@@ -12,4 +12,7 @@
 #define CONSTANTS_GREETING "hi\tthere"
 #define CONSTANTS_JOINED "con" "cat"
 #define CONSTANTS_SIZE sizeof(long long)
+#define CONSTANTS_NIL ((void*)0)
+#define CONSTANTS_INVALID ((void*)-1)
+#define CONSTANTS_PAGE ((const int*)4096)
 #endif

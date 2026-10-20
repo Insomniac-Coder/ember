@@ -3,7 +3,8 @@
 #define UNREPRESENTABLE_H
 
 union Number { int i; float f; };
-struct Flags { unsigned ready : 1; unsigned count : 7; };
+enum Mode { MODE_OFF, MODE_ON };
+struct Flags { enum Mode mode : 2; unsigned count : 6; };
 static int unrepresentable_hidden = 4;
 
 int unrepresentable_log(const char* format, ...);

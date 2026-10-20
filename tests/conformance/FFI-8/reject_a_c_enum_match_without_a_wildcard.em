@@ -22,7 +22,7 @@ enum Shape:
     Square = 1
 
 unsafe extern "C":
-    safe fn shape_of(n: i32) -> Shape  #$ error[E5050]
+    safe fn shape_of(n: i32) -> Shape  #$ error[E5015]
 
 fn name(c: Color) -> str:
     match c:  #$ error[E2090]

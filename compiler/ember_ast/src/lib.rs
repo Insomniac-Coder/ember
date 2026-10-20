@@ -174,6 +174,8 @@ pub struct OverlayDecl {
 #[derive(Clone, Debug)]
 pub struct OverlayItem {
     pub attrs: Vec<Attribute>,
+    /// `[FFI-30c]` (ODR-149) — `override`: it replaces an earlier overlay's entry for its name.
+    pub is_override: bool,
     pub kind: OverlayItemKind,
     pub span: Span,
 }
@@ -187,6 +189,9 @@ pub enum OverlayItemKind {
     /// ["->" contract {contract}] NEWLINE`; a function entry asserts the
     /// function safe to call (`[FFI-2]`).
     Fn { name: Ident, params: Vec<OverlayParam>, result: Vec<Contract> },
+    /// `[FFI-6b]` (ODR-147) — `@ffi(macro_fn) fn SQUARE(x: i32) -> i32`: a function-like macro's
+    /// signature, one Ember type for each parameter and for the result.
+    MacroFn { name: Ident, params: Vec<(Ident, TypeExpr)>, result: Option<TypeExpr> },
     Type(Ident),
     Enum(Ident),
     Rename { from: Ident, to: Ident },

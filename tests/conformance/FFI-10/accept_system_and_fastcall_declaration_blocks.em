@@ -4,8 +4,8 @@
 #$ stdout: 42
 #$ stdout: 9000000000
 #$ stdout: 17
-#$ assert-c: contains("EMBER_CC_SYSTEM abs(")
-#$ assert-c: contains("EMBER_CC_FASTCALL imaxabs(")
+#$ assert-c: contains("EMBER_CC_SYSTEM em_0x616273_abs(")
+#$ assert-c: contains("EMBER_CC_FASTCALL em_0x696d6178616273_imaxabs(")
 # `[FFI-10]`, `[FFI-9]` — a declaration block names its calling convention:
 # `"system"` is `stdcall` on 32-bit Windows and C elsewhere, and on x86-64
 # `"fastcall"` is the one convention there, so the C library's functions are

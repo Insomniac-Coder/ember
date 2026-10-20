@@ -5017,6 +5017,27 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-238 — Helper N's second job merged: the importer's rulings and its defects
+
+2026-10-20. Branch `helper-N` (12 commits after 780c70da, notes in `tasks/90/N-notes.md` Part 2)
+merged; two conflicts, both additive (`std/src/ffi.em`: `WideString` beside the C aliases;
+`docs/phase-status.json`). Built: ODR-145 (a `const` may hold a pointer made from an integer;
+null-pointer and pointer-cast macros import as such constants), ODR-146 (named by its test),
+ODR-147 (`@ffi(macro_fn)` entries, their shim wrappers and bindings; folding constant calls, which
+the spec allows, is not built), ODR-148 (named by `[CLI-5]`'s milestone), ODR-149 (a list of
+overlays in order, `override`, `E5010` otherwise). Defects fixed: D-742 (`std.ffi`'s C aliases, the
+target's), D-743 and D-744 (each foreign declaration bound to its symbol under a private alias, so
+no prototype clashes; disagreeing declarations of one function are `E0104`), D-745 (`E5050` is
+`[TCB-1]`'s alone; no foreign representation is `E5015`), D-746, and three it found: D-756..D-758.
+`[FFI-8]` gains bit-fields (`get_`/`set_` accessors) and anonymous struct members. Rules done:
+FFI-6a, FFI-6b, FFI-29, FFI-30c, TST-7 (its baseline is empty); FFI-8 stays unfinished (unions,
+`long double`, `volatile`, flexible array members, `_Atomic`, `va_list`, `@ffi(newtype)`). Both test
+harnesses take `#$ flags:`. Questions: two ruled under the delegation as built (a `const`
+initialiser's integer-to-pointer cast needs no `unsafe`; an `override` replacing nothing is
+`E5010`); two keep existing codes until the owner says whether a new one is wanted (disagreeing
+declarations `E0104`; `E5015` for a type with no foreign representation, whose code-table row cites
+`[FFI-31]` where it means `[FFI-31b]`) — `tasks/90/owner-questions.md`.
+
 ## ADR-237 — No implicit cost without its row (`[COST-5]`, ODR-152)
 
 2026-10-20. `[COST-5]`: a rule that introduces an implicit cost adds a row to `[COST-3]`'s table, and

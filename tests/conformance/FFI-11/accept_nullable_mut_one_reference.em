@@ -2,7 +2,7 @@
 #$ rules: FFI-11, FFI-10
 #$ profiles: debug
 #$ assert-c: contains("typedef int32_t* em_Option_ref_mut_i32;")
-#$ assert-c: contains("extern int32_t update_optional(")
+#$ assert-c: contains("extern int32_t em_0x7570646174655f6f7074696f6e616c_update_optional(")
 
 unsafe extern "C":
     @ffi(param(value, borrowed, one, nullable, exclusive))

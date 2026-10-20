@@ -10790,6 +10790,8 @@ formal 1/9 count or Phase 2's estimate.
 > D-755 open: CI's MSVC runner times `w1_sum_loop` 1.7x and `s5` 1.35x C since 812a1fdf, the owner's
 > laptop 1.01x; baselined for MSVC; the gate now names the machine (read the `performance gate
 > machine` notice) and leaves a baselined case only on a clear pass (s4's false "passes now").
+> ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
+> FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and
 > `s4_copied_enumerate_skip` (MSVC runner 1.27x) over threshold; baselined per compiler.
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through

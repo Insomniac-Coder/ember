@@ -311,6 +311,13 @@ pub fn check(
     checker.resolve_pending_generic_implements();
     checker.resolve_pending_bound_interfaces();
     checker.extend_early_instances();
+    // Aliases are resolved after every type header and before any signature or field: they may
+    // name a struct or enum, and a signature may name another module's alias (`std.ffi`'s `c_int`)
+    // whichever order the modules are in. Dependencies before importers.
+    for (index, loaded) in modules.iter().enumerate().rev() {
+        checker.current_module = index;
+        checker.collect_type_aliases(&loaded.module);
+    }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.collect(&loaded.module);
@@ -448,6 +455,29 @@ pub fn check(
             table_symbols.insert(symbol, span);
         }
         checker.types.add_export_table(table);
+    }
+    // `[FFI-30]` (D-744) — each declaration of one C function binds it under a C name of its own,
+    // so the C compiler compares none of them: every declaration, and the program's own definition
+    // of it, must pass and return what the others do.
+    let mut c_functions = HashMap::<String, (&Function, String)>::new();
+    for function in functions.iter().filter(|function| function.ffi_counted.is_none() && (function.is_extern_declaration || function.abi.is_some())) {
+        let symbol = ember_branding::export_alias_symbol(&function.symbol).unwrap_or_else(|| function.symbol.clone());
+        let shape = checker.c_call_shape(function);
+        match c_functions.get(&symbol) {
+            Some((first, expected)) if *expected != shape => {
+                let kind = |function: &Function| if function.is_extern_declaration { "declared" } else { "defined" };
+                checker.sink.emit(
+                    Diagnostic::error(codes::E0104, function.span, format!("C function `{symbol}` is {} here with another C signature than elsewhere", kind(function)))
+                        .secondary(first.span, format!("{} here as `{expected}`", kind(first)))
+                        .note(format!("here it is `{shape}`"))
+                        .note("one C function has one signature, however many modules declare it [FFI-30]"),
+                );
+            }
+            Some(_) => {}
+            None => {
+                c_functions.insert(symbol, (function, shape));
+            }
+        }
     }
     let mut emitted_symbols = HashMap::<&str, &Function>::new();
     for function in &functions {
@@ -2224,6 +2254,8 @@ struct Checker<'a> {
     foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
     /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
     foreign_backed: Vec<HashSet<Symbol>>,
+    /// `[CT-2]` (ODR-145) — a `const`'s initialiser is being checked.
+    const_initializer: bool,
     /// Declaration spans for module items, keyed by their canonical names.
     /// N1 uses each span's file identity before considering its offset, so
     /// imported aliases never compare unrelated source coordinates.
@@ -2864,6 +2896,7 @@ impl<'a> Checker<'a> {
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
             foreign_backed: Vec::new(),
+            const_initializer: false,
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
@@ -3333,7 +3366,7 @@ impl<'a> Checker<'a> {
         }
         if matches!(self.types.kind(ty), TyKind::Opaque(_)) {
             let shown = self.types.display(ty);
-            self.error(codes::E5050, span,
+            self.error(codes::E5015, span,
                 format!("`{shown}` is incomplete and cannot cross the C boundary by value"));
             return self.common.error;
         }
@@ -3449,6 +3482,8 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let repr = self.resolve_type(value);
+                // `[FFI-8]` (D-742) — `std.ffi`'s C aliases whose type is the target's.
+                let repr = target_c_alias(name.as_str(), self.types.pointer_size()).map_or(repr, |kind| self.types.intern(kind));
                 // `[RNG-1]` — an alias carrying an `in` clause declares a
                 // **nominal** numeric type over `repr`; one without it is
                 // transparent, exactly as `[LEX-15a]` specifies.
@@ -4066,8 +4101,7 @@ impl<'a> Checker<'a> {
                         let symbol = match &decl.abi {
                             Some(_) if decl.is_foreign_decl && !ffi_count_witnesses(&item.attrs).is_empty() =>
                                 mangle(qualified, false),
-                            Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                                .unwrap_or_else(|| decl.name.name.to_string()),
+                            Some(_) if decl.is_foreign_decl => foreign_function_symbol(&item.attrs, decl, qualified),
                             Some(_) => decl.name.name.to_string(),
                             None => mangle(qualified, qualified.is("main")),
                         };
@@ -6705,7 +6739,9 @@ impl<'a> Checker<'a> {
         if self.types.is_untyped_literal(ty) {
             return ExprConst { value: value.clone(), module, ok: true, public: true, folded: None, pending: false };
         }
+        let outer = std::mem::replace(&mut self.const_initializer, true);
         let checked = self.check_field_default(value, ty, module, DefaultOwner::Constant);
+        self.const_initializer = outer;
         if self.sink.error_count() != before {
             return refused();
         }
@@ -7117,6 +7153,8 @@ impl<'a> Checker<'a> {
         match &expr.kind {
             ast::ExprKind::Lit(_) => true,
             ast::ExprKind::Paren(inner) | ast::ExprKind::Unary { operand: inner, .. } => self.is_const_expr(inner),
+            // `[CT-2]` (ODR-145) — `0 as *mut T`: a pointer made from an integer.
+            ast::ExprKind::Cast { expr: inner, ty } if matches!(ty.kind, ast::TypeKind::Ptr { .. }) => self.is_const_expr(inner),
             ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
                 self.is_const_expr(lhs) && self.is_const_expr(rhs)
             }
@@ -8484,11 +8522,6 @@ impl<'a> Checker<'a> {
     /// Resolve aliases, fields, variants, constants, statics, and function
     /// signatures after every type header and generic recipe exists.
     fn collect(&mut self, module: &ast::Module) {
-
-        // Aliases are resolved between the two loops: they may name a struct or
-        // enum (registered above) and may be named by a field (resolved below).
-        self.collect_type_aliases(module);
-
         for item in &module.items {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
@@ -8777,7 +8810,7 @@ impl<'a> Checker<'a> {
                             if ty != self.common.error {
                                 let shown = self.types.display(ty);
                                 self.sink.emit(
-                                    Diagnostic::error(codes::E5050, decl.ty.span,
+                                    Diagnostic::error(codes::E5015, decl.ty.span,
                                         format!("`{shown}` has no foreign representation"))
                                         .primary_label("the type of this foreign static")
                                         .note("a foreign static holds a value C lays out: a scalar, a pointer, a `cstr`, an array or record of those [FFI-8]"),
@@ -9041,7 +9074,8 @@ impl<'a> Checker<'a> {
                             }
                             self.foreign_unknown_facts.insert(def, unknown);
                         }
-                        self.foreign_symbols.insert(def, Symbol::intern(&ffi_link_name(&item.attrs).unwrap_or_else(|| decl.name.name.to_string())));
+                        let qualified = self.qualified(decl.name.name);
+                        self.foreign_symbols.insert(def, Symbol::intern(&foreign_function_symbol(&item.attrs, decl, qualified)));
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -12961,7 +12995,7 @@ impl<'a> Checker<'a> {
                     .unwrap_or(self.common.void);
                 if abi.is_some() && (!self.types.is_ffi_safe(ret)
                     || params.iter().any(|param: &FnParam| !self.types.is_ffi_safe(param.ty))) {
-                    self.error(codes::E5050, ty.span, "an `extern \"C\" fn` pointer needs FFI-safe parameters and result");
+                    self.error(codes::E5015, ty.span, "an `extern \"C\" fn` pointer needs FFI-safe parameters and result");
                     return self.common.error;
                 }
                 // `[FFI-31b]` — a foreign function pointer is a boundary C code may call, or be
@@ -14931,7 +14965,7 @@ impl<'a> Checker<'a> {
 
         if self.types.has_unsized_by_value(elem) {
             let shown = self.types.display(elem);
-            self.error(codes::E5050, span,
+            self.error(codes::E5015, span,
                 format!("`{shown}` is incomplete and has no size or alignment"));
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         }
@@ -18046,8 +18080,7 @@ impl<'a> Checker<'a> {
                 if c_link_identifier(exported) { exported.to_string() } else { ember_branding::export_alias(exported) }
             } else { match &decl.abi {
                 Some(_) if ffi_counted.is_some() => mangle(name, false),
-                Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                    .unwrap_or_else(|| decl.name.name.to_string()),
+                Some(_) if decl.is_foreign_decl => foreign_function_symbol(&item.attrs, decl, name),
                 Some(_) => decl.name.name.to_string(),
                 None if has_attribute(&item.attrs, "export") => decl.name.name.to_string(),
                 None => mangle(name, is_main),
@@ -18690,7 +18723,7 @@ impl<'a> Checker<'a> {
                     .is_some_and(|param| param.callable.is_some())
             {
                 this.sink.emit(
-                    Diagnostic::error(codes::E5050, span,
+                    Diagnostic::error(codes::E5015, span,
                         "a native `fn` callable parameter has no foreign representation")
                         .primary_label(what)
                         .help("write `extern \"C\" fn(…)` for a C function pointer"),
@@ -18720,7 +18753,7 @@ impl<'a> Checker<'a> {
                 let shown = this.types.display(ty);
                 this.sink.emit(
                     Diagnostic::error(
-                        codes::E5050,
+                        codes::E5015,
                         span,
                         format!("`{shown}` has no foreign representation"),
                     )
@@ -18746,25 +18779,25 @@ impl<'a> Checker<'a> {
             if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ty) {
                 if !self.types.is_ffi_safe(inner) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let Some((elem, _)) = self.foreign_nullable_span_elem(ty) {
                 if !self.types.is_ffi_safe(elem) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` contains a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Span { elem, .. } = self.types.kind(ty) {
                 if !self.types.is_ffi_safe(*elem) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` contains a type with no foreign representation"));
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ty) {
                 if !self.types.is_ffi_safe(*inner) {
-                    self.error(codes::E5050, span,
+                    self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
             } else {
@@ -18785,7 +18818,7 @@ impl<'a> Checker<'a> {
                     | FfiResultContract::ExclusiveCountFrom { .. }))
                 && let TyKind::Span { elem, .. } = self.types.kind(ret) {
                 if !self.types.is_ffi_safe(*elem) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the counted result contains a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
@@ -18795,19 +18828,19 @@ impl<'a> Checker<'a> {
                     | FfiResultContract::NullableExclusiveCountFrom { .. }))
                 && let Some((elem, _)) = self.foreign_nullable_span_elem(ret) {
                 if !self.types.is_ffi_safe(elem) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the nullable counted result contains a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ret) {
                 if !self.types.is_ffi_safe(inner) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the nullable reference result refers to a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ret) {
                 if !self.types.is_ffi_safe(*inner) {
-                    self.error(codes::E5050, decl.name.span,
+                    self.error(codes::E5015, decl.name.span,
                         "the reference result refers to a type with no foreign representation");
                 }
             } else {
@@ -19265,6 +19298,76 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// D-746 — an `@ffi(…)` argument on a foreign function that no contract form matched: a word
+    /// the vocabulary does not have is `E0104`; a form made of its words is one this compiler has
+    /// not built (`threads(…)`, `destroys(f)`, `callback(…)`), `E0900`.
+    fn unknown_ffi_argument(&mut self, arg: &ast::AttrArg, span: Span) {
+        let word_of = |expr: &ast::Expr| match &expr.kind {
+            ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
+            _ => ffi_contract_word(expr),
+        };
+        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name"];
+        let (top, inner): (Option<Symbol>, Vec<Symbol>) = match arg {
+            ast::AttrArg::Named { name, .. } => (Some(name.name), Vec::new()),
+            ast::AttrArg::Expr(value) => {
+                let top = word_of(value);
+                // `param(p, …)` names its parameter, then its words, as `result(…)` does; any other
+                // form's arguments are its own (`threads(main)`).
+                let skip = usize::from(top.is_some_and(|word| word.is("param")));
+                let inner = match &value.kind {
+                    ast::ExprKind::Call { args, .. } if top.is_some_and(|word| word.is("param") || word.is("result")) => {
+                        args.iter().skip(skip).filter_map(|arg| word_of(&arg.value)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                (top, inner)
+            }
+        };
+        let known = |word: &Symbol| FFI_CONTRACT_WORDS.contains(&word.as_str());
+        let unknown = top.filter(|word| !known(word) && !FORMS.contains(&word.as_str()))
+            .or_else(|| inner.iter().copied().find(|word| !known(word)));
+        match (top, unknown) {
+            (_, Some(word)) => self.sink.emit(
+                Diagnostic::error(codes::E0104, span, format!("`{word}` is not a contract word of `@ffi`"))
+                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), FFI_CONTRACT_WORDS.join(", ")))
+                    .note("a hand declaration's contract is written `@ffi(param(name, word, …), result(word, …))` [FFI-11]"),
+            ),
+            _ if inner.iter().any(|word| word.is("exclusive")) && inner.iter().any(|word| word.is("aliased")) => {
+                self.error(codes::E0104, span, "a contract is `exclusive` or `aliased`, not both");
+            }
+            (Some(word), None) => self.error(codes::E0900, span, format!("this `{word}(…)` contract is not implemented yet")),
+            (None, None) => self.error(codes::E0104, span, "an argument of `@ffi` is a contract form: `param(…)`, `result(…)`, `effects=[…]`, `deterministic` or `link_name=\"…\"`"),
+        }
+    }
+
+    /// `[FFI-30]` (D-744) — what a C call passes and returns, as the C ABI sees it: each parameter
+    /// then the result, a pointer, an integer or a float of its size, or a type by value.
+    fn c_call_shape(&self, function: &Function) -> String {
+        let shape = |ty: Ty| -> String {
+            let pointer = |ty: Ty| match self.types.kind(ty) {
+                TyKind::Ptr { .. } | TyKind::Ref { .. } | TyKind::Fn { .. } | TyKind::CStr => true,
+                TyKind::Enum(id) => self.types.option_niche(*id).is_some_and(|niche| {
+                    matches!(self.types.kind(niche.payload), TyKind::Ptr { .. } | TyKind::Ref { .. } | TyKind::Fn { .. } | TyKind::CStr)
+                }),
+                _ => false,
+            };
+            match self.types.kind(ty) {
+                _ if pointer(ty) => "pointer".to_string(),
+                TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) => format!("{}-byte integer", self.types.layout(ty).size),
+                // A C-like enum is its representation.
+                TyKind::Enum(id) if self.types.enum_def(*id).is_unit_only() => format!("{}-byte integer", self.types.layout(ty).size),
+                TyKind::Float(_) => format!("{}-byte float", self.types.layout(ty).size),
+                TyKind::Void | TyKind::Never => "nothing".to_string(),
+                _ => format!("`{}`", self.types.display(ty)),
+            }
+        };
+        let params: Vec<String> = function.params.iter().map(|param| {
+            // A `mut` parameter is passed by address.
+            if param.mode == hir::Mode::Mut { "pointer".to_string() } else { shape(function.local(param.local).ty) }
+        }).collect();
+        format!("({}) -> {}", params.join(", "), shape(function.ret))
+    }
+
     /// `[FFI-36a]` — the foreign function `name` of this module that frees a `pointee`: its
     /// definition, C symbol and result type.
     fn foreign_destructor(&self, name: Symbol, pointee: Ty) -> Option<(DefId, Symbol, Ty)> {
@@ -19326,7 +19429,7 @@ impl<'a> Checker<'a> {
         if !decl.is_safe {
             if !borrowed_aggregate { return None; }
             return Some(hir::FfiCounted {
-                foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
+                foreign_symbol: foreign_function_symbol(attrs, decl, self.qualified(decl.name.name)),
                 abi_params: visible.iter().enumerate().map(|(public_index, &(_, ty, mode, _))|
                     hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
                 result_array: None,
@@ -19480,7 +19583,7 @@ impl<'a> Checker<'a> {
             }
         }
         Some(hir::FfiCounted {
-            foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
+            foreign_symbol: foreign_function_symbol(attrs, decl, self.qualified(decl.name.name)),
             abi_params,
             result_array,
             result_span,
@@ -33365,8 +33468,11 @@ impl<'a> Checker<'a> {
                      TyKind::Ptr { mutable: target_mutable, inner: target })
                         if source == target && (!target_mutable || *source_mutable)
                 );
+                // `[CT-2]` (ODR-145) — a `const`'s pointer made from an integer is an address read
+                // by nothing: it asks no `unsafe`, as a cast at run time does (`[UNS-1]`).
+                let constant_address = self.const_initializer && pointer_integer_cast && self.types.is_integral(inner.ty);
                 if pointer_integer_cast || pointer_pointer_cast {
-                    if !self.unsafe_context() {
+                    if !constant_address && !self.unsafe_context() {
                         self.error(codes::E3100, span, if pointer_integer_cast {
                             "casting between a raw pointer and an integer requires `unsafe`"
                         } else {
@@ -36928,6 +37034,10 @@ impl<'a> Checker<'a> {
                     _ => self.check_attribute_list(std::slice::from_ref(attr), "overlay item"),
                 }
             }
+            if let ast::OverlayItemKind::MacroFn { name, .. } = &item.kind {
+                fact(name.span, format!("the entry for macro `{}`, which states its signature", name.name));
+                continue;
+            }
             let ast::OverlayItemKind::Fn { name, params, result } = &item.kind else { continue };
             fact(name.span, format!("the entry for `{}`, which asserts it safe to call", name.name));
             for contract in params.iter().flat_map(|param| &param.contract).chain(result) {
@@ -36957,7 +37067,7 @@ impl<'a> Checker<'a> {
     /// claim is unbacked, `W5050` (`E5050` under `--require-evidence`), and the fact stays asserted
     /// (`[TCB-2]`).
     fn check_grade(&mut self, attr: &ast::Attribute, kind: &ast::OverlayItemKind) {
-        if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
+        if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::MacroFn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
             self.error(codes::E0104, attr.span, "`@grade` applies to an overlay entry that states facts");
             return;
         }
@@ -37254,8 +37364,7 @@ impl<'a> Checker<'a> {
                                     }
                                     self.sink.emit(diagnostic);
                                 } else {
-                                    self.error(codes::E0900, attr.span,
-                                        "only `@ffi` link names and borrowed-one pointer contracts are implemented yet");
+                                    self.unknown_ffi_argument(arg, attr.span);
                                 }
                             }
                         }
@@ -41664,6 +41773,10 @@ impl<'a> Checker<'a> {
                     self.check_field_visible(id, field.vis, field.name, name.span);
                     Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
                 }
+                // `[FFI-8]` — a field of an imported struct's anonymous member reads through it.
+                None if let Some(path) = self.anonymous_member_path(id, name.name) => {
+                    path.into_iter().fold(base, |base, (index, ty)| Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span })
+                }
                 None => {
                     self.sink
                         .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
@@ -41701,6 +41814,32 @@ impl<'a> Checker<'a> {
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
         }
+    }
+
+    /// `[FFI-8]` — the fields from struct `id` to `name` through anonymous members: a struct
+    /// `import c` wrote holds an anonymous member as a field `_anon<N>` of its generated type
+    /// `<Parent>_anon<N>`, and that type's fields (its own anonymous members' too) are the parent's.
+    fn anonymous_member_path(&self, id: StructId, name: Symbol) -> Option<Vec<(usize, Ty)>> {
+        let parent = self.types.struct_def(id);
+        if !self.foreign_skipped.get(parent.declaring_module).is_some_and(Option::is_some) {
+            return None;
+        }
+        let short = parent.name.as_str().rsplit('.').next().unwrap_or("");
+        for (index, field) in parent.fields.iter().enumerate() {
+            let TyKind::Struct(inner) = *self.types.kind(field.ty) else { continue };
+            let generated = self.types.struct_def(inner).name;
+            if !field.name.as_str().starts_with("_anon") || !generated.as_str().ends_with(&format!("{short}{}", field.name)) {
+                continue;
+            }
+            if let Some((found, member)) = self.types.struct_def(inner).field(name) {
+                return Some(vec![(index, field.ty), (found, member.ty)]);
+            }
+            if let Some(mut path) = self.anonymous_member_path(inner, name) {
+                path.insert(0, (index, field.ty));
+                return Some(path);
+            }
+        }
+        None
     }
 
     /// `[CLO-11]` — whether `ty`, read through references and boxes, has a
@@ -53037,6 +53176,25 @@ fn ffi_link_name_arg(arg: &ast::AttrArg) -> Option<&str> {
     Some(symbol)
 }
 
+/// `[FFI-6]` (D-743, D-744) — the C name a foreign function declaration `owner` (its qualified
+/// name) is declared under: a private alias of the symbol it binds (its `link_name`, else its
+/// name), which the C binds to the symbol as `[MNG-2]`'s aliases are. Its prototype, in Ember's
+/// spellings of its types, then conflicts with no other declaration of the symbol: a system
+/// header's (`puts` beside `<stdio.h>`), another module's with contracts of its own (`[FFI-30a]`),
+/// or the program's own definition.
+fn foreign_function_symbol(attrs: &[ast::Attribute], decl: &ast::FnDecl, owner: Symbol) -> String {
+    // ponytail: a `vectorcall` declaration keeps its symbol's own C name: MSVC decorates both names
+    // (`f@@16`), which a linker alias would have to spell; two of its declarations still meet in C.
+    if decl.abi.as_deref() == Some("vectorcall") {
+        return ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string());
+    }
+    let symbol = attrs.iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .and_then(ffi_link_name_attr)
+        .map_or_else(|| decl.name.name.to_string(), str::to_string);
+    ember_branding::foreign_alias(&symbol, owner.as_str())
+}
+
 /// `[FFI-49]` — the C name a declaration binds: its `link_name`, or, for a symbol C cannot spell,
 /// the alias it is declared under in C (`[MNG-2]`'s), which the C binds to the symbol.
 fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<String> {
@@ -54649,4 +54807,27 @@ fn reads_any(e: &Expr, locals: &HashSet<LocalId>) -> bool {
         ExprKind::Block { value, .. } => reads_any(value, locals),
         _ => false,
     }
+}
+
+/// `[FFI-8]` (D-742) — the type of a `std.ffi` C alias that differs between targets, for the target
+/// the compiler builds for (its own: the C backend compiles with this machine's C compiler):
+/// `char` is unsigned on ARM, PowerPC, RISC-V and s390x but on Apple's and Windows' ABIs; `long` is
+/// 32 bits on Windows and on 32-bit targets; `wchar_t` is a `u16` on Windows. `None` for any other
+/// name.
+fn target_c_alias(name: &str, pointer_size: u64) -> Option<TyKind> {
+    use ember_types::{IntTy, UintTy};
+    let windows = cfg!(windows);
+    let long32 = windows || pointer_size == 4;
+    let signed_char = !cfg!(any(target_arch = "aarch64", target_arch = "arm", target_arch = "powerpc", target_arch = "powerpc64",
+        target_arch = "s390x", target_arch = "riscv32", target_arch = "riscv64"))
+        || cfg!(target_vendor = "apple") || windows;
+    Some(match name {
+        "std.ffi.c_char" if signed_char => TyKind::Int(IntTy::I8),
+        "std.ffi.c_char" => TyKind::Uint(UintTy::U8),
+        "std.ffi.c_long" => TyKind::Int(if long32 { IntTy::I32 } else { IntTy::I64 }),
+        "std.ffi.c_ulong" => TyKind::Uint(if long32 { UintTy::U32 } else { UintTy::U64 }),
+        "std.ffi.c_wchar" if windows => TyKind::Uint(UintTy::U16),
+        "std.ffi.c_wchar" => TyKind::Int(IntTy::I32),
+        _ => return None,
+    })
 }

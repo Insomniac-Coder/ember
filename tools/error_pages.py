@@ -111,9 +111,13 @@ RUNTIME_CODES = {"L3017"}
 # programs are the entry of a package whose tests are run instrumented.
 INSTRUMENTED_CODES = {"E5053", "W5054"}
 
+# A code only a build that requires evidence reports (`[TCB-1]`): its page's programs are checked
+# with `--require-evidence`.
+REQUIRE_EVIDENCE_CODES = {"E5050"}
+
 
 def run(source: str, work: Path, manifest: str | None = None, command: str = "check",
-        files: list[tuple[str, str]] = ()) -> tuple[int, str]:
+        files: list[tuple[str, str]] = (), flags: tuple[str, ...] = ()) -> tuple[int, str]:
     path = work / "page.em"
     for name, body in files:
         (work / name).write_text(body.lstrip("\n"), encoding="utf-8", newline="\n")
@@ -129,7 +133,7 @@ def run(source: str, work: Path, manifest: str | None = None, command: str = "ch
         for index, part in enumerate(parts)
     )
     path.write_bytes(raw)
-    arguments = [str(ember()), command, str(path)]
+    arguments = [str(ember()), command, str(path), *flags]
     cwd = ROOT
     if command == "run":
         arguments += ["--out-dir", str(work / "out")]
@@ -176,11 +180,12 @@ def check_page(path: Path, work: Path) -> list[str]:
     # compiler warning page.
     is_non_error = code.startswith(("L", "W"))
     command = "run" if code in RUNTIME_CODES else "test" if code in INSTRUMENTED_CODES else "check"
+    flags = ("--require-evidence",) if code in REQUIRE_EVIDENCE_CODES else ()
 
     if "fails" not in blocks:
         problems.append(f"{code}: no ```ember,fails block — [DOC-1] wants the program that triggers it")
     else:
-        status, output = run(blocks["fails"][0], work, blocks["fails"][1], command, files)
+        status, output = run(blocks["fails"][0], work, blocks["fails"][1], command, files, flags)
         if is_non_error:
             # It must compile — a lint does not reject — and it must actually
             # emit the lint. The second half is the one that matters: without
@@ -211,7 +216,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fixed" not in blocks:
         problems.append(f"{code}: no ```ember,fixed block — [DOC-1] wants the fix as compilable code")
     else:
-        status, output = run(blocks["fixed"][0], work, blocks["fixed"][1], command, files)
+        status, output = run(blocks["fixed"][0], work, blocks["fixed"][1], command, files, flags)
         if status != 0:
             problems.append(
                 f"{code}: the ```ember,fixed program does not compile — [PHIL-8a]:\n"

@@ -72,7 +72,7 @@
         "XVI"
       ],
       "rules": 632,
-      "done": 603,
+      "done": 607,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -81,11 +81,7 @@
         "ECS-4",
         "FFI-1",
         "FFI-11",
-        "FFI-29",
-        "FFI-30c",
         "FFI-33b",
-        "FFI-6a",
-        "FFI-6b",
         "FFI-8",
         "GRM-28",
         "GRM-38",
@@ -111,7 +107,7 @@
         "Annex B"
       ],
       "rules": 691,
-      "done": 651,
+      "done": 655,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -120,11 +116,7 @@
         "ECS-4",
         "FFI-1",
         "FFI-11",
-        "FFI-29",
-        "FFI-30c",
         "FFI-33b",
-        "FFI-6a",
-        "FFI-6b",
         "FFI-8",
         "GRM-28",
         "GRM-38",

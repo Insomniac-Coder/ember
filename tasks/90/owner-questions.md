@@ -59,3 +59,17 @@ owner's to overturn.
    `q.commands().destroy(e)` has an `e`) — confirm. **Ruled ODR-141: confirmed.**
 7. D-690: lend `self` to a shared call as a read (built), let the callee's writes through, or lend
    exactly the method's live loans. **Ruled ODR-143: lent as a read.**
+
+## The importer's second job (helper N), 2026-10-20 (ADR-238) — `tasks/90/N-notes.md` Part 2
+
+1. Inside a `const` initialiser, an integer-to-pointer cast (`0 as *mut T`, ODR-145) needs no
+   `unsafe`. **Ruled under the delegation: as built** (the value is a number until it is used, and
+   using it is what `[UNS-1]` guards).
+2. Declarations of one C function that disagree (what they pass or return) are now caught by the
+   type checker, since C no longer compares them (D-743/D-744). Built with `E0104`. (a) keep
+   `E0104`; (b) widen `E5011` to functions; (c) a new code. **OPEN** (a new code is the owner's).
+3. An `override` overlay entry with nothing earlier to replace is `E5010`. **Ruled under the
+   delegation: as built.**
+4. `E5015` now also covers a type with no foreign representation (it was one of `E5050`'s two
+   meanings, D-745). (a) keep it, and correct its code-table row, which cites `[FFI-31]` (in 0.9.10
+   the cdylib runtime rule) where it means `[FFI-5]`/`[FFI-31b]`; (b) a code of its own. **OPEN.**

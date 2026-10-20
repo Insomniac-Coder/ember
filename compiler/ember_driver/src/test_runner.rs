@@ -572,6 +572,12 @@ fn write_files(work: &Path, files: &[(String, String)]) -> Result<(), String> {
     Ok(())
 }
 
+/// How an error page's examples are checked: `E5050` only a build that requires evidence reports
+/// (`[TCB-1]`).
+fn check_command(code: &str) -> &'static [&'static str] {
+    if code == "E5050" { &["check", "--require-evidence"] } else { &["check"] }
+}
+
 fn run_example(
     exe: &Path,
     work: &Path,
@@ -585,7 +591,7 @@ fn run_example(
             write_files(work, files)?;
             let tag = format!("[{code}]");
             let manifest = manifest.as_deref();
-            let (checked, output) = ember_on(exe, work, source, manifest, &["check"], options)?;
+            let (checked, output) = ember_on(exe, work, source, manifest, check_command(code), options)?;
             if code.starts_with('E') && *toolchain {
                 if !checked {
                     Attempt::fail("the failing program, an error only a C compiler decides, is rejected without one", &output)
@@ -625,7 +631,7 @@ fn run_example(
         Example::Fixed { code, source, manifest, files } => {
             write_files(work, files)?;
             let manifest = manifest.as_deref();
-            let (checked, output) = ember_on(exe, work, source, manifest, &["check"], options)?;
+            let (checked, output) = ember_on(exe, work, source, manifest, check_command(code), options)?;
             if !checked {
                 Attempt::fail("the fixed program does not compile", &output)
             } else if runtime_codes.borrow().contains(code) {

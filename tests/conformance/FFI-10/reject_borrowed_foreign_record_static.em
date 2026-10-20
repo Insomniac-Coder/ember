@@ -13,7 +13,7 @@ struct HasCText:
     width: i32
 
 unsafe extern "C":
-    static foreign_view: HasView    #$ error[E5050]: `HasView` has no foreign representation
+    static foreign_view: HasView    #$ error[E5015]: `HasView` has no foreign representation
     @ffi(immutable)
     static label: HasCText    #$ error[E7002]: foreign static type `HasCText` is not Sync
 

@@ -57,6 +57,9 @@ struct Expectations {
     stdin: Option<String>,
     /// `#$ args:` — one program argument per annotation, after `--`.
     args: Vec<String>,
+    /// `#$ flags:` — one compiler flag per annotation for the check of a test's diagnostics:
+    /// `--require-evidence` (`[TCB-1]`), under which a claimed grade's missing evidence is `E5050`.
+    flags: Vec<String>,
     /// `#$ stderr:` — text the run's standard error must contain, one needle
     /// per annotation: the debug leak report (`[WK-15]`) goes there.
     stderr: Vec<String>,
@@ -232,6 +235,8 @@ fn parse_expectations(source: &str) -> Expectations {
         } else if let Some(value) = rest.strip_prefix("panics:") {
             expectations.panics = Some(value.trim().to_string());
             collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("flags:") {
+            expectations.flags.push(value.trim().to_string());
         } else if let Some(value) = rest.strip_prefix("args:") {
             expectations.args.push(value.trim().to_string());
             collecting_stdout = false;
@@ -336,7 +341,9 @@ fn assert_exact_diagnostics(
     root: &Path,
     expectations: &Expectations,
 ) -> (i32, String) {
-    let checked = ember(&["check", "--json", relative, "--profile", profile], root);
+    let mut arguments = vec!["check", "--json", relative, "--profile", profile];
+    arguments.extend(expectations.flags.iter().map(String::as_str));
+    let checked = ember(&arguments, root);
     struct Produced {
         code: String,
         text: String,
@@ -7327,7 +7334,8 @@ static inline void bind_zero(int* items, size_t n) { for (size_t i = 0; i < n; i
 int bind_log(const char* format, ...);
 ";
 
-/// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay: each fact the header cannot
+/// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay, `<stem>.overlay.em` beside the
+/// header (`calc.overlay.em` for `calc.h`, ODR-148): each fact the header cannot
 /// state a `TODO(…)` word, each derived one a comment, each skipped declaration a comment with its
 /// reason. It compiles unchanged (every call still `unsafe`), is never written over, and `--merge`
 /// adds only what it lacks, keeping what was written by hand.
@@ -7514,7 +7522,7 @@ fn a_reexported_header_layout_is_part_of_the_interface_hash() {
     let before = cached_interface(&out_dir, "lib");
     let header_hash = before.dependencies.get("c.h_shape").cloned().expect("`lib` depends on the header's module");
     let layouts = cached_interface(&out_dir, "c.h_shape").layouts;
-    assert!(layouts.iter().any(|(name, layout)| name.contains("Shape") && layout.contains("pub h: i32")), "{layouts:?}");
+    assert!(layouts.iter().any(|(name, layout)| name.contains("Shape") && layout.contains("pub h: c_int")), "{layouts:?}");
     std::fs::write(dir.join("shape.h"), "typedef struct Shape { int w; int h; int d; } Shape;\n").unwrap();
     std::fs::write(dir.join(format!("main.{SOURCE_EXT}")), "import lib\n\nfn main():\n    println(lib.area(lib.shape.Shape(w=2, h=3, d=4)))\n").unwrap();
     check();
@@ -7615,9 +7623,7 @@ fn main():
 #[test]
 fn every_example_of_the_specification_checks() {
     // A block known to fail, by the heading it is under, and why.
-    const BASELINE: &[(&str, &str)] = &[
-        ("Part XVI", "`std.ffi` has no `c_int` or `c_double` yet (D-742)"),
-    ];
+    const BASELINE: &[(&str, &str)] = &[];
     let root = workspace_root();
     let pinned = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the pin");
     let path = pinned.split('"').skip_while(|part| *part != "path").nth(2).expect("the pin names the target");

@@ -4,8 +4,8 @@
 # global holds one.
 
 unsafe extern "C":
-    static text: str    #$ error[E5050]: `str` has no foreign representation
-    static mut owned_text: String    #$ error[E5050]: `String` has no foreign representation
+    static text: str    #$ error[E5015]: `str` has no foreign representation
+    static mut owned_text: String    #$ error[E5015]: `String` has no foreign representation
 
 fn main():
     pass

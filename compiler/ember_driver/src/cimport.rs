@@ -83,6 +83,14 @@ pub struct Function {
     pub abi: &'static str,
 }
 
+/// `[FFI-6b]` — a function-like macro: its name and parameters, for an overlay's
+/// `@ffi(macro_fn)` entry to state its signature.
+#[derive(Clone, Debug)]
+pub struct MacroFunction {
+    pub name: String,
+    pub params: Vec<String>,
+}
+
 /// A C type as the importer maps it (`[FFI-8]`).
 #[derive(Clone, Debug)]
 pub struct CType {
@@ -138,6 +146,11 @@ pub struct Imported {
     pub uses: Vec<Vec<String>>,
     pub entities: Vec<(String, String, String)>,
     pub conflicts: Vec<(String, String)>,
+    /// `[FFI-6b]` — the function-like macros, for an overlay entry to declare.
+    pub macro_functions: Vec<MacroFunction>,
+    /// `[FFI-6b]` — each type the module declares, by its Ember name, as C spells it: a macro's
+    /// wrapper is written with it.
+    pub c_types: Vec<(String, String)>,
 }
 
 fn text(string: CXString) -> String {
@@ -380,7 +393,10 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
             // Unparenthesised: Clang evaluates a string only as the literal itself.
             let _ = writeln!(probe, "static const __auto_type {}_macro_{index} = {name};", ember_branding::SYMBOL_PREFIX);
         }
-        let unit = Unit::parse(&main, &probe, &args)?;
+        // Every macro's error reported, however many: each names its own line.
+        let mut probe_args = args.clone();
+        probe_args.push("-ferror-limit=0".to_string());
+        let unit = Unit::parse(&main, &probe, &probe_args)?;
         let main_name = main.to_string_lossy().replace('\\', "/");
         let mut reasons: HashMap<usize, String> = HashMap::new();
         for note in unit.notes().into_iter().filter(|note| note.error) {
@@ -397,12 +413,21 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                 values.insert(index, cursor);
             }
         }
+        // `[FFI-6a]` (ODR-145) — a null-pointer or pointer-cast macro: its address, from a third parse.
+        let mut addresses: Vec<(usize, String)> = Vec::new();
         for (index, (name, at)) in macros.iter().enumerate() {
             let outcome = match (reasons.get(&index), values.get(&index)) {
                 (Some(reason), _) => Err(format!("Clang: {reason}")),
                 (None, Some(&cursor)) => writer.constant_value(cursor),
                 (None, None) => Err("Clang made no declaration of its value".to_string()),
             };
+            if outcome.is_err()
+                && reasons.get(&index).is_none()
+                && let Some(pointer) = values.get(&index).and_then(|&cursor| writer.pointer_constant(cursor))
+            {
+                addresses.push((index, pointer));
+                continue;
+            }
             match outcome {
                 Ok((ty, value)) if writer.claim(name) => {
                     writer.push(name, Kind::Const, format!("const {}: {ty} = {value}", ident(name)));
@@ -413,6 +438,49 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                     at: at.clone(),
                 }),
                 Err(reason) => writer.macro_skipped.push(Skipped { name: name.clone(), reason, at: at.clone() }),
+            }
+        }
+        if !addresses.is_empty() {
+            let mut probe = include.clone();
+            for (line, (index, _)) in addresses.iter().enumerate() {
+                let _ = writeln!(probe, "static const unsigned long long {prefix}{line} = (unsigned long long)({});", macros[*index].0);
+            }
+            let unit = Unit::parse(&main, &probe, &probe_args)?;
+            let mut reasons: HashMap<usize, String> = HashMap::new();
+            for note in unit.notes().into_iter().filter(|note| note.error) {
+                if note.file.replace('\\', "/") == main_name && note.line >= 2 {
+                    reasons.entry(note.line as usize - 2).or_insert(note.text);
+                }
+            }
+            let mut values: HashMap<usize, u64> = HashMap::new();
+            for cursor in children(unit.cursor()) {
+                if kind(cursor) == CXCursor_VarDecl
+                    && let Some(line) = spelling(cursor).strip_prefix(&prefix).and_then(|line| line.parse::<usize>().ok())
+                    && let Some(address) = evaluate_unsigned(cursor)
+                {
+                    values.insert(line, address);
+                }
+            }
+            for (line, (index, pointer)) in addresses.iter().enumerate() {
+                let (name, at) = &macros[*index];
+                match (values.get(&line), reasons.get(&line)) {
+                    (Some(address), _) if writer.claim(name) => {
+                        writer.push(name, Kind::Const, format!("const {}: {pointer} = {address}usize as {pointer}", ident(name)));
+                    }
+                    (Some(_), _) => writer.macro_skipped.push(Skipped {
+                        name: name.clone(),
+                        reason: "its name is taken by a declaration of the header".to_string(),
+                        at: at.clone(),
+                    }),
+                    (None, reason) => writer.macro_skipped.push(Skipped {
+                        name: name.clone(),
+                        reason: match reason {
+                            Some(reason) => format!("a pointer whose address Clang does not evaluate: {reason}"),
+                            None => "a pointer whose address Clang does not evaluate to an integer".to_string(),
+                        },
+                        at: at.clone(),
+                    }),
+                }
             }
         }
     }
@@ -447,12 +515,17 @@ struct Writer {
     functions: Vec<Function>,
     /// Object-like macros to evaluate, with where each is defined.
     macro_names: Vec<(String, String)>,
+    macro_functions: Vec<MacroFunction>,
+    c_types: Vec<(String, String)>,
     /// Ember names taken in the module.
     names: HashSet<String>,
     records: HashMap<String, Record>,
     enums: HashMap<String, Result<String, String>>,
     typedefs: HashMap<String, Result<String, String>>,
     seen: HashSet<String>,
+    /// `[FFI-8]` — the generated `<Parent>_anon<N>` types of anonymous members: C has no name for
+    /// them, so the shim checks their bytes through the parent.
+    anonymous: HashSet<String>,
 }
 
 impl Writer {
@@ -469,6 +542,18 @@ impl Writer {
 
     fn push(&mut self, name: &str, kind: Kind, text: String) {
         self.items.push(Item { name: name.to_string(), kind, text: text.trim_end().to_string() });
+    }
+
+    /// `[FFI-6b]` — the C spelling of a type just declared, by its Ember name: Clang's (`struct
+    /// Pair`, `Point`), or the typedef's name of a struct with no tag of its own.
+    fn spelled(&mut self, cursor: CXCursor, named: &str) {
+        if self.anonymous.contains(named) {
+            return;
+        }
+        // SAFETY(ffi): a live cursor.
+        let spelled = type_spelling(unsafe { clang_getCursorType(cursor) });
+        let c = if spelled.is_empty() || spelled.contains('(') { named.to_string() } else { spelled };
+        self.c_types.push((ident(named), c));
     }
 
     /// Take `name` in the module's one namespace; C's tags and ordinary names are two.
@@ -509,25 +594,18 @@ impl Writer {
     fn ty(&mut self, ty: CXType, behind_pointer: bool) -> Result<String, String> {
         // SAFETY(ffi): types and declarations of a live translation unit.
         unsafe {
-            let size = clang_Type_getSizeOf(ty);
-            let int = |signed: bool| -> Result<String, String> {
-                let bits = match size {
-                    1 => "8",
-                    2 => "16",
-                    4 => "32",
-                    8 => "64",
-                    _ => return Err(format!("a {size}-byte integer")),
-                };
-                Ok(format!("{}{bits}", if signed { "i" } else { "u" }))
-            };
             match ty.kind {
                 CXType_Void => Ok("void".to_string()),
                 CXType_Bool => Ok("bool".to_string()),
-                CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong => int(true),
-                CXType_Char_U | CXType_UChar | CXType_UShort | CXType_UInt | CXType_ULong | CXType_ULongLong
-                | CXType_Char16 | CXType_Char32 => int(false),
-                // `c_wchar`: `u16` on Windows, `i32` elsewhere.
-                CXType_WChar => int(!cfg!(windows)),
+                // `std.ffi`'s C aliases, whose types are the target's (D-742).
+                CXType_Char_S | CXType_Char_U => Ok("c_char".to_string()),
+                CXType_Int => Ok("c_int".to_string()),
+                CXType_UInt => Ok("c_uint".to_string()),
+                CXType_Long => Ok("c_long".to_string()),
+                CXType_ULong => Ok("c_ulong".to_string()),
+                CXType_WChar => Ok("c_wchar".to_string()),
+                CXType_SChar | CXType_UChar | CXType_Short | CXType_UShort | CXType_LongLong | CXType_ULongLong
+                | CXType_Char16 | CXType_Char32 => fixed_integer(ty),
                 CXType_Float => Ok("f32".to_string()),
                 CXType_Double => Ok("f64".to_string()),
                 CXType_LongDouble => Err("`long double` (Ember's `c_longdouble` is not built yet)".to_string()),
@@ -587,6 +665,10 @@ impl Writer {
                 }
                 CXType_IncompleteArray => Err("an array of unknown size (a flexible array member's unsized struct is not built yet)".to_string()),
                 CXType_FunctionProto | CXType_FunctionNoProto => Err("a function type that is not a pointer".to_string()),
+                // Sugar libclang does not expose, as Clang's own `__size_t` in a builtin's type
+                // (`size_t strlen(const char*)`): by its name, else as what it stands for.
+                _ if let Some(fixed) = standard_typedef(&type_spelling(ty)) => Ok(fixed.to_string()),
+                _ if clang_getCanonicalType(ty).kind != ty.kind => self.ty(clang_getCanonicalType(ty), behind_pointer),
                 _ => Err(format!("the C type `{}`", type_spelling(ty))),
             }
         }
@@ -682,6 +764,7 @@ impl Writer {
             Ok(None) => Ok(ident(&name)),
             Ok(Some(target)) if self.claim(&name) => {
                 self.push(&name, Kind::Type, format!("type {} = {target}", ident(&name)));
+                self.spelled(cursor, &name);
                 Ok(ident(&name))
             }
             Ok(Some(_)) => {
@@ -769,36 +852,102 @@ impl Writer {
             let mut layout = Vec::new();
             let mut natural = 1u64;
             let mut packed = false;
+            let mut plain = Vec::new();
+            let mut bits = Vec::new();
+            let mut anonymous = 0;
+            let mut members_seen = HashSet::new();
             for child in children(definition) {
                 match kind(child) {
                     CXCursor_PackedAttr => packed = true,
-                    CXCursor_FieldDecl => {
-                        let field = spelling(child);
+                    // A record declared inside is a member only when it is an anonymous one.
+                    CXCursor_StructDecl | CXCursor_UnionDecl if clang_Cursor_isAnonymousRecordDecl(child) == 0 => {}
+                    CXCursor_FieldDecl | CXCursor_StructDecl | CXCursor_UnionDecl => {
+                        let field = if kind(child) == CXCursor_FieldDecl { spelling(child) } else { String::new() };
                         if clang_Cursor_isBitField(child) != 0 {
-                            return self.opaque(cursor, &key, &named, Some(format!("bit-field `{field}` (its `get_`/`set_` methods are not built yet)")));
-                        }
-                        if field.is_empty() || clang_Cursor_isAnonymousRecordDecl(clang_getTypeDeclaration(clang_getCursorType(child))) != 0 {
-                            return self.opaque(cursor, &key, &named, Some("an anonymous member (its generated `<Parent>_anon<N>` type is not built yet)".to_string()));
+                            // `[FFI-8]` — read and written by `get_<f>`/`set_<f>`; an unnamed one is padding.
+                            let width = clang_getFieldDeclBitWidth(child).max(0) as u64;
+                            if field.is_empty() || width == 0 {
+                                continue;
+                            }
+                            let field_ty = clang_getCursorType(child);
+                            let canonical = clang_getCanonicalType(field_ty).kind;
+                            let boolean = canonical == CXType_Bool;
+                            let integer = matches!(canonical, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong
+                                | CXType_Char_U | CXType_UChar | CXType_UShort | CXType_UInt | CXType_ULong | CXType_ULongLong);
+                            let mapped = match self.ty(field_ty, false) {
+                                Ok(mapped) if boolean || integer => mapped,
+                                _ => return self.opaque(cursor, &key, &named, Some(format!("bit-field `{field}` of type `{}` (only integer and `bool` bit-fields have accessors)", type_spelling(field_ty)))),
+                            };
+                            let signed = matches!(canonical, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong);
+                            let offset = clang_Cursor_getOffsetOfField(child).max(0) as u64;
+                            bits.push(BitField { name: ident(&field), offset, width, ty: mapped, signed, boolean });
+                            continue;
                         }
                         let field_ty = clang_getCursorType(child);
-                        let mapped = match self.ty(field_ty, false) {
-                            Ok(mapped) => mapped,
-                            Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("field `{field}`: {reason}"))),
+                        let member = if kind(child) == CXCursor_FieldDecl { clang_getTypeDeclaration(field_ty) } else { child };
+                        // `[FFI-8]` — an anonymous member is a field `_anon<N>` of a generated type
+                        // `<Parent>_anon<N>`, whose fields read through it (`p.x` is `p._anon0.x`).
+                        // libclang shows it as the record, or as an unnamed field too: once.
+                        let anonymous_member = field.is_empty() || clang_Cursor_isAnonymousRecordDecl(member) != 0;
+                        if anonymous_member && !members_seen.insert(usr(member)) {
+                            continue;
+                        }
+                        let offset = if anonymous_member {
+                            match anonymous_offset(ty, member) {
+                                Some(offset) => offset,
+                                None => return self.opaque(cursor, &key, &named, Some("an anonymous member with no named field".to_string())),
+                            }
+                        } else {
+                            (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8
                         };
-                        natural = natural.max(clang_Type_getAlignOf(field_ty).max(1) as u64);
-                        layout.push((ident(&field), (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8));
-                        fields.push(format!("    pub {}: {mapped}\n", ident(&field)));
+                        let (field, mapped) = if anonymous_member {
+                            if kind(member) == CXCursor_UnionDecl {
+                                return self.opaque(cursor, &key, &named, Some("an anonymous union member (Ember's `union` is reserved for a later version)".to_string()));
+                            }
+                            let generated = format!("{named}_anon{anonymous}");
+                            self.anonymous.insert(generated.clone());
+                            match self.record(member, Some(&generated)) {
+                                Record::Full(_) => {}
+                                Record::Pending(_) | Record::Opaque(..) => {
+                                    return self.opaque(cursor, &key, &named, Some(format!("its anonymous member `{generated}` cannot be represented")));
+                                }
+                            }
+                            anonymous += 1;
+                            (format!("_anon{}", anonymous - 1), ident(&generated))
+                        } else {
+                            match self.ty(field_ty, false) {
+                                Ok(mapped) => (field, mapped),
+                                Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("field `{field}`: {reason}"))),
+                            }
+                        };
+                        let field_align = clang_Type_getAlignOf(field_ty).max(1) as u64;
+                        natural = natural.max(field_align);
+                        let line = format!("    pub {}: {mapped}\n", ident(&field));
+                        layout.push((ident(&field), offset));
+                        fields.push(line.clone());
+                        let size = clang_Type_getSizeOf(field_ty).max(0) as u64;
+                        plain.push(Plain { name: ident(&field), offset, size, align: field_align, line });
                     }
                     _ => {}
+                }
+            }
+            let size = clang_Type_getSizeOf(ty).max(0) as u64;
+            let align = clang_Type_getAlignOf(ty).max(1) as u64;
+            // The fields C has, whose offsets the shim checks; with bit-fields, the members Ember
+            // lays out beside them and the accessors.
+            let c_fields = layout.clone();
+            let mut accessors = String::new();
+            if !bits.is_empty() {
+                match bit_field_members(&name, &plain, &bits, size, align, packed) {
+                    Ok((lines, members, methods)) => (fields, layout, accessors) = (lines, members, methods),
+                    Err(why) => return self.opaque(cursor, &key, &named, Some(why)),
                 }
             }
             if fields.is_empty() {
                 return self.opaque(cursor, &key, &named, Some("a struct with no fields (a GNU C extension)".to_string()));
             }
-            let size = clang_Type_getSizeOf(ty).max(0) as u64;
-            let align = clang_Type_getAlignOf(ty).max(1) as u64;
             let fingerprint = format!("struct {size} {align} {:?}", layout.iter().map(|(_, offset)| offset).collect::<Vec<_>>());
-            if let Some(adopted) = self.adopt(&key, &named, &fingerprint, false) {
+            if let Some(adopted) = self.adopt(cursor, &key, &named, &fingerprint, false) {
                 return adopted;
             }
             if !self.claim(&named) {
@@ -812,16 +961,20 @@ impl Writer {
             if align > if packed { 1 } else { natural } {
                 let _ = writeln!(attributes, "@align({align})");
             }
-            self.push(&named, Kind::Type, format!("{attributes}struct {name}:\n{}", fields.concat()));
+            self.push(&named, Kind::Type, format!("{attributes}struct {name}:\n{}{accessors}", fields.concat()));
+            self.spelled(cursor, &named);
             // `[FFI-5a]` — the project's C compiler checks the layout on every build.
             // `struct Point`, or the typedef name of a struct with no tag of its own.
             let spelled = type_spelling(ty);
             let c_name = if spelled.contains('(') { named.clone() } else { spelled };
-            let _ = writeln!(self.shim, "_Static_assert(sizeof({c_name}) == {size}, \"{named}: size\");");
-            let _ = writeln!(self.shim, "_Static_assert(_Alignof({c_name}) == {align}, \"{named}: alignment\");");
-            for (field, offset) in &layout {
-                let c_field = field.trim_start_matches("r#");
-                let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
+            // An anonymous member's type has no C name: its parent's checks cover its bytes.
+            if !self.anonymous.contains(&named) {
+                let _ = writeln!(self.shim, "_Static_assert(sizeof({c_name}) == {size}, \"{named}: size\");");
+                let _ = writeln!(self.shim, "_Static_assert(_Alignof({c_name}) == {align}, \"{named}: alignment\");");
+                for (field, offset) in c_fields.iter().filter(|(field, _)| !field.starts_with("_anon")) {
+                    let c_field = field.trim_start_matches("r#");
+                    let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
+                }
             }
             self.layouts.push(RecordLayout { name: name.clone(), size, align, fields: layout });
             self.entities.push((key.clone(), name.clone(), fingerprint));
@@ -833,7 +986,7 @@ impl Writer {
     /// `[FFI-30]` — a declaration an earlier import of the build wrote with this layout is that
     /// import's entity: here an alias of it. With another layout it is a distinct entity, `E5011`
     /// unless this import binds a name of its own. `any`: an incomplete struct takes any layout.
-    fn adopt(&mut self, key: &str, named: &str, layout: &str, any: bool) -> Option<Record> {
+    fn adopt(&mut self, cursor: CXCursor, key: &str, named: &str, layout: &str, any: bool) -> Option<Record> {
         let shared = self.shared.get(key)?.clone();
         if !any && shared.layout != layout {
             if shared.binding == self.binding && shared.layout != "opaque" {
@@ -850,6 +1003,7 @@ impl Writer {
         let alias = format!("{}_{}.{}", ember_branding::SYMBOL_PREFIX, shared.module.join("_"), shared.name);
         let name = ident(named);
         self.push(named, Kind::Type, format!("type {name} = {alias}"));
+        self.spelled(cursor, named);
         let record = if shared.layout == "opaque" { Record::Opaque(name, None) } else { Record::Full(name) };
         self.records.insert(key.to_string(), record.clone());
         Some(record)
@@ -860,7 +1014,7 @@ impl Writer {
     fn opaque(&mut self, cursor: CXCursor, key: &str, named: &str, why: Option<String>) -> Record {
         // An incomplete struct is the entity another import wrote, whatever its layout there.
         if why.is_none()
-            && let Some(adopted) = self.adopt(key, named, "", true)
+            && let Some(adopted) = self.adopt(cursor, key, named, "", true)
         {
             return adopted;
         }
@@ -869,6 +1023,7 @@ impl Writer {
         }
         let name = ident(named);
         self.push(named, Kind::Opaque, format!("type {name}"));
+        self.spelled(cursor, named);
         if why.is_none() {
             self.entities.push((key.to_string(), name.clone(), "opaque".to_string()));
         }
@@ -898,8 +1053,8 @@ impl Writer {
         }
         let named = typedef_name.map_or_else(|| spelling(cursor), str::to_string);
         let name = ident(&named);
-        // SAFETY(ffi): a live enum cursor.
-        let repr = self.ty(unsafe { clang_getEnumDeclIntegerType(cursor) }, false);
+        // SAFETY(ffi): a live enum cursor. `@repr` takes a fixed-width type.
+        let repr = fixed_integer(unsafe { clang_getEnumDeclIntegerType(cursor) });
         let layout = |repr: &str| {
             let values: Vec<i64> = children(cursor)
                 .into_iter()
@@ -911,7 +1066,7 @@ impl Writer {
         };
         // `[FFI-30]` — the enum an earlier import wrote, with these values, is that one.
         if let Ok(repr) = &repr
-            && self.adopt(&key, &named, &layout(repr), false).is_some()
+            && self.adopt(cursor, &key, &named, &layout(repr), false).is_some()
         {
             self.enums.insert(key, Ok(name.clone()));
             return Ok(name);
@@ -942,6 +1097,7 @@ impl Writer {
                     variants.push_str("    pass\n");
                 }
                 self.push(&named, Kind::Type, format!("@repr({repr})\n@non_exhaustive\nenum {name}:\n{variants}"));
+                self.spelled(cursor, &named);
                 self.entities.push((key.clone(), name.clone(), layout(&repr)));
                 for (alias, text) in aliases {
                     if self.claim(&alias) {
@@ -1084,7 +1240,8 @@ impl Writer {
     }
 
     /// `[FFI-6a]` — an object-like macro to evaluate; any other is `W5001`. A macro that expands
-    /// to nothing (an include guard, a feature flag) has no value to import.
+    /// to nothing (an include guard, a feature flag) has no value to import. `[FFI-6b]` — a
+    /// function-like macro is recorded with its parameters, for an overlay entry to declare.
     fn macro_definition(&mut self, cursor: CXCursor) {
         let name = spelling(cursor);
         // SAFETY(ffi): a live macro cursor and its tokens.
@@ -1093,22 +1250,44 @@ impl Writer {
                 return;
             }
             let at = self.at(cursor);
-            if clang_Cursor_isMacroFunctionLike(cursor) != 0 {
-                self.macro_skipped.push(Skipped {
-                    name,
-                    reason: "a function-like macro: Ember has no macros (a `static inline` C function in a header of your own can call it)".to_string(),
-                    at,
-                });
-                return;
-            }
             let tu = clang_Cursor_getTranslationUnit(cursor);
             let mut tokens: *mut CXToken = std::ptr::null_mut();
             let mut count: c_uint = 0;
             clang_tokenize(tu, clang_getCursorExtent(cursor), &mut tokens, &mut count);
+            let spelled: Vec<String> = (0..count as usize).map(|index| text(clang_getTokenSpelling(tu, *tokens.add(index)))).collect();
             clang_disposeTokens(tu, tokens, count);
+            if clang_Cursor_isMacroFunctionLike(cursor) != 0 {
+                // `NAME ( a , b ) …`: its parameters, `...` for a variadic one.
+                let params = spelled.iter().skip(2).take_while(|token| *token != ")").filter(|token| *token != ",").cloned().collect();
+                self.macro_functions.push(MacroFunction { name: name.clone(), params });
+                self.macro_skipped.push(Skipped {
+                    name,
+                    reason: "a function-like macro: an overlay's `@ffi(macro_fn)` entry declares its signature, and the import's shim wraps it ([FFI-6b])".to_string(),
+                    at,
+                });
+                return;
+            }
             if count > 1 {
                 self.macro_names.push((name, at));
             }
+        }
+    }
+
+    /// `[FFI-6a]` (ODR-145) — the Ember pointer type of a macro whose value is a data pointer that
+    /// is no string: `*mut void` for `((void*)0)`. A function pointer is not one.
+    fn pointer_constant(&mut self, cursor: CXCursor) -> Option<String> {
+        // SAFETY(ffi): a live variable cursor.
+        unsafe {
+            let ty = clang_getCanonicalType(clang_getCursorType(cursor));
+            if ty.kind != CXType_Pointer {
+                return None;
+            }
+            let pointee = clang_getPointeeType(ty);
+            if matches!(clang_getCanonicalType(pointee).kind, CXType_FunctionProto | CXType_FunctionNoProto) {
+                return None;
+            }
+            let inner = self.ty(pointee, true).ok()?;
+            Some(format!("*{}{inner}", if clang_isConstQualifiedType(pointee) != 0 { "" } else { "mut " }))
         }
     }
 
@@ -1129,7 +1308,7 @@ impl Writer {
             if ty.kind == CXType_Pointer {
                 let pointee = clang_getCanonicalType(clang_getPointeeType(ty)).kind;
                 if !matches!(pointee, CXType_Char_S | CXType_Char_U) {
-                    return Err("a pointer constant: Ember's compile-time values cannot be pointers ([CT-5])".to_string());
+                    return Err("a function pointer: a `const` holds only an address of data ([CT-2])".to_string());
                 }
             }
             let result = clang_Cursor_Evaluate(cursor);
@@ -1185,8 +1364,152 @@ impl Writer {
             uses: self.uses,
             entities: self.entities,
             conflicts: self.conflicts,
+            macro_functions: self.macro_functions,
+            c_types: self.c_types,
         }
     }
+}
+
+/// `[FFI-8]` — where in `parent` its anonymous member `member` starts, in bytes: Clang gives a field's
+/// offset by name through anonymous members, so the member's is its first named field's offset in
+/// the parent less that field's offset in the member.
+fn anonymous_offset(parent: CXType, member: CXCursor) -> Option<u64> {
+    // SAFETY(ffi): types and cursors of a live translation unit; the names live for the calls.
+    unsafe {
+        let member_ty = clang_getCursorType(member);
+        let named = children(member).into_iter().find(|child| kind(*child) == CXCursor_FieldDecl && !spelling(*child).is_empty())?;
+        let name = CString::new(spelling(named)).ok()?;
+        let in_parent = clang_Type_getOffsetOf(parent, name.as_ptr());
+        let in_member = clang_Type_getOffsetOf(member_ty, name.as_ptr());
+        (in_parent >= 0 && in_member >= 0 && in_parent >= in_member).then(|| ((in_parent - in_member) / 8) as u64)
+    }
+}
+
+/// A field of a struct with bit-fields that is not one: where C puts it, and its line.
+struct Plain {
+    name: String,
+    offset: u64,
+    size: u64,
+    align: u64,
+    line: String,
+}
+
+/// `[FFI-8]` — a bit-field: its Ember name, its offset and width in bits, and its type.
+struct BitField {
+    name: String,
+    offset: u64,
+    width: u64,
+    ty: String,
+    signed: bool,
+    boolean: bool,
+}
+
+/// `[FFI-8]` — a struct with bit-fields, laid out as C lays it out: its plain fields, each run of
+/// bytes its bit-fields share as a byte array `_bits<k>` (and `_pad<k>` where C leaves a gap Ember
+/// would not), each public with a zero default so the struct can be made; and `get_<f>`/`set_<f>`
+/// for each bit-field, reading and writing its bits there (little-endian, as C's bit numbering is
+/// on the targets Ember builds for). Returns the field lines, every member's offset and the
+/// `extend` block.
+fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, align: u64, packed: bool) -> Result<(Vec<String>, Vec<(String, u64)>, String), String> {
+    if cfg!(target_endian = "big") {
+        return Err("bit-fields on a big-endian target (their accessors are written for little-endian bit numbering)".to_string());
+    }
+    // Each bit-field's bytes; bit-fields that share a byte share one array.
+    let mut sorted: Vec<&BitField> = bits.iter().collect();
+    sorted.sort_by_key(|field| field.offset);
+    let mut runs: Vec<(u64, u64)> = Vec::new();
+    for field in &sorted {
+        let (first, end) = (field.offset / 8, (field.offset + field.width).div_ceil(8));
+        match runs.last_mut() {
+            Some((_, last)) if first < *last => *last = (*last).max(end),
+            _ => runs.push((first, end)),
+        }
+    }
+    let mut members: Vec<(u64, Option<&Plain>, usize)> = plain.iter().map(|field| (field.offset, Some(field), 0)).collect();
+    members.extend(runs.iter().enumerate().map(|(run, (start, _))| (*start, None, run)));
+    members.sort_by_key(|(offset, ..)| *offset);
+    let (mut lines, mut layout, mut cursor, mut pads) = (Vec::new(), Vec::new(), 0u64, 0);
+    let mut pad = |lines: &mut Vec<String>, layout: &mut Vec<(String, u64)>, from: u64, to: u64| {
+        let length = to - from;
+        lines.push(format!("    pub _pad{pads}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
+        layout.push((format!("_pad{pads}"), from));
+        pads += 1;
+    };
+    for (offset, field, run) in members {
+        if offset < cursor {
+            return Err("bit-fields laid out over another field".to_string());
+        }
+        let natural = match field {
+            Some(field) if !packed => cursor.next_multiple_of(field.align),
+            _ => cursor,
+        };
+        if natural != offset {
+            pad(&mut lines, &mut layout, cursor, offset);
+        }
+        match field {
+            Some(field) => {
+                lines.push(field.line.clone());
+                layout.push((field.name.clone(), offset));
+                cursor = offset + field.size;
+            }
+            None => {
+                let (start, end) = runs[run];
+                let length = end - start;
+                lines.push(format!("    pub _bits{run}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
+                layout.push((format!("_bits{run}"), start));
+                cursor = end;
+            }
+        }
+    }
+    // Ember rounds the size up to the alignment, as C does; padding only where C's goes further.
+    if cursor.next_multiple_of(align) != size && cursor < size {
+        pad(&mut lines, &mut layout, cursor, size);
+    }
+    let mut methods = format!("\nextend {name}:\n");
+    for field in bits {
+        let (first, last) = (field.offset / 8, (field.offset + field.width - 1) / 8);
+        if last - first >= 8 {
+            return Err(format!("bit-field `{}` spans more than 8 bytes", field.name));
+        }
+        let run = runs.iter().position(|(start, end)| first >= *start && first < *end).expect("a bit-field is in its run");
+        let start = runs[run].0;
+        let shift = field.offset - first * 8;
+        let mask: u64 = if field.width >= 64 { u64::MAX } else { (1 << field.width) - 1 };
+        let read: Vec<String> = (first..=last)
+            .map(|byte| match byte - first {
+                0 => format!("(self._bits{run}[{}] as u64)", byte - start),
+                j => format!("((self._bits{run}[{}] as u64) << {})", byte - start, 8 * j),
+            })
+            .collect();
+        let (f, ty, width) = (&field.name, &field.ty, field.width);
+        let value = if field.boolean {
+            "value != 0".to_string()
+        } else if field.signed {
+            format!("(((value << {0}) as i64) >> {0}) as {ty}", 64 - width)
+        } else {
+            format!("value as {ty}")
+        };
+        let _ = write!(
+            methods,
+            "    ## The {width}-bit field `{f}`.\n    pub fn get_{f}(self) -> {ty}:\n        bits: u64 = {}\n        value = (bits >> {shift}) & {mask:#x}\n        return {value}\n\n",
+            read.join(" | ")
+        );
+        let input = if field.boolean { "bits: u64 = 0\n        if value:\n            bits = 1".to_string() } else { "bits: u64 = value as u64".to_string() };
+        let _ = write!(methods, "    ## Writes the {width}-bit field `{f}`: its low {width} bits.\n    pub fn set_{f}(mut self, value: {ty}):\n        {input}\n        bits = (bits & {mask:#x}) << {shift}\n");
+        for byte in first..=last {
+            let j = byte - first;
+            let part = ((mask << shift) >> (8 * j)) & 0xff;
+            let keep = !part & 0xff;
+            let _ = writeln!(
+                methods,
+                "        self._bits{run}[{0}] = (((self._bits{run}[{0}] as u64) & {keep:#x}) | ((bits >> {1}) & {part:#x})) as u8",
+                byte - start,
+                8 * j
+            );
+        }
+        methods.push('\n');
+    }
+    Ok((lines, layout, methods.trim_end().to_string() + "\n"))
 }
 
 /// The options an `import c` takes (`[FFI-6]`).
@@ -1195,14 +1518,15 @@ struct Options {
     include_paths: Vec<String>,
     defines: Vec<String>,
     link: Vec<String>,
-    overlay: Option<(String, Span)>,
+    /// `[FFI-30c]` (ODR-149) — applied first to last.
+    overlays: Vec<(String, Span)>,
     implementation: Vec<String>,
 }
 
 const OPTIONS: &str = "`include_paths`, `defines`, `link`, `overlay` and `implementation`";
 
-/// `[FFI-6]` — the options, each a list of strings but `overlay`, a string. An unknown option, or
-/// one written otherwise, is `E0104`.
+/// `[FFI-6]` — the options, each a list of strings but `overlay`, a string or a list of them
+/// (`[FFI-30c]`). An unknown option, or one written otherwise, is `E0104`.
 fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
     let mut options = Options::default();
     let mut ok = true;
@@ -1226,12 +1550,24 @@ fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
             "link" => &mut options.link,
             "implementation" => &mut options.implementation,
             "overlay" => {
-                if let ExprKind::Lit(Literal::Str(path)) = &value.kind {
-                    options.overlay = Some((path.clone(), value.span));
-                } else {
-                    sink.emit(Diagnostic::error(codes::E0104, value.span, "`overlay` names one overlay file: a string")
-                        .help(format!("write `overlay = \"overlays/name.{}\"`", ember_branding::SOURCE_EXT)));
-                    ok = false;
+                let one = |expr: &Expr| match &expr.kind {
+                    ExprKind::Lit(Literal::Str(path)) => Some((path.clone(), expr.span)),
+                    _ => None,
+                };
+                let written = match &value.kind {
+                    ExprKind::ArrayLit(items) => items.iter().map(one).collect::<Option<Vec<_>>>(),
+                    _ => one(value).map(|written| vec![written]),
+                };
+                match written {
+                    Some(written) => options.overlays.extend(written),
+                    None => {
+                        let ext = ember_branding::SOURCE_EXT;
+                        sink.emit(
+                            Diagnostic::error(codes::E0104, value.span, "`overlay` names an overlay file, or a list of them applied first to last")
+                                .help(format!("write `overlay = \"overlays/name.{ext}\"` or `overlay = [\"theirs.{ext}\", \"ours.{ext}\"]` [FFI-30c]")),
+                        );
+                        ok = false;
+                    }
                 }
                 continue;
             }
@@ -1272,9 +1608,10 @@ pub struct Loaded {
     pub path: Vec<String>,
     pub module: ast::Module,
     pub foreign: ember_typeck::ForeignImport,
-    /// The import's overlay file, a module of its own whose entries are checked as any overlay's
-    /// (`[GRM-35]`), with the function entries whose `instrumented` grade evidence backs (`[TCB-1]`).
-    pub overlay: Option<(Vec<String>, ast::Module, Vec<String>)>,
+    /// The import's overlay files, each a module of its own whose entries are checked as any
+    /// overlay's (`[GRM-35]`), with the function entries whose `instrumented` grade evidence backs
+    /// (`[TCB-1]`).
+    pub overlays: Vec<(Vec<String>, ast::Module, Vec<String>)>,
 }
 
 /// `[FFI-6]` — the module an `import c` names, written from its header, and the import rewritten
@@ -1311,7 +1648,7 @@ pub fn load(
         from_dir.display(),
         options.include_paths,
         options.defines,
-        options.overlay.as_ref().map(|o| &o.0),
+        options.overlays.iter().map(|(written, _)| written).collect::<Vec<_>>(),
         options.implementation
     );
     let rewrite = |import: &mut ast::Import, path: &[String]| {
@@ -1344,8 +1681,13 @@ pub fn load(
         shared: &known.shared,
         binding: bound.as_str(),
     };
-    // `[FFI-7]` — the overlay is part of what the record is for.
-    let overlay_text = options.overlay.as_ref().and_then(|(written, _)| std::fs::read_to_string(base.join(written)).ok()).unwrap_or_default();
+    // `[FFI-7]` — the overlays are part of what the record is for.
+    let overlay_text = options
+        .overlays
+        .iter()
+        .map(|(written, _)| std::fs::read_to_string(base.join(written)).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n\0\n");
     let mut cached = false;
     let imported = match import_cached(&config, &overlay_text, &mut cached) {
         Ok((imported, _)) => {
@@ -1394,16 +1736,11 @@ pub fn load(
                 .help("to reach its fields, wrap them in C functions the header declares"),
         );
     }
-    for skipped in &imported.macros {
-        sink.emit(
-            Diagnostic::warning(codes::W5001, span, format!("macro `{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
-                .note(format!("defined at {} [FFI-6a]", skipped.at)),
-        );
-    }
-    // `[FFI-2]` — the overlay, applied before the module is written.
+    // `[FFI-2]` — the overlays, applied first to last before the module is written (`[FFI-30c]`).
+    let symbol_stem = path.join("_");
     let mut applied = Applied::default();
-    let mut overlay_module = None;
-    if let Some((written, at)) = &options.overlay {
+    let mut overlay_modules = Vec::new();
+    for (layer, (written, at)) in options.overlays.iter().enumerate() {
         let overlay_file = base.join(written);
         match map.load(&overlay_file) {
             Err(error) => sink.emit(crate::load_diagnostic(&error, *at)),
@@ -1420,7 +1757,7 @@ pub fn load(
                     })
                     .collect();
                 match overlays.as_slice() {
-                    [overlay] => applied = apply(overlay, &text, &shown, &imported, sink),
+                    [overlay] => apply(&mut applied, layer, overlay, &text, &shown, &imported, &symbol_stem, sink),
                     _ => sink.emit(
                         Diagnostic::error(codes::E5010, *at, format!("`{written}` holds {} `overlay c` declarations: an import's overlay file holds one", overlays.len()))
                             .note("an overlay states the contracts of one header's declarations [FFI-12]"),
@@ -1428,18 +1765,29 @@ pub fn load(
                 }
                 let mut overlay_path = path.clone();
                 overlay_path[1].push_str("_overlay");
-                overlay_module = Some((overlay_path, parsed, Vec::new()));
+                if layer > 0 {
+                    let _ = write!(overlay_path[1], "_{}", layer + 1);
+                }
+                overlay_modules.push((overlay_path, parsed, Vec::new()));
             }
         }
+    }
+    // `[FFI-6b]` — a macro an overlay declares is imported.
+    let declared = |name: &str| applied.macros.iter().any(|(function, ..)| function.name == name);
+    for skipped in imported.macros.iter().filter(|skipped| !declared(&skipped.name)) {
+        sink.emit(
+            Diagnostic::warning(codes::W5001, span, format!("macro `{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
+                .note(format!("defined at {} [FFI-6a]", skipped.at)),
+        );
     }
     // Named for its module: the source map keeps one file per name, and one header imported twice
     // is two modules.
     // No quotes: the name reaches the C as `#line`'s file name ([CG-C-8]).
     let rendered = render(&imported, &applied);
     // `[TCB-1]` — each `@grade(instrumented)` entry an evidence record of this package backs.
-    if let Some((_, overlay, backed)) = &mut overlay_module
-        && let Some(evidence) = crate::foreign::load_evidence(importer)
-    {
+    let evidence = if overlay_modules.is_empty() { None } else { crate::foreign::load_evidence(importer) };
+    for (_, overlay, backed) in &mut overlay_modules {
+        let Some(evidence) = &evidence else { break };
         let source_hash = ember_build::content_hash(rendered.as_bytes());
         for item in overlay.items.iter().filter_map(|item| match &item.kind {
             ast::ItemKind::Overlay(overlay) => Some(overlay),
@@ -1453,7 +1801,7 @@ pub fn load(
             });
             let bound_name = applied.renamed.get(name.name.as_str()).map_or(name.name.as_str(), String::as_str);
             let qualified = format!("{}.{bound_name}", path.join("."));
-            if graded && crate::foreign::backs_instrumented(&evidence, &qualified, &source_hash) {
+            if graded && crate::foreign::backs_instrumented(evidence, &qualified, &source_hash) {
                 backed.push(name.name.to_string());
             }
         }
@@ -1480,11 +1828,17 @@ pub fn load(
         }
     }
     shim.push_str(&imported.shim);
+    if !applied.macros.is_empty() {
+        shim.push_str("\n/* The wrappers of the macros the overlays declare ([FFI-6b]). */\n#include <stdint.h>\n");
+        for (_, _, wrapper) in &applied.macros {
+            shim.push_str(wrapper);
+        }
+    }
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
     let mut identities = vec![("header".to_string(), imported.header.clone())];
-    identities.extend(options.overlay.as_ref().map(|(written, _)| ("overlay".to_string(), base.join(written))));
+    identities.extend(options.overlays.iter().map(|(written, _)| ("overlay".to_string(), base.join(written))));
     let foreign = ember_typeck::ForeignImport {
         backed: Vec::new(),
         header: shown,
@@ -1493,7 +1847,7 @@ pub fn load(
             .skipped
             .iter()
             .map(|skipped| (skipped.name.clone(), skipped.reason.clone()))
-            .chain(imported.macros.iter().map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))))
+            .chain(imported.macros.iter().filter(|skipped| !declared(&skipped.name)).map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))))
             .collect(),
         layouts: imported.layouts.iter().map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
         shim,
@@ -1507,7 +1861,7 @@ pub fn load(
     };
     rewrite(import, &path);
     known.modules.insert(key, path.clone());
-    Some(Loaded { path, module, foreign, overlay: overlay_module })
+    Some(Loaded { path, module, foreign, overlays: overlay_modules })
 }
 
 /// `[FFI-29]`, `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — each `import c`'s shim and C sources,
@@ -1545,9 +1899,10 @@ pub fn build_objects(
     Ok((objects, libraries))
 }
 
-/// `[FFI-2]`, `[FFI-12]`, `[FFI-13]`, `[FFI-30a]` — what an overlay changes in an imported module:
+/// `[FFI-2]`, `[FFI-12]`, `[FFI-13]`, `[FFI-30a]` — what an import's overlays change in its module:
 /// the contracts, safety and names of functions, facts on opaque types and enums, what is hidden,
-/// and the wrappers its `extend` blocks add. It never changes a type's identity, layout or fields.
+/// the wrappers its `extend` blocks add, and the macros it declares (`[FFI-6b]`). It never changes a
+/// type's identity, layout or fields.
 #[derive(Default)]
 struct Applied {
     hidden: HashSet<String>,
@@ -1558,6 +1913,11 @@ struct Applied {
     functions: HashMap<String, Entry>,
     /// Each `extend` block, as written, at column 0.
     extends: Vec<String>,
+    /// `[FFI-6b]` — each macro an entry declares: its binding, as a function of the header's would
+    /// be, the entry that makes it safe or not, and its wrapper in the shim.
+    macros: Vec<(Function, Entry, String)>,
+    /// `[FFI-30c]` — which overlay, by its place in the import's list, wrote each entry.
+    origins: HashMap<(&'static str, String), usize>,
 }
 
 /// An overlay's function entry: each parameter's contract words, the result's, and the entry's own
@@ -1573,18 +1933,104 @@ fn word(written: &str) -> &str {
     written.split('(').next().unwrap_or(written).trim()
 }
 
-/// `[FFI-12]` — apply an overlay to the module the header made; an entry whose name, parameter
-/// count or parameter names do not match the header is `E5010`.
-fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Imported, sink: &mut Sink) -> Applied {
+/// `[FFI-30c]` (ODR-149) — take the entry of `category` for `name` for the overlay at `layer`: a later
+/// overlay's `override` entry replaces an earlier one's; any other second entry is `E5010`.
+fn take(applied: &mut Applied, sink: &mut Sink, layer: usize, is_override: bool, category: &'static str, name: &ast::Ident) -> bool {
+    let key = (category, name.name.to_string());
+    let note = "an import's overlays compose in the order it lists them, and a later one replaces an entry only with `override` [FFI-30c]";
+    let refused = match applied.origins.get(&key) {
+        None if is_override => format!("`override` replaces an earlier overlay's entry, and none has one for `{}`", name.name),
+        Some(&earlier) if earlier == layer => format!("a second entry for `{}` in one overlay", name.name),
+        Some(_) if !is_override => {
+            sink.emit(
+                Diagnostic::error(codes::E5010, name.span, format!("an earlier overlay has an entry for `{}`", name.name))
+                    .help("begin this entry with `override` to replace it")
+                    .note(note),
+            );
+            return false;
+        }
+        _ => {
+            applied.origins.insert(key, layer);
+            return true;
+        }
+    };
+    sink.emit(Diagnostic::error(codes::E5010, name.span, refused).note(note));
+    false
+}
+
+/// `std.ffi`'s C aliases, each with the C type it names (`[FFI-8]`).
+const C_ALIASES: [(&str, &str); 14] = [
+    ("c_char", "char"),
+    ("c_schar", "signed char"),
+    ("c_uchar", "unsigned char"),
+    ("c_short", "short"),
+    ("c_ushort", "unsigned short"),
+    ("c_int", "int"),
+    ("c_uint", "unsigned int"),
+    ("c_long", "long"),
+    ("c_ulong", "unsigned long"),
+    ("c_longlong", "long long"),
+    ("c_ulonglong", "unsigned long long"),
+    ("c_float", "float"),
+    ("c_double", "double"),
+    ("c_wchar", "wchar_t"),
+];
+
+/// `[FFI-6b]` — the C type a macro's wrapper declares for an Ember type its entry writes: a scalar,
+/// `cstr`, a type of the module (by value only when it is not opaque), or a raw pointer to one.
+fn c_spelling(ty: &ast::TypeExpr, imported: &Imported, behind_pointer: bool) -> Option<String> {
+    match &ty.kind {
+        ast::TypeKind::Ptr { mutable, inner } => {
+            let pointee = if matches!(inner.kind, ast::TypeKind::Void) { "void".to_string() } else { c_spelling(inner, imported, true)? };
+            Some(format!("{pointee}{} *", if *mutable { "" } else { " const" }))
+        }
+        ast::TypeKind::Path { segments, args } if segments.len() == 1 && args.is_empty() => {
+            let name = segments[0].name.as_str();
+            if let Some((_, c)) = C_ALIASES.iter().find(|(ember, _)| *ember == name) {
+                return Some(c.to_string());
+            }
+            let scalar = match name {
+                "i8" => "int8_t",
+                "i16" => "int16_t",
+                "i32" => "int32_t",
+                "i64" => "int64_t",
+                "u8" => "uint8_t",
+                "u16" => "uint16_t",
+                "u32" => "uint32_t",
+                "u64" => "uint64_t",
+                "isize" => "ptrdiff_t",
+                "usize" => "size_t",
+                "f32" => "float",
+                "f64" => "double",
+                "bool" => "_Bool",
+                "cstr" => "char const *",
+                _ => {
+                    let opaque = imported.items.iter().any(|item| ident(&item.name) == name && item.kind == Kind::Opaque);
+                    if opaque && !behind_pointer {
+                        return None;
+                    }
+                    return imported.c_types.iter().find(|(ember, _)| ember == name).map(|(_, c)| c.clone());
+                }
+            };
+            Some(scalar.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// `[FFI-12]` — apply an overlay, the `layer`th of the import's list, to the module the header
+/// made; an entry whose name, parameter count or parameter names do not match the header is
+/// `E5010`. `stem`: the module's path joined with `_`, which names the shim's wrappers.
+#[allow(clippy::too_many_arguments)]
+fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Imported, stem: &str, sink: &mut Sink) {
     let snippet = |span: Span| text.get(span.start as usize..span.end as usize).unwrap_or("").to_string();
-    let mut applied = Applied::default();
     let written = Path::new(&overlay.header).file_name().map(|name| name.to_string_lossy().into_owned());
     if written.as_deref() != Some(header) {
         sink.emit(
             Diagnostic::error(codes::E5010, overlay.span, format!("this overlay is for `{}`, and the import is of `{header}`", overlay.header))
                 .note("an overlay states the contracts of one header's declarations [FFI-12]"),
         );
-        return applied;
+        return;
     }
     let item = |name: &str, kind: Kind| imported.items.iter().any(|item| item.name == name && item.kind == kind);
     let mismatch = |sink: &mut Sink, span: Span, message: String| {
@@ -1592,16 +2038,26 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
     };
     for entry in &overlay.items {
         let attributes = || entry.attrs.iter().map(|attr| snippet(attr.span)).collect::<Vec<_>>();
+        // The entry's own `@ffi(…)` arguments, as written; `macro_fn` is what the entry is.
+        let arguments = || -> Vec<String> {
+            entry
+                .attrs
+                .iter()
+                .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+                .flat_map(|attr| &attr.args)
+                .map(|arg| match arg {
+                    AttrArg::Expr(expr) => snippet(expr.span),
+                    AttrArg::Named { name, value } => snippet(name.span.to(value.span)),
+                })
+                .filter(|written| written != "macro_fn")
+                .collect()
+        };
         match &entry.kind {
             ast::OverlayItemKind::Fn { name, params, result } => {
                 let Some(function) = imported.functions.iter().find(|function| function.name == name.name.as_str()) else {
                     mismatch(sink, name.span, format!("`{header}` declares no function `{}`", name.name));
                     continue;
                 };
-                if applied.functions.contains_key(&function.name) {
-                    mismatch(sink, name.span, format!("a second entry for `{}`", name.name));
-                    continue;
-                }
                 if params.len() != function.params.len() {
                     mismatch(sink, name.span, format!("`{}` takes {} parameters in `{header}`, and the entry names {}", name.name, function.params.len(), params.len()));
                     continue;
@@ -1613,27 +2069,80 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
                         matched = false;
                     }
                 }
-                if !matched {
+                if !matched || !take(applied, sink, layer, entry.is_override, "fn", name) {
                     continue;
                 }
-                let arguments = entry
-                    .attrs
-                    .iter()
-                    .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
-                    .flat_map(|attr| &attr.args)
-                    .map(|arg| match arg {
-                        AttrArg::Expr(expr) => snippet(expr.span),
-                        AttrArg::Named { name, value } => snippet(name.span.to(value.span)),
-                    })
-                    .collect();
                 applied.functions.insert(
                     function.name.clone(),
                     Entry {
                         params: params.iter().map(|param| param.contract.iter().map(|word| snippet(word.span)).collect()).collect(),
                         result: result.iter().map(|word| snippet(word.span)).collect(),
-                        arguments,
+                        arguments: arguments(),
                     },
                 );
+            }
+            // `[FFI-6b]` (ODR-147) — a macro's signature in Ember types, and the shim's wrapper.
+            ast::OverlayItemKind::MacroFn { name, params, result } => {
+                let Some(found) = imported.macro_functions.iter().find(|found| found.name == name.name.as_str()) else {
+                    mismatch(sink, name.span, format!("`{header}` defines no function-like macro `{}`", name.name));
+                    continue;
+                };
+                if imported.functions.iter().any(|function| function.name == found.name) {
+                    mismatch(sink, name.span, format!("`{}` is a function of `{header}` as well as a macro: its entry is one without `@ffi(macro_fn)`", name.name));
+                    continue;
+                }
+                if params.len() != found.params.len() {
+                    mismatch(sink, name.span, format!("`{}` takes {} parameters in `{header}`, and the entry names {}", name.name, found.params.len(), params.len()));
+                    continue;
+                }
+                let mut matched = true;
+                for ((param, _), c_name) in params.iter().zip(&found.params) {
+                    if param.name.as_str() != c_name {
+                        mismatch(sink, param.span, format!("parameter `{}` of `{}` is `{c_name}` in `{header}`", param.name, name.name));
+                        matched = false;
+                    }
+                }
+                let mut spell = |ty: &ast::TypeExpr| {
+                    let spelled = c_spelling(ty, imported, false);
+                    if spelled.is_none() {
+                        sink.emit(
+                            Diagnostic::error(codes::E5015, ty.span, format!("`{}` has no C type for the wrapper of macro `{}`", snippet(ty.span), name.name))
+                                .note("a macro's wrapper takes and returns scalars, `cstr`, the header's types and raw pointers [FFI-6b]"),
+                        );
+                        matched = false;
+                    }
+                    spelled.unwrap_or_default()
+                };
+                let c_params: Vec<String> = params.iter().map(|(_, ty)| spell(ty)).collect();
+                let c_result = result.as_ref().map(&mut spell);
+                if !matched || !take(applied, sink, layer, entry.is_override, "fn", name) {
+                    continue;
+                }
+                let wrapper = format!("{}_cshim_{stem}_{}", ember_branding::SYMBOL_PREFIX, found.name);
+                let declared: Vec<String> = c_params.iter().enumerate().map(|(index, c)| format!("{c} a{index}")).collect();
+                let call = format!("{}({})", found.name, (0..params.len()).map(|index| format!("a{index}")).collect::<Vec<_>>().join(", "));
+                let body = if result.is_some() { format!("return {call};") } else { format!("{call};") };
+                let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
+                let c_text = format!("{} {wrapper}({declared}) {{ {body} }}\n", c_result.as_deref().unwrap_or("void"));
+                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string() };
+                let function = Function {
+                    name: found.name.clone(),
+                    params: params.iter().zip(&c_params).map(|((param, ty), c)| (param.name.to_string(), c_type(ty, c))).collect(),
+                    result: result.as_ref().zip(c_result.as_ref()).map(|(ty, c)| c_type(ty, c)),
+                    link_name: Some(wrapper),
+                    abi: "C",
+                };
+                // A raw pointer states nothing a call can rely on: the call stays unsafe (`[FFI-2]`).
+                let raw = params.iter().map(|(_, ty)| ty).chain(result).any(|ty| matches!(ty.kind, ast::TypeKind::Ptr { .. }));
+                let made = Entry {
+                    params: vec![Vec::new(); params.len()],
+                    result: if raw { vec!["unsafe".to_string()] } else { Vec::new() },
+                    arguments: arguments(),
+                };
+                match applied.macros.iter_mut().find(|(earlier, ..)| earlier.name == found.name) {
+                    Some(earlier) => *earlier = (function, made, c_text),
+                    None => applied.macros.push((function, made, c_text)),
+                }
             }
             ast::OverlayItemKind::Type(name) | ast::OverlayItemKind::Enum(name) => {
                 let kind = if matches!(entry.kind, ast::OverlayItemKind::Type(_)) { Kind::Opaque } else { Kind::Type };
@@ -1643,23 +2152,31 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
                     mismatch(sink, name.span, format!("`{header}` declares no {what} `{}`", name.name));
                     continue;
                 }
-                applied.attributes.entry(name.name.to_string()).or_default().extend(attributes());
+                if take(applied, sink, layer, entry.is_override, "type", name) {
+                    applied.attributes.insert(name.name.to_string(), attributes());
+                }
             }
             ast::OverlayItemKind::Rename { from, to } => {
-                let function = imported.functions.iter().any(|function| function.name == from.name.as_str());
+                let function = imported.functions.iter().any(|function| function.name == from.name.as_str())
+                    || imported.macro_functions.iter().any(|found| found.name == from.name.as_str());
                 if !function && !item(from.name.as_str(), Kind::Type) && !item(from.name.as_str(), Kind::Opaque) {
                     mismatch(sink, from.span, format!("`{header}` declares no function or type `{}` to rename", from.name));
                     continue;
                 }
-                applied.renamed.insert(from.name.to_string(), to.name.to_string());
+                if take(applied, sink, layer, entry.is_override, "rename", from) {
+                    applied.renamed.insert(from.name.to_string(), to.name.to_string());
+                }
             }
             ast::OverlayItemKind::Hide(name) => {
-                let function = imported.functions.iter().any(|function| function.name == name.name.as_str());
+                let function = imported.functions.iter().any(|function| function.name == name.name.as_str())
+                    || imported.macro_functions.iter().any(|found| found.name == name.name.as_str());
                 if !function && !imported.items.iter().any(|item| item.name == name.name.as_str()) {
                     mismatch(sink, name.span, format!("`{header}` declares no `{}` to hide", name.name));
                     continue;
                 }
-                applied.hidden.insert(name.name.to_string());
+                if take(applied, sink, layer, entry.is_override, "hide", name) {
+                    applied.hidden.insert(name.name.to_string());
+                }
             }
             // `[FFI-13]` — wrappers written in Ember, over the module's own declarations.
             ast::OverlayItemKind::Extend(_) => {
@@ -1672,7 +2189,6 @@ fn apply(overlay: &ast::OverlayDecl, text: &str, header: &str, imported: &Import
             }
         }
     }
-    applied
 }
 
 /// `[FFI-11]` — the Ember type a contracted pointer parameter is, as a hand declaration writes it:
@@ -1837,6 +2353,11 @@ fn render(imported: &Imported, applied: &Applied) -> String {
         let hidden = applied.hidden.contains(&function.name);
         member(function.abi, render_function(function, applied.functions.get(&function.name), applied.renamed.get(&function.name), hidden));
     }
+    // `[FFI-6b]` — each declared macro, bound to its wrapper in the shim.
+    for (function, entry, _) in &applied.macros {
+        let hidden = applied.hidden.contains(&function.name);
+        member(function.abi, render_function(function, Some(entry), applied.renamed.get(&function.name), hidden));
+    }
     for (abi, members) in blocks {
         let _ = write!(body, "unsafe extern \"{abi}\":\n{members}\n");
     }
@@ -1847,8 +2368,11 @@ fn render(imported: &Imported, applied: &Applied) -> String {
     for module in &imported.uses {
         let _ = writeln!(imports, "import {} as {}_{}", module.join("."), ember_branding::SYMBOL_PREFIX, module.join("_"));
     }
-    if body.contains("ForeignBox[") {
-        imports.push_str("from std.ffi import ForeignBox\n");
+    // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
+    let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox"]).filter(|name| words.contains(name)).collect();
+    if !used.is_empty() {
+        let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
     if !imports.is_empty() {
         imports.push('\n');
@@ -1952,7 +2476,11 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             })
             .collect();
         match overlays.as_slice() {
-            [overlay] => Ok(apply(overlay, &text, &file, &imported, sink)),
+            [overlay] => {
+                let mut applied = Applied::default();
+                apply(&mut applied, 0, overlay, &text, &file, &imported, "bind", sink);
+                Ok(applied)
+            }
             _ => Err(format!("`{path}` holds {} overlay declarations: it should hold one", overlays.len())),
         }
     };
@@ -2248,7 +2776,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 1;
+const EMBIND_VERSION: u64 = 2;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -2390,6 +2918,17 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ("uses".to_string(), Value::Array(imported.uses.iter().map(|path| Value::Array(path.iter().map(|segment| Value::Text(segment.clone())).collect())).collect())),
         ("entities".to_string(), Value::Array(imported.entities.iter().map(|(usr, name, layout)| texts(&[usr, name, layout])).collect())),
         ("conflicts".to_string(), Value::Array(imported.conflicts.iter().map(|(name, header)| texts(&[name, header])).collect())),
+        (
+            "macro_functions".to_string(),
+            Value::Array(
+                imported
+                    .macro_functions
+                    .iter()
+                    .map(|found| Value::Array(std::iter::once(&found.name).chain(&found.params).map(|text| Value::Text(text.clone())).collect()))
+                    .collect(),
+            ),
+        ),
+        ("c_types".to_string(), Value::Array(imported.c_types.iter().map(|(ember, c)| texts(&[ember, c])).collect())),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -2470,6 +3009,14 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         uses: array_of(field(&value, "uses")?)?.iter().map(|path| array_of(path)?.iter().map(text_of).collect::<Option<Vec<_>>>()).collect::<Option<_>>()?,
         entities: triples(field(&value, "entities")?)?,
         conflicts: pairs(field(&value, "conflicts")?)?,
+        macro_functions: array_of(field(&value, "macro_functions")?)?
+            .iter()
+            .map(|entry| {
+                let entry = array_of(entry)?;
+                Some(MacroFunction { name: text_of(entry.first()?)?, params: entry[1..].iter().map(text_of).collect::<Option<_>>()? })
+            })
+            .collect::<Option<_>>()?,
+        c_types: pairs(field(&value, "c_types")?)?,
     };
     Some((files, imported))
 }
@@ -2573,6 +3120,36 @@ fn c_declaration(ty: CXType, name: &str) -> String {
             }
             _ => format!("{} {name}", type_spelling(ty)).trim_end().to_string(),
         }
+    }
+}
+
+/// `[FFI-8]` — a C integer type as the fixed-width Ember one of its size and signedness.
+fn fixed_integer(ty: CXType) -> Result<String, String> {
+    // SAFETY(ffi): a type of a live translation unit.
+    let (size, kind) = unsafe { (clang_Type_getSizeOf(ty), clang_getCanonicalType(ty).kind) };
+    let signed = matches!(kind, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong)
+        || (kind == CXType_WChar && !cfg!(windows));
+    let bits = match size {
+        1 => "8",
+        2 => "16",
+        4 => "32",
+        8 => "64",
+        _ => return Err(format!("a {size}-byte integer")),
+    };
+    Ok(format!("{}{bits}", if signed { "i" } else { "u" }))
+}
+
+/// The unsigned integer Clang evaluates a variable's initialiser to.
+fn evaluate_unsigned(cursor: CXCursor) -> Option<u64> {
+    // SAFETY(ffi): a live variable cursor; the result is disposed.
+    unsafe {
+        let result = clang_Cursor_Evaluate(cursor);
+        if result.is_null() {
+            return None;
+        }
+        let value = (clang_EvalResult_getKind(result) == CXEval_Int).then(|| clang_EvalResult_getAsUnsigned(result));
+        clang_EvalResult_dispose(result);
+        value
     }
 }
 
