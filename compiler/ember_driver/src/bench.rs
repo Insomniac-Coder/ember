@@ -461,6 +461,7 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
     }
     let mut failed = 0;
     let (mut passed, mut voided, mut inconclusive, mut baselined) = (0, 0, 0, 0);
+    let mut summary: Vec<String> = Vec::new();
     for pair in pairs {
         let pair_dir = out_dir.join(&pair.name);
         let embers = (0..layouts).map(|layout| build_ember(&pair.ember, &pair_dir, layout)).collect::<Result<Vec<_>, _>>()?;
@@ -522,6 +523,8 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
             (Verdict::Void(why), _) => format!("void — {why}"),
         };
         println!("{}: {word}\n  {shown}", pair.name);
+        let verdict_word = word.split([' ', ',']).next().unwrap_or("");
+        summary.push(format!("{} {verdict_word} {}", pair.name, shown.split("ratio ").nth(1).and_then(|rest| rest.split(',').next()).unwrap_or("")));
         // A CI log is read only when signed in; an annotation by anyone.
         if std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") {
             if word.starts_with("FAIL") {
@@ -536,6 +539,10 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         pairs.len(),
         gate_state(pairs.len(), baselined)
     );
+    // Every benchmark's ratio in one annotation: a CI log is read only when signed in.
+    if std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") {
+        println!("::notice title=performance gate results::{}", summary.join(" | "));
+    }
     if failed > 0 {
         eprintln!("{failed} benchmark(s) failed the performance gate [TST-28]");
         return Ok(ExitCode::FAILURE);
