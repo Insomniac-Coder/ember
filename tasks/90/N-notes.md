@@ -76,7 +76,7 @@ floating or string constant becomes a `const` of its C type (`int` → `i32`, `0
 `1ULL << 40` → `u64`, `'A'` → `i32`, `0.5f` → `f32`, `sizeof` → `usize`, `"text"` → `cstr` with
 `c"…"`). Any other is `W5001` with Clang's own diagnostic for that line as the reason ("expected
 expression", "initializer element is not a compile-time constant"); a function-like macro is `W5001`
-too. Unparenthesised on purpose: Clang evaluates a string only as the literal itself. A macro that
+too, suggesting a `static inline` C function that calls it. Unparenthesised on purpose: Clang evaluates a string only as the literal itself. A macro that
 expands to nothing (an include guard) is not reported (owner question 2).
 
 ### N3. The shim (`[FFI-29]`, `[FFI-29a]`, `[FFI-5a]`, `[FFI-29b]`)
@@ -210,7 +210,11 @@ the shim's wrapper (its symbol is the wrapper's), and "one direct call" otherwis
   `ref` (`cstr`, `Span`) in a non-root module was an internal compiler error ("`@borrows` must name
   at least one parameter"). The artifact now accepts an empty borrow list for any ABI callable (a
   source `@borrows()` is `E2031` before it gets there). D-N2.
-* CI (`.github/workflows/ci.yml`): Ubuntu jobs install `libclang-dev`; the Windows image has LLVM.
+* CI (`.github/workflows/ci.yml`): the Ubuntu test jobs and the documents job (error pages) install
+  `libclang-dev`; the Windows image has LLVM.
+* Error pages for the codes the importer emits: `docs/errors/E5001.md`, `E5010.md`, `E5011.md`,
+  `E5014.md`, `E9002.md`, `W5001.md`, `W5002.md`. A page may now give files its examples are compiled
+  beside (```` ```c,file=shape.h ````), in `tools/error_pages.py` and `ember test --doc` alike.
 
 ## 2. Tests
 
@@ -255,7 +259,7 @@ in a rule folder for a test.
   `va_list` and variadic calls, `long double` (`c_longdouble`), `volatile`, `@ffi(newtype)`; and
   `std.ffi` has none of `c_int`, `c_char`, `c_long` and the other C aliases Part XV lists (D-N4).
 * `[FFI-30c]` — overlays from several packages, their order and `override`: one overlay file per
-  import, holding one overlay.
+  import, holding one overlay. Owner question 5.
 * Linux: the importer has not run there (no libclang in WSL here); CI is the first run.
 
 ## 4. Owner questions (real choices only)
@@ -282,7 +286,16 @@ in a rule folder for a test.
    Options: (a) the entry names Ember types (`@ffi(macro_fn) fn SQUARE(x: i32) -> i32`), a grammar
    change for this entry only; (b) a `@ffi(macro_fn(param types…, result))` attribute spelling the C
    types; (c) the importer wraps the macro once per use with the argument types of the call. Built
-   meanwhile: nothing (`W5001` says an overlay can declare it).
+   meanwhile: nothing; `W5001` suggests a `static inline` C function that calls the macro.
+5. **Several overlays for one module (`[FFI-30c]`).** "A package may distribute an overlay for a
+   foreign module, and several overlays for one module compose in a declared order; they may add
+   aliases and wrappers and replace an entry only with an explicit `override`." But `[FFI-6]`'s
+   `overlay` option names one file, and `[GRM-35]`'s `overlay_item` has no `override`. Options: (a)
+   `overlay = ["dep/overlays/vk.em", "overlays/vk.em"]`, a list in the declared order, and
+   `override fn …` in the grammar; (b) each dependency's overlay found by convention
+   (`overlays/<header stem>.em`, in dependency order); (c) overlays named in the manifest. Built
+   meanwhile: one file, one `overlay c` declaration in it; a second entry for one function is
+   `E5010`.
 4. **`ember bind --init`'s file name (`[CLI-5]`).** The rule says it "writes a starter overlay" and
    never overwrites a file, but not where. Built: `<stem>.overlay.em` beside the header. Options:
    that; `overlays/<stem>.em` under the package; standard output.
@@ -317,6 +330,12 @@ in a rule folder for a test.
   `unsafe extern "C"` block of one module and defining `pub extern "C" fn add` in another is an ICE
   ("[BLD-2] import-visible callable `add` has more than one declaration contract") rather than a
   diagnostic.
+* **D-N8 (fixed): one C function declared by two modules was an ICE.** Two imports of one header
+  with different options (or two hand declarations of one C function in two modules) both declare
+  its symbol; the interface artifacts refused the second ("[BLD-2] import-visible callable … has
+  more than one declaration contract", then "[LT-40] … present in more than one interface
+  artifact"). Declarations that agree are now one callable; ones that disagree keep the error. Test:
+  `FFI-30/accept_one_c_function_declared_by_two_imports.em`.
 * **D-N7 (fixed): a module's imports leaked through it.** Module `a` with `import math as m`, then
   `import a` and `a.m.sqrt(4.0)` compiled: a path went through any import of the module it named.
   Now only child modules and `pub import c` re-exports are reached; the two tests that went through a
