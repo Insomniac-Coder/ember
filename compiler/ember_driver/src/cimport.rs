@@ -2443,9 +2443,33 @@ pub fn load(
         }
         options.defines = value("defines").map(|written| manifest_strings(&written)).unwrap_or_default();
         options.include_paths = value("include_paths").map(|written| manifest_strings(&written)).unwrap_or_default();
-        let standard = value("standard").map(|written| written.trim_matches('"').to_string()).unwrap_or_else(|| "c++17".to_string());
-        let project_flags = value("flags").map(|written| manifest_strings(&written)).unwrap_or_default();
+        let mut standard = value("standard").map(|written| written.trim_matches('"').to_string());
+        let mut project_flags = value("flags").map(|written| manifest_strings(&written)).unwrap_or_default();
         let compiler = value("compiler").map(|written| written.trim_matches('"').to_string());
+        // `[FFI-50]` — `cmake = { build_dir, target }`: the target's C++ flags, as CMake's File API
+        // replies them for the configured build.
+        if let Some(written) = value("cmake") {
+            let at = options.project.as_ref().map_or(span, |(_, at)| *at);
+            let entry = |key: &str| manifest_inline(&written, key);
+            let (Some(build_dir), Some(target)) = (entry("build_dir"), entry("target")) else {
+                sink.emit(Diagnostic::error(codes::E0104, at, "`cmake` names the CMake build: `cmake = { build_dir = \"build\", target = \"engine\" }`")
+                    .note("the C++ project's flags are read from CMake's File API [FFI-50]"));
+                return None;
+            };
+            match cmake_target(&base.join(&build_dir), &target) {
+                Ok(found) => {
+                    options.defines.extend(found.defines);
+                    options.include_paths.extend(found.includes);
+                    project_flags.extend(found.flags);
+                    standard = standard.or(found.standard);
+                }
+                Err(message) => {
+                    sink.emit(Diagnostic::error(codes::E9002, at, format!("cannot read the flags of CMake target `{target}`")).note(message).note("the C++ project's flags are read from CMake's File API [FFI-50]"));
+                    return None;
+                }
+            }
+        }
+        let standard = standard.unwrap_or_else(|| "c++17".to_string());
         Some((standard, project_flags, compiler))
     } else {
         None
@@ -2799,6 +2823,70 @@ pub fn build_objects(
         libraries.extend(foreign.link.iter().cloned());
     }
     Ok((objects, libraries))
+}
+
+/// `[FFI-50]` — one key of a manifest inline table as written: `build_dir` of
+/// `{ build_dir = "build", target = "engine" }`.
+fn manifest_inline(written: &str, key: &str) -> Option<String> {
+    written.trim().trim_start_matches('{').trim_end_matches('}').split(',').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name.trim() == key).then(|| value.trim().trim_matches('"').to_string())
+    })
+}
+
+/// `[FFI-50]` — what CMake's File API says of a target's C++ compile: its defines, include
+/// folders (made absolute against the build folder), other flags, and standard.
+struct CmakeTarget {
+    defines: Vec<String>,
+    includes: Vec<String>,
+    flags: Vec<String>,
+    standard: Option<String>,
+}
+
+/// `[FFI-50]` — read `target`'s C++ compile from the File API reply in `build_dir` (its newest
+/// index, the codemodel it names, the target's own reply). With no reply yet, the query that asks
+/// for one is written, and configuring with CMake again makes it.
+fn cmake_target(build_dir: &Path, target: &str) -> Result<CmakeTarget, String> {
+    let api = build_dir.join(".cmake").join("api").join("v1");
+    let reply = api.join("reply");
+    let read = |path: &Path| -> Result<serde_json::Value, String> {
+        let text = std::fs::read_to_string(path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
+        serde_json::from_str(&text).map_err(|error| format!("`{}` is not JSON: {error}", path.display()))
+    };
+    let mut indexes: Vec<PathBuf> = std::fs::read_dir(&reply)
+        .map(|entries| entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("index-"))).collect())
+        .unwrap_or_default();
+    indexes.sort();
+    let Some(index) = indexes.last() else {
+        let query = api.join("query");
+        let _ = std::fs::create_dir_all(&query).and_then(|()| std::fs::write(query.join("codemodel-v2"), ""));
+        return Err(format!("`{}` has no CMake File API reply: the query for one is written there now, so configure it with CMake again", build_dir.display()));
+    };
+    let index = read(index)?;
+    let codemodel = index["reply"]["codemodel-v2"]["jsonFile"].as_str().ok_or("the File API reply has no `codemodel-v2`")?;
+    let codemodel = read(&reply.join(codemodel))?;
+    let target_file = codemodel["configurations"][0]["targets"]
+        .as_array()
+        .and_then(|targets| targets.iter().find(|entry| entry["name"].as_str() == Some(target)))
+        .and_then(|entry| entry["jsonFile"].as_str())
+        .ok_or_else(|| format!("the CMake build has no target `{target}`"))?;
+    let target_reply = read(&reply.join(target_file))?;
+    let group = target_reply["compileGroups"]
+        .as_array()
+        .and_then(|groups| groups.iter().find(|group| group["language"].as_str() == Some("CXX")))
+        .ok_or_else(|| format!("CMake compiles no C++ for target `{target}`"))?;
+    let texts = |key: &str, field: &str| -> Vec<String> {
+        group[key].as_array().into_iter().flatten().filter_map(|entry| entry[field].as_str().map(str::to_string)).collect()
+    };
+    Ok(CmakeTarget {
+        defines: texts("defines", "define"),
+        includes: texts("includes", "path")
+            .into_iter()
+            .map(|path| std::path::absolute(build_dir.join(&path)).unwrap_or_else(|_| build_dir.join(&path)).to_string_lossy().into_owned())
+            .collect(),
+        flags: texts("compileCommandFragments", "fragment").iter().flat_map(|fragment| fragment.split_whitespace().map(str::to_string)).collect(),
+        standard: group["languageStandard"]["standard"].as_str().map(|standard| format!("c++{standard}")),
+    })
 }
 
 /// `[FFI-50]` — a toolchain by the name a `[cpp.<project>]` section's `compiler` gives it.

@@ -7379,6 +7379,32 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     assert_eq!(after.matches("# skipped: `bind_log`").count(), 1, "a skip was noted twice:\n{after}");
 }
 
+/// `[FFI-50]` — `ember bind <header> --emit-cpp` writes the thunk translation unit an `import cpp`
+/// of the header compiles, for inspection: one `extern "C"` thunk per function, method,
+/// constructor and destructor (`[FFI-17]`, `[FFI-3]`), a catching one for a function that may
+/// throw (`[FFI-24]`).
+#[test]
+fn bind_emit_cpp_writes_the_thunk_file() {
+    let dir = temporary_directory("bind-emit-cpp");
+    std::fs::write(
+        dir.join("engine.hpp"),
+        "#pragma once\nnamespace engine {\nclass Body {\npublic:\n    explicit Body(int mass) noexcept : mass_(mass) {}\n    ~Body() {}\n    int mass() const noexcept { return mass_; }\nprivate:\n    int mass_;\n};\ninline int heavier(int a, int b) { return a > b ? a : b; }\n}\n",
+    )
+    .unwrap();
+    let run = ember(&["bind", "engine.hpp", "--emit-cpp"], &dir);
+    assert_eq!(run.exit, 0, "{}{}", run.stdout, run.stderr);
+    let thunks = std::fs::read_to_string(dir.join("engine.thunks.cpp")).expect("the thunk file is written");
+    for line in [
+        "new engine::Body(a0)",
+        "{ delete self; }",
+        "return self->mass();",
+        "try { *failed = 0; return ::engine::heavier(a0, a1); } catch (...) { *failed = 1; caught();",
+    ] {
+        assert!(thunks.contains(line), "the thunk file lacks {line:?}:\n{thunks}");
+    }
+    assert!(thunks.matches("extern \"C\"").count() >= 6, "{thunks}");
+}
+
 /// `[CLI-6]` — `ember bind --report` lists every skipped declaration and every declaration still
 /// `unsafe` with its unknown facts, and exits non-zero on a skip; `--baseline` limits that to skips
 /// the baseline does not list. `[FFI-35a]` — it lists, as an assumption, every pointer parameter

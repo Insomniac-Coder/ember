@@ -1,0 +1,12 @@
+{
+	"compileGroups" : [ {
+		"compileCommandFragments" : [ { "fragment" : "-DENGINE_FLAG=2" } ],
+		"defines" : [ { "define" : "ENGINE_SCALE=5" } ],
+		"includes" : [ { "path" : "../include" } ],
+		"language" : "CXX",
+		"languageStandard" : { "standard" : "17" },
+		"sourceIndexes" : [ 0 ]
+	} ],
+	"name" : "engine",
+	"type" : "STATIC_LIBRARY"
+}
