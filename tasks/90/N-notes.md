@@ -560,6 +560,48 @@ owning value in an exported signature (question Q4 on whether that is the code t
 checked with `--require-evidence` (`tools/error_pages.py` and `ember test --doc` both know that code);
 `W5050.md` no longer says the two flags are unbuilt. Ten tests' expected codes changed.
 
+With that, no conformance test asserted `E5050` any more (`rule_index.py`'s `[TST-4]` check): only
+the `[TCB-1]` milestone, since the code needs `--require-evidence`. Both test harnesses
+(`milestones.rs`, `tasks/impl-0.9.9/annotations.py`) now read `#$ flags:` — one compiler flag per line
+for the check of a test's diagnostics — and `tests/conformance/TCB-1/` holds
+`reject_a_grade_without_evidence_where_evidence_is_required.em` (`E5050`) and
+`accept_a_grade_without_evidence_is_a_warning.em` (`W5050`).
+
+### `[FFI-8]`'s rows, as far as they went
+
+In the table's order: **`long double`** (`c_longdouble`, "opaque bytes") needs a type the C backend
+emits as `long double` — its size and alignment are the target's (8 on Windows, 16 on x86-64 and
+AArch64 Linux) and System V passes it in the x87 class, so a struct of bytes would be wrong by value:
+a new primitive in `ember_types`, not built. **`volatile T*`** maps to `Volatile[*T]`, which `[UNS-5]`
+puts in `std.mem` and which does not exist yet: not built. Then:
+
+* **Bit-fields — built.** A struct with integer or `bool` bit-fields is a `@layout(c)` struct laid out
+  as this target's C compiler lays it out (the two ABIs differ: MSVC starts a new unit when the type
+  changes): its plain fields; each run of bytes its bit-fields share as `pub _bits<k>: [u8; n] = [0, …]`
+  (public with a default, so the struct can still be made); `_pad<k>` arrays where C leaves a gap
+  Ember's own layout would not. `[FFI-5]` checks every member's offset. Each bit-field has
+  `get_<f>(self) -> T` (signed ones sign-extended, `bool` ones as `bool`) and `set_<f>(mut self, value:
+  T)`, which writes only its bits; they assemble the bytes little-endian, as the bit numbering is on
+  every target Ember builds for (`ponytail:` a big-endian target keeps such structs opaque). An
+  enum-typed bit-field, or one spanning more than 8 bytes, still makes the struct opaque (`W5002`).
+  Checked also under `--target=x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (the layout
+  check passes). Test: `FFI-8/accept_bit_fields_are_read_and_written_by_accessors.em` (MSVC's and
+  System V's layouts differ for its struct); `FFI-20a`'s skipped-struct example is now an enum
+  bit-field.
+* **Anonymous members — built for structs.** An anonymous struct member is a field `_anon<N>` of a
+  generated type `<Parent>_anon<N>`, at the offset C gives it (libclang shows the member as the
+  record, not as a field: its offset is its first named field's in the parent less that field's in
+  the member), nested ones too. The type checker reads a field of such a member through it — `p.x` is
+  `p._anon0.x`, to read and to write — for structs `import c` wrote only (the field and type names
+  must match the pattern). Constructing one names the member (`_anon0 = Packet_anon0(…)`). Anonymous
+  *unions* stay opaque with unions. Test: `FFI-8/accept_anonymous_members_read_through.em`.
+* **Flexible array members** need an unsized struct in the type checker (`E5017` on every by-value
+  use) and `tail(self, n)`: not built. **`_Atomic T`** needs libclang 11's `CXType_Atomic` and
+  `clang_Type_getValueType` (the importer is built against the libclang 9 API): not built.
+  **`va_list`** and variadic calls need `VaList` and variadic call lowering: not built.
+
+`docs/phase-status.json`'s `FFI-8` entry says what is left.
+
 ## 3. Rules now done, with their tests
 
 | Rule | Test |
