@@ -859,6 +859,12 @@ impl Writer {
                     match self.record(declaration, None) {
                         Record::Full(name) | Record::Pending(name) => Ok(self.qualify(name, declaration)),
                         Record::Opaque(name, _) if behind_pointer => Ok(self.qualify(name, declaration)),
+                        // `[FFI-32]` — a C++ class held behind a pointer by design, not for want of
+                        // a definition.
+                        Record::Opaque(name, None) if self.cpp && clang_Cursor_isNull(clang_getCursorDefinition(declaration)) == 0 => Err(format!(
+                            "`{name}` by value: a C++ class that is not standard-layout and trivially copyable is held only behind a pointer ([FFI-32]); a C++ function taking a `const {}&` takes it",
+                            cpp_spelling(ty)
+                        )),
                         Record::Opaque(name, why) => Err(opaque_by_value(&name, why.as_deref())),
                     }
                 }
@@ -2928,7 +2934,7 @@ pub fn load(
         .functions
         .iter()
         .filter(|function| function.policy == Policy::Unknown && applied.functions.get(&function.name).and_then(|entry| entry.policy).is_none())
-        .map(|function| (function.name.clone(), "[E5061] its exception policy cannot be derived from the header (its specification is not evaluated), and no overlay declares one".to_string()))
+        .map(|function| (function.name.clone(), "[E5061] its exception policy cannot be derived from the header (Clang could not evaluate its `noexcept(…)`), and no overlay declares one".to_string()))
         .collect();
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));

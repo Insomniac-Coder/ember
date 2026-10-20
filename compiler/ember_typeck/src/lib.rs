@@ -4664,8 +4664,12 @@ impl<'a> Checker<'a> {
             Some(("[E5034", rest)) => (codes::E5034, rest),
             _ => (codes::E1010, why.as_str()),
         };
-        let diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}"))
-            .note("the import skipped it, and said so at the import (W5002, W5001) [FFI-20a]");
+        let note = if code == codes::E5061 {
+            "an overlay entry declares its policy: `@ffi(noexcept)` or `@ffi(noexcept=false)` [FFI-43]"
+        } else {
+            "the import skipped it, and said so at the import (W5002, W5001) [FFI-20a]"
+        };
+        let diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}")).note(note);
         self.sink.emit(diagnostic);
         true
     }
