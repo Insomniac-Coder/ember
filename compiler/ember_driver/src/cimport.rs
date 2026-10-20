@@ -1081,6 +1081,17 @@ impl Writer {
             if kind(definition) == CXCursor_UnionDecl {
                 return self.opaque(cursor, &key, &named, Some("a C union (Ember's `union` is reserved for a later version)".to_string()));
             }
+            // `[FFI-48]` — multiple inheritance and virtual bases: `E5034` where the class is named.
+            if self.cpp {
+                let bases: Vec<CXCursor> = children(definition).into_iter().filter(|child| kind(*child) == CXCursor_CXXBaseSpecifier).collect();
+                if bases.len() > 1 || bases.iter().any(|base| clang_isVirtualBase(*base) != 0) {
+                    let why = "multiple inheritance, or a virtual base: the pointer adjustment is ABI-private and differs between MSVC and Itanium (write a single-inheritance facade in C++)";
+                    self.skip(cursor, &named, format!("[E5034] {why}"));
+                    let record = Record::Opaque(name, Some(why.to_string()));
+                    self.records.insert(key, record.clone());
+                    return record;
+                }
+            }
             // `[FFI-32]` — a C++ class is a struct only when it is standard-layout and trivially
             // copyable; any other is opaque behind a pointer, made only by its constructors.
             if self.cpp && !self.by_value.get(&key).copied().unwrap_or(false) {
@@ -1666,9 +1677,9 @@ impl Writer {
                     let spelled = cpp_spelling(pointee);
                     Ok(match (constant, by_value) {
                         (true, Ok(mapped)) => (plain(mapped, ""), format!("{spelled} {name}"), name.to_string()),
-                        (true, Err(_)) => (plain(format!("ref {}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
+                        (true, Err(_)) => (plain(format!("*{}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
                         (false, Ok(mapped)) => (plain(mapped, "mut "), format!("{spelled}* {name}"), format!("*{name}")),
-                        (false, Err(_)) => (plain(format!("ref mut {}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
+                        (false, Err(_)) => (plain(format!("*mut {}", self.ty(pointee, true)?), ""), format!("{spelled}* {name}"), format!("*{name}")),
                     })
                 }
                 CXType_RValueReference => {
