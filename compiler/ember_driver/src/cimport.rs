@@ -988,7 +988,7 @@ impl Writer {
         if let Some(done) = self.typedefs.get(&key) {
             return done.clone();
         }
-        let name = spelling(cursor);
+        let name = if self.cpp { nested_name(cursor) } else { spelling(cursor) };
         if let Some(fixed) = standard_typedef(&name) {
             return Ok(fixed.to_string());
         }
@@ -1075,7 +1075,7 @@ impl Writer {
         }
         // SAFETY(ffi): cursors and types of a live translation unit.
         unsafe {
-            let tag = spelling(cursor);
+            let tag = if self.cpp { nested_name(cursor) } else { spelling(cursor) };
             let named = typedef_name.map_or(tag.clone(), str::to_string);
             let name = ident(&named);
             let definition = clang_getCursorDefinition(cursor);
@@ -1315,7 +1315,7 @@ impl Writer {
         if let Some(done) = self.enums.get(&key) {
             return done.clone();
         }
-        let named = typedef_name.map_or_else(|| spelling(cursor), str::to_string);
+        let named = typedef_name.map_or_else(|| if self.cpp { nested_name(cursor) } else { spelling(cursor) }, str::to_string);
         let name = ident(&named);
         // SAFETY(ffi): a live enum cursor. `@repr` takes a fixed-width type.
         let repr = fixed_integer(unsafe { clang_getEnumDeclIntegerType(cursor) });
@@ -1520,6 +1520,23 @@ impl Writer {
                     continue;
                 }
                 let name = spelling(child);
+                match kind(child) {
+                    // `[FFI-41]` — a nested type, under its outer type's name.
+                    CXCursor_StructDecl | CXCursor_ClassDecl | CXCursor_UnionDecl | CXCursor_EnumDecl | CXCursor_TypedefDecl | CXCursor_TypeAliasDecl => {
+                        self.declaration(child);
+                        continue;
+                    }
+                    // `[FFI-41]` — a static data member, under its class's name too.
+                    CXCursor_VarDecl => {
+                        if taken.insert(name.clone()) {
+                            self.cpp_variable(child, &name, Some(&owner));
+                        } else {
+                            self.skip(child, &format!("{owner}.{name}"), "its name is taken by another member of the class");
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
                 let member = match kind(child) {
                     CXCursor_Constructor => {
                         if abstract_class || clang_CXXConstructor_isCopyConstructor(child) != 0 || clang_CXXConstructor_isMoveConstructor(child) != 0 {
@@ -1804,7 +1821,18 @@ impl Writer {
     /// with a constant value is a constant; any other internal global is `W5002`.
     fn global(&mut self, cursor: CXCursor) {
         let name = spelling(cursor);
+        // A static data member's definition outside its class: the class's members import it.
+        // SAFETY(ffi): a live variable cursor.
+        if self.cpp && matches!(kind(unsafe { clang_getCursorSemanticParent(cursor) }), CXCursor_StructDecl | CXCursor_ClassDecl | CXCursor_UnionDecl) {
+            return;
+        }
         if !self.seen.insert(format!("var {name}")) {
+            return;
+        }
+        // `[FFI-3]` — a variable of C++ linkage has a mangled symbol, which Ember never links.
+        // SAFETY(ffi): a live variable cursor.
+        if self.cpp && unsafe { text(clang_Cursor_getMangling(cursor)) } != name && unsafe { clang_getCursorLinkage(cursor) } != CXLinkage_Internal {
+            self.cpp_variable(cursor, &name, None);
             return;
         }
         // SAFETY(ffi): a live variable cursor.
@@ -1829,6 +1857,47 @@ impl Writer {
                 Ok(_) => self.skip(cursor, &name, "its name is taken by another declaration of the header"),
                 Err(reason) => self.skip(cursor, &name, reason),
             }
+        }
+    }
+
+    /// `[FFI-41]`, `[FFI-3]` — a C++ variable of C++ linkage: a static data member (of the class
+    /// `owner` names) or a namespace's. A `const` one with a constant value is a constant (a
+    /// class's, `Outer.limit`); any other is reached through a thunk that gives its address, since
+    /// its symbol is mangled: `Outer.count() -> *mut T` (`*T` for a `const` one), the form of a
+    /// static member function that returns a `T&`. (An `extern static` of the address would be a
+    /// raw pointer in a static, which is not `Sync`, `E7002`.)
+    fn cpp_variable(&mut self, cursor: CXCursor, name: &str, owner: Option<&str>) {
+        let shown = owner.map_or_else(|| name.to_string(), |owner| format!("{owner}.{name}"));
+        // SAFETY(ffi): a live variable cursor.
+        unsafe {
+            let ty = clang_getCursorType(cursor);
+            let constant = clang_isConstQualifiedType(ty) != 0;
+            if constant && let Ok((ty, value)) = self.constant_value(cursor) {
+                let key = owner.map_or_else(|| name.to_string(), |owner| format!("{owner}::{name}"));
+                if self.claim(&key) {
+                    self.push(&key, Kind::Const, format!("const {}: {ty} = {value}", ident(name)));
+                } else {
+                    self.skip(cursor, &shown, "its name is taken by another declaration of the header");
+                }
+                return;
+            }
+            if clang_getCursorTLSKind(cursor) != CXTLS_None {
+                return self.skip(cursor, &shown, "a `thread_local` variable: each thread has its own");
+            }
+            let mapped = match self.ty(ty, false) {
+                Ok(mapped) => mapped,
+                Err(reason) => return self.skip(cursor, &shown, reason),
+            };
+            if owner.is_none() && !self.claim(name) {
+                return self.skip(cursor, &shown, "its name is taken by another declaration of the header");
+            }
+            let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
+            self.thunks += 1;
+            let pointer = format!("{}*", cpp_spelling(ty));
+            let _ = writeln!(self.shim, "extern \"C\" {pointer} {thunk}(void) noexcept {{ return &{}; }}", qualified_name(cursor));
+            let result = CType { ember: format!("*{}{mapped}", if constant { "" } else { "mut " }), pointee: Some((mapped, constant)), char_pointer: false, c: pointer, mode: String::new() };
+            let owner = owner.map(|owner| (owner.to_string(), Member::Static));
+            self.functions.push(Function { name: name.to_string(), params: Vec::new(), result: Some(result), link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone() });
         }
     }
 
@@ -2041,6 +2110,17 @@ fn namespace_of(cursor: CXCursor) -> Vec<String> {
     }
     path.reverse();
     path
+}
+
+/// `[FFI-41]` — a C++ declaration's name, under its outer classes' names when it is nested in
+/// them: `Outer::Inner` is `Outer_Inner` (Ember has no nested types).
+fn nested_name(cursor: CXCursor) -> String {
+    // SAFETY(ffi): cursors of a live translation unit.
+    let parent = unsafe { clang_getCursorSemanticParent(cursor) };
+    match kind(parent) {
+        CXCursor_StructDecl | CXCursor_ClassDecl | CXCursor_UnionDecl if !spelling(parent).is_empty() => format!("{}_{}", nested_name(parent), spelling(cursor)),
+        _ => spelling(cursor),
+    }
 }
 
 /// `[FFI-41]` — the name a namespace's module is imported under by another namespace's.
@@ -3471,7 +3551,8 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
         out
     };
     let alias = |item: &Item| applied.renamed.get(&item.name).map(|to| format!("pub type {} = {}\n", ident(to), ident(&item.name)));
-    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const) && item.namespace == namespace) {
+    let in_class = |item: &Item| item.kind == Kind::Const && item.name.contains("::");
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const) && !in_class(item) && item.namespace == namespace) {
         body.push_str(&declare(item, ""));
         if let Some(alias) = alias(item) {
             body.push_str(&alias);
@@ -3492,6 +3573,15 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     // A hidden declaration stays, private to the module: another may name it (`destructor=f`).
     let mut wrappers = String::new();
     let mut extensions: Vec<(String, String)> = Vec::new();
+    // `[FFI-41]` — a static data member that is a constant: its class's (`Outer.limit`).
+    for item in imported.items.iter().filter(|item| in_class(item) && item.namespace == namespace) {
+        let owner = item.name.split("::").next().unwrap_or_default().to_string();
+        let text = format!("{}\n", declare(item, "").trim_end());
+        match extensions.iter_mut().find(|(of, _)| *of == owner) {
+            Some((_, members)) => members.push_str(&text),
+            None => extensions.push((owner, text)),
+        }
+    }
     let mut catching = false;
     for function in imported.functions.iter().filter(|function| function.namespace == namespace) {
         let hidden = applied.hidden.contains(&function.name);

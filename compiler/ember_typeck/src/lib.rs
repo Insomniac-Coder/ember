@@ -177,6 +177,21 @@ pub struct CheckOutput {
     pub incomplete: HashSet<String>,
 }
 
+/// `[LEX-15a]` — a module's item-level aliases, to resolve: the generic ones first, since a plain
+/// alias may name one declared after it (`[TYP-16]`).
+fn pending_type_aliases(module: &ast::Module) -> Vec<&ast::TypeAlias> {
+    let mut pending: Vec<&ast::TypeAlias> = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::TypeAlias(decl) if !decl.is_foreign_decl => Some(decl),
+            _ => None,
+        })
+        .collect();
+    pending.sort_by_key(|decl| decl.generics.is_empty());
+    pending
+}
+
 pub fn check(
     modules: &[LoadedModule],
     types: &mut TypeTable,
@@ -317,10 +332,23 @@ pub fn check(
     checker.extend_early_instances();
     // Aliases are resolved after every type header and before any signature or field: they may
     // name a struct or enum, and a signature may name another module's alias (`std.ffi`'s `c_int`)
-    // whichever order the modules are in. Dependencies before importers.
-    for (index, loaded) in modules.iter().enumerate().rev() {
+    // whichever order the modules are in. An alias may name another module's alias too (`type
+    // count_t = c_int` in a module `import c` wrote), and the module list is in no dependency
+    // order, so every module's aliases are resolved together, to a fixpoint.
+    let mut aliases: Vec<Vec<&ast::TypeAlias>> = modules.iter().map(|loaded| pending_type_aliases(&loaded.module)).collect();
+    loop {
+        let mut progress = false;
+        for (index, pending) in aliases.iter_mut().enumerate().rev() {
+            checker.current_module = index;
+            progress |= checker.collect_type_aliases(pending);
+        }
+        if !progress {
+            break;
+        }
+    }
+    for (index, pending) in aliases.into_iter().enumerate() {
         checker.current_module = index;
-        checker.collect_type_aliases(&loaded.module);
+        checker.report_unresolved_aliases(pending);
     }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
@@ -3435,25 +3463,17 @@ impl<'a> Checker<'a> {
     }
 
     /// `[LEX-15a]` — `type Name = T` at item level. An alias may name another
-    /// alias declared later in the file, so they are resolved to a fixpoint:
-    /// one whose body still mentions an unknown name is deferred, and whatever
-    /// survives no-further-progress is a cycle or a genuinely unknown type.
-    fn collect_type_aliases(&mut self, module: &ast::Module) {
-        let mut pending: Vec<&ast::TypeAlias> = module
-            .items
-            .iter()
-            .filter_map(|item| match &item.kind {
-                ast::ItemKind::TypeAlias(decl) if !decl.is_foreign_decl => Some(decl),
-                _ => None,
-            })
-            .collect();
-        // `[TYP-16]` — the generic ones first: a plain alias may name one declared after it.
-        pending.sort_by_key(|decl| decl.generics.is_empty());
-
+    /// alias declared later in the file, or another module's, so they are
+    /// resolved to a fixpoint: one whose body still mentions an unknown name is
+    /// deferred (left in `pending`), and whatever survives no-further-progress
+    /// is a cycle or a genuinely unknown type ([`Self::report_unresolved_aliases`]).
+    /// Whether any alias of `pending` was settled.
+    fn collect_type_aliases<'m>(&mut self, pending: &mut Vec<&'m ast::TypeAlias>) -> bool {
+        let start = pending.len();
         loop {
             let before = pending.len();
             let mut deferred = Vec::new();
-            for decl in std::mem::take(&mut pending) {
+            for decl in std::mem::take(pending) {
                 let name = self.qualified(decl.name.name);
                 if self.named_types.contains_key(&name) {
                     self.error(
@@ -3500,12 +3520,17 @@ impl<'a> Checker<'a> {
                 };
                 self.named_types.insert(name, ty);
             }
-            pending = deferred;
+            *pending = deferred;
             if pending.is_empty() || pending.len() == before {
                 break;
             }
         }
+        pending.len() != start
+    }
 
+    /// The aliases [`Self::collect_type_aliases`] could not settle: resolving
+    /// them now reports what each names that does not exist.
+    fn report_unresolved_aliases(&mut self, pending: Vec<&ast::TypeAlias>) {
         for decl in pending {
             let Some(value) = &decl.value else { continue };
             // Resolving now emits the real "cannot find type" diagnostic and
@@ -32655,16 +32680,25 @@ impl<'a> Checker<'a> {
                     self.error(codes::E1010, name.span, format!("`{shown}` has no constant `{}`", name.name));
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
-                // V.3 — `Vec2.ZERO`, `Self.ZERO`: a constant a type declares.
-                if let ast::ExprKind::Path { segments } = &base.kind
+                // V.3 — `Vec2.ZERO`, `Self.ZERO`: a constant a type declares; `geometry.Vec2.ZERO`
+                // through the type's module (`[GRM-24]`).
+                let named_owner = if let ast::ExprKind::Path { segments } = &base.kind
                     && let [segment] = segments.as_slice()
                     && self.lookup(segment.name).is_none()
                 {
-                    let owner = if segment.name.is("Self") {
+                    Some(if segment.name.is("Self") {
                         self.self_ty
                     } else {
                         self.named_types.get(&self.resolve_name(segment.name)).copied()
-                    };
+                    })
+                } else if let ast::ExprKind::Field { base: module, name: type_name } = &base.kind
+                    && let Some(module) = self.namespace_named(module)
+                {
+                    Some(self.named_types.get(&self.qualified_in_module(module, type_name.name)).copied())
+                } else {
+                    None
+                };
+                if let Some(owner) = named_owner {
                     if let Some(owner) = owner
                         && self.assoc_consts.contains_key(&(owner, name.name))
                     {
