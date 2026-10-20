@@ -12105,10 +12105,13 @@ fn unread_locals(body: &Body, void_place: &dyn Fn(&Place) -> bool) -> Vec<usize>
         block.stmts.iter().for_each(|stmt| stmt_c_reads(stmt, &mut read, void_place));
         terminator_c_reads(&block.terminator, &mut read, void_place);
     }
+    // The return slot is read by each `return`; a body with none (every path panics) never reads
+    // it, and MSVC's C4101 names it.
+    let returns = body.blocks.iter().any(|block| matches!(block.terminator, Terminator::Return));
     body.locals
         .iter()
         .enumerate()
-        .filter(|(index, decl)| decl.kind != LocalKind::Return && !read[*index])
+        .filter(|(index, decl)| (decl.kind != LocalKind::Return || !returns) && !read[*index])
         .map(|(index, _)| index)
         .collect()
 }
