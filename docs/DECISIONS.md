@@ -5017,6 +5017,40 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-237 — No implicit cost without its row (`[COST-5]`, ODR-152)
+
+2026-10-20. `[COST-5]`: a rule that introduces an implicit cost adds a row to `[COST-3]`'s table, and
+`rule_index.py` fails CI on a new implicit cost with no row. The implicit costs the compiler knows are
+the rows `ember inspect --cost` prints; `tools/rule_index.py` now reads their names from the driver
+(each `add("…", …)` of `safety_costs_json` and each arm of `check_cost_row`) and fails on any the
+development target's table lacks, never baselined. Its first run found five: `Virtual method call`,
+`Downcast check`, `assert_disjoint` comparison, `Allocation` and `contains`, reported since `[COST-4]`
+was built with no row. ODR-152 (ruled under the delegation, in 0.9.10_Hardened_25) adds the five rows.
+Three classes the report printed were not the table's and are corrected: a `RefCell` borrow and a
+downcast are guaranteed present, a virtual call conditionally elided (`[DSP-5]`). `check_cost_row`'s
+catch-all `Runtime check` is gone: a kind this compiler does not emit (a side table from another
+version) is shown under its own name. `inspect_cost_reports_each_row_by_site` checks each printed row
+and class against the table.
+
+## ADR-236 — The compiler declares its conformance profile (`[CONF-1]`–`[CONF-5]`, ODR-151)
+
+2026-10-20. `[CONF-1]` asks a compiler to declare the profile it implements and to claim one only when
+every rule in it passes. ODR-151 (ruled under the delegation, cut as 0.9.10_Hardened_25) says where
+and what: `ember --version` prints `profile:` (and `--json` a `profile` key), one of `none`, `core`,
+`systems`, `native`, `dynamic`; each profile holds the one before it; Part XV's core and alloc layers
+are XV.1 and XV.3–XV.6, and XV.2 and XV.7, the io layer, join Ember Systems; Ember Dynamic adds
+Annex B to Ember Native.
+
+The claim is a constant in the driver (`PROFILE`). `tools/phase_progress.py` computes the evidence
+the README's percentages come from (a rule is done when a passing test names it and nothing marks it
+unfinished), writes `docs/conformance.json`, which lists for each profile its rules done and the ones
+missing, and `--check` fails CI when the constant differs from the profile the evidence earns, in
+either direction. The milestone `ember_version_declares_the_profile_the_evidence_earns` checks the
+profiles' contents against the specification and the printed claim against the evidence.
+
+Today: `none`. Ember Core lacks nine rules: `CLO-6a`, `COST-5`, `GRM-28`, `GRM-38`, `LT-39`,
+`RNG-10a`, `STD-14`, `STD-7`, `TXT-7`.
+
 ## ADR-235 — Every gate with a baseline reports it (`[TST-29]`)
 
 2026-10-20. The performance gate and the specification-example test already printed their baseline

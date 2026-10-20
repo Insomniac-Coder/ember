@@ -415,6 +415,27 @@ def registry_rule_failures(registry, adopted_rules, development_target=None):
     return failures
 
 
+def cost_rows_reported():
+    """`[COST-5]` — the rows `ember inspect --cost` prints: each `add("…", …)` of the program's
+    costs and each arm of `check_cost_row`."""
+    text = (ROOT / "compiler" / "ember_driver" / "src" / "main.rs").read_text(encoding="utf-8")
+    rows = set(re.findall(r'\badd\("([^"]+)"', text))
+    start = text.index("fn check_cost_row")
+    rows |= set(re.findall(r'=> "([^"]+)"', text[start:text.index("\n}\n", start)]))
+    return rows
+
+
+def cost_table_rows(text):
+    """The first column of `[COST-3]`'s table."""
+    lines = text[text.index("| Cost | Class |"):].split("\n")[2:]
+    rows = set()
+    for line in lines:
+        if not line.startswith("|"):
+            break
+        rows.add(line.split("|")[1].strip())
+    return rows
+
+
 def load_baseline():
     if BASELINE.exists():
         return json.loads(BASELINE.read_text(encoding="utf-8"))
@@ -519,6 +540,13 @@ def main():
     # check.
     rule_set = set(rules)
     failures.extend(registry_rule_failures(registry, rule_set, development_target))
+
+    # `[COST-5]` — an implicit cost the compiler reports with no row in the development target's
+    # table. Never baselined: the row is the rule's whole point.
+    if development_target:
+        table = cost_table_rows(development_target["path"].read_text(encoding="utf-8"))
+        for row in sorted(cost_rows_reported() - table):
+            failures.append(f"[COST-5] `ember inspect --cost` reports `{row}`, which has no row in [COST-3]'s table")
 
     if args.write_baseline:
         # `[TST-4c]` — "The baseline shrinks and never grows: rule_index.py

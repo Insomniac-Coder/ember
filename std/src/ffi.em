@@ -27,6 +27,67 @@ extend String:
     pub fn to_cstring(self) -> Result[CString, NulError]:
         return self.as_str().to_cstring()
 
+## `[TXT-7]` — text is UTF-8 everywhere; `WideString` is UTF-16 for the APIs that need it
+## (Windows' `W` functions), converted explicitly: `s.to_wide()` encodes a `str` (an interior NUL
+## is a `NulError` at its byte, as for `to_cstring`) and adds one 0 unit; `w.as_ptr()` is the
+## terminated units for the call; `WideString.from_units(units)` takes C's units up to the first 0
+## and `w.to_string()` decodes them, an unpaired surrogate becoming U+FFFD.
+pub struct WideString:
+    units: Array[u16]
+
+    ## The units, without the terminating 0.
+    pub fn units(self) -> Span[u16]:
+        return self.units[0..self.units.len() - 1]
+
+    ## The first unit's address: the units and their terminating 0, for a foreign call.
+    pub fn as_ptr(self) -> *u16:
+        return self.units.as_span().as_ptr()
+
+    pub fn from_units(units: Span[u16]) -> WideString:
+        kept: Array[u16] = []
+        for unit in units:
+            if unit == 0:
+                break
+            kept.push(unit)
+        kept.push(0)
+        return WideString(kept)
+
+    pub fn to_string(self) -> String:
+        out = String()
+        units = self.units()
+        i = 0
+        while i < units.len():
+            unit = units[i] as u32
+            code = unit
+            i += 1
+            if unit >= 0xD800 and unit < 0xDC00 and i < units.len():
+                low = units[i] as u32
+                if low >= 0xDC00 and low < 0xE000:
+                    code = 0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00)
+                    i += 1
+            match char.from_u32(code):
+                Some(c):
+                    out.push(c)
+                None:
+                    out.push('\u{FFFD}')
+        return out
+
+extend str:
+    pub fn to_wide(self) -> Result[WideString, NulError]:
+        units: Array[u16] = []
+        for (at, c) in self.char_indices():
+            code = c as u32
+            if code == 0:
+                return Err(NulError(at as usize))
+            if code < 0x10000:
+                units.push(code as u16)
+            else:
+                rest = code - 0x10000
+                units.push((0xD800 + (rest >> 10)) as u16)
+                units.push((0xDC00 + (rest & 0x3FF)) as u16)
+        units.push(0)
+        return Ok(WideString(units))
+
 ## `[FFI-36a]` — `ForeignBox[T]` owns a foreign object: its address, and the foreign function
 ## that frees it, which the box's end calls once. A box is made by `adopt[T](h)` (the destructor
 ## is the one the declaration of `T` names, `@ffi(destroys(f))`) or by a foreign function whose

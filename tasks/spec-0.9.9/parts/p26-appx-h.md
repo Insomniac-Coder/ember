@@ -429,6 +429,8 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-148 | ruled under the delegation: `ember bind --init <header>` writes `<stem>.overlay.em` beside the header | `[CLI-5]` |
 | ODR-149 | ruled under the delegation: `overlay` takes one file or a list applied in order; `override` before an item replaces an earlier file's entry, any other second entry for one name is `E5010` | `[FFI-30c]`, `[GRM-35]` |
 | ODR-150 | ruled under the delegation: the examples are corrected to the rules (`mut` on written `MutSpan` parameters, `[FN-1]`; `ember,fragment` where a block names undeclared items; XVII.5's expected diagnostic); every block is checked as `[TST-7]` says | `[TST-7]`, `[FN-1]`, `[TST-1]` |
+| ODR-151 | ruled under the delegation: a compiler declares its profile as `ember --version`'s `profile:` line; each profile holds the one before it; Ember Core's part of XV is XV.1 and XV.3–XV.6, and XV.2 and XV.7 (the io layer) join Ember Systems; Ember Dynamic adds Annex B to Ember Native | `[CONF-1]`, `[CONF-2]`, `[CONF-3]`, `[CONF-5]` |
+| ODR-152 | ruled under the delegation: the cost table gains the rows `Virtual method call` (conditionally elided, `[DSP-2]`, `[DSP-5]`), `Downcast check` (`[DSP-4]`), `assert_disjoint` comparison (`[DSJ-5]`), `Allocation` (`[EFF-1]`) and `contains` (`[STD-8a]`), the five costs `ember inspect --cost` reported with no row; `rule_index.py` compares the rows the compiler reports with the table | `[COST-3]`, `[COST-5]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1053,3 +1055,22 @@ Generated: every rule whose text differs from 0.9.10_Hardened_23.
 | Rule | 0.9.10_Hardened_23 → 0.9.10_Hardened_24 |
 |---|---|
 
+
+## H.30 Changes in 0.9.10_Hardened_25 (from 0.9.10_Hardened_24)
+
+**0.9.10_Hardened_25** records ODR-151 and ODR-152, ruled under the delegation when `[CONF-1]`'s declaration and `[COST-5]`'s check were built (`docs/DECISIONS.md` ADR-236, ADR-237):
+
+* A compiler declares (`[CONF-1]`) its profile as `ember --version`'s `profile:` line (`none`, `core`, `systems`, `native` or `dynamic`), and each profile holds the one before it.
+* Ember Core (`[CONF-2]`) named XV's core and alloc layers, which are not sections of Part XV: they are XV.1 and XV.3–XV.6. `[CONF-3]` takes XV.2 and XV.7, the io layer's console, files, time and processes, which no profile named.
+* Ember Dynamic (`[CONF-5]`) adds Annex B to Ember Native.
+* The cost table (`[COST-3]`) gains five rows, the costs `ember inspect --cost` already reported without one: `Virtual method call`, `Downcast check`, `assert_disjoint` comparison, `Allocation` and `contains`. `[COST-5]`'s check found them.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_24.
+
+| Rule | 0.9.10_Hardened_24 → 0.9.10_Hardened_25 |
+|---|---|
+| `[CONF-1]` | changed |
+| `[CONF-2]` | changed |
+| `[CONF-3]` | changed |
+| `[CONF-5]` | changed |
+| `[COST-3]` | changed |

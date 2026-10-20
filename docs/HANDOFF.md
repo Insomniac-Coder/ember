@@ -10781,6 +10781,15 @@ formal 1/9 count or Phase 2's estimate.
 > Then ADR-234: D-752 fixed (a plain `and`/`or`/`not` condition branches on its operands: MSVC
 > unrolls the loop again; Mandelbrot 0.98x C).
 > ADR-235: `[TST-29]` done: the three Python gates print `baseline B of N` and `green`/`baselined`.
+> ADR-236 (ODR-151, 0.9.10_Hardened_25): `ember --version` prints `profile:`; `docs/conformance.json`
+> is the evidence (`phase_progress.py --write`). Ember Core lacks 9 rules: CLO-6a, COST-5, GRM-28,
+> GRM-38, LT-39, RNG-10a, STD-14, STD-7, TXT-7 — a good next target.
+> ADR-237 (ODR-152): `[COST-5]` done: `rule_index.py` fails on a cost `inspect --cost` reports with no
+> row; five rows added to the table. Core now lacks 8 (COST-5 done).
+> `[TXT-7]` done: `std.ffi.WideString` (UTF-16, `s.to_wide()`, `from_units`, `to_string`). Core lacks 7.
+> D-755 open: CI's MSVC runner times `w1_sum_loop` 1.7x and `s5` 1.35x C since 812a1fdf, the owner's
+> laptop 1.01x; baselined for MSVC; the gate now names the machine (read the `performance gate
+> machine` notice) and leaves a baselined case only on a clear pass (s4's false "passes now").
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and
 > `s4_copied_enumerate_skip` (MSVC runner 1.27x) over threshold; baselined per compiler.
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through

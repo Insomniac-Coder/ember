@@ -507,6 +507,10 @@ ODRS = [
      "`[FFI-30c]`, `[GRM-35]`"),
     ('ODR-150', "ruled under the delegation: the examples are corrected to the rules (`mut` on written `MutSpan` parameters, `[FN-1]`; `ember,fragment` where a block names undeclared items; XVII.5's expected diagnostic); every block is checked as `[TST-7]` says",
      "`[TST-7]`, `[FN-1]`, `[TST-1]`"),
+    ('ODR-151', "ruled under the delegation: a compiler declares its profile as `ember --version`'s `profile:` line; each profile holds the one before it; Ember Core's part of XV is XV.1 and XV.3\u2013XV.6, and XV.2 and XV.7 (the io layer) join Ember Systems; Ember Dynamic adds Annex B to Ember Native",
+     "`[CONF-1]`, `[CONF-2]`, `[CONF-3]`, `[CONF-5]`"),
+    ('ODR-152', "ruled under the delegation: the cost table gains the rows `Virtual method call` (conditionally elided, `[DSP-2]`, `[DSP-5]`), `Downcast check` (`[DSP-4]`), `assert_disjoint` comparison (`[DSJ-5]`), `Allocation` (`[EFF-1]`) and `contains` (`[STD-8a]`), the five costs `ember inspect --cost` reported with no row; `rule_index.py` compares the rows the compiler reports with the table",
+     "`[COST-3]`, `[COST-5]`"),
 ]
 
 H5_HEAD = """
@@ -575,7 +579,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 24)
+CURRENT = ('0.9.10', 25)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -600,6 +604,7 @@ V010_H20_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h20')
 V010_H21_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h21')
 V010_H22_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h22')
 V010_H23_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h23')
+V010_H24_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h24')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1180,8 +1185,29 @@ Generated: every rule whose text differs from 0.9.10_Hardened_23.
 """
 
 
-def v010_h23_to_now():
-    return H29_HEAD + rule_diff(V010_H23_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h23_to_h24():
+    return H29_HEAD + rule_diff(V010_H23_PARTS, V010_H24_PARTS)
+
+
+H30_HEAD = """
+## H.30 Changes in 0.9.10_Hardened_25 (from 0.9.10_Hardened_24)
+
+**0.9.10_Hardened_25** records ODR-151 and ODR-152, ruled under the delegation when `[CONF-1]`'s declaration and `[COST-5]`'s check were built (`docs/DECISIONS.md` ADR-236, ADR-237):
+
+* A compiler declares (`[CONF-1]`) its profile as `ember --version`'s `profile:` line (`none`, `core`, `systems`, `native` or `dynamic`), and each profile holds the one before it.
+* Ember Core (`[CONF-2]`) named XV's core and alloc layers, which are not sections of Part XV: they are XV.1 and XV.3–XV.6. `[CONF-3]` takes XV.2 and XV.7, the io layer's console, files, time and processes, which no profile named.
+* Ember Dynamic (`[CONF-5]`) adds Annex B to Ember Native.
+* The cost table (`[COST-3]`) gains five rows, the costs `ember inspect --cost` already reported without one: `Virtual method call`, `Downcast check`, `assert_disjoint` comparison, `Allocation` and `contains`. `[COST-5]`'s check found them.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_24.
+
+| Rule | 0.9.10_Hardened_24 → 0.9.10_Hardened_25 |
+|---|---|
+"""
+
+
+def v010_h24_to_now():
+    return H30_HEAD + rule_diff(V010_H24_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1252,7 +1278,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

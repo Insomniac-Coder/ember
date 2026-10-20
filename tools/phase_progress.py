@@ -128,6 +128,7 @@ def compute():
     if stale:
         sys.exit(f'docs/phase-status.json names rules the target does not define: {stale}')
     phases = collections.defaultdict(lambda: {'rules': 0, 'words': 0, 'done_rules': 0, 'done_words': 0, 'untested': [], 'unfinished': []})
+    phases['done'] = set()
     for rule, entry in rules.items():
         phase = phase_of(entry)
         if phase is None:
@@ -142,7 +143,54 @@ def compute():
         else:
             row['done_rules'] += 1
             row['done_words'] += entry['words']
+            phases['done'].add(rule)
     return phases
+
+
+# `[CONF-2]`–`[CONF-5]` (ODR-151): what each profile adds to the one before it.
+PROFILES = [
+    ('core', ['II', 'III', 'IV', 'V', 'VI', 'VII', 'X', 'XIII', 'XV.1', 'XV.3', 'XV.4', 'XV.5', 'XV.6']),
+    ('systems', ['VIII', 'IX', 'XI', 'XII', 'XIV', 'XV.2', 'XV.7']),
+    ('native', ['XVI']),
+    ('dynamic', ['Annex B']),
+]
+CONFORMANCE = ROOT / 'docs' / 'conformance.json'
+DECLARED = re.compile(r'const PROFILE: &str = "(\w+)";')
+
+
+def rule_places(doc):
+    """Each rule's Part, Part XV's section (`XV.3`), or annex (`Annex B`)."""
+    places, place = {}, 'front'
+    for line in doc.split('\n'):
+        heading = re.match(r'^# (Part ([IVXL]+)|Annex [A-Z]|Appendix [A-Z])\b', line)
+        if heading:
+            place = heading.group(2) or heading.group(1)
+            continue
+        section = re.match(r'^## (XV\.\d+) ', line)
+        if section:
+            place = section.group(1)
+            continue
+        rule = re.match(r'^\* `\[([A-Z]+(?:-[A-Z]+)?-[0-9]+[a-z0-9]*)\]`', line)
+        if rule:
+            places.setdefault(rule.group(1), place)
+    return places
+
+
+def conformance(done):
+    """`[CONF-1]` — the profile the evidence earns: the last one, each holding the one before it, all
+    of whose rules are done; `none` below Ember Core."""
+    target = json.loads((ROOT / 'docs' / 'spec-source' / 'development-target.json').read_text(encoding='utf-8'))['path']
+    places = rule_places((ROOT / target).read_text(encoding='utf-8'))
+    earned, held, rows, short = 'none', set(), [], False
+    for name, adds in PROFILES:
+        held |= set(adds)
+        rules = sorted(rule for rule, place in places.items() if place in held)
+        missing = [rule for rule in rules if rule not in done]
+        short = short or bool(missing)
+        if not short:
+            earned = name
+        rows.append({'profile': name, 'adds': adds, 'rules': len(rules), 'done': len(rules) - len(missing), 'missing': missing})
+    return {'earned': earned, 'profiles': rows}
 
 
 def percent(done, total):
@@ -176,21 +224,35 @@ def main():
     readme = ROOT / 'README.md'
     text = readme.read_text(encoding='utf-8')
     start, end = readme_table(text)
+    profile = conformance(phases['done'])
+    evidence = json.dumps(profile, indent=2) + '\n'
+    declared = DECLARED.search((ROOT / 'compiler' / 'ember_driver' / 'src' / 'main.rs').read_text(encoding='utf-8')).group(1)
     if '--check' in sys.argv:
         if text[start:end] != new:
             print('README.md\'s phase table is not what tools/phase_progress.py computes; run it with --write.')
             print(new)
             return 1
-        print('README phase table matches the evidence')
+        if not CONFORMANCE.exists() or CONFORMANCE.read_text(encoding='utf-8') != evidence:
+            print('docs/conformance.json is not what tools/phase_progress.py computes; run it with --write.')
+            return 1
+        if declared != profile['earned']:
+            print(f"[CONF-1] the compiler claims profile `{declared}` and the evidence earns `{profile['earned']}`: "
+                  'set PROFILE in compiler/ember_driver/src/main.rs to it')
+            return 1
+        print(f"README phase table and docs/conformance.json match the evidence; profile `{declared}` [CONF-1]")
         return 0
     if '--write' in sys.argv:
         readme.write_text(text[:start] + new + text[end:], encoding='utf-8', newline='\n')
+        CONFORMANCE.write_text(evidence, encoding='utf-8', newline='\n')
     print(new)
     print()
     for phase in ORDER + ['post']:
         row = phases[phase]
         print(f"phase {phase}: {row['done_rules']}/{row['rules']} rules done, {row['done_words']}/{row['words']} words; "
               f"{len(row['untested'])} untested, {len(row['unfinished'])} unfinished")
+    print(f"\nprofile earned: {profile['earned']}, claimed: {declared} [CONF-1]")
+    for row in profile['profiles']:
+        print(f"  {row['profile']}: {row['done']}/{row['rules']} rules done")
     return 0
 
 

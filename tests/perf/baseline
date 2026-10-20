@@ -7,3 +7,5 @@ s3_skip_step_take [gcc]: D-754, 1.30x C on the Ubuntu runner
 s2_zip_and [gcc]: D-754, 1.09x C on the Ubuntu runner
 a06_enum_match [gcc]: D-754, 1.08x C on the Ubuntu runner
 s4_copied_enumerate_skip [msvc]: D-754, 1.27x C on the Windows runner (0.98x on the owner's laptop)
+w1_sum_loop [msvc]: D-755, 1.68x-1.79x C on the Windows runner since 812a1fdf (1.007x on the owner's laptop)
+s5_range_step_enumerate [msvc]: D-755, 1.34x-1.37x C on the Windows runner since 812a1fdf (1.010x on the owner's laptop)

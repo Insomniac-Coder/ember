@@ -173,7 +173,7 @@ compute the same bits, on one machine and across machines running the same binar
   **guaranteed present**; **conditionally elided** (the compiler MAY remove it with a proof and reports
   whether it did); **implementation-defined** (not constrained, such as code size; two conforming
   implementations may differ); **not observable** (erased).
-* `[COST-3]` *(changed in 0.9.9)* **The costs.**
+* `[COST-3]` *(changed in 0.9.9)* *(changed in 0.9.10)* **The costs.**
 
 | Cost | Class | Condition, and what the programmer can do |
 |---|---|---|
@@ -186,9 +186,12 @@ compute the same bits, on one machine and across machines running the same binar
 | Dynamic exclusivity check | conditionally elided | removed per `[EXC-3]`, including when nothing held anywhere could fail it; hoisted per `[EXC-8]`; covered by `mut self` (`[EXC-15]`); a load and a compare when the access is not held (`[EXC-19]`) |
 | Per-field access word | guaranteed present | one `u32` per non-`Copy` field of a non-`@sync` class, packed per class with a zero word after an odd count, and at most one check per such field on entry to a `mut self` method (`[EXC-19]`) |
 | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |
+| Downcast check | guaranteed present | `as?` and `as!` walk the base chain (`[DSP-4]`) |
+| `assert_disjoint` comparison | guaranteed present | one comparison of the two ranges, which later checks rely on; none when the ranges are known disjoint (`[DSJ-5]`) |
 | `RefCell` borrow | guaranteed present | one counter update |
 | `Cell` access | not observable | a load or a store |
 | Interface call through `dyn` | guaranteed present | one indirect call |
+| Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
 | Generic call, monomorphised | not observable | a direct, inlinable call |
 | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
 | Callable parameter (`fn(A) -> R` as a parameter) | not observable | a direct call |
@@ -204,6 +207,8 @@ compute the same bits, on one machine and across machines running the same binar
 | 64-bit `int` | guaranteed present | `int` is `i64`, so an `Array[int]` moves twice the bytes of C's 32-bit `int`; dense numeric data uses `i32`/`f32` elements (`L4003`) |
 | Sorting floats | not observable | `sort` on floats compares by IEEE totalOrder (`[TYP-37]`), a few integer instructions per compare |
 | Arena allocation | guaranteed present | a pointer bump |
+| Allocation | guaranteed present | a call that allocates (a collection growing, a `String` built), reported per site; `@noalloc` refuses it (`[EFF-1]`) |
+| `contains` | guaranteed present | the `contains` an `x in c` selects: linear for an array or view, constant for a set or map (`[STD-8a]`) |
 | Stack probe | guaranteed present | one touch per page of a frame larger than a page (`[RT-12]`); none for smaller frames |
 | FFI call | guaranteed present | one direct call for an ABI-direct C function |
 

@@ -523,13 +523,16 @@ fn main():
 
 ## XVII.8 Conformance profiles and ABI versions
 
-* `[CONF-1]` *(changed in 0.9.9)* A compiler declares the profile it implements, and claims it only
-  when every conformance test of every rule in it passes; a partial implementation claims the profile
-  below, never the one above with exceptions.
-* `[CONF-2]` **Ember Core**: Parts II–VII, X, XIII and XV's core and alloc layers.
-* `[CONF-3]` **Ember Systems**: adds Parts VIII, IX, XI, XII and XIV.
+* `[CONF-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* A compiler declares the profile it implements,
+  as `ember --version`'s `profile:` line (`none`, `core`, `systems`, `native` or `dynamic`), and claims
+  it only when every conformance test of every rule in it passes; a partial implementation claims the
+  profile below, never the one above with exceptions. Each profile holds the one before it.
+* `[CONF-2]` *(changed in 0.9.10)* **Ember Core**: Parts II–VII, X, XIII and XV's core and alloc
+  layers, which are XV.1 and XV.3–XV.6.
+* `[CONF-3]` *(changed in 0.9.10)* **Ember Systems**: adds Parts VIII, IX, XI, XII and XIV, and XV.2
+  and XV.7 (console, files, time and processes: the io layer).
 * `[CONF-4]` **Ember Native**: adds Part XVI. Annex C (C++) is a separate, optional claim.
-* `[CONF-5]` **Ember Dynamic**: adds Annex B (hot reload).
+* `[CONF-5]` *(changed in 0.9.10)* **Ember Dynamic**: adds Annex B (hot reload) to Ember Native.
 * `[ABI-1]` *(changed in 0.9.10)* The runtime ABI, the hot-reload protocol, the module protocol and the
   export-table protocol are versioned independently of the language; each version is a symbol whose
   name encodes the number (`ember_rt_init_vN`, `ember_reload_protocol_vN`, a module's marker

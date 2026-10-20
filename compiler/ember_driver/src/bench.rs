@@ -227,6 +227,31 @@ fn pin_to_core(core: usize) -> Result<(), String> {
     }
 }
 
+/// The processor's name, for the gate's report: a benchmark's ratio is a fact about the machine as
+/// much as the code (D-755), and CI's runners differ from run to run.
+fn processor() -> String {
+    #[cfg(windows)]
+    {
+        let query = std::process::Command::new("reg")
+            .args(["query", r"HKLM\HARDWARE\DESCRIPTION\System\CentralProcessor\0", "/v", "ProcessorNameString"])
+            .output();
+        query
+            .ok()
+            .and_then(|out| {
+                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                text.lines().find_map(|line| line.split("REG_SZ").nth(1).map(|name| name.trim().to_string()))
+            })
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|text| text.lines().find_map(|line| line.strip_prefix("model name").and_then(|rest| rest.split(':').nth(1)).map(|name| name.trim().to_string())))
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+}
+
 /// `[BEN-3]` — a machine running on battery is unfit for gating: its clocks follow the battery.
 fn on_battery() -> bool {
     #[cfg(windows)]
@@ -388,6 +413,11 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
     }
     pin_to_core(core)?;
     println!("{} benchmark(s), {} on core {core}, {WARMUP} untimed and {TIMED} timed runs each [BEN-1]", pairs.len(), toolchain.name());
+    let machine = format!("{} with {}", processor(), toolchain.compiler_path().display());
+    println!("machine: {machine}");
+    if std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") {
+        println!("::notice title=performance gate machine::{machine}");
+    }
     let mut failed = 0;
     let (mut passed, mut voided, mut inconclusive, mut baselined) = (0, 0, 0, 0);
     for pair in pairs {
@@ -406,11 +436,13 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         }
         let mut outcome = Verdict::Inconclusive;
         let mut shown = String::new();
+        let mut clear = false;
         for _ in 0..ATTEMPTS {
             let (e, c, c2) = time_pair(&ember, &twin, &copy, pair.stdin.as_deref())?;
             let (e, c, c2) = (side(&e), side(&c), side(&c2));
             let to_c = ratio(e, c);
             outcome = verdict(to_c, ratio(c2, c), pair.threshold);
+            clear = to_c.high <= pair.threshold;
             shown = format!(
                 "Ember {:.2} ms [{:.2}, {:.2}], C {:.2} ms [{:.2}, {:.2}], ratio {:.3} [{:.3}, {:.3}], threshold {:.2}x ({:?})",
                 e.median, e.low, e.high, c.median, c.low, c.high, to_c.median, to_c.low, to_c.high, pair.threshold, pair.category
@@ -421,6 +453,13 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         }
         let scoped = format!("{} [{}]", pair.name, toolchain.name());
         let known = baseline.iter().find(|(name, _)| *name == pair.name || *name == scoped).map(|(_, reason)| reason.as_str());
+        // `[TST-29]` — a known failure leaves the baseline only on a clear pass, its whole interval
+        // under the threshold; a pass within the noise keeps it known (D-755: `s4` at 1.020x
+        // [0.996, 1.065] was called a pass and failed the gate).
+        let outcome = match outcome {
+            Verdict::Pass if known.is_some() && !clear => Verdict::Inconclusive,
+            other => other,
+        };
         match (&outcome, known) {
             (Verdict::Fail(_), Some(_)) => baselined += 1,
             (Verdict::Pass, Some(_)) | (Verdict::Fail(_), None) => failed += 1,

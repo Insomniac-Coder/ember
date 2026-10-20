@@ -379,6 +379,32 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-152 — Costs the compiler reports with no row in the table — **CLOSED**
+
+    ID:        ODR-152
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_25
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_24.md [COST-3], [COST-5]
+
+**The question.** Building `[COST-5]`'s check showed five implicit costs that `ember inspect --cost` reports under names the table of `[COST-3]` does not have: a virtual method call (`[DSP-2]`), a downcast (`[DSP-4]`), an `assert_disjoint` comparison (`[DSJ-5]`), an allocation in a call (`[EFF-1]`) and the `contains` an `x in c` selects (`[STD-8a]`).
+
+**Ruling.** Ruled under the delegation: the table gains the five rows; a virtual call is conditionally elided (`[DSP-5]`), the rest guaranteed present. ADR-237.
+
+---
+
+## ODR-151 — Where a compiler declares its profile, and what XV's layers are — **CLOSED**
+
+    ID:        ODR-151
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_25
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_24.md [CONF-1], [CONF-2], [CONF-3], [CONF-5]
+
+**The question.** `[CONF-1]` says a compiler declares its profile but not where. `[CONF-2]` gives Ember Core "XV's core and alloc layers", which `[STD-6]` defines by content, not by section, and no profile names the io layer's sections (XV.2, XV.7). `[CONF-5]` does not say which profile Ember Dynamic adds to.
+
+**Ruling.** Ruled under the delegation: `ember --version`'s `profile:` line; profiles are cumulative; XV.1 and XV.3–XV.6 are Core's, XV.2 and XV.7 Systems'; Dynamic adds Annex B to Native. ADR-236.
+
+---
+
 ## ODR-150 — Examples that the rules refuse — **CLOSED**
 
     ID:        ODR-150

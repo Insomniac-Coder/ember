@@ -235,11 +235,11 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[CONF-1]` | XVII | A compiler declares the profile it implements, and claims it only … |
-| `[CONF-2]` | XVII | Ember Core: Parts II–VII, X, XIII and XV's core and alloc layers. |
-| `[CONF-3]` | XVII | Ember Systems: adds Parts VIII, IX, XI, XII and XIV. |
+| `[CONF-1]` | XVII | *(changed in 0.9.10)* A compiler declares the profile it implements, … |
+| `[CONF-2]` | XVII | *(changed in 0.9.10)* Ember Core: Parts II–VII, X, XIII and XV's core … |
+| `[CONF-3]` | XVII | *(changed in 0.9.10)* Ember Systems: adds Parts VIII, IX, XI, XII and … |
 | `[CONF-4]` | XVII | Ember Native: adds Part XVI. Annex C (C++) is a separate, optional … |
-| `[CONF-5]` | XVII | Ember Dynamic: adds Annex B (hot reload). |
+| `[CONF-5]` | XVII | *(changed in 0.9.10)* Ember Dynamic: adds Annex B (hot reload) to … |
 
 ## CORO
 
@@ -265,7 +265,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[COST-1]` | X | Zero cost, defined. An abstraction is zero-cost *for a use* whose … |
 | `[COST-2]` | X | Every implicit cost is one of: guaranteed elided (emitting it is a … |
-| `[COST-3]` | X | The costs. |
+| `[COST-3]` | X | *(changed in 0.9.10)* The costs. |
 | `[COST-4]` | X | `ember inspect --cost <item>` prints every row that applies to an … |
 | `[COST-5]` | X | A rule that introduces an implicit cost MUST add a row to this table; … |
 

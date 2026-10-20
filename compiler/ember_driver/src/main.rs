@@ -505,6 +505,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "--version" | "-V" => {
+            // `[CONF-1]` — the profile this compiler claims. Raise it only when every rule of the next
+            // profile is done: `tools/phase_progress.py --check` compares it with the evidence
+            // (`docs/conformance.json`) and fails CI on any difference, either way.
+            const PROFILE: &str = "none";
             if args.iter().any(|argument| argument == "--matrix") {
                 return Err("error[E0900]: `ember --version --matrix` is not implemented yet".to_string());
             }
@@ -520,7 +524,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             if json {
                 println!("{}", serde_json::json!({
                     "schema": 1, "version": env!("CARGO_PKG_VERSION"), "language": ember_parser::LANGUAGE_VERSION,
-                    "backend": "c", "c_compiler": compiler, "linker": linker,
+                    "backend": "c", "c_compiler": compiler, "linker": linker, "profile": PROFILE,
                 }));
             } else {
                 println!("ember {}", env!("CARGO_PKG_VERSION"));
@@ -528,6 +532,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 println!("backend: c");
                 println!("C compiler: {compiler}");
                 println!("linker: {linker}");
+                println!("profile: {PROFILE}");
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -1426,7 +1431,9 @@ fn inspect_safety(
 }
 
 /// `[COST-3]` — a check's row of the cost table, by its kind.
-fn check_cost_row(kind: &str, mechanism: &str) -> &'static str {
+/// `[COST-5]` — `tools/rule_index.py` reads the rows named here and in `safety_costs_json`'s `add`
+/// calls, and fails CI on one the table of `[COST-3]` does not have: name a new row with a literal.
+fn check_cost_row<'a>(kind: &'a str, mechanism: &str) -> &'a str {
     match (kind, mechanism) {
         ("Bounds", _) => "Bounds check on `a[i]`",
         ("Overflow", _) => "Overflow check on integer arithmetic",
@@ -1435,7 +1442,8 @@ fn check_cost_row(kind: &str, mechanism: &str) -> &'static str {
         ("Aliasing", _) => "Dynamic exclusivity check",
         ("Borrow", _) => "`RefCell` borrow",
         ("Downcast", _) => "Downcast check",
-        _ => "Runtime check",
+        // A kind this compiler does not emit (a side table from another version): shown as named.
+        _ => kind,
     }
 }
 
@@ -1452,7 +1460,10 @@ fn inspect_cost(path: &Path, function: Option<&str>, json: bool) -> Result<ExitC
     for check in value.get("checks").and_then(serde_json::Value::as_array).into_iter().flatten() {
         let (kind, mechanism, status) = (field(check, "kind"), field(check, "mechanism"), field(check, "status"));
         let row = check_cost_row(&kind, &mechanism);
-        let class = if row == "`assert_disjoint` comparison" { "guaranteed present" } else { "conditionally elided" };
+        let class = match row {
+            "`assert_disjoint` comparison" | "`RefCell` borrow" | "Downcast check" => "guaranteed present",
+            _ => "conditionally elided",
+        };
         let what = if status == "elided" || check.get("classification").and_then(serde_json::Value::as_str) == Some("DYNAMIC_HOISTED_LOOP") {
             let proof = check.get("proof").and_then(serde_json::Value::as_str).map(str::to_string).unwrap_or_else(|| field(check, "reason"));
             format!("removed: {mechanism} ({proof})")
@@ -2379,7 +2390,7 @@ fn safety_costs_json(
             let span = block.terminator_span;
             match func {
                 ember_mir::FuncRef::Interface { .. } => add("Interface call through `dyn`", "guaranteed present", span, &body.name, "one indirect call".to_string()),
-                ember_mir::FuncRef::Virtual { .. } => add("Virtual method call", "guaranteed present", span, &body.name, "one indirect call through the class's method table".to_string()),
+                ember_mir::FuncRef::Virtual { .. } => add("Virtual method call", "conditionally elided", span, &body.name, "one indirect call through the class's method table".to_string()),
                 ember_mir::FuncRef::Indirect { .. } => add("Owned callable value", "guaranteed present", span, &body.name, "one indirect call".to_string()),
                 ember_mir::FuncRef::Direct { symbol, .. } => {
                     if let Some(callee) = by_symbol.get(symbol.as_str()) && callee.contracts.foreign.is_some() {

@@ -763,7 +763,8 @@ fn tcb_lists_each_category_and_audit_summarises() {
 /// conditionally elided cost whether each site's was removed and by which proof. `[PHIL-15]` — the
 /// costs the language inserts unwritten are each reported by site: bounds and overflow checks, a
 /// count operation, a dynamic exclusivity check, an indirect call, an allocation. `[STD-8a]` — which
-/// `contains` an `x in c` selects: a scan of an `Array`, linear; a `Set`'s, constant.
+/// `contains` an `x in c` selects: a scan of an `Array`, linear; a `Set`'s, constant. `[COST-5]` — each
+/// row it prints is one of the table's.
 #[test]
 fn inspect_cost_reports_each_row_by_site() {
     let root = workspace_root();
@@ -818,6 +819,25 @@ fn inspect_cost_reports_each_row_by_site() {
     let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--cost --json is JSON");
     let rows = value["costs"].as_array().expect("the rows");
     assert!(rows.iter().any(|row| row["row"] == "Allocation" && row["class"] == "guaranteed present"), "{}", json.stdout);
+    // `[COST-5]` — every cost the compiler reports has its row in the table of `[COST-3]`, with that
+    // row's class (`tools/rule_index.py` checks the names the compiler can print at all).
+    let pin = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the pin reads");
+    let path = pin.split("\"path\": \"").nth(1).and_then(|rest| rest.split('"').next()).expect("the pin names a document");
+    let document = std::fs::read_to_string(root.join(path)).expect("the development target reads");
+    let table: Vec<(String, String)> = document[document.find("| Cost | Class |").expect("the cost table")..]
+        .lines()
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            (cells[1].to_string(), cells[2].to_string())
+        })
+        .collect();
+    for row in rows {
+        let (name, class) = (row["row"].as_str().unwrap_or(""), row["class"].as_str().unwrap_or(""));
+        let stated = table.iter().find(|(row, _)| row == name).map(|(_, class)| class.as_str());
+        assert!(stated.is_some_and(|stated| stated.starts_with(class)), "[COST-5] `{name}` [{class}] is not the table's: {stated:?}");
+    }
 }
 
 /// `[CLI-10]` — `ember build --report=engine` is a report, not a profile: the program's C is the
@@ -6957,6 +6977,48 @@ fn the_three_versions_are_separate() {
         .find_map(|line| line.strip_prefix(&format!("#define {}_RUNTIME_ABI ", ember_branding::SYMBOL_PREFIX.to_uppercase())))
         .expect("the runtime header defines its ABI version");
     assert!(abi.trim().parse::<u32>().is_ok(), "the runtime ABI version is a number: {abi}");
+}
+
+/// `[CONF-1]` — `ember --version` declares the profile the compiler claims, and the claim is the one
+/// the evidence earns (`docs/conformance.json`, which `tools/phase_progress.py --check` keeps current:
+/// the last profile all of whose rules are done). `[CONF-2]`–`[CONF-5]` (ODR-151) — each profile
+/// adds to the one before it what the specification lists.
+#[test]
+fn ember_version_declares_the_profile_the_evidence_earns() {
+    let root = workspace_root();
+    let evidence: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("docs/conformance.json")).expect("the evidence reads"))
+            .expect("the evidence is JSON");
+    let profiles: Vec<(String, Vec<String>)> = evidence["profiles"]
+        .as_array()
+        .expect("a list of profiles")
+        .iter()
+        .map(|row| {
+            let adds = row["adds"].as_array().expect("what it adds").iter().map(|part| part.as_str().unwrap().to_string());
+            (row["profile"].as_str().expect("a name").to_string(), adds.collect())
+        })
+        .collect();
+    let stated = [
+        ("core", "II III IV V VI VII X XIII XV.1 XV.3 XV.4 XV.5 XV.6"),
+        ("systems", "VIII IX XI XII XIV XV.2 XV.7"),
+        ("native", "XVI"),
+        ("dynamic", "Annex B"),
+    ];
+    let stated: Vec<(String, Vec<String>)> = stated
+        .iter()
+        .map(|(name, adds)| {
+            let adds = if *name == "dynamic" { vec![adds.to_string()] } else { adds.split(' ').map(str::to_string).collect() };
+            (name.to_string(), adds)
+        })
+        .collect();
+    assert_eq!(profiles, stated, "the profiles are not the specification's");
+
+    let earned = evidence["earned"].as_str().expect("the earned profile");
+    let text = ember(&["--version"], &root);
+    assert!(text.stdout.lines().any(|line| line == format!("profile: {earned}")), "{}", text.stdout);
+    let json = ember(&["--version", "--json"], &root);
+    let value: serde_json::Value = serde_json::from_str(json.stdout.trim()).expect("--version --json is JSON");
+    assert_eq!(value["profile"], earned);
 }
 
 /// A package for `ember test` in a directory of its own: its manifest and
