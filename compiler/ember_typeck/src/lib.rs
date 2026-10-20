@@ -4635,6 +4635,7 @@ impl<'a> Checker<'a> {
         let (code, why) = match why.split_once("] ") {
             Some(("[E5031", rest)) => (codes::E5031, rest),
             Some(("[E5061", rest)) => (codes::E5061, rest),
+            Some(("[E5055", rest)) => (codes::E5055, rest),
             _ => (codes::E1010, why.as_str()),
         };
         let diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}"))

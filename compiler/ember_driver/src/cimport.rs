@@ -39,6 +39,8 @@ pub struct Config<'a> {
     pub binding: &'a str,
     /// `[FFI-17]` — for `import cpp`: the C++ standard the header is parsed with (`c++17`).
     pub cpp: Option<&'a str>,
+    /// `[FFI-17b]` — the explicit template instantiations to import: `"Vec<int>"`, `"max<double>"`.
+    pub instantiate: &'a [String],
 }
 
 /// `[FFI-30]` — a C declaration (by Clang's USR) an import of the build wrote: one Ember entity
@@ -222,6 +224,21 @@ extern "C" fn gather(cursor: CXCursor, _: CXCursor, data: CXClientData) -> CXChi
     // SAFETY(ffi): `data` is the `Vec` `children` passes, alive for the visit.
     unsafe { (*(data as *mut Vec<CXCursor>)).push(cursor) };
     CXChildVisit_Continue
+}
+
+extern "C" fn gather_field(cursor: CXCursor, data: CXClientData) -> CXVisitorResult {
+    // SAFETY(ffi): `data` is the `Vec` `fields` passes, alive for the visit.
+    unsafe { (*(data as *mut Vec<CXCursor>)).push(cursor) };
+    CXVisit_Continue
+}
+
+/// `[FFI-17b]` — a record's fields as its type has them: a template specialization's, which its
+/// cursor's children do not show.
+fn record_fields(ty: CXType) -> Vec<CXCursor> {
+    let mut out: Vec<CXCursor> = Vec::new();
+    // SAFETY(ffi): the visitor only pushes into `out`, which outlives the call.
+    unsafe { clang_Type_visitFields(ty, gather_field, &mut out as *mut Vec<CXCursor> as CXClientData) };
+    out
 }
 
 fn children(cursor: CXCursor) -> Vec<CXCursor> {
@@ -426,6 +443,33 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         return Err(errors.join("\n"));
     }
     let inclusions = unit.inclusions();
+    // `[FFI-17b]` — each listed instantiation, declared after the header: a class template's
+    // explicitly instantiated and named, a function template's address taken.
+    let unit = if config.cpp.is_some() && !config.instantiate.is_empty() {
+        let prefix = ember_branding::SYMBOL_PREFIX;
+        let mut source = include.clone();
+        for (index, written) in config.instantiate.iter().enumerate() {
+            let id = written.trim().trim_start_matches("::");
+            let template = id.split('<').next().unwrap_or(id).trim();
+            match find_template(unit.cursor(), template) {
+                Some(CXCursor_ClassTemplate) => {
+                    let _ = writeln!(source, "template class ::{id};\nusing {prefix}_inst_{index} = ::{id};");
+                }
+                Some(_) => {
+                    let _ = writeln!(source, "constexpr auto {prefix}_inst_{index} = &::{id};");
+                }
+                None => return Err(format!("`instantiate` names `{written}`, and `{}` declares no template `{template}` ([FFI-17b])", config.header)),
+            }
+        }
+        let instantiated = Unit::parse(&main, &source, &args)?;
+        let errors: Vec<String> = instantiated.notes().into_iter().filter(|note| note.error).map(|note| note.text).collect();
+        if !errors.is_empty() {
+            return Err(format!("the instantiations `instantiate` lists do not compile:\n{}", errors.join("\n")));
+        }
+        instantiated
+    } else {
+        unit
+    };
     let header = inclusions.iter().find(|(_, depth)| *depth == 1).map(|(file, _)| file.clone()).ok_or_else(|| format!("`{}` was not found", config.header))?;
     let files: Vec<String> = inclusions.into_iter().filter(|(_, depth)| *depth > 0).map(|(file, _)| file).collect();
     let header_path = std::path::absolute(from_dir.join(&header)).unwrap_or_else(|_| PathBuf::from(&header));
@@ -454,6 +498,14 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         if in_header(cursor) {
             writer.declaration(cursor);
         }
+    }
+    // `[FFI-17b]` — the instantiations, each under a name made of its template-id (`Vec<int>` is
+    // `Vec_int`), in its template's namespace.
+    let prefix = format!("{}_inst_", ember_branding::SYMBOL_PREFIX);
+    for cursor in children(unit.cursor()) {
+        let Some(index) = spelling(cursor).strip_prefix(&prefix).and_then(|index| index.parse::<usize>().ok()) else { continue };
+        let written = config.instantiate[index].trim().trim_start_matches("::").to_string();
+        writer.instantiation(cursor, &written);
     }
     // `[FFI-6a]` — the object-like macros, evaluated by Clang in a second parse.
     let macros = writer.macro_names.clone();
@@ -605,6 +657,8 @@ struct Writer {
     nothrow: HashMap<String, bool>,
     /// The thunks written, for their names.
     thunks: usize,
+    /// `[FFI-17b]` — the function template specialization being imported, as C++ names it.
+    callee: Option<String>,
     anonymous_namespace: Vec<Skipped>,
     rvalue_members: Vec<Skipped>,
     /// `[FFI-41]` — the namespace being written, each declaration's (by USR), every namespace with
@@ -687,7 +741,7 @@ impl Writer {
             }
             CXCursor_ClassTemplate | CXCursor_FunctionTemplate | CXCursor_ClassTemplatePartialSpecialization => {
                 let name = spelling(cursor);
-                self.skip(cursor, &name, "a template: only the explicit instantiations `instantiate=[…]` lists are imported ([FFI-17b])");
+                self.skip(cursor, &name, "[E5055] a C++ template: only the explicit instantiations `instantiate=[…]` lists are imported, and no Ember code, generic or not, instantiates one ([FFI-17b])");
             }
             CXCursor_ClassDecl => {
                 // SAFETY(ffi): a live cursor.
@@ -1042,7 +1096,10 @@ impl Writer {
             let mut bits = Vec::new();
             let mut anonymous = 0;
             let mut members_seen = HashSet::new();
-            for child in children(definition) {
+            // A class template's specialization shows its fields only through its type.
+            let specialized = self.cpp && clang_Cursor_isNull(clang_getSpecializedCursorTemplate(definition)) == 0;
+            let members = if specialized { record_fields(ty) } else { children(definition) };
+            for child in members {
                 match kind(child) {
                     CXCursor_PackedAttr => packed = true,
                     // A record declared inside is a member only when it is an anonymous one.
@@ -1523,7 +1580,8 @@ impl Writer {
             let result_ty = clang_getResultType(ty);
             let arguments = passed.join(", ");
             let call = match member {
-                None | Some((_, Member::Static, _)) => format!("{}({arguments})", qualified_name(cursor)),
+                None => format!("{}({arguments})", self.callee.clone().unwrap_or_else(|| qualified_name(cursor))),
+                Some((_, Member::Static, _)) => format!("{}({arguments})", qualified_name(cursor)),
                 Some((_, Member::Method | Member::MutMethod, _)) => format!("self->{}({arguments})", spelling(cursor)),
                 Some((_, Member::Constructor, class)) => format!("{class}({arguments})"),
                 Some((_, Member::BoxedConstructor, class)) => format!("new {class}({arguments})"),
@@ -1623,6 +1681,36 @@ impl Writer {
                     Ok((mapped, c_declaration(clang_getCanonicalType(ty), name), name.to_string()))
                 }
             }
+        }
+    }
+
+    /// `[FFI-17b]` — an explicit instantiation `instantiate=[…]` lists: a class template's
+    /// specialization as a class of the module, or a function template's as a function.
+    fn instantiation(&mut self, cursor: CXCursor, written: &str) {
+        let name = instance_name(written);
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            if kind(cursor) == CXCursor_TypeAliasDecl {
+                let class = clang_getTypeDeclaration(clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor)));
+                let saved = std::mem::replace(&mut self.writing, namespace_of(class));
+                let record = self.record(class, Some(&name));
+                self.cpp_members(class, record);
+                self.writing = saved;
+                return;
+            }
+            let Some(function) = referenced_function(cursor) else {
+                self.skip(cursor, &name, "an instantiation Clang names no function for");
+                return;
+            };
+            let saved = std::mem::replace(&mut self.writing, namespace_of(function));
+            self.callee = Some(format!("::{written}"));
+            match self.cpp_thunk(function, &name, None) {
+                Ok(made) if self.claim(&name) => self.functions.push(Function { namespace: self.writing.clone(), ..made }),
+                Ok(_) => self.skip(cursor, &name, "its name is taken by another declaration of the header"),
+                Err(reason) => self.skip(cursor, &name, reason),
+            }
+            self.callee = None;
+            self.writing = saved;
         }
     }
 
@@ -1841,6 +1929,53 @@ impl Writer {
     }
 }
 
+/// `[FFI-17b]` — the template a template-id names, by its qualified name (`engine::Vec`), if the
+/// header declares one: a class template's cursor kind or a function template's.
+fn find_template(cursor: CXCursor, wanted: &str) -> Option<CXCursorKind> {
+    for child in children(cursor) {
+        match kind(child) {
+            CXCursor_Namespace | CXCursor_LinkageSpec => {
+                if let Some(found) = find_template(child, wanted) {
+                    return Some(found);
+                }
+            }
+            CXCursor_ClassTemplate | CXCursor_FunctionTemplate if qualified_name(child).trim_start_matches("::") == wanted => return Some(kind(child)),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `[FFI-17b]` — the function a `&::max<double>` names.
+fn referenced_function(cursor: CXCursor) -> Option<CXCursor> {
+    for child in children(cursor) {
+        // SAFETY(ffi): cursors of a live translation unit.
+        let referenced = unsafe { clang_getCursorReferenced(child) };
+        if kind(child) == CXCursor_DeclRefExpr && kind(referenced) == CXCursor_FunctionDecl {
+            return Some(referenced);
+        }
+        if let Some(found) = referenced_function(child) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// `[FFI-17b]` — an instantiation's Ember name, made of its template-id: `Vec<int>` is `Vec_int`,
+/// `Pair<int, float>` is `Pair_int_float`.
+fn instance_name(written: &str) -> String {
+    let template = written.rsplit("::").next().unwrap_or(written);
+    let mut name = String::new();
+    for c in template.chars() {
+        if c.is_ascii_alphanumeric() {
+            name.push(c);
+        } else if !name.ends_with('_') {
+            name.push('_');
+        }
+    }
+    name.trim_end_matches('_').to_string()
+}
+
 /// `[FFI-41]` — the namespaces a declaration is in, outermost first.
 fn namespace_of(cursor: CXCursor) -> Vec<String> {
     let mut path = Vec::new();
@@ -1892,6 +2027,15 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
     // (a class's question, the USR, the question)
     fn gather(cursor: CXCursor, in_header: &dyn Fn(CXCursor) -> bool, out: &mut Vec<(bool, String, String)>) {
         for child in children(cursor) {
+            // `[FFI-17b]` — a class template's instantiation `instantiate=[…]` lists.
+            if kind(child) == CXCursor_TypeAliasDecl && spelling(child).starts_with(&format!("{}_inst_", ember_branding::SYMBOL_PREFIX)) {
+                // SAFETY(ffi): types of a live translation unit.
+                let ty = unsafe { clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(child)) };
+                let spelled = cpp_spelling(ty);
+                // SAFETY(ffi): as above.
+                out.push((true, usr(unsafe { clang_getTypeDeclaration(ty) }), format!("__is_trivially_copyable({spelled}) && __is_standard_layout({spelled})")));
+                continue;
+            }
             if !in_header(child) {
                 continue;
             }
@@ -2346,6 +2490,7 @@ pub fn load(
         shared: &known.shared,
         binding: bound.as_str(),
         cpp: project.as_ref().map(|(standard, ..)| standard.as_str()),
+        instantiate: &options.instantiate,
     };
     // `[FFI-7]` — the overlays are part of what the record is for.
     let overlay_text = options
@@ -2388,11 +2533,19 @@ pub fn load(
             header: shown.clone(),
         });
     }
-    for skipped in &imported.skipped {
+    // `[FFI-17b]` — a template is not reported: it is imported only as its instantiations, and
+    // naming it is `E5055`. The code a reason carries for the type checker is not shown here.
+    for skipped in imported.skipped.iter().filter(|skipped| !skipped.reason.starts_with("[E5055]")) {
+        let reason = skipped.reason.split_once("] ").filter(|(tag, _)| tag.starts_with("[E")).map_or(skipped.reason.as_str(), |(_, rest)| rest);
+        let help = if cpp {
+            "to use it, wrap it in a C++ function of a header of yours whose types Ember has"
+        } else {
+            "to use it, declare it by hand in an `unsafe extern \"C\":` block with types Ember has, or wrap it in a C function the header declares"
+        };
         sink.emit(
-            Diagnostic::warning(codes::W5002, span, format!("`{}` is not imported from `{shown}`: {}", skipped.name, skipped.reason))
+            Diagnostic::warning(codes::W5002, span, format!("`{}` is not imported from `{shown}`: {reason}", skipped.name))
                 .note(format!("declared at {} [FFI-20a]", skipped.at))
-                .help("to use it, declare it by hand in an `unsafe extern \"C\":` block with types Ember has, or wrap it in a C function the header declares"),
+                .help(help),
         );
     }
     // `[FFI-40]` — `&&`-qualified members.
@@ -3172,6 +3325,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
                 member(function.abi, raw);
                 catching |= policy != Policy::Direct;
                 match owner {
+                    Some(_) if wrapper.is_empty() => {}
                     Some((owner, _)) => match extensions.iter_mut().find(|(of, _)| of == owner) {
                         Some((_, methods)) => methods.push_str(&wrapper),
                         None => extensions.push((owner.clone(), wrapper)),
@@ -3444,6 +3598,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         shared: &shared,
         binding: if emit_cpp { "cpp" } else { "c" },
         cpp: emit_cpp.then_some(standard.as_str()),
+        instantiate: &[],
     };
     let (imported, files) = import_header(&config)?;
     if emit_cpp {
