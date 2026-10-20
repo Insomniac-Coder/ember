@@ -3265,6 +3265,17 @@ fn resolve_package_import(
     Some((found, path, file))
 }
 
+/// `[RFL-2]`, `[SER-1]` — an attribute written as `std.ser`'s declarations: `@reflect`, or a
+/// `@derive` of `Serialize` or `Deserialize`.
+fn names_std_ser(attr: &ember_ast::Attribute) -> bool {
+    let name = |path: &[ember_ast::Ident], wanted: &[&str]| path.len() == 1 && wanted.iter().any(|w| path[0].name.is(w));
+    name(&attr.path, &["reflect"])
+        || name(&attr.path, &["derive"])
+            && attr.args.iter().any(|arg| matches!(arg,
+                ember_ast::AttrArg::Expr(ember_ast::Expr { kind: ember_ast::ExprKind::Path { segments }, .. })
+                    if name(segments, &["Serialize", "Deserialize"])))
+}
+
 fn load_modules(
     root: ember_ast::Module,
     root_dir: &Path,
@@ -3356,6 +3367,11 @@ fn load_package_modules(
             let removed = matches!(&import.kind, ember_ast::ImportKind::Items { items, glob: false, .. }
                 if items.iter().all(|item| item.name.name.as_str().starts_with("with_views")));
             wanted.push((names, import.span, removed, resolved.map(|(found, _, file)| (found, file))));
+        }
+        // `[RFL-2]`, `[SER-1]` — `@reflect` and the serialisation derives are written as `std.ser`'s
+        // declarations, so that module is loaded wherever they are, imported or not.
+        if module.items.iter().any(|item| item.attrs.iter().any(names_std_ser)) {
+            wanted.push((vec![ember_branding::STD_PACKAGE.to_string(), "ser".to_string()], ember_span::Span::DUMMY, false, None));
         }
 
         // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty

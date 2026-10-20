@@ -1389,6 +1389,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         },
         // `[DET-2]` — the system random source (`RandomState`'s seed).
         B::ProcessKey => (Effects::NONDET, "the process's random hash key"),
+        B::ClassTypeInfo { .. } => (Effects::NONE, ""),
         B::Runtime(function) => function.effects(),
         // A reload loads a library, allocates and may run `migrate_from` and `drop` code.
         B::HotCheckpoint => (Effects::ALLOC | Effects::IO | Effects::NONDET, "`std.hot.checkpoint`"),

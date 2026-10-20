@@ -535,3 +535,31 @@ fn debug_display(name: ast::Ident, generics: &[ast::GenericParam], span: Span) -
     let body = ret(Some(call(path(&[Symbol::intern("std.fmt.implicit_fmt_debug")], span), vec![self_expr(span), f], span)), span);
     extend_item(&bounded(generics, "std.core.Debug", span), owner_type(name, generics), vec![named_type("std.core.Display", span)], vec![fmt_member(body, span)], span)
 }
+
+/// `[RFL-2]` — `@reflect` on a struct, an enum or a class is `extend T implements std.ser.Reflect`
+/// over the declaration's own parameters: the bound `type_info[T]()` asks for.
+pub(crate) fn desugar_reflect(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> {
+    let reflected = |item: &ast::Item| {
+        matches!(item.kind, ast::ItemKind::Struct(_) | ast::ItemKind::Enum(_) | ast::ItemKind::Class(_))
+            && item.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("reflect"))
+    };
+    if !modules.iter().any(|loaded| loaded.module.items.iter().any(reflected)) {
+        return None;
+    }
+    let mut out = modules.to_vec();
+    for loaded in &mut out {
+        let mut generated = Vec::new();
+        for item in loaded.module.items.iter().filter(|item| reflected(item)) {
+            let (name, generics) = match &item.kind {
+                ast::ItemKind::Struct(decl) => (decl.name, &decl.generics),
+                ast::ItemKind::Enum(decl) => (decl.name, &decl.generics),
+                ast::ItemKind::Class(decl) => (decl.name, &decl.generics),
+                _ => continue,
+            };
+            let reflect = named_type("std.ser.Reflect", item.span);
+            generated.push(extend_item(generics, owner_type(name, generics), vec![reflect], Vec::new(), item.span));
+        }
+        loaded.module.items.extend(generated);
+    }
+    Some(out)
+}

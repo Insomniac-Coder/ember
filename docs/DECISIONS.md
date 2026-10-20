@@ -5017,6 +5017,24 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-250 — Reflection: `reflect[T]()`, `@reflect` and user attributes (`[RFL-1]`..`[RFL-3]`, `[RT-3]`, ODR-158)
+
+2026-10-20. `std.ser` declares the descriptions (ODR-158, cut as `0.9.10_Hardened_29`); the
+compiler knows `reflect` and `type_info` by name there. `reflect[T]()` is checked only where compile
+time evaluates (`E6010` elsewhere) and writes the `TypeDesc` value in place: the type's name,
+kind, layout, fields with their offsets (an enum's payload fields where `enum_layout` puts them,
+`TypeTable::variant_field_offsets`; a class's after the header, `class_field_offsets`), variants with
+their discriminants, and the attributes written on the type, each field and each variant, recorded
+before any attribute is checked. `@reflect` is desugared to `extend T implements std.ser.Reflect`;
+`type_info[T]()` evaluates `T`'s description while compiling, once for each type, and places it as a
+constant static, returned by reference. For `h.type_info()`, each `@reflect` class's type information
+gains a function returning its description (`ember_type_info.reflect`, a function because a
+reloadable image's constant data is the runtime's), which the runtime ABI records: version 3,
+`ember_rt_init_v3`. A user attribute (`@attribute` struct) is checked as its constructor call once
+every type is collected, and its arguments' values are written into the description as checked in
+the module that wrote them. The driver loads `std.ser` wherever `@reflect` or a serialisation derive is
+written. D-777: a `static` holding a view made only of literals was refused.
+
 ## ADR-249 — `[LAY-2]`'s last two layouts (ODR-157), and ODR-156 cut (`0.9.10_Hardened_28`)
 
 2026-10-20. `@align(N)` on an enum without payloads is built: such an enum was its bare

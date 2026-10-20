@@ -1569,6 +1569,9 @@ pub enum Builtin {
     /// `[HASH-2]` — word `which` of the process's hash key, drawn once from
     /// the operating system: `std.collections.process_key`.
     ProcessKey,
+    /// `[RFL-2]`, `[RT-3]` — `h.type_info()` on a `@reflect` class handle: the description of the
+    /// object's own class, which its type information reaches. `result` is `ref TypeInfo`.
+    ClassTypeInfo { result: Ty },
     /// `[HR-33]` — `std.hot.checkpoint()`: where the program lets a waiting reload apply.
     HotCheckpoint,
     /// `[STD-15]` — `xs.sort()` (stable, in `Ord`'s order), `xs.reverse()`,
@@ -2059,6 +2062,7 @@ impl Builtin {
             Builtin::FormatWith(_) => "format",
             Builtin::StrContains | Builtin::StrContainsChar => "contains",
             Builtin::ProcessKey => "process_key",
+            Builtin::ClassTypeInfo { .. } => "type_info",
             Builtin::HotCheckpoint => "checkpoint",
             Builtin::ArraySort => "sort",
             Builtin::ArrayReverse => "reverse",

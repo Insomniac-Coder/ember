@@ -436,6 +436,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-155 | ruled under the delegation: Annex A's map comprehension names its type (`index: Map[str, int] = …`), and its `unsafe:` block carries a safety note; the annex is generated from `docs/spec-source/appendix-a.em`, which compiles | `[TST-6]`, `[TYP-38]`, `[UNS-8]` |
 | ODR-156 | the owner's answer: a C++ parameter that keeps the pointer takes a `Retained` token the program holds (`tok = Retained.pin(self)`, then `tok`); `self` there is `E5060`; a parameter borrowed for the call takes `self` | `[FFI-39c]`, `[FFI-23]` |
 | ODR-157 | ruled under the delegation: a `@packed` type holding a SIMD vector is `E0104`, as one holding an `@align` type is (ODR-138); a vector's alignment is its size (`[SIMD-1]`) | `[LAY-2]`, `[SIMD-1]` |
+| ODR-158 | ruled under the delegation: `std.ser`'s descriptions own their text (`String`) and arrays; a field names its type by name; a class field's offset counts from the end of the header; attribute arguments are `(name, AttrValue)` pairs and an `@attribute` struct's fields are numbers, text, `bool` or `char` (`E0104`); `@reflect` implements `std.ser.Reflect` (`type_info` needs it, `E2040`), inherited by derived classes; `reflect[T]()` outside compile time is `E6010` | `[RFL-1]`, `[RFL-2]`, `[RFL-3]`, `[RT-3]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1119,3 +1120,18 @@ Generated: every rule whose text differs from 0.9.10_Hardened_27.
 | Rule | 0.9.10_Hardened_27 → 0.9.10_Hardened_28 |
 |---|---|
 | `[FFI-39c]` | changed |
+
+## H.34 Changes in 0.9.10_Hardened_29 (from 0.9.10_Hardened_28)
+
+**0.9.10_Hardened_29** records ODR-158, ruled under the delegation when reflection was built (`[RFL-1]`..`[RFL-3]`, `[RT-3]`, `docs/DECISIONS.md` ADR-250). The rules name `TypeDesc`, `TypeInfo` and their descriptors without declaring them; §XIV.2 now says what `std.ser` declares:
+
+* A description owns its text and arrays (`String`, `Array`), so it is no view and lives in a `static`, not a `const`; `TypeInfo` is `TypeDesc`.
+* A field names its type by name, since a description of each field's type would not end for a recursive type; a class field's offset is counted from the end of the runtime's object header.
+* An attribute is its name and `(name, AttrValue)` pairs: a user attribute's arguments named by the fields they set, a built-in's positional ones by position, a name argument as its text; an `@attribute` struct's fields are `int`, `float`, `str`, `String`, `bool` or `char` (`E0104`).
+* `@reflect` implements `std.ser.Reflect`, which `type_info[T]()` asks for (`E2040`); a class derived from a `@reflect` class is `@reflect`; `reflect[T]()` where compile time does not evaluate is `E6010`.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_28.
+
+| Rule | 0.9.10_Hardened_28 → 0.9.10_Hardened_29 |
+|---|---|
+

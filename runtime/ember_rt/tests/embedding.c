@@ -96,7 +96,7 @@ int main(void) {
     ember_rt_shutdown();
     if (strcmp(g_events, "host;") != 0) return 15;
     /* [ABI-3] A module built against another runtime ABI is refused before anything else. */
-    if (ember_rt_module_init_v2(&cfg, EMBER_RUNTIME_ABI + 1) != EMBER_MODULE_INIT_ABI_MISMATCH) return 16;
+    if (ember_rt_module_init_v3(&cfg, EMBER_RUNTIME_ABI + 1) != EMBER_MODULE_INIT_ABI_MISMATCH) return 16;
     printf("ok\n");
     return 0;
 }

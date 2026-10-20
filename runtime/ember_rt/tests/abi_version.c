@@ -10,7 +10,7 @@
 int main(void) {
     if (ember_rt_abi_version() != EMBER_RUNTIME_ABI) return 1;
     /* A caller built for the next version: refused, the runtime untouched. */
-    if (ember_rt_init_v2(NULL, EMBER_RUNTIME_ABI + 1) != EMBER_RT_INIT_ABI_MISMATCH) return 2;
+    if (ember_rt_init_v3(NULL, EMBER_RUNTIME_ABI + 1) != EMBER_RT_INIT_ABI_MISMATCH) return 2;
     /* A caller that knows the fields up to `alloc` only: `free` past its size
      * holds garbage, which the runtime must never call. */
     ember_rt_config cfg = ember_rt_config_default();

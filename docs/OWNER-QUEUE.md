@@ -405,6 +405,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-158 — What `TypeDesc`, `TypeInfo` and their descriptors are — **CLOSED**
+
+    ID:        ODR-158
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_29
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_28.md [RFL-1]..[RFL-3], [RT-3]
+
+**The question.** The rules name a `TypeDesc` with name, kind, size, alignment, fields (name, type, offset, attributes), variants and attributes, and a `TypeInfo` with the same field descriptors, but declare neither: what holds the text, how a field's type is given, how a class field's offset is counted, how an attribute's value is held, and what `type_info[T]()` of a type not `@reflect` is.
+
+**Ruling.** Ruled under the delegation as written in §XIV.2's paragraph after `[RFL-3]`. ADR-250.
+
+---
+
 ## ODR-157 — A SIMD vector in a `@packed` type — **CLOSED**
 
     ID:        ODR-157

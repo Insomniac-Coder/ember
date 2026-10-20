@@ -85,6 +85,20 @@ comptime:
   readable through `TypeDesc` and `TypeInfo`. An attribute that names no built-in attribute and no
   visible `@attribute` struct is `E0104` (`[PHIL-12]`).
 
+`std.ser` declares the descriptions (ODR-158): `TypeDesc` (`name`, `kind: TypeKind`, `size`, `align`,
+`fields: Array[FieldDesc]`, `variants: Array[VariantDesc]`, `attributes: Array[AttributeDesc]`), and
+`TypeInfo` is the same type. A description owns its text (`String`), so it is no view and lives in a
+`static`; it owns arrays, so it is no `const` (`static D: TypeDesc = reflect[Point]()`). A field names
+its type by name (`type_name`): a description of each field's type would not end for a recursive
+type. A class field's offset is counted from the end of the object header, which the runtime owns
+(`[OBJ-1]`). An attribute is its name and its arguments as `(name, AttrValue)` pairs, `AttrValue`
+being `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` or `Char(char)`: a user attribute's
+argument is named by the field it sets, a built-in attribute's positional argument by its position,
+and a name written as an argument (`@derive(Eq)`) is its text. An `@attribute` struct's fields are
+of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: Reflect]()`
+asks for (`E2040` without it), and a class derived from a `@reflect` class is `@reflect` too;
+`reflect[T]()` outside what compile time evaluates is `E6010`.
+
 ## XIV.3 Derives
 
 * `[DRV-1]` *(changed in 0.9.9)* `@derive(…)` requests generated implementations. The built-in derives,

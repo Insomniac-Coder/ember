@@ -521,6 +521,8 @@ ODRS = [
      "`[FFI-39c]`, `[FFI-23]`"),
     ('ODR-157', "ruled under the delegation: a `@packed` type holding a SIMD vector is `E0104`, as one holding an `@align` type is (ODR-138); a vector's alignment is its size (`[SIMD-1]`)",
      "`[LAY-2]`, `[SIMD-1]`"),
+    ('ODR-158', "ruled under the delegation: `std.ser`'s descriptions own their text (`String`) and arrays; a field names its type by name; a class field's offset counts from the end of the header; attribute arguments are `(name, AttrValue)` pairs and an `@attribute` struct's fields are numbers, text, `bool` or `char` (`E0104`); `@reflect` implements `std.ser.Reflect` (`type_info` needs it, `E2040`), inherited by derived classes; `reflect[T]()` outside compile time is `E6010`",
+     "`[RFL-1]`, `[RFL-2]`, `[RFL-3]`, `[RT-3]`"),
 ]
 
 H5_HEAD = """
@@ -589,7 +591,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 28)
+CURRENT = ('0.9.10', 29)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -618,6 +620,7 @@ V010_H24_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h24')
 V010_H25_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h25')
 V010_H26_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h26')
 V010_H27_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h27')
+V010_H28_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h28')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1276,8 +1279,29 @@ Generated: every rule whose text differs from 0.9.10_Hardened_27.
 """
 
 
-def v010_h27_to_now():
-    return H33_HEAD + rule_diff(V010_H27_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h27_to_h28():
+    return H33_HEAD + rule_diff(V010_H27_PARTS, V010_H28_PARTS)
+
+
+H34_HEAD = """
+## H.34 Changes in 0.9.10_Hardened_29 (from 0.9.10_Hardened_28)
+
+**0.9.10_Hardened_29** records ODR-158, ruled under the delegation when reflection was built (`[RFL-1]`..`[RFL-3]`, `[RT-3]`, `docs/DECISIONS.md` ADR-250). The rules name `TypeDesc`, `TypeInfo` and their descriptors without declaring them; §XIV.2 now says what `std.ser` declares:
+
+* A description owns its text and arrays (`String`, `Array`), so it is no view and lives in a `static`, not a `const`; `TypeInfo` is `TypeDesc`.
+* A field names its type by name, since a description of each field's type would not end for a recursive type; a class field's offset is counted from the end of the runtime's object header.
+* An attribute is its name and `(name, AttrValue)` pairs: a user attribute's arguments named by the fields they set, a built-in's positional ones by position, a name argument as its text; an `@attribute` struct's fields are `int`, `float`, `str`, `String`, `bool` or `char` (`E0104`).
+* `@reflect` implements `std.ser.Reflect`, which `type_info[T]()` asks for (`E2040`); a class derived from a `@reflect` class is `@reflect`; `reflect[T]()` where compile time does not evaluate is `E6010`.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_28.
+
+| Rule | 0.9.10_Hardened_28 → 0.9.10_Hardened_29 |
+|---|---|
+"""
+
+
+def v010_h28_to_now():
+    return H34_HEAD + rule_diff(V010_H28_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1348,7 +1372,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

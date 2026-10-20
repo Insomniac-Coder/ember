@@ -225,6 +225,9 @@ pub fn check(
     // `[DRV-1]` — `@derive(Ord)`, `Default` and `Display` too.
     let (written, derive_requests) = derives::desugar_derives(modules, sink);
     let modules: &[LoadedModule] = written.as_deref().unwrap_or(modules);
+    // `[RFL-2]` — `@reflect` is the implementation of `std.ser.Reflect` it stands for.
+    let reflected = derives::desugar_reflect(modules);
+    let modules: &[LoadedModule] = reflected.as_deref().unwrap_or(modules);
     // `[CORO-1]` — a `gen fn` is the frame, its implementations and its body.
     let generators = coroutines::desugar_generators(modules, sink);
     let modules: &[LoadedModule] = generators.as_ref().map_or(modules, |written| written.modules.as_slice());
@@ -294,6 +297,14 @@ pub fn check(
     }
     checker.bind_prelude(modules);
     checker.bind_imports(modules);
+    // `[RFL-1]`, `[RFL-3]` — every type's written attributes, and the `@attribute` structs, before
+    // any attribute is checked.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        for item in &loaded.module.items {
+            checker.record_written_attributes(item);
+        }
+    }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.check_attributes(&loaded.module);
@@ -434,6 +445,7 @@ pub fn check(
     // are checked once with the parameters opaque, as a generic function's
     // body is (D-248).
     checker.check_generic_type_methods(modules);
+    checker.check_pending_user_attributes();
     let mut functions = Vec::new();
     let mut main = None;
     let mut tests = Vec::new();
@@ -471,6 +483,7 @@ pub fn check(
     }
     functions.extend(checker.take_some_forwarder_bodies());
     checker.publish_debug_writers(&functions);
+    checker.reflect_classes();
     checker.check_declared_layouts();
     // `[CLO-1]` — the functions capture-free closures lowered to. They have no
     // name in source, so they are gathered as they are checked and appended
@@ -1149,6 +1162,16 @@ const JOB_WORDS: TaskWords = TaskWords {
 /// `[GRM-28]` — a local function whose body is being checked: a call to
 /// `name` in it is a call to itself, the function `def` reserved before the
 /// body, through its own environment once `env` says how it is passed.
+/// `[RFL-1]`, `[RFL-3]` — the attributes written on a struct, an enum or a class, on each of its
+/// fields and on each variant, with the module that wrote them, for `reflect[T]()`.
+#[derive(Clone, Default)]
+struct WrittenAttributes {
+    module: usize,
+    own: Vec<ast::Attribute>,
+    fields: HashMap<Symbol, Vec<ast::Attribute>>,
+    variants: HashMap<Symbol, Vec<ast::Attribute>>,
+}
+
 #[derive(Clone)]
 struct LocalFnSelf {
     name: Symbol,
@@ -2186,6 +2209,16 @@ struct Checker<'a> {
     /// `[GRM-28]` — the local functions whose bodies are being checked,
     /// innermost last.
     local_fn_self: Vec<LocalFnSelf>,
+    /// `[RFL-1]` — each type's written attributes, by its qualified name.
+    written_attributes: HashMap<Symbol, WrittenAttributes>,
+    /// `[RFL-3]` — the structs declared `@attribute`, by their qualified names.
+    attribute_structs: HashSet<Symbol>,
+    /// `[RFL-3]` — the user attributes written, with their modules, checked as constructor calls
+    /// once every type is collected.
+    pending_user_attributes: Vec<(ast::Attribute, usize)>,
+    /// `[RFL-3]` — whether the attributes being checked are on a `@reflect` type, its fields or
+    /// its variants, where a user attribute may be written.
+    user_attributes_here: bool,
     /// How many closure bodies enclose the code being checked.
     lambda_depth: usize,
     /// D-546 — each lambda's last value checked without an error, by its
@@ -2983,6 +3016,10 @@ impl<'a> Checker<'a> {
             incomplete: HashSet::new(),
             closure_numbers: 0,
             local_fn_self: Vec::new(),
+            written_attributes: HashMap::new(),
+            attribute_structs: HashSet::new(),
+            pending_user_attributes: Vec::new(),
+            user_attributes_here: false,
             lambda_depth: 0,
             lambda_values: HashMap::new(),
             skipped_instances: 0,
@@ -3482,6 +3519,48 @@ impl<'a> Checker<'a> {
                 "region may be stored in it (TYP-15, LT-3)"
             )),
         );
+    }
+
+    /// `[TYP-15]`, `[LT-3]` (D-777) — whether a static's initialiser is a view of the `static` region:
+    /// a string literal, or a struct, a variant, a tuple or an array built only of such values and
+    /// values with no region (a number, a `bool`, a `char`). A function's result is not taken as
+    /// known, as `static S: str = pick("x")` is not.
+    fn made_of_static_views(&self, expr: &ast::Expr) -> bool {
+        if has_static_region(expr) {
+            return true;
+        }
+        let part = |this: &Self, e: &ast::Expr| matches!(e.kind, ast::ExprKind::Lit(_)) || this.made_of_static_views(e);
+        match &expr.kind {
+            ast::ExprKind::Paren(inner) => self.made_of_static_views(inner),
+            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) => items.iter().all(|item| part(self, item)),
+            ast::ExprKind::Call { callee, args } if self.constructs(callee) => args.iter().all(|arg| part(self, &arg.value)),
+            ast::ExprKind::MethodCall { recv, name, args, .. } if self.enum_variant_named(recv, name.name) => {
+                args.iter().all(|arg| part(self, &arg.value))
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `callee` names a struct (its memberwise constructor) or an enum's variant.
+    fn constructs(&self, callee: &ast::Expr) -> bool {
+        match &callee.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                let name = self.resolve_name(segments[0].name);
+                self.struct_ids.contains_key(&name) || self.generic_structs.contains_key(&name)
+            }
+            ast::ExprKind::IndexOrInstantiate { base, .. } => self.constructs(base),
+            ast::ExprKind::Field { base, name } => self.enum_variant_named(base, name.name),
+            _ => false,
+        }
+    }
+
+    fn enum_variant_named(&self, base: &ast::Expr, variant: Symbol) -> bool {
+        let ast::ExprKind::Path { segments } = &base.kind else { return false };
+        let [single] = segments.as_slice() else { return false };
+        let name = self.resolve_name(single.name);
+        let enum_id = self.enum_ids.get(&name).copied();
+        enum_id.is_some_and(|id| self.types.enum_def(id).variant(variant).is_some())
+            || self.generic_enums.contains_key(&name)
     }
 
     /// `[LEX-15a]` — `type Name = T` at item level. An alias may name another
@@ -8908,10 +8987,9 @@ impl<'a> Checker<'a> {
                     };
                     // `[TYP-15]` with `[LT-3]` — a `static` has no bounding
                     // region, so what may be stored in one is a view whose
-                    // region is `static`. `[STA-2]` already requires the
-                    // initialiser to be a literal, so the question is decidable
-                    // here and needs no region graph.
-                    let static_region = has_static_region(initializer);
+                    // region is `static`: one built only of literals and items
+                    // (D-777), which the initialiser's form decides.
+                    let static_region = self.made_of_static_views(initializer);
                     self.reject_stored_view_unless(
                         ty,
                         decl.ty.span,
@@ -9272,6 +9350,35 @@ impl<'a> Checker<'a> {
             }
         }
         self.types.declare_layout(name, LayoutAttrs { packed, align });
+    }
+
+    /// `[RFL-1]` — what `reflect[T]()` lists as written on a type, its fields and its variants.
+    fn record_written_attributes(&mut self, item: &ast::Item) {
+        let fields_of = |members: &[ast::Member]| {
+            members
+                .iter()
+                .filter_map(|member| match &member.kind {
+                    ast::MemberKind::Field(field) => Some((field.name.name, member.attrs.clone())),
+                    _ => None,
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        let (name, fields, variants) = match &item.kind {
+            ast::ItemKind::Struct(decl) => (decl.name.name, fields_of(&decl.members), HashMap::new()),
+            ast::ItemKind::Class(decl) => (decl.name.name, fields_of(&decl.members), HashMap::new()),
+            ast::ItemKind::Enum(decl) => (
+                decl.name.name,
+                HashMap::new(),
+                decl.variants.iter().map(|variant| (variant.name.name, variant.attrs.clone())).collect(),
+            ),
+            _ => return,
+        };
+        let qualified = self.qualified(name);
+        if matches!(item.kind, ast::ItemKind::Struct(_)) && has_attribute(&item.attrs, "attribute") {
+            self.attribute_structs.insert(qualified);
+        }
+        let written = WrittenAttributes { module: self.current_module, own: item.attrs.clone(), fields, variants };
+        self.written_attributes.insert(qualified, written);
     }
 
     /// `[LAY-2]` — the layouts the attributes ask for that are refused, checked on every struct
@@ -15099,6 +15206,12 @@ impl<'a> Checker<'a> {
         if name.is("offset_of") || resolved.is("std.mem.offset_of") {
             return Some(self.synth_offset_of(args, explicit, span));
         }
+        if resolved.is("std.ser.reflect") {
+            return Some(self.synth_reflect(args, explicit, span));
+        }
+        if resolved.is("std.ser.type_info") {
+            return Some(self.synth_type_info(args, explicit, span));
+        }
         let (which, arity, needs_unsafe) = if name.is("alloc") {
             (Builtin::MemAlloc, 1, true)
         } else if name.is("free") {
@@ -15230,6 +15343,378 @@ impl<'a> Checker<'a> {
         self.check_field_visible(id, def.vis, def.name, field.span);
         let offset = if self.in_generic_template { 0 } else { self.types.layout(ty).field_offsets[index] };
         Expr { ty: self.common.usize, kind: ExprKind::Int(u128::from(offset)), span }
+    }
+
+    /// `[RFL-1]` — `reflect[T]()`: `T` described, a `std.ser.TypeDesc` value written where the call
+    /// is. Only compile time describes a type (`E6010` elsewhere), as only compile time has its
+    /// inputs (`[CT-2]`); a generic body is described in each instance.
+    fn synth_reflect(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let Some(desc) = self.named_types.get(&Symbol::intern("std.ser.TypeDesc")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.ser.TypeDesc`");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let error = Expr { ty: desc, kind: ExprKind::Error, span };
+        if !args.is_empty() {
+            self.error(codes::E2020, span, "`reflect` takes no arguments: `reflect[T]()`");
+            return error;
+        }
+        let Some(&ty) = explicit.first().filter(|_| explicit.len() == 1) else {
+            self.error(codes::E2060, span, "write the type: `reflect[T]()`");
+            return error;
+        };
+        if self.comptime_outer_names.is_none() {
+            self.sink.emit(
+                Diagnostic::error(codes::E6010, span, "`reflect` describes a type while compiling, which only compile time does")
+                    .help("call it in a constant's or static's initialiser, `comptime(…)` or a `comptime:` block, and keep the description in a `static`")
+                    .note("`reflect[T]()` is not available at run time [RFL-1]; `@reflect` gives a type its description at run time, `type_info[T]()` [RFL-2]"),
+            );
+            return error;
+        }
+        if self.in_generic_template || self.types.is_generic(ty) || ty == self.common.error {
+            return error;
+        }
+        self.type_description(ty, span).unwrap_or(error)
+    }
+
+    /// `[RFL-2]` — `type_info[T]()`: a reference to `T`'s description, one constant table for each
+    /// `@reflect` type, made while compiling the first time one is asked for.
+    fn synth_type_info(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
+        let Some(info) = self.named_types.get(&Symbol::intern("std.ser.TypeDesc")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.ser.TypeInfo`");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let reference = self.types.intern(TyKind::Ref { mutable: false, inner: info });
+        let error = Expr { ty: reference, kind: ExprKind::Error, span };
+        if !args.is_empty() {
+            self.error(codes::E2020, span, "`type_info` takes no arguments: `type_info[T]()`");
+            return error;
+        }
+        let Some(&ty) = explicit.first().filter(|_| explicit.len() == 1) else {
+            self.error(codes::E2060, span, "write the type: `type_info[T]()`");
+            return error;
+        };
+        if self.in_generic_template || self.types.is_generic(ty) || ty == self.common.error {
+            return error;
+        }
+        if !self.reflected(ty) {
+            let shown = self.types.display(ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E2040, span, format!("`{shown}` does not implement `Reflect`, which `type_info` requires"))
+                    .help(format!("write `@reflect` on the declaration of `{shown}`"))
+                    .note("`@reflect` keeps a type's description in the program for run time [RFL-2]; `reflect[T]()` describes any type while compiling [RFL-1]"),
+            );
+            return error;
+        }
+        match self.type_info_static(ty) {
+            Some(holder) => Expr { ty: reference, kind: ExprKind::Builtin { which: Builtin::ConstStatic { name: holder, ty: info }, args: Vec::new() }, span },
+            None => error,
+        }
+    }
+
+    /// `[RFL-2]` — whether `ty` is `@reflect`: its declaration says so, or, for a class, a base
+    /// class's does (ODR-158).
+    fn reflected(&mut self, ty: Ty) -> bool {
+        if self.implements_origin(ty, "std.ser.Reflect") {
+            return true;
+        }
+        let mut class = match self.types.kind(ty) {
+            TyKind::Class(id) => self.types.class_def(*id).base,
+            _ => None,
+        };
+        while let Some(base) = class {
+            if let Some(base_ty) = self.types.find(&TyKind::Class(base))
+                && self.implements_origin(base_ty, "std.ser.Reflect")
+            {
+                return true;
+            }
+            class = self.types.class_def(base).base;
+        }
+        false
+    }
+
+    /// `[RFL-2]` — the constant static holding `ty`'s description: evaluated while compiling, as
+    /// `comptime(reflect[T]())` is, and placed in the image once. `None` until the evaluator has
+    /// answered.
+    fn type_info_static(&mut self, ty: Ty) -> Option<Symbol> {
+        let info = self.named_types.get(&Symbol::intern("std.ser.TypeDesc")).copied()?;
+        let holder = Symbol::intern(&format!("std.ser.type_info.{}", self.types.symbol_name(ty)));
+        if self.types.constant_statics().iter().any(|(name, ..)| *name == holder) {
+            return Some(holder);
+        }
+        let what = format!("the description of `{}`", self.types.display(ty));
+        // One request for each type, wherever it is asked for: at its declaration.
+        let span = match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.types.struct_def(id).span,
+            TyKind::Enum(id) => self.types.enum_def(id).span,
+            TyKind::Class(id) => self.types.class_def(id).span,
+            _ => return None,
+        };
+        let closures = self.lambdas.len();
+        let unresolved = self.comptime_unresolved;
+        let type_params = std::mem::take(&mut self.type_params);
+        let (checked, locals) = self.check_comptime_isolated(|this| {
+            this.type_description(ty, span).unwrap_or(Expr { ty: info, kind: ExprKind::Error, span })
+        });
+        let answer = self.comptime_answer(checked, locals, closures, unresolved, span, what, false);
+        self.type_params = type_params;
+        let Comptime::Value(folded) = answer else { return None };
+        let text = folded.to_text(self.types);
+        self.types.add_constant_static(holder, info, text);
+        self.const_statics.insert(holder, info);
+        Some(holder)
+    }
+
+    /// `[RFL-2]`, `[RT-3]` — every `@reflect` class's description, made for its type information,
+    /// which `h.type_info()` reads whether or not the program names the class in `type_info[T]()`.
+    fn reflect_classes(&mut self) {
+        let classes: Vec<(ClassId, Ty)> = self
+            .types
+            .runtime_classes()
+            .filter_map(|(id, _)| self.types.find(&TyKind::Class(id)).map(|ty| (id, ty)))
+            .collect();
+        for (id, ty) in classes {
+            if self.types.is_generic(ty) || !self.reflected(ty) {
+                continue;
+            }
+            if let (Some(holder), Some(info)) = (self.type_info_static(ty), self.named_types.get(&Symbol::intern("std.ser.TypeDesc")).copied()) {
+                self.types.set_class_reflection(id, holder, info);
+            }
+        }
+    }
+
+    /// `[RFL-2]`, `[RT-3]` — `h.type_info()` on a `@reflect` class handle: the description of the
+    /// object's own class, through its type information.
+    fn synth_class_type_info(&mut self, receiver: Expr, span: Span) -> Expr {
+        let Some(info) = self.named_types.get(&Symbol::intern("std.ser.TypeDesc")).copied() else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let result = self.types.intern(TyKind::Ref { mutable: false, inner: info });
+        Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::ClassTypeInfo { result }, args: vec![receiver] }, span }
+    }
+
+    /// `[RFL-1]` — the `TypeDesc` value describing `ty`: `std.ser`'s declarations, in their order.
+    fn type_description(&mut self, ty: Ty, span: Span) -> Option<Expr> {
+        let named = |this: &Self, name: &str| this.named_types.get(&Symbol::intern(&format!("std.ser.{name}"))).copied();
+        let (desc_ty, field_ty, variant_ty, attr_ty, kind_ty) =
+            (named(self, "TypeDesc")?, named(self, "FieldDesc")?, named(self, "VariantDesc")?, named(self, "AttributeDesc")?, named(self, "TypeKind")?);
+        let (&TyKind::Struct(desc_id), &TyKind::Struct(field_id), &TyKind::Struct(variant_id), &TyKind::Enum(kind_id)) =
+            (self.types.kind(desc_ty), self.types.kind(field_ty), self.types.kind(variant_ty), self.types.kind(kind_ty))
+        else {
+            return None;
+        };
+        let layout = self.types.layout(ty);
+        let kind = |name: &str| name.to_string();
+        // (kind, the declaration whose attributes are listed, fields as (name, type, offset), variants)
+        type Fields = Vec<(Symbol, Ty, u64)>;
+        let (kind_name, declared, fields, variants): (String, Option<Symbol>, Fields, Vec<(Symbol, i128, Fields)>) = match self.types.kind(ty).clone() {
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(id).clone();
+                let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+                let fields = def.fields.iter().zip(&layout.field_offsets).map(|(field, &at)| (field.name, field.ty, at)).collect();
+                (kind("Struct"), Some(declared), fields, Vec::new())
+            }
+            TyKind::Enum(id) => {
+                let def = self.types.enum_def(id).clone();
+                let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+                let offsets = self.types.variant_field_offsets(id);
+                let variants = def
+                    .variants
+                    .iter()
+                    .zip(offsets)
+                    .map(|(variant, offsets)| {
+                        let fields = variant.fields.iter().zip(offsets).map(|(field, at)| (field.name, field.ty, at)).collect();
+                        (variant.name, variant.discriminant, fields)
+                    })
+                    .collect();
+                (kind("Enum"), Some(declared), Vec::new(), variants)
+            }
+            TyKind::Class(id) => {
+                let def = self.types.class_def(id).clone();
+                let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
+                let offsets = self.types.class_field_offsets(id);
+                let fields = (0..self.types.class_field_count(id))
+                    .filter_map(|index| self.types.class_field_at(id, index).map(|field| (field.name, field.ty)))
+                    .zip(offsets)
+                    .map(|((name, ty), at)| (name, ty, at))
+                    .collect();
+                (kind("Class"), Some(declared), fields, Vec::new())
+            }
+            TyKind::Tuple(items) => {
+                let fields = items.iter().zip(&layout.field_offsets).enumerate().map(|(index, (&item, &at))| (Symbol::intern(&index.to_string()), item, at)).collect();
+                (kind("Tuple"), None, fields, Vec::new())
+            }
+            TyKind::Int(_) | TyKind::Uint(_) => (kind("Integer"), None, Vec::new(), Vec::new()),
+            TyKind::Float(_) => (kind("Float"), None, Vec::new(), Vec::new()),
+            TyKind::Bool => (kind("Bool"), None, Vec::new(), Vec::new()),
+            TyKind::Char => (kind("Char"), None, Vec::new(), Vec::new()),
+            _ if self.is_text(ty) => (kind("Text"), None, Vec::new(), Vec::new()),
+            TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Vec { .. } | TyKind::Span { .. } => (kind("Array"), None, Vec::new(), Vec::new()),
+            _ => (kind("Other"), None, Vec::new(), Vec::new()),
+        };
+        let written = declared.and_then(|name| self.written_attributes.get(&name).cloned()).unwrap_or_default();
+        let kind_variant = self.types.enum_def(kind_id).variant(Symbol::intern(&kind_name)).map(|(index, _)| index)?;
+        let mut field_values = Vec::new();
+        let module = written.module;
+        for (name, field, at) in fields {
+            let written = written.fields.get(&name).cloned().unwrap_or_default();
+            field_values.push(self.field_description(field_ty, field_id, name, field, at, &written, module, span)?);
+        }
+        let mut variant_values = Vec::new();
+        for (name, discriminant, payload) in variants {
+            let mut payload_values = Vec::new();
+            for (field_name, field, at) in payload {
+                payload_values.push(self.field_description(field_ty, field_id, field_name, field, at, &[], written.module, span)?);
+            }
+            let attributes = self.attribute_descriptions(attr_ty, written.variants.get(&name).map_or(&[][..], Vec::as_slice), written.module, span)?;
+            let fields = self.array_value(field_ty, payload_values, span);
+            let discriminant = self.i64_value(discriminant, span);
+            let name = self.str_value(name.as_str(), span);
+            variant_values.push(Expr { ty: variant_ty, kind: ExprKind::StructLit { struct_id: variant_id, fields: vec![name, discriminant, fields, attributes] }, span });
+        }
+        let attributes = self.attribute_descriptions(attr_ty, &written.own, written.module, span)?;
+        let shown = self.types.display(ty);
+        let values = vec![
+            self.str_value(&shown, span),
+            Expr { ty: kind_ty, kind: ExprKind::EnumLit { enum_id: kind_id, variant: kind_variant, fields: Vec::new() }, span },
+            self.i64_value(i128::from(layout.size), span),
+            self.i64_value(i128::from(layout.align), span),
+            self.array_value(field_ty, field_values, span),
+            self.array_value(variant_ty, variant_values, span),
+            attributes,
+        ];
+        (self.types.struct_def(desc_id).fields.len() == values.len())
+            .then_some(Expr { ty: desc_ty, kind: ExprKind::StructLit { struct_id: desc_id, fields: values }, span })
+    }
+
+    /// One `FieldDesc`: its name, its type's name, its offset and its attributes.
+    #[allow(clippy::too_many_arguments)]
+    fn field_description(&mut self, field_ty: Ty, field_id: StructId, name: Symbol, ty: Ty, at: u64, written: &[ast::Attribute], module: usize, span: Span) -> Option<Expr> {
+        let attr_ty = self.named_types.get(&Symbol::intern("std.ser.AttributeDesc")).copied()?;
+        let shown = self.types.display(ty);
+        let fields = vec![
+            self.str_value(name.as_str(), span),
+            self.str_value(&shown, span),
+            self.i64_value(i128::from(at), span),
+            self.attribute_descriptions(attr_ty, written, module, span)?,
+        ];
+        Some(Expr { ty: field_ty, kind: ExprKind::StructLit { struct_id: field_id, fields }, span })
+    }
+
+    /// `[RFL-1]`, `[RFL-3]` — the attributes written, each an `AttributeDesc`: its name and each
+    /// argument by the name it is given (a positional one by its position). An argument is a
+    /// number, text, a `bool` or a `char` as written, and a name (`@derive(Eq)`) is its text.
+    fn attribute_descriptions(&mut self, attr_ty: Ty, written: &[ast::Attribute], module: usize, span: Span) -> Option<Expr> {
+        let TyKind::Struct(attr_id) = *self.types.kind(attr_ty) else { return None };
+        let value_ty = self.named_types.get(&Symbol::intern("std.ser.AttrValue")).copied()?;
+        let TyKind::Enum(value_id) = *self.types.kind(value_ty) else { return None };
+        let pair_ty = self.types.intern(TyKind::Tuple(vec![self.common.string, value_ty]));
+        let variant = |this: &Self, name: &str| this.types.enum_def(value_id).variant(Symbol::intern(name)).map(|(index, _)| index);
+        let mut descriptions = Vec::new();
+        for attr in written {
+            // `[RFL-3]` — a user attribute's value: each argument checked as its constructor's
+            // field, in the module that wrote it, and named by that field.
+            let caller = std::mem::replace(&mut self.current_module, module);
+            let declared = self.attribute_struct_named(&attr.path);
+            self.current_module = caller;
+            if let Some(declared) = declared {
+                let args = self.user_attribute_args(declared, attr, module, pair_ty, value_ty, value_id, span)?;
+                let name = attr.path.last().map_or_else(String::new, |segment| segment.name.to_string());
+                let name = self.str_value(&name, span);
+                descriptions.push(Expr { ty: attr_ty, kind: ExprKind::StructLit { struct_id: attr_id, fields: vec![name, args] }, span });
+                continue;
+            }
+            let mut args = Vec::new();
+            for (position, arg) in attr.args.iter().enumerate() {
+                let (label, expr) = match arg {
+                    ast::AttrArg::Named { name, value } => (name.name.to_string(), value),
+                    ast::AttrArg::Expr(value) => (position.to_string(), value),
+                };
+                let (which, value) = match &expr.kind {
+                    ast::ExprKind::Lit(ast::Literal::Int { value, .. }) => ("Int", self.i64_value(*value as i128, span)),
+                    ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } if matches!(operand.kind, ast::ExprKind::Lit(ast::Literal::Int { .. })) => {
+                        let ast::ExprKind::Lit(ast::Literal::Int { value, .. }) = operand.kind else { unreachable!("matched above") };
+                        ("Int", self.i64_value(-(value as i128), span))
+                    }
+                    ast::ExprKind::Lit(ast::Literal::Float { value, .. }) => ("Float", Expr { ty: self.common.f64, kind: ExprKind::Float(*value), span }),
+                    ast::ExprKind::Unary { op: ast::UnOp::Neg, operand } if matches!(operand.kind, ast::ExprKind::Lit(ast::Literal::Float { .. })) => {
+                        let ast::ExprKind::Lit(ast::Literal::Float { value, .. }) = operand.kind else { unreachable!("matched above") };
+                        ("Float", Expr { ty: self.common.f64, kind: ExprKind::Float(-value), span })
+                    }
+                    ast::ExprKind::Lit(ast::Literal::Str(text)) => ("Str", self.str_value(text, span)),
+                    ast::ExprKind::Lit(ast::Literal::Bool(value)) => ("Bool", Expr { ty: self.common.bool_, kind: ExprKind::Bool(*value), span }),
+                    ast::ExprKind::Lit(ast::Literal::Char(value)) => ("Char", Expr { ty: self.common.char_, kind: ExprKind::Int(*value as u128), span }),
+                    ast::ExprKind::Path { segments } => {
+                        let text = segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".");
+                        ("Str", self.str_value(&text, span))
+                    }
+                    // ponytail: an argument computed by an expression is not listed; `[RFL-3]`'s
+                    // `@attribute` structs give their arguments' values as they are checked.
+                    _ => continue,
+                };
+                let value = Expr { ty: value_ty, kind: ExprKind::EnumLit { enum_id: value_id, variant: variant(self, which)?, fields: vec![value] }, span };
+                let label = self.str_value(&label, span);
+                args.push(Expr { ty: pair_ty, kind: ExprKind::TupleLit(vec![label, value]), span });
+            }
+            let name = attr.path.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".");
+            let name = self.str_value(&name, span);
+            let args = self.array_value(pair_ty, args, span);
+            descriptions.push(Expr { ty: attr_ty, kind: ExprKind::StructLit { struct_id: attr_id, fields: vec![name, args] }, span });
+        }
+        Some(self.array_value(attr_ty, descriptions, span))
+    }
+
+    /// A `String` of `text`, as `String.from` makes one: the descriptors own their text, so that a
+    /// description is no view (ODR-158).
+    /// `[RFL-3]` — a user attribute's arguments as `(field, value)` pairs, each value checked as the
+    /// field it sets, in the module that wrote the attribute.
+    #[allow(clippy::too_many_arguments)]
+    fn user_attribute_args(&mut self, declared: Symbol, attr: &ast::Attribute, module: usize, pair_ty: Ty, value_ty: Ty, value_id: EnumId, span: Span) -> Option<Expr> {
+        let id = *self.struct_ids.get(&declared)?;
+        let fields: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+        let mut pairs = Vec::new();
+        for (position, arg) in attr.args.iter().enumerate() {
+            let (field, value) = match arg {
+                ast::AttrArg::Named { name, value } => (fields.iter().find(|(field, _)| *field == name.name).copied(), value),
+                ast::AttrArg::Expr(value) => (fields.get(position).copied(), value),
+            };
+            // Reported where the attribute was checked.
+            let Some((field, ty)) = field else { continue };
+            let kind = self.attribute_value_kind(ty)?;
+            let caller = std::mem::replace(&mut self.current_module, module);
+            let checked = self.check_expr(value, ty);
+            self.current_module = caller;
+            let checked = if ty == self.common.str_ { self.to_string_of(checked, span) } else { checked };
+            let variant = self.types.enum_def(value_id).variant(Symbol::intern(kind)).map(|(index, _)| index)?;
+            let value = Expr { ty: value_ty, kind: ExprKind::EnumLit { enum_id: value_id, variant, fields: vec![checked] }, span };
+            let label = self.str_value(field.as_str(), span);
+            pairs.push(Expr { ty: pair_ty, kind: ExprKind::TupleLit(vec![label, value]), span });
+        }
+        Some(self.array_value(pair_ty, pairs, span))
+    }
+
+    fn str_value(&mut self, text: &str, span: Span) -> Expr {
+        let literal = Expr { ty: self.common.str_, kind: ExprKind::Str(text.to_string()), span };
+        self.to_string_of(literal, span)
+    }
+
+    fn i64_value(&self, value: i128, span: Span) -> Expr {
+        let ty = self.common.i64;
+        let magnitude = Expr { ty, kind: ExprKind::Int(value.unsigned_abs()), span };
+        match value < 0 {
+            true => Expr { ty, kind: ExprKind::Unary { op: UnOp::Neg, operand: Box::new(magnitude) }, span },
+            false => magnitude,
+        }
+    }
+
+    /// An `Array[elem]` of the values given, as a list literal makes one.
+    fn array_value(&mut self, elem: Ty, items: Vec<Expr>, span: Span) -> Expr {
+        let array = self.types.intern(TyKind::Vec { elem, text: false });
+        if items.is_empty() {
+            return Expr { ty: array, kind: ExprKind::Builtin { which: Builtin::ArrayNew, args: Vec::new() }, span };
+        }
+        let fixed = self.types.intern(TyKind::Array { elem, len: items.len() as u64 });
+        let fixed = Expr { ty: fixed, kind: ExprKind::ArrayLit(items), span };
+        Expr { ty: array, kind: ExprKind::Builtin { which: Builtin::ArrayFromLiteral, args: vec![fixed] }, span }
     }
 
     /// `[FFI-40]` — in a module `import cpp` wrote, and nowhere else: a method's `T&` result as
@@ -37502,6 +37987,110 @@ impl<'a> Checker<'a> {
     }
 
     fn check_item_attributes(&mut self, item: &ast::Item, in_extern: bool) {
+        // `[RFL-3]` — a user attribute is written on a `@reflect` type, its fields and its variants.
+        let reflected = matches!(item.kind, ast::ItemKind::Struct(_) | ast::ItemKind::Enum(_) | ast::ItemKind::Class(_))
+            && has_attribute(&item.attrs, "reflect");
+        let outer = std::mem::replace(&mut self.user_attributes_here, reflected);
+        self.check_item_attributes_of(item, in_extern);
+        self.user_attributes_here = outer;
+    }
+
+    /// `[RFL-3]` — an `@attribute` struct's fields hold what an attribute's arguments are: numbers,
+    /// text, `bool`s and `char`s (ODR-158).
+    fn check_attribute_struct(&mut self, declared: Symbol) {
+        let Some(&id) = self.struct_ids.get(&declared) else { return };
+        let fields: Vec<(Symbol, Ty, Span)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty, field.span)).collect();
+        for (name, ty, span) in fields {
+            if self.attribute_value_kind(ty).is_none() && ty != self.common.error {
+                let shown = self.types.display(ty);
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, span, format!("field `{name}` of an `@attribute` struct is a `{shown}`"))
+                        .note("an attribute's arguments are `int`, `float`, `str`, `String`, `bool` or `char` [RFL-3], ODR-158"),
+                );
+            }
+        }
+    }
+
+    /// `[RFL-3]` — the `std.ser.AttrValue` variant a value of `ty` is described as.
+    fn attribute_value_kind(&self, ty: Ty) -> Option<&'static str> {
+        match self.types.kind(ty) {
+            _ if ty == self.common.i64 => Some("Int"),
+            _ if ty == self.common.f64 => Some("Float"),
+            _ if ty == self.common.str_ || ty == self.common.string => Some("Str"),
+            TyKind::Bool => Some("Bool"),
+            TyKind::Char => Some("Char"),
+            _ => None,
+        }
+    }
+
+    /// `[RFL-3]` — the `@attribute` struct an attribute's name resolves to, if any.
+    fn attribute_struct_named(&self, path: &[ast::Ident]) -> Option<Symbol> {
+        let qualified = match path {
+            [single] => self.resolve_name(single.name),
+            [first, rest @ ..] => {
+                let mut expr = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![*first] }, span: first.span };
+                for segment in rest {
+                    expr = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Field { base: Box::new(expr), name: *segment }, span: segment.span };
+                }
+                self.item_through_module(&expr)?
+            }
+            [] => return None,
+        };
+        self.attribute_structs.contains(&qualified).then_some(qualified)
+    }
+
+    /// `[RFL-3]` — a user attribute, checked exactly as its constructor call: `@Range(min=0.0,
+    /// max=1.0)` as `Range(min=0.0, max=1.0)`.
+    fn check_user_attribute(&mut self, attr: &ast::Attribute, site: &str) {
+        let written = attr.path.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".");
+        if !self.user_attributes_here || !matches!(site, "struct" | "enum" | "class" | "field" | "variant") {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, format!("`@{written}` is written on a `@reflect` type, its fields and its variants"))
+                    .note("a user attribute's value is read through the type's description [RFL-3]; write `@reflect` on the type"),
+            );
+            return;
+        }
+        self.pending_user_attributes.push((attr.clone(), self.current_module));
+    }
+
+    /// `[RFL-3]` — each user attribute written, checked as its constructor call in its module,
+    /// once every type is known.
+    fn check_pending_user_attributes(&mut self) {
+        let mut declared: Vec<Symbol> = self.attribute_structs.iter().copied().collect();
+        declared.sort_by_key(|name| name.as_str().to_string());
+        for name in declared {
+            self.check_attribute_struct(name);
+        }
+        for (attr, module) in std::mem::take(&mut self.pending_user_attributes) {
+            let caller = std::mem::replace(&mut self.current_module, module);
+            let call = self.attribute_call(&attr);
+            let _ = self.check_comptime_isolated(|this| {
+                let value = this.synth(&call);
+                this.commit(value)
+            });
+            self.current_module = caller;
+        }
+    }
+
+    /// `@Name(args)` as the constructor call it stands for.
+    fn attribute_call(&self, attr: &ast::Attribute) -> ast::Expr {
+        let span = attr.span;
+        let mut callee = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![attr.path[0]] }, span };
+        for segment in &attr.path[1..] {
+            callee = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Field { base: Box::new(callee), name: *segment }, span };
+        }
+        let args = attr
+            .args
+            .iter()
+            .map(|arg| match arg {
+                ast::AttrArg::Named { name, value } => ast::Arg { name: Some(*name), value: value.clone(), span: value.span },
+                ast::AttrArg::Expr(value) => ast::Arg { name: None, value: value.clone(), span: value.span },
+            })
+            .collect();
+        ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Call { callee: Box::new(callee), args }, span }
+    }
+
+    fn check_item_attributes_of(&mut self, item: &ast::Item, in_extern: bool) {
         if let ast::ItemKind::Overlay(overlay) = &item.kind {
             self.check_attribute_list(&item.attrs, "overlay");
             self.check_overlay(overlay);
@@ -38035,6 +38624,10 @@ impl<'a> Checker<'a> {
 
     fn check_attribute_list(&mut self, attrs: &[ast::Attribute], site: &str) {
         for attr in attrs {
+            if self.attribute_struct_named(&attr.path).is_some() {
+                self.check_user_attribute(attr, site);
+                continue;
+            }
             let written = attr.path.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
             let not_an_attribute = |this: &mut Self, note: &str| {
                 this.sink.emit(
@@ -40331,6 +40924,16 @@ impl<'a> Checker<'a> {
     ) -> Expr {
         let expected = self.method_expectation.take();
         let receiver = self.synth_committed(recv);
+        // `[RFL-2]`, `[RT-3]` — `h.type_info()` on a `@reflect` class with no method of that name.
+        if name.name.is("type_info")
+            && args.is_empty()
+            && generic_args.is_empty()
+            && matches!(self.types.kind(receiver.ty), TyKind::Class(_))
+            && self.lookup_method(receiver.ty, name.name).is_none()
+            && self.reflected(receiver.ty)
+        {
+            return self.synth_class_type_info(receiver, span);
+        }
         if receiver.ty == self.common.error {
             // `[TYP-23]` — `xs.push(v)` says what an open `xs = []` holds.
             if let ExprKind::Local(local) = receiver.kind
@@ -53972,7 +54575,8 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     // `[TYP-34]` — documentation only: a view type is inferred.
     (&["view"], &["struct", "enum"], true),
     (&["sync"], &["class"], true),
-    (&["reflect"], &["struct", "enum", "class", "type"], false),
+    (&["reflect"], &["struct", "enum", "class"], true),
+    (&["attribute"], &["struct"], true),
     (&["borrows"], &["fn"], true),
     (&["safety"], &["fn"], true),
     (&["must_drop"], &["struct", "class"], true),

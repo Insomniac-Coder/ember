@@ -41,7 +41,7 @@
         "XV.7"
       ],
       "rules": 575,
-      "done": 557,
+      "done": 560,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -52,9 +52,6 @@
         "JOB-5",
         "LT-39",
         "OPT-1",
-        "RFL-1",
-        "RFL-2",
-        "RFL-3",
         "RNG-10a",
         "SEL-2",
         "SER-1",
@@ -69,7 +66,7 @@
         "XVI"
       ],
       "rules": 632,
-      "done": 609,
+      "done": 612,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -85,9 +82,6 @@
         "JOB-5",
         "LT-39",
         "OPT-1",
-        "RFL-1",
-        "RFL-2",
-        "RFL-3",
         "RNG-10a",
         "SEL-2",
         "SER-1",
@@ -102,7 +96,7 @@
         "Annex B"
       ],
       "rules": 691,
-      "done": 657,
+      "done": 660,
       "missing": [
         "ALC-2",
         "ALC-3",
@@ -129,9 +123,6 @@
         "JOB-5",
         "LT-39",
         "OPT-1",
-        "RFL-1",
-        "RFL-2",
-        "RFL-3",
         "RNG-10a",
         "SEL-2",
         "SER-1",

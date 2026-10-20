@@ -57,7 +57,7 @@ extern "C" {
  * shape; ember_rt_abi_version() reports what the linked library was built as.
  * 2: ember_rt_config gained its leading size, and ember_rt_init carries the
  * caller's version. */
-#define EMBER_RUNTIME_ABI 2
+#define EMBER_RUNTIME_ABI 3
 
 /* -- portability shims ---------------------------------------------------- */
 
@@ -1377,6 +1377,10 @@ struct ember_type_info {
     uint32_t itable_count;
     const ember_field_desc* fields;
     uint32_t field_count;
+    /* `[RFL-2]`, `[RT-3]` — a `@reflect` class's description, the program's `std.ser.TypeInfo`,
+     * through a function, since a reloadable image's constant data is the runtime's; NULL for any
+     * other type. */
+    const void* (*reflect)(void);
 #if defined(EMBER_RELOAD)
     /* Annex B — the type's identity across images, which the runtime makes one per name. */
     const ember_rl_identity* identity;
@@ -2786,10 +2790,10 @@ static inline ember_rt_config ember_rt_config_default(void) {
  * two besides, and on a mismatch names both and returns
  * EMBER_RT_INIT_ABI_MISMATCH. */
 #define EMBER_RT_INIT_ABI_MISMATCH 3
-int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi);
-#define ember_rt_init(cfg) ember_rt_init_v2((cfg), EMBER_RUNTIME_ABI)
-#if EMBER_RUNTIME_ABI != 2
-#error "rename ember_rt_init_v2 with the runtime ABI version"
+int ember_rt_init_v3(const ember_rt_config* cfg, uint32_t caller_abi);
+#define ember_rt_init(cfg) ember_rt_init_v3((cfg), EMBER_RUNTIME_ABI)
+#if EMBER_RUNTIME_ABI != 3
+#error "rename ember_rt_init_v3 with the runtime ABI version"
 #endif
 void ember_rt_shutdown(void);
 uint32_t ember_rt_abi_version(void);
@@ -2824,8 +2828,8 @@ int ember_rt_at_exit(void (*hook)(void* data), void* data);
 #if EMBER_MODULE_PROTOCOL != 1
 #error "rename the marker ember_module_protocol_v1 with the module protocol version"
 #endif
-int ember_rt_module_init_v2(const ember_rt_config* cfg, uint32_t caller_abi);
-#define ember_rt_module_init(cfg) ember_rt_module_init_v2((cfg), EMBER_RUNTIME_ABI)
+int ember_rt_module_init_v3(const ember_rt_config* cfg, uint32_t caller_abi);
+#define ember_rt_module_init(cfg) ember_rt_module_init_v3((cfg), EMBER_RUNTIME_ABI)
 void ember_rt_module_shutdown(void);
 
 /* [STA-3] A static initialised on first access. The generated accessor calls

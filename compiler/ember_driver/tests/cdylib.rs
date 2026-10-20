@@ -225,7 +225,7 @@ int main(int argc, char** argv) {{
     value_fn odd = (value_fn)find(g_lib, "plugin-odd"); /* [MNG-2]: exactly the symbol written */
     if (!init || !shutdown || !on_main || !leak || !twice || !odd) return 3;
     /* Nothing but the exports and the entry points: no runtime symbol, no private function. */
-    if (find(g_lib, "@RT@rt_init_v2") || find(g_lib, "@RT@alloc") || find(g_lib, "@RT@rt_shutdown")) return 4;
+    if (find(g_lib, "@RT@rt_init_v3") || find(g_lib, "@RT@alloc") || find(g_lib, "@RT@rt_shutdown")) return 4;
     if (strcmp(mode, "before") == 0) {{ on_main(); return 5; }}
     if (init(&cfg) != 0) return 6;
     if (strcmp(mode, "other") == 0) {{
@@ -411,10 +411,10 @@ fn a_module_built_for_another_runtime_abi_is_refused_first() {
     for line in current.lines() {
         if line.starts_with("#if EMBER_RUNTIME_ABI != ") { skip = true; continue; }
         if skip { if line.starts_with("#endif") { skip = false; } continue; }
-        next.push_str(&line.replace("#define EMBER_RUNTIME_ABI 2", "#define EMBER_RUNTIME_ABI 3"));
+        next.push_str(&line.replace("#define EMBER_RUNTIME_ABI 3", "#define EMBER_RUNTIME_ABI 4"));
         next.push('\n');
     }
-    assert!(next.contains("#define EMBER_RUNTIME_ABI 3"), "the runtime header's version line moved");
+    assert!(next.contains("#define EMBER_RUNTIME_ABI 4"), "the runtime header's version line moved");
     let next_include = dir.join("next");
     std::fs::create_dir_all(&next_include).unwrap();
     std::fs::write(next_include.join(&header_name), next).unwrap();

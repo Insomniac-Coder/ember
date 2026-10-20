@@ -2589,7 +2589,7 @@ int main(int argc, char** argv) {
         assert!(output.status.success(), "the ABI-version oracle failed: {}", String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("ABI version 2, and its caller was compiled against version 3"), "{stderr}");
+        assert!(stderr.contains("ABI version 3, and its caller was compiled against version 4"), "{stderr}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

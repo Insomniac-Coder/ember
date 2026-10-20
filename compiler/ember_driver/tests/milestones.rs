@@ -3542,7 +3542,7 @@ fn the_runtime_header_spells_its_names_from_the_one_prefix() {
     let header = std::fs::read_to_string(runtime.join("include").join(format!("{prefix}_rt.h"))).expect("the runtime header");
     let source = std::fs::read_to_string(runtime.join("src").join(format!("{prefix}_rt.c"))).expect("the runtime source");
     assert!(header.contains(&format!("#define {}_SYMBOL_PREFIX {prefix}", prefix.to_uppercase())), "the header defines the prefix");
-    assert!(header.contains(&format!("int {prefix}_rt_init_v2(")), "the header names the entry point literally");
+    assert!(header.contains(&format!("int {prefix}_rt_init_v3(")), "the header names the entry point literally");
     assert!(source.contains(&format!("#include \"{prefix}_rt.h\"")), "the source includes the header by its prefixed name");
 }
 

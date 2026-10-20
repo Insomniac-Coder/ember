@@ -551,6 +551,8 @@ pub struct TypeTable {
     /// evaluator computed, placed in the image as constant data: each name,
     /// type and value (in the evaluator's text).
     constant_statics: Vec<(Symbol, Ty, String)>,
+    /// `[RFL-2]` — each `@reflect` class's description: its constant static and its type.
+    class_reflections: HashMap<ClassId, (Symbol, Ty)>,
     /// `[FFI-26]` — each `@export_table` of the program.
     export_tables: Vec<ExportTable>,
 }
@@ -649,6 +651,16 @@ impl TypeTable {
         self.constant_statics.push((name, ty, value));
     }
 
+    /// `[RFL-2]`, `[RT-3]` — the constant static holding a `@reflect` class's description, which
+    /// its type information reaches.
+    pub fn set_class_reflection(&mut self, id: ClassId, holder: Symbol, ty: Ty) {
+        self.class_reflections.insert(id, (holder, ty));
+    }
+
+    pub fn class_reflection(&self, id: ClassId) -> Option<(Symbol, Ty)> {
+        self.class_reflections.get(&id).copied()
+    }
+
     pub fn constant_statics(&self) -> &[(Symbol, Ty, String)] {
         &self.constant_statics
     }
@@ -683,6 +695,7 @@ impl TypeTable {
             coroutine_frames: HashMap::new(),
             next_infer: 0,
             constant_statics: Vec::new(),
+            class_reflections: HashMap::new(),
             export_tables: Vec::new(),
             pointer_size: 8,
         };
@@ -2132,6 +2145,58 @@ impl TypeTable {
         let def = self.enum_def(id);
         let declared = def.origin.as_ref().map_or(def.name, |(origin, _)| *origin);
         def.is_unit_only() && self.layout_attrs.get(&declared).is_none_or(|attrs| attrs.align <= 1)
+    }
+
+    /// `[RFL-1]` — each variant's payload fields' offsets in the whole value: after the tag, where
+    /// `enum_layout` puts the payload; a niche `Option`'s payload is the value itself.
+    pub fn variant_field_offsets(&self, id: EnumId) -> Vec<Vec<u64>> {
+        let def = self.enum_def(id);
+        let ty = self.find(&TyKind::Enum(id));
+        let base = match (self.option_niche(id), ty) {
+            (None, Some(ty)) => self.layout(ty).field_offsets.get(1).copied().unwrap_or(0),
+            _ => 0,
+        };
+        let attrs = LayoutAttrs { packed: ty.is_some_and(|ty| self.layout_attrs(ty).packed), align: 1 };
+        def.variants
+            .iter()
+            .map(|variant| {
+                let inner = self.aggregate_layout(variant.fields.iter().map(|field| field.ty), attrs);
+                inner.field_offsets.iter().map(|offset| base + offset).collect()
+            })
+            .collect()
+    }
+
+    /// `[RFL-1]`, `[OBJ-1]` — each field's offset in a class's object, counted from the end of the
+    /// header the runtime owns (24 bytes, 40 in a reloadable build, ODR-158): each class's own
+    /// fields, base classes first, preceded by the `u32` access words of its non-`Copy` fields with
+    /// a zero word after an odd count (`[EXC-19]`), each field at its natural alignment, as the C
+    /// backend declares them.
+    /// ponytail: placed after a 24-byte header; a field aligned to 32 or more sits elsewhere in a
+    /// reloadable build's object.
+    pub fn class_field_offsets(&self, id: ClassId) -> Vec<u64> {
+        let count = self.class_field_count(id);
+        let owner = |index: usize| self.class_field_at_info(id, index).map(|(owner, _)| owner);
+        let mut offsets = Vec::with_capacity(count);
+        let mut at = 24u64;
+        let mut start = 0;
+        while start < count {
+            let mut end = start + 1;
+            while end < count && owner(end) == owner(start) {
+                end += 1;
+            }
+            let words = (start..end).filter(|&index| self.class_field_has_access_word(id, index)).count() as u64;
+            at += 4 * (words + words % 2);
+            for index in start..end {
+                if let Some(field) = self.class_field_at(id, index) {
+                    let layout = self.layout(field.ty);
+                    at = align_to(at, layout.align);
+                    offsets.push(at - 24);
+                    at += layout.size;
+                }
+            }
+            start = end;
+        }
+        offsets
     }
 
     pub fn layout_attrs(&self, ty: Ty) -> LayoutAttrs {

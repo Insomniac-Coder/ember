@@ -4354,6 +4354,20 @@ impl Emitter<'_> {
             if self.reload.is_some() {
                 self.line(&format!("static {RT}rl_identity {identity} = {{ {}, NULL }};", c_string_literal(&info)));
             }
+            // `[RFL-2]`, `[RT-3]` — a `@reflect` class's description, reached through a function: a
+            // reloadable image's constant data is the runtime's.
+            let reflect = self.types.class_reflection(id).map(|(holder, ty)| {
+                let function = format!("{info}_reflect");
+                let access = if self.reload.is_some() {
+                    self.reload_static_access(holder.as_str(), ty)
+                } else {
+                    let symbol = constant_static_symbol(holder.as_str());
+                    self.line(&format!("extern const {} {symbol};", self.c_type(ty)));
+                    format!("&{symbol}")
+                };
+                self.line(&format!("static const void* {function}(void) {{ return {access}; }}"));
+                function
+            });
             self.line(&format!(
                 "const {} {info} = {{",
                 ember_branding::runtime("type_info")
@@ -4415,6 +4429,10 @@ impl Emitter<'_> {
                     self.line("    NULL,");
                     self.line("    UINT32_C(0)");
                 }
+            }
+            match reflect {
+                Some(function) => self.line(&format!("    , &{function}")),
+                None => self.line("    , NULL"),
             }
             if self.reload.is_some() {
                 self.line(&format!("    , &{identity}"));
@@ -4758,6 +4776,8 @@ impl Emitter<'_> {
             self.line("    UINT32_C(0),");
             self.line("    NULL,");
             self.line("    UINT32_C(0)");
+            // `[RFL-2]` — a shared value has no description of its own.
+            self.line("    , NULL");
             // Annex B — a reload build's type information ends with the type's identity across
             // images; a shared value's has none (as a class's is made, `class_identity_symbol`).
             if self.reload.is_some() {
@@ -9445,6 +9465,10 @@ impl Emitter<'_> {
                     }
                     Builtin::CloneParts { .. } => {
                         unreachable!("CloneParts writes directly into its MIR destination")
+                    }
+                    // `[RFL-2]`, `[RT-3]` — through the object's type information.
+                    Builtin::ClassTypeInfo { result } => {
+                        return format!("(({})((const {RT}obj_header*)({}))->ti->reflect())", self.c_type(*result), rendered[0]);
                     }
                     Builtin::ProcessKey => {
                         return format!("{RT}process_key({})", rendered[0]);

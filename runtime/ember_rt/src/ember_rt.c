@@ -961,7 +961,7 @@ void ember_debug_leak_report(FILE* out) {
     debug_leak_report(&text);
 }
 
-int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
+int ember_rt_init_v3(const ember_rt_config* cfg, uint32_t caller_abi) {
     /* [VER-4] A caller compiled against another runtime ABI is refused,
      * naming both versions, before anything is touched. */
     if (caller_abi != EMBER_RUNTIME_ABI) {
@@ -1086,7 +1086,7 @@ void ember_rt_shutdown(void) {
 static uint32_t g_modules;
 static uint32_t g_modules_lock;
 
-int ember_rt_module_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
+int ember_rt_module_init_v3(const ember_rt_config* cfg, uint32_t caller_abi) {
     /* [ABI-3] The ABI version first: a module built against another runtime touches nothing. */
     if (caller_abi != EMBER_RUNTIME_ABI) {
         return EMBER_MODULE_INIT_ABI_MISMATCH;
@@ -1094,7 +1094,7 @@ int ember_rt_module_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
     rt_spin_lock(&g_modules_lock);
     int status = 0;
     if (!g_initialised) {
-        status = ember_rt_init_v2(cfg, caller_abi);
+        status = ember_rt_init_v3(cfg, caller_abi);
         g_host_initialised = false;
     } else {
         ember_rt_thread_attach();

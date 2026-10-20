@@ -104,8 +104,16 @@ def compiler_flags(text):
     return [line[len('#$ flags:'):].strip() for line in text.splitlines() if line.startswith('#$ flags:')]
 
 
-def produced(path, profile, flags=()):
-    code, out, err = run(['check', '--json', '--profile', profile, *flags], path)
+def checking_command(text):
+    """`#$ command: lint` — the command whose diagnostics the test names; `check` when absent."""
+    for line in text.splitlines():
+        if line.startswith('#$ command:'):
+            return line[len('#$ command:'):].strip()
+    return 'check'
+
+
+def produced(path, profile, flags=(), command='check'):
+    code, out, err = run([command, '--json', '--profile', profile, *flags], path)
     found = []
     for line in (out + '\n' + err).split('\n'):
         line = line.strip()
@@ -137,7 +145,7 @@ def check(path):
         return []
     profile = (re.search(r'^#\$ profiles:\s*([a-z]+)', text, re.M) or [None, 'debug'])[1]
     problems = []
-    exit_code, found = produced(path, profile, compiler_flags(text))
+    exit_code, found = produced(path, profile, compiler_flags(text), checking_command(text))
     claimed = [False] * len(found)
     for _, code, message, line in annotations(text):
         index = next((i for i, d in enumerate(found)
