@@ -5067,10 +5067,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
-    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.
+    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it. The
+    // image holds the imports' shims and thunks (`[FFI-39a]`: a trampoline's object keeps calling
+    // through the permanent thunks of the entries it was given).
     if let Some(image) = &reload_image {
+        let c_toolchain = match manifest.as_deref().and_then(|text| manifest_string(text, "c", "compiler")) {
+            Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+            None => toolchain.clone(),
+        };
+        let foreign = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile)?;
         let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
-            options.profile, image, &emitted.relaxed_units, options.reload, options.explain, started)
+            options.profile, image, &emitted.relaxed_units, &foreign, options.reload, options.explain, started)
         {
             Ok(built) => built,
             Err(reload::Failure::Other(message)) => return Err(message),

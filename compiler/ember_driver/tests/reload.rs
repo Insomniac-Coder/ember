@@ -1220,3 +1220,40 @@ fn a_reloadable_package_shares_the_runtime() {
     let checked = ember(&["check", &plain.to_string_lossy()], &root);
     assert_eq!(checked.exit, 0, "{}", checked.stderr);
 }
+
+/// `[FFI-39a]` — a trampoline calls the overrides through their permanent thunks (`[HR-6]`): an
+/// Ember class deriving from a C++ class is made before a reload, C++ keeps calling its virtual
+/// across it, and after the next checkpoint the call runs the override's new body.
+#[test]
+fn a_trampoline_reaches_an_edited_override_after_a_reload() {
+    let root = workspace_root();
+    let v1 = "import std.hot\nimport cpp \"engine.hpp\" with (overlay = \"engine_overlay.em\")\n\n\
+              class Mine(cpp.Layer):\n    override fn on_update(self, step: i32) -> i32:\n        return step * 10\n\n\
+              fn main():\n    layer = Mine()\n    unsafe:  # SAFETY(ffi): C++ calls the object's virtual while it lives\n        println(cpp.drive(layer))\n    \
+              hot.checkpoint()\n    unsafe:  # SAFETY(ffi): as above\n        println(cpp.drive(layer))\n";
+    let v2 = v1.replace("return step * 10", "return step * 1000");
+    let (package, file) = package("reload-trampoline", RELOAD_ALL, v1);
+    std::fs::write(
+        package.join("engine.hpp"),
+        "#pragma once\nclass Layer {\npublic:\n    Layer() noexcept {}\n    virtual ~Layer() {}\n    virtual int on_update(int step) noexcept { return step; }\n};\n\
+         inline int drive(Layer& layer) noexcept { return layer.on_update(1) + layer.on_update(2); }\n",
+    )
+    .expect("the header is writable");
+    std::fs::write(
+        package.join("engine_overlay.em"),
+        "unsafe overlay cpp \"engine.hpp\":\n    @ffi(trampoline, virtuals=[\"on_update\"])\n    type Layer\n",
+    )
+    .expect("the overlay is writable");
+    let out = package.join("target");
+    let out_arg = out.to_string_lossy().into_owned();
+    let file_arg = file.to_string_lossy().into_owned();
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "the first build failed:\n{}", built.stderr);
+    std::fs::write(&file, &v2).expect("the edit is writable");
+    let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(reloaded.exit, 0, "the reload build failed:\n{}", reloaded.stderr);
+    let run = run_host(&out);
+    drop(package);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "30\n3000\n", "{}", run.stderr);
+}

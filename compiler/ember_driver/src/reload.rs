@@ -268,6 +268,7 @@ pub fn build(
     profile: Profile,
     image: &ReloadImage,
     relaxed_units: &[(ember_types::FpMode, String)],
+    foreign: &(Vec<PathBuf>, Vec<String>),
     next: bool,
     explain: bool,
     started: std::time::Instant,
@@ -333,6 +334,8 @@ pub fn build(
             .map_err(|error| error.to_string())?;
         relaxed.push(object);
     }
+    // `[FFI-29]`, `[BLD-FFI-3]` — the imports' shims and thunks are the image's, and their libraries.
+    relaxed.extend(foreign.0.iter().cloned());
     ember_build::reload::link_image(
         toolchain,
         c_path,
@@ -342,6 +345,7 @@ pub fn build(
         &runtime,
         &ember_codegen_c::manifest_symbol(),
         &relaxed,
+        &foreign.1,
         &layout.obj,
         &output,
     )
