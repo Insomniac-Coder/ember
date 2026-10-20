@@ -15042,6 +15042,30 @@ impl<'a> Checker<'a> {
         Expr { ty: self.common.usize, kind: ExprKind::Int(u128::from(offset)), span }
     }
 
+    /// `[FFI-40]` — in a module `import cpp` wrote, and nowhere else: a method's `T&` result as
+    /// the reference it is, from the thunk's pointer (the method's signature ties it to its
+    /// receiver, `[LT-1]`).
+    fn synth_cpp_ref(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let cpp_ref = format!("{}_cpp_ref", ember_branding::SYMBOL_PREFIX);
+        if !(name.is(&cpp_ref) || name.is(&format!("{cpp_ref}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
+            return None;
+        }
+        let mutable = name.as_str().ends_with("_mut");
+        let pointer = match args {
+            [arg] if arg.name.is_none() => self.synth_committed(&arg.value),
+            _ => return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span }),
+        };
+        let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else {
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        };
+        if !self.unsafe_context() {
+            self.error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block");
+        }
+        let place = Expr { ty: inner, kind: ExprKind::Deref(Box::new(pointer)), span };
+        let ty = self.types.intern(TyKind::Ref { mutable, inner });
+        Some(Expr { ty, kind: ExprKind::Ref { place: Box::new(place), mutable }, span })
+    }
+
     /// ODR-075/076 — construction is safe; the resulting raw pointer has no
     /// compiler-tracked loan and using it remains the caller's obligation.
     fn synth_raw_pointer_constructor(
@@ -34037,6 +34061,9 @@ impl<'a> Checker<'a> {
         // `[MOD-5]` — a generic type the program declares or imports shadows a
         // compiler-known constructor: a declared `Box[T]` is built by
         // `Box(5)` (D-305).
+        if segments.len() == 1 && let Some(built) = self.synth_cpp_ref(name, args, span) {
+            return built;
+        }
         let resolved_name = self.resolve_name(name);
         if self.declared_by_program(name, resolved_name) {
             if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {

@@ -14,6 +14,8 @@ public:
     void merge(const Bag& other) noexcept { total_ += other.total_; }
     int total() const noexcept { return total_; }
     int& slot() noexcept { return total_; }
+    const int& peek() const noexcept { return total_; }
+    int& checked() { return total_; }
     void take() && noexcept {}
 
 private:

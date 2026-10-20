@@ -1619,7 +1619,16 @@ impl Writer {
                     let inner = self.ty(pointee, true).map_err(|reason| format!("its result: {reason}"))?;
                     let pointer = format!("*{}{inner}", if constant { "" } else { "mut " });
                     let c = type_spelling(result_ty);
-                    let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode: String::new() };
+                    // `[FFI-40]` — a method's `T&` result is a `ref` borrowing its receiver; any other
+                    // a raw pointer (a free function's has no receiver to borrow, and a `const`
+                    // method's `T&` would be a `ref mut` out of a shared borrow).
+                    let borrowed = match member {
+                        Some((_, Member::MutMethod, _)) => true,
+                        Some((_, Member::Method, _)) => constant,
+                        _ => false,
+                    };
+                    let mode = if borrowed { "ref" } else { "" }.to_string();
+                    let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode };
                     (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
                 }
                 _ => {
@@ -3609,13 +3618,21 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         arguments.push("(ref mut failed) as *mut c_int".to_string());
     }
     let mut call = format!("{raw_name}({})", arguments.join(", "));
-    let value = match member {
+    // `[FFI-40]` — a method's `T&` result: the reference the thunk's pointer is.
+    let reference = function.result.as_ref().filter(|ty| ty.mode == "ref").and_then(|ty| ty.pointee.clone());
+    if let Some((_, constant)) = &reference {
+        call = format!("{prefix}_cpp_ref{}({call})", if *constant { "" } else { "_mut" });
+    }
+    let value = match (member, &reference) {
+        (_, Some((inner, constant))) => Some(format!("ref {}{inner}", if *constant { "" } else { "mut " })),
+        (member, None) => match member {
         // `[FFI-36a]` — the object a constructor made, owned through its destructor.
         Some(Member::BoxedConstructor) => {
             call = format!("adopt[{owner}]({call})");
             Some(format!("ForeignBox[{owner}]"))
         }
         _ => function.result.as_ref().map(|ty| ty.ember.clone()),
+        },
     };
     let returned = match (policy, &value) {
         (Policy::Direct | Policy::Asserted, Some(value)) => format!(" -> {value}"),
