@@ -348,11 +348,11 @@ enum Example {
     /// marks an error only a C compiler decides: the program checks clean,
     /// and its build is rejected with the code by a toolchain that cannot do
     /// what it asks (ADR-192).
-    Fails { code: String, source: String, manifest: Option<String>, toolchain: bool },
+    Fails { code: String, source: String, manifest: Option<String>, toolchain: bool, files: Vec<(String, String)> },
     /// `[DIA-6]` — an error page's ```` ```ember,fixed ```` program: it
     /// compiles; for a code reported only when the failing program runs, it
     /// also runs without reporting it.
-    Fixed { code: String, source: String, manifest: Option<String> },
+    Fixed { code: String, source: String, manifest: Option<String>, files: Vec<(String, String)> },
     /// `[DOC-2]` — a user-guide sample, ```` ```ember ````: built and run, it
     /// exits with status 0.
     Run { source: String },
@@ -398,6 +398,11 @@ fn error_page_examples(page: &Path, code: &str) -> Result<Vec<(String, Example)>
     let mut manifest = None;
     let mut out = Vec::new();
     let (mut fails, mut fixed) = (0, 0);
+    // A file the page's examples are compiled beside: ```` ```c,file=shape.h ```` (`[FFI-6]`).
+    let files: Vec<(String, String)> = fences(&text)
+        .into_iter()
+        .filter_map(|(info, body, _)| Some((info.split_once(",file=")?.1.to_string(), body)))
+        .collect();
     for (info, body, line) in fences(&text) {
         match info.as_str() {
             "toml" => manifest = Some(body),
@@ -405,12 +410,14 @@ fn error_page_examples(page: &Path, code: &str) -> Result<Vec<(String, Example)>
                 fails += 1;
                 let toolchain = info.ends_with(",toolchain");
                 out.push((name("fails", line), Example::Fails {
-                    code: code.to_string(), source: body, manifest: manifest.clone(), toolchain,
+                    code: code.to_string(), source: body, manifest: manifest.clone(), toolchain, files: files.clone(),
                 }));
             }
             "ember,fixed" => {
                 fixed += 1;
-                out.push((name("fixed", line), Example::Fixed { code: code.to_string(), source: body, manifest: manifest.clone() }));
+                out.push((name("fixed", line), Example::Fixed {
+                    code: code.to_string(), source: body, manifest: manifest.clone(), files: files.clone(),
+                }));
             }
             _ => {}
         }
@@ -556,6 +563,15 @@ fn ember_on(
     Ok((output.status.success(), text))
 }
 
+/// The files a page's examples are compiled beside (`[FFI-6]`'s headers), into `work`.
+fn write_files(work: &Path, files: &[(String, String)]) -> Result<(), String> {
+    std::fs::create_dir_all(work).map_err(|error| format!("cannot create `{}`: {error}", work.display()))?;
+    for (name, body) in files {
+        std::fs::write(work.join(name), body).map_err(|error| format!("cannot write `{name}`: {error}"))?;
+    }
+    Ok(())
+}
+
 fn run_example(
     exe: &Path,
     work: &Path,
@@ -565,7 +581,8 @@ fn run_example(
 ) -> Result<Attempt, String> {
     Ok(match example {
         Example::Missing { what } => Attempt::fail(format!("the page has no ```ember,{what} block [DIA-6]"), ""),
-        Example::Fails { code, source, manifest, toolchain } => {
+        Example::Fails { code, source, manifest, toolchain, files } => {
+            write_files(work, files)?;
             let tag = format!("[{code}]");
             let manifest = manifest.as_deref();
             let (checked, output) = ember_on(exe, work, source, manifest, &["check"], options)?;
@@ -605,7 +622,8 @@ fn run_example(
                 }
             }
         }
-        Example::Fixed { code, source, manifest } => {
+        Example::Fixed { code, source, manifest, files } => {
+            write_files(work, files)?;
             let manifest = manifest.as_deref();
             let (checked, output) = ember_on(exe, work, source, manifest, &["check"], options)?;
             if !checked {

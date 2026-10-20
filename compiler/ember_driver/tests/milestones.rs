@@ -7392,7 +7392,8 @@ fn import_c_parses_a_header_again_only_when_it_changes() {
     let source_arg = source.to_string_lossy().into_owned();
     let check = || ember_with_env(&["check", &source_arg, "--timings"], &root, &ember_branding::cache_dir_var(), &cache_arg);
     let parsed = |run: &Run| run.stdout.contains("import c, parsed") || run.stderr.contains("import c, parsed");
-    let reused = |run: &Run| run.stdout.contains("import c, from its .embind") || run.stderr.contains("import c, from its .embind");
+    let from_record = format!("import c, from its .{}", ember_branding::BINDING_EXT);
+    let reused = |run: &Run| run.stdout.contains(&from_record) || run.stderr.contains(&from_record);
     let first = check();
     assert_eq!(first.exit, 0, "{}", first.stderr);
     assert!(parsed(&first), "the first build did not parse the header:\n{}{}", first.stdout, first.stderr);
@@ -7409,7 +7410,7 @@ fn import_c_parses_a_header_again_only_when_it_changes() {
     std::fs::write(&source, program(", defines = [\"CACHED_EXTRA=1\"]")).unwrap();
     assert!(parsed(&check()), "a new define did not parse the header again");
     // The record: versioned CBOR, a map whose first key is `version`.
-    let records: Vec<PathBuf> = std::fs::read_dir(cache.join("embind")).expect("the records' folder").filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
+    let records: Vec<PathBuf> = std::fs::read_dir(cache.join(ember_branding::BINDING_EXT)).expect("the records' folder").filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
     assert!(!records.is_empty());
     let bytes = std::fs::read(&records[0]).unwrap();
     assert_eq!(bytes[0] >> 5, 5, "not a CBOR map");
@@ -7419,7 +7420,7 @@ fn import_c_parses_a_header_again_only_when_it_changes() {
     }
     let emitted = ember(&["bind", "cached.h", "--emit-embind"], &dir);
     assert_eq!(emitted.exit, 0, "{}", emitted.stderr);
-    assert!(dir.join("cached.embind").is_file());
+    assert!(dir.join(format!("cached.{}", ember_branding::BINDING_EXT)).is_file());
     let explained = ember(&["bind", "cached.h", "--explain", "cached_sum", "--overlay", &format!("overlay.{SOURCE_EXT}")], &dir);
     assert_eq!(explained.exit, 0, "{}", explained.stderr);
     for line in [

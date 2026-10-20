@@ -343,7 +343,8 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         .notes()
         .into_iter()
         .filter(|note| note.error)
-        .map(|note| if note.file.is_empty() { note.text } else { format!("{}:{}: {}", note.file, note.line, note.text) })
+        // Where the header is included from is this importer's own file: only the header's are shown.
+        .map(|note| if note.file.is_empty() || Path::new(&note.file) == main { note.text } else { format!("{}:{}: {}", note.file, note.line, note.text) })
         .collect();
     if !errors.is_empty() {
         return Err(errors.join("\n"));
@@ -1088,7 +1089,7 @@ impl Writer {
             if clang_Cursor_isMacroFunctionLike(cursor) != 0 {
                 self.macro_skipped.push(Skipped {
                     name,
-                    reason: "a function-like macro: Ember has no macros; an overlay can declare its signature ([FFI-6b])".to_string(),
+                    reason: "a function-like macro: Ember has no macros (a `static inline` C function in a header of your own can call it)".to_string(),
                     at,
                 });
                 return;
@@ -1222,7 +1223,7 @@ fn options(written: &[AttrArg], sink: &mut Sink) -> Option<Options> {
                     options.overlay = Some((path.clone(), value.span));
                 } else {
                     sink.emit(Diagnostic::error(codes::E0104, value.span, "`overlay` names one overlay file: a string")
-                        .help("write `overlay = \"overlays/name.em\"`"));
+                        .help(format!("write `overlay = \"overlays/name.{}\"`", ember_branding::SOURCE_EXT)));
                     ok = false;
                 }
                 continue;
@@ -1341,7 +1342,8 @@ pub fn load(
     let mut cached = false;
     let imported = match import_cached(&config, &overlay_text, &mut cached) {
         Ok((imported, _)) => {
-            crate::mark(if cached { "import c, from its .embind" } else { "import c, parsed" }, &header);
+            let stage = if cached { format!("import c, from its .{}", ember_branding::BINDING_EXT) } else { "import c, parsed".to_string() };
+            crate::mark(&stage, &header);
             imported
         }
         Err(message) => {
@@ -1892,7 +1894,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     if emit {
         // `[FFI-14]` — the record a build keeps for this header, written beside it.
         let files: Vec<(String, String)> = files.into_iter().filter_map(|file| file_hash(&file).map(|hash| (file, hash))).collect();
-        let path = dir.join(format!("{}.embind", header.file_stem().unwrap_or_default().to_string_lossy()));
+        let path = dir.join(format!("{}.{}", header.file_stem().unwrap_or_default().to_string_lossy(), ember_branding::BINDING_EXT));
         std::fs::write(&path, embind(&imported, &files, &arguments(&config).join(" "), "", "")).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
         println!("wrote {}", path.display());
         return Ok(ExitCode::SUCCESS);
@@ -2468,7 +2470,7 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
         )
         .as_bytes(),
     );
-    let path = ember_build::cache_root().join("embind").join(format!("{key}.embind"));
+    let path = ember_build::cache_root().join(ember_branding::BINDING_EXT).join(format!("{key}.{}", ember_branding::BINDING_EXT));
     if let Some((files, imported)) = std::fs::read(&path).ok().and_then(|bytes| read_embind(&bytes))
         && files.iter().all(|(file, hash)| file_hash(file).as_deref() == Some(hash.as_str()))
     {

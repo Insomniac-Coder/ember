@@ -122,7 +122,10 @@ jobs:
 
       # `[DOC-1]`, `[DIA-6]`, `[PHIL-8a]` — every `docs/errors/EXXXX.md` page's
       # failing example fails with its code and its fix compiles, against a
-      # ratcheted baseline of emitted codes without a page.
+      # ratcheted baseline of emitted codes without a page. The `import c` pages
+      # (`E5001`, `E5010`, `W5002`, …) parse headers with libclang.
+      - name: libclang
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
       - name: error pages compile as documented
         run: python tools/error_pages.py
 

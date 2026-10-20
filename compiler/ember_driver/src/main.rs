@@ -3507,14 +3507,19 @@ fn module_interface_inputs(
             effects: None,
             inline_body: None,
         };
-        if import_visible_contracts
-            .insert(declaration.symbol.clone(), contract.clone())
-            .is_some()
-        {
-            return Err(format!(
-                "internal compiler error: [BLD-2] import-visible callable `{}` has more than one declaration contract",
-                declaration.symbol
-            ));
+        match import_visible_contracts.get(&declaration.symbol) {
+            // `[FFI-30]` — one C function declared by two modules (two imports of one header, or
+            // two hand declarations of it) is one callable when the declarations agree.
+            Some(existing) if *existing == contract => {}
+            Some(_) => {
+                return Err(format!(
+                    "internal compiler error: [BLD-2] import-visible callable `{}` has more than one declaration contract",
+                    declaration.symbol
+                ));
+            }
+            None => {
+                import_visible_contracts.insert(declaration.symbol.clone(), contract.clone());
+            }
         }
         let records = records_by_file.entry(declaration.span.file).or_default();
         if records
@@ -3758,7 +3763,8 @@ fn install_callable_metadata_from_artifacts(
     let mut records: BTreeMap<String, CallableInterfaceContract> = BTreeMap::new();
     for artifact in artifacts {
         for (symbol, contract) in &artifact.callables {
-            if records.insert(symbol.clone(), contract.clone()).is_some() {
+            // `[FFI-30]` — one C function two modules declare alike is one callable.
+            if records.insert(symbol.clone(), contract.clone()).is_some_and(|earlier| earlier != *contract) {
                 return Err(format!(
                     "internal compiler error: [LT-40] callable `{symbol}` is present in more than one interface artifact"
                 ));
