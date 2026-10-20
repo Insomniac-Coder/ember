@@ -400,6 +400,8 @@ struct Options {
     profile: Profile,
     emit: Option<String>,
     emit_header: bool,
+    /// `[BLD-FFI-5]` — `--cpp`: a C++ header beside the C one.
+    cpp_header: bool,
     cc: Option<String>,
     out_dir: Option<PathBuf>,
     json: bool,
@@ -680,6 +682,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             }
             if options.emit.as_deref() == Some("header") && command != "build" {
                 return Err("`--emit header` is only valid with `ember build`".to_string());
+            }
+            if options.cpp_header && command != "build" {
+                return Err("`--cpp` writes a C++ header beside the C one: it is only valid with `ember build`".to_string());
             }
             if options.emit_header && options.emit.as_deref().is_some_and(|stage|
                 !matches!(stage, "c" | "header")) {
@@ -3178,6 +3183,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             }
             "--emit" => options.emit = Some(value(&mut index, arg)?),
             "--emit-header" => options.emit_header = true,
+            "--cpp" => options.cpp_header = true,
             "--emit-optimization-report" => options.optimization_report = true,
             "--timings" => options.timings = Some(false),
             "--timings=json" => options.timings = Some(true),
@@ -5072,7 +5078,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         if header.needs_runtime_header {
             copy_runtime_header(&layout.lib)?;
         }
-        std::fs::write(header_path, &header.source).map_err(|e| e.to_string())?;
+        std::fs::write(&header_path, &header.source).map_err(|e| e.to_string())?;
+        // `[BLD-FFI-5]` — and the C++ one beside it.
+        if options.cpp_header {
+            std::fs::write(header_path.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+        }
     }
     if options.emit.as_deref() == Some("header") {
         return Ok(finish(&sink, &map, options));
@@ -5307,6 +5317,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .map_err(|e| e.to_string())?;
         copy_runtime_header(&layout.lib)?;
         std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+        if options.cpp_header {
+            std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+        }
         report(&sink, &map, options);
         eprintln!("built {}", built.library.display());
         return Ok(ExitCode::SUCCESS);
@@ -5337,6 +5350,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
                 .map_err(|e| e.to_string())?;
             copy_runtime_header(&layout.lib)?;
             std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+            if options.cpp_header {
+                std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+            }
             Ok(())
         })();
         if let Err(error) = built {

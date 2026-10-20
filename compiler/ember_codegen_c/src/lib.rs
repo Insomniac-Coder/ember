@@ -108,6 +108,8 @@ pub struct HeaderOutput {
     pub source: String,
     /// True when public i128/u128 carriers need the packaged runtime header.
     pub needs_runtime_header: bool,
+    /// `[BLD-FFI-5]` — the C++ header `--cpp` writes beside it.
+    pub cpp_source: String,
 }
 
 /// `[MNG-1]` — the C symbol of a type's `drop` method.
