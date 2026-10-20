@@ -210,6 +210,18 @@ overlay's module). Any other grade above `asserted` is `W5050`; `ember build --r
 (a type with no foreign representation, helper B's noted defect); moving that to `E5015` churns
 B's tests and page and is left to the coordinator.
 
+### N8e. Link names C cannot spell (`[FFI-49]`)
+
+`@ffi(link_name="weird$twice")` (any symbol a linker takes; a space, quote, backslash or control
+character is `E0104`) binds the declaration through `[MNG-2]`'s alias mechanism, as `@export` symbols
+C cannot spell already were: the declaration is named `em0x<hex>` in the C and bound to the symbol by
+an assembler label (gcc, clang, clang-cl) or by MSVC's linker (`/ALTERNATENAME:alias=symbol`; the
+reverse of an export's). Functions, counted wrappers' C callees and statics alike. With `[link]` and
+`link = […]` built, `[FFI-49]` is whole; its unfinished entry is gone. (`@ffi(ownership="transfer")`,
+which is no contract word, is still `E0900` "only `@ffi` link names and borrowed-one pointer
+contracts are implemented yet" in `FFI-49/reject_unimplemented_ffi_contract.em`; that message is
+stale since helper B's contracts, and an unknown word would be `E0104`: left for the coordinator.)
+
 ### N8a. Wrapped calls in the cost report (`[FFI-29c]`)
 
 `ember inspect --cost`'s "FFI call" row says `wrapped (static inline)` for a call that goes through
@@ -254,6 +266,7 @@ the shim's wrapper (its symbol is the wrapper's), and "one direct call" otherwis
 | `CLI-5` | milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` |
 | `CLI-6`, `CLI-7`, `FFI-35a` | milestone `bind_report_and_check_count_what_is_safe_unsafe_and_skipped` |
 | `FFI-29c` | milestone `inspect_reports_a_wrapped_static_inline_call` |
+| `FFI-49` | `tests/conformance/FFI-49/accept_a_link_name_c_cannot_spell.em`, `reject_a_link_name_no_linker_takes.em` |
 | `TCB-1` | milestone `a_grade_on_an_overlay_entry_is_met_only_by_evidence_that_holds` |
 | `TCB-5` | milestone `evidence_for_an_imported_declaration_rests_on_its_header_and_overlay` |
 | `FFI-7`, `FFI-14` | milestone `import_c_parses_a_header_again_only_when_it_changes`; the codec's unit test `cbor::tests::values_round_trip` |

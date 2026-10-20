@@ -532,10 +532,15 @@ fn emit_with(
         let mut foreign_declarations = emitter.foreign_statics.borrow().iter()
             .map(|(symbol, (ty, immutable))| {
                 let c_ty = emitter.c_type(*ty);
-                match (*immutable, c_ty.ends_with('*')) {
-                    (false, _) => format!("extern {c_ty} {symbol};\n"),
-                    (true, false) => format!("extern const {c_ty} {symbol};\n"),
-                    (true, true) => format!("extern {c_ty} const {symbol};\n"),
+                let declaration = match (*immutable, c_ty.ends_with('*')) {
+                    (false, _) => format!("extern {c_ty} {symbol}"),
+                    (true, false) => format!("extern const {c_ty} {symbol}"),
+                    (true, true) => format!("extern {c_ty} const {symbol}"),
+                };
+                // `[FFI-49]` — a symbol C cannot spell is declared under its alias, bound to it.
+                match ember_branding::export_alias_symbol(symbol) {
+                    Some(exact) => format!("{}\n", foreign_symbol_declaration(&declaration, symbol, &exact)),
+                    None => format!("{declaration};\n"),
                 }
             })
             .collect::<String>();
@@ -1035,6 +1040,14 @@ enum Definition {
 pub(crate) fn exact_symbol_prototype(signature: &str, alias: &str, exact: &str) -> String {
     format!(
         "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{exact}={alias}\")\n{signature};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{signature} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{signature} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\");\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
+    )
+}
+
+/// `[FFI-49]` — a foreign declaration under `alias`, a C identifier, bound to the linker symbol
+/// `exact` C cannot spell: an assembler label, or MSVC's linker resolving the alias to the symbol.
+fn foreign_symbol_declaration(declaration: &str, alias: &str, exact: &str) -> String {
+    format!(
+        "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{alias}={exact}\")\n{declaration};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{declaration} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{declaration} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\");\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
     )
 }
 
@@ -5552,8 +5565,12 @@ impl Emitter<'_> {
             self.line(&format!("void {RT}ffi_instrument_end(void);"));
         }
         for body in bodies {
-            if body.ffi_counted.is_some() {
-                self.line(&format!("extern {};", self.ffi_counted_signature(body)));
+            if let Some(counted) = &body.ffi_counted {
+                let declaration = format!("extern {}", self.ffi_counted_signature(body));
+                match ember_branding::export_alias_symbol(&counted.foreign_symbol) {
+                    Some(exact) => self.line(&foreign_symbol_declaration(&declaration, &counted.foreign_symbol, &exact)),
+                    None => self.line(&format!("{declaration};")),
+                }
                 let signature = self.signature(body);
                 if self.internal_linkage() { self.emit_internal_prototype(&signature); }
                 else { self.line(&format!("{signature};")); }
@@ -5562,7 +5579,12 @@ impl Emitter<'_> {
             if body.is_extern_declaration {
                 // The C linker supplies this body; keep a declaration in the
                 // generated translation unit for type-checked direct calls.
-                self.line(&format!("extern {};", self.signature(body)));
+                let declaration = format!("extern {}", self.signature(body));
+                // `[FFI-49]` — a symbol C cannot spell is declared under its alias, bound to it.
+                match ember_branding::export_alias_symbol(&body.symbol) {
+                    Some(exact) => self.line(&foreign_symbol_declaration(&declaration, &body.symbol, &exact)),
+                    None => self.line(&format!("{declaration};")),
+                }
                 continue;
             }
             if body.is_abstract {

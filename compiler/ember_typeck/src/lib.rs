@@ -4013,7 +4013,7 @@ impl<'a> Checker<'a> {
                             Some(_) if decl.is_foreign_decl && !ffi_count_witnesses(&item.attrs).is_empty() =>
                                 mangle(qualified, false),
                             Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                                .unwrap_or(decl.name.name.as_str()).to_string(),
+                                .unwrap_or_else(|| decl.name.name.to_string()),
                             Some(_) => decl.name.name.to_string(),
                             None => mangle(qualified, qualified.is("main")),
                         };
@@ -8191,7 +8191,7 @@ impl<'a> Checker<'a> {
                             continue;
                         }
                         let name = self.qualified(decl.name.name);
-                        let symbol = Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str()));
+                        let symbol = Symbol::intern(&ffi_link_name(&item.attrs).unwrap_or_else(|| decl.name.name.to_string()));
                         if self.foreign_statics.values().any(|existing|
                             existing.symbol == symbol && (existing.ty != ty || existing.immutable != immutable)) {
                             self.error(codes::E5002, item.span,
@@ -8434,7 +8434,7 @@ impl<'a> Checker<'a> {
                             }
                             self.foreign_unknown_facts.insert(def, unknown);
                         }
-                        self.foreign_symbols.insert(def, Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str())));
+                        self.foreign_symbols.insert(def, Symbol::intern(&ffi_link_name(&item.attrs).unwrap_or_else(|| decl.name.name.to_string())));
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -17297,7 +17297,7 @@ impl<'a> Checker<'a> {
             } else { match &decl.abi {
                 Some(_) if ffi_counted.is_some() => mangle(name, false),
                 Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                    .unwrap_or(decl.name.name.as_str()).to_string(),
+                    .unwrap_or_else(|| decl.name.name.to_string()),
                 Some(_) => decl.name.name.to_string(),
                 None if has_attribute(&item.attrs, "export") => decl.name.name.to_string(),
                 None => mangle(name, is_main),
@@ -18573,7 +18573,7 @@ impl<'a> Checker<'a> {
         if !decl.is_safe {
             if !borrowed_aggregate { return None; }
             return Some(hir::FfiCounted {
-                foreign_symbol: ffi_link_name(attrs).unwrap_or(decl.name.name.as_str()).to_string(),
+                foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
                 abi_params: visible.iter().enumerate().map(|(public_index, &(_, ty, mode, _))|
                     hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
                 result_array: None,
@@ -18727,7 +18727,7 @@ impl<'a> Checker<'a> {
             }
         }
         Some(hir::FfiCounted {
-            foreign_symbol: ffi_link_name(attrs).unwrap_or(decl.name.name.as_str()).to_string(),
+            foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
             abi_params,
             result_array,
             result_span,
@@ -36250,9 +36250,9 @@ impl<'a> Checker<'a> {
                             }
                             saw_link_name = true;
                             match ffi_link_name_arg(arg) {
-                                Some(symbol) if c_link_identifier(symbol) => {}
-                                Some(_) => self.error(codes::E0900, attr.span,
-                                    "a `link_name` that is not a C identifier is not implemented yet"),
+                                Some(symbol) if linker_symbol(symbol) => {}
+                                Some(symbol) => self.error(codes::E0104, attr.span,
+                                    format!("`{symbol}` is not a symbol a linker takes: no space, quote, backslash or control character")),
                                 None => self.error(codes::E0900, attr.span,
                                     "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
                             }
@@ -36398,9 +36398,9 @@ impl<'a> Checker<'a> {
                                 }
                                 saw_link_name = true;
                                 match ffi_link_name_arg(arg) {
-                                    Some(symbol) if c_link_identifier(symbol) => {}
-                                    Some(_) => self.error(codes::E0900, attr.span,
-                                        "a `link_name` that is not a C identifier is not implemented yet"),
+                                    Some(symbol) if linker_symbol(symbol) => {}
+                                    Some(symbol) => self.error(codes::E0104, attr.span,
+                                        format!("`{symbol}` is not a symbol a linker takes: no space, quote, backslash or control character")),
                                     None => self.error(codes::E0900, attr.span,
                                         "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
                                 }
@@ -52185,10 +52185,13 @@ fn ffi_link_name_arg(arg: &ast::AttrArg) -> Option<&str> {
     Some(symbol)
 }
 
-fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
-    attrs.iter()
+/// `[FFI-49]` — the C name a declaration binds: its `link_name`, or, for a symbol C cannot spell,
+/// the alias it is declared under in C (`[MNG-2]`'s), which the C binds to the symbol.
+fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<String> {
+    let symbol = attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
-        .and_then(ffi_link_name_attr)
+        .and_then(ffi_link_name_attr)?;
+    Some(if c_link_identifier(symbol) { symbol.to_string() } else { ember_branding::export_alias(symbol) })
 }
 
 /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(…)`: `destroys(f)`,
@@ -52935,8 +52938,6 @@ fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Option<Symbol>) -> Vec<String
     }).collect()
 }
 
-/// A C declaration cannot spell an arbitrary linker symbol portably. Names
-/// needing an assembler alias remain an explicit implementation gap.
 /// `[MNG-2]` — a symbol a linker takes: not empty, and no space, quote, backslash or control
 /// character (which no object format, module-definition file or version script can carry).
 fn linker_symbol(symbol: &str) -> bool {
