@@ -1735,7 +1735,7 @@ impl Writer {
         match specification {
             _ if kind(cursor) == CXCursor_Destructor => Policy::Direct,
             CXCursor_ExceptionSpecificationKind_BasicNoexcept | CXCursor_ExceptionSpecificationKind_DynamicNone | CXCursor_ExceptionSpecificationKind_NoThrow => Policy::Direct,
-            CXCursor_ExceptionSpecificationKind_ComputedNoexcept => match self.nothrow.get(&usr(cursor)) {
+            CXCursor_ExceptionSpecificationKind_ComputedNoexcept | CXCursor_ExceptionSpecificationKind_Uninstantiated | CXCursor_ExceptionSpecificationKind_Unevaluated => match self.nothrow.get(&usr(cursor)) {
                 Some(true) => Policy::Direct,
                 Some(false) => Policy::Catching,
                 None => Policy::Unknown,
@@ -2031,6 +2031,35 @@ fn qualified_name(cursor: CXCursor) -> String {
     format!("::{}", parts.join("::"))
 }
 
+/// `[FFI-24]` — whether a function's exception specification is one only Clang can evaluate:
+/// `noexcept(expr)`, or one a template's instantiation has not evaluated yet.
+fn undecided(cursor: CXCursor) -> bool {
+    // SAFETY(ffi): a live cursor.
+    matches!(
+        unsafe { clang_getCursorExceptionSpecificationType(cursor) },
+        CXCursor_ExceptionSpecificationKind_ComputedNoexcept | CXCursor_ExceptionSpecificationKind_Uninstantiated | CXCursor_ExceptionSpecificationKind_Unevaluated
+    )
+}
+
+/// `[FFI-24]` — a call of a function with values of its parameters' types, for `noexcept(…)` to
+/// ask of: `::f(std::declval<int>())`, `std::declval<C&>().m(…)`, `C(…)`.
+fn probe_call(cursor: CXCursor) -> String {
+    // SAFETY(ffi): cursors and types of a live translation unit.
+    unsafe {
+        let ty = clang_getCursorType(cursor);
+        let arguments: Vec<String> = (0..clang_getNumArgTypes(ty).max(0) as u32)
+            .map(|index| format!("std::declval<{}>()", type_spelling(clang_getCanonicalType(clang_getArgType(ty, index)))))
+            .collect();
+        let arguments = arguments.join(", ");
+        let class = || cpp_spelling(clang_getCursorType(clang_getCursorSemanticParent(cursor)));
+        match kind(cursor) {
+            CXCursor_Constructor => format!("{}({arguments})", class()),
+            CXCursor_CXXMethod if clang_CXXMethod_isStatic(cursor) == 0 => format!("std::declval<{}&>().{}({arguments})", class(), spelling(cursor)),
+            _ => format!("{}({arguments})", qualified_name(cursor)),
+        }
+    }
+}
+
 /// `[FFI-32]`, `[FFI-24]` — what only C++'s own rules answer, asked of Clang in one parse of the
 /// header: for each class it defines, whether it is standard-layout and trivially copyable; for
 /// each function declared `noexcept(expr)`, whether `expr` holds. Each by USR.
@@ -2038,6 +2067,16 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
     // (a class's question, the USR, the question)
     fn gather(cursor: CXCursor, in_header: &dyn Fn(CXCursor) -> bool, out: &mut Vec<(bool, String, String)>) {
         for child in children(cursor) {
+            // `[FFI-17b]` — a function template's instantiation `instantiate=[…]` lists, whose
+            // `noexcept(expr)` is evaluated only for it.
+            if kind(child) == CXCursor_VarDecl
+                && spelling(child).starts_with(&format!("{}_inst_", ember_branding::SYMBOL_PREFIX))
+                && let Some(function) = referenced_function(child)
+                && undecided(function)
+            {
+                out.push((false, usr(function), format!("noexcept({})", probe_call(function))));
+                continue;
+            }
             // `[FFI-17b]` — a class template's instantiation `instantiate=[…]` lists.
             if kind(child) == CXCursor_TypeAliasDecl && spelling(child).starts_with(&format!("{}_inst_", ember_branding::SYMBOL_PREFIX)) {
                 // SAFETY(ffi): types of a live translation unit.
@@ -2061,12 +2100,8 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
                         }
                         gather(child, in_header, out);
                     }
-                    CXCursor_FunctionDecl if clang_getCursorExceptionSpecificationType(child) == CXCursor_ExceptionSpecificationKind_ComputedNoexcept => {
-                        let ty = clang_getCursorType(child);
-                        let arguments: Vec<String> = (0..clang_getNumArgTypes(ty).max(0) as u32)
-                            .map(|index| format!("std::declval<{}>()", type_spelling(clang_getArgType(ty, index))))
-                            .collect();
-                        out.push((false, usr(child), format!("noexcept({}({}))", qualified_name(child), arguments.join(", "))));
+                    CXCursor_FunctionDecl | CXCursor_CXXMethod | CXCursor_Constructor if undecided(child) => {
+                        out.push((false, usr(child), format!("noexcept({})", probe_call(child))));
                     }
                     _ => {}
                 }
