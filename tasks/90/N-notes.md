@@ -5,6 +5,16 @@ clang-cl: the conformance runner, the Rust suites of the crates changed), the em
 run-pass test and every shim compiled with gcc 15 in WSL with `-Wall -Wextra -Werror` (never run
 there: WSL has no libclang, so the importer itself has not run on Linux), and committed on the branch.
 
+**Effect on the computed table** (`tools/phase_progress.py`, before → after on this branch): Phase 5
+51% → 65% (42 → 63 of 116 rules), Phase 4 82% → 89% (`TCB-1`, `TCB-5`), Phase 1 96% → 97%
+(`CLI-5`..`CLI-7`), Overall 87.9% → 90.0% (90.02). README.md is not edited here, so `phase_progress.py
+--check` reports the table out of date until it is rewritten on merge.
+
+**For the merge:** the importer needs libclang wherever the suites run. CI installs `libclang-dev`
+on Ubuntu (test jobs and the documents job); `bench/gcc/gate.sh` in WSL needs it too (`sudo apt
+install libclang-dev`), or every `import c` test there fails with `E9002` naming it. The `.embind`
+records go to the build cache (`<cache>/embind/`), a few KB each.
+
 ## 1. What was built, feature by feature
 
 ### N1. The importer (`compiler/ember_driver/src/cimport.rs`), `[FFI-6]`, `[FFI-8]`
