@@ -15057,6 +15057,29 @@ impl<'a> Checker<'a> {
             }
             return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value] }, span });
         }
+        // `[FFI-17e]` — a C++ container's elements, viewed in place, and a smart pointer's object:
+        // `cpp_span(ref owner, pointer, count)`, `cpp_span_mut(ref mut owner, …)` and
+        // `cpp_pointee(ref owner, pointer)`, each borrowing the owner.
+        if (resolved.is("std.ffi.cpp_span") || resolved.is("std.ffi.cpp_span_mut")) && args.len() == 3 {
+            let mutable = resolved.is("std.ffi.cpp_span_mut");
+            let owner = self.synth_committed(&args[0].value);
+            let pointer = self.synth_committed(&args[1].value);
+            let count = self.check_expr(&args[2].value, self.common.usize);
+            let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else {
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            };
+            let ty = self.types.intern(TyKind::Span { elem: inner, mutable });
+            return Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppSpan { mutable }, args: vec![owner, pointer, count] }, span });
+        }
+        if resolved.is("std.ffi.cpp_pointee") && args.len() == 2 {
+            let owner = self.synth_committed(&args[0].value);
+            let pointer = self.synth_committed(&args[1].value);
+            let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else {
+                return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            };
+            let ty = self.types.intern(TyKind::Ref { mutable: false, inner });
+            return Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppPointee, args: vec![owner, pointer] }, span });
+        }
         if resolved.is("std.ffi.foreign_release") && args.len() == 2 {
             let pointer = self.synth_committed(&args[0].value);
             let creator = self.check_expr(&args[1].value, self.common.u32);
@@ -33665,6 +33688,21 @@ impl<'a> Checker<'a> {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let str_ty = self.common.str_;
+                // `[FFI-17a]` — `String.from(c)` of a `CppString` copies its bytes.
+                if let Some(&copy) = self.fn_ids.get(&Symbol::intern("std.ffi.cpp_string_copy"))
+                    && !matches!(args[0].value.kind, ast::ExprKind::Lit(_) | ast::ExprKind::FString(_))
+                {
+                    let mark = self.sink.mark();
+                    let value = self.synth_committed(&args[0].value);
+                    if matches!(self.types.kind(value.ty), TyKind::Struct(id) if self.types.struct_def(*id).name.is("std.ffi.CppString")) {
+                        return Expr {
+                            ty: self.common.string,
+                            kind: ExprKind::Call { callee: copy, arg_eval_order: None, default_arg_locals: None, args: vec![value], latebound: false },
+                            span,
+                        };
+                    }
+                    self.sink.rollback(mark);
+                }
                 let text = self.check_expr(&args[0].value, str_ty);
                 self.to_string_of(text, span)
             }

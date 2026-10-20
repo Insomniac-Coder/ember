@@ -2430,8 +2430,31 @@ fn safety_costs_json(
                         };
                         add("FFI call", "guaranteed present", span, &body.name, detail);
                     }
+                    // `[FFI-17f]` — an operation of a C++ bridge type is a call of its C++ thunk.
+                    if let Some(callee) = by_symbol.get(symbol.as_str())
+                        && symbol.starts_with(&ember_branding::mangled("std.ffi."))
+                        && let Some((_, receiver)) = callee.args().next()
+                        && let Some(bridge) = bridge_type(types, receiver.ty)
+                    {
+                        let method = callee.name.rsplit('.').next().unwrap_or(&callee.name);
+                        if matches!(method, "as_ptr" | "from_thunks") {
+                            continue;
+                        }
+                        add("FFI call", "guaranteed present", span, &body.name, format!("`{bridge}.{method}`, through its C++ thunk: a call, never inlined [FFI-17f]"));
+                    }
                 }
                 _ => {}
+            }
+        }
+        // `[FFI-17f]` — a bridge value's end is a call of its C++ destructor's thunk.
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let ember_mir::StmtKind::Drop { place, .. } = &stmt.kind
+                    && place.projection.is_empty()
+                    && let Some(bridge) = bridge_type(types, body.local(place.local).ty)
+                {
+                    add("FFI call", "guaranteed present", stmt.span, &body.name, format!("`{bridge}` dropped, through its C++ destructor's thunk: a call, never inlined [FFI-17f]"));
+                }
             }
         }
     }
@@ -2446,6 +2469,19 @@ fn safety_costs_json(
         add("`contains`", "guaranteed present", use_.span, "", format!("{}: {}", use_.selects, use_.cost));
     }
     serde_json::Value::Array(costs).to_string()
+}
+
+/// `[FFI-17e]` — the name of a C++ bridge type (`std.ffi`'s `CppVector`, `CppString`, `CppShared`),
+/// for `ty` or a reference to one.
+fn bridge_type(types: &TypeTable, ty: ember_types::Ty) -> Option<&'static str> {
+    let ty = match types.kind(ty) {
+        ember_types::TyKind::Ref { inner, .. } => *inner,
+        _ => ty,
+    };
+    let ember_types::TyKind::Struct(id) = types.kind(ty) else { return None };
+    let def = types.struct_def(*id);
+    let name = def.origin.as_ref().map_or(def.name, |(name, _)| *name);
+    ["CppVector", "CppString", "CppShared"].into_iter().find(|bridge| name.as_str() == format!("std.ffi.{bridge}"))
 }
 
 /// `[EFF-16]` — each function of the program with the two facts that together say it has no panic

@@ -8708,6 +8708,13 @@ impl Emitter<'_> {
                     Builtin::CppObjectHandle { adopt: true } => {
                         return format!("((void*){RT}cpp_object_adopt(({RT}obj_header*)({}), {}))", rendered[0], self.location(span));
                     }
+                    // `[FFI-17e]` — a C++ container's elements as a view, and a smart pointer's
+                    // object as a reference: the owner (argument 0) is what they borrow.
+                    Builtin::CppSpan { mutable } => {
+                        let kind = if *mutable { "mutspan" } else { "span" };
+                        return format!("(({RT}{kind}){{ (void*)({}), (size_t)({}) }})", rendered[1], rendered[2]);
+                    }
+                    Builtin::CppPointee => return format!("((void*)({}))", rendered[1]),
                     Builtin::CppObjectGive => {
                         return format!("({RT}obj_retain(({RT}obj_header*)({0})), {RT}obj_pin(({RT}obj_header*)({0})))", rendered[0]);
                     }

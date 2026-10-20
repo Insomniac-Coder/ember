@@ -1480,6 +1480,12 @@ pub enum Builtin {
     /// `[FFI-17d]` — a count of a class object (the argument, a handle) for
     /// C++ to hold, its header pinned, as `Retained.pin` does.
     CppObjectGive,
+    /// `[FFI-17e]` — a view of a C++ container's elements: the owner (a
+    /// reference, which the view borrows), their address and their count.
+    CppSpan { mutable: bool },
+    /// `[FFI-17e]` — the object a C++ smart pointer holds, as a reference:
+    /// the owner (a reference, which it borrows) and the object's address.
+    CppPointee,
     /// `[STA-3]` — a reference to the one value of a `static` whose
     /// initialiser runs on first access: `init`, a function of no
     /// arguments, the first time any thread asks. `name` is the static's, for
@@ -2033,6 +2039,8 @@ impl Builtin {
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppObjectHandle { .. } => "cpp_object_handle",
             Builtin::CppObjectGive => "cpp_object_give",
+            Builtin::CppSpan { .. } => "cpp_span",
+            Builtin::CppPointee => "cpp_pointee",
             Builtin::LazyStatic { .. } => "lazy_static",
             Builtin::ConstStatic { .. } => "constant_static",
             Builtin::ComptimeReadFile => "read_file",

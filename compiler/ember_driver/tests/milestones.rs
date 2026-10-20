@@ -7596,6 +7596,26 @@ int wrapped_plain(int x);
     assert!(report.stdout.contains("wrapped_plain`, one direct call"), "{}", report.stdout);
 }
 
+/// `[FFI-17f]` — an operation of a C++ bridge type and a bridge value's end are each a call of a
+/// C++ thunk, never inlined: `ember inspect --cost` lists each one as an FFI call.
+#[test]
+fn inspect_reports_each_bridge_operation_as_a_thunk_call() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-bridges");
+    let source = root.join("tests").join("conformance").join("FFI-17a").join(format!("accept_standard_library_types_cross_as_bridge_types.{SOURCE_EXT}"));
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("accept_standard_library_types_cross_as_bridge_types.safety.json");
+    let report = ember(&["inspect", &table.to_string_lossy(), "--cost"], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    for row in ["`CppVector.push_back`, through its C++ thunk", "`CppVector.len`, through its C++ thunk", "`CppShared.clone`, through its C++ thunk",
+        "`CppVector` dropped, through its C++ destructor's thunk", "`CppString` dropped, through its C++ destructor's thunk",
+        "`CppShared` dropped, through its C++ destructor's thunk"] {
+        assert!(report.stdout.contains(row), "no row `{row}`:\n{}", report.stdout);
+    }
+}
+
 /// `[FFI-7]` — a header is parsed again only when its content, its overlay, or a setting that can
 /// change a binding (its defines) changes; otherwise the import is read from its `.embind` record.
 /// `[FFI-14]` — the record is versioned CBOR holding the header's files and their hashes, the Clang

@@ -4,6 +4,7 @@
 ## can express the invariant in the library.
 
 import std.core
+from std.string import Utf8Error
 
 ## `[FFI-15]` (ODR-081) — report the first interior NUL byte, rather than
 ## truncating a C argument or panicking on runtime input.
@@ -181,4 +182,185 @@ fn retained_pin[T](value: T):
 ## `[FFI-36b]`, `[FFI-33b]` — a box's end: the address leaves the runtime's record, and a box
 ## that records its creator is checked to end on that thread (debug). Compiler-known.
 fn foreign_release[T](pointer: *mut T, creator: u32):
+    pass
+
+
+## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::vector<T>` Ember owns, its elements in place. The import
+## that made it gives the thunks of its element type, which each operation calls: `len`,
+## `push_back` and its end are calls into C++, never inlined (`[FFI-17f]`). `span()` and
+## `span_mut()` view the elements without copying and borrow the vector, so neither outlives it;
+## `to_array()` copies them. Not `Copy`, `Send` or `Sync`: C++ makes a container no such promise.
+pub struct CppVector[T]:
+    object: *mut u8
+    data: unsafe extern "C" fn(*mut u8) -> *mut T
+    size: unsafe extern "C" fn(*mut u8) -> usize
+    push: unsafe extern "C" fn(*mut u8, *T)
+    destroy: unsafe extern "C" fn(*mut u8)
+
+    ## `[FFI-17a]` — the vector at `object`, with its element type's thunks: what `import cpp`
+    ## makes of a `std::vector<T>`.
+    @safety("`object` is a live `std::vector<T>` nothing else owns, and the functions are the thunks of its element type")
+    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *mut T, size: unsafe extern "C" fn(*mut u8) -> usize, push: unsafe extern "C" fn(*mut u8, *T), destroy: unsafe extern "C" fn(*mut u8)) -> CppVector[T]:  # SAFETY: the caller keeps the obligation
+        return CppVector(object, data, size, push, destroy)
+
+    ## The `std::vector` itself, for a call into C++.
+    pub fn as_ptr(self) -> *mut u8:
+        return self.object
+
+    pub fn len(self) -> usize:
+        size = self.size
+        unsafe:  # SAFETY(ffi): the vector's own thunk, on the vector it came with
+            return size(self.object)
+
+    pub fn span(self) -> Span[T]:
+        data = self.data
+        unsafe:  # SAFETY(ffi): the vector's elements, which the view borrows the vector for
+            return cpp_span(ref self, data(self.object), self.len())
+
+    pub fn span_mut(mut self) -> MutSpan[T]:
+        data = self.data
+        count = self.len()
+        unsafe:  # SAFETY(ffi): the vector's elements, viewed exclusively while the vector is
+            return cpp_span_mut(ref mut self, data(self.object), count)
+
+    pub fn push_back(mut self, value: T):
+        push = self.push
+        unsafe:  # SAFETY(ffi): the thunk copies the value into the vector
+            push(self.object, ref_to_ptr(ref value))
+
+    fn drop(mut self):
+        destroy = self.destroy
+        unsafe:  # SAFETY(ffi): the vector's end, once
+            destroy(self.object)
+
+extend[T: Copy] CppVector[T]:
+    ## The elements, copied into an `Array`.
+    pub fn to_array(self) -> Array[T]:
+        out: Array[T] = []
+        for item in self.span():
+            out.push(item)
+        return out
+
+## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::string` Ember owns: its bytes in place. `bytes()` views
+## them and `to_str()` views them as text when they are UTF-8 (`[TXT-2]`), each borrowing the
+## string; `String.from(c)` copies them, each invalid sequence becoming U+FFFD. Its end deletes it
+## (a call into C++, `[FFI-17f]`). Not `Copy`, `Send` or `Sync`.
+pub struct CppString:
+    object: *mut u8
+    data: unsafe extern "C" fn(*mut u8) -> *u8
+    size: unsafe extern "C" fn(*mut u8) -> usize
+    destroy: unsafe extern "C" fn(*mut u8)
+
+    ## `[FFI-17a]` — the string at `object`, with its thunks: what `import cpp` makes of a
+    ## `std::string`.
+    @safety("`object` is a live `std::string` nothing else owns, and the functions are its thunks")
+    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *u8, size: unsafe extern "C" fn(*mut u8) -> usize, destroy: unsafe extern "C" fn(*mut u8)) -> CppString:  # SAFETY: the caller keeps the obligation
+        return CppString(object, data, size, destroy)
+
+    ## The `std::string` itself, for a call into C++.
+    pub fn as_ptr(self) -> *mut u8:
+        return self.object
+
+    pub fn len(self) -> usize:
+        size = self.size
+        unsafe:  # SAFETY(ffi): the string's own thunk
+            return size(self.object)
+
+    pub fn bytes(self) -> Span[u8]:
+        data = self.data
+        unsafe:  # SAFETY(ffi): the string's bytes, which the view borrows the string for
+            return cpp_span(ref self, data(self.object), self.len())
+
+    pub fn to_str(self) -> Result[str, Utf8Error]:
+        return self.bytes().to_str()
+
+    fn drop(mut self):
+        destroy = self.destroy
+        unsafe:  # SAFETY(ffi): the string's end, once
+            destroy(self.object)
+
+extend String implements From[CppString]:
+    fn from(owned value: CppString) -> String:
+        return cpp_string_copy(value)
+
+## `[FFI-17a]` — `String.from(c)`: the bytes of a `std::string`, copied, each invalid sequence
+## becoming U+FFFD. Compiler-known: `String.from` of a `CppString` is this.
+fn cpp_string_copy(owned value: CppString) -> String:
+    bytes = value.bytes()
+    out = String()
+    at = 0
+    while at < bytes.len():
+        lead = bytes[at] as u32
+        width = 0
+        if lead < 0x80:
+            width = 1
+        elif lead >= 0xC2 and lead < 0xE0:
+            width = 2
+        elif lead >= 0xE0 and lead < 0xF0:
+            width = 3
+        elif lead >= 0xF0 and lead < 0xF5:
+            width = 4
+        if width > 0 and at + width <= bytes.len():
+            match bytes[at..at + width].to_str():
+                Ok(text):
+                    out.push_str(text)
+                    at += width
+                    continue
+                Err(_):
+                    pass
+        out.push('\u{FFFD}')
+        at += 1
+    return out
+
+## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::shared_ptr<T>` Ember holds, never a `Shared` (`[WK-14]`):
+## `get()` is the object it shares, borrowing the pointer; `clone()` and its end copy and destroy
+## the `std::shared_ptr`, C++'s count changing in C++ (calls into C++, `[FFI-17f]`). Not `Copy`,
+## `Send` or `Sync`.
+pub struct CppShared[T]:
+    object: *mut u8
+    pointee: unsafe extern "C" fn(*mut u8) -> *mut T
+    copy: unsafe extern "C" fn(*mut u8) -> *mut u8
+    destroy: unsafe extern "C" fn(*mut u8)
+
+    ## `[FFI-17a]` — the `std::shared_ptr` at `object`, with its thunks: what `import cpp` makes
+    ## of one.
+    @safety("`object` is a live `std::shared_ptr<T>` nothing else owns, and the functions are its thunks")
+    pub unsafe fn from_thunks(object: *mut u8, pointee: unsafe extern "C" fn(*mut u8) -> *mut T, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppShared[T]:  # SAFETY: the caller keeps the obligation
+        return CppShared(object, pointee, copy, destroy)
+
+    ## The `std::shared_ptr` itself, for a call into C++.
+    pub fn as_ptr(self) -> *mut u8:
+        return self.object
+
+    ## The object it shares; an empty one panics.
+    pub fn get(self) -> ref T:
+        pointee = self.pointee
+        address = null[*mut T]()
+        unsafe:  # SAFETY(ffi): the pointer's own thunk
+            address = pointee(self.object)
+        if address.is_null():
+            panic("`CppShared.get`: the `std::shared_ptr` is empty")
+        # The object the pointer shares, which the reference borrows the pointer for.
+        return cpp_pointee(ref self, address)
+
+    fn drop(mut self):
+        destroy = self.destroy
+        unsafe:  # SAFETY(ffi): this `std::shared_ptr`'s end, once
+            destroy(self.object)
+
+extend[T] CppShared[T] implements Clone:
+    fn clone(self) -> CppShared[T]:
+        copy = self.copy
+        unsafe:  # SAFETY(ffi): a copy of the `std::shared_ptr`, which C++ counts
+            return CppShared(copy(self.object), self.pointee, self.copy, self.destroy)
+
+## `[FFI-17e]` — compiler-known: a C++ container's elements as a view, and a smart pointer's
+## object as a reference, each borrowing `owner`.
+fn cpp_span[O, T](owner: ref O, pointer: *mut T, count: usize) -> Span[T]:
+    pass
+
+fn cpp_span_mut[O, T](owner: ref mut O, pointer: *mut T, count: usize) -> MutSpan[T]:
+    pass
+
+fn cpp_pointee[O, T](owner: ref O, pointer: *mut T) -> ref T:
     pass

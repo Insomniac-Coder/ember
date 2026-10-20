@@ -355,6 +355,39 @@ fn kind(cursor: CXCursor) -> CXCursorKind {
     unsafe { clang_getCursorKind(cursor) }
 }
 
+/// A C++ declaration's skip reason, `context: reason`, tagged with the code the reason carries
+/// (`[FFI-48]`'s `E5034` for a type the importer refuses), else with `default` (a parameter's
+/// `E5031`, `[FFI-32]`) if there is one.
+fn tagged(default: Option<&str>, context: &str, reason: &str) -> String {
+    match (reason.strip_prefix("[E").and_then(|rest| rest.split_once("] ")), default) {
+        (Some((code, rest)), _) => format!("[E{code}] {context}: {rest}"),
+        (None, Some(code)) => format!("[{code}] {context}: {reason}"),
+        (None, None) => format!("{context}: {reason}"),
+    }
+}
+
+/// The name of the class template a canonical record type `ty` instantiates, when the template's
+/// outermost namespace is `std` (inline ones, `__1`, `__cxx11`, inside it).
+fn std_template(ty: CXType) -> Option<String> {
+    // SAFETY(ffi): a type of a live translation unit.
+    unsafe {
+        if ty.kind != CXType_Record {
+            return None;
+        }
+        let template = clang_getSpecializedCursorTemplate(clang_getTypeDeclaration(ty));
+        if clang_Cursor_isNull(template) != 0 {
+            return None;
+        }
+        let mut outermost = String::new();
+        let mut parent = clang_getCursorSemanticParent(template);
+        while kind(parent) == CXCursor_Namespace {
+            outermost = spelling(parent);
+            parent = clang_getCursorSemanticParent(parent);
+        }
+        (outermost == "std").then(|| spelling(template))
+    }
+}
+
 fn usr(cursor: CXCursor) -> String {
     // SAFETY(ffi): as above; the canonical cursor names every redeclaration alike.
     unsafe { text(clang_getCursorUSR(clang_getCanonicalCursor(cursor))) }
@@ -778,6 +811,22 @@ struct Writer {
     /// `[FFI-39]` — the trampolines the overlays declare, and those made.
     trampoline_decls: Vec<TrampolineDecl>,
     trampolines: Vec<Trampoline>,
+    /// `[FFI-17a]` — each bridge type the module uses (by its C++ type and the namespace it is
+    /// used in), with the thunks written for it.
+    bridges: HashMap<(String, Vec<String>), Bridge>,
+}
+
+/// `[FFI-17a]` — a C++ standard-library type as its bridge type: the Ember type, the C++ type, and
+/// how a value of it is made from the C++ object's address (`@`): `CppVector.from_thunks(@, …)`
+/// with its element type's thunks, or `adopt[T](@)` for a `std::unique_ptr<T>`.
+#[derive(Clone, Debug)]
+struct Bridge {
+    ember: String,
+    spelled: String,
+    make: String,
+    /// `std::unique_ptr<T>`: the thunk gives up the object (`release()`) rather than copying the
+    /// smart pointer to the heap; its raw result is a `*mut T`, not a `*mut u8`.
+    unique: Option<String>,
 }
 
 impl Writer {
@@ -937,7 +986,11 @@ impl Writer {
                     let declaration = clang_getTypeDeclaration(ty);
                     // `[FFI-17a]` — the C++ standard library's classes cross only as its bridge types.
                     if self.cpp && location(declaration).2 {
-                        return Err(format!("`{}`: the C++ standard library's types cross as `[FFI-17a]`'s bridge types, which are not built yet", cpp_spelling(ty)));
+                        return Err(match self.bridge(ty) {
+                            Some(Ok(bridge)) => format!("`{}` by value or behind a pointer: it crosses as `{}`, by reference or as a result ([FFI-17a])", cpp_spelling(ty), bridge.ember),
+                            Some(Err(reason)) => reason,
+                            None => format!("`{}`: a C++ standard library type with no bridge type ([FFI-17a] bridges `std::vector`, `std::string`, `std::shared_ptr` and `std::unique_ptr`)", cpp_spelling(ty)),
+                        });
                     }
                     // A struct with no tag is known by its typedef's name once that is written
                     // (`typedef struct {…} Rect`, seen through a canonical type).
@@ -1716,6 +1769,136 @@ impl Writer {
         }
     }
 
+    /// `[FFI-17a]` — the bridge type of a C++ standard-library type, its thunks written the first
+    /// time the module's namespace uses it; `None` for a type that is not one of the bridged
+    /// templates, `Err` for one whose argument does not map.
+    fn bridge(&mut self, ty: CXType) -> Option<Result<Bridge, String>> {
+        // SAFETY(ffi): types and cursors of a live translation unit.
+        unsafe {
+            let ty = clang_getCanonicalType(ty);
+            let name = std_template(ty)?;
+            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "unique_ptr") {
+                return None;
+            }
+            let declaration = clang_getTypeDeclaration(ty);
+            let spelled = cpp_spelling(clang_getCursorType(declaration));
+            let key = (spelled.clone(), self.writing.clone());
+            if let Some(found) = self.bridges.get(&key) {
+                return Some(Ok(found.clone()));
+            }
+            // `[FFI-48]` — a container whose allocator (or a string whose traits) is not the standard
+            // one: the allocator is part of the type and opaque (`E5034`).
+            let defaulted = |index: u32, expected: &str| {
+                index as c_int >= clang_Type_getNumTemplateArguments(ty)
+                    || std_template(clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(ty, index as c_uint))).as_deref() == Some(expected)
+            };
+            let standard = match name.as_str() {
+                "vector" => defaulted(1, "allocator"),
+                "basic_string" => defaulted(1, "char_traits") && defaulted(2, "allocator"),
+                _ => true,
+            };
+            if !standard {
+                return Some(Err(format!(
+                    "[E5034] `{spelled}`: an allocator-parameterised container: the allocator is part of the type and opaque; expose a span, or keep it native ([FFI-48])"
+                )));
+            }
+            // `[FFI-17a]` — a `std::unique_ptr` with a deleter of its own is not built: its
+            // `ForeignBox` frees the object with the class's destructor.
+            if name == "unique_ptr" && !defaulted(1, "default_delete") {
+                return Some(Err(format!("`{spelled}`: a `std::unique_ptr` with a deleter of its own (only `std::default_delete` is built) [FFI-17a]")));
+            }
+            let argument = clang_Type_getTemplateArgumentAsType(ty, 0);
+            let prefix = ember_branding::SYMBOL_PREFIX;
+            let ops = format!("{prefix}_cpp_{}_bridge_{}", self.stem, self.bridges.len());
+            let element = cpp_spelling(argument);
+            let mut decls = String::new();
+            let declare = |decls: &mut String, suffix: &str, signature: &str| {
+                let _ = writeln!(decls, "    @ffi(link_name=\"{ops}_{suffix}\")\n    fn {ops}_{suffix}{signature}");
+            };
+            let bridge = match name.as_str() {
+                "vector" => {
+                    if argument.kind == CXType_Bool {
+                        return Some(Err(format!("`{spelled}`: a `std::vector<bool>` stores bits, which no view of its elements can show ([FFI-17a])")));
+                    }
+                    let mapped = match self.ty(argument, false) {
+                        Ok(mapped) => mapped,
+                        Err(reason) => return Some(Err(format!("`{spelled}`: its elements do not map by value ({reason}) [FFI-17a]"))),
+                    };
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" {element}* {ops}_data(void* v) noexcept {{ return static_cast<{spelled}*>(v)->data(); }}\n\
+                         extern \"C\" std::size_t {ops}_size(void* v) noexcept {{ return static_cast<{spelled}*>(v)->size(); }}\n\
+                         extern \"C\" void {ops}_push(void* v, const {element}* value) noexcept {{ try {{ static_cast<{spelled}*>(v)->push_back(*value); }} catch (...) {{ crossed(\"std::vector::push_back\"); }} }}\n\
+                         extern \"C\" void {ops}_destroy(void* v) noexcept {{ delete static_cast<{spelled}*>(v); }}"
+                    );
+                    declare(&mut decls, "data", &format!("(object: *mut u8) -> *mut {mapped}"));
+                    declare(&mut decls, "size", "(object: *mut u8) -> usize");
+                    declare(&mut decls, "push", &format!("(object: *mut u8, value: *{mapped})"));
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    Bridge {
+                        ember: format!("CppVector[{mapped}]"),
+                        spelled: spelled.clone(),
+                        make: format!("CppVector.from_thunks(@, {ops}_data, {ops}_size, {ops}_push, {ops}_destroy)"),
+                        unique: None,
+                    }
+                }
+                "basic_string" => {
+                    if !matches!(argument.kind, CXType_Char_S | CXType_Char_U) {
+                        return Some(Err(format!("`{spelled}`: only a string of `char` crosses, as `CppString` ([FFI-17a])")));
+                    }
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" const char* {ops}_data(void* s) noexcept {{ return static_cast<{spelled}*>(s)->data(); }}\n\
+                         extern \"C\" std::size_t {ops}_size(void* s) noexcept {{ return static_cast<{spelled}*>(s)->size(); }}\n\
+                         extern \"C\" void {ops}_destroy(void* s) noexcept {{ delete static_cast<{spelled}*>(s); }}"
+                    );
+                    declare(&mut decls, "data", "(object: *mut u8) -> *u8");
+                    declare(&mut decls, "size", "(object: *mut u8) -> usize");
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    Bridge { ember: "CppString".to_string(), spelled: spelled.clone(), make: format!("CppString.from_thunks(@, {ops}_data, {ops}_size, {ops}_destroy)"), unique: None }
+                }
+                "shared_ptr" => {
+                    let mapped = match self.ty(argument, true) {
+                        Ok(mapped) => mapped,
+                        Err(reason) => return Some(Err(format!("`{spelled}`: the type it shares does not map ({reason}) [FFI-17a]"))),
+                    };
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" {element}* {ops}_pointee(void* p) noexcept {{ return static_cast<{spelled}*>(p)->get(); }}\n\
+                         extern \"C\" void* {ops}_copy(void* p) noexcept {{ return new {spelled}(*static_cast<{spelled}*>(p)); }}\n\
+                         extern \"C\" void {ops}_destroy(void* p) noexcept {{ delete static_cast<{spelled}*>(p); }}"
+                    );
+                    declare(&mut decls, "pointee", &format!("(object: *mut u8) -> *mut {mapped}"));
+                    declare(&mut decls, "copy", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    Bridge {
+                        ember: format!("CppShared[{mapped}]"),
+                        spelled: spelled.clone(),
+                        make: format!("CppShared.from_thunks(@, {ops}_pointee, {ops}_copy, {ops}_destroy)"),
+                        unique: None,
+                    }
+                }
+                _ => {
+                    // `std::unique_ptr<T>`: the object it gives up, owned by a `ForeignBox` that frees
+                    // it with the class's destructor thunk (an opaque class's, `[FFI-36a]`).
+                    let declaration = clang_getTypeDeclaration(clang_getCanonicalType(argument));
+                    let opaque = matches!(self.record(declaration, None), Record::Opaque(_, None));
+                    let mapped = match self.ty(argument, true) {
+                        Ok(mapped) if opaque => mapped,
+                        Ok(_) => return Some(Err(format!("`{spelled}`: a `std::unique_ptr` crosses as a `ForeignBox` of a class Ember holds behind a pointer ([FFI-17a])"))),
+                        Err(reason) => return Some(Err(format!("`{spelled}`: the type it owns does not map ({reason}) [FFI-17a]"))),
+                    };
+                    let bridge = Bridge { ember: format!("ForeignBox[{mapped}]"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@)"), unique: Some(mapped) };
+                    self.bridges.insert(key, bridge.clone());
+                    return Some(Ok(bridge));
+                }
+            };
+            self.push(&ops, Kind::Class, format!("## `[FFI-17a]` — the thunks of `{spelled}`.\nunsafe extern \"C\":\n{decls}"));
+            self.bridges.insert(key, bridge.clone());
+            Some(Ok(bridge))
+        }
+    }
+
     /// `[FFI-39]`, `[FFI-17d]` — whether a trampoline can be made for a class: it has a virtual
     /// destructor (`E5059`), is not `final`, each virtual `virtuals` names is one virtual method of
     /// it (`E5057`), every pure virtual it declares is named (`E5056`), and each named one passes
@@ -1888,7 +2071,7 @@ impl Writer {
                         match self.cpp_parameter(clang_getArgType(ty, index), &format!("a{index}")) {
                             Ok((c_type, declaration, pass)) => params.push((param, c_type, declaration, pass)),
                             Err(reason) => {
-                                self.skip(ctor, &format!("{class}.init"), format!("[E5031] parameter `{param}`: {reason}"));
+                                self.skip(ctor, &format!("{class}.init"), tagged(Some("E5031"), &format!("parameter `{param}`"), &reason));
                                 params.clear();
                                 break;
                             }
@@ -2068,7 +2251,7 @@ impl Writer {
                 let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
                 let (c_type, declaration, pass) = self
                     .cpp_parameter(clang_getCursorType(argument), &format!("a{index}"))
-                    .map_err(|reason| format!("[E5031] parameter `{param}`: {reason}"))?;
+                    .map_err(|reason| tagged(Some("E5031"), &format!("parameter `{param}`"), &reason))?;
                 params.push((param, c_type));
                 declared.push(declaration);
                 passed.push(pass);
@@ -2089,6 +2272,12 @@ impl Writer {
                 Some((_, Member::MutMethod | Member::Destructor, class)) => declared.insert(0, format!("{class}* self")),
                 _ => {}
             }
+            // `[FFI-17a]` — a standard-library result's bridge type, if it is one.
+            let bridged_result = if result_ty.kind == CXType_Void || member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) {
+                None
+            } else {
+                self.bridge(clang_getCanonicalType(result_ty))
+            };
             let (result, returned, call) = match (member, result_ty.kind) {
                 (Some((owner, Member::Constructor, class)), _) => {
                     let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new() };
@@ -2099,10 +2288,25 @@ impl Writer {
                     (Some(ember), Some(format!("{class}*")), call)
                 }
                 (_, CXType_Void) => (None, None, call),
+                // `[FFI-17a]` — a standard-library value: moved to the heap (or, for a
+                // `std::unique_ptr`, given up) for its bridge type to own.
+                _ if bridged_result.is_some() => {
+                    let bridge = bridged_result.clone().into_iter().next().expect("a bridge").map_err(|reason| tagged(None, "its result", &reason))?;
+                    match &bridge.unique {
+                        Some(inner) => {
+                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: "void*".to_string(), mode: format!("bridge {}", bridge.make) };
+                            (Some(ember), Some("void*".to_string()), format!("({call}).release()"))
+                        }
+                        None => {
+                            let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: "void*".to_string(), mode: format!("bridge {}", bridge.make) };
+                            (Some(ember), Some("void*".to_string()), format!("static_cast<void*>(new {}({call}))", bridge.spelled))
+                        }
+                    }
+                }
                 (_, CXType_LValueReference) => {
                     let pointee = clang_getPointeeType(result_ty);
                     let constant = clang_isConstQualifiedType(pointee) != 0;
-                    let inner = self.ty(pointee, true).map_err(|reason| format!("its result: {reason}"))?;
+                    let inner = self.ty(pointee, true).map_err(|reason| tagged(None, "its result", &reason))?;
                     let pointer = format!("*{}{inner}", if constant { "" } else { "mut " });
                     let c = type_spelling(result_ty);
                     // `[FFI-40]` — a method's `T&` result is a reference borrowing its receiver:
@@ -2119,7 +2323,7 @@ impl Writer {
                     (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
                 }
                 _ => {
-                    let mapped = self.c_type(result_ty, false).map_err(|reason| format!("its result: {reason}"))?;
+                    let mapped = self.c_type(result_ty, false).map_err(|reason| tagged(None, "its result", &reason))?;
                     (Some(mapped), Some(cpp_spelling(result_ty)), call)
                 }
             };
@@ -2131,7 +2335,10 @@ impl Writer {
             // A class by value is written through a pointer the caller gives: MSVC returns a class
             // with a constructor in memory where C returns a struct of its size in registers.
             let class_result = matches!(member, Some((_, Member::Constructor, _)))
-                || (result.is_some() && clang_getCanonicalType(result_ty).kind == CXType_Record && !matches!(member, Some((_, Member::BoxedConstructor, _))));
+                || (result.is_some()
+                    && clang_getCanonicalType(result_ty).kind == CXType_Record
+                    && !matches!(member, Some((_, Member::BoxedConstructor, _)))
+                    && !result.as_ref().is_some_and(|ty| ty.mode.starts_with("bridge ")));
             let (returned, call) = match (class_result, returned) {
                 (true, Some(class)) => {
                     declared.push(format!("{class}* out"));
@@ -2164,6 +2371,27 @@ impl Writer {
         // SAFETY(ffi): types of a live translation unit.
         unsafe {
             let c = type_spelling(ty);
+            // `[FFI-17a]` — a standard-library value by reference or by value: the bridge value,
+            // whose C++ object the wrapper passes on (`bridged`): a `const T&` or a `T` borrowed
+            // (the callee copies it), a `T&` lent mutably, a `T&&` given up.
+            let referenced = matches!(ty.kind, CXType_LValueReference | CXType_RValueReference);
+            if referenced || clang_getCanonicalType(ty).kind == CXType_Record {
+                let value = if referenced { clang_getPointeeType(ty) } else { ty };
+                if let Some(found) = self.bridge(clang_getCanonicalType(value)) {
+                    let bridge = found?;
+                    if bridge.unique.is_some() {
+                        return Err(format!("`{}`: a `std::unique_ptr` crosses as a result only", cpp_spelling(value)));
+                    }
+                    let constant = clang_isConstQualifiedType(value) != 0;
+                    let (mode, pass) = match ty.kind {
+                        CXType_LValueReference if !constant => ("bridged mut ", format!("*static_cast<{}*>({name})", bridge.spelled)),
+                        CXType_RValueReference => ("bridged owned ", format!("std::move(*static_cast<{}*>({name}))", bridge.spelled)),
+                        _ => ("bridged ", format!("*static_cast<const {}*>({name})", bridge.spelled)),
+                    };
+                    let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), mode == "bridged ")), char_pointer: false, c: c.clone(), mode: mode.to_string() };
+                    return Ok((ember, format!("void* {name}"), pass));
+                }
+            }
             // `[FFI-39]` — a `T*` or `T&` of a class with a trampoline: the Ember object, whose C++
             // object the wrapper passes on (`tramp`).
             if matches!(ty.kind, CXType_LValueReference | CXType_Pointer) {
@@ -4248,7 +4476,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained"]).filter(|name| words.contains(name)).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared"]).filter(|name| words.contains(name)).collect();
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -4279,6 +4507,10 @@ fn wrapper_param(param: &str, ty: &CType) -> String {
     match &ty.pointee {
         Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
         Some((inner, _)) if ty.mode == "tramp " => format!("{param}: {inner}"),
+        // `[FFI-17a]` — a bridge value, as the C++ parameter takes it.
+        Some((inner, _)) if ty.mode == "bridged " => format!("{param}: {inner}"),
+        Some((inner, _)) if ty.mode == "bridged mut " => format!("mut {param}: {inner}"),
+        Some((inner, _)) if ty.mode == "bridged owned " => format!("owned {param}: {inner}"),
         // `[FFI-39c]` (ODR-156) — a `retained` one: the token the program pinned and keeps.
         Some((inner, _)) if ty.mode == "token " => format!("{param}: Retained[{inner}]"),
         Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
@@ -4291,6 +4523,7 @@ fn wrapper_argument(param: &str, ty: &CType) -> String {
     let prefix = ember_branding::SYMBOL_PREFIX;
     match &ty.pointee {
         _ if ty.mode == "owned " && wrapped(ty) => format!("{param}.as_ptr()"),
+        _ if ty.mode.starts_with("bridged ") => format!("{param}.as_ptr()"),
         // `[FFI-39]` — the C++ object a trampoline class's object owns.
         Some((_, true)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object as {}", ty.ember),
         Some((_, false)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object"),
@@ -4404,7 +4637,13 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     if let Some((_, shared)) = &reference {
         call = format!("{prefix}_cpp_ref{}({call})", if *shared { "" } else { "_mut" });
     }
+    // `[FFI-17a]` — a bridge result: the value its bridge type makes of the thunk's object.
+    if let Some(make) = function.result.as_ref().and_then(|ty| ty.mode.strip_prefix("bridge ")) {
+        call = make.replace('@', &call);
+    }
+    let bridged = function.result.as_ref().filter(|ty| ty.mode.starts_with("bridge ")).and_then(|ty| ty.pointee.clone()).map(|(ember, _)| ember);
     let value = match (member, &reference) {
+        _ if bridged.is_some() => bridged.clone(),
         (_, Some((inner, shared))) => Some(format!("ref {}{inner}", if *shared { "" } else { "mut " })),
         (member, None) => match member {
         // `[FFI-36a]` — the object a constructor made, owned through its destructor.
