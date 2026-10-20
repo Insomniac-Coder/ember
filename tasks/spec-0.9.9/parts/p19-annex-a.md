@@ -2,8 +2,8 @@
 
 # Annex A — Syntax Quick Reference
 
-Every construct below parses under Part III. The block is generated from the conformance fixture
-`docs/spec-source/appendix-a.em` (`[TST-6]`).
+Every construct below parses under Part III, and the block is generated from a fixture that compiles,
+`docs/spec-source/appendix-a.em` (`[TST-6]`): it declares what the fragment names (ODR-155).
 
 ```ember,fragment
 import std.io                                   # module import: binds `io`
@@ -81,7 +81,7 @@ fn evens(xs: Span[int]) -> some Iterator[Item = int]:    # opaque return type
 fn demo(xs: Array[int], m: Map[String, int], opt: Option[Point]):
     squares = [x * x for x in xs if x > 0]      # list comprehension
     total = sum(x * x for x in xs)              # generator expression, no allocation
-    index = {name: i for i, name in NAMES.iter().enumerate()}    # map comprehension
+    index: Map[str, int] = {name: i for i, name in NAMES.iter().enumerate()}    # map comprehension
     seen = {1, 2, 3}                            # set literal
     for name, count in m.items():               # a Map iterates keys; items() gives pairs
         println(f"{name}: {count}")
@@ -100,7 +100,7 @@ fn demo(xs: Array[int], m: Map[String, int], opt: Option[Point]):
         scope.spawn(fn() => println(xs.len()))
     defer: println("leaving demo")              # runs at scope exit
     comptime: assert(mem.size_of[Point]() == 16)    # compile-time check
-    unsafe: ptr_write_example()                 # unsafe block
+    unsafe: ptr_write_example()                 # SAFETY: an unsafe block names why it is sound
     @parallel(chunk=256)
     for i in 0..xs.len():
         consume_item(xs[i])

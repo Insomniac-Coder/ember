@@ -111,35 +111,50 @@ def check_block(binary, block, workdir):
 
 
 APPENDIX_FIXTURE = ROOT / "docs" / "spec-source" / "appendix-a.em"
+# The development target's Annex A, in the part every `Hardened_N` is assembled from.
+ANNEX_A = ROOT / "tasks" / "spec-0.9.9" / "parts" / "p19-annex-a.md"
 
 
-def emit_appendix():
-    """`[TST-6]` — rewrite Appendix A's code block from the fixture.
-
-    The fixture is the source of truth: it is the file that is checked, so the
-    quick reference cannot drift away from something that parses. `#$` lines
-    belong to the harness and are stripped on the way in.
-    """
-    fixture = APPENDIX_FIXTURE.read_text(encoding="utf-8")
-    body = [l for l in fixture.split(NEWLINE) if not l.lstrip().startswith("#$")]
+def appendix_block(fixture):
+    """`[TST-6]` — the lines of the fixture the quick reference prints: not the harness's `#$`
+    lines, and not the declarations between `#$ begin fixture` and `#$ end fixture`, which give the
+    printed fragment's names something to name so that the fixture compiles."""
+    body, hidden = [], False
+    for line in fixture.split(NEWLINE):
+        marker = line.strip()
+        if marker == "#$ begin fixture":
+            hidden = True
+        elif marker == "#$ end fixture":
+            hidden = False
+        elif not hidden and not line.lstrip().startswith("#$"):
+            body.append(line)
     while body and not body[0].strip():
         body.pop(0)
     while body and not body[-1].strip():
         body.pop()
+    return body
 
-    spec = SPEC.read_text(encoding="utf-8")
-    lines = spec.split(NEWLINE)
-    start = next(n for n, l in enumerate(lines) if APPENDIX.match(l))
+
+def emit_appendix():
+    """`[TST-6]` — rewrite Annex A's code block from the fixture.
+
+    The fixture is the source of truth: it is the file that is compiled, so the
+    quick reference cannot drift away from something that compiles. The next
+    `Hardened_N` cut assembles the part into the development target.
+    """
+    body = appendix_block(APPENDIX_FIXTURE.read_text(encoding="utf-8"))
+    part = ANNEX_A.read_text(encoding="utf-8")
+    lines = part.split(NEWLINE)
+    start = next(n for n, l in enumerate(lines) if l.startswith("# Annex A"))
     open_at = next(n for n in range(start, len(lines)) if lines[n].startswith("```ember"))
     close_at = next(n for n in range(open_at + 1, len(lines)) if lines[n].startswith("```"))
 
     new = NEWLINE.join(lines[: open_at + 1] + body + lines[close_at:])
-    if new == spec:
-        print("Appendix A already matches the fixture")
+    if new == part:
+        print("Annex A already matches the fixture")
         return 0
-    SPEC.write_text(new, encoding="utf-8", newline=NEWLINE)
-    print(f"Appendix A rewritten from {APPENDIX_FIXTURE.name} ({len(body)} lines)")
-    print("run: python tools/split_spec.py docs/spec-source/ember-spec.md docs/spec")
+    ANNEX_A.write_text(new, encoding="utf-8", newline=NEWLINE)
+    print(f"Annex A rewritten from {APPENDIX_FIXTURE.name} ({len(body)} lines)")
     return 0
 
 

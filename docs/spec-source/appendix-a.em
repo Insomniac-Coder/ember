@@ -1,90 +1,123 @@
-#$ test: syntax-pass
+#$ test: compile-pass
 #$ rules: TST-6, TST-7, GRM-2
 #$
-#$ `[TST-6]` — Appendix A's code block is generated from this file by
-#$ `tools/spec_check.py --emit-appendix`, so the quick reference cannot drift
-#$ from something that parses. Every construct here is in Part III's grammar.
-#$
-#$ `[TST-6]` asks for `compile-pass`, and that cannot hold yet: the appendix
-#$ names `Entity`, `CommandList`, `Formatter`, `SoA`, `Arena` and `Mutex`,
-#$ which are Phase 2 to Phase 6 library types. Today the file is held to
-#$ `ember check --syntax-only`, which is what `[TST-7]`'s gate runs over every
-#$ block in the document. It becomes `compile-pass` when `std` catches up.
-#$ Recorded as errata ERR-020.
+#$ `[TST-6]` — Annex A's code block is generated from this file by `tools/spec_check.py
+#$ --emit-appendix`, and this file is compiled (`ember_driver/tests/milestones.rs`,
+#$ `annex_a_is_generated_from_a_fixture_that_compiles`), so the quick reference is code that
+#$ compiles, not only code that parses. The lines between `#$ begin fixture` and `#$ end fixture`
+#$ declare what the printed fragment names and are not printed; every `#$` line is the harness's.
+#$ `import c "zlib.h"` reads the header the test writes beside this file.
+#$ begin fixture
+from std.sync import Atomic
+#$ end fixture
+import std.io                                   # module import: binds `io`
+import std.thread
+from std.math import Vec3, sin as sine          # item import
+import c "zlib.h" with (link=["z"]) as zlib     # C header import (Part XVI)
 
-#! language "0.5"
-import std.io                              # namespace import
-from std.math import Vec3, sin as sine     # item import
-import c "vulkan/vulkan.h" with (overlay="overlays/vulkan.em")
+const MAX: int = 1024                           # compile-time constant
+static HITS: Atomic[int] = Atomic(0)            # one global value; Sync
+static NAMES: Array[str] = ["ann", "bob"]       # initialised once
 
-const MAX: u32 = 1024                      # compile-time constant
-static HITS: Atomic[u64] = Atomic(0)       # global (Sync)
+@derive(Copy)
+struct Point:                                   # value type; Eq, Debug, Clone implicit
+    x: float
+    y: float = 0.0                              # field default
+    fn length(self) -> float:                   # borrowed receiver
+        return (self.x * self.x + self.y * self.y).sqrt()
+    fn scale(mut self, k: float):               # mutable receiver
+        self.x *= k
+        self.y *= k
 
-@derive(Copy, Debug, Eq)                   # derives
-@layout(c)
-pub struct Vec3:                           # value type
-    pub x: f32
-    pub y: f32
-    pub z: f32 = 0.0                       # field default
-    fn length(self) -> f32: pass           # borrowed receiver
-    fn scale(mut self, k: f32): pass       # mutable receiver
-    fn into_array(owned self) -> [f32; 3]: pass   # consuming receiver
+open class Script:                              # reference type, subclassable
+    let entity: int                             # assigned only in init
+    pub(read) health: float = 100.0             # readable everywhere, written here
+    fn init(self, entity: int):
+        self.entity = entity
+    virtual fn on_update(self, dt: float):
+        pass
 
-pub open class Script:                     # reference type, subclassable
-    let entity: Entity                     # immutable field
-    pub(read) health: f32 = 100.0          # public read, private write
-    fn init(mut self, entity: Entity): self.entity = entity
-    virtual fn on_update(mut self, dt: f32): pass
+class Door(Script):                             # inherits Script's init
+    angle: float = 0.0
+    override fn on_update(self, dt: float):
+        self.angle = min(self.angle + 90.0 * dt, 90.0)
 
-class Door(Script):                        # single inheritance
-    angle: f32 = 0.0
-    override fn on_update(mut self, dt: f32): self.angle += dt
+@sync
+class Counter:                                  # shareable across threads; fields fixed after init
+    hits: Atomic[int] = Atomic(0)
 
-enum Shape:                                # tagged union
-    Circle(r: f32)
-    Rect(w: f32, h: f32)
+enum Shape:                                     # tagged union
+    Circle(r: float)
+    Rect(w: float, h: float)
     Empty
 
 interface Drawable:
-    fn draw(self, mut cmd: CommandList)
+    fn draw(self) -> String
 
-extend Vec3 implements Display:            # external impl
-    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]: pass
+extend Shape implements Drawable:
+    fn draw(self) -> String:
+        return f"{self!r}"
 
-fn area(s: Shape) -> f32:                  # params: borrowed by default
-    return match s:                        # expression `match`: arms are expressions
-        Circle(r) => PI * r * r
+fn area(s: Shape) -> float:                     # parameters are borrowed by default
+    return match s:                             # match expression: `=>` arms
+        Circle(r) => 3.14159 * r * r
         Rect(w, h) => w * h
         Empty => 0.0
 
-fn fill(mut buf: MutSpan[f32], v: f32):    # `mut` = inout
-    for x in buf.iter_mut(): x = v         # ref mut local writes through
+fn fill(mut buf: MutSpan[float], v: float):     # `mut` parameter: in-out
+    for x in buf.iter_mut():
+        x = v                                   # writes through `ref mut`
 
-fn consume(owned xs: Array[i32]) -> usize: return xs.len()   # `owned` = move
+fn total(owned xs: Array[int]) -> int:          # `owned`: moved in
+    return xs.iter().sum()
 
-fn parse(s: str) -> Result[i32, ParseError]:
-    n = s.trim().parse[i32]()?             # ? propagates
-    return Ok(n)
+fn parse_pair(s: str) -> Result[(int, int)]:    # error type defaults to AnyError
+    a, _, b = s.partition(",")
+    return Ok((a.trim().parse[int]()?, b.trim().parse[int]()?))    # `?` converts ParseError
 
-@noalloc @simd
-fn integrate(mut p: SoA[Particle], dt: f32):        # contract + hint
-    for i in 0..p.len(): p.velocity[i] += GRAVITY * dt
+gen fn countdown(n: int) -> Generator[int]:     # generator
+    for i in (0..=n).rev():
+        yield i
 
-## Statements live in a function: `file` admits only items (`[GRM-2]`).
-fn demo(n: usize, out: MutSpan[f32], inp: Span[f32], m: Mutex[Array[i32]]):
-    @parallel(chunk=256)                   # statement attribute (`[ATT-2]`, `[ATT-3]`)
-    for i in 0..n: out[i] = f(inp[i])      # parallel loop
+fn evens(xs: Span[int]) -> some Iterator[Item = int]:    # opaque return type
+    return xs.iter().copied().filter(fn(x) => x % 2 == 0)
 
-    frame = Arena.with_capacity(16 * MB)   # arena
-    cmds  = frame.alloc_array[Cmd](count)  # MutSpan tied to frame
+fn demo(xs: Array[int], m: Map[String, int], opt: Option[Point]):
+    squares = [x * x for x in xs if x > 0]      # list comprehension
+    total = sum(x * x for x in xs)              # generator expression, no allocation
+    index: Map[str, int] = {name: i for i, name in NAMES.iter().enumerate()}    # map comprehension
+    seen = {1, 2, 3}                            # set literal
+    for name, count in m.items():               # a Map iterates keys; items() gives pairs
+        println(f"{name}: {count}")
+    q = 7 // 2                                  # floor division; `7 / 2` is an error
+    if 0 <= q < 10 and q in seen:               # chained comparison, membership
+        println(f"{q=} {q:>8}")                 # f-string: `=` form and format spec
+    if opt is None:
+        return
+    if Some(p) = opt:                           # pattern condition
+        println(p.length())
+    label = "big" if q > 3 else "small"         # conditional expression
+    r = ref xs[0]                               # explicit borrow
+    double = fn(x: int) => x * 2                # closure (borrows)
+    task = owned fn() => println("done")        # closure (owns its captures)
+    with scope = thread.scope():                # scoped threads; joins at block end
+        scope.spawn(fn() => println(xs.len()))
+    defer: println("leaving demo")              # runs at scope exit
+    comptime: assert(mem.size_of[Point]() == 16)    # compile-time check
+    unsafe: ptr_write_example()                 # SAFETY: an unsafe block names why it is sound
+    @parallel(chunk=256)
+    for i in 0..xs.len():
+        consume_item(xs[i])
 
-    double = fn(x: f32) => x * 2.0         # closure (borrowing)
-    task   = owned fn() => run(job)        # escaping closure
+#$ begin fixture
 
-    with lock = m.lock(): lock.push(1)     # scoped guard
-    defer: cleanup()                       # runs at scope exit
-    unsafe: ptr.write(0)                   # unsafe block
-    comptime: assert(size_of[Vec3]() == 12)  # compile-time check
-    x = a if cond else b                   # ternary
-    h: Option[Player] = None
-    if Some(p) = h: p.health -= 1          # pattern condition
+# SAFETY: it does nothing, so every call is sound
+unsafe fn ptr_write_example():
+    pass
+
+fn consume_item(x: int):
+    pass
+
+fn main():
+    demo([1, 2, 3], {}, None)
+#$ end fixture

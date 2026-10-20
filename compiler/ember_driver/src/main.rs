@@ -64,7 +64,9 @@ this compiler does not have yet):
     ember lint [file.em] [--json]                  check, then report [LNT-6]'s lints: unneeded clones,
                                                    large copies, guards held too long, allocation and
                                                    dispatch in hot loops, copies at the FFI boundary
-    ember doc                                      (not built yet)
+    ember doc <file.em>                            for each function that produces or takes a view, its
+                                                   contract: how it takes each parameter, what its result
+                                                   borrows, its effects and whether it allocates
     ember update [package]                         re-resolve dependencies and rewrite ember.lock
                                                    (not built yet)
     ember explain <E-code | rule-id> [--json]      the error page or rule text
@@ -465,6 +467,8 @@ struct Options {
     /// `[MONO-7]` — `ember inspect --generics`: check, then say of each generic whether its
     /// instances were specialised or share one body, and why.
     generics_report: bool,
+    /// `[DOC-3]` — `ember doc`: check, then print each view contract.
+    doc_report: bool,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -585,6 +589,14 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             explain(code, json)
         }
         "inspect" => inspect(&args[1..]),
+        // `[DOC-3]` — checked as `ember check` does.
+        "doc" => {
+            let [file] = &args[1..] else {
+                return Err(format!("`ember doc` takes one source file: `ember doc <file.{}>`", ember_branding::SOURCE_EXT));
+            };
+            let options = Options { doc_report: true, ..Options::default() };
+            compile(Path::new(file.as_str()), "check", &options)
+        }
         "tcb" => tcb(&args[1..]),
         "audit" => audit(&args[1..]),
         "calls" => calls(&args[1..]),
@@ -4643,6 +4655,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
     // `[COST-4]` — the costs the checks do not show, read before inlining folds functions together.
     let safety_costs = safety_costs_json(&bodies, &types, &modules, &map, &checked.contains_uses);
+    // `[DOC-3]` — the view contracts, read where the checks left the bodies, before inlining.
+    if options.doc_report {
+        let (standard, _) = standard_parts(&bodies, &modules);
+        report(&sink, &map, options);
+        print_view_contracts(&bodies, &types, &standard);
+        return Ok(if sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
+    }
     // `[LNT-6]` — `ember lint`'s own lints, on the MIR the checks ran on, before inlining.
     if options.lint {
         let (standard, _) = standard_parts(&bodies, &modules);
@@ -5869,6 +5888,70 @@ fn manifest_lint_is_known(key: &str) -> bool {
     ember_diag::codes::lookup(key)
         .is_some_and(|code| code.kind == ember_diag::codes::CodeKind::Lint)
         || matches!(key, "unused" | "potential_cycle" | "large_copy")
+}
+
+/// `[DOC-3]` — for every function of the program's own that produces or takes a view, its contract
+/// as the checks derived it from the signature: how it takes each parameter, what its result
+/// borrows (the region analysis's provenance of the result), its effects, and whether it allocates.
+fn print_view_contracts(bodies: &[ember_mir::Body], types: &ember_types::TypeTable, standard: &[bool]) {
+    let effects = ember_analysis::effects::effect_sets(bodies, types);
+    for (index, body) in bodies.iter().enumerate() {
+        if standard[index] || body.is_lambda || body.emit_if_used || body.span.is_dummy() || body.contracts.foreign.is_some() {
+            continue;
+        }
+        let params: Vec<(String, ember_types::Ty, ember_mir::ParameterMode)> = (0..body.arg_count)
+            .map(|position| {
+                let local = &body.locals[position + 1];
+                let name = local.name.clone().unwrap_or_else(|| format!("_{}", position + 1));
+                (name, local.ty, body.param_modes.get(position).copied().unwrap_or(ember_mir::ParameterMode::Borrow))
+            })
+            .collect();
+        let result = body.locals[0].ty;
+        if !types.is_view(result) && !params.iter().any(|(_, ty, _)| types.is_view(*ty)) {
+            continue;
+        }
+        let word = |mode: ember_mir::ParameterMode| match mode {
+            ember_mir::ParameterMode::Borrow => "",
+            ember_mir::ParameterMode::Mut => "mut ",
+            ember_mir::ParameterMode::Owned => "owned ",
+        };
+        let shown: Vec<String> = params.iter().map(|(name, ty, mode)| format!("{}{name}: {}", word(*mode), types.display(*ty))).collect();
+        println!("fn {}({}) -> {}", ember_analysis::effects::function_name(body, types), shown.join(", "), types.display(result));
+        for (name, ty, mode) in &params {
+            let how = match mode {
+                ember_mir::ParameterMode::Borrow if types.is_view(*ty) => "a view, read for the call",
+                ember_mir::ParameterMode::Borrow => "borrowed for the call",
+                ember_mir::ParameterMode::Mut => "borrowed mutably for the call (in-out)",
+                ember_mir::ParameterMode::Owned => "owned: moved in",
+            };
+            println!("    `{name}`: {how}");
+        }
+        if types.is_view(result) {
+            let mut from: Vec<String> = Vec::new();
+            for field in body.callable_regions.as_ref().and_then(|regions| regions.result.as_ref()).map(|result| result.fields.as_slice()).unwrap_or_default() {
+                for source in &field.sources {
+                    let (ember_mir::ResultRegionSource::View { argument, .. } | ember_mir::ResultRegionSource::Arena { argument }) = source;
+                    let name = params.get(*argument).map_or_else(|| format!("argument {argument}"), |(name, _, _)| format!("`{name}`"));
+                    if !from.contains(&name) {
+                        from.push(name);
+                    }
+                }
+            }
+            match from.as_slice() {
+                [] => println!("    the result borrows nothing it is given: a `static` view"),
+                [one] => println!("    the result borrows {one}, and lives no longer than it"),
+                many => println!("    the result borrows {}, and lives no longer than any of them", many.join(" and ")),
+            }
+        } else if matches!(types.kind(result), ember_types::TyKind::Void) {
+            println!("    it returns nothing");
+        } else {
+            println!("    the result is a value of its own, borrowing nothing");
+        }
+        let set = effects[index];
+        let named: Vec<&str> = set.each().map(|(_, name)| name).collect();
+        println!("    effects: {}", if named.is_empty() { "none".to_string() } else { named.join(", ") });
+        println!("    allocates: {}", if set.contains(ember_hir::Effects::ALLOC) { "yes" } else { "no" });
+    }
 }
 
 /// `[LNT-6]` — the `ember lint` lint a `[lints]` key names: its code, or `large_copy` (`L2002`).

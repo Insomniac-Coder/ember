@@ -693,6 +693,59 @@ fn main():
     assert_eq!(before.stdout, after.stdout, "parse(fmt(x)) differs from parse(x)");
 }
 
+/// `[DOC-3]` — `ember doc` presents, for every function that produces or takes a view, its contract
+/// derived from the signature: how it takes each parameter, what its result borrows, its effects and
+/// whether it allocates. A function with no view in its signature is not listed.
+#[test]
+fn ember_doc_presents_each_view_contract() {
+    let root = workspace_root();
+    let dir = temporary_directory("ember-doc");
+    let file = dir.join(ember_branding::source_file("main"));
+    let source = [
+        "fn pick(a: str, b: str, first: bool) -> str:",
+        "    if first:",
+        "        return a",
+        "    return b",
+        "",
+        "fn total(xs: Span[int]) -> int:",
+        "    t = 0",
+        "    for x in xs:",
+        "        t += x",
+        "    return t",
+        "",
+        "fn shout(text: str) -> String:",
+        "    return f\"{text}!\"",
+        "",
+        "fn fill(mut buf: MutSpan[int], v: int):",
+        "    for i in 0..buf.len():",
+        "        buf[i] = v",
+        "",
+        "fn twice(x: int) -> int:",
+        "    return x * 2",
+        "",
+        "fn main():",
+        "    xs = [1, 2, 3]",
+        "    fill(xs.as_mut_span(), 2)",
+        "    println(pick(\"a\", \"b\", true), total(xs.as_span()), shout(\"hey\"), twice(2))",
+        "",
+    ]
+    .join("\n");
+    std::fs::write(&file, source).expect("the source is writable");
+    let doc = ember(&["doc", &file.to_string_lossy()], &root);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(doc.exit, 0, "{}", doc.stderr);
+    let text = doc.stdout.replace("\r\n", "\n");
+    for block in [
+        "fn pick(a: str, b: str, first: bool) -> str\n    `a`: a view, read for the call\n    `b`: a view, read for the call\n    `first`: borrowed for the call\n    the result borrows `a` and `b`, and lives no longer than any of them\n    effects: none\n    allocates: no\n",
+        "fn total(xs: Span[i64]) -> i64\n    `xs`: a view, read for the call\n    the result is a value of its own, borrowing nothing\n",
+        "fn shout(text: str) -> String\n    `text`: a view, read for the call\n    the result is a value of its own, borrowing nothing\n    effects: Alloc, Panic(Explicit)\n    allocates: yes\n",
+        "fn fill(mut buf: MutSpan[i64], v: i64) -> void\n    `buf`: borrowed mutably for the call (in-out)\n    `v`: borrowed for the call\n    it returns nothing\n",
+    ] {
+        assert!(text.contains(block), "missing:\n{block}\nin:\n{text}");
+    }
+    assert!(!text.contains("fn twice"), "a function with no view is not listed:\n{text}");
+}
+
 /// `[MONO-7]` — `ember inspect --generics` says of each of the program's generics whether its
 /// instances share one body or are specialised, and why: `@never_specialize`, `@always_specialize`,
 /// or neither, when with no ceiling set nothing is shared (`[MONO-6]`).
@@ -7110,6 +7163,52 @@ fn the_three_versions_are_separate() {
         .find_map(|line| line.strip_prefix(&format!("#define {}_RUNTIME_ABI ", ember_branding::SYMBOL_PREFIX.to_uppercase())))
         .expect("the runtime header defines its ABI version");
     assert!(abi.trim().parse::<u32>().is_ok(), "the runtime ABI version is a number: {abi}");
+}
+
+/// `[TST-6]` — Annex A's code is generated from a fixture that is compiled: the annex's block is the
+/// fixture without its harness's `#$` lines and the declarations between `#$ begin fixture` and
+/// `#$ end fixture` (what the printed fragment names), and the fixture compiles, beside the C header
+/// its `import c` reads. Its only diagnostics are the quick reference's bindings that show a form
+/// and are not read again.
+#[test]
+fn annex_a_is_generated_from_a_fixture_that_compiles() {
+    let root = workspace_root();
+    let fixture = std::fs::read_to_string(root.join(format!("docs/spec-source/appendix-a.{SOURCE_EXT}"))).expect("the fixture reads");
+    let mut printed: Vec<&str> = Vec::new();
+    let mut hidden = false;
+    for line in fixture.lines() {
+        match line.trim() {
+            "#$ begin fixture" => hidden = true,
+            "#$ end fixture" => hidden = false,
+            _ if hidden || line.trim_start().starts_with("#$") => {}
+            _ => printed.push(line),
+        }
+    }
+    while printed.first().is_some_and(|line| line.trim().is_empty()) {
+        printed.remove(0);
+    }
+    while printed.last().is_some_and(|line| line.trim().is_empty()) {
+        printed.pop();
+    }
+    let part = std::fs::read_to_string(root.join("tasks/spec-0.9.9/parts/p19-annex-a.md")).expect("the part reads");
+    let open = "```ember,fragment\n";
+    let start = part.find(open).expect("Annex A has its block") + open.len();
+    let end = start + part[start..].find("\n```").expect("the block ends");
+    assert_eq!(&part[start..end], printed.join("\n"), "Annex A is not its fixture: run `python tools/spec_check.py --emit-appendix`");
+
+    let dir = temporary_directory("annex-a");
+    let file = dir.join(ember_branding::source_file("appendix_a"));
+    std::fs::write(&file, &fixture).expect("the fixture is writable");
+    std::fs::write(dir.join("zlib.h"), "const char *zlibVersion(void);\n").expect("the header is writable");
+    let checked = ember(&["check", &file.to_string_lossy()], &root);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(checked.exit, 0, "the fixture does not compile:\n{}", checked.stderr);
+    let reported: Vec<&str> = checked.stderr.lines().filter(|line| line.starts_with("warning[") || line.starts_with("error[")).collect();
+    let unread = ["squares", "total", "index", "label", "r", "double", "task"].map(|name| format!("warning[L1001]: `{name}` is never read"));
+    assert_eq!(reported.len(), unread.len(), "{}", checked.stderr);
+    for line in &unread {
+        assert!(reported.contains(&line.as_str()), "missing {line:?}:\n{}", checked.stderr);
+    }
 }
 
 /// `[CONF-1]` — `ember --version` declares the profile the compiler claims, and the claim is the one

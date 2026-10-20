@@ -392,6 +392,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-155 — Annex A's code broke two of the specification's rules — **CLOSED**
+
+    ID:        ODR-155
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_27
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_26.md [TST-6], Annex A
+
+**The question.** Compiling Annex A as `[TST-6]` asks: `index = {name: i for i, name in NAMES.iter().enumerate()}` is a `Map[String, int]` by `[TYP-38]`, into which a non-literal `str` does not convert (`[TYP-5]` rule 4), so it is `E2020`; and `unsafe: ptr_write_example()  # unsafe block` has no safety note, `W3012` by `[UNS-8]`.
+
+**Ruling.** Ruled under the delegation: `index: Map[str, int] = …`, and `# SAFETY: an unsafe block names why it is sound`. ADR-246.
+
+---
+
 ## ODR-154 — Where the performance gate's verdict is measured — **CLOSED**
 
     ID:        ODR-154

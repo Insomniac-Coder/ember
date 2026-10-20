@@ -5017,6 +5017,31 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-247 — `ember doc` presents view contracts (`[DOC-3]`)
+
+2026-10-20. `ember doc <file.em>` checks the program as `ember check` does and prints, for every
+function of the program's own whose signature has a view (a parameter or the result, `[TYP-14]`),
+its contract: how it takes each parameter (a view read for the call, borrowed, borrowed mutably,
+owned), what its result borrows (the region analysis's provenance of the result, the same record
+borrow checking consumes, `[MIR-REG-1]`), its effects (`[EFF-1]`) and whether it allocates. It reads
+the bodies where the checks left them, before inlining. A function with no view is not listed.
+
+## ADR-246 — Annex A is generated from a fixture that compiles (`[TST-6]`, ODR-155)
+
+2026-10-20. `docs/spec-source/appendix-a.em` held the 0.8 quick reference and was only parsed; the
+development target's Annex A had moved on without it. The fixture is now the 0.9.10 annex's code
+plus, between `#$ begin fixture` and `#$ end fixture`, the declarations the printed fragment names
+(`Atomic`'s import, `ptr_write_example`, `consume_item`, a `main` that calls `demo` so that every body
+is lowered and borrow-checked). `tools/spec_check.py --emit-appendix` writes the printed part into
+`tasks/spec-0.9.9/parts/p19-annex-a.md`, the part every `Hardened_N` is assembled from, and CI checks
+that it is unchanged. The milestone `annex_a_is_generated_from_a_fixture_that_compiles` checks that
+the part's block is the fixture's printed part and compiles the fixture beside a `zlib.h` its
+`import c` reads; its only diagnostics are the seven bindings the annex shows a form with and never
+reads (`L1001`). Compiling it found D-761..D-765 (ADR-244) and two lines of the annex that broke the
+specification's own rules, ruled as ODR-155 in `0.9.10_Hardened_27`: the map comprehension names
+its type (`index: Map[str, int] = …`, `[TYP-38]`, `[TYP-5]`), and the `unsafe:` block carries a
+safety note (`[UNS-8]`).
+
 ## ADR-245 — `import cpp`, the first slice of Annex C (helper N3)
 
 2026-10-20. Helper N3's branch, merged (23 commits, `tasks/90/N3-notes.md`): `import cpp "H.hpp"

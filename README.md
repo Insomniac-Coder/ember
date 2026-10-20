@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_26` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_26.md`](docs/spec-source/Ember_v0.9.10_Hardened_26.md) |
+| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_27` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_27.md`](docs/spec-source/Ember_v0.9.10_Hardened_27.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -47,8 +47,8 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 6 | Concurrency and data-oriented design | 95% |
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 85% |
-| 8 | Hardening and 1.0 | 65% |
-| | Overall (1.0) | 92% |
+| 8 | Hardening and 1.0 | 69% |
+| | Overall (1.0) | 93% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10
