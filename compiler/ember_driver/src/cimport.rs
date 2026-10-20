@@ -4614,7 +4614,14 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
         .map(|(usr, shared)| format!("{usr}={}:{}:{}:{}", shared.module.join("."), shared.name, shared.layout, shared.binding))
         .collect();
     shared.sort();
-    let configuration = format!("{library}\n{}\n{}\n{}", arguments(config).join(" "), config.header, std::path::absolute(config.from_dir).unwrap_or_default().display());
+    // `[FFI-17b]` — the instantiations listed are part of what is imported.
+    let configuration = format!(
+        "{library}\n{}\n{}\n{}\n{}",
+        arguments(config).join(" "),
+        config.header,
+        std::path::absolute(config.from_dir).unwrap_or_default().display(),
+        config.instantiate.join("\n")
+    );
     // The compiler itself is part of the key: another build of the importer may write another module.
     let key = ember_build::content_hash(
         format!(
