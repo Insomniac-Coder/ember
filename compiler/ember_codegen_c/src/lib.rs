@@ -6338,16 +6338,8 @@ impl Emitter<'_> {
         // A 128-bit counter is a runtime struct on MSVC: C's `<` and `++`
         // are for plain integers only.
         let inline_sizes = &self.inline_sizes;
-        // D-755 — `RangeNth`, a stepped range's value at an index, is the runtime header's inline
-        // arithmetic (`[CTL-3b]`: no call per element): MSVC 14.51 made `s5`'s loop 1.12x C as
-        // blocks.
         let inlined = |func: &FuncRef| {
-            self.for_msvc
-                && match func {
-                    FuncRef::Direct { symbol, .. } => inline_sizes.contains_key(symbol),
-                    FuncRef::Builtin { which: Builtin::RangeNth, .. } => true,
-                    _ => false,
-                }
+            self.for_msvc && matches!(func, FuncRef::Direct { symbol, .. } if inline_sizes.contains_key(symbol))
         };
         let mut for_loops = for_loops(body, &inlined);
         for_loops.retain(|_, counted| {

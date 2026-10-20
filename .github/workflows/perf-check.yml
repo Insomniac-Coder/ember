@@ -1,0 +1,33 @@
+name: perf-check
+
+# D-755: the performance gate alone, on the branch `perf-check`, run several times before a change
+# to it goes to main, so that it meets several of CI's runner machines.
+
+on:
+  push:
+    branches: [perf-check]
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: ubuntu-latest, cc: gcc }
+          - { os: windows-latest, cc: msvc }
+    runs-on: ${{ matrix.platform.os }}
+    name: performance / ${{ matrix.platform.os }} / ${{ matrix.platform.cc }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build
+        run: cargo build --locked --profile ci -p ember_driver --bin ember
+      - name: performance gate
+        run: ${{ runner.os == 'Windows' && 'target/ci/ember.exe' || 'target/ci/ember' }} bench --compare --core 1
+        env:
+          EMBER_CC: ${{ matrix.platform.cc }}

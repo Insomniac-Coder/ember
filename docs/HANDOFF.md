@@ -10792,9 +10792,9 @@ formal 1/9 count or Phase 2's estimate.
 > machine` notice) and leaves a baselined case only on a clear pass (s4's false "passes now").
 > D-755 progress: VS 2026 Build Tools installed (owner, 2026-10-20) — CI's MSVC is 14.51; run the
 > bench under it with scratchpad-style `vcvars64.bat` of `Microsoft Visual Studio\18\BuildTools`
-> (a developer environment wins over detection, which still picks VS 2022). `s5` fixed (RangeNth in
-> a counted loop); `w1`, `a10`, `s3`, `s4` baselined for MSVC; a clearly passing baselined case now
-> only warns. Next for `w1`: emit an outer counted loop whose body holds an inner one as a C `for`.
+> (a developer environment wins over detection, which still picks VS 2022). TRAP: the runner is AMD
+> EPYC; `s5` as a C `for` was 0.93x on the Intel laptop and 2.05x there (reverted) — judge on the
+> runner. `s5`, `w1`, `a10`, `s3`, `s4` baselined for MSVC; a clearly passing baselined case only warns.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

@@ -18,6 +18,10 @@ const WARMUP: usize = 3;
 const TIMED: usize = 30;
 /// `[BEN-2]` — an inconclusive benchmark is run again, this many times in all.
 const ATTEMPTS: usize = 3;
+/// D-755, `[BEN-1]` — the untimed and timed runs each layout of each side gets before the fastest
+/// layout of each is chosen for the timed comparison.
+const SCREEN_WARMUP: usize = 1;
+const SCREEN_TIMED: usize = 7;
 /// `[BEN-3]` — the band the C program's ratio to its own copy must reach.
 const FIT_BAND: (f64, f64) = (0.98, 1.02);
 
@@ -309,13 +313,14 @@ fn run_once(exe: &Path, stdin: Option<&str>) -> Result<(String, f64), String> {
 }
 
 /// The Ember program, built for release by this compiler: the path it printed.
-fn build_ember(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
+fn build_ember(source: &Path, out_dir: &Path, layout: usize) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let output = Command::new(exe)
         .args(["build", "--profile", "release"])
         .arg(source)
         .arg("--out-dir")
-        .arg(out_dir)
+        .arg(out_dir.join(format!("layout{layout}")))
+        .env(ember_branding::bench_layout_var(), layout.to_string())
         .output()
         .map_err(|error| error.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -334,9 +339,9 @@ fn build_ember(source: &Path, out_dir: &Path) -> Result<PathBuf, String> {
 
 /// `[BEN-5]` — the C program, built by the same toolchain and profile as the Ember program's C,
 /// so both have one optimisation level, LTO setting, floating-point model and target-CPU flags.
-fn build_twin(toolchain: &ember_build::Toolchain, source: &Path, out_dir: &Path, name: &str) -> Result<PathBuf, String> {
-    let output = out_dir.join(format!("{name}_c{}", std::env::consts::EXE_SUFFIX));
-    let obj_dir = out_dir.join(format!("{name}_c_obj"));
+fn build_twin(toolchain: &ember_build::Toolchain, source: &Path, out_dir: &Path, name: &str, layout: usize) -> Result<PathBuf, String> {
+    let output = out_dir.join(format!("{name}_c{layout}{}", std::env::consts::EXE_SUFFIX));
+    let obj_dir = out_dir.join(format!("{name}_c{layout}_obj"));
     std::fs::create_dir_all(&obj_dir).map_err(|error| error.to_string())?;
     let request = ember_build::LinkRequest {
         sources: &[source.to_path_buf()],
@@ -345,8 +350,34 @@ fn build_twin(toolchain: &ember_build::Toolchain, source: &Path, out_dir: &Path,
         profile: ember_build::Profile::Release,
         obj_dir,
     };
-    ember_build::compile_and_link(toolchain, &request).map_err(|error| format!("{} does not build: {error}", source.display()))?;
+    ember_build::compile_and_link_at_layout(toolchain, &request, layout)
+        .map_err(|error| format!("{} does not build: {error}", source.display()))?;
     Ok(output)
+}
+
+/// D-755, `[BEN-1]` — of each side's builds, one per code layout, the one with the lowest median
+/// over a short run of all of them interleaved. A small loop's speed depends on where its code
+/// lies; the gate compares each side at its fastest, so that neither wins or loses by where its
+/// compiler happened to put it, on any machine.
+fn fastest_layouts(ember: &[PathBuf], twin: &[PathBuf], stdin: Option<&str>) -> Result<(usize, usize), String> {
+    let programs: Vec<&PathBuf> = ember.iter().chain(twin).collect();
+    for _ in 0..SCREEN_WARMUP {
+        for program in &programs {
+            run_once(program, stdin)?;
+        }
+    }
+    let mut times = vec![Vec::with_capacity(SCREEN_TIMED); programs.len()];
+    for rep in 0..SCREEN_TIMED {
+        for offset in 0..programs.len() {
+            let which = (rep + offset) % programs.len();
+            times[which].push(run_once(programs[which], stdin)?.1);
+        }
+    }
+    let medians: Vec<f64> = times.iter().map(|samples| median(samples)).collect();
+    let fastest = |range: std::ops::Range<usize>| {
+        range.min_by(|&a, &b| medians[a].total_cmp(&medians[b])).map_or(0, |index| index)
+    };
+    Ok((fastest(0..ember.len()), fastest(ember.len()..programs.len()) - ember.len()))
 }
 
 pub fn command(args: &[String]) -> Result<ExitCode, String> {
@@ -412,7 +443,17 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         return Ok(ExitCode::SUCCESS);
     }
     pin_to_core(core)?;
-    println!("{} benchmark(s), {} on core {core}, {WARMUP} untimed and {TIMED} timed runs each [BEN-1]", pairs.len(), toolchain.name());
+    // D-755 — clang-cl's linker has no layout option: one layout.
+    let layouts = if matches!(&toolchain, ember_build::Toolchain::Msvc { cl, .. } if cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("clang-cl"))) {
+        1
+    } else {
+        ember_build::LAYOUTS
+    };
+    println!(
+        "{} benchmark(s), {} on core {core}, each side at its fastest of {layouts} code layout(s), then {WARMUP} untimed and {TIMED} timed runs [BEN-1]",
+        pairs.len(),
+        toolchain.name()
+    );
     let machine = format!("{} with {}", processor(), toolchain.compiler_path().display());
     println!("machine: {machine}");
     if std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") {
@@ -421,30 +462,33 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
     let mut failed = 0;
     let (mut passed, mut voided, mut inconclusive, mut baselined) = (0, 0, 0, 0);
     for pair in pairs {
-        let ember = build_ember(&pair.ember, out_dir)?;
-        let twin = build_twin(&toolchain, &pair.twin, out_dir, &pair.name)?;
-        // `[BEN-3]` — the second copy of the C program, a separate file.
-        let copy = out_dir.join(format!("{}_c2{}", pair.name, std::env::consts::EXE_SUFFIX));
-        std::fs::copy(&twin, &copy).map_err(|error| error.to_string())?;
+        let pair_dir = out_dir.join(&pair.name);
+        let embers = (0..layouts).map(|layout| build_ember(&pair.ember, &pair_dir, layout)).collect::<Result<Vec<_>, _>>()?;
+        let twins = (0..layouts).map(|layout| build_twin(&toolchain, &pair.twin, out_dir, &pair.name, layout)).collect::<Result<Vec<_>, _>>()?;
         // `[TST-28]` — a checker of identical output.
-        let (ember_out, _) = run_once(&ember, pair.stdin.as_deref())?;
-        let (c_out, _) = run_once(&twin, pair.stdin.as_deref())?;
+        let (ember_out, _) = run_once(&embers[0], pair.stdin.as_deref())?;
+        let (c_out, _) = run_once(&twins[0], pair.stdin.as_deref())?;
         if ember_out != c_out {
             println!("{}: FAIL — its output differs from the C program's", pair.name);
             failed += 1;
             continue;
         }
+        let (ember_layout, twin_layout) = fastest_layouts(&embers, &twins, pair.stdin.as_deref())?;
+        let (ember, twin) = (&embers[ember_layout], &twins[twin_layout]);
+        // `[BEN-3]` — the second copy of the C program, a separate file.
+        let copy = out_dir.join(format!("{}_copy{}", pair.name, std::env::consts::EXE_SUFFIX));
+        std::fs::copy(twin, &copy).map_err(|error| error.to_string())?;
         let mut outcome = Verdict::Inconclusive;
         let mut shown = String::new();
         let mut clear = false;
         for _ in 0..ATTEMPTS {
-            let (e, c, c2) = time_pair(&ember, &twin, &copy, pair.stdin.as_deref())?;
+            let (e, c, c2) = time_pair(ember, twin, &copy, pair.stdin.as_deref())?;
             let (e, c, c2) = (side(&e), side(&c), side(&c2));
             let to_c = ratio(e, c);
             outcome = verdict(to_c, ratio(c2, c), pair.threshold);
             clear = to_c.high <= pair.threshold;
             shown = format!(
-                "Ember {:.2} ms [{:.2}, {:.2}], C {:.2} ms [{:.2}, {:.2}], ratio {:.3} [{:.3}, {:.3}], threshold {:.2}x ({:?})",
+                "Ember {:.2} ms [{:.2}, {:.2}] (layout {ember_layout}), C {:.2} ms [{:.2}, {:.2}] (layout {twin_layout}), ratio {:.3} [{:.3}, {:.3}], threshold {:.2}x ({:?})",
                 e.median, e.low, e.high, c.median, c.low, c.high, to_c.median, to_c.low, to_c.high, pair.threshold, pair.category
             );
             if outcome != Verdict::Inconclusive {

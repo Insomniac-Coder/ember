@@ -11,3 +11,4 @@ s4_copied_enumerate_skip [msvc]: D-754, 1.27x C on the Windows runner; 1.058x on
 w1_sum_loop [msvc]: D-755, 1.68x-1.79x C on the Windows runner (MSVC 14.51, AMD EPYC); 1.07x on the owner's laptop with 14.51, 1.007x with 14.44
 s3_skip_step_take [msvc]: D-755, 1.25x C on two of three Windows runs (0.98x on the third; 0.93x on the owner's laptop with MSVC 14.51)
 a10_recursion [msvc]: D-755, 1.10x-1.11x C on two of three Windows runs; 1.055x on the owner's laptop with MSVC 14.51
+s5_range_step_enumerate [msvc]: D-755, 1.34x-1.37x C on the Windows runner (AMD EPYC, MSVC 14.51); as a C `for` loop 0.93x on the owner's Intel laptop but 2.05x on the runner, so not done

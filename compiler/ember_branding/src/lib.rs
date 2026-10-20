@@ -185,6 +185,11 @@ pub fn cc_var() -> String {
     format!("{}_CC", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// D-755 — the code layout `ember bench` builds a program at (`ember_build::LAYOUTS`).
+pub fn bench_layout_var() -> String {
+    format!("{}_BENCH_LAYOUT", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// Where `std`'s sources live, or `None` where they cannot be found.
 ///
 /// The order is: the environment variable; then `std/src` beside the running
