@@ -228,6 +228,7 @@ pub fn check(
         .iter()
         .map(|m| m.foreign.iter().flat_map(|foreign| foreign.backed.iter().map(|name| Symbol::intern(name))).collect())
         .collect();
+    checker.foreign_cpp = modules.iter().map(|m| m.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some())).collect();
     checker.foreign_skipped = modules
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
@@ -2255,6 +2256,8 @@ struct Checker<'a> {
     /// `[FFI-20a]` — per module `import c` wrote: its header, and each declaration it could not
     /// represent with why.
     foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
+    /// `[FFI-32]` — per module: `import cpp` wrote it.
+    foreign_cpp: Vec<bool>,
     /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
     foreign_backed: Vec<HashSet<Symbol>>,
     /// `[CT-2]` (ODR-145) — a `const`'s initialiser is being checked.
@@ -2898,6 +2901,7 @@ impl<'a> Checker<'a> {
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
+            foreign_cpp: Vec::new(),
             foreign_backed: Vec::new(),
             const_initializer: false,
             item_spans: HashMap::new(),
@@ -37888,6 +37892,20 @@ impl<'a> Checker<'a> {
             return self.synth_generic_class_constructor(qualified, &decl, args, &explicit, None, span);
         }
         let Some(&def) = self.fn_ids.get(&qualified) else {
+            // `[FFI-32]` — an opaque C++ class is made only by its imported constructors.
+            if let Some(&ty) = self.named_types.get(&qualified)
+                && matches!(self.types.kind(ty), TyKind::Opaque(_))
+                && qualified.as_str().rsplit_once('.').and_then(|(prefix, _)| self.prefixes.iter().position(|module| module == prefix))
+                    .is_some_and(|module| self.foreign_cpp.get(module).copied().unwrap_or(false))
+            {
+                let shown = qualified.as_str().rsplit('.').next().unwrap_or("");
+                self.sink.emit(
+                    Diagnostic::error(codes::E5032, name_span, format!("`{shown}` is an opaque C++ class: Ember does not know how to make one"))
+                        .help(format!("call one of its imported constructors, `{shown}.new(…)`, which returns a `ForeignBox[{shown}]`"))
+                        .note("a C++ class that is not standard-layout and trivially copyable is opaque, made only through its constructors [FFI-32]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };

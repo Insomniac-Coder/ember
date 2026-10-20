@@ -745,6 +745,10 @@ impl Writer {
                 }
                 CXType_Record => {
                     let declaration = clang_getTypeDeclaration(ty);
+                    // `[FFI-17a]` — the C++ standard library's classes cross only as its bridge types.
+                    if self.cpp && location(declaration).2 {
+                        return Err(format!("`{}`: the C++ standard library's types cross as `[FFI-17a]`'s bridge types, which are not built yet", cpp_spelling(ty)));
+                    }
                     // A struct with no tag is known by its typedef's name once that is written
                     // (`typedef struct {…} Rect`, seen through a canonical type).
                     if clang_Cursor_isAnonymous(declaration) != 0 && !self.records.contains_key(&usr(declaration)) {
@@ -1352,6 +1356,22 @@ impl Writer {
             let class_spelled = cpp_spelling(clang_getCursorType(definition));
             let abstract_class = clang_CXXRecord_isAbstract(definition) != 0;
             let mutable_state = children(definition).into_iter().any(|child| kind(child) == CXCursor_FieldDecl && clang_CXXField_isMutable(child) != 0);
+            // An opaque class's object is freed by its destructor: the one it declares, when that
+            // is public, else the implicit one, which is.
+            let declared = children(definition).into_iter().find(|child| kind(*child) == CXCursor_Destructor);
+            let destructible = by_value
+                || declared.is_none_or(|destructor| clang_getCXXAccessSpecifier(destructor) == CX_CXXPublic && clang_getCursorAvailability(destructor) != CXAvailability_NotAvailable);
+            if !by_value && destructible {
+                let destroys = format!("{}_cpp_delete_{owner}", ember_branding::SYMBOL_PREFIX);
+                let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
+                self.thunks += 1;
+                let _ = writeln!(self.shim, "extern \"C\" void {thunk}({class_spelled}* self) noexcept {{ delete self; }}");
+                if let Some(item) = self.items.iter_mut().find(|item| ident(&item.name) == owner && item.kind == Kind::Opaque) {
+                    item.text = format!("@ffi(destroys({destroys}))\n{}", item.text);
+                }
+                let owner = Some((owner.clone(), Member::Destructor));
+                self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false });
+            }
             let mut taken: HashSet<String> = HashSet::new();
             for child in children(definition) {
                 if clang_getCXXAccessSpecifier(child) != CX_CXXPublic || clang_getCursorAvailability(child) == CXAvailability_NotAvailable {
@@ -1363,9 +1383,12 @@ impl Writer {
                         if abstract_class || clang_CXXConstructor_isCopyConstructor(child) != 0 || clang_CXXConstructor_isMoveConstructor(child) != 0 {
                             continue;
                         }
+                        if !destructible {
+                            self.skip(child, &format!("{owner}.new"), "a constructor of a class whose destructor is not public: no `ForeignBox` could free what it makes");
+                            continue;
+                        }
                         if by_value { Member::Constructor } else { Member::BoxedConstructor }
                     }
-                    CXCursor_Destructor if !by_value => Member::Destructor,
                     CXCursor_CXXMethod => {
                         if name.starts_with("operator") {
                             self.skip(child, &format!("{owner}.{name}"), "an operator (`[FFI-42]`'s operator interfaces are not built yet)");
@@ -1396,15 +1419,7 @@ impl Writer {
                     continue;
                 }
                 match self.cpp_thunk(child, &key, Some((&owner, member, &class_spelled))) {
-                    Ok(function) => {
-                        if member == Member::Destructor {
-                            let destroys = format!("{}_cpp_delete_{owner}", ember_branding::SYMBOL_PREFIX);
-                            if let Some(item) = self.items.iter_mut().find(|item| ident(&item.name) == owner && item.kind == Kind::Opaque) {
-                                item.text = format!("@ffi(destroys({destroys}))\n{}", item.text);
-                            }
-                        }
-                        self.functions.push(function);
-                    }
+                    Ok(function) => self.functions.push(function),
                     Err(reason) => self.skip(child, &format!("{owner}.{key}"), reason),
                 }
             }
@@ -2406,7 +2421,7 @@ pub fn load(
     let undecided: Vec<(String, String)> = imported
         .functions
         .iter()
-        .filter(|function| function.policy == Policy::Unknown)
+        .filter(|function| function.policy == Policy::Unknown && applied.functions.get(&function.name).and_then(|entry| entry.policy).is_none())
         .map(|function| (function.name.clone(), "[E5061] its exception policy cannot be derived from the header (its specification is not evaluated), and no overlay declares one".to_string()))
         .collect();
     let mut c_flags: Vec<String> = flags.to_vec();
@@ -2561,6 +2576,9 @@ struct Entry {
     params: Vec<Vec<String>>,
     result: Vec<String>,
     arguments: Vec<String>,
+    /// `[FFI-24b]`, `[FFI-43]` — a C++ function's exception policy, as the entry declares it:
+    /// `@ffi(noexcept)` asserts it non-throwing, `@ffi(noexcept=false)` declares it throwing.
+    policy: Option<Policy>,
 }
 
 /// The word of a contract word as written: `count` of `count(n)`.
@@ -2707,12 +2725,29 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 if !matched || !take(applied, sink, layer, entry.is_override, "fn", name) {
                     continue;
                 }
+                // `[FFI-24b]`, `[FFI-43]` — the exception policy an entry declares, never one it
+                // declares twice over (`E5062`).
+                let (declared, arguments): (Vec<String>, Vec<String>) = arguments().into_iter().partition(|written| {
+                    let written: String = written.chars().filter(|c| !c.is_whitespace()).collect();
+                    matches!(written.as_str(), "noexcept" | "noexcept=true" | "noexcept=false")
+                });
+                let asserts = declared.iter().any(|written| !written.ends_with("false"));
+                let throws = declared.iter().any(|written| written.ends_with("false"));
+                if asserts && throws {
+                    sink.emit(
+                        Diagnostic::error(codes::E5062, name.span, format!("the entry for `{}` declares it both `noexcept` and throwing", name.name))
+                            .note("a C++ function has one exception policy [FFI-43]"),
+                    );
+                    continue;
+                }
+                let policy = if asserts { Some(Policy::Asserted) } else if throws { Some(Policy::Catching) } else { None };
                 applied.functions.insert(
                     function.name.clone(),
                     Entry {
                         params: params.iter().map(|param| param.contract.iter().map(|word| snippet(word.span)).collect()).collect(),
                         result: result.iter().map(|word| snippet(word.span)).collect(),
-                        arguments: arguments(),
+                        arguments,
+                        policy,
                     },
                 );
             }
@@ -2776,6 +2811,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     params: vec![Vec::new(); params.len()],
                     result: if raw { vec!["unsafe".to_string()] } else { Vec::new() },
                     arguments: arguments(),
+                    policy: None,
                 };
                 match applied.macros.iter_mut().find(|(earlier, ..)| earlier.name == found.name) {
                     Some(earlier) => *earlier = (function, made, c_text),
@@ -2993,7 +3029,14 @@ fn render(imported: &Imported, applied: &Applied, stem: &str) -> String {
     for function in &imported.functions {
         let hidden = applied.hidden.contains(&function.name);
         let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
-        match (function.policy, &function.owner) {
+        // `[FFI-24b]` — an asserted `noexcept` keeps the catching thunk, and a throw panics; a
+        // declared throwing function is caught; a non-throwing header declaration stays direct.
+        let policy = match (function.policy, entry.and_then(|entry| entry.policy)) {
+            (Policy::Direct, _) => Policy::Direct,
+            (_, Some(declared)) => declared,
+            (derived, None) => derived,
+        };
+        match (policy, &function.owner) {
             (Policy::Direct, None) if !function.out => member(function.abi, render_function(function, entry, renamed, hidden)),
             // `E5061` where it is used.
             (Policy::Unknown, _) => {}
