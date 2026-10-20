@@ -453,23 +453,25 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         }
         let scoped = format!("{} [{}]", pair.name, toolchain.name());
         let known = baseline.iter().find(|(name, _)| *name == pair.name || *name == scoped).map(|(_, reason)| reason.as_str());
-        // `[TST-29]` — a known failure leaves the baseline only on a clear pass, its whole interval
+        // `[TST-29]` — a known failure counts as passing only on a clear pass, its whole interval
         // under the threshold; a pass within the noise keeps it known (D-755: `s4` at 1.020x
-        // [0.996, 1.065] was called a pass and failed the gate).
+        // [0.996, 1.065] was called a pass). A clear pass is reported, as a warning on CI, for the
+        // entry to be taken out; it does not fail the gate, because a benchmark that passes on one
+        // of CI's machines may fail on the next (D-755: `s3` 0.98x and 1.25x on two runs).
         let outcome = match outcome {
             Verdict::Pass if known.is_some() && !clear => Verdict::Inconclusive,
             other => other,
         };
         match (&outcome, known) {
             (Verdict::Fail(_), Some(_)) => baselined += 1,
-            (Verdict::Pass, Some(_)) | (Verdict::Fail(_), None) => failed += 1,
-            (Verdict::Pass, None) => passed += 1,
+            (Verdict::Fail(_), None) => failed += 1,
+            (Verdict::Pass, _) => passed += 1,
             (Verdict::Inconclusive, _) => inconclusive += 1,
             (Verdict::Void(_), _) => voided += 1,
         }
         let word = match (&outcome, known) {
             (Verdict::Fail(why), Some(reason)) => format!("baselined — {reason}; {why} [TST-29]"),
-            (Verdict::Pass, Some(_)) => "FAIL — it passes now: take it out of the baseline [TST-29]".to_string(),
+            (Verdict::Pass, Some(_)) => "pass, though baselined: take it out of the baseline [TST-29]".to_string(),
             (Verdict::Pass, None) => "pass".to_string(),
             (Verdict::Fail(why), None) => format!("FAIL — {why}"),
             (Verdict::Inconclusive, _) => format!("inconclusive after {ATTEMPTS} runs [BEN-2]"),
@@ -477,8 +479,12 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         };
         println!("{}: {word}\n  {shown}", pair.name);
         // A CI log is read only when signed in; an annotation by anyone.
-        if word.starts_with("FAIL") && std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") {
-            println!("::error title=performance gate::{} with {}: {word}; {shown}", pair.name, toolchain.name());
+        if std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") {
+            if word.starts_with("FAIL") {
+                println!("::error title=performance gate::{} with {}: {word}; {shown}", pair.name, toolchain.name());
+            } else if word.starts_with("pass, though baselined") {
+                println!("::warning title=performance gate::{} with {}: {word}; {shown}", pair.name, toolchain.name());
+            }
         }
     }
     println!(
