@@ -335,6 +335,8 @@ pub fn check(
         checker.current_module = index;
         checker.collect(&loaded.module);
     }
+    // D-761 — an `SoA[T]` a signature named above `T`'s declaration was made before `T` had fields.
+    checker.refresh_soa_columns();
     checker.check_view_attributes();
     // `[FFI-5]` — each struct `import c` wrote, laid out as Clang lays it out.
     for (index, loaded) in modules.iter().enumerate() {
@@ -2445,8 +2447,14 @@ struct Checker<'a> {
     /// `[TYP-17]` — the interface each call a generic body made through a
     /// bound went to, by the call's span, so that an instantiation checking
     /// the body again on a concrete type calls that interface's method and
-    /// not an inherent one of the same name (D-245).
-    bound_calls: HashMap<Span, Symbol>,
+    /// not an inherent one of the same name (D-245). By the type `Self` names there too: a generic
+    /// type's generic methods are checked once per instance of the type, each through its own bounds
+    /// (D-765: `Map[String, V]`'s `AsKey[String]` is not `Map[str, V]`'s `AsKey[str]`).
+    bound_calls: HashMap<(Span, Option<Ty>), Symbol>,
+    /// D-765 — per call, the interface every record of it names, `None` when they differ: what an
+    /// instance whose `Self` the opaque check did not see (a generic type's method, checked once
+    /// over `Wrapper[T]`; an interface's default, over its `Self`) calls through.
+    bound_calls_by_span: HashMap<Span, Option<Symbol>>,
     /// `[COST-1]` — the inherent extension methods a built-in instance took
     /// when a method was first looked up on it: emitted only if called.
     emit_if_used_methods: HashSet<DefId>,
@@ -2997,6 +3005,7 @@ impl<'a> Checker<'a> {
             allocation_documented: HashSet::new(),
             std_generic_members: HashSet::new(),
             bound_calls: HashMap::new(),
+            bound_calls_by_span: HashMap::new(),
             generically_checked: HashSet::new(),
             reported_generic_override_errors: HashSet::new(),
             class_methods_recorded: false,
@@ -19846,6 +19855,26 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// D-245, D-765 — the interface a generic body's call at `span` went through, by the type `Self`
+    /// names now.
+    fn note_bound_call(&mut self, span: Span, bound: Symbol) {
+        self.bound_calls.insert((span, self.self_ty), bound);
+        self.bound_calls_by_span
+            .entry(span)
+            .and_modify(|all| {
+                if *all != Some(bound) {
+                    *all = None;
+                }
+            })
+            .or_insert(Some(bound));
+    }
+
+    /// D-245, D-765 — the interface the call at `span` goes through in this instance: its own
+    /// `Self`'s record, else the one every record names.
+    fn bound_call(&self, span: Span) -> Option<Symbol> {
+        self.bound_calls.get(&(span, self.self_ty)).copied().or_else(|| self.bound_calls_by_span.get(&span).copied().flatten())
+    }
+
     /// `[MONO-2]` — one more instance of `generic` (once each), made `made`-th, and the time its
     /// check took. Instances are checked in no particular order, so they are kept in the order made.
     fn note_instantiation(&mut self, generic: String, span: Span, made: u32, instance: String, elapsed: std::time::Duration) {
@@ -22594,11 +22623,47 @@ impl<'a> Checker<'a> {
                         return;
                     }
                 }
+                // `[EXP-2]` (D-762) — an element of an `SoA` column is reached through a view of the
+                // column, which the right side may read too: the right side first, into a temporary,
+                // then the place once, its view bound to a local the store (and an augmented
+                // assignment's read) go through.
+                let mut soa_place_ty = None;
+                if matches!(op, None | Some(ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul | ast::BinOp::Div | ast::BinOp::Rem | ast::BinOp::BitAnd | ast::BinOp::BitOr | ast::BinOp::BitXor))
+                    && matches!(&target.kind, ast::ExprKind::IndexOrInstantiate { base, .. } if matches!(base.kind, ast::ExprKind::Field { .. }))
+                {
+                    let quiet = self.sink.mark();
+                    let previous = self.in_assignment_target;
+                    self.in_assignment_target = true;
+                    let probe = self.synth(target);
+                    self.in_assignment_target = previous;
+                    self.sink.rollback(quiet);
+                    if contains_soa_column(&probe) {
+                        soa_place_ty = Some(probe.ty);
+                    }
+                }
+                let hidden_value;
+                let value = match soa_place_ty {
+                    Some(ty) => {
+                        let name = Symbol::intern("\u{b7}value");
+                        let init = self.check_expr(value, ty);
+                        let local = self.declare(Some(name), init.ty, value.span);
+                        out.push(Stmt::Let { local, init: Some(init) });
+                        hidden_value = ast::Expr {
+                            id: ast::NodeId::DUMMY,
+                            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name, span: value.span }] },
+                            span: value.span,
+                        };
+                        &hidden_value
+                    }
+                    None => value,
+                };
+                let soa_target = soa_place_ty.is_some();
                 let previous_target = self.in_assignment_target;
                 self.in_assignment_target = true;
                 let place = self.synth(target);
                 self.in_assignment_target = previous_target;
                 let place = self.index_place_for_write(place);
+                let place = if soa_target { self.bind_soa_column_views(place, out) } else { place };
                 // Only a place can be assigned; anything else would write a
                 // temporary and drop it, silently (a slice, `xs.as_span()`).
                 if !is_place(&place.kind) && place.ty != self.common.error {
@@ -22721,7 +22786,8 @@ impl<'a> Checker<'a> {
                 // something (`m[k]` through `index_mut` (`[STD-17]`), an index
                 // that is not a local or a literal) is held once (D-296); a
                 // plain place is read again.
-                let holds = op.is_some() && computes_in_path(&place);
+                // D-762 — an `SoA` column's element is read through the view the place is bound to.
+                let holds = op.is_some() && (computes_in_path(&place) || soa_target);
                 let operand = match op {
                     Some(ast::BinOp::Pow) => {
                         let exponent = self.synth(value);
@@ -22813,6 +22879,12 @@ impl<'a> Checker<'a> {
                 out.push(Stmt::Assign { place, value });
             }
             ast::StmtKind::If(if_stmt) => self.check_if(if_stmt, out),
+            // `condition := pattern "=" expression` — `while p = e:` loops around a `match` of `e`
+            // whose other arm runs the `else` block and leaves (D-763).
+            ast::StmtKind::While { label, cond: ast::Condition::Pattern { pattern, value }, body, else_block } => {
+                let stmt = pattern_while_as_loop(*label, pattern, value, body, else_block.as_ref(), stmt.span);
+                self.check_stmt_attrs_and_kind(&stmt, attrs, out);
+            }
             ast::StmtKind::While { label, cond, body, else_block } => {
                 let incoming_class_init = self.class_init.clone();
                 match cond {
@@ -29654,7 +29726,7 @@ impl<'a> Checker<'a> {
             );
             return Ok(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         };
-        self.bound_calls.insert(span, bound);
+        self.note_bound_call(span, bound);
         // D-257 — a call through a bound names no function that is emitted: a lambda making one
         // is over the body's opaque parameters, whatever its own types are.
         self.skipped_instances += 1;
@@ -31171,6 +31243,13 @@ impl<'a> Checker<'a> {
     }
 
     fn check_if(&mut self, if_stmt: &ast::IfStmt, out: &mut Vec<Stmt>) {
+        // `condition := pattern "=" expression` — `if p = e:` is a `match` of `e` (D-763).
+        if let ast::Condition::Pattern { pattern, value } = &if_stmt.cond {
+            let span = pattern.span.to(if_stmt.then_block.span);
+            let stmt = pattern_if_as_match(pattern, value, &if_stmt.then_block, if_stmt.else_block.as_deref(), span);
+            self.check_stmt_attrs_and_kind(&stmt, &[], out);
+            return;
+        }
         match &if_stmt.cond {
             ast::Condition::Expr(expr) => self.check_class_init_whole_self_use(expr),
             ast::Condition::Pattern { value, .. } => self.check_class_init_whole_self_use(value),
@@ -40323,7 +40402,7 @@ impl<'a> Checker<'a> {
             .named_interface_call
             .filter(|(_, at)| *at == span)
             .map(|(interface, _)| interface)
-            .or_else(|| self.bound_calls.get(&span).copied());
+            .or_else(|| self.bound_call(span));
         if let Some(interface) = through
             && self.interface_methods.contains_key(&(receiver.ty, interface, name.name))
         {
@@ -41768,7 +41847,7 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
-        self.bound_calls.insert(span, bound);
+        self.note_bound_call(span, bound);
         // D-257 — a call through a bound names no function that is emitted: a lambda making one
         // is over the body's opaque parameters, whatever its own types are.
         self.skipped_instances += 1;
@@ -44729,6 +44808,66 @@ impl<'a> Checker<'a> {
         ty
     }
 
+    /// `[SOA-1]` (D-761) — every `SoA[T]` again, now that every struct's fields are collected: one
+    /// named before `T`'s fields were (a signature above `T`'s declaration) was made with none.
+    fn refresh_soa_columns(&mut self) {
+        let soas: Vec<(StructId, Ty)> = self.soas.iter().map(|(&id, &inner)| (id, inner)).collect();
+        for (id, inner) in soas {
+            let TyKind::Struct(element) = *self.types.kind(inner) else { continue };
+            let columns: Vec<(Symbol, Ty)> =
+                self.types.soa_columns(element).into_iter().map(|column| (Symbol::intern(&column.name), column.ty)).collect();
+            let fields = &self.types.struct_def(id).fields;
+            let made = fields.iter().filter(|field| field.name.as_str().starts_with("col_")).count();
+            if made == columns.len() {
+                continue;
+            }
+            let mut rebuilt: Vec<FieldDef> = columns
+                .iter()
+                .map(|(column, ty)| FieldDef {
+                    name: Symbol::intern(&format!("col_{column}")),
+                    ty: self.types.intern(TyKind::Ptr { mutable: true, inner: *ty }),
+                    span: Span::DUMMY,
+                    ty_span: Span::DUMMY,
+                    has_default: false,
+                    is_let: false,
+                    read_only_outside: false,
+                    vis: FieldVis::Private,
+                })
+                .collect();
+            // The length, the capacity and an arena's borrow, after the columns as made.
+            rebuilt.extend(self.types.struct_def(id).fields.iter().filter(|field| !field.name.as_str().starts_with("col_")).cloned());
+            self.types.struct_def_mut(id).fields = rebuilt;
+            for (_, column) in &columns {
+                for mutable in [false, true] {
+                    self.types.intern(TyKind::Span { elem: *column, mutable });
+                    let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner: *column });
+                    self.types.intern(TyKind::Ref { mutable, inner: pointer });
+                }
+            }
+        }
+    }
+
+    /// `[EXP-2]` (D-762) — `place` with each `SoA` column view in it bound to a local first, so the
+    /// place is reached, and the view taken, once.
+    fn bind_soa_column_views(&mut self, place: Expr, out: &mut Vec<Stmt>) -> Expr {
+        let Expr { ty, kind, span } = place;
+        let kind = match kind {
+            ExprKind::Index { base, index } => ExprKind::Index { base: Box::new(self.bind_soa_column_views(*base, out)), index },
+            ExprKind::Field { base, index } => ExprKind::Field { base: Box::new(self.bind_soa_column_views(*base, out)), index },
+            ExprKind::Deref(base) => ExprKind::Deref(Box::new(self.bind_soa_column_views(*base, out))),
+            kind => {
+                let expr = Expr { ty, kind, span };
+                if !contains_soa_column(&expr) {
+                    return expr;
+                }
+                let local = self.declare(None, ty, span);
+                out.push(Stmt::Let { local, init: Some(expr) });
+                ExprKind::Local(local)
+            }
+        };
+        Expr { ty, kind, span }
+    }
+
     fn soa_inner(&self, ty: Ty) -> Option<Ty> {
         match self.types.kind(ty) {
             TyKind::Struct(id) => self.soas.get(id).copied(),
@@ -47567,7 +47706,7 @@ impl<'a> Checker<'a> {
         let concrete = place.ty;
         let receiver = self.pass_receiver(*place, receiver_mode, receiver_span);
         args.insert(0, receiver);
-        self.bound_calls.insert(span, bound);
+        self.note_bound_call(span, bound);
         // D-257 — a call through a bound names no function that is emitted: a lambda making one
         // is over the body's opaque parameters, whatever its own types are.
         self.skipped_instances += 1;
@@ -53526,6 +53665,72 @@ impl ShareWalk<'_> {
             E::Jump(ast::Jump::Return(Some(value))) | E::Yield(Some(value)) => self.expr(value),
             E::Jump(_) | E::Yield(None) => {}
         }
+    }
+}
+
+/// D-763 — `if p = e: A elif …: B else: C` as `match e:` with `p => A` and `_ =>` the rest of the
+/// chain (`pass` when there is none). The pattern's names are the `then` block's only.
+fn pattern_if_as_match(pattern: &ast::Pattern, value: &ast::Expr, then_block: &ast::Block, rest: Option<&ast::ElseBranch>, span: Span) -> ast::Stmt {
+    let stmt = |kind: ast::StmtKind, span: Span| ast::Stmt { id: ast::NodeId::DUMMY, attrs: Vec::new(), kind, span };
+    let otherwise = match rest {
+        Some(ast::ElseBranch::Block(block)) => block.clone(),
+        Some(ast::ElseBranch::If(nested)) => ast::Block {
+            id: ast::NodeId::DUMMY,
+            stmts: vec![stmt(ast::StmtKind::If(nested.clone()), nested.then_block.span)],
+            span: nested.then_block.span,
+        },
+        None => ast::Block { id: ast::NodeId::DUMMY, stmts: vec![stmt(ast::StmtKind::Pass, span)], span },
+    };
+    let arm = |pattern: ast::Pattern, body: ast::Block| ast::MatchArm {
+        id: ast::NodeId::DUMMY,
+        span: pattern.span.to(body.span),
+        pattern,
+        guard: None,
+        body: ast::MatchArmBody::Block(body),
+    };
+    let wild = ast::Pattern { id: ast::NodeId::DUMMY, kind: ast::PatternKind::Wild, span: pattern.span };
+    stmt(
+        ast::StmtKind::Match { scrutinee: value.clone(), arms: vec![arm(pattern.clone(), then_block.clone()), arm(wild, otherwise)] },
+        span,
+    )
+}
+
+/// D-763 — `while p = e: A else: B` as `while true:` around `match e:` with `p => A` and `_ =>` `B`,
+/// then `break`: a `break` in `A` still leaves without `B`, and `continue` tests `e` again.
+fn pattern_while_as_loop(
+    label: Option<ast::Ident>,
+    pattern: &ast::Pattern,
+    value: &ast::Expr,
+    body: &ast::Block,
+    else_block: Option<&ast::Block>,
+    span: Span,
+) -> ast::Stmt {
+    let stmt = |kind: ast::StmtKind, span: Span| ast::Stmt { id: ast::NodeId::DUMMY, attrs: Vec::new(), kind, span };
+    let expr = |kind: ast::ExprKind, span: Span| ast::Expr { id: ast::NodeId::DUMMY, kind, span };
+    let mut leave: Vec<ast::Stmt> = else_block.map(|block| block.stmts.clone()).unwrap_or_default();
+    leave.push(stmt(ast::StmtKind::Expr(expr(ast::ExprKind::Jump(ast::Jump::Break { label }), span)), span));
+    let otherwise = ast::ElseBranch::Block(ast::Block { id: ast::NodeId::DUMMY, stmts: leave, span });
+    let inner = pattern_if_as_match(pattern, value, body, Some(&otherwise), span);
+    let always = ast::Condition::Expr(expr(ast::ExprKind::Lit(ast::Literal::Bool(true)), value.span));
+    stmt(
+        ast::StmtKind::While {
+            label,
+            cond: always,
+            body: ast::Block { id: ast::NodeId::DUMMY, stmts: vec![inner], span: body.span },
+            else_block: None,
+        },
+        span,
+    )
+}
+
+/// `[EXP-2]` (D-762) — whether a place is reached through a view of an `SoA` column: the column's
+/// view itself, or a place inside one.
+fn contains_soa_column(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Builtin { which: Builtin::SoA { op: hir::SoAOp::Column { .. }, .. }, .. } => true,
+        ExprKind::Block { value, .. } => contains_soa_column(value),
+        ExprKind::Index { base, .. } | ExprKind::Field { base, .. } | ExprKind::Deref(base) => contains_soa_column(base),
+        _ => false,
     }
 }
 

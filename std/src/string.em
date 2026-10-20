@@ -2,6 +2,8 @@
 ## until the library can declare them; this module holds what can already be
 ## written.
 
+from std.fmt import Formatter, FmtError
+
 ## `[TXT-10]` (ODR-029) — why `s.parse[T]()` failed: the text was empty, held
 ## something that is not part of a `T` literal, or named a value outside `T`.
 ## A unit-only enum, so it is `Copy`, `Eq` and `Debug`.
@@ -9,6 +11,18 @@ pub enum ParseError:
     Empty
     Invalid
     Overflow
+
+## `[ERR-3]`, `[ERR-8]` (D-764) — an error type: `?` carries a failed `parse` into an `AnyError`
+## (`s.parse[int]()?` in a function returning `Result[T]`), and its text says why.
+extend ParseError implements Display:
+    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
+        return match self:
+            Empty => f.write_str("the text is empty")
+            Invalid => f.write_str("the text is not a value of this type")
+            Overflow => f.write_str("the value is outside this type's range")
+
+extend ParseError implements Error:
+    pass
 
 ## `[TXT-2]` — invalid UTF-8 when viewing foreign or raw bytes as text.
 pub enum Utf8Error:

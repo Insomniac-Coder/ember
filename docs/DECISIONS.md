@@ -5017,6 +5017,26 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-244 — What compiling Annex A found (D-761 to D-765)
+
+2026-10-20. Compiling Annex A's code as `[TST-6]` asks found five defects, each fixed where all its
+callers route through:
+
+* D-761 — an `SoA[T]` is made again once every struct's fields are collected
+  (`refresh_soa_columns`), so a signature above `T`'s declaration names one with `T`'s columns.
+* D-762 — `[EXP-2]` for a target in an `SoA` column: the right side first, into a temporary, then
+  the place once, its column view bound to a local the store and an augmented assignment's read share.
+* D-763 — the grammar's pattern condition: `if p = e:` is checked as `match e:` (`p` the `then`
+  block, `_` the rest of the chain), `while p = e:` as `while true:` around one whose `_` arm runs the
+  `else` block and leaves; `[GRM-19]`'s refutability check is unchanged.
+* D-764 — `std.string.ParseError` is `Display` and `Error`, so `?` carries it into an `AnyError`.
+* D-765 — D-245's record of the bound a generic body's call went through is keyed by the call's span
+  and the type `Self` names, so each instance of a generic type's generic methods calls through its
+  own bounds (`Map[str, V]`'s `AsKey[str]`, not `Map[String, V]`'s `AsKey[String]`); an instance
+  whose `Self` no check recorded (a generic type's method checked once over `Wrapper[T]`, an
+  interface default over its `Self`) takes the interface every record of the call names, when they
+  agree.
+
 ## ADR-243 — Shape S1 names the check's reason (`[DIA-11]`)
 
 2026-10-20. `E4030` (a `@static_safe` function keeping a dynamic aliasing check) carries the check's
