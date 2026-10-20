@@ -111,12 +111,16 @@ import c "vulkan/vulkan.h" with (
   target, language standard, defines and include paths, and exposes its functions, structs, unions,
   enums, typedefs, globals and constant macros as a module (`c`, or `name`). Options: `include_paths`,
   `defines`, `link`, `overlay`, `implementation` (`[FFI-29b]`). An unknown option is `E0104`.
-* `[FFI-6a]` An object-like macro is imported when, after expansion, it is a constant expression of
+* `[FFI-6a]` *(changed in 0.9.10)* An object-like macro is imported when, after expansion, it is a constant expression of
   integer, floating, string, null-pointer or pointer-cast type as Clang evaluates it; its type is the
-  C type of that value. Any other macro is skipped with `W5001`, giving Clang's reason.
-* `[FFI-6b]` A function-like macro is exposed only when an overlay declares its signature
+  C type of that value. A null-pointer or pointer-cast macro (`((void*)0)`, `((HANDLE)-1)`) is a
+  `const` of that pointer type holding the address as an integer (`[CT-2]`, ODR-145). A macro that
+  expands to nothing (an include guard, a feature flag) declares nothing and is not reported
+  (ODR-146). Any other macro is skipped with `W5001`, giving Clang's reason.
+* `[FFI-6b]` *(changed in 0.9.10)* A function-like macro is exposed only when an overlay declares its signature
   (`@ffi(macro_fn)`); the importer emits a C wrapper function for it into the shim. Ember gains no
-  macro facility. When every argument is a constant the importer may fold the call, so the result can
+  macro facility. A macro has no C types to derive contracts from, so its entry writes Ember types in
+  their place: `@ffi(macro_fn) fn SQUARE(x: i32) -> i32` (`[GRM-35]`, ODR-147). When every argument is a constant the importer may fold the call, so the result can
   initialise a `const`.
 * `[FFI-7]` A header is re-parsed only when its content, its overlay, or a setting that can change a
   binding's meaning or ABI changes (defines, target, language standard, packing, the C runtime); the
@@ -174,10 +178,13 @@ import c "vulkan/vulkan.h" with (
 * `[FFI-30b]` `pub import c "…" as vk` re-exports the module under the ordinary visibility rules; the
   package's interface hash (`[BLD-2]`) includes the imported layouts, so a header change rebuilds
   dependants.
-* `[FFI-30c]` A package may distribute an overlay for a foreign module, and several overlays for one
+* `[FFI-30c]` *(changed in 0.9.10)* A package may distribute an overlay for a foreign module, and several overlays for one
   module compose in a declared order; they may add aliases and wrappers and replace an entry only with
   an explicit `override`. Incompatible entries are an error, never a silent choice, and no overlay may
-  change a foreign type's identity or layout.
+  change a foreign type's identity or layout. The order is declared where the module is imported:
+  `overlay` takes one file or a list, applied first to last (a dependency's before the package's
+  own); a later file's `override` entry replaces an earlier file's for that name, and any other
+  second entry for one name is `E5010` (ODR-149).
 
 ## XVI.4 Contracts and overlays
 
@@ -215,6 +222,11 @@ unsafe overlay c "vulkan/vulkan.h":
   overlay_param := IDENT [":" contract {contract}]
   contract      := IDENT ["(" [attr_arg {"," attr_arg}] ")"]
   ```
+
+  In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one Ember
+  type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read (ODR-147). An
+  item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
+  ODR-149).
 
   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an

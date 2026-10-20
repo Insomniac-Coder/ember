@@ -5017,6 +5017,24 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-231 — Helper N's questions ruled (ODR-145..ODR-149, 0.9.10_Hardened_23)
+
+2026-10-20, under the delegation (the owner, 2026-10-19: issues a helper reports are mine to
+settle); each is the owner's to overturn.
+* ODR-145 (`[FFI-6a]`, `[CT-2]`): a raw pointer made from an integer is a compile-time value (an
+  address read by nothing), so a `const` of pointer type may hold one; a pointer into the evaluator's
+  heap may not leave it (`E6010`). A null-pointer or pointer-cast macro is imported as such a `const`
+  of its C pointer type. `[CT-2]` forbade pointer *access* outside the evaluator's heap, never an
+  address; the implementation refused the constant.
+* ODR-146 (`[FFI-6a]`): an empty macro (an include guard) declares nothing and is not reported (built).
+* ODR-147 (`[FFI-6b]`, `[GRM-35]`): an overlay entry marked `@ffi(macro_fn)` writes one Ember type per
+  parameter and for the result; a macro has no C declaration to derive contracts from.
+* ODR-148 (`[CLI-5]`): `ember bind --init` writes `<stem>.overlay.em` beside the header (built).
+* ODR-149 (`[FFI-30c]`, `[GRM-35]`): `overlay` takes one file or a list applied first to last; an
+  item may begin with `override`, replacing an earlier file's entry; any other second entry for one
+  name is `E5010`.
+ODR-145, ODR-147 and ODR-149 are to be built (helper N's second job, `scratchpad` job sheet N2).
+
 ## ADR-230 — Helper N merged: the C header importer (`import c`)
 
 2026-10-20. Helper N's branch (20 commits on `e6dbf552`, notes in `tasks/90/N-notes.md`) merged

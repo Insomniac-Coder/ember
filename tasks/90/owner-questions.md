@@ -7,17 +7,19 @@ the specification quoted, a real example and the options, in the helper's notes.
 
 ## The C header importer (`[FFI-6a]`, `[FFI-6b]`, `[CLI-5]`, `[FFI-30c]`), helper N — `tasks/90/N-notes.md` §4
 
-To be ruled under the delegation (the owner, 2026-10-19: issues a helper reports are mine to settle).
+Ruled under the delegation 2026-10-20 as ODR-145..ODR-149 (0.9.10_Hardened_23, ADR-231), each the
+owner's to overturn.
 1. A pointer-constant macro (`#define NIL ((void*)0)`, `((HANDLE)-1)`): `[FFI-6a]` imports it with its
-   C pointer type, `[CT-5]` forbids a pointer `const`. Built meanwhile: skipped with `W5001`.
+   C pointer type, `[CT-5]` forbids a pointer `const`. Built meanwhile: skipped with `W5001`. **Ruled ODR-145: a
+   pointer made from an integer is a compile-time value; imported as a `const`.**
 2. A macro that expands to nothing (include guards): a `W5001` each, as written, or not reported.
-   Built meanwhile: not reported.
+   Built meanwhile: not reported. **Ruled ODR-146: not reported.**
 3. A function-like macro's signature (`[FFI-6b]`, `@ffi(macro_fn)`): the overlay grammar gives an
-   entry no types. Built meanwhile: nothing.
+   entry no types. Built meanwhile: nothing. **Ruled ODR-147: a `macro_fn` entry writes Ember types.**
 4. Where `ember bind --init` writes its starter overlay (`[CLI-5]`). Built: `<stem>.overlay.em` beside
-   the header.
+   the header. **Ruled ODR-148: as built.**
 5. Several overlays for one module, their order and `override` (`[FFI-30c]`). Built meanwhile: one
-   overlay file per import.
+   overlay file per import. **Ruled ODR-149: a list in order, `override`, else `E5010`.**
 
 ## Box (`[STR-5]`, IX.1), found 2026-10-20 (ADR-226)
 

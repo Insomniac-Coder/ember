@@ -180,7 +180,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLI-1]` | XVII | Every command accepts `--json` and exits non-zero on error. |
 | `[CLI-2]` | XVII | `ember build --emit c --out-dir <dir>` writes the C sources without … |
 | `[CLI-4]` | XVII | `ember run file.em` and `ember build file.em` accept a single file … |
-| `[CLI-5]` | XVII | `ember bind --init <header>` writes a starter overlay: every derived … |
+| `[CLI-5]` | XVII | *(changed in 0.9.10)* `ember bind --init <header>` writes a starter … |
 | `[CLI-6]` | XVII | `ember bind --report` lists every skipped declaration and every … |
 | `[CLI-7]` | XVII | `ember bind --check <overlay>` checks `[FFI-12]` and prints how many … |
 | `[CLI-9]` | XVII | `ember check --syntax-only` lexes and parses only, reporting `E00xx` … |
@@ -274,7 +274,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[CT-1]` | XIV | These are evaluated during compilation: `comptime(e)`; `comptime:` … |
-| `[CT-2]` | XIV | An operation that cannot run at compile time — an `extern` call, a … |
+| `[CT-2]` | XIV | *(changed in 0.9.10)* An operation that cannot run at compile time — … |
 | `[CT-3]` | XIV | Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap … |
 | `[CT-4]` | XIV | Compile-time evaluation is deterministic by construction: the … |
 | `[CT-5]` | XIV | Where results live. A compile-time result is placed in the image as … |
@@ -517,8 +517,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-5]` | XVI | Layouts are verified, not assumed: the importer records `sizeof`, … |
 | `[FFI-5a]` | XVI | The generated shim (`[FFI-29]`) contains a `_Static_assert` for the … |
 | `[FFI-6]` | XVI | `import c "header" with (…) [as name]` parses the header with … |
-| `[FFI-6a]` | XVI | An object-like macro is imported when, after expansion, it is a … |
-| `[FFI-6b]` | XVI | A function-like macro is exposed only when an overlay declares its … |
+| `[FFI-6a]` | XVI | *(changed in 0.9.10)* An object-like macro is imported when, after … |
+| `[FFI-6b]` | XVI | *(changed in 0.9.10)* A function-like macro is exposed only when an … |
 | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
 | `[FFI-8]` | XVI | Type mapping. |
 | `[FFI-9]` | XVI | `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, … |
@@ -560,7 +560,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-30]` | XVI | Two imports of one C declaration (by Clang's USR, through typedefs) … |
 | `[FFI-30a]` | XVI | An overlay changes the signatures, safety and names of *functions* … |
 | `[FFI-30b]` | XVI | `pub import c "…" as vk` re-exports the module under the ordinary … |
-| `[FFI-30c]` | XVI | A package may distribute an overlay for a foreign module, and several … |
+| `[FFI-30c]` | XVI | *(changed in 0.9.10)* A package may distribute an overlay for a … |
 | `[FFI-31]` | XVI | *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. … |
 | `[FFI-31a]` | XVI | Its thread detachment never relies on a TLS destructor in the … |
 | `[FFI-31b]` | XVI | No owning Ember value crosses a module boundary: class handles, … |

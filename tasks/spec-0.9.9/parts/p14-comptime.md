@@ -40,9 +40,11 @@ comptime:
 * `[CT-7]` *(new in 0.9.9)* A `comptime:` block at item level, or as a statement, runs once during
   compilation for its checks. A failed `assert` or any other panic there is `E6004`, which shows the
   panic message and the compile-time call chain.
-* `[CT-2]` *(changed in 0.9.9)* An operation that cannot run at compile time — an `extern` call, a
+* `[CT-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* An operation that cannot run at compile time — an `extern` call, a
   thread, a clock, `unsafe` pointer access outside the evaluator's heap, I/O — is `E6010`, naming the
-  call chain. Two inputs are provided: `comptime.read_file(path)` (relative to the package root, and only inside the
+  call chain. A raw pointer made from an integer (`0 as *mut T`, `-1 as *mut T`) is a compile-time
+  value: it is an address, read by nothing, and a `const` of pointer type may hold one; a pointer into
+  the evaluator's heap may not leave it (`E6010`) (ODR-145). Two inputs are provided: `comptime.read_file(path)` (relative to the package root, and only inside the
   package directory, `E6010` otherwise, so a dependency's build cannot read the builder's files) and
   `comptime.env(name)`. Both are recorded as build inputs.
 * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default

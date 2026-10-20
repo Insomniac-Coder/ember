@@ -78,7 +78,8 @@ ember --help | --version [--matrix]
   every Part, rule family, command and flag of this document, whether this compiler implements it.
   A command, flag, attribute or construct the compiler does not implement is rejected with `E0900`
   naming it (`[PHIL-12]`), never ignored.
-* `[CLI-5]` `ember bind --init <header>` writes a starter overlay: every derived contract, every unknown
+* `[CLI-5]` *(changed in 0.9.10)* `ember bind --init <header>` writes a starter overlay, `<stem>.overlay.em` beside the header
+  (ODR-148): every derived contract, every unknown
   fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It
   compiles unchanged and never overwrites a file; with `--merge` it adds only the declarations missing
   from an existing overlay, keeping hand-written contracts and comments.

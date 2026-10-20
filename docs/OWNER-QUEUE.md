@@ -327,6 +327,71 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-145 — A pointer-constant macro — **CLOSED**
+
+    ID:        ODR-145
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_23
+    Category:  FFI
+    Location:  Ember_v0.9.10_Hardened_22.md [FFI-6a], [CT-2]
+
+**The question.** `[FFI-6a]` imports a null-pointer or pointer-cast macro with its C pointer type, and the compile-time evaluator refused a `const` of pointer type (helper N's question 1).
+
+**Ruling.** Ruled under the delegation: a pointer made from an integer is an address read by nothing, so it is a compile-time value; a `const` of pointer type may hold one, and such a macro is imported as one. A pointer into the evaluator's heap stays `E6010`. ADR-231.
+
+---
+
+## ODR-146 — A macro that expands to nothing — **CLOSED**
+
+    ID:        ODR-146
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_23
+    Category:  FFI
+    Location:  Ember_v0.9.10_Hardened_22.md [FFI-6a]
+
+**The question.** Read literally, every include guard is a `W5001` at every import (helper N's question 2).
+
+**Ruling.** Ruled under the delegation: it declares nothing and is not reported. ADR-231.
+
+---
+
+## ODR-147 — A function-like macro's signature — **CLOSED**
+
+    ID:        ODR-147
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_23
+    Category:  FFI
+    Location:  Ember_v0.9.10_Hardened_22.md [FFI-6b], [GRM-35]
+
+**The question.** An overlay entry's parameters take contract words, not types, and a macro has no C types to derive them from (helper N's question 3).
+
+**Ruling.** Ruled under the delegation: an entry marked `@ffi(macro_fn)` writes one Ember type per parameter and for the result (`@ffi(macro_fn) fn SQUARE(x: i32) -> i32`). ADR-231.
+
+---
+
+## ODR-148 — Where `ember bind --init` writes — **CLOSED**
+
+    ID:        ODR-148
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_23
+    Category:  TOOLING
+    Location:  Ember_v0.9.10_Hardened_22.md [CLI-5]
+
+**The question.** The rule says it writes a starter overlay and never overwrites one, not where (helper N's question 4).
+
+**Ruling.** Ruled under the delegation: `<stem>.overlay.em` beside the header, as built. ADR-231.
+
+---
+
+## ODR-149 — Several overlays for one module — **CLOSED**
+
+    ID:        ODR-149
+    Status:    CLOSED — ruled under the delegation 2026-10-20; incorporated in 0.9.10_Hardened_23
+    Category:  FFI
+    Location:  Ember_v0.9.10_Hardened_22.md [FFI-30c], [GRM-35]
+
+**The question.** Overlays compose "in a declared order" with `override`, but `[FFI-6]`'s `overlay` option names one file and the grammar has no `override` (helper N's question 5).
+
+**Ruling.** Ruled under the delegation: `overlay` takes one file or a list, applied first to last; `override` before an item replaces an earlier file's entry; any other second entry for a name is `E5010`. ADR-231.
+
+---
+
 ## ODR-144 — `some` in an interface's method — **CLOSED**
 
     ID:        ODR-144

@@ -10772,6 +10772,7 @@ formal 1/9 count or Phase 2's estimate.
 > interface's method, `E2260`.
 > Then ADR-230: helper N merged, the C header importer (`import c`, `ember bind`, overlays); README
 > Overall **90%**. D-737..D-746 (D-742..D-746 open). N's questions in `tasks/90/owner-questions.md`.
+> Then ADR-231: N's questions ruled as ODR-145..ODR-149 (0.9.10_Hardened_23); ODR-145/147/149 to build.
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 

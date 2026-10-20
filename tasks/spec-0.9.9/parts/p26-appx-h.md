@@ -423,6 +423,11 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-142 | ruled under the delegation: a query none of whose parameters requires a component iterates every live entity, in the world's order (creation order with swap-remove holes) | `[ECS-3]`, `[ECS-6]` |
 | ODR-143 | ruled under the delegation: a shared method called on `self` inside a `mut self` method is lent the method's access as a read: its reads are not checked again, and a write to the object under it is | `[EXC-5]` |
 | ODR-144 | ruled under the delegation: `some I` is legal as a function's or a method's return type; in an interface's method (declared or default) it is `E2260`, and an associated type bounded by `I` states what each implementation returns | `[GRM-31]`, `[TYP-32]` |
+| ODR-145 | ruled under the delegation: a raw pointer made from an integer is a compile-time value and a `const` of pointer type may hold one; a pointer into the evaluator's heap may not leave it (`E6010`); a null-pointer or pointer-cast macro is imported as such a `const` | `[FFI-6a]`, `[CT-2]` |
+| ODR-146 | ruled under the delegation: an object-like macro that expands to nothing is not a declaration and is not reported | `[FFI-6a]` |
+| ODR-147 | ruled under the delegation: an overlay entry marked `@ffi(macro_fn)` writes one Ember type for each parameter and for the result | `[FFI-6b]`, `[GRM-35]` |
+| ODR-148 | ruled under the delegation: `ember bind --init <header>` writes `<stem>.overlay.em` beside the header | `[CLI-5]` |
+| ODR-149 | ruled under the delegation: `overlay` takes one file or a list applied in order; `override` before an item replaces an earlier file's entry, any other second entry for one name is `E5010` | `[FFI-30c]`, `[GRM-35]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1012,3 +1017,23 @@ Generated: every rule whose text differs from 0.9.10_Hardened_21.
 |---|---|
 | `[GRM-31]` | changed |
 | `[TYP-32]` | changed |
+
+## H.28 Changes in 0.9.10_Hardened_23 (from 0.9.10_Hardened_22)
+
+**0.9.10_Hardened_23** records ODR-145..ODR-149, ruled under the delegation on the questions helper N raised building the C header importer (`tasks/90/owner-questions.md`, `docs/DECISIONS.md` ADR-231):
+
+* A raw pointer made from an integer is a compile-time value (an address, read by nothing), so a `const` of pointer type may hold one; a null-pointer or pointer-cast macro is imported as such a `const` (ODR-145).
+* An object-like macro that expands to nothing declares nothing and is not reported (ODR-146).
+* An overlay entry marked `@ffi(macro_fn)` writes Ember types for the macro's parameters and result (ODR-147).
+* `ember bind --init <header>` writes `<stem>.overlay.em` beside the header (ODR-148).
+* `overlay` takes one file or a list applied first to last; a later file's `override` entry replaces an earlier one, any other second entry for one name is `E5010` (ODR-149).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_22.
+
+| Rule | 0.9.10_Hardened_22 → 0.9.10_Hardened_23 |
+|---|---|
+| `[CLI-5]` | changed |
+| `[CT-2]` | changed |
+| `[FFI-6a]` | changed |
+| `[FFI-6b]` | changed |
+| `[FFI-30c]` | changed |
