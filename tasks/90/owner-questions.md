@@ -60,6 +60,34 @@ owner's to overturn.
 7. D-690: lend `self` to a shared call as a read (built), let the callee's writes through, or lend
    exactly the method's live loans. **Ruled ODR-143: lent as a read.**
 
+## `import cpp`, helper N3, 2026-10-20 (ADR-245) — `tasks/90/N3-notes.md` §5
+
+Each has option (a) built; all **OPEN**.
+
+1. How an instantiation is named (`[FFI-17b]` gives none): (a) the template-id's characters joined
+   by `_` (`geo::Pair<int>` is `geo.Pair_int`); (b) an overlay `rename` for each; (c) another spelling.
+2. How an overlay declares a function throwing (`[FFI-43]` names no spelling; `[FFI-24b]` spells the
+   assertion `@ffi(noexcept)`): (a) `@ffi(noexcept=false)`; (b) `@ffi(throws)`.
+3. How an overlay names a method, for `[FFI-40a]`'s `@ffi(invalidates)` (`[GRM-35]`'s `overlay_fn`
+   takes one name): (a) not possible: the class-wide assumption only; (b) `fn Cache.lookup(…)`;
+   (c) entries inside `extend Cache:`; (d) `@ffi(invalidates=[lookup])` on `type Cache`.
+4. A static data member (`[FFI-41]`), whose mangled symbol `[FFI-3]` forbids and whose address in a
+   static `E7002` refuses: (a) an associated function giving its address, `Grid.made() -> *mut c_int`;
+   (b) an `extern static` of the address exempt from `E7002`; (c) amend `[FFI-41]` to say (a).
+5. Nested types "under their outer type's name" (`[FFI-41]`), Ember having none: (a) `Outer_Inner`;
+   (b) a child module per class (`cpp.Outer.Inner`).
+6. Composed overlays that disagree on a policy (`E5062`, `[FFI-43]`, beside ODR-149's `E5010`):
+   (a) a second entry without `override` declaring the opposite policy is `E5062`, the same or none
+   `E5010`; (b) every second entry `E5010`, `E5062` only within one entry.
+7. `[FFI-24c]`'s `ember bind --report` reads a header, not a program, so it cannot see `@noalloc` or
+   main-thread paths: (a) not built; (b) the report belongs to `ember build --report`; (c) list every
+   catching function.
+8. `[BLD-FFI-5a]` beside `[FFI-31b]`, which keeps class handles out of exported signatures: (a) not
+   built; (b) `[FFI-31b]` allows `@sync` handles in exports with the `--cpp` header; (c) a later version.
+9. A defaulted special member C++ makes `noexcept(false)` (`[FFI-24]` lists it as non-throwing):
+   (a) direct, as the rule says (a throw ends in `std::terminate`); (b) Clang's answer, catching when
+   C++ says it may throw.
+
 ## The importer's second job (helper N), 2026-10-20 (ADR-238) — `tasks/90/N-notes.md` Part 2
 
 1. Inside a `const` initialiser, an integer-to-pointer cast (`0 as *mut T`, ODR-145) needs no

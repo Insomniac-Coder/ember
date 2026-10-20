@@ -4,3 +4,8 @@ pub fn triple(x: int) -> int:
 pub enum Shape:
     Dot
     Square(int)
+
+pub struct Tile:
+    pub size: int
+
+    pub const SIDE: int = 5

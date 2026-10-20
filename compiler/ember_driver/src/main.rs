@@ -3317,8 +3317,12 @@ fn load_package_modules(
                 let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
                 let flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
                 let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
-                if let Some(written) = cimport::load(import, &importer, &base, &flags, &mut foreign_known, map, sink) {
+                if let Some(written) = cimport::load(import, &importer, &base, &flags, manifest.as_deref(), &mut foreign_known, map, sink) {
                     seen.insert(written.path.join("."));
+                    for (child_path, child, foreign) in written.children {
+                        seen.insert(child_path.join("."));
+                        queue.push((package, child_path, child, Some(foreign)));
+                    }
                     for (overlay_path, overlay, backed) in written.overlays {
                         seen.insert(overlay_path.join("."));
                         let graded = ember_typeck::ForeignImport { backed, ..Default::default() };
@@ -5145,7 +5149,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
         None => toolchain.clone(),
     };
-    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &layout.c, &layout.obj, options.profile)?;
+    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile)?;
     libraries.extend(foreign_libraries);
     library_relaxed.extend(foreign_objects.iter().cloned());
     // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry

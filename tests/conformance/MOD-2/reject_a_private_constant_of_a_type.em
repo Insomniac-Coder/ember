@@ -2,10 +2,12 @@
 #$ rules: MOD-2, CT-1
 # `[MOD-2]` — a type's `const` is private to its module unless it is `pub`,
 # as a field is: `Grid.SIDE` reads anywhere, `Grid.SECRET` only through
-# what its module exports.
+# what its module exports, however the type is reached.
 
 from support.constants import Grid, secret
+import support.constants as constants
 
 fn main():
     println(Grid.SIDE, secret())
     println(Grid.SECRET)    #$ error[E1052]: `SECRET` is private to
+    println(constants.Grid.SECRET)    #$ error[E1052]: `SECRET` is private to

@@ -718,11 +718,11 @@ impl Regions {
     ) {
         match kind {
             StmtKind::Assign { place, rvalue } => {
-                let assignments = self.rvalue_facts(body, state, point, place, rvalue);
+                let assignments = self.rvalue_facts(body, types, state, point, place, rvalue);
                 if self.stores_whole_slots(body, types, place) {
                     self.install_facts(state, &self.assigned_place_regions(place), assignments);
                 } else {
-                    let value = self.rvalue_value_fact(body, state, point, rvalue);
+                    let value = self.rvalue_value_fact(body, types, state, point, rvalue);
                     self.store(body, types, state, place, assignments, value);
                 }
             }
@@ -896,7 +896,7 @@ impl Regions {
     }
 
     /// Everything an rvalue's result carries, as one fact.
-    fn rvalue_value_fact(&self, body: &Body, state: &[ValueFact], point: Point, rvalue: &Rvalue) -> ValueFact {
+    fn rvalue_value_fact(&self, body: &Body, types: &TypeTable, state: &[ValueFact], point: Point, rvalue: &Rvalue) -> ValueFact {
         match rvalue {
             Rvalue::Ref { place, .. } => {
                 let mut fact = self.fact_for_place(state, place);
@@ -904,6 +904,7 @@ impl Regions {
                 if let Some(loan) = self.loan_region.get(&point) {
                     fact.roots.insert(*loan);
                 }
+                fact.imprecise |= through_raw_pointer(body, types, place);
                 if self.borrows_own_storage(place) {
                     fact.origins.insert(match body.local(place.local).kind {
                         LocalKind::Arg => Origin::Param(place.local),
@@ -1095,7 +1096,7 @@ impl Regions {
                 }
                 let Some(state) = self.values_at.get(&point) else { continue };
                 if let Some(target) = self.store_destinations(body, types, state, place, 0).unbounded {
-                    let value = self.rvalue_value_fact(body, state, point, rvalue);
+                    let value = self.rvalue_value_fact(body, types, state, point, rvalue);
                     require(point, place_type(body, types, place), target, value, None);
                 }
             }
@@ -1241,6 +1242,7 @@ impl Regions {
     fn rvalue_facts(
         &self,
         body: &Body,
+        types: &TypeTable,
         state: &[ValueFact],
         point: Point,
         destination: &Place,
@@ -1299,6 +1301,11 @@ impl Regions {
                 // place (`holding_facts`).
                 let mut own = self.holding_facts(state, place);
                 own.roots.insert(loan);
+                // `[UNS-4]` — a reference made through a raw pointer borrows what the pointer
+                // points to, which no region here follows: what it came from is the function's
+                // signature to say (`[LT-1]`'s elision), as for a call the analysis cannot see
+                // into (an imported C++ method's `T&` result, `[FFI-40]`).
+                own.imprecise |= through_raw_pointer(body, types, place);
                 if self.borrows_own_storage(place) {
                     own.origins.insert(match body.local(place.local).kind {
                         LocalKind::Arg => Origin::Param(place.local),
@@ -2347,6 +2354,13 @@ fn static_read_places(body: &Body, types: &TypeTable) -> HashSet<Place> {
 }
 
 /// The type of a place, following its projections (a class field included).
+/// `[UNS-4]` — whether a place is the memory a raw pointer value points to (`*p`, with `p` a
+/// local of raw pointer type), which the frame does not own. The pointer fields of what the
+/// frame owns (a `Box`'s) are not this: the place's root is then the owner.
+pub(crate) fn through_raw_pointer(body: &Body, types: &TypeTable, place: &Place) -> bool {
+    place.projection.first() == Some(&Projection::Deref) && matches!(types.kind(body.local(place.local).ty), TyKind::Ptr { .. })
+}
+
 pub(crate) fn place_type(body: &Body, types: &TypeTable, place: &Place) -> Ty {
     let mut ty = body.local(place.local).ty;
     let mut variant = None;

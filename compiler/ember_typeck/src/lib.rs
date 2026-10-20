@@ -75,6 +75,9 @@ pub struct ForeignImport {
     pub sources: Vec<std::path::PathBuf>,
     pub flags: Vec<String>,
     pub link: Vec<String>,
+    /// `[FFI-3]` — for `import cpp`: the shim is the C++ thunks, compiled with this standard, and
+    /// the compiler the project names, if it names one (`[FFI-50]`).
+    pub cpp: Option<(String, Option<String>)>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -187,6 +190,21 @@ pub struct CheckOutput {
     pub incomplete: HashSet<String>,
 }
 
+/// `[LEX-15a]` — a module's item-level aliases, to resolve: the generic ones first, since a plain
+/// alias may name one declared after it (`[TYP-16]`).
+fn pending_type_aliases(module: &ast::Module) -> Vec<&ast::TypeAlias> {
+    let mut pending: Vec<&ast::TypeAlias> = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::TypeAlias(decl) if !decl.is_foreign_decl => Some(decl),
+            _ => None,
+        })
+        .collect();
+    pending.sort_by_key(|decl| decl.generics.is_empty());
+    pending
+}
+
 pub fn check(
     modules: &[LoadedModule],
     types: &mut TypeTable,
@@ -238,6 +256,7 @@ pub fn check(
         .iter()
         .map(|m| m.foreign.iter().flat_map(|foreign| foreign.backed.iter().map(|name| Symbol::intern(name))).collect())
         .collect();
+    checker.foreign_cpp = modules.iter().map(|m| m.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some())).collect();
     checker.foreign_skipped = modules
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
@@ -326,10 +345,23 @@ pub fn check(
     checker.extend_early_instances();
     // Aliases are resolved after every type header and before any signature or field: they may
     // name a struct or enum, and a signature may name another module's alias (`std.ffi`'s `c_int`)
-    // whichever order the modules are in. Dependencies before importers.
-    for (index, loaded) in modules.iter().enumerate().rev() {
+    // whichever order the modules are in. An alias may name another module's alias too (`type
+    // count_t = c_int` in a module `import c` wrote), and the module list is in no dependency
+    // order, so every module's aliases are resolved together, to a fixpoint.
+    let mut aliases: Vec<Vec<&ast::TypeAlias>> = modules.iter().map(|loaded| pending_type_aliases(&loaded.module)).collect();
+    loop {
+        let mut progress = false;
+        for (index, pending) in aliases.iter_mut().enumerate().rev() {
+            checker.current_module = index;
+            progress |= checker.collect_type_aliases(pending);
+        }
+        if !progress {
+            break;
+        }
+    }
+    for (index, pending) in aliases.into_iter().enumerate() {
         checker.current_module = index;
-        checker.collect_type_aliases(&loaded.module);
+        checker.report_unresolved_aliases(pending);
     }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
@@ -2267,6 +2299,8 @@ struct Checker<'a> {
     /// `[FFI-20a]` — per module `import c` wrote: its header, and each declaration it could not
     /// represent with why.
     foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
+    /// `[FFI-32]` — per module: `import cpp` wrote it.
+    foreign_cpp: Vec<bool>,
     /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
     foreign_backed: Vec<HashSet<Symbol>>,
     /// `[CT-2]` (ODR-145) — a `const`'s initialiser is being checked.
@@ -2916,6 +2950,7 @@ impl<'a> Checker<'a> {
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
+            foreign_cpp: Vec::new(),
             foreign_backed: Vec::new(),
             const_initializer: false,
             item_spans: HashMap::new(),
@@ -3450,25 +3485,17 @@ impl<'a> Checker<'a> {
     }
 
     /// `[LEX-15a]` — `type Name = T` at item level. An alias may name another
-    /// alias declared later in the file, so they are resolved to a fixpoint:
-    /// one whose body still mentions an unknown name is deferred, and whatever
-    /// survives no-further-progress is a cycle or a genuinely unknown type.
-    fn collect_type_aliases(&mut self, module: &ast::Module) {
-        let mut pending: Vec<&ast::TypeAlias> = module
-            .items
-            .iter()
-            .filter_map(|item| match &item.kind {
-                ast::ItemKind::TypeAlias(decl) if !decl.is_foreign_decl => Some(decl),
-                _ => None,
-            })
-            .collect();
-        // `[TYP-16]` — the generic ones first: a plain alias may name one declared after it.
-        pending.sort_by_key(|decl| decl.generics.is_empty());
-
+    /// alias declared later in the file, or another module's, so they are
+    /// resolved to a fixpoint: one whose body still mentions an unknown name is
+    /// deferred (left in `pending`), and whatever survives no-further-progress
+    /// is a cycle or a genuinely unknown type ([`Self::report_unresolved_aliases`]).
+    /// Whether any alias of `pending` was settled.
+    fn collect_type_aliases<'m>(&mut self, pending: &mut Vec<&'m ast::TypeAlias>) -> bool {
+        let start = pending.len();
         loop {
             let before = pending.len();
             let mut deferred = Vec::new();
-            for decl in std::mem::take(&mut pending) {
+            for decl in std::mem::take(pending) {
                 let name = self.qualified(decl.name.name);
                 if self.named_types.contains_key(&name) {
                     self.error(
@@ -3515,12 +3542,17 @@ impl<'a> Checker<'a> {
                 };
                 self.named_types.insert(name, ty);
             }
-            pending = deferred;
+            *pending = deferred;
             if pending.is_empty() || pending.len() == before {
                 break;
             }
         }
+        pending.len() != start
+    }
 
+    /// The aliases [`Self::collect_type_aliases`] could not settle: resolving
+    /// them now reports what each names that does not exist.
+    fn report_unresolved_aliases(&mut self, pending: Vec<&ast::TypeAlias>) {
         for decl in pending {
             let Some(value) = &decl.value else { continue };
             // Resolving now emits the real "cannot find type" diagnostic and
@@ -4645,8 +4677,21 @@ impl<'a> Checker<'a> {
     fn report_skipped_foreign(&mut self, module: usize, name: Symbol, span: Span) -> bool {
         let Some(Some((header, skipped))) = self.foreign_skipped.get(module) else { return false };
         let Some(why) = skipped.get(&name) else { return false };
-        let diagnostic = Diagnostic::error(codes::E1010, span, format!("`{name}` was not imported from `{header}`: {why}"))
-            .note("`import c` skipped it, and said so at the import (W5002, W5001) [FFI-20a]");
+        // `[FFI-17]`, `[FFI-24]` — a C++ function whose parameter maps to nothing is `E5031`, one
+        // whose exception policy is neither derived nor declared `E5061`.
+        let (code, why) = match why.split_once("] ") {
+            Some(("[E5031", rest)) => (codes::E5031, rest),
+            Some(("[E5061", rest)) => (codes::E5061, rest),
+            Some(("[E5055", rest)) => (codes::E5055, rest),
+            Some(("[E5034", rest)) => (codes::E5034, rest),
+            _ => (codes::E1010, why.as_str()),
+        };
+        let note = if code == codes::E5061 {
+            "an overlay entry declares its policy: `@ffi(noexcept)` or `@ffi(noexcept=false)` [FFI-43]"
+        } else {
+            "the import skipped it, and said so at the import (W5002, W5001) [FFI-20a]"
+        };
+        let diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}")).note(note);
         self.sink.emit(diagnostic);
         true
     }
@@ -15179,6 +15224,33 @@ impl<'a> Checker<'a> {
         Expr { ty: self.common.usize, kind: ExprKind::Int(u128::from(offset)), span }
     }
 
+    /// `[FFI-40]` — in a module `import cpp` wrote, and nowhere else: a method's `T&` result as
+    /// the reference it is, from the thunk's pointer (the method's signature ties it to its
+    /// receiver, `[LT-1]`).
+    fn synth_cpp_ref(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let cpp_ref = format!("{}_cpp_ref", ember_branding::SYMBOL_PREFIX);
+        if !(name.is(&cpp_ref) || name.is(&format!("{cpp_ref}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
+            return None;
+        }
+        let mutable = name.as_str().ends_with("_mut");
+        let pointer = match args {
+            [arg] if arg.name.is_none() => self.synth_committed(&arg.value),
+            _ => return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span }),
+        };
+        let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else {
+            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        };
+        if !self.unsafe_context() {
+            self.error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block");
+        }
+        // C's `ref` is a plain pointer: a `const T*` is cast to it first.
+        let plain = self.types.intern(TyKind::Ptr { mutable: true, inner });
+        let pointer = Expr { ty: plain, kind: ExprKind::Cast { expr: Box::new(pointer), to: plain }, span };
+        let place = Expr { ty: inner, kind: ExprKind::Deref(Box::new(pointer)), span };
+        let ty = self.types.intern(TyKind::Ref { mutable, inner });
+        Some(Expr { ty, kind: ExprKind::Ref { place: Box::new(place), mutable }, span })
+    }
+
     /// ODR-075/076 — construction is safe; the resulting raw pointer has no
     /// compiler-tracked loan and using it remains the caller's obligation.
     fn synth_raw_pointer_constructor(
@@ -21927,6 +21999,12 @@ impl<'a> Checker<'a> {
             TyKind::Enum(id) if !self.is_option(ty) && !self.is_result(ty) => {
                 std_name(self.types.enum_def(id).name) == self.is_std_module(here)
             }
+            // `[FFI-13]` — an `extern type` is its declaring module's, as `import c` and `import
+            // cpp` write them: an `extend` block there (or the overlay's) gives it methods.
+            TyKind::Opaque(name) => match name.as_str().rsplit_once('.') {
+                Some((prefix, _)) => self.prefixes.iter().position(|module| module == prefix).is_some_and(|module| self.same_package(here, module)),
+                None => self.same_package(here, 0),
+            },
             _ => self.is_std_module(here),
         }
     }
@@ -32877,16 +32955,25 @@ impl<'a> Checker<'a> {
                     self.error(codes::E1010, name.span, format!("`{shown}` has no constant `{}`", name.name));
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
-                // V.3 — `Vec2.ZERO`, `Self.ZERO`: a constant a type declares.
-                if let ast::ExprKind::Path { segments } = &base.kind
+                // V.3 — `Vec2.ZERO`, `Self.ZERO`: a constant a type declares; `geometry.Vec2.ZERO`
+                // through the type's module (`[GRM-24]`).
+                let named_owner = if let ast::ExprKind::Path { segments } = &base.kind
                     && let [segment] = segments.as_slice()
                     && self.lookup(segment.name).is_none()
                 {
-                    let owner = if segment.name.is("Self") {
+                    Some(if segment.name.is("Self") {
                         self.self_ty
                     } else {
                         self.named_types.get(&self.resolve_name(segment.name)).copied()
-                    };
+                    })
+                } else if let ast::ExprKind::Field { base: module, name: type_name } = &base.kind
+                    && let Some(module) = self.namespace_named(module)
+                {
+                    Some(self.named_types.get(&self.qualified_in_module(module, type_name.name)).copied())
+                } else {
+                    None
+                };
+                if let Some(owner) = named_owner {
                     if let Some(owner) = owner
                         && self.assoc_consts.contains_key(&(owner, name.name))
                     {
@@ -34283,6 +34370,9 @@ impl<'a> Checker<'a> {
         // `[MOD-5]` — a generic type the program declares or imports shadows a
         // compiler-known constructor: a declared `Box[T]` is built by
         // `Box(5)` (D-305).
+        if segments.len() == 1 && let Some(built) = self.synth_cpp_ref(name, args, span) {
+            return built;
+        }
         let resolved_name = self.resolve_name(name);
         if self.declared_by_program(name, resolved_name) {
             if let Some(decl) = self.generic_structs.get(&resolved_name).cloned() {
@@ -34292,8 +34382,10 @@ impl<'a> Checker<'a> {
                 return self.synth_generic_class_constructor(resolved_name, &decl, args, &explicit, expected, span);
             }
         }
-        if !self.declared_by_program(name, resolved_name)
-            && !self.fn_ids.contains_key(&resolved_name) {
+        // ODR-075/076 — `null[P]()` and `ref_to_ptr(r)` in every module, unless a function of that
+        // name shadows them: outside the root, an undeclared name resolves to the module's own form,
+        // so that it is no program declaration is what `fn_ids` says.
+        if !self.fn_ids.contains_key(&resolved_name) {
             if let Some(built) = self.synth_raw_pointer_constructor(name, args, &explicit, span) {
                 return built;
             }
@@ -38169,6 +38261,20 @@ impl<'a> Checker<'a> {
             return self.synth_generic_class_constructor(qualified, &decl, args, &explicit, None, span);
         }
         let Some(&def) = self.fn_ids.get(&qualified) else {
+            // `[FFI-32]` — an opaque C++ class is made only by its imported constructors.
+            if let Some(&ty) = self.named_types.get(&qualified)
+                && matches!(self.types.kind(ty), TyKind::Opaque(_))
+                && qualified.as_str().rsplit_once('.').and_then(|(prefix, _)| self.prefixes.iter().position(|module| module == prefix))
+                    .is_some_and(|module| self.foreign_cpp.get(module).copied().unwrap_or(false))
+            {
+                let shown = qualified.as_str().rsplit('.').next().unwrap_or("");
+                self.sink.emit(
+                    Diagnostic::error(codes::E5032, name_span, format!("`{shown}` is an opaque C++ class: Ember does not know how to make one"))
+                        .help(format!("call one of its imported constructors, `{shown}.new(…)`, which returns a `ForeignBox[{shown}]`"))
+                        .note("a C++ class that is not standard-layout and trivially copyable is opaque, made only through its constructors [FFI-32]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
@@ -40436,6 +40542,13 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_shared_method(receiver, inner, name, args, span);
+        }
+        // `[FFI-17a]`, `[FFI-36a]` — a `ForeignBox[T]` owns a live foreign object: `get` borrows it
+        // shared and `get_mut` exclusively, for the methods `import cpp` gives an opaque class.
+        if let Some(inner) = self.foreign_box_inner(receiver.ty)
+            && (name.name.is("get") || name.name.is("get_mut"))
+        {
+            return self.synth_foreign_box_get(receiver, inner, name, args, span);
         }
         // IX.1 — `get` exposes the canonical shared reference. Other method
         // names are resolved after auto-dereferencing to the payload, so Box
@@ -44283,6 +44396,34 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Ref { place: Box::new(payload), mutable: false },
             span,
         }
+    }
+
+    /// `[FFI-36a]` — the object a `ForeignBox[T]` owns, when `ty` is one.
+    fn foreign_box_inner(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        match &self.types.struct_def(id).origin {
+            Some((name, args)) if name.is("std.ffi.ForeignBox") && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
+    /// `[FFI-17a]`, `[FFI-36a]` — `box.get()` / `box.get_mut()`: a reference to the object the box
+    /// owns, which lives as long as the box, so the box must be a place (as for `Box.get`).
+    fn synth_foreign_box_get(&mut self, receiver: Expr, inner: Ty, name: ast::Ident, args: &[ast::Arg], span: Span) -> Expr {
+        if !args.is_empty() {
+            self.error(codes::E2020, span, format!("`{}` takes 0 arguments, found {}", name.name, args.len()));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if !is_place(&receiver.kind) {
+            self.error(codes::E2140, span, format!("`ForeignBox.{}` needs an owner place so its returned reference cannot outlive a temporary", name.name));
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let mutable = name.name.is("get_mut");
+        let pointer = self.types.intern(TyKind::Ptr { mutable: true, inner });
+        let field = Expr { ty: pointer, kind: ExprKind::Field { base: Box::new(receiver), index: 0 }, span };
+        let object = Expr { ty: inner, kind: ExprKind::Deref(Box::new(field)), span };
+        let ty = self.types.intern(TyKind::Ref { mutable, inner });
+        Expr { ty, kind: ExprKind::Ref { place: Box::new(object), mutable }, span }
     }
 
     /// `[HEAP-4]`, `[HEAP-5]` — `Shared[T]` borrows its payload. The shared

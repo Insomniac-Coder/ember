@@ -1,0 +1,10 @@
+# The C++ projects the FFI-50 tests import from: one configured by hand, one read from CMake's
+# File API reply in ./cmake-build (written as CMake writes one, its include folder relative).
+[cpp.engine]
+standard = "c++17"
+defines = ["ENGINE_SCALE=3"]
+include_paths = ["include"]
+flags = ["-DENGINE_FLAG=1"]
+
+[cpp.built]
+cmake = { build_dir = "cmake-build", target = "engine" }

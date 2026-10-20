@@ -10,5 +10,6 @@ static inline char char_min(void) { return CHAR_MIN; }
 static inline int char_min_int(void) { return CHAR_MIN; }
 static inline wchar_t wchar_minus_one(void) { return (wchar_t)-1; }
 static inline int wchar_is_signed(void) { return WCHAR_MIN < 0; }
-static inline int add_ints(int a, int b) { return a + b; }
+typedef int score_t;
+static inline score_t add_ints(score_t a, score_t b) { return a + b; }
 #endif

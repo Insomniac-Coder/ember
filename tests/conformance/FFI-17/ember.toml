@@ -1,0 +1,4 @@
+# The C++ project the FFI-17 tests import from ([FFI-50]).
+[cpp.engine]
+standard = "c++17"
+defines = ["ENGINE_SCALE=3"]

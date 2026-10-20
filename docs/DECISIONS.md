@@ -5017,6 +5017,22 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-245 — `import cpp`, the first slice of Annex C (helper N3)
+
+2026-10-20. Helper N3's branch, merged (23 commits, `tasks/90/N3-notes.md`): `import cpp "H.hpp"
+with (project=…, overlay=…, instantiate=[…])` parses the header with libclang in the `[cpp.<project>]`
+configuration (`[FFI-50]`, flags from the CMake File API too; `ember bind --emit-cpp`) and calls C++
+only through `extern "C"` thunks compiled by the project's compiler (`[FFI-3]`, `[FFI-17]`). Done:
+`[FFI-3]`, `[FFI-17]`, `[FFI-17b]` (explicit instantiations), `[FFI-24]`, `[FFI-24b]` (exception
+policies; `noexcept(expr)` evaluated by Clang), `[FFI-32]` (classes by value and opaque, `E5031`,
+`E5032`), `[FFI-36]`, `[FFI-40]` (methods; a `T&` result is a `ref` keeping its receiver borrowed;
+`T&&` of an opaque class takes the owned `ForeignBox`), `[FFI-43]` (`E5061`, `E5062`), `[FFI-50]`;
+error pages for `E5031`, `E5032`, `E5034`, `E5055`, `E5061`, `E5062`, `W5033`, `W5034`. Unfinished
+and recorded: `[FFI-40a]`, `[FFI-41]`, `[FFI-48]`, `[BLD-FFI-4]`. Defects fixed on the way:
+D-766..D-772. The region analysis takes a reference made through a local raw pointer to carry the
+signature's provenance (only the `import cpp` conversion makes one). Nine questions, each with option
+(a) built, are in `tasks/90/owner-questions.md`.
+
 ## ADR-244 — What compiling Annex A found (D-761 to D-765)
 
 2026-10-20. Compiling Annex A's code as `[TST-6]` asks found five defects, each fixed where all its

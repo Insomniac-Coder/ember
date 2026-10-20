@@ -1,0 +1,5 @@
+{
+	"cmake" : { "version" : { "major" : 4, "minor" : 2, "patch" : 3, "string" : "4.2.3" } },
+	"objects" : [ { "jsonFile" : "codemodel-v2-0000.json", "kind" : "codemodel", "version" : { "major" : 2, "minor" : 9 } } ],
+	"reply" : { "codemodel-v2" : { "jsonFile" : "codemodel-v2-0000.json", "kind" : "codemodel", "version" : { "major" : 2, "minor" : 9 } } }
+}

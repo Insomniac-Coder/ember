@@ -341,3 +341,39 @@ fn the_manifest_names_the_language() {
     assert!(older.stderr.contains(&format!("write `language = \"{}\"`", ember_parser::LANGUAGE_VERSION)), "{}", older.stderr);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `[BLD-FFI-4]` — Ember's emitted C and the project's C++ are compiled by one compiler: a
+/// `[cpp.<project>]` section naming the compiler Ember's C is built with builds, and one naming
+/// another is refused, naming both.
+#[test]
+fn one_compiler_builds_the_c_and_the_cpp() {
+    let probe = ember(&["--version"], &std::env::temp_dir());
+    let line = probe.stdout.lines().find(|line| line.starts_with("C compiler: ")).unwrap_or_default().to_string();
+    let backend = match line.trim_start_matches("C compiler: ").split(' ').next().unwrap_or_default() {
+        "msvc" if line.contains("clang-cl") => "clang-cl",
+        name => name,
+    }
+    .to_string();
+    let other = if backend == "gcc" { "msvc" } else { "gcc" };
+    for (compiler, builds) in [(backend.as_str(), true), (other, false)] {
+        let dir = scratch();
+        package(
+            &dir,
+            &format!("[package]\nname = \"engine_user\"\nversion = \"0.1.0\"\n\n[cpp.engine]\ncompiler = \"{compiler}\"\nstandard = \"c++17\"\n"),
+            &[("main", "import cpp \"engine.hpp\" with (project = \"engine\")\n\nfn main():\n    unsafe:  # SAFETY(ffi): a scalar call\n        println(cpp.twice(21))\n")],
+        );
+        std::fs::write(dir.join("src").join("engine.hpp"), "#pragma once\ninline int twice(int x) noexcept { return x * 2; }\n").unwrap();
+        let built = ember(&["build"], &dir);
+        if builds {
+            assert!(built.ok, "{compiler}: {}", built.stderr);
+        } else {
+            assert!(!built.ok, "a C++ project compiled with {compiler} built with {backend}");
+            assert!(
+                built.stderr.contains(&format!("is compiled with `{compiler}`, and this build's C with `{backend}`: one compiler builds both ([BLD-FFI-4])")),
+                "{}",
+                built.stderr
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

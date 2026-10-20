@@ -6,7 +6,8 @@
 # `[FFI-8]` (D-742) — `std.ffi` names C's types: `c_int` is `i32`, `c_short` `i16`, `c_double`
 # `f64`, and `import c` writes `int` as `c_int`. Those that differ between targets are the target's
 # the compiler builds for, as this target's C compiler has them: `c_long`'s size, `c_char`'s and
-# `c_wchar`'s signedness and `c_wchar`'s size.
+# `c_wchar`'s signedness and `c_wchar`'s size. A typedef of one (`score_t`) is an alias of the alias,
+# whichever order the program's modules are in (the program imports `c_int` itself, too).
 
 from std.ffi import c_char, c_double, c_int, c_long, c_short, c_wchar
 from std.mem import size_of
@@ -17,7 +18,7 @@ unsafe extern "C":
     safe fn abs(x: c_int) -> c_int
 
 fn main():
-    sum: c_int = 0
+    sum: c.score_t = 0
     long_size: usize = 0
     char_signed = false
     wchar_size: usize = 0

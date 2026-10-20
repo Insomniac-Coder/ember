@@ -1,0 +1,5 @@
+{
+	"configurations" : [ { "name" : "", "targets" : [ { "directoryIndex" : 0, "id" : "engine::@0000", "jsonFile" : "target-engine-0000.json", "name" : "engine", "projectIndex" : 0 } ] } ],
+	"kind" : "codemodel",
+	"version" : { "major" : 2, "minor" : 9 }
+}

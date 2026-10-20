@@ -1,0 +1,5 @@
+# The C++ project of ./reject_a_policy_neither_derived_nor_declared.em: freestanding, with no
+# standard library to include, so Clang cannot evaluate a `noexcept(expr)` with the questions
+# the importer asks it (they use `std::declval`).
+[cpp.freestanding]
+flags = ["-nostdinc"]

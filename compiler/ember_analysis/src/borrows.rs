@@ -3633,7 +3633,11 @@ fn check_escapes(
         // array's span). A view parameter's own slot is this frame's
         // (`return ref x` for `x: str`), and so is an `Array` or `Box` it owns.
         let through_a_view = types.is_view(root.ty) && through_indirection(body, types, place);
+        // `[UNS-4]` — a loan through a raw pointer points where the pointer does, never into this
+        // frame: keeping that memory live is the obligation of the unsafe code that made it
+        // (an imported C++ method's `T&` result, `[FFI-40]`).
         if through_a_view
+            || crate::regions::through_raw_pointer(body, types, place)
             || (is_parameter
                 && arena_owner.is_some_and(|owner| is_named_arena_origin(body, owner, types)))
         {
