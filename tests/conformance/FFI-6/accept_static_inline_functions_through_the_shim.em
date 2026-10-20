@@ -1,8 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-6, FFI-29, FFI-29a, BLD-FFI-1a
 #$ profiles: debug, development, release
-#$ assert-c: contains("_cshim_c_h_inline_math_inline_scale(")
-#$ assert-c: not contains("inline_scale(int32_t")
+#$ assert-c: contains("_cshim_c_h_inline_math_inline_scale")
+#$ assert-c: not contains(" inline_scale(")
 #$ stdout: 30 21 2 1 9
 #$ stdout: 28
 # `[FFI-6]` — `import c "…" with (…) as m` binds the header's module to `m`. `[FFI-29]` — the shim

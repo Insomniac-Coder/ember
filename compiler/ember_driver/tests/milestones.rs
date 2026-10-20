@@ -7453,7 +7453,7 @@ fn a_reexported_header_layout_is_part_of_the_interface_hash() {
     let before = cached_interface(&out_dir, "lib");
     let header_hash = before.dependencies.get("c.h_shape").cloned().expect("`lib` depends on the header's module");
     let layouts = cached_interface(&out_dir, "c.h_shape").layouts;
-    assert!(layouts.iter().any(|(name, layout)| name.contains("Shape") && layout.contains("pub h: i32")), "{layouts:?}");
+    assert!(layouts.iter().any(|(name, layout)| name.contains("Shape") && layout.contains("pub h: c_int")), "{layouts:?}");
     std::fs::write(dir.join("shape.h"), "typedef struct Shape { int w; int h; int d; } Shape;\n").unwrap();
     std::fs::write(dir.join(format!("main.{SOURCE_EXT}")), "import lib\n\nfn main():\n    println(lib.area(lib.shape.Shape(w=2, h=3, d=4)))\n").unwrap();
     check();

@@ -100,9 +100,19 @@ pub fn export_alias(symbol: &str) -> String {
     format!("{}0x{hex}", mangle_prefix())
 }
 
-/// The `@export` symbol an [`export_alias`] stands for, if `name` is one.
+/// `[FFI-6]` (D-743, D-744) — the C name of one foreign declaration of a function: the
+/// [`export_alias`] of the symbol it binds, then the declaration's qualified name, so each
+/// declaration of one symbol has a C name of its own, which the C binds to the symbol.
+pub fn foreign_alias(symbol: &str, owner: &str) -> String {
+    let owner: String = c_identifier(owner).chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    format!("{}_{owner}", export_alias(symbol))
+}
+
+/// The symbol an [`export_alias`] or a [`foreign_alias`] stands for, if `name` is one.
 pub fn export_alias_symbol(name: &str) -> Option<String> {
     let hex = name.strip_prefix(&format!("{}0x", mangle_prefix()))?;
+    // A foreign alias's qualified name follows the hex, after `_`.
+    let hex = hex.split_once('_').map_or(hex, |(hex, _)| hex);
     if hex.is_empty() || hex.len() % 2 != 0 {
         return None;
     }

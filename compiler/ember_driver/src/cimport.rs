@@ -659,6 +659,10 @@ impl Writer {
                 }
                 CXType_IncompleteArray => Err("an array of unknown size (a flexible array member's unsized struct is not built yet)".to_string()),
                 CXType_FunctionProto | CXType_FunctionNoProto => Err("a function type that is not a pointer".to_string()),
+                // Sugar libclang does not expose, as Clang's own `__size_t` in a builtin's type
+                // (`size_t strlen(const char*)`): by its name, else as what it stands for.
+                _ if let Some(fixed) = standard_typedef(&type_spelling(ty)) => Ok(fixed.to_string()),
+                _ if clang_getCanonicalType(ty).kind != ty.kind => self.ty(clang_getCanonicalType(ty), behind_pointer),
                 _ => Err(format!("the C type `{}`", type_spelling(ty))),
             }
         }

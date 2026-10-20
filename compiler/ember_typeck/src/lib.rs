@@ -456,6 +456,29 @@ pub fn check(
         }
         checker.types.add_export_table(table);
     }
+    // `[FFI-30]` (D-744) — each declaration of one C function binds it under a C name of its own,
+    // so the C compiler compares none of them: every declaration, and the program's own definition
+    // of it, must pass and return what the others do.
+    let mut c_functions = HashMap::<String, (&Function, String)>::new();
+    for function in functions.iter().filter(|function| function.ffi_counted.is_none() && (function.is_extern_declaration || function.abi.is_some())) {
+        let symbol = ember_branding::export_alias_symbol(&function.symbol).unwrap_or_else(|| function.symbol.clone());
+        let shape = checker.c_call_shape(function);
+        match c_functions.get(&symbol) {
+            Some((first, expected)) if *expected != shape => {
+                let kind = |function: &Function| if function.is_extern_declaration { "declared" } else { "defined" };
+                checker.sink.emit(
+                    Diagnostic::error(codes::E0104, function.span, format!("C function `{symbol}` is {} here with another C signature than elsewhere", kind(function)))
+                        .secondary(first.span, format!("{} here as `{expected}`", kind(first)))
+                        .note(format!("here it is `{shape}`"))
+                        .note("one C function has one signature, however many modules declare it [FFI-30]"),
+                );
+            }
+            Some(_) => {}
+            None => {
+                c_functions.insert(symbol, (function, shape));
+            }
+        }
+    }
     let mut emitted_symbols = HashMap::<&str, &Function>::new();
     for function in &functions {
         if function.is_extern_declaration {
@@ -4078,8 +4101,7 @@ impl<'a> Checker<'a> {
                         let symbol = match &decl.abi {
                             Some(_) if decl.is_foreign_decl && !ffi_count_witnesses(&item.attrs).is_empty() =>
                                 mangle(qualified, false),
-                            Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                                .unwrap_or_else(|| decl.name.name.to_string()),
+                            Some(_) if decl.is_foreign_decl => foreign_function_symbol(&item.attrs, decl, qualified),
                             Some(_) => decl.name.name.to_string(),
                             None => mangle(qualified, qualified.is("main")),
                         };
@@ -9052,7 +9074,8 @@ impl<'a> Checker<'a> {
                             }
                             self.foreign_unknown_facts.insert(def, unknown);
                         }
-                        self.foreign_symbols.insert(def, Symbol::intern(&ffi_link_name(&item.attrs).unwrap_or_else(|| decl.name.name.to_string())));
+                        let qualified = self.qualified(decl.name.name);
+                        self.foreign_symbols.insert(def, Symbol::intern(&foreign_function_symbol(&item.attrs, decl, qualified)));
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -18057,8 +18080,7 @@ impl<'a> Checker<'a> {
                 if c_link_identifier(exported) { exported.to_string() } else { ember_branding::export_alias(exported) }
             } else { match &decl.abi {
                 Some(_) if ffi_counted.is_some() => mangle(name, false),
-                Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                    .unwrap_or_else(|| decl.name.name.to_string()),
+                Some(_) if decl.is_foreign_decl => foreign_function_symbol(&item.attrs, decl, name),
                 Some(_) => decl.name.name.to_string(),
                 None if has_attribute(&item.attrs, "export") => decl.name.name.to_string(),
                 None => mangle(name, is_main),
@@ -19276,6 +19298,34 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[FFI-30]` (D-744) — what a C call passes and returns, as the C ABI sees it: each parameter
+    /// then the result, a pointer, an integer or a float of its size, or a type by value.
+    fn c_call_shape(&self, function: &Function) -> String {
+        let shape = |ty: Ty| -> String {
+            let pointer = |ty: Ty| match self.types.kind(ty) {
+                TyKind::Ptr { .. } | TyKind::Ref { .. } | TyKind::Fn { .. } | TyKind::CStr => true,
+                TyKind::Enum(id) => self.types.option_niche(*id).is_some_and(|niche| {
+                    matches!(self.types.kind(niche.payload), TyKind::Ptr { .. } | TyKind::Ref { .. } | TyKind::Fn { .. } | TyKind::CStr)
+                }),
+                _ => false,
+            };
+            match self.types.kind(ty) {
+                _ if pointer(ty) => "pointer".to_string(),
+                TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) => format!("{}-byte integer", self.types.layout(ty).size),
+                // A C-like enum is its representation.
+                TyKind::Enum(id) if self.types.enum_def(*id).is_unit_only() => format!("{}-byte integer", self.types.layout(ty).size),
+                TyKind::Float(_) => format!("{}-byte float", self.types.layout(ty).size),
+                TyKind::Void | TyKind::Never => "nothing".to_string(),
+                _ => format!("`{}`", self.types.display(ty)),
+            }
+        };
+        let params: Vec<String> = function.params.iter().map(|param| {
+            // A `mut` parameter is passed by address.
+            if param.mode == hir::Mode::Mut { "pointer".to_string() } else { shape(function.local(param.local).ty) }
+        }).collect();
+        format!("({}) -> {}", params.join(", "), shape(function.ret))
+    }
+
     /// `[FFI-36a]` — the foreign function `name` of this module that frees a `pointee`: its
     /// definition, C symbol and result type.
     fn foreign_destructor(&self, name: Symbol, pointee: Ty) -> Option<(DefId, Symbol, Ty)> {
@@ -19337,7 +19387,7 @@ impl<'a> Checker<'a> {
         if !decl.is_safe {
             if !borrowed_aggregate { return None; }
             return Some(hir::FfiCounted {
-                foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
+                foreign_symbol: foreign_function_symbol(attrs, decl, self.qualified(decl.name.name)),
                 abi_params: visible.iter().enumerate().map(|(public_index, &(_, ty, mode, _))|
                     hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
                 result_array: None,
@@ -19491,7 +19541,7 @@ impl<'a> Checker<'a> {
             }
         }
         Some(hir::FfiCounted {
-            foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
+            foreign_symbol: foreign_function_symbol(attrs, decl, self.qualified(decl.name.name)),
             abi_params,
             result_array,
             result_span,
@@ -53053,6 +53103,25 @@ fn ffi_link_name_arg(arg: &ast::AttrArg) -> Option<&str> {
     }
     let ast::ExprKind::Lit(ast::Literal::Str(symbol)) = &value.kind else { return None };
     Some(symbol)
+}
+
+/// `[FFI-6]` (D-743, D-744) — the C name a foreign function declaration `owner` (its qualified
+/// name) is declared under: a private alias of the symbol it binds (its `link_name`, else its
+/// name), which the C binds to the symbol as `[MNG-2]`'s aliases are. Its prototype, in Ember's
+/// spellings of its types, then conflicts with no other declaration of the symbol: a system
+/// header's (`puts` beside `<stdio.h>`), another module's with contracts of its own (`[FFI-30a]`),
+/// or the program's own definition.
+fn foreign_function_symbol(attrs: &[ast::Attribute], decl: &ast::FnDecl, owner: Symbol) -> String {
+    // ponytail: a `vectorcall` declaration keeps its symbol's own C name: MSVC decorates both names
+    // (`f@@16`), which a linker alias would have to spell; two of its declarations still meet in C.
+    if decl.abi.as_deref() == Some("vectorcall") {
+        return ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string());
+    }
+    let symbol = attrs.iter()
+        .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .and_then(ffi_link_name_attr)
+        .map_or_else(|| decl.name.name.to_string(), str::to_string);
+    ember_branding::foreign_alias(&symbol, owner.as_str())
 }
 
 /// `[FFI-49]` — the C name a declaration binds: its `link_name`, or, for a symbol C cannot spell,

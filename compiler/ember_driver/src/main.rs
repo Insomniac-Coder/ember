@@ -1724,7 +1724,8 @@ impl EngineReport {
                 if let Some(outputs) = &counted.outputs {
                     work.push(if outputs.status_ok.is_some() { "the status as a `Result`".to_string() } else { "the outputs as the result".to_string() });
                 }
-                self.wrappers.push(format!("{} (`{}`): one call, plus {}", body.name, counted.foreign_symbol, work.join("; ")));
+                let symbol = ember_branding::export_alias_symbol(&counted.foreign_symbol).unwrap_or_else(|| counted.foreign_symbol.clone());
+                self.wrappers.push(format!("{} (`{symbol}`): one call, plus {}", body.name, work.join("; ")));
             } else if body.contracts.foreign.is_some() && body.is_extern_declaration {
                 self.wrappers.push(format!("{}: a direct call, no wrapper", body.name));
             }
@@ -1982,7 +1983,7 @@ fn print_foreign_calls(
         let reached: Vec<serde_json::Value> = reach.reached.iter().map(|(index, chain)| {
             serde_json::json!({
                 "function": bodies[*index].name,
-                "symbol": bodies[*index].symbol,
+                "symbol": ember_branding::export_alias_symbol(&bodies[*index].symbol).unwrap_or_else(|| bodies[*index].symbol.clone()),
                 "chain": chain,
                 "declaration": declaration(*index).map(|decl| foreign::json(decl, map)),
             })
@@ -2382,7 +2383,8 @@ fn safety_costs_json(
                 ember_mir::FuncRef::Direct { symbol, .. } => {
                     if let Some(callee) = by_symbol.get(symbol.as_str()) && callee.contracts.foreign.is_some() {
                         // `[FFI-29c]` — a `static inline` function is reached through the shim's wrapper.
-                        let detail = if symbol.starts_with(&format!("{}_cshim_", ember_branding::SYMBOL_PREFIX)) {
+                        let exact = ember_branding::export_alias_symbol(symbol).unwrap_or_else(|| symbol.clone());
+                        let detail = if exact.starts_with(&format!("{}_cshim_", ember_branding::SYMBOL_PREFIX)) {
                             format!("`{}`, wrapped (static inline): a direct call to the import's shim, which calls it \
                                      (one call more, unless the shim takes part in link-time optimisation)", callee.name)
                         } else {

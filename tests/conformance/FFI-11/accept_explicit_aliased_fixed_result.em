@@ -2,7 +2,7 @@
 #$ rules: FFI-10, FFI-11
 #$ profiles: debug, development, release
 #$ stdout: 31
-#$ assert-c: contains("extern const int32_t* pair_c(")
+#$ assert-c: contains("extern const int32_t* em_0x706169725f63_pair(")
 
 unsafe extern "C":
     @ffi(result(borrowed, fixed(2), aliased, from(static)), link_name="pair_c")
