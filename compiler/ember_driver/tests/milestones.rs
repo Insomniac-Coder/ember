@@ -7554,9 +7554,7 @@ fn main():
 #[test]
 fn every_example_of_the_specification_checks() {
     // A block known to fail, by the heading it is under, and why.
-    const BASELINE: &[(&str, &str)] = &[
-        ("Part XVI", "`std.ffi` has no `c_int` or `c_double` yet (D-742)"),
-    ];
+    const BASELINE: &[(&str, &str)] = &[];
     let root = workspace_root();
     let pinned = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the pin");
     let path = pinned.split('"').skip_while(|part| *part != "path").nth(2).expect("the pin names the target");

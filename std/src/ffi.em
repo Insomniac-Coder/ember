@@ -27,6 +27,26 @@ extend String:
     pub fn to_cstring(self) -> Result[CString, NulError]:
         return self.as_str().to_cstring()
 
+## `[FFI-8]` — C's types by their C names, as `import c` writes them (`int` is `c_int`). Those
+## whose type differs between targets are written here as one target's; the compiler gives each
+## the type of the target it builds for: `c_char` is `u8` where C's `char` is unsigned (ARM and
+## other non-x86 Linux targets), `c_long` and `c_ulong` are 32 bits on Windows and on 32-bit
+## targets, and `c_wchar` is `u16` on Windows (not portable).
+pub type c_char = i8
+pub type c_schar = i8
+pub type c_uchar = u8
+pub type c_short = i16
+pub type c_ushort = u16
+pub type c_int = i32
+pub type c_uint = u32
+pub type c_long = i64
+pub type c_ulong = u64
+pub type c_longlong = i64
+pub type c_ulonglong = u64
+pub type c_float = f32
+pub type c_double = f64
+pub type c_wchar = i32
+
 ## `[FFI-36a]` — `ForeignBox[T]` owns a foreign object: its address, and the foreign function
 ## that frees it, which the box's end calls once. A box is made by `adopt[T](h)` (the destructor
 ## is the one the declaration of `T` names, `@ffi(destroys(f))`) or by a foreign function whose

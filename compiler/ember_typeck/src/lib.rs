@@ -311,6 +311,13 @@ pub fn check(
     checker.resolve_pending_generic_implements();
     checker.resolve_pending_bound_interfaces();
     checker.extend_early_instances();
+    // Aliases are resolved after every type header and before any signature or field: they may
+    // name a struct or enum, and a signature may name another module's alias (`std.ffi`'s `c_int`)
+    // whichever order the modules are in. Dependencies before importers.
+    for (index, loaded) in modules.iter().enumerate().rev() {
+        checker.current_module = index;
+        checker.collect_type_aliases(&loaded.module);
+    }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
         checker.collect(&loaded.module);
@@ -3452,6 +3459,8 @@ impl<'a> Checker<'a> {
                     continue;
                 }
                 let repr = self.resolve_type(value);
+                // `[FFI-8]` (D-742) — `std.ffi`'s C aliases whose type is the target's.
+                let repr = target_c_alias(name.as_str(), self.types.pointer_size()).map_or(repr, |kind| self.types.intern(kind));
                 // `[RNG-1]` — an alias carrying an `in` clause declares a
                 // **nominal** numeric type over `repr`; one without it is
                 // transparent, exactly as `[LEX-15a]` specifies.
@@ -8491,11 +8500,6 @@ impl<'a> Checker<'a> {
     /// Resolve aliases, fields, variants, constants, statics, and function
     /// signatures after every type header and generic recipe exists.
     fn collect(&mut self, module: &ast::Module) {
-
-        // Aliases are resolved between the two loops: they may name a struct or
-        // enum (registered above) and may be named by a field (resolved below).
-        self.collect_type_aliases(module);
-
         for item in &module.items {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
@@ -54663,4 +54667,25 @@ fn reads_any(e: &Expr, locals: &HashSet<LocalId>) -> bool {
         ExprKind::Block { value, .. } => reads_any(value, locals),
         _ => false,
     }
+}
+
+/// `[FFI-8]` (D-742) — the type of a `std.ffi` C alias that differs between targets, for the target
+/// the compiler builds for (its own: the C backend compiles with this machine's C compiler):
+/// `char` is unsigned on ARM, PowerPC, RISC-V and s390x but on Apple's and Windows' ABIs; `long` is
+/// 32 bits on Windows and on 32-bit targets; `wchar_t` is a `u16` on Windows. `None` for any other
+/// name.
+fn target_c_alias(name: &str, pointer_size: u64) -> Option<TyKind> {
+    use ember_types::{IntTy, UintTy};
+    let windows = cfg!(windows);
+    let long32 = windows || pointer_size == 4;
+    let signed_char = cfg!(any(target_arch = "x86", target_arch = "x86_64")) || cfg!(target_vendor = "apple") || windows;
+    Some(match name {
+        "std.ffi.c_char" if signed_char => TyKind::Int(IntTy::I8),
+        "std.ffi.c_char" => TyKind::Uint(UintTy::U8),
+        "std.ffi.c_long" => TyKind::Int(if long32 { IntTy::I32 } else { IntTy::I64 }),
+        "std.ffi.c_ulong" => TyKind::Uint(if long32 { UintTy::U32 } else { UintTy::U64 }),
+        "std.ffi.c_wchar" if windows => TyKind::Uint(UintTy::U16),
+        "std.ffi.c_wchar" => TyKind::Int(IntTy::I32),
+        _ => return None,
+    })
 }

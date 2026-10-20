@@ -588,25 +588,18 @@ impl Writer {
     fn ty(&mut self, ty: CXType, behind_pointer: bool) -> Result<String, String> {
         // SAFETY(ffi): types and declarations of a live translation unit.
         unsafe {
-            let size = clang_Type_getSizeOf(ty);
-            let int = |signed: bool| -> Result<String, String> {
-                let bits = match size {
-                    1 => "8",
-                    2 => "16",
-                    4 => "32",
-                    8 => "64",
-                    _ => return Err(format!("a {size}-byte integer")),
-                };
-                Ok(format!("{}{bits}", if signed { "i" } else { "u" }))
-            };
             match ty.kind {
                 CXType_Void => Ok("void".to_string()),
                 CXType_Bool => Ok("bool".to_string()),
-                CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong => int(true),
-                CXType_Char_U | CXType_UChar | CXType_UShort | CXType_UInt | CXType_ULong | CXType_ULongLong
-                | CXType_Char16 | CXType_Char32 => int(false),
-                // `c_wchar`: `u16` on Windows, `i32` elsewhere.
-                CXType_WChar => int(!cfg!(windows)),
+                // `std.ffi`'s C aliases, whose types are the target's (D-742).
+                CXType_Char_S | CXType_Char_U => Ok("c_char".to_string()),
+                CXType_Int => Ok("c_int".to_string()),
+                CXType_UInt => Ok("c_uint".to_string()),
+                CXType_Long => Ok("c_long".to_string()),
+                CXType_ULong => Ok("c_ulong".to_string()),
+                CXType_WChar => Ok("c_wchar".to_string()),
+                CXType_SChar | CXType_UChar | CXType_Short | CXType_UShort | CXType_LongLong | CXType_ULongLong
+                | CXType_Char16 | CXType_Char32 => fixed_integer(ty),
                 CXType_Float => Ok("f32".to_string()),
                 CXType_Double => Ok("f64".to_string()),
                 CXType_LongDouble => Err("`long double` (Ember's `c_longdouble` is not built yet)".to_string()),
@@ -981,8 +974,8 @@ impl Writer {
         }
         let named = typedef_name.map_or_else(|| spelling(cursor), str::to_string);
         let name = ident(&named);
-        // SAFETY(ffi): a live enum cursor.
-        let repr = self.ty(unsafe { clang_getEnumDeclIntegerType(cursor) }, false);
+        // SAFETY(ffi): a live enum cursor. `@repr` takes a fixed-width type.
+        let repr = fixed_integer(unsafe { clang_getEnumDeclIntegerType(cursor) });
         let layout = |repr: &str| {
             let values: Vec<i64> = children(cursor)
                 .into_iter()
@@ -1744,6 +1737,24 @@ fn take(applied: &mut Applied, sink: &mut Sink, layer: usize, is_override: bool,
     false
 }
 
+/// `std.ffi`'s C aliases, each with the C type it names (`[FFI-8]`).
+const C_ALIASES: [(&str, &str); 14] = [
+    ("c_char", "char"),
+    ("c_schar", "signed char"),
+    ("c_uchar", "unsigned char"),
+    ("c_short", "short"),
+    ("c_ushort", "unsigned short"),
+    ("c_int", "int"),
+    ("c_uint", "unsigned int"),
+    ("c_long", "long"),
+    ("c_ulong", "unsigned long"),
+    ("c_longlong", "long long"),
+    ("c_ulonglong", "unsigned long long"),
+    ("c_float", "float"),
+    ("c_double", "double"),
+    ("c_wchar", "wchar_t"),
+];
+
 /// `[FFI-6b]` — the C type a macro's wrapper declares for an Ember type its entry writes: a scalar,
 /// `cstr`, a type of the module (by value only when it is not opaque), or a raw pointer to one.
 fn c_spelling(ty: &ast::TypeExpr, imported: &Imported, behind_pointer: bool) -> Option<String> {
@@ -1754,6 +1765,9 @@ fn c_spelling(ty: &ast::TypeExpr, imported: &Imported, behind_pointer: bool) -> 
         }
         ast::TypeKind::Path { segments, args } if segments.len() == 1 && args.is_empty() => {
             let name = segments[0].name.as_str();
+            if let Some((_, c)) = C_ALIASES.iter().find(|(ember, _)| *ember == name) {
+                return Some(c.to_string());
+            }
             let scalar = match name {
                 "i8" => "int8_t",
                 "i16" => "int16_t",
@@ -2133,8 +2147,11 @@ fn render(imported: &Imported, applied: &Applied) -> String {
     for module in &imported.uses {
         let _ = writeln!(imports, "import {} as {}_{}", module.join("."), ember_branding::SYMBOL_PREFIX, module.join("_"));
     }
-    if body.contains("ForeignBox[") {
-        imports.push_str("from std.ffi import ForeignBox\n");
+    // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
+    let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox"]).filter(|name| words.contains(name)).collect();
+    if !used.is_empty() {
+        let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
     if !imports.is_empty() {
         imports.push('\n');
@@ -2883,6 +2900,22 @@ fn c_declaration(ty: CXType, name: &str) -> String {
             _ => format!("{} {name}", type_spelling(ty)).trim_end().to_string(),
         }
     }
+}
+
+/// `[FFI-8]` — a C integer type as the fixed-width Ember one of its size and signedness.
+fn fixed_integer(ty: CXType) -> Result<String, String> {
+    // SAFETY(ffi): a type of a live translation unit.
+    let (size, kind) = unsafe { (clang_Type_getSizeOf(ty), clang_getCanonicalType(ty).kind) };
+    let signed = matches!(kind, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong)
+        || (kind == CXType_WChar && !cfg!(windows));
+    let bits = match size {
+        1 => "8",
+        2 => "16",
+        4 => "32",
+        8 => "64",
+        _ => return Err(format!("a {size}-byte integer")),
+    };
+    Ok(format!("{}{bits}", if signed { "i" } else { "u" }))
 }
 
 /// The unsigned integer Clang evaluates a variable's initialiser to.
