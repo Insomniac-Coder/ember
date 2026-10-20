@@ -7,6 +7,25 @@ struct Pair {
     T first;
     T second;
     T sum() const noexcept { return first + second; }
+    void scale(T by) noexcept { first *= by; second *= by; }
+    static Pair twin(T value) noexcept { return Pair{value, value}; }
+    T larger() const { return first < second ? second : first; }
+};
+
+// Opaque: its object is behind a pointer, freed through its destructor.
+template <class T>
+class Stack {
+public:
+    Stack() noexcept {}
+    ~Stack() {}
+    void push(T value) { items_[count_++] = value; }
+    T top() const noexcept { return items_[count_ - 1]; }
+    int size() const noexcept { return count_; }
+    static Stack* make() { return new Stack(); }
+
+private:
+    T items_[8] = {};
+    int count_ = 0;
 };
 }  // namespace geo
 

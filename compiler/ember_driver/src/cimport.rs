@@ -455,8 +455,19 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
             let id = written.trim().trim_start_matches("::");
             let template = id.split('<').next().unwrap_or(id).trim();
             match find_template(unit.cursor(), template) {
-                Some(CXCursor_ClassTemplate) => {
+                Some(found) if kind(found) == CXCursor_ClassTemplate => {
                     let _ = writeln!(source, "template class ::{id};\nusing {prefix}_inst_{index} = ::{id};");
+                    // Its methods, which Clang shows no visitor of an instantiation: each public one
+                    // the template declares once, by its address in the instantiation.
+                    let methods: Vec<String> = children(found)
+                        .into_iter()
+                        // SAFETY(ffi): cursors of a live translation unit.
+                        .filter(|child| kind(*child) == CXCursor_CXXMethod && unsafe { clang_getCXXAccessSpecifier(*child) } == CX_CXXPublic)
+                        .map(spelling)
+                        .collect();
+                    for name in methods.iter().filter(|name| !name.starts_with("operator") && methods.iter().filter(|other| other == name).count() == 1) {
+                        let _ = writeln!(source, "constexpr auto {prefix}_inst_{index}_{name} = &::{id}::{name};");
+                    }
                 }
                 Some(_) => {
                     let _ = writeln!(source, "constexpr auto {prefix}_inst_{index} = &::{id};");
@@ -505,10 +516,18 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
     // `[FFI-17b]` — the instantiations, each under a name made of its template-id (`Vec<int>` is
     // `Vec_int`), in its template's namespace.
     let prefix = format!("{}_inst_", ember_branding::SYMBOL_PREFIX);
+    let mut methods: HashMap<usize, Vec<CXCursor>> = HashMap::new();
+    for cursor in children(unit.cursor()) {
+        if let Some((index, _)) = spelling(cursor).strip_prefix(&prefix).and_then(|rest| rest.split_once('_'))
+            && let Ok(index) = index.parse::<usize>()
+        {
+            methods.entry(index).or_default().push(cursor);
+        }
+    }
     for cursor in children(unit.cursor()) {
         let Some(index) = spelling(cursor).strip_prefix(&prefix).and_then(|index| index.parse::<usize>().ok()) else { continue };
         let written = config.instantiate[index].trim().trim_start_matches("::").to_string();
-        writer.instantiation(cursor, &written);
+        writer.instantiation(cursor, &written, methods.get(&index).map_or(&[], Vec::as_slice));
     }
     // `[FFI-6a]` — the object-like macros, evaluated by Clang in a second parse.
     let macros = writer.macro_names.clone();
@@ -1548,24 +1567,10 @@ impl Writer {
                         }
                         if by_value { Member::Constructor } else { Member::BoxedConstructor }
                     }
-                    CXCursor_CXXMethod => {
-                        if name.starts_with("operator") {
-                            self.skip(child, &format!("{owner}.{name}"), "an operator (`[FFI-42]`'s operator interfaces are not built yet)");
-                            continue;
-                        }
-                        if clang_Type_getCXXRefQualifier(clang_getCursorType(child)) == CXRefQualifier_RValue {
-                            let at = self.at(child);
-                            self.rvalue_members.push(Skipped { name: format!("{owner}.{name}"), reason: "an `&&`-qualified member function, which only a temporary may call".to_string(), at });
-                            continue;
-                        }
-                        if clang_CXXMethod_isStatic(child) != 0 {
-                            Member::Static
-                        } else if clang_CXXMethod_isConst(child) != 0 && !mutable_state {
-                            Member::Method
-                        } else {
-                            Member::MutMethod
-                        }
-                    }
+                    CXCursor_CXXMethod => match self.method_member(child, &owner, mutable_state) {
+                        Some(member) => member,
+                        None => continue,
+                    },
                     _ => continue,
                 };
                 let key = match member {
@@ -1582,6 +1587,32 @@ impl Writer {
                     Err(reason) => self.skip(child, &format!("{owner}.{key}"), reason),
                 }
             }
+        }
+    }
+
+    /// `[FFI-40]`, `[FFI-41]` — what a method of the class `owner` is: a static one an associated
+    /// function, a `const` one `self` (unless the class has a `mutable` member, `[FFI-40a]`), any
+    /// other `mut self`; `None` for an operator (`W5002`) and an `&&`-qualified one (`W5033`).
+    fn method_member(&mut self, method: CXCursor, owner: &str, mutable_state: bool) -> Option<Member> {
+        let name = spelling(method);
+        // SAFETY(ffi): a live method cursor.
+        unsafe {
+            if name.starts_with("operator") {
+                self.skip(method, &format!("{owner}.{name}"), "an operator (`[FFI-42]`'s operator interfaces are not built yet)");
+                return None;
+            }
+            if clang_Type_getCXXRefQualifier(clang_getCursorType(method)) == CXRefQualifier_RValue {
+                let at = self.at(method);
+                self.rvalue_members.push(Skipped { name: format!("{owner}.{name}"), reason: "an `&&`-qualified member function, which only a temporary may call".to_string(), at });
+                return None;
+            }
+            Some(if clang_CXXMethod_isStatic(method) != 0 {
+                Member::Static
+            } else if clang_CXXMethod_isConst(method) != 0 && !mutable_state {
+                Member::Method
+            } else {
+                Member::MutMethod
+            })
         }
     }
 
@@ -1613,7 +1644,7 @@ impl Writer {
             let arguments = passed.join(", ");
             let call = match member {
                 None => format!("{}({arguments})", self.callee.clone().unwrap_or_else(|| qualified_name(cursor))),
-                Some((_, Member::Static, _)) => format!("{}({arguments})", qualified_name(cursor)),
+                Some((_, Member::Static, class)) => format!("::{class}::{}({arguments})", spelling(cursor)),
                 Some((_, Member::Method | Member::MutMethod, _)) => format!("self->{}({arguments})", spelling(cursor)),
                 Some((_, Member::Constructor, class)) => format!("{class}({arguments})"),
                 Some((_, Member::BoxedConstructor, class)) => format!("new {class}({arguments})"),
@@ -1751,7 +1782,7 @@ impl Writer {
 
     /// `[FFI-17b]` — an explicit instantiation `instantiate=[…]` lists: a class template's
     /// specialization as a class of the module, or a function template's as a function.
-    fn instantiation(&mut self, cursor: CXCursor, written: &str) {
+    fn instantiation(&mut self, cursor: CXCursor, written: &str, methods: &[CXCursor]) {
         let name = instance_name(written);
         // SAFETY(ffi): cursors and types of a live translation unit.
         unsafe {
@@ -1759,7 +1790,43 @@ impl Writer {
                 let class = clang_getTypeDeclaration(clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor)));
                 let saved = std::mem::replace(&mut self.writing, namespace_of(class));
                 let record = self.record(class, Some(&name));
-                self.cpp_members(class, record);
+                self.cpp_members(class, record.clone());
+                // Its methods, each named by the address the instantiation's import file takes.
+                let owner = match record {
+                    Record::Full(owner) | Record::Opaque(owner, None) => Some(owner),
+                    _ => None,
+                };
+                if let Some(owner) = owner {
+                    let class_spelled = cpp_spelling(clang_getCursorType(class));
+                    let mutable_state = record_fields(clang_getCursorType(class)).into_iter().any(|field| clang_CXXField_isMutable(field) != 0);
+                    // What the import file names no address of: the template's constructors, its
+                    // operators and its overloaded methods.
+                    let pattern = clang_getSpecializedCursorTemplate(class);
+                    let declared: Vec<CXCursor> = children(pattern).into_iter().filter(|child| clang_getCXXAccessSpecifier(*child) == CX_CXXPublic).collect();
+                    for child in &declared {
+                        let member = spelling(*child);
+                        let reason = match kind(*child) {
+                            CXCursor_Constructor if clang_CXXConstructor_isCopyConstructor(*child) == 0 && clang_CXXConstructor_isMoveConstructor(*child) == 0 => {
+                                "a constructor of a class template's instantiation: no C++ expression names one to take its types from"
+                            }
+                            CXCursor_CXXMethod if member.starts_with("operator") => "an operator (`[FFI-42]`'s operator interfaces are not built yet)",
+                            CXCursor_CXXMethod if declared.iter().filter(|other| kind(**other) == CXCursor_CXXMethod && spelling(**other) == member).count() > 1 => {
+                                "an overload of a class template's instantiation: its address names no one of them"
+                            }
+                            _ => continue,
+                        };
+                        let shown = if kind(*child) == CXCursor_Constructor { format!("{owner}.new") } else { format!("{owner}.{member}") };
+                        self.skip(*child, &shown, reason);
+                    }
+                    for method in methods.iter().filter_map(|var| referenced_function(*var)) {
+                        let key = spelling(method);
+                        let Some(member) = self.method_member(method, &owner, mutable_state) else { continue };
+                        match self.cpp_thunk(method, &key, Some((&owner, member, &class_spelled))) {
+                            Ok(function) => self.functions.push(Function { namespace: self.writing.clone(), ..function }),
+                            Err(reason) => self.skip(method, &format!("{owner}.{key}"), reason),
+                        }
+                    }
+                }
                 self.writing = saved;
                 return;
             }
@@ -2048,7 +2115,7 @@ impl Writer {
 
 /// `[FFI-17b]` — the template a template-id names, by its qualified name (`engine::Vec`), if the
 /// header declares one: a class template's cursor kind or a function template's.
-fn find_template(cursor: CXCursor, wanted: &str) -> Option<CXCursorKind> {
+fn find_template(cursor: CXCursor, wanted: &str) -> Option<CXCursor> {
     for child in children(cursor) {
         match kind(child) {
             CXCursor_Namespace | CXCursor_LinkageSpec => {
@@ -2056,7 +2123,7 @@ fn find_template(cursor: CXCursor, wanted: &str) -> Option<CXCursorKind> {
                     return Some(found);
                 }
             }
-            CXCursor_ClassTemplate | CXCursor_FunctionTemplate if qualified_name(child).trim_start_matches("::") == wanted => return Some(kind(child)),
+            CXCursor_ClassTemplate | CXCursor_FunctionTemplate if qualified_name(child).trim_start_matches("::") == wanted => return Some(child),
             _ => {}
         }
     }
@@ -2068,7 +2135,7 @@ fn referenced_function(cursor: CXCursor) -> Option<CXCursor> {
     for child in children(cursor) {
         // SAFETY(ffi): cursors of a live translation unit.
         let referenced = unsafe { clang_getCursorReferenced(child) };
-        if kind(child) == CXCursor_DeclRefExpr && kind(referenced) == CXCursor_FunctionDecl {
+        if kind(child) == CXCursor_DeclRefExpr && matches!(kind(referenced), CXCursor_FunctionDecl | CXCursor_CXXMethod) {
             return Some(referenced);
         }
         if let Some(found) = referenced_function(child) {
