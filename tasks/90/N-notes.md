@@ -16,7 +16,7 @@ functions, opaque types and statics — the forms hand declarations use. The imp
 `import c.h_<stem> as <name or c>`. Everything after the parser (name resolution, the foreign-call
 checks, contracts, the C wrapper, codegen) then works on it unchanged, which was the point: the
 hand-declaration machinery (ODR-073/074/077-082, ODR-137) is the one contract system. The generated
-text is a source-map file named `<import c "h.h" as c.h_stem>`, so a diagnostic in it shows the
+text is a source-map file named `<import c h.h as c.h_stem>`, so a diagnostic in it shows the
 declaration the importer wrote.
 
 *Why text, not AST:* the parser already turns text into exactly the items needed; building AST nodes

@@ -1427,7 +1427,8 @@ pub fn load(
     }
     // Named for its module: the source map keeps one file per name, and one header imported twice
     // is two modules.
-    let file = map.add(PathBuf::from(format!("<import c \"{header}\" as {}>", path.join("."))), render(&imported, &applied));
+    // No quotes: the name reaches the C as `#line`'s file name ([CG-C-8]).
+    let file = map.add(PathBuf::from(format!("<import c {header} as {}>", path.join("."))), render(&imported, &applied));
     let text = map.file(file).text.clone();
     let lexed = ember_lexer::lex(file, &text, sink);
     let module = ember_parser::parse(file, &text, lexed.tokens, sink);
