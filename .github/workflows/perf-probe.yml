@@ -1,0 +1,20 @@
+name: perf-probe
+
+# D-755: time C variants of the benchmarks on CI's Windows runner (the machine the performance
+# gate fails on), with Ember's MSVC release flags. Results are annotations.
+
+on:
+  push:
+    branches: [perf-probe]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: probe
+        run: python probe/run.py
