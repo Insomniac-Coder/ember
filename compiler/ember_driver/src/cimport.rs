@@ -286,6 +286,10 @@ pub struct Imported {
     /// `[FFI-42]` — each member operator imported: its class's Ember name, its method's, and the
     /// Ember operator interface it implements when its call is asserted safe.
     pub operators: Vec<(String, String, String)>,
+    /// `[FFI-24d]` — each function whose header added or removed `noexcept` since the binding was
+    /// last made (and has not changed it back): its namespace, its Ember name (`Owner.name` for a
+    /// member), and whether it is `noexcept` now.
+    pub policy_changes: Vec<(String, String, bool)>,
 }
 
 /// `[FFI-39]` — a C++ class an Ember class may derive from: its Ember class, the opaque type of
@@ -432,6 +436,55 @@ fn iterable_classes(cursor: CXCursor, in_header: &dyn Fn(CXCursor) -> bool, out:
                 _ => {}
             }
         }
+    }
+}
+
+/// `[FFI-11f]` — whether a parameter is declared `[[clang::lifetimebound]]`: an attribute of it
+/// whose text, or that of the macro it expands (`#define LIFETIMEBOUND [[clang::lifetimebound]]`),
+/// names `lifetimebound`.
+fn lifetimebound(param: CXCursor) -> bool {
+    // SAFETY(ffi): cursors of a live translation unit; the tokens are disposed of before returning.
+    unsafe {
+        let unit = clang_Cursor_getTranslationUnit(param);
+        let tokens = |range: CXSourceRange| -> Vec<(String, CXSourceLocation)> {
+            let (mut tokens, mut count) = (std::ptr::null_mut(), 0);
+            clang_tokenize(unit, range, &mut tokens, &mut count);
+            let out = (0..count as usize).map(|at| (text(clang_getTokenSpelling(unit, *tokens.add(at))), clang_getTokenLocation(unit, *tokens.add(at)))).collect();
+            if !tokens.is_null() {
+                clang_disposeTokens(unit, tokens, count);
+            }
+            out
+        };
+        let names = |range: CXSourceRange| {
+            tokens(range).into_iter().any(|(spelled, at)| {
+                if spelled == "lifetimebound" {
+                    return true;
+                }
+                let expansion = clang_getCursor(unit, at);
+                if kind(expansion) != CXCursor_MacroExpansion {
+                    return false;
+                }
+                let definition = clang_getCursorReferenced(expansion);
+                clang_Cursor_isNull(definition) == 0 && tokens(clang_getCursorExtent(definition)).iter().any(|(spelled, _)| spelled == "lifetimebound")
+            })
+        };
+        // Clang shows the attribute as an unexposed one of the parameter.
+        children(param).into_iter().any(|child| clang_isAttribute(kind(child)) != 0 && names(clang_getCursorExtent(child)))
+    }
+}
+
+/// `[FFI-44]` — the definition of a class's base, when it has exactly one, public and not virtual,
+/// that the header (not the system's library) defines.
+fn single_public_base(class: CXCursor) -> Option<CXCursor> {
+    // SAFETY(ffi): cursors and types of a live translation unit.
+    unsafe {
+        let bases: Vec<CXCursor> = children(class).into_iter().filter(|child| kind(*child) == CXCursor_CXXBaseSpecifier).collect();
+        let [base] = bases.as_slice() else { return None };
+        if clang_getCXXAccessSpecifier(*base) != CX_CXXPublic || clang_isVirtualBase(*base) != 0 {
+            return None;
+        }
+        let definition = clang_getCursorDefinition(clang_getTypeDeclaration(clang_getCanonicalType(clang_getCursorType(*base))));
+        (clang_Cursor_isNull(definition) == 0 && !location(definition).2).then_some(definition)
     }
 }
 
@@ -1859,7 +1912,21 @@ impl Writer {
             }
             let mut taken: HashSet<String> = HashSet::new();
             let mut friends = Vec::new();
-            for child in children(definition) {
+            // `[FFI-44]` — a class with one public, non-virtual C++ base the header defines has the
+            // base's public methods too (a name of its own hides the base's, as in C++): the thunk
+            // calls them through the derived object.
+            let mut members = children(definition);
+            let own = members.len();
+            if trampoline.is_none() {
+                let mut base = single_public_base(definition);
+                for _ in 0..64 {
+                    let Some(found) = base else { break };
+                    members.extend(children(found).into_iter().filter(|child| kind(*child) == CXCursor_CXXMethod));
+                    base = single_public_base(found);
+                }
+            }
+            for (index, child) in members.into_iter().enumerate() {
+                let inherited = index >= own;
                 // `[FFI-42]` — an operator the class declares its friend (often defined there, found
                 // only by argument-dependent lookup), as one declared outside it, after the members.
                 if kind(child) == CXCursor_FriendDecl {
@@ -1930,7 +1997,9 @@ impl Writer {
                     _ => operator.map_or(name.clone(), |(method, _)| method.to_string()),
                 };
                 if !taken.insert(key.clone()) {
-                    self.skip(child, &format!("{owner}.{key}"), "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+                    if !inherited {
+                        self.skip(child, &format!("{owner}.{key}"), "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+                    }
                     continue;
                 }
                 match self.cpp_thunk(child, &key, Some((&owner, member, &class_spelled))) {
@@ -2522,6 +2591,8 @@ impl Writer {
             let mut passed = Vec::new();
             // `[FFI-42]` — a free operator as a method: its first operand is the receiver.
             let free_operator = member.is_some() && kind(cursor) == CXCursor_FunctionDecl;
+            // `[FFI-11f]` — the parameters declared `[[clang::lifetimebound]]`, with their modes.
+            let mut lifetime_bound: Vec<(String, String)> = Vec::new();
             for index in u32::from(free_operator)..clang_Cursor_getNumArguments(cursor).max(0) as u32 {
                 let argument = clang_Cursor_getArgument(cursor, index);
                 let written = spelling(argument);
@@ -2529,6 +2600,9 @@ impl Writer {
                 let (c_type, declaration, pass) = self
                     .cpp_parameter(clang_getCursorType(argument), &format!("a{index}"))
                     .map_err(|reason| tagged(Some("E5031"), &format!("parameter `{param}`"), &reason))?;
+                if lifetimebound(argument) {
+                    lifetime_bound.push((param.clone(), c_type.mode.clone()));
+                }
                 params.push((param, c_type));
                 declared.push(declaration);
                 passed.push(pass);
@@ -2605,6 +2679,18 @@ impl Writer {
                         _ => "",
                     }
                     .to_string();
+                    // `[FFI-11f]` — a result `[[clang::lifetimebound]]` ties to a parameter the thunk
+                    // takes by address (not one it copies): a `ref` borrowing it too, an asserted fact.
+                    let by_address = |mode: &str| matches!(mode, "ref " | "ref mut " | "mut " | "bridged " | "bridged mut " | "tramp ");
+                    let bound: Vec<&(String, String)> = lifetime_bound.iter().filter(|(_, mode)| by_address(mode)).collect();
+                    let method = matches!(member, Some((_, Member::Method | Member::MutMethod, _)));
+                    let mode = if bound.is_empty() {
+                        mode
+                    } else {
+                        let mutable = !constant && !matches!(member, Some((_, Member::Method, _))) && bound.iter().all(|(_, mode)| mode.contains("mut"));
+                        let from: Vec<&str> = method.then_some("self").into_iter().chain(bound.iter().map(|(param, _)| param.as_str())).collect();
+                        format!("ref{} from {}", if mutable { " mut" } else { "" }, from.join(", "))
+                    };
                     let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode };
                     (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
                 }
@@ -2663,6 +2749,13 @@ impl Writer {
             let referenced = matches!(ty.kind, CXType_LValueReference | CXType_RValueReference);
             if referenced || clang_getCanonicalType(ty).kind == CXType_Record {
                 let value = if referenced { clang_getPointeeType(ty) } else { ty };
+                // `[FFI-17a]` — `E5030`: a `std::function` is never a parameter type.
+                if std_template(clang_getCanonicalType(value)).as_deref() == Some("function") {
+                    return Err(format!(
+                        "[E5030] `{}`: a `std::function` is never a parameter type: take a function pointer and a context, or wrap the call in C++ ([FFI-17a])",
+                        cpp_spelling(clang_getCanonicalType(value))
+                    ));
+                }
                 if let Some(found) = self.bridge(clang_getCanonicalType(value)) {
                     let bridge = found?;
                     if bridge.unique.is_some() {
@@ -3073,6 +3166,7 @@ impl Writer {
             ns_uses: self.ns_uses,
             trampolines: self.trampolines,
             operators: self.operators,
+            policy_changes: Vec::new(),
         }
     }
 }
@@ -3930,7 +4024,7 @@ pub fn load(
     identities.extend(options.overlays.iter().map(|(written, _)| ("overlay".to_string(), base.join(written))));
     let foreign = ember_typeck::ForeignImport {
         backed: Vec::new(),
-        header: shown,
+        header: shown.clone(),
         identities,
         skipped: imported
             .skipped
@@ -3956,6 +4050,7 @@ pub fn load(
             .filter(|found| imported.items.iter().any(|item| item.kind == Kind::Class && item.name == found.class && item.namespace.is_empty()))
             .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
             .collect(),
+        policy_changes: changed_signatures(&imported, &applied, "", &shown),
     };
     // `[FFI-41]` — each C++ namespace a module under the import's.
     let children = imported
@@ -3984,6 +4079,7 @@ pub fn load(
                     .filter(|found| imported.items.iter().any(|item| item.kind == Kind::Class && item.name == found.class && item.namespace == *namespace))
                     .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
                     .collect(),
+                policy_changes: changed_signatures(&imported, &applied, &namespace.join("::"), &foreign.header),
                 ..Default::default()
             };
             (child, module, foreign)
@@ -4697,7 +4793,9 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
             (derived, None) => derived,
         };
         match (policy, &function.owner) {
-            (Policy::Direct, None) if !function.out && !function.params.iter().any(|(_, ty)| wrapped(ty)) => {
+            // A result with a mode of its own (a bridge value, `[FFI-17a]`; a lifetime-bound `ref`,
+            // `[FFI-11f]`) is made by the wrapper too.
+            (Policy::Direct, None) if !function.out && !function.params.iter().any(|(_, ty)| wrapped(ty)) && function.result.as_ref().is_none_or(|ty| ty.mode.is_empty()) => {
                 member(function.abi, render_function(function, entry, renamed, hidden))
             }
             // `E5061` where it is used.
@@ -4995,7 +5093,9 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     }
     let mut call = format!("{raw_name}({})", arguments.join(", "));
     // `[FFI-40]` — a method's `T&` result: the reference the thunk's pointer is.
-    let reference = function.result.as_ref().filter(|ty| ty.mode.starts_with("ref")).and_then(|ty| Some((ty.pointee.clone()?.0, ty.mode == "ref")));
+    let reference = function.result.as_ref().filter(|ty| ty.mode.starts_with("ref")).and_then(|ty| Some((ty.pointee.clone()?.0, !ty.mode.starts_with("ref mut"))));
+    // `[FFI-11f]` — the parameters a `[[clang::lifetimebound]]` result borrows.
+    let lifetime_bound = function.result.as_ref().and_then(|ty| ty.mode.split_once(" from ")).map(|(_, from)| from.to_string());
     if let Some((_, shared)) = &reference {
         call = format!("{prefix}_cpp_ref{}({call})", if *shared { "" } else { "_mut" });
     }
@@ -5028,8 +5128,16 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     }
     let public = if hidden { "" } else { "pub " };
     let note = if safe { String::new() } else { "  # SAFETY: the caller keeps what the header does not state".to_string() };
+    if let Some(from) = &lifetime_bound {
+        let _ = writeln!(text, "@borrows({from})");
+    }
     let _ = writeln!(text, "{public}{}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, params.join(", "));
-    let safety = "# SAFETY: the thunk takes this function's own arguments";
+    let safety = match &lifetime_bound {
+        Some(from) => format!(
+            "# SAFETY: the thunk takes this function's own arguments; its result lives as long as `{from}`, as the header's `[[clang::lifetimebound]]` states: asserted, never checked, since C++ does not enforce it [FFI-11f]"
+        ),
+        None => "# SAFETY: the thunk takes this function's own arguments".to_string(),
+    };
     if catching {
         let _ = writeln!(text, "    failed: c_int = 0");
     }
@@ -5138,6 +5246,8 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     }
     let header = header.ok_or("`ember bind` needs a header")?;
     let file = header.file_name().ok_or("`ember bind` needs a header file")?.to_string_lossy().into_owned();
+    // A C++ header by its extension, or for `--emit-cpp`.
+    let cpp = emit_cpp || header.extension().is_some_and(|extension| matches!(extension.to_string_lossy().as_ref(), "hpp" | "hh" | "hxx" | "h++" | "ipp"));
     let dir = header.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
     let shared = HashMap::new();
     let config = Config {
@@ -5148,8 +5258,8 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         flags: &[],
         symbol_stem: "bind",
         shared: &shared,
-        binding: if emit_cpp { "cpp" } else { "c" },
-        cpp: emit_cpp.then_some(standard.as_str()),
+        binding: if cpp { "cpp" } else { "c" },
+        cpp: cpp.then_some(standard.as_str()),
         instantiate: &[],
         trampolines: &[],
     };
@@ -5352,8 +5462,17 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             }
         }
         let names: Vec<&str> = skipped.iter().map(|skip| skip.name.as_str()).collect();
+        // `[FFI-24d]` — a C++ function's exception policy is part of its Ember signature: the
+        // baseline keeps each one's (`api <name> noexcept|throwing`).
+        let policy = |function: &Function| if function.policy == Policy::Direct { "noexcept" } else { "throwing" };
+        let key = |function: &Function| match &function.owner {
+            Some((owner, _)) => format!("{owner}.{}", function.name),
+            None => function.name.clone(),
+        };
+        let api: Vec<String> = if cpp { imported.functions.iter().map(|function| format!("api {} {}", key(function), policy(function))).collect() } else { Vec::new() };
         if let Some(path) = write_baseline {
-            std::fs::write(&path, names.join("\n") + "\n").map_err(|error| format!("cannot write `{path}`: {error}"))?;
+            let lines: Vec<&str> = names.iter().copied().chain(api.iter().map(String::as_str)).collect();
+            std::fs::write(&path, lines.join("\n") + "\n").map_err(|error| format!("cannot write `{path}`: {error}"))?;
         }
         let known: Vec<String> = match &baseline {
             Some(path) => std::fs::read_to_string(path).map_err(|error| format!("cannot read `{path}`: {error}"))?.lines().map(str::to_string).collect(),
@@ -5363,7 +5482,23 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         if new > 0 {
             println!("{new} skipped declaration(s){}", if baseline.is_some() { " not in the baseline" } else { "" });
         }
-        return Ok(if new > 0 || sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
+        // `[FFI-24d]` — API changes: each function whose header added or removed `noexcept` since
+        // the baseline, which changes its Ember signature.
+        let mut changes = 0;
+        for function in imported.functions.iter().filter(|_| cpp) {
+            let name = key(function);
+            let before = known.iter().find_map(|line| line.strip_prefix("api ").and_then(|rest| rest.rsplit_once(' ')).filter(|(found, _)| *found == name).map(|(_, policy)| policy));
+            if let Some(before) = before.filter(|before| *before != policy(function)) {
+                changes += 1;
+                let what = if policy(function) == "noexcept" {
+                    "`noexcept` added: it returns its value, no longer a `Result[…, CppError]`"
+                } else {
+                    "`noexcept` removed: it returns a `Result[…, CppError]`"
+                };
+                println!("API change: `{name}` was {before}: {what} [FFI-24d]");
+            }
+        }
+        return Ok(if new > 0 || changes > 0 || sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
     Err("`ember bind` needs `--init`, `--report`, `--check <overlay>`, `--explain <fn>` or `--emit-embind`".to_string())
 }
@@ -5485,7 +5620,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 6;
+const EMBIND_VERSION: u64 = 7;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -5670,6 +5805,10 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
             ),
         ),
         ("operators".to_string(), Value::Array(imported.operators.iter().map(|(owner, method, interface)| texts(&[owner, method, interface])).collect())),
+        (
+            "policy_changes".to_string(),
+            Value::Array(imported.policy_changes.iter().map(|(namespace, name, now)| texts(&[namespace, name, if *now { "1" } else { "0" }])).collect()),
+        ),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -5785,6 +5924,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
             })
             .collect::<Option<_>>()?,
         operators: triples(field(&value, "operators")?)?,
+        policy_changes: triples(field(&value, "policy_changes")?)?.into_iter().map(|(namespace, name, now)| (namespace, name, now == "1")).collect(),
     };
     Some((files, imported))
 }
@@ -5829,13 +5969,18 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
         .as_bytes(),
     );
     let path = ember_build::cache_root().join(ember_branding::BINDING_EXT).join(format!("{key}.{}", ember_branding::BINDING_EXT));
-    if let Some((files, imported)) = std::fs::read(&path).ok().and_then(|bytes| read_embind(&bytes))
-        && files.iter().all(|(file, hash)| file_hash(file).as_deref() == Some(hash.as_str()))
-    {
-        *cached = true;
-        return Ok((imported, path));
+    let previous = match std::fs::read(&path).ok().and_then(|bytes| read_embind(&bytes)) {
+        Some((files, imported)) if files.iter().all(|(file, hash)| file_hash(file).as_deref() == Some(hash.as_str())) => {
+            *cached = true;
+            return Ok((imported, path));
+        }
+        // `[FFI-24d]` — the binding the header's last parse made, to compare with.
+        previous => previous.map(|(_, imported)| imported),
+    };
+    let (mut imported, files) = import_header(config)?;
+    if let Some(previous) = &previous {
+        imported.policy_changes = policy_changes(previous, &imported);
     }
-    let (imported, files) = import_header(config)?;
     let files: Vec<(String, String)> = files.into_iter().filter_map(|file| file_hash(&file).map(|hash| (file, hash))).collect();
     let bytes = embind(&imported, &files, &configuration, &overlay_hash, overlay);
     // Written aside then renamed: builds side by side read whole records only.
@@ -5847,6 +5992,51 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
         }
     }
     Ok((imported, path))
+}
+
+/// `[FFI-24d]` — for the module of `namespace`, each function whose Ember signature a `noexcept`
+/// the header added or removed changed (an overlay's `@ffi(noexcept)` keeps it), by its Ember name,
+/// with the note a diagnostic in dependent code gives as the cause.
+fn changed_signatures(imported: &Imported, applied: &Applied, namespace: &str, header: &str) -> Vec<(String, String)> {
+    imported
+        .policy_changes
+        .iter()
+        .filter(|(at, name, _)| at == namespace && applied.functions.get(name.rsplit('.').next().unwrap_or(name)).is_none_or(|entry| entry.policy.is_none()))
+        .map(|(_, name, now)| {
+            let change = if *now {
+                format!("`{header}` now declares `{name}` `noexcept` (it did not when this import was last bound), so it returns its value, no longer a `Result[…, CppError]`")
+            } else {
+                format!("`{header}` no longer declares `{name}` `noexcept` (it did when this import was last bound), so it returns a `Result[…, CppError]`, as a function that may throw does")
+            };
+            (name.clone(), format!("the cause: {change} [FFI-24d]"))
+        })
+        .collect()
+}
+
+/// `[FFI-24d]` — each function of `current` whose header added or removed `noexcept` against
+/// `previous` (a member by `Owner.name`), and each change `previous` recorded that still holds.
+fn policy_changes(previous: &Imported, current: &Imported) -> Vec<(String, String, bool)> {
+    let key = |function: &Function| match &function.owner {
+        Some((owner, _)) => format!("{owner}.{}", function.name),
+        None => function.name.clone(),
+    };
+    let direct = |imported: &Imported, namespace: &str, name: &str| {
+        imported.functions.iter().find(|function| function.namespace.join("::") == namespace && key(function) == name).map(|function| function.policy == Policy::Direct)
+    };
+    let mut changes: Vec<(String, String, bool)> = Vec::new();
+    for function in &current.functions {
+        let (namespace, name) = (function.namespace.join("::"), key(function));
+        let now = function.policy == Policy::Direct;
+        if direct(previous, &namespace, &name).is_some_and(|before| before != now) {
+            changes.push((namespace, name, now));
+        }
+    }
+    for (namespace, name, now) in &previous.policy_changes {
+        if direct(current, namespace, name) == Some(*now) && !changes.iter().any(|(at, found, _)| at == namespace && found == name) {
+            changes.push((namespace.clone(), name.clone(), *now));
+        }
+    }
+    changes
 }
 
 fn opaque_by_value(name: &str, why: Option<&str>) -> String {

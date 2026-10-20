@@ -81,6 +81,9 @@ pub struct ForeignImport {
     /// `[FFI-39]` — each class of the module with a trampoline: whether its C++ class has a default
     /// constructor (`E5058`), and the virtuals its trampoline does not override (`E5056`).
     pub trampolines: Vec<(String, bool, Vec<String>)>,
+    /// `[FFI-24d]` — each function whose Ember signature a `noexcept` the header added or removed
+    /// changed, by its name (`Owner.name` for a method), with the note naming the cause.
+    pub policy_changes: Vec<(String, String)>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -265,6 +268,11 @@ pub fn check(
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
         .collect();
+    for loaded in modules {
+        if let Some(foreign) = loaded.foreign.as_ref().filter(|foreign| !foreign.policy_changes.is_empty()) {
+            checker.changed_declarations.extend(changed_declarations(&loaded.module, &foreign.policy_changes));
+        }
+    }
     checker.namespaces = vec![HashMap::new(); modules.len()];
     checker.public_namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
@@ -546,6 +554,7 @@ pub fn check(
                 .secondary(previous.span, "first definition is here"));
         }
     }
+    checker.note_changed_declarations();
     checker.report_unneeded_unsafe();
     let callable_declarations = checker.callable_declarations(modules);
     // `[CT-1]` — the functions computing what is still to be evaluated go to
@@ -1185,6 +1194,37 @@ struct Signature {
     /// `[DIA-22]` — the function's name where it is declared, the secondary span of a diagnostic
     /// its signature causes at a call; `Span::DUMMY` for one the compiler made.
     decl: Span,
+}
+
+/// `[FFI-24d]` — the declarations of a module `import cpp` wrote whose names `changes` lists (a
+/// function's, or `Owner.name` for a method of an `extend Owner:` block), by their names' spans.
+fn changed_declarations(module: &ast::Module, changes: &[(String, String)]) -> Vec<(Span, String)> {
+    let note = |name: &str| changes.iter().find(|(changed, _)| changed == name).map(|(_, note)| note.clone());
+    let mut out = Vec::new();
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::Fn(decl) => out.extend(note(decl.name.name.as_str()).map(|note| (decl.name.span, note))),
+            ast::ItemKind::Extend(extend) => {
+                let ast::TypeKind::Path { segments, .. } = &extend.target.kind else { continue };
+                let Some(owner) = segments.last() else { continue };
+                for member in &extend.members {
+                    if let ast::MemberKind::Fn(decl) = &member.kind {
+                        out.extend(note(&format!("{}.{}", owner.name, decl.name.name)).map(|note| (decl.name.span, note)));
+                    }
+                }
+            }
+            ast::ItemKind::ExternBlock(block) => {
+                for decl in block.items.iter().filter_map(|item| match &item.kind {
+                    ast::ItemKind::Fn(decl) => Some(decl),
+                    _ => None,
+                }) {
+                    out.extend(note(decl.name.name.as_str()).map(|note| (decl.name.span, note)));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The names the compiler knows as types before any module declares them
@@ -2139,6 +2179,11 @@ struct Checker<'a> {
     fn_ids: HashMap<Symbol, DefId>,
     /// A hand-written foreign declaration and whether it asserts a safe call.
     foreign_declarations: HashMap<DefId, bool>,
+    /// `[FFI-24d]` — the declaration (its name's span) of each imported C++ function whose header
+    /// changed its `noexcept`, with the note naming the cause; and where the program calls one
+    /// (the call, and the patterns a `match` on it tests), for the errors there to carry the note.
+    changed_declarations: HashMap<Span, String>,
+    changed_calls: Vec<(Span, String)>,
     /// `[DIA-18]` — for a foreign declaration not asserted safe to call, each fact a safe call
     /// still lacks and the declaration line that would supply it.
     foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
@@ -2956,6 +3001,8 @@ impl<'a> Checker<'a> {
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
             foreign_skipped: Vec::new(),
+            changed_declarations: HashMap::new(),
+            changed_calls: Vec::new(),
             foreign_cpp: Vec::new(),
             foreign_trampolines: Vec::new(),
             foreign_backed: Vec::new(),
@@ -4688,6 +4735,7 @@ impl<'a> Checker<'a> {
         // whose exception policy is neither derived nor declared `E5061`.
         let (code, why) = match why.split_once("] ") {
             Some(("[E5031", rest)) => (codes::E5031, rest),
+            Some(("[E5030", rest)) => (codes::E5030, rest),
             Some(("[E5061", rest)) => (codes::E5061, rest),
             Some(("[E5055", rest)) => (codes::E5055, rest),
             Some(("[E5034", rest)) => (codes::E5034, rest),
@@ -20095,7 +20143,29 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[FFI-24d]` — each error at a call of an imported C++ function whose header changed its
+    /// `noexcept` (or at a pattern of a `match` on one) carries the note naming the header, the
+    /// declaration and the change as the cause.
+    fn note_changed_declarations(&mut self) {
+        if self.changed_calls.is_empty() {
+            return;
+        }
+        let calls = std::mem::take(&mut self.changed_calls);
+        for mut diagnostic in self.sink.take() {
+            let at = diagnostic.primary.span;
+            let cause = calls.iter().find(|(span, _)| span.file == at.file && span.start < at.end.max(at.start + 1) && at.start < span.end.max(span.start + 1));
+            if diagnostic.severity == ember_diag::Severity::Error && let Some((_, note)) = cause {
+                diagnostic = diagnostic.note(note.clone());
+            }
+            self.sink.emit(diagnostic);
+        }
+    }
+
     fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
+        // `[FFI-24d]` — a call of a C++ function whose header changed its `noexcept`.
+        if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
+            self.changed_calls.push((span, note.clone()));
+        }
         if !self.signatures[def.0 as usize].is_unsafe || self.unsafe_context() {
             return;
         }
@@ -23531,7 +23601,13 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Owned(inner) => (inner.as_ref(), true),
             _ => (scrutinee, false),
         };
+        let calls = self.changed_calls.len();
         let mut scrutinee = self.synth_committed(scrutinee);
+        // `[FFI-24d]` — a `match` on a call whose result a header's `noexcept` change made another
+        // type: its patterns are where that shows.
+        if let Some((_, note)) = self.changed_calls.get(calls).cloned() {
+            self.changed_calls.extend(arms.iter().map(|arm| (arm.pattern.span, note.clone())));
+        }
         let scrutinee_ty = scrutinee.ty;
         // Through a class handle's field too: the binding's loan holds the
         // field's read access, which the handle's other aliases respect

@@ -7596,6 +7596,103 @@ int wrapped_plain(int x);
     assert!(report.stdout.contains("wrapped_plain`, one direct call"), "{}", report.stdout);
 }
 
+/// `[FFI-24c]` — `ember inspect --cost` reports each C++ call's mode: `noexcept (derived)` for a
+/// function the header declares non-throwing (called directly, or through a method's wrapper),
+/// `noexcept (asserted)` for one an overlay asserts `@ffi(noexcept)`, `catching` for one that may
+/// throw, whose throw is returned as a `CppError`.
+#[test]
+fn inspect_reports_each_cpp_call_s_exception_mode() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-cpp-modes");
+    std::fs::write(dir.join("modes.hpp"), "\
+#pragma once
+#include <stdexcept>
+inline int plain_sum(int a, int b) noexcept { return a + b; }
+inline int stated_safe(int x) { if (x < 0) throw std::runtime_error(\"negative\"); return x; }
+inline int may_throw(int x) { if (x < 0) throw std::runtime_error(\"negative\"); return x; }
+struct Meter { int level; int read() const noexcept { return level; } };
+").unwrap();
+    std::fs::write(dir.join(format!("overlay.{SOURCE_EXT}")), "unsafe overlay cpp \"modes.hpp\":\n    @ffi(noexcept)\n    fn stated_safe(x)\n    fn plain_sum(a, b)\n    fn read()\n").unwrap();
+    let source = dir.join(format!("calls.{SOURCE_EXT}"));
+    std::fs::write(&source, format!("import cpp \"modes.hpp\" with (overlay = \"overlay.{SOURCE_EXT}\")\n\nfn main():\n    \
+        meter = cpp.Meter(level = 4)\n    println(cpp.plain_sum(1, 2), cpp.stated_safe(3), meter.read())\n    \
+        unsafe:  # SAFETY(ffi): a scalar call\n        match cpp.may_throw(5):\n            Ok(value):\n                println(value)\n            \
+        Err(error):\n                println(error.what)\n")).unwrap();
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("calls.safety.json").to_string_lossy().into_owned();
+    let report = ember(&["inspect", &table, "--cost"], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    for (function, mode) in [("plain_sum", "noexcept (derived)"), ("read", "noexcept (derived)"), ("stated_safe", "noexcept (asserted)"), ("may_throw", "catching")] {
+        let found = report.stdout.lines().any(|line| line.contains(&format!("{function}`, a C++ call through its thunk: {mode}")));
+        assert!(found, "no `{mode}` row for `{function}`:\n{}", report.stdout);
+    }
+}
+
+/// `[FFI-24d]` — a header that adds or removes `noexcept` changes the Ember signature: the errors in
+/// dependent code name the header, the declaration and the change as the cause (on every build
+/// until the header changes it back), and `ember bind --report` lists it under API changes
+/// against its baseline.
+#[test]
+fn a_noexcept_change_in_a_header_is_named_as_the_cause() {
+    let root = workspace_root();
+    let dir = temporary_directory("noexcept-change");
+    let cache = temporary_directory("noexcept-change-cache");
+    let cache_arg = cache.to_string_lossy().into_owned();
+    let header = |halve: &str, third: &str| {
+        std::fs::write(dir.join("api.hpp"), format!("#pragma once\ninline int halve(int x) {halve}{{ return x / 2; }}\ninline int third(int x) {third}{{ return x / 3; }}\n")).unwrap();
+    };
+    header("noexcept ", "");
+    let source = dir.join(format!("main.{SOURCE_EXT}"));
+    std::fs::write(&source, "import cpp \"api.hpp\"\n\nfn main():\n    unsafe:  # SAFETY(ffi): scalar calls\n        println(cpp.halve(4) + 1)\n        \
+        match cpp.third(9):\n            Ok(value):\n                println(value)\n            Err(error):\n                println(error.what)\n").unwrap();
+    let source_arg = source.to_string_lossy().into_owned();
+    let check = || ember_with_env(&["check", &source_arg], &root, &ember_branding::cache_dir_var(), &cache_arg);
+    let first = check();
+    assert_eq!(first.exit, 0, "{}", first.stderr);
+    let report = |args: &[&str]| ember(&[&["bind", "api.hpp", "--report"], args].concat(), &dir);
+    let baseline = report(&["--write-baseline", "baseline.txt"]);
+    assert_eq!(baseline.exit, 0, "{}{}", baseline.stdout, baseline.stderr);
+    header("", "noexcept ");
+    for _ in 0..2 {
+        let changed = check();
+        assert_ne!(changed.exit, 0, "the changed signatures were accepted");
+        assert!(
+            changed.stderr.contains("the cause: `api.hpp` no longer declares `halve` `noexcept`")
+                && changed.stderr.contains("the cause: `api.hpp` now declares `third` `noexcept`"),
+            "the errors do not name the change as their cause:\n{}",
+            changed.stderr
+        );
+    }
+    let listed = report(&["--baseline", "baseline.txt"]);
+    assert_ne!(listed.exit, 0, "{}", listed.stdout);
+    assert!(listed.stdout.contains("API change: `halve` was noexcept: `noexcept` removed"), "{}", listed.stdout);
+    assert!(listed.stdout.contains("API change: `third` was throwing: `noexcept` added"), "{}", listed.stdout);
+}
+
+/// `[FFI-11f]` — a result lifetime derived from `[[clang::lifetimebound]]` imports as an asserted
+/// fact: `ember tcb` lists it, with the header's attribute as its source, graded `asserted` and
+/// never `checked`, since C++ does not enforce the attribute. `[TCB-4]` — the C++ bridge category
+/// names the header whose thunks the program trusts.
+#[test]
+fn a_lifetimebound_result_is_an_asserted_fact() {
+    let root = workspace_root();
+    let source = root.join("tests").join("conformance").join("FFI-11f").join(format!("accept_a_lifetimebound_result_borrows_its_parameter.{SOURCE_EXT}"));
+    let report = ember(&["tcb", &source.to_string_lossy()], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    let facts: Vec<&str> = report.stdout.lines().filter(|line| line.contains("[[clang::lifetimebound]]")).collect();
+    for from in ["`values`", "`a, b`", "`self, other`"] {
+        assert!(
+            facts.iter().any(|line| line.contains(&format!("its result lives as long as {from}")) && line.contains("asserted, never checked") && line.ends_with("[asserted]")),
+            "no asserted fact for a result bound to {from}:\n{}",
+            report.stdout
+        );
+    }
+    assert!(!report.stdout.contains("[checked]"), "{}", report.stdout);
+    assert!(report.stdout.lines().any(|line| line.starts_with("C++ bridge: ") && line.contains("`lifetimes.hpp`")), "{}", report.stdout);
+}
+
 /// `[FFI-17f]` — an operation of a C++ bridge type and a bridge value's end are each a call of a
 /// C++ thunk, never inlined: `ember inspect --cost` lists each one as an FFI call.
 #[test]

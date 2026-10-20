@@ -1601,8 +1601,26 @@ fn known_defects() -> Vec<&'static str> {
         .collect()
 }
 
+/// `[TCB-4]`, `[FFI-3]` — the C++ the program trusts: the thunks of each header it imports, which
+/// the C++ compiler builds with the project's flags, and `std.ffi`'s bridge types (`[FFI-17e]`).
+fn cpp_bridge(modules: &[ember_typeck::LoadedModule]) -> String {
+    let mut headers: Vec<&str> = modules
+        .iter()
+        .filter_map(|loaded| loaded.foreign.as_ref().filter(|foreign| foreign.cpp.is_some() && !foreign.header.is_empty()).map(|foreign| foreign.header.as_str()))
+        .collect();
+    headers.sort_unstable();
+    headers.dedup();
+    if headers.is_empty() {
+        return "none: the program imports no C++".to_string();
+    }
+    format!(
+        "the `extern \"C\"` thunks of {}, compiled by the C++ compiler with the project's flags, and `std.ffi`'s bridge types (`CppVector`, `CppString`, `CppShared`) over the C++ standard library",
+        headers.iter().map(|header| format!("`{header}`")).collect::<Vec<_>>().join(", ")
+    )
+}
+
 /// `[TCB-4]` — the trusted base by category, the compiler first, with its version and known defects.
-fn trusted_base_categories() -> Vec<(&'static str, String)> {
+fn trusted_base_categories(modules: &[ember_typeck::LoadedModule]) -> Vec<(&'static str, String)> {
     let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
     let driver = match Toolchain::detect(requested.as_deref()) {
         Ok(toolchain) => format!("{} ({}) and {}", toolchain.name(), toolchain.compiler_path().display(), toolchain.linker()),
@@ -1618,7 +1636,7 @@ fn trusted_base_categories() -> Vec<(&'static str, String)> {
         )),
         ("runtime", format!("{}_rt, the runtime built with this compiler", ember_branding::SYMBOL_PREFIX)),
         ("standard library", format!("{}, as shipped with this compiler", ember_branding::STD_PACKAGE)),
-        ("C++ bridge", "none: C++ interoperability is not built".to_string()),
+        ("C++ bridge", cpp_bridge(modules)),
         ("external libraries", "the foreign declarations below, each linked from its library".to_string()),
         ("driver", driver),
         ("hardware", format!("{} ({})", std::env::consts::ARCH, std::env::consts::OS)),
@@ -2267,7 +2285,7 @@ fn print_tcb_report(
             }
             value
         }).collect();
-        let categories: serde_json::Map<String, serde_json::Value> = trusted_base_categories()
+        let categories: serde_json::Map<String, serde_json::Value> = trusted_base_categories(modules)
             .into_iter()
             .map(|(name, text)| (name.to_string(), serde_json::json!(text)))
             .collect();
@@ -2307,7 +2325,7 @@ fn print_tcb_report(
     println!("Trusted base: {}", input.display());
     println!("Guaranteed by the language, checked by the compiler: {LANGUAGE_GUARANTEES}");
     // `[TCB-4]` — the rest of the base, by category.
-    for (name, text) in trusted_base_categories() {
+    for (name, text) in trusted_base_categories(modules) {
         println!("{}{}: {text}", name[..1].to_uppercase(), &name[1..]);
     }
     println!("Supplied from outside the language, each fact with its grade:");
@@ -2398,6 +2416,13 @@ fn safety_costs_json(
         .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
         .collect();
     let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
+    // `[FFI-24c]` — the modules `import cpp` wrote: their functions are the program's C++ calls, and
+    // their bodies (the wrappers of the thunks) are the import's, not the program's own.
+    let cpp_files: std::collections::BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some()))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
     let mut costs: Vec<serde_json::Value> = Vec::new();
     let mut add = |row: &str, class: &str, span: ember_span::Span, function: &str, detail: String| {
         costs.push(serde_json::json!({
@@ -2408,12 +2433,20 @@ fn safety_costs_json(
         add("Allocation", "guaranteed present", site.span, &site.function, site.operations.join(", "));
     }
     for (index, body) in bodies.iter().enumerate() {
-        if standard[index] {
+        if standard[index] || cpp_files.contains(&body.span.file) {
             continue;
         }
         for block in &body.blocks {
             let ember_mir::Terminator::Call { func, .. } = &block.terminator else { continue };
             let span = block.terminator_span;
+            // `[FFI-24c]` — a C++ call, with its exception mode.
+            if let ember_mir::FuncRef::Direct { symbol, .. } = func
+                && let Some(callee) = by_symbol.get(symbol.as_str())
+                && let Some(mode) = cpp_call_mode(callee, &by_symbol, &cpp_files)
+            {
+                add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, a C++ call through its thunk: {mode} [FFI-24c]", callee.name));
+                continue;
+            }
             match func {
                 ember_mir::FuncRef::Interface { .. } => add("Interface call through `dyn`", "guaranteed present", span, &body.name, "one indirect call".to_string()),
                 ember_mir::FuncRef::Virtual { .. } => add("Virtual method call", "conditionally elided", span, &body.name, "one indirect call through the class's method table".to_string()),
@@ -2469,6 +2502,45 @@ fn safety_costs_json(
         add("`contains`", "guaranteed present", use_.span, "", format!("{}: {}", use_.selects, use_.cost));
     }
     serde_json::Value::Array(costs).to_string()
+}
+
+/// `[FFI-24c]` — the exception mode of a call of `callee`, when it is a function `import cpp` wrote:
+/// `noexcept (derived)` for a thunk called directly, or a wrapper whose thunk does not catch;
+/// `noexcept (asserted)` for one an overlay asserts `@ffi(noexcept)`, whose thunk catches and whose
+/// wrapper panics on a throw (`[FFI-24b]`); `catching` for one that returns the throw as a
+/// `CppError` (`[FFI-24]`). `None` for any other function, and for a helper of the import's that
+/// calls no thunk.
+fn cpp_call_mode(
+    callee: &ember_mir::Body,
+    by_symbol: &std::collections::HashMap<&str, &ember_mir::Body>,
+    cpp_files: &std::collections::BTreeSet<ember_span::FileId>,
+) -> Option<&'static str> {
+    if !cpp_files.contains(&callee.span.file) {
+        return None;
+    }
+    if callee.contracts.foreign.is_some() {
+        return Some("noexcept (derived)");
+    }
+    let prefix = ember_branding::SYMBOL_PREFIX;
+    let called: Vec<&str> = callee
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.terminator {
+            ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } => Some(symbol.as_str()),
+            _ => None,
+        })
+        .collect();
+    let thunk = called.iter().any(|symbol| by_symbol.get(symbol).is_some_and(|body| body.contracts.foreign.is_some() && cpp_files.contains(&body.span.file)));
+    if !thunk {
+        return None;
+    }
+    Some(if called.iter().any(|symbol| symbol.contains(&format!("{prefix}_cpp_value"))) {
+        "noexcept (asserted)"
+    } else if called.iter().any(|symbol| symbol.contains(&format!("{prefix}_cpp_result"))) {
+        "catching"
+    } else {
+        "noexcept (derived)"
+    })
 }
 
 /// `[FFI-17e]` — the name of a C++ bridge type (`std.ffi`'s `CppVector`, `CppString`, `CppShared`),
