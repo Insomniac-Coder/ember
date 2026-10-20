@@ -718,11 +718,17 @@ impl<'a> Analysis<'a> {
     /// its header, any other mutable borrow, or any other way in, and it is
     /// not followed. Its shared views and element references read it.
     fn element_lists(&self) -> Lists {
+        self.element_lists_where(&|elem| type_range(self.types, elem).is_some())
+    }
+
+    /// `element_lists`, for the lists whose element type `keep` accepts (`[LNT-6]`'s `L4003`
+    /// follows `Array[float]`'s stores too).
+    fn element_lists_where(&self, keep: &dyn Fn(Ty) -> bool) -> Lists {
         let body = self.body;
         let mut stores: BTreeMap<LocalId, Vec<Store>> = BTreeMap::new();
         for (index, decl) in body.locals.iter().enumerate().skip(body.arg_count + 1) {
             if let TyKind::Vec { elem, text: false } = *self.types.kind(decl.ty) {
-                if type_range(self.types, elem).is_some() {
+                if keep(elem) {
                     stores.insert(LocalId(index as u32), Vec::new());
                 }
             }
@@ -2515,6 +2521,212 @@ pub(crate) fn natural_loops(body: &Body, order: &[usize], headers: &HashSet<usiz
         }
     }
     blocks
+}
+
+/// `[LNT-6]` — the loops the compiler judges hot: the innermost ones, which hold no other loop. Each
+/// is its header and its blocks, in header order.
+pub(crate) fn innermost_loops(body: &Body) -> Vec<(usize, HashSet<usize>)> {
+    let order = reverse_postorder(body);
+    let headers = loop_headers(body, &order);
+    let mut loops: Vec<(usize, HashSet<usize>)> = natural_loops(body, &order, &headers)
+        .into_iter()
+        .filter(|(header, blocks)| !blocks.iter().any(|block| block != header && headers.contains(block)))
+        .collect();
+    loops.sort_by_key(|(header, _)| *header);
+    loops
+}
+
+/// `[LNT-6]` (`L4003`) — a list of `int` or `float` values indexed in a hot loop that holds more
+/// than 64 KiB and whose values provably fit 32 bits: where it is indexed, the list, and the
+/// 32-bit type that holds its values.
+pub(crate) struct NarrowList {
+    pub(crate) span: ember_span::Span,
+    pub(crate) list: LocalId,
+    pub(crate) narrow: &'static str,
+}
+
+/// `[LNT-6]` (`L4003`) — the lists of 64-bit numbers a hot loop indexes at its counter on every turn
+/// of a run that takes the counter past 8191, so that the list holds more than 8192 values (64 KiB):
+/// an integer list whose every store the facts keep within `i32` or `u32`, or a `float` list whose
+/// every store is exactly an `f32` (a constant one holds, a widened `f32`, or an integer the facts
+/// keep within 2^24). One per list and loop.
+pub(crate) fn narrow_lists_in_hot_loops(
+    body: &Body,
+    types: &TypeTable,
+    common: &CommonTypes,
+    returns: &HashMap<String, Vec<usize>>,
+    fields: &BTreeMap<FieldKey, Interval>,
+) -> Vec<NarrowList> {
+    let mut found = Vec::new();
+    let hot = innermost_loops(body);
+    if hot.is_empty() || !body.locals.iter().any(|decl| matches!(types.kind(decl.ty), TyKind::Vec { .. })) {
+        return found;
+    }
+    let Some(analysis) = Analysis::run_with_fields(body, types, common, returns, fields) else { return found };
+    let floats = analysis.element_lists_where(&|elem| matches!(types.kind(elem), TyKind::Float(ember_types::FloatTy::F64)));
+    let i64_ty = |ty: Ty| matches!(types.kind(ty), TyKind::Int(ember_types::IntTy::I64));
+    for (header, blocks) in &hot {
+        let Some(counted) = crate::loop_version::counted_loop(body, types, *header) else { continue };
+        // Every turn runs to the step: the loop is left only by its test.
+        let exit = match &body.blocks[*header].terminator {
+            Terminator::SwitchInt { targets, .. } => targets[0].1.0 as usize,
+            _ => continue,
+        };
+        let leaves_early = blocks.iter().any(|&block| {
+            block != *header
+                && successors(&body.blocks[block].terminator)
+                    .into_iter()
+                    .any(|next| !blocks.contains(&next) && !(next == exit && counted.last == Some(block)))
+        });
+        if leaves_early {
+            continue;
+        }
+        let Some(state) = analysis.state_before(*header, 0) else { continue };
+        let Some(limit) = analysis.operand_range(&state, &Operand::Copy(Place::local(counted.limit))) else { continue };
+        if !(if counted.inclusive { limit.lo >= 8192 } else { limit.lo > 8192 }) {
+            continue;
+        }
+        let mut region: Vec<usize> = blocks.iter().copied().collect();
+        region.sort_unstable();
+        let dominators = crate::loop_version::dominators(body, *header, &region);
+        let mut reported: BTreeSet<LocalId> = BTreeSet::new();
+        for &block in &region {
+            // An access on every turn: its block is on the way to the step.
+            if !dominators.get(&counted.step).is_some_and(|set| set.contains(&block)) {
+                continue;
+            }
+            for stmt in &body.blocks[block].stmts {
+                let mut indexed: Vec<LocalId> = Vec::new();
+                for_each_place(stmt, &mut |place: &Place| {
+                    if let [Projection::Index(index)] = place.projection.as_slice()
+                        && holds_counter(body, *index, counted.counter, 0)
+                    {
+                        indexed.push(place.local);
+                    }
+                });
+                for local in indexed {
+                    let list = analysis.lists.views.get(&local).copied().unwrap_or(local);
+                    if reported.contains(&list) {
+                        continue;
+                    }
+                    let TyKind::Vec { elem, .. } = *types.kind(body.local(list).ty) else { continue };
+                    let narrow = if i64_ty(elem) {
+                        let Some(range) = analysis.elements.get(&list).filter(|_| analysis.lists.stores.contains_key(&list)) else { continue };
+                        if range.within(Interval { lo: i128::from(i32::MIN), hi: i128::from(i32::MAX) }) {
+                            "i32"
+                        } else if range.within(Interval { lo: 0, hi: i128::from(u32::MAX) }) {
+                            "u32"
+                        } else {
+                            continue;
+                        }
+                    } else if floats.stores.get(&list).is_some_and(|stores| float_stores_fit_f32(&analysis, stores)) {
+                        "f32"
+                    } else {
+                        continue;
+                    };
+                    reported.insert(list);
+                    found.push(NarrowList { span: stmt.span, list, narrow });
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Whether `local` holds the value `counter` has: it is `counter`, or a local written once with a
+/// copy or a numeric conversion of one that does (an index is the counter converted to `usize`).
+fn holds_counter(body: &Body, local: LocalId, counter: LocalId, depth: usize) -> bool {
+    if local == counter {
+        return true;
+    }
+    if depth >= 8 {
+        return false;
+    }
+    let mut writes = body.blocks.iter().flat_map(|block| &block.stmts).filter(|stmt| match &stmt.kind {
+        StmtKind::Assign { place, .. } => place.local == local,
+        StmtKind::CheckedBinaryOp { dest, overflow, .. } => dest.local == local || overflow.local == local,
+        _ => false,
+    });
+    let (Some(stmt), None) = (writes.next(), writes.next()) else { return false };
+    if body.blocks.iter().any(|block| matches!(&block.terminator, Terminator::Call { dest, .. } if dest.local == local)) {
+        return false;
+    }
+    match &stmt.kind {
+        StmtKind::Assign {
+            place,
+            rvalue: Rvalue::Use(Operand::Copy(from)) | Rvalue::Cast { kind: CastKind::Numeric, operand: Operand::Copy(from), .. },
+        } if place.projection.is_empty() && from.projection.is_empty() => holds_counter(body, from.local, counter, depth + 1),
+        _ => false,
+    }
+}
+
+/// `[LNT-6]` (`L4003`) — every value these stores put in a `float` list is exactly an `f32`.
+fn float_stores_fit_f32(analysis: &Analysis, stores: &[Store]) -> bool {
+    let body = analysis.body;
+    stores.iter().all(|store| {
+        let value = match *store {
+            Store::Element(block, stmt) => match &body.blocks[block].stmts[stmt].kind {
+                StmtKind::Assign { rvalue: Rvalue::Use(value), .. } => value,
+                _ => return false,
+            },
+            Store::Added(block, arg) => match &body.blocks[block].terminator {
+                Terminator::Call { args, .. } => match args.get(arg) {
+                    Some(value) => value,
+                    None => return false,
+                },
+                _ => return false,
+            },
+            Store::Unknown => return false,
+        };
+        exact_f32(analysis, value, 0)
+    })
+}
+
+/// Whether `value` is exactly an `f32`: a constant one holds,
+/// or a local written once with a widened `f32`, an integer the facts keep within 2^24, or a copy.
+fn exact_f32(analysis: &Analysis, value: &Operand, depth: usize) -> bool {
+    let body = analysis.body;
+    let types = analysis.types;
+    match value {
+        Operand::Const(Const::Float { value, .. }) => f64::from(*value as f32) == *value,
+        Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() && depth < 8 => {
+            // Its one write: an assignment of the whole local (a checked operation is none).
+            let mut writes: Vec<(usize, usize, Option<&Rvalue>)> = Vec::new();
+            for (b, data) in body.blocks.iter().enumerate() {
+                for (s, stmt) in data.stmts.iter().enumerate() {
+                    match &stmt.kind {
+                        StmtKind::Assign { place: written, rvalue } if written.local == place.local => {
+                            writes.push((b, s, written.projection.is_empty().then_some(rvalue)));
+                        }
+                        StmtKind::CheckedBinaryOp { dest, .. } if dest.local == place.local => writes.push((b, s, None)),
+                        _ => {}
+                    }
+                }
+                if matches!(&data.terminator, Terminator::Call { dest, .. } if dest.local == place.local) {
+                    writes.push((b, data.stmts.len(), None));
+                }
+            }
+            let [(b, s, Some(rvalue))] = writes.as_slice() else { return false };
+            let (b, s) = (*b, *s);
+            match rvalue {
+                Rvalue::Use(inner) => exact_f32(analysis, inner, depth + 1),
+                Rvalue::Cast { kind: CastKind::Numeric, operand: from @ (Operand::Copy(_) | Operand::Move(_)), .. } => {
+                    let (Operand::Copy(source) | Operand::Move(source)) = from else { return false };
+                    let from_ty = place_type(body, types, source);
+                    match types.kind(from_ty) {
+                        TyKind::Float(ember_types::FloatTy::F32 | ember_types::FloatTy::F16) => true,
+                        TyKind::Int(_) | TyKind::Uint(_) => analysis
+                            .state_before(b, s)
+                            .and_then(|state| analysis.operand_range(&state, from))
+                            .is_some_and(|range| range.within(Interval { lo: -(1 << 24), hi: 1 << 24 })),
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
 
 /// Per loop header, every local its loop writes.

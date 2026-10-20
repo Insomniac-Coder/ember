@@ -10804,6 +10804,8 @@ formal 1/9 count or Phase 2's estimate.
 > the reference machine's run is all 21 green with an empty baseline. `unsafe` local functions built.
 > Owner 2026-10-20: STOP AT 95% Overall; helper N3 (C++ import, job_N3.md) running in
 > .claude/worktrees/helper-N3.
+> ADR-241: `ember lint` built with all of `[LNT-6]`'s lints (`ember_analysis::perf_lints`, pages
+> docs/errors/L2001..L7001, tests/conformance/LNT-6/, `#$ command: lint` in the harness).
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

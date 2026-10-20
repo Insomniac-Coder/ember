@@ -1213,7 +1213,7 @@ fn reachable_from(body: &Body, start: usize, stop: usize) -> HashSet<usize> {
 }
 
 /// Dominators within the loop, the header as the entry.
-fn dominators(body: &Body, header: usize, blocks: &[usize]) -> HashMap<usize, HashSet<usize>> {
+pub(crate) fn dominators(body: &Body, header: usize, blocks: &[usize]) -> HashMap<usize, HashSet<usize>> {
     let all: HashSet<usize> = blocks.iter().copied().collect();
     let predecessors = predecessors(body);
     let mut dominators: HashMap<usize, HashSet<usize>> =

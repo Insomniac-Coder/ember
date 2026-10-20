@@ -60,6 +60,9 @@ struct Expectations {
     /// `#$ flags:` — one compiler flag per annotation for the check of a test's diagnostics:
     /// `--require-evidence` (`[TCB-1]`), under which a claimed grade's missing evidence is `E5050`.
     flags: Vec<String>,
+    /// `#$ command: lint` — the command whose diagnostics the test names, `check` when absent:
+    /// `ember lint` reports what `check` does and `[LNT-6]`'s lints.
+    command: Option<String>,
     /// `#$ stderr:` — text the run's standard error must contain, one needle
     /// per annotation: the debug leak report (`[WK-15]`) goes there.
     stderr: Vec<String>,
@@ -237,6 +240,8 @@ fn parse_expectations(source: &str) -> Expectations {
             collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("flags:") {
             expectations.flags.push(value.trim().to_string());
+        } else if let Some(value) = rest.strip_prefix("command:") {
+            expectations.command = Some(value.trim().to_string());
         } else if let Some(value) = rest.strip_prefix("args:") {
             expectations.args.push(value.trim().to_string());
             collecting_stdout = false;
@@ -341,7 +346,8 @@ fn assert_exact_diagnostics(
     root: &Path,
     expectations: &Expectations,
 ) -> (i32, String) {
-    let mut arguments = vec!["check", "--json", relative, "--profile", profile];
+    let command = expectations.command.as_deref().unwrap_or("check");
+    let mut arguments = vec![command, "--json", relative, "--profile", profile];
     arguments.extend(expectations.flags.iter().map(String::as_str));
     let checked = ember(&arguments, root);
     struct Produced {
@@ -2221,6 +2227,76 @@ fn known_manifest_lints_are_accepted() {
         "known manifest lints were rejected:\n{}",
         checked.stderr
     );
+}
+
+/// `[LNT-6]`, `[MAN-3]` — `ember lint` reports `ember check`'s diagnostics and its own lints, each at
+/// the level `[lints]` gives it, `warn` when it gives none: `allow` silences one, `error` fails the
+/// run, and `large_copy`'s table sets `L2002`'s threshold. `ember check` reports none of them. A level
+/// that is none, or a parameter a lint does not take, is `E9001`.
+#[test]
+fn ember_lint_reports_its_lints_at_the_levels_the_manifest_gives() {
+    let root = workspace_root();
+    let source = [
+        "@derive(Copy)",
+        "struct Pair:",
+        "    a: int",
+        "    b: int",
+        "",
+        "fn first(owned p: Pair) -> int:",
+        "    return p.a",
+        "",
+        "fn main():",
+        "    s = String.from(\"x\")",
+        "    t = s.clone()",
+        "    for i in 0..3:",
+        "        u = String.from(\"y\")",
+        "        println(u.len() + i)",
+        "    println(t.len(), first(Pair(1, 2)))",
+        "",
+    ]
+    .join("\n");
+    let run = |name: &str, lints: &[&str], command: &str| {
+        let package = temporary_directory(name);
+        let file = package.join(ember_branding::source_file("main"));
+        std::fs::write(package.join(MANIFEST), format!("[lints]\n{}\n", lints.join("\n"))).expect("manifest is writable");
+        std::fs::write(&file, &source).expect("source is writable");
+        let out = ember(&[command, &file.to_string_lossy()], &root);
+        let _ = std::fs::remove_dir_all(&package);
+        out
+    };
+    let codes = |text: &str| -> Vec<String> {
+        let mut found: Vec<String> = text.match_indices('[').filter_map(|(at, _)| {
+            let code = text.get(at + 1..at + 6)?;
+            let is_lint = code.starts_with('L') && code[1..].bytes().all(|b| b.is_ascii_digit());
+            (is_lint && text[at..].starts_with(&format!("[{code}]"))).then(|| code.to_string())
+        }).collect();
+        found.sort();
+        found
+    };
+    // The defaults: each lint at `warn`, `large_copy` above 256 bytes.
+    let warned = run("lint-defaults", &[], "lint");
+    assert_eq!(warned.exit, 0, "{}", warned.stderr);
+    assert_eq!(codes(&warned.stderr), ["L2001", "L4001"], "{}", warned.stderr);
+    assert!(warned.stderr.contains("warning[L2001]: `s` is cloned, then never used again"), "{}", warned.stderr);
+    // `ember check` reports none of them.
+    let checked = run("lint-check", &[], "check");
+    assert_eq!(checked.exit, 0, "{}", checked.stderr);
+    assert!(codes(&checked.stderr).is_empty(), "{}", checked.stderr);
+    // `allow`, `error`, and a lower threshold, by code and by name.
+    let levels = run(
+        "lint-levels",
+        &["L4001 = \"allow\"", "l2001 = \"error\"", "large_copy = { level = \"warn\", threshold = 8 }"],
+        "lint",
+    );
+    assert_ne!(levels.exit, 0, "an `error` lint fails the run:\n{}", levels.stderr);
+    assert!(levels.stderr.contains("error[L2001]"), "{}", levels.stderr);
+    assert!(levels.stderr.contains("warning[L2002]: `p` is a 16-byte `Copy` value passed by value"), "{}", levels.stderr);
+    assert!(!levels.stderr.contains("L4001"), "{}", levels.stderr);
+    // A level that is none, and a parameter `L2001` does not take.
+    let wrong = run("lint-wrong", &["L2001 = \"loud\"", "L4001 = { threshold = 3 }"], "lint");
+    assert_ne!(wrong.exit, 0, "{}", wrong.stderr);
+    assert!(wrong.stderr.contains("error[E9001]: `loud` is not a lint level"), "{}", wrong.stderr);
+    assert!(wrong.stderr.contains("error[E9001]: `L4001` has no parameter `threshold`"), "{}", wrong.stderr);
 }
 
 /// `[PRF-3]` and `[EXC-14]` — a manifest must not silently revive a removed

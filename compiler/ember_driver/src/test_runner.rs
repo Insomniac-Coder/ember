@@ -575,7 +575,14 @@ fn write_files(work: &Path, files: &[(String, String)]) -> Result<(), String> {
 /// How an error page's examples are checked: `E5050` only a build that requires evidence reports
 /// (`[TCB-1]`).
 fn check_command(code: &str) -> &'static [&'static str] {
-    if code == "E5050" { &["check", "--require-evidence"] } else { &["check"] }
+    // `[LNT-6]` — `ember lint`'s own lints appear under `ember lint` only.
+    if code == "E5050" {
+        &["check", "--require-evidence"]
+    } else if ember_analysis::PerfLints::CODES.iter().any(|lint| lint.to_string() == code) {
+        &["lint"]
+    } else {
+        &["check"]
+    }
 }
 
 fn run_example(

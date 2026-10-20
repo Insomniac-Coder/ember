@@ -5017,6 +5017,44 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-241 — `ember lint` and `[LNT-6]`'s lints
+
+2026-10-20. `ember lint` is `ember check` and the lints `[LNT-6]` lists, read off the MIR the checks ran
+on, before inlining (`ember_analysis::perf_lints`; `L5001` from the declarations as written, in the
+driver). Each is at `warn` unless `[lints]` gives `allow`, `warn` or `error`, by code or, for `L2002`,
+as `large_copy` (with `threshold`, 256 bytes by default); any other level or parameter is `E9001`.
+`ember check` and `ember build` report none of them. Error pages: `docs/errors/L2001.md` … `L7001.md`,
+run under `ember lint` by `tools/error_pages.py` and `ember test --doc`.
+
+**A hot loop** (`L4001`, `L4003`; the specification says "a loop the compiler judges hot") is an
+innermost loop: one that holds no other.
+
+* `L2001` — `x.clone()` of a value the function owns (a local, or an `owned` parameter), not `Copy`
+  and not a view, that nothing reads afterwards on any path, counting a read of any view of it.
+* `L2002` — an `owned` parameter of a `Copy` type larger than the threshold: a borrowed one is passed
+  by address (`[BRW-8]`), so only `owned` copies.
+* `L3002` — a `std.sync` lock guard held across a call after its last use: the call neither reads the
+  guard (or a view of it) nor comes before its last use in the source (the second `print` of
+  `println(g)` belongs to that use), and nothing reads it afterwards. One per guard.
+* `L4001` — in a hot loop, a call or operation that carries `Alloc` and makes a value owning heap
+  memory (growing a list made before the loop is no lint).
+* `L4002` — a call through `dyn` whose receiver is, through copies, one conversion to `dyn` made in
+  this function from a struct, an enum or a final class.
+* `L4003` — a list of `int` or `float` indexed at the counter of a hot counted loop that leaves only
+  by its test, on every turn, whose limit the range facts keep above 8192 (so the list holds more
+  than 8192 eight-byte values, 64 KiB); an `int` list whose every store the range facts keep within
+  `i32` or `u32`, a `float` list whose every store is exactly an `f32` (a constant one holds, a
+  widened `f32`, an integer within 2^24).
+* `L5001` — an `unsafe extern` function declaration that takes or returns a raw pointer and has no
+  `@ffi(…)`.
+* `L5002` — `to_cstring`, `to_wide`, `WideString.from_units` or `WideString.to_string` whose result
+  reaches a foreign call's argument, or whose argument comes from a foreign call's result.
+* `L7001` — a lock guard held across a call whose known effects include `Block`.
+* `L3001` is `[WK-6]`'s, reported by `check` too.
+
+A call's diagnostic points at its last argument, as every call diagnostic does (the MIR's call
+terminators carry that span); the line is the call's.
+
 ## ADR-240 — Text cursors need no checks again (D-759); `unsafe` local functions (`[GRM-28]`)
 
 2026-10-20. `t5_words` was the reference machine's one failing benchmark (1.131x C). Priced by

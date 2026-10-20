@@ -61,7 +61,9 @@ this compiler does not have yet):
     ember fmt <file.em> [--check | --write | --migrate] [--json]
                                                    print the file in the canonical layout
                                                    (--migrate: 0.9.8 source rewritten into 0.9.9)
-    ember lint                                     (not built yet)
+    ember lint [file.em] [--json]                  check, then report [LNT-6]'s lints: unneeded clones,
+                                                   large copies, guards held too long, allocation and
+                                                   dispatch in hot loops, copies at the FFI boundary
     ember doc                                      (not built yet)
     ember update [package]                         re-resolve dependencies and rewrite ember.lock
                                                    (not built yet)
@@ -458,6 +460,8 @@ struct Options {
     /// `[TCB-1]` — `ember build --require-evidence`, `ember tcb --require`: a claimed grade whose
     /// evidence is missing or stale is `E5050`, not `W5050`.
     require_evidence: bool,
+    /// `[LNT-6]` — `ember lint`: check, then report the lints `check` leaves out.
+    lint: bool,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -585,7 +589,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "bench" => bench::command(&args[1..]),
-        "build" | "run" | "check" => {
+        "build" | "run" | "check" | "lint" => {
+            // `[LNT-6]` — `ember lint` is `ember check` and its own lints.
+            let lint = command == "lint";
+            let command = if lint { "check" } else { command };
             // The source file may sit before or after the flags. Requiring it
             // first made `ember check --syntax-only f.em` fail with "needs a
             // source file", which is a confusing way to say "wrong order".
@@ -640,6 +647,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             };
             let mut options = parse_options(&rest)?;
             options.program_args = program_args;
+            options.lint = lint;
             if options.leak_check && command != "run" {
                 return Err("`--leak-check` is only valid with `ember run` and `ember test`".to_string());
             }
@@ -4602,6 +4610,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
     // `[COST-4]` — the costs the checks do not show, read before inlining folds functions together.
     let safety_costs = safety_costs_json(&bodies, &types, &modules, &map, &checked.contains_uses);
+    // `[LNT-6]` — `ember lint`'s own lints, on the MIR the checks ran on, before inlining.
+    if options.lint {
+        let (standard, _) = standard_parts(&bodies, &modules);
+        ember_analysis::lint_performance_all(&bodies, &types, &common, &standard, &lint_settings.perf, &mut sink);
+        lint_foreign_contracts(&modules, &lint_settings.perf, &mut sink);
+    }
     // `[THR-5]` — a `Scope` binding stays where its `with` put it.
     if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
@@ -5603,6 +5617,8 @@ struct ManifestLintSettings {
     static_runtime: Option<Span>,
     /// `[MONO-3]` — `[build] max_instantiations`, when written, with where.
     max_instantiations: Option<(usize, Span)>,
+    /// `[LNT-6]` — the levels `[lints]` gives `ember lint`'s lints, and `large_copy`'s threshold.
+    perf: ember_analysis::PerfLints,
 }
 
 /// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
@@ -5738,6 +5754,8 @@ fn manifest_lint_settings(
                         } else if key.eq_ignore_ascii_case("l3013") {
                             settings.long_term_access_across_dynamic_call |=
                                 matches!(value.trim().trim_matches('"'), "warn" | "deny");
+                        } else if let Some(code) = perf_lint_code(key) {
+                            perf_lint_setting(code, key, value, location, &mut settings.perf, sink);
                         }
                     }
                 }
@@ -5818,6 +5836,96 @@ fn manifest_lint_is_known(key: &str) -> bool {
     ember_diag::codes::lookup(key)
         .is_some_and(|code| code.kind == ember_diag::codes::CodeKind::Lint)
         || matches!(key, "unused" | "potential_cycle" | "large_copy")
+}
+
+/// `[LNT-6]` — the `ember lint` lint a `[lints]` key names: its code, or `large_copy` (`L2002`).
+fn perf_lint_code(key: &str) -> Option<ember_diag::codes::Code> {
+    if key == "large_copy" {
+        return Some(codes::L2002);
+    }
+    ember_diag::codes::lookup(key).filter(|code| ember_analysis::PerfLints::CODES.contains(code))
+}
+
+/// `[MAN-3]`, `[LNT-6]` — one `[lints]` entry for an `ember lint` lint: a level (`"allow"`, `"warn"`,
+/// `"error"`), or a table with `level` and the lint's parameters (`large_copy = { threshold = 64 }`).
+fn perf_lint_setting(
+    code: ember_diag::codes::Code,
+    key: &str,
+    value: &str,
+    location: Span,
+    perf: &mut ember_analysis::PerfLints,
+    sink: &mut Sink,
+) {
+    let level = |text: &str, sink: &mut Sink| {
+        let text = text.trim().trim_matches('"');
+        let level = ember_analysis::LintLevel::parse(text);
+        if level.is_none() {
+            sink.emit(
+                Diagnostic::error(codes::E9001, location, format!("`{text}` is not a lint level"))
+                    .help("a lint's level is \"allow\", \"warn\" or \"error\" [MAN-3]"),
+            );
+        }
+        level
+    };
+    let value = value.trim();
+    let Some(table) = value.strip_prefix('{').and_then(|rest| rest.strip_suffix('}')) else {
+        if let Some(level) = level(value, sink) {
+            perf.set(code, level);
+        }
+        return;
+    };
+    for entry in table.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+        let (name, written) = entry.split_once('=').map_or((entry, ""), |(name, written)| (name.trim(), written.trim()));
+        match name {
+            "level" => {
+                if let Some(level) = level(written, sink) {
+                    perf.set(code, level);
+                }
+            }
+            "threshold" if code == codes::L2002 => match written.parse::<u64>() {
+                Ok(bytes) => perf.large_copy_threshold = bytes,
+                Err(_) => sink.emit(
+                    Diagnostic::error(codes::E9001, location, format!("`threshold = {written}` is not a number of bytes"))
+                        .help("write `large_copy = { threshold = 256 }` [LNT-6]"),
+                ),
+            },
+            _ => sink.emit(
+                Diagnostic::error(codes::E9001, location, format!("`{key}` has no parameter `{name}`"))
+                    .help(if code == codes::L2002 { "its table takes `level` and `threshold` [LNT-6]" } else { "its table takes `level` [MAN-3]" }),
+            ),
+        }
+    }
+}
+
+/// `[LNT-6]` (`L5001`) — an `unsafe extern` function declaration of the program's own that takes or
+/// returns a raw pointer and states no contract (`@ffi(…)`): every call needs `unsafe`, and nothing
+/// is known of what C does with the pointer.
+fn lint_foreign_contracts(modules: &[ember_typeck::LoadedModule], perf: &ember_analysis::PerfLints, sink: &mut Sink) {
+    let pointer = |ty: &ember_ast::TypeExpr| matches!(ty.kind, ember_ast::TypeKind::Ptr { .. });
+    for loaded in modules {
+        if loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE) {
+            continue;
+        }
+        for item in &loaded.module.items {
+            let ember_ast::ItemKind::ExternBlock(block) = &item.kind else { continue };
+            for inner in &block.items {
+                let ember_ast::ItemKind::Fn(decl) = &inner.kind else { continue };
+                if decl.is_safe || inner.attrs.iter().any(|attr| attr.path.first().is_some_and(|name| name.name.as_str() == "ffi")) {
+                    continue;
+                }
+                let takes = decl.params.iter().any(|param| matches!(&param.kind, ember_ast::ParamKind::Named { ty, .. } if pointer(ty)));
+                if !takes && !decl.ret.as_ref().is_some_and(pointer) {
+                    continue;
+                }
+                perf.emit(
+                    sink,
+                    Diagnostic::lint(codes::L5001, decl.name.span, format!("`{}` is an `unsafe extern` declaration with no contract", decl.name.name))
+                        .primary_label("each call needs `unsafe`, and nothing is known of its pointers")
+                        .help("state what C does with each pointer in `@ffi(param(name, …), result(…))`, and mark it `safe` when the contract makes every call safe [FFI-11]"),
+                );
+            }
+        }
+    }
 }
 
 /// `[MAN-8]` — the manifest's sections, for `E9001`'s help.

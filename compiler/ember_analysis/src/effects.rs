@@ -115,6 +115,53 @@ pub fn effect_sources(
     Some(roots.into_iter().map(|root| (root, graph.sources(root, effect, types))).collect())
 }
 
+/// `[LNT-6]` — what each call, and each statement, of each body runs where it is: its own
+/// operations' effects and its callee's whole set. A call through a function value or a `dyn` value,
+/// whose effects nothing declares, contributes none: the lints that read this report what is known.
+pub(crate) struct OperationEffects {
+    /// Per body, per block ending in a call: the call's effects.
+    pub(crate) calls: Vec<HashMap<usize, Effects>>,
+    /// Per body, per `(block, statement)`: the statement's effects, where it has any.
+    pub(crate) stmts: Vec<HashMap<(usize, usize), Effects>>,
+}
+
+pub(crate) fn operation_effects(bodies: &[Body], types: &TypeTable) -> OperationEffects {
+    let graph = Graph::new(bodies, types);
+    let index: HashMap<&str, usize> =
+        bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new() };
+    let known = |sites: &[Site]| {
+        sites.iter().fold(Effects::NONE, |all, site| match site.origin {
+            Origin::Operation(_) if site.effects == Effects::ALL => all,
+            Origin::Operation(_) => all | site.effects,
+            Origin::Call(callee) => all | graph.effects[callee],
+        })
+    };
+    let mut calls = Vec::with_capacity(bodies.len());
+    let mut stmts = Vec::with_capacity(bodies.len());
+    for body in bodies {
+        let (mut body_calls, mut body_stmts) = (HashMap::new(), HashMap::new());
+        for (block_index, block) in body.blocks.iter().enumerate() {
+            for (stmt_index, stmt) in block.stmts.iter().enumerate() {
+                let mut sites = Vec::new();
+                builder.stmt_sites(body, stmt, &mut sites);
+                let effects = known(&sites);
+                if effects != Effects::NONE {
+                    body_stmts.insert((block_index, stmt_index), effects);
+                }
+            }
+            if matches!(block.terminator, Terminator::Call { .. }) {
+                let mut sites = Vec::new();
+                builder.terminator_sites(body, block, &mut sites);
+                body_calls.insert(block_index, known(&sites));
+            }
+        }
+        calls.push(body_calls);
+        stmts.push(body_stmts);
+    }
+    OperationEffects { calls, stmts }
+}
+
 /// `[CLI-12]` — a function as the program names it (a class method with its class).
 pub fn function_name(body: &Body, types: &TypeTable) -> String {
     display_name(body, types)

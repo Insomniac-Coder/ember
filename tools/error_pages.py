@@ -115,6 +115,9 @@ INSTRUMENTED_CODES = {"E5053", "W5054"}
 # with `--require-evidence`.
 REQUIRE_EVIDENCE_CODES = {"E5050"}
 
+# `[LNT-6]` — the lints only `ember lint` reports: their pages' programs are linted.
+LINT_CODES = {"L2001", "L2002", "L3002", "L4001", "L4002", "L4003", "L5001", "L5002", "L7001"}
+
 
 def run(source: str, work: Path, manifest: str | None = None, command: str = "check",
         files: list[tuple[str, str]] = (), flags: tuple[str, ...] = ()) -> tuple[int, str]:
@@ -179,7 +182,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     # guard held across a call) was the first lint page; `W2111` is the first
     # compiler warning page.
     is_non_error = code.startswith(("L", "W"))
-    command = "run" if code in RUNTIME_CODES else "test" if code in INSTRUMENTED_CODES else "check"
+    command = "run" if code in RUNTIME_CODES else "test" if code in INSTRUMENTED_CODES else "lint" if code in LINT_CODES else "check"
     flags = ("--require-evidence",) if code in REQUIRE_EVIDENCE_CODES else ()
 
     if "fails" not in blocks:
