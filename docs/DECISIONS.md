@@ -5017,6 +5017,17 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-248 — The fixed-capacity containers (`[STD-7]`)
+
+2026-10-20. `std.collections` has, written in Ember: `FixedArray[T, N]` and `RingBuffer[T, N]`, an
+inline `[Option[T]; N]` and a count (the ring a head too), and `FixedString[N]`, `N` bytes of UTF-8
+inline; `push` past the capacity returns `Err(CapacityError.Full)` (the one `CapacityError`
+`ArenaSoA` already used) and changes nothing, and `push_or_drop` drops the value pushed. Pushing
+allocates nothing, so `@noalloc` code may (the test checks it). `Deque[T]` is a growing ring on the
+heap, `SmallArray[T, N]` holds `N` values inline and moves them all to an `Array` with the next,
+`BitSet` holds non-negative integers in `u64` words (a negative one panics). Writing them found
+D-773 and D-774 (const arguments in expressions and in generic bodies) and D-775 (C member names).
+
 ## ADR-247 — `ember doc` presents view contracts (`[DOC-3]`)
 
 2026-10-20. `ember doc <file.em>` checks the program as `ember check` does and prints, for every

@@ -869,11 +869,11 @@ impl Emitter<'_> {
             TyKind::Tuple(items) => groups.push((None, items.into_iter().enumerate()
                 .map(|(index, item)| (format!("_{index}"), format!("_{index}"), item)).collect())),
             TyKind::Struct(id) => groups.push((None, self.types.struct_def(id).fields.iter()
-                .map(|field| (field.name.to_string(), field.name.to_string(), field.ty)).collect())),
+                .map(|field| (field.name.to_string(), member(field.name), field.ty)).collect())),
             TyKind::Enum(id) => {
                 for variant in self.types.enum_def(id).variants.clone() {
                     let members = variant.fields.iter()
-                        .map(|field| (field.name.to_string(), format!("payload.{}.{}", variant.name, field.name), field.ty))
+                        .map(|field| (field.name.to_string(), format!("payload.{}.{}", member(variant.name), member(field.name)), field.ty))
                         .collect();
                     groups.push((Some((variant.name.to_string(), variant.discriminant as u64)), members));
                 }
@@ -990,6 +990,7 @@ impl Emitter<'_> {
             let mut rows = Vec::new();
             let mut cases = Vec::new();
             for (index, (field, ty)) in fields.iter().enumerate() {
+                let c_field = member(field);
                 let shape = self.field_shape(*ty, reload);
                 let mut flags = shape.flags.clone();
                 if let Some(function) = reload.defaults.get(&(name.clone(), field.clone())) {
@@ -998,14 +999,14 @@ impl Emitter<'_> {
                     if let Some(symbol) = symbol {
                         let member_type = self.c_member_type(*ty);
                         cases.push(format!(
-                            "    case {index}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {field})) = {symbol}(); break;"
+                            "    case {index}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {c_field})) = {symbol}(); break;"
                         ));
                     }
                 }
                 let renamed = reload.renamed.get(&(name.clone(), field.clone())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let flags = if flags.is_empty() { "0".to_string() } else { flags.join(" | ") };
                 rows.push(format!(
-                    "    {{ {}, {renamed}, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {field}), (uint32_t)sizeof((({c_type}*)0)->{field}), {flags}, {} }},",
+                    "    {{ {}, {renamed}, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {c_field}), (uint32_t)sizeof((({c_type}*)0)->{c_field}), {flags}, {} }},",
                     c_string_literal(field),
                     c_string_literal(&shape.type_name),
                     self.type_schema(*ty, &mut Vec::new()),
@@ -1039,10 +1040,11 @@ impl Emitter<'_> {
             let drop_name = table(&format!("drop_{}", c_name(&name)));
             let mut drops = Vec::new();
             for (index, (field, ty)) in fields.iter().enumerate() {
+                let c_field = member(field);
                 if !self.types.needs_drop(*ty) {
                     continue;
                 }
-                let access = format!("(*({}*)((unsigned char*)object + offsetof({c_type}, {field})))", self.c_member_type(*ty));
+                let access = format!("(*({}*)((unsigned char*)object + offsetof({c_type}, {c_field})))", self.c_member_type(*ty));
                 let mut lines = Vec::new();
                 match self.drop_glue_call(&access, *ty) {
                     Some(call) => lines.push(call),
@@ -1124,7 +1126,7 @@ impl Emitter<'_> {
                 let held: Vec<_> = variant.fields.iter().filter(|field| payloads && !self.is_void(field.ty)).cloned().collect();
                 for field in &held {
                     let shape = self.field_shape(field.ty, reload);
-                    let member = format!("payload.{}.{}", variant.name, field.name);
+                    let member = format!("payload.{}.{}", member(variant.name), member(field.name));
                     fields.push(format!(
                         "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), 0, {} }},",
                         c_string_literal(&field.name.to_string()),

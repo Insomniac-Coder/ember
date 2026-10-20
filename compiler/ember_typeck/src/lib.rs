@@ -13822,6 +13822,21 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[TYP-41]` (D-774) — the arguments with each `const` parameter's as a `TyKind::Const`. A
+    /// generic body reads its own `const` parameter as a `TyKind::Param` in some places and as its
+    /// form in others; `B[N]` is one type however `N` was read.
+    fn const_params_as_forms(&mut self, params: &[GenericParam], args: &[Ty]) -> Vec<Ty> {
+        args.iter()
+            .enumerate()
+            .map(|(slot, &arg)| match *self.types.kind(arg) {
+                TyKind::Param { index, name } if params.get(slot).is_some_and(|param| param.const_ty.is_some()) => {
+                    self.types.intern(TyKind::Const(ConstNorm::param(index, name)))
+                }
+                _ => arg,
+            })
+            .collect()
+    }
+
     /// `[TYP-41]` — a bracketed argument written as a type: a constant's
     /// name there is a const argument.
     fn generic_type_argument(&mut self, written: &ast::TypeExpr) -> Ty {
@@ -16512,6 +16527,8 @@ impl<'a> Checker<'a> {
         if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
             return self.common.error;
         }
+        let forms = self.const_params_as_forms(&decl.generic_params, args);
+        let args = forms.as_slice();
         // `[FFI-23]` — a `Retained` token holds a class handle or a `Box`: what foreign code keeps
         // is an object's address. Refused where the type is named (or inferred, at `pin`).
         if name.is("std.ffi.Retained")
@@ -16781,6 +16798,8 @@ impl<'a> Checker<'a> {
         if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
             return self.common.error;
         }
+        let forms = self.const_params_as_forms(&decl.generic_params, args);
+        let args = forms.as_slice();
         let instance = self.generic_instance_name(name, args);
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
@@ -16931,6 +16950,8 @@ impl<'a> Checker<'a> {
         if decl.generic_params.iter().zip(args).any(|(param, &arg)| arg != self.common.error && !self.const_argument_fits(&param.clone(), arg, span)) {
             return self.common.error;
         }
+        let forms = self.const_params_as_forms(&decl.generic_params, args);
+        let args = forms.as_slice();
         let instance = self.generic_instance_name(name, args);
         if let Some(&ty) = self.named_types.get(&instance) {
             return ty;
@@ -34910,6 +34931,10 @@ impl<'a> Checker<'a> {
                 for arg in args {
                     let ty = match arg {
                         ast::TypeOrExpr::Type(ty) => self.resolve_type(ty),
+                        // `[TYP-41]` (D-773) — `FixedArray[String, 2].new()`: an argument that is no
+                        // type's shape (a literal, arithmetic) is a `const` argument, as it is in a
+                        // type position.
+                        ast::TypeOrExpr::Expr(expr) if !type_shaped(expr) => self.const_argument_type(expr),
                         ast::TypeOrExpr::Expr(expr) => self.type_from_expr(expr),
                         ast::TypeOrExpr::Binding { name, .. } => {
                             self.error(
@@ -53873,6 +53898,19 @@ fn contains_soa_column(expr: &Expr) -> bool {
         ExprKind::Index { base, .. } | ExprKind::Field { base, .. } | ExprKind::Deref(base) => contains_soa_column(base),
         _ => false,
     }
+}
+
+/// `[TYP-41]` (D-773) — whether a type argument written in expression position has a type's shape:
+/// a name, a dotted path, an application, a tuple or a fixed array. Anything else is a `const` one.
+fn type_shaped(expr: &ast::Expr) -> bool {
+    matches!(
+        expr.kind,
+        ast::ExprKind::Path { .. }
+            | ast::ExprKind::Field { .. }
+            | ast::ExprKind::IndexOrInstantiate { .. }
+            | ast::ExprKind::Tuple(_)
+            | ast::ExprKind::ArrayRepeat { .. }
+    )
 }
 
 fn has_attribute(attrs: &[ast::Attribute], name: &str) -> bool {

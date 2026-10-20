@@ -1729,7 +1729,7 @@ impl Emitter<'_> {
                                 "memset(&r, 0, sizeof r);".to_string(),
                                 format!("if (v->len == 0) {{ r.tag = {}; return r; }}", none.discriminant),
                                 "v->len -= 1;".to_string(),
-                                format!("memcpy(&r.payload.{}.{}, {last});", some.name, some.fields[0].name),
+                                format!("memcpy(&r.payload.{}.{}, {last});", member(some.name), member(some.fields[0].name)),
                                 format!("r.tag = {};", some.discriminant),
                                 "return r;".to_string(),
                             ]
@@ -2046,7 +2046,7 @@ impl Emitter<'_> {
         match self.types.compiler_box_inner(id) {
             Some(_) => Some((format!("(*({v}))"), inner)),
             // A `Cell`'s `value`, or a `some` wrapper's one field (`[TYP-32]`).
-            None => Some((format!("(({v}).{})", self.types.struct_def(id).fields[0].name), inner)),
+            None => Some((format!("(({v}).{})", member(self.types.struct_def(id).fields[0].name)), inner)),
         }
     }
 
@@ -2138,11 +2138,11 @@ impl Emitter<'_> {
         let slot = self.types.struct_def(slot_id);
         let field = |name: &str| slot.fields.iter().find(|f| f.name.as_str() == name).expect("a MapSlot field");
         let (key, value) = (field("key"), field("value"));
-        let at = format!("e->payload.{}.{}", some.name, payload.name);
-        let mut item = vec![self.debug_stmt("out", &format!("{at}.{}", key.name), key.ty)];
+        let at = format!("e->payload.{}.{}", member(some.name), member(payload.name));
+        let mut item = vec![self.debug_stmt("out", &format!("{at}.{}", member(key.name)), key.ty)];
         if !is_set {
             item.push(text(": "));
-            item.push(self.debug_stmt("out", &format!("{at}.{}", value.name), value.ty));
+            item.push(self.debug_stmt("out", &format!("{at}.{}", member(value.name)), value.ty));
         }
         let option_c = self.c_type(option);
         let walk = format!(
@@ -2231,7 +2231,7 @@ impl Emitter<'_> {
                                 parts.push(text(", "));
                             }
                             parts.push(text(&format!("{}=", field.name)));
-                            parts.push(self.packed_use(ty, &format!("v->{}", field.name), field.ty, |this, at| this.debug_stmt("out", at, field.ty)));
+                            parts.push(self.packed_use(ty, &format!("v->{}", member(field.name)), field.ty, |this, at| this.debug_stmt("out", at, field.ty)));
                         }
                         parts.push(text(")"));
                         parts.join(" ")
@@ -2357,7 +2357,7 @@ impl Emitter<'_> {
                         let fields = self.types.struct_def(id).fields.clone();
                         let parts: Vec<String> = fields
                             .iter()
-                            .map(|f| self.packed_eq_stmt(&format!("a->{}", f.name), &format!("b->{}", f.name), f.ty))
+                            .map(|f| self.packed_eq_stmt(&format!("a->{}", member(f.name)), &format!("b->{}", member(f.name)), f.ty))
                             .collect();
                         format!("{} return 1;", parts.join(" "))
                     }
@@ -2365,7 +2365,7 @@ impl Emitter<'_> {
                         let fields = self.types.struct_def(id).fields.clone();
                         let parts: Vec<String> = fields
                             .iter()
-                            .map(|f| self.eq_expr(&format!("a->{}", f.name), &format!("b->{}", f.name), f.ty))
+                            .map(|f| self.eq_expr(&format!("a->{}", member(f.name)), &format!("b->{}", member(f.name)), f.ty))
                             .collect();
                         format!("return {};", conjunction(parts))
                     }
@@ -2779,7 +2779,7 @@ impl Emitter<'_> {
         let (ty, fields): (Ty, Vec<String>) = match node {
             TypeNode::Struct(id) => (
                 self.types.find(&TyKind::Struct(id)).expect("a defined struct is interned"),
-                self.types.struct_def(id).fields.iter().map(|field| field.name.to_string()).collect(),
+                self.types.struct_def(id).fields.iter().map(|field| member(field.name)).collect(),
             ),
             TypeNode::Enum(id) => (self.types.find(&TyKind::Enum(id)).expect("a defined enum is interned"), vec!["tag".to_string(), "payload".to_string()]),
             _ => return out,
@@ -3023,7 +3023,7 @@ impl Emitter<'_> {
                     for &index in &column.path {
                         let field = &self.types.struct_def(structure).fields[index];
                         path.push('.');
-                        path.push_str(field.name.as_str());
+                        path.push_str(&member(field.name));
                         if let TyKind::Struct(inner) = *self.types.kind(field.ty) {
                             structure = inner;
                         }
@@ -3470,7 +3470,7 @@ impl Emitter<'_> {
                         continue;
                     }
                     let mut lines = Vec::new();
-                    self.drop_lines(&format!("object->{}", field.name), field.ty, &mut lines);
+                    self.drop_lines(&format!("object->{}", member(field.name)), field.ty, &mut lines);
                     for line in lines {
                         self.line(&format!("    {line}"));
                     }
@@ -4469,7 +4469,7 @@ impl Emitter<'_> {
                 };
                 let mut lines = Vec::new();
                 self.debug_edge_lines(
-                    &format!("object->{}", field.name),
+                    &format!("object->{}", member(field.name)),
                     field.ty,
                     &label,
                     weak_replacement.as_deref(),
@@ -4596,7 +4596,7 @@ impl Emitter<'_> {
                 }
                 for nested in &self.types.struct_def(*id).fields {
                     self.debug_edge_lines(
-                        &format!("({access}).{}", nested.name),
+                        &format!("({access}).{}", member(nested.name)),
                         nested.ty,
                         field,
                         None,
@@ -4877,7 +4877,7 @@ impl Emitter<'_> {
                         "union {{ EMBER_SIMD_ALIGN({}) {} {}; EMBER_SIMD_REGS({kind}, {}); }}",
                         shape.bytes(),
                         self.c_member_type(field.ty),
-                        field.name,
+                        member(field.name),
                         shape.bytes() / 16
                     )]);
                 }
@@ -4886,7 +4886,7 @@ impl Emitter<'_> {
                         .struct_def(id)
                         .fields
                         .iter()
-                        .map(|f| format!("{} {}", self.c_member_type(f.ty), f.name))
+                        .map(|f| format!("{} {}", self.c_member_type(f.ty), member(f.name)))
                         .collect(),
                 )
             }
@@ -4908,7 +4908,7 @@ impl Emitter<'_> {
                     }
                     for index in start..end {
                         if let Some(field) = self.types.class_field_at(id, index) {
-                            members.push(format!("{} {}", self.c_member_type(field.ty), field.name));
+                            members.push(format!("{} {}", self.c_member_type(field.ty), member(field.name)));
                         }
                     }
                 }
@@ -4948,10 +4948,10 @@ impl Emitter<'_> {
                             } else {
                                 self.c_type(f.ty)
                             };
-                            format!("{ty} {}; ", f.name)
+                            format!("{ty} {}; ", member(f.name))
                         })
                         .collect();
-                    union.push(format!("        struct {{ {}}} {};", fields.concat(), variant.name));
+                    union.push(format!("        struct {{ {}}} {};", fields.concat(), member(variant.name)));
                 }
                 union.push("    } payload".to_string());
                 members.push(union.join("\n"));
@@ -5246,7 +5246,7 @@ impl Emitter<'_> {
                     let fields = def.fields.clone();
                     for field in fields.iter().rev() {
                         if self.types.needs_drop(field.ty) {
-                            let member = format!("{access}.{}", field.name);
+                            let member = format!("{access}.{}", member(field.name));
                             if packed {
                                 self.packed_drop_lines(&member, field.ty, out);
                             } else {
@@ -5958,7 +5958,7 @@ impl Emitter<'_> {
         assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
         let def = self.types.enum_def(id);
         let some = &def.variants[1];
-        (format!("({access}).tag == {}", some.discriminant), format!("({access}).payload.{}.{}", some.name, some.fields[0].name))
+        (format!("({access}).tag == {}", some.discriminant), format!("({access}).payload.{}.{}", member(some.name), member(some.fields[0].name)))
     }
 
     /// `[FFI-36a]` — the `ForeignBox[T]` a value of `ty` is (or holds, as `Option`'s `Some`).
@@ -6039,12 +6039,12 @@ impl Emitter<'_> {
         if !self.is_void(ok_field.ty)
             && let Some(made) = value(self, ok_field.ty)
         {
-            self.line(&format!("        _ffi_result.payload.{}.{} = {made};", ok_variant.name, ok_field.name));
+            self.line(&format!("        _ffi_result.payload.{}.{} = {made};", member(ok_variant.name), member(ok_field.name)));
         }
         self.line(&format!("        _ffi_result.tag = {};", ok_variant.discriminant));
         self.line("    } else {");
         let err_field = &err_variant.fields[0];
-        self.line(&format!("        _ffi_result.payload.{}.{} = ({}){{ _ffi_status }};", err_variant.name, err_field.name, self.c_type(err_field.ty)));
+        self.line(&format!("        _ffi_result.payload.{}.{} = ({}){{ _ffi_status }};", member(err_variant.name), member(err_field.name), self.c_type(err_field.ty)));
         self.line(&format!("        _ffi_result.tag = {};", err_variant.discriminant));
         self.line("    }");
         self.line("    return _ffi_result;");
@@ -6191,7 +6191,7 @@ impl Emitter<'_> {
                 self.line(&format!("    {option} _ffi_option;"));
                 self.line("    memset(&_ffi_option, 0, sizeof _ffi_option);");
                 self.line(&format!("    if (_ffi_result == NULL) {{ _ffi_option.tag = {}; return _ffi_option; }}", none.discriminant));
-                self.line(&format!("    _ffi_option.payload.{}.{} = {made};", some.name, some.fields[0].name));
+                self.line(&format!("    _ffi_option.payload.{}.{} = {made};", member(some.name), member(some.fields[0].name)));
                 self.line(&format!("    _ffi_option.tag = {};", some.discriminant));
                 self.line("    return _ffi_option;");
             } else {
@@ -7405,7 +7405,7 @@ impl Emitter<'_> {
                 let fields: Vec<(Symbol, Ty)> =
                     def.fields.iter().map(|field| (field.name, field.ty)).collect();
                 for (name, field_ty) in fields {
-                    self.retain_lines_for_value(&format!("{access}.{name}"), field_ty, out);
+                    self.retain_lines_for_value(&format!("{access}.{}", member(name)), field_ty, out);
                 }
             }
             TyKind::Tuple(items) => {
@@ -10039,7 +10039,7 @@ impl Emitter<'_> {
                         let variant = &def.variants[variant];
                         out.push_str(&format!(
                             ".payload.{}.{}",
-                            variant.name, variant.fields[*index].name
+                            member(variant.name), member(variant.fields[*index].name)
                         ));
                     }
                     (_, TyKind::Struct(id)) => {
@@ -10060,12 +10060,12 @@ impl Emitter<'_> {
                                 c_align(&inner_c),
                             );
                         } else if self.box_inner_id(*id).is_none() {
-                            out.push_str(&format!(".{}", def.fields[*index].name));
+                            out.push_str(&format!(".{}", member(def.fields[*index].name)));
                         }
                     }
                     (_, TyKind::Class(id)) => {
                         if let Some(field) = self.types.class_field_at(*id, *index) {
-                            out.push_str(&format!("->{}", field.name));
+                            out.push_str(&format!("->{}", member(field.name)));
                         }
                     }
                     // An `Array[T]` is the runtime's buffer: pointer, length,
@@ -10735,7 +10735,7 @@ impl Emitter<'_> {
         }
         format!(
             "({name}){{ .tag = {tag}, .payload = {{ .{} = {{ {} }} }} }}",
-            def.variants[variant].name,
+            member(def.variants[variant].name),
             values.join(", ")
         )
     }
@@ -10763,7 +10763,7 @@ impl Emitter<'_> {
             return format!("({access})");
         }
         let variant = &self.types.enum_def(id).variants[variant];
-        format!("({access}).payload.{}.{}", variant.name, variant.fields[field].name)
+        format!("({access}).payload.{}.{}", member(variant.name), member(variant.fields[field].name))
     }
 
     /// True when the niche `Option` at `access` is `None`.
@@ -10821,7 +10821,7 @@ impl Emitter<'_> {
         }
         let field = &self.types.struct_def(id).fields[0];
         let zero = self.constant(&Const::Int { value: 0, ty: field.ty });
-        self.eq_expr(&format!("({access}).{}", field.name), &zero, field.ty)
+        self.eq_expr(&format!("({access}).{}", member(field.name)), &zero, field.ty)
     }
 
     /// A niche `Option`'s `None`: its payload holding the niche.
@@ -10882,7 +10882,7 @@ impl Emitter<'_> {
         }
         let field = &self.types.struct_def(id).fields[0];
         let zero = self.constant(&Const::Int { value: 0, ty: field.ty });
-        format!("(({}){{ .{} = {zero} }})", self.c_type(niche.payload), field.name)
+        format!("(({}){{ .{} = {zero} }})", self.c_type(niche.payload), member(field.name))
     }
 
     // -- types ----------------------------------------------------------------
@@ -11519,7 +11519,7 @@ impl Emitter<'_> {
                 let variant: usize = token(tokens)?.strip_prefix('e')?.parse().ok()?;
                 let (discriminant, name, fields) = {
                     let v = def.variants.get(variant)?;
-                    (v.discriminant, v.name.to_string(), v.fields.iter().map(|field| field.ty).collect::<Vec<Ty>>())
+                    (v.discriminant, member(v.name), v.fields.iter().map(|field| field.ty).collect::<Vec<Ty>>())
                 };
                 let unit_only = def.is_unit_only();
                 if !open(tokens) {
@@ -11677,7 +11677,7 @@ impl Emitter<'_> {
                 out.push("fputs(\" )\", stdout);".to_string());
             }
             TyKind::Struct(id) => {
-                let fields: Vec<(String, Ty)> = self.types.struct_def(*id).fields.iter().map(|f| (f.name.to_string(), f.ty)).collect();
+                let fields: Vec<(String, Ty)> = self.types.struct_def(*id).fields.iter().map(|f| (member(f.name), f.ty)).collect();
                 out.push("fputs(\" (\", stdout);".to_string());
                 for (name, field) in fields {
                     if self.is_void(field) {
@@ -13109,6 +13109,26 @@ const DYN_BEGIN_WRITE: u8 = 2;
 const DYN_END_WRITE: u8 = 3;
 
 /// `[EXC-19]` — the C member holding a class field's access word.
+/// D-775 — an Ember field or variant name as a C member: transliterated as `[MNG-3]` says
+/// (`größe` is `gr_u00F6__u00DF_e`), and a name C reserves, a keyword or an object-like macro of the
+/// headers generated code includes (`default`, `inline`, `errno`), written `em_kw_<name>`. What a
+/// program prints names the field as written.
+fn member(name: impl std::fmt::Display) -> String {
+    const RESERVED: &[&str] = &[
+        "EOF", "INFINITY", "NAN", "NULL", "alignas", "alignof", "auto", "bool", "break", "case", "char",
+        "const", "constexpr", "continue", "default", "do", "double", "else", "enum", "errno", "extern",
+        "false", "float", "for", "goto", "if", "inline", "int", "long", "nullptr", "register",
+        "restrict", "return", "short", "signed", "sizeof", "static", "static_assert", "stderr", "stdin",
+        "stdout", "struct", "switch", "thread_local", "true", "typedef", "typeof", "typeof_unqual",
+        "union", "unsigned", "void", "volatile", "while",
+    ];
+    let name = name.to_string();
+    match RESERVED.contains(&name.as_str()) {
+        true => format!("{}kw_{name}", ember_branding::mangle_prefix()),
+        false => ember_branding::c_identifier(&name),
+    }
+}
+
 fn access_word_member(field: &str) -> String {
     format!("_access_{field}")
 }

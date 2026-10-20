@@ -1470,3 +1470,337 @@ extend[T, B: HandleSplit] Pool[T, B] implements Index[Handle[T, B]]:
                 return value
             None:
                 panic("stale handle")
+
+## `[STD-7]` — up to `N` values of `T` held inline, never on the heap. `push` past `N` returns
+## `Err(CapacityError.Full)` and changes nothing; `push_or_drop` drops the value instead.
+pub struct FixedArray[T, const N: int]:
+    items: [Option[T]; N]
+    count: int
+
+    pub fn new() -> FixedArray[T, N]:
+        return FixedArray[T, N]([None; N], 0)
+
+    pub fn len(self) -> int:
+        return self.count
+
+    pub fn is_empty(self) -> bool:
+        return self.count == 0
+
+    pub fn is_full(self) -> bool:
+        return self.count == N
+
+    pub fn capacity(self) -> int:
+        return N
+
+    pub fn push(mut self, owned value: T) -> Result[void, CapacityError]:
+        if self.count == N:
+            return Err(CapacityError.Full)
+        self.items[self.count] = Some(value)
+        self.count += 1
+        return Ok(())
+
+    pub fn push_or_drop(mut self, owned value: T):
+        _ = self.push(value)
+
+    pub fn pop(mut self) -> Option[T]:
+        if self.count == 0:
+            return None
+        self.count -= 1
+        return self.items[self.count].take()
+
+    pub fn get(self, i: int) -> Option[ref T]:
+        if i < 0 or i >= self.count:
+            return None
+        match self.items[i]:
+            Some(ref v):
+                return Some(v)
+            None:
+                return None
+
+    pub fn clear(mut self):
+        while self.count > 0:
+            self.count -= 1
+            _ = self.items[self.count].take()
+
+    pub fn iter(self) -> FixedArrayIter[T, N]:
+        return FixedArrayIter(ref self, 0)
+
+@view
+pub struct FixedArrayIter[T, const N: int]:
+    owner: ref FixedArray[T, N]
+    at: int
+
+    pub fn next(mut self) -> Option[ref T]:
+        i = self.at
+        self.at += 1
+        return self.owner.get(i)
+
+extend[T, const N: int] FixedArrayIter[T, N] implements Iterator:
+    type Item = ref T
+
+## `[STD-7]` — text of up to `N` bytes of UTF-8 held inline. `push` and `push_str` past `N` bytes
+## return `Err(CapacityError.Full)` and change nothing.
+pub struct FixedString[const N: int]:
+    bytes: [u8; N]
+    count: int
+
+    pub fn new() -> FixedString[N]:
+        return FixedString[N]([0; N], 0)
+
+    pub fn len(self) -> int:
+        return self.count
+
+    pub fn is_empty(self) -> bool:
+        return self.count == 0
+
+    pub fn capacity(self) -> int:
+        return N
+
+    pub fn push_str(mut self, s: str) -> Result[void, CapacityError]:
+        b = s.as_bytes()
+        if self.count + b.len() > N:
+            return Err(CapacityError.Full)
+        for x in b:
+            self.bytes[self.count] = x
+            self.count += 1
+        return Ok(())
+
+    pub fn push(mut self, c: char) -> Result[void, CapacityError]:
+        return self.push_str(c.to_string())
+
+    pub fn push_or_drop(mut self, s: str):
+        _ = self.push_str(s)
+
+    pub fn as_str(self) -> str:
+        match self.bytes[0..self.count].to_str():
+            Ok(text):
+                return text
+            Err(_):
+                return ""
+
+    pub fn clear(mut self):
+        self.count = 0
+
+## `[STD-7]` — a first-in, first-out queue of up to `N` values held inline. `push` adds at the
+## back and past `N` returns `Err(CapacityError.Full)`; `push_or_drop` drops the new value then;
+## `pop` takes from the front.
+pub struct RingBuffer[T, const N: int]:
+    items: [Option[T]; N]
+    head: int
+    count: int
+
+    pub fn new() -> RingBuffer[T, N]:
+        return RingBuffer[T, N]([None; N], 0, 0)
+
+    pub fn len(self) -> int:
+        return self.count
+
+    pub fn is_empty(self) -> bool:
+        return self.count == 0
+
+    pub fn is_full(self) -> bool:
+        return self.count == N
+
+    pub fn capacity(self) -> int:
+        return N
+
+    pub fn push(mut self, owned value: T) -> Result[void, CapacityError]:
+        if self.count == N:
+            return Err(CapacityError.Full)
+        self.items[(self.head + self.count) % N] = Some(value)
+        self.count += 1
+        return Ok(())
+
+    pub fn push_or_drop(mut self, owned value: T):
+        _ = self.push(value)
+
+    pub fn pop(mut self) -> Option[T]:
+        if self.count == 0:
+            return None
+        value = self.items[self.head].take()
+        self.head = (self.head + 1) % N
+        self.count -= 1
+        return value
+
+    ## The `i`th value from the front.
+    pub fn get(self, i: int) -> Option[ref T]:
+        if i < 0 or i >= self.count:
+            return None
+        match self.items[(self.head + i) % N]:
+            Some(ref v):
+                return Some(v)
+            None:
+                return None
+
+    pub fn clear(mut self):
+        while self.count > 0:
+            _ = self.pop()
+
+## `[STD-7]` — a double-ended queue on the heap: pushes and pops at either end in constant time,
+## growing as it fills.
+pub struct Deque[T]:
+    slots: Array[Option[T]]
+    head: int
+    count: int
+
+    pub fn new() -> Deque[T]:
+        return Deque[T]([], 0, 0)
+
+    pub fn len(self) -> int:
+        return self.count
+
+    pub fn is_empty(self) -> bool:
+        return self.count == 0
+
+    fn grow(mut self):
+        if self.count < self.slots.len():
+            return
+        bigger: Array[Option[T]] = []
+        size = 4 if self.slots.len() == 0 else self.slots.len() * 2
+        for i in 0..size:
+            if i < self.count:
+                bigger.push(self.slots[(self.head + i) % self.slots.len()].take())
+            else:
+                bigger.push(None)
+        self.slots = bigger
+        self.head = 0
+
+    pub fn push_back(mut self, owned value: T):
+        self.grow()
+        self.slots[(self.head + self.count) % self.slots.len()] = Some(value)
+        self.count += 1
+
+    pub fn push_front(mut self, owned value: T):
+        self.grow()
+        self.head = (self.head + self.slots.len() - 1) % self.slots.len()
+        self.slots[self.head] = Some(value)
+        self.count += 1
+
+    pub fn pop_front(mut self) -> Option[T]:
+        if self.count == 0:
+            return None
+        value = self.slots[self.head].take()
+        self.head = (self.head + 1) % self.slots.len()
+        self.count -= 1
+        return value
+
+    pub fn pop_back(mut self) -> Option[T]:
+        if self.count == 0:
+            return None
+        self.count -= 1
+        return self.slots[(self.head + self.count) % self.slots.len()].take()
+
+    ## The `i`th value from the front.
+    pub fn get(self, i: int) -> Option[ref T]:
+        if i < 0 or i >= self.count:
+            return None
+        match self.slots[(self.head + i) % self.slots.len()]:
+            Some(ref v):
+                return Some(v)
+            None:
+                return None
+
+    pub fn clear(mut self):
+        while self.count > 0:
+            _ = self.pop_back()
+
+## `[STD-7]` — an array that holds up to `N` values inline and moves them to the heap when the
+## `N + 1`th arrives.
+pub struct SmallArray[T, const N: int]:
+    held: [Option[T]; N]
+    count: int
+    heap: Array[T]
+    spilled: bool
+
+    pub fn new() -> SmallArray[T, N]:
+        return SmallArray[T, N]([None; N], 0, [], false)
+
+    pub fn len(self) -> int:
+        return self.heap.len() if self.spilled else self.count
+
+    pub fn is_empty(self) -> bool:
+        return self.len() == 0
+
+    ## Whether the values are still held inline.
+    pub fn is_inline(self) -> bool:
+        return not self.spilled
+
+    pub fn push(mut self, owned value: T):
+        if self.spilled:
+            self.heap.push(value)
+            return
+        if self.count < N:
+            self.held[self.count] = Some(value)
+            self.count += 1
+            return
+        for i in 0..self.count:
+            if Some(v) = self.held[i].take():
+                self.heap.push(v)
+        self.count = 0
+        self.spilled = true
+        self.heap.push(value)
+
+    pub fn pop(mut self) -> Option[T]:
+        if self.spilled:
+            return self.heap.pop()
+        if self.count == 0:
+            return None
+        self.count -= 1
+        return self.held[self.count].take()
+
+    pub fn get(self, i: int) -> Option[ref T]:
+        if self.spilled:
+            if i < 0 or i >= self.heap.len():
+                return None
+            return Some(ref self.heap[i])
+        if i < 0 or i >= self.count:
+            return None
+        match self.held[i]:
+            Some(ref v):
+                return Some(v)
+            None:
+                return None
+
+## `[STD-7]` — a set of non-negative integers, one bit each, growing as larger ones arrive.
+pub struct BitSet:
+    words: Array[u64]
+
+    pub fn new() -> BitSet:
+        return BitSet([])
+
+    ## Adds `i`; whether it was absent.
+    pub fn insert(mut self, i: int) -> bool:
+        if i < 0:
+            panic(f"a BitSet holds non-negative integers, not {i}")
+        word = i // 64
+        while self.words.len() <= word:
+            self.words.push(0)
+        bit = 1u64 << ((i % 64) as u64)
+        absent = self.words[word] & bit == 0
+        self.words[word] |= bit
+        return absent
+
+    ## Removes `i`; whether it was present.
+    pub fn remove(mut self, i: int) -> bool:
+        if not self.contains(i):
+            return false
+        self.words[i // 64] &= ~(1u64 << ((i % 64) as u64))
+        return true
+
+    pub fn contains(self, i: int) -> bool:
+        if i < 0 or i // 64 >= self.words.len():
+            return false
+        return self.words[i // 64] & (1u64 << ((i % 64) as u64)) != 0
+
+    ## How many integers it holds.
+    pub fn len(self) -> int:
+        n = 0
+        for w in self.words:
+            n += w.count_ones() as int
+        return n
+
+    pub fn is_empty(self) -> bool:
+        return self.len() == 0
+
+    pub fn clear(mut self):
+        self.words.clear()
