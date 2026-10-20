@@ -10800,6 +10800,10 @@ formal 1/9 count or Phase 2's estimate.
 > may change speed; CI's `performance` jobs only report (`--report`). Each side at its fastest of 5
 > code layouts. Baseline empty; open: D-759 (`t5_words` 1.10x, text slices' boundary checks).
 > Two-way branches are now `if (c) goto then; else goto else;` (a10 fixed).
+> ADR-240: D-759 fixed (`text_boundaries` pass: text cursors' slice checks removed; t5 1.028x) —
+> the reference machine's run is all 21 green with an empty baseline. `unsafe` local functions built.
+> Owner 2026-10-20: STOP AT 95% Overall; helper N3 (C++ import, job_N3.md) running in
+> .claude/worktrees/helper-N3.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

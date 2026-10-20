@@ -6988,8 +6988,9 @@ fn the_three_versions_are_separate() {
 
 /// `[CONF-1]` — `ember --version` declares the profile the compiler claims, and the claim is the one
 /// the evidence earns (`docs/conformance.json`, which `tools/phase_progress.py --check` keeps current:
-/// the last profile all of whose rules are done). `[CONF-2]`–`[CONF-5]` (ODR-151) — each profile
-/// adds to the one before it what the specification lists.
+/// the last profile all of whose rules are done). `[CONF-2]`, `[CONF-3]`, `[CONF-4]`, `[CONF-5]`
+/// (ODR-151) — each profile adds to the one before it what the specification lists: Core, Systems,
+/// Native, Dynamic.
 #[test]
 fn ember_version_declares_the_profile_the_evidence_earns() {
     let root = workspace_root();

@@ -4679,6 +4679,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if folds > 0 {
         ember_analysis::install_callable_regions_all(&mut bodies, &types);
     }
+    // D-759, `[TXT-4]` — a text slice's bound that is a character boundary by construction (`0`, the
+    // text's length, a cursor `next_char` stepped from one) is not checked again.
+    ember_analysis::remove_known_boundary_checks_all(&mut bodies, &types);
     // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
     // all provably in bounds at entry runs a copy without its bounds checks;
     // then `[SIMD-7]` groups the overflow checks of every loop in

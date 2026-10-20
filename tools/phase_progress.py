@@ -193,6 +193,22 @@ def conformance(done):
     return {'earned': earned, 'profiles': rows}
 
 
+# README's lines naming the specification being implemented: kept to the pinned development target.
+SPEC_NAME = re.compile(r'Ember_v\d+\.\d+\.\d+_Hardened_\d+')
+SPEC_LINES = ('| Language version being implemented |', '| Pinned development target |')
+
+
+def readme_spec_lines(text):
+    """`text` with the specification lines naming the development target's document."""
+    target = json.loads((ROOT / 'docs' / 'spec-source' / 'development-target.json').read_text(encoding='utf-8'))['path']
+    name = pathlib.Path(target).stem
+    lines = text.split('\n')
+    for index, line in enumerate(lines):
+        if line.startswith(SPEC_LINES):
+            lines[index] = SPEC_NAME.sub(name, line)
+    return '\n'.join(lines)
+
+
 def percent(done, total):
     return 0 if total == 0 else int(100 * done / total)
 
@@ -232,6 +248,9 @@ def main():
             print('README.md\'s phase table is not what tools/phase_progress.py computes; run it with --write.')
             print(new)
             return 1
+        if readme_spec_lines(text) != text:
+            print('README.md names a specification other than the pinned development target; run it with --write.')
+            return 1
         if not CONFORMANCE.exists() or CONFORMANCE.read_text(encoding='utf-8') != evidence:
             print('docs/conformance.json is not what tools/phase_progress.py computes; run it with --write.')
             return 1
@@ -242,7 +261,7 @@ def main():
         print(f"README phase table and docs/conformance.json match the evidence; profile `{declared}` [CONF-1]")
         return 0
     if '--write' in sys.argv:
-        readme.write_text(text[:start] + new + text[end:], encoding='utf-8', newline='\n')
+        readme.write_text(readme_spec_lines(text[:start] + new + text[end:]), encoding='utf-8', newline='\n')
         CONFORMANCE.write_text(evidence, encoding='utf-8', newline='\n')
     print(new)
     print()

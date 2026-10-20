@@ -32060,7 +32060,7 @@ impl<'a> Checker<'a> {
                     abi: None,
                     latebound: false,
                     stateless: true,
-                    is_unsafe: false,
+                    is_unsafe: signature.is_unsafe,
                     params,
                     ret: signature.ret,
                 }))
@@ -35568,6 +35568,7 @@ impl<'a> Checker<'a> {
         let Some(mode) = own.env else {
             return self.synth_known_function_call(own.def, args, span, false);
         };
+        self.check_unsafe_local_call(own.def, span);
         let signature: Vec<(Ty, Mode)> =
             self.signatures[own.def.0 as usize].params.iter().map(|(_, ty, mode, _)| (*ty, *mode)).collect();
         let ret = self.signatures[own.def.0 as usize].ret;
@@ -35600,8 +35601,6 @@ impl<'a> Checker<'a> {
     fn check_local_fn(&mut self, decl: &ast::FnDecl, span: Span, out: &mut Vec<Stmt>) {
         let unbuilt = if !decl.generics.is_empty() {
             Some("a generic local function")
-        } else if decl.is_unsafe {
-            Some("an `unsafe` local function")
         } else if decl.is_gen {
             Some("a local generator")
         } else if decl.abi.is_some() {
@@ -35647,7 +35646,9 @@ impl<'a> Checker<'a> {
                 .collect(),
             ret,
             abi: None,
-            is_unsafe: false,
+            // `[GRM-28]`, `[UNS-1]` — an `unsafe` local function: its body is an `unsafe` context,
+            // its value is an `unsafe` callable (`[FN-6]`), and each call needs `unsafe`.
+            is_unsafe: decl.is_unsafe,
             overflow: self.active_overflow,
             fp: self.active_fp,
             borrows: None,
@@ -35663,12 +35664,26 @@ impl<'a> Checker<'a> {
             body: ast::LambdaBody::Block(body.clone()),
         };
         self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None });
+        let unsafe_body = self.in_unsafe || decl.is_unsafe;
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, unsafe_body);
         let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
+        self.in_unsafe = outer_unsafe;
         self.local_fn_self.pop();
         // A call through the local reads it; MIR makes the call direct when
         // the value is a known function (ADR-169).
         let local = self.declare(Some(decl.name.name), value.ty, decl.name.span);
         out.push(Stmt::Let { local, init: Some(value) });
+    }
+
+    /// `[GRM-28]`, `[UNS-1]` — a call to an `unsafe` local function that captures (one that does not
+    /// is an `unsafe fn` value, whose calls are checked as any).
+    fn check_unsafe_local_call(&mut self, def: DefId, span: Span) {
+        if self.signatures[def.0 as usize].is_unsafe && !self.unsafe_context() {
+            self.sink.emit(
+                Diagnostic::error(codes::E3100, span, "calling an `unsafe` local function requires an `unsafe` block")
+                    .help("wrap the call in `unsafe:` and state its safety reason"),
+            );
+        }
     }
 
     /// `[CLO-1]`, `[CLO-6]` — call a closure through its environment.
@@ -35687,6 +35702,7 @@ impl<'a> Checker<'a> {
     ) -> Expr {
         let closure = self.closure_calls[&id];
         let def = closure.def;
+        self.check_unsafe_local_call(def, span);
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
@@ -35898,6 +35914,10 @@ impl<'a> Checker<'a> {
                 .get(index as usize)
                 .and_then(|param| param.callable.as_ref())
                 .is_some_and(|bound| bound.is_unsafe),
+            // `[GRM-28]` — an `unsafe` local function that captures.
+            TyKind::Struct(id) => {
+                self.closure_calls.get(&id).is_some_and(|closure| self.signatures[closure.def.0 as usize].is_unsafe)
+            }
             _ => false,
         };
         if actual_unsafe && !bound.is_unsafe {
@@ -36004,7 +36024,8 @@ impl<'a> Checker<'a> {
             let signature = &self.signatures[closure.def.0 as usize];
             let params: Vec<String> =
                 signature.params.iter().skip(1).map(|(_, ty, _, _)| self.types.display(*ty)).collect();
-            return format!("fn({}) -> {}", params.join(", "), self.types.display(signature.ret));
+            let keyword = if signature.is_unsafe { "unsafe fn" } else { "fn" };
+            return format!("{keyword}({}) -> {}", params.join(", "), self.types.display(signature.ret));
         }
         self.types.display(ty)
     }
@@ -42200,11 +42221,12 @@ impl<'a> Checker<'a> {
                 self.check_lambda_body(lambda, &params, ret, watch, None);
             let ret = ret.unwrap_or(body_ty);
             let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before, reserved);
+            let is_unsafe = self.signatures[def.0 as usize].is_unsafe;
             let ty = self.types.intern(TyKind::Fn {
                 abi: None,
                 latebound: false,
                 stateless: true,
-                is_unsafe: false,
+                is_unsafe,
                 params: params
                     .iter()
                     .map(|(_, t, mode, _)| FnParam {
@@ -42868,11 +42890,12 @@ impl<'a> Checker<'a> {
         {
             self.opaque_lambdas.insert(def);
         }
+        let is_unsafe = reserved.is_some_and(|def| self.signatures.get(def.0 as usize).is_some_and(|signature| signature.is_unsafe));
         let signature = Signature { decl: span,
             params: signature_params,
             ret,
             abi: None,
-            is_unsafe: false,
+            is_unsafe,
             overflow: self.active_overflow,
             fp: self.active_fp,
             borrows: None,

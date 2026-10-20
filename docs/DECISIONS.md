@@ -5017,6 +5017,27 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-240 — Text cursors need no checks again (D-759); `unsafe` local functions (`[GRM-28]`)
+
+2026-10-20. `t5_words` was the reference machine's one failing benchmark (1.131x C). Priced by
+variants of its C: without the per-word slices' bounds checks 1.037x, without the counters'
+overflow checks (the language's, kept) 1.125x. Its words come from `SplitWhitespace.next`, which
+slices at cursors that cannot fail a check. `ember_analysis::text_boundaries` runs after the range
+facts and follows, per integer local, the texts it is a character boundary of (`0`, a text's length,
+a cursor `next_char` stepped from one, which moves by whole characters and never past the end), the
+text whose length it holds, and the locals it is at least (a copy is equal; a stepped cursor stays at
+least what it was). A text is named by a local assigned once, so no fact outlives its text; a cursor
+is followed only while its address goes to `next_char` alone. A boundary check of a known boundary,
+and a bounds check `a <= b` the facts decide, go (recorded as range-fact removals). In
+`split_whitespace` that is all seven checks a word: `t5_words` 1.028x. A bound moved any other way
+is checked as before (`run_fail_a_cursor_moved_by_one_byte_is_checked.em`).
+
+`[GRM-28]` — a local function may be `unsafe`, as any `fn_decl`: its body is an `unsafe` context, its
+value an `unsafe` callable (a capturing one's too, through `callable_signature_of_value` and the
+callable-bound check), and a call outside `unsafe` is `E3100`; passing it where a safe `fn` is
+wanted is `E2020`. Generic and `gen` local functions, and a call to a local function from a closure
+inside it, stay refused (`E0900`).
+
 ## ADR-239 — The performance gate measures code, not where it lies (D-755, ODR-153, ODR-154)
 
 2026-10-20. CI's MSVC performance job failed a different set of benchmarks on each run. Measured
