@@ -14,13 +14,14 @@ staticlib, ui), and the gates `rule_index`, `error_pages`, `hardening_check`, `c
 the new C++ tests with gcc `-Wall -Wextra -Werror`; WSL has no libclang, so the importer itself has
 not run on Linux.
 
-**Effect on the computed table** (`tools/phase_progress.py`): Overall 93.96% (45219 of 48125
-words); Phase 5 86% (92 of 116 rules). README.md is not edited.
+**Effect on the computed table** (`tools/phase_progress.py`): Overall 94.06% (45266 of 48125
+words); Phase 5 87.8% (93 of 116 rules). README.md is not edited.
 
 **For the merge.** `.embind` records are version 7 (new keys `trampolines`, `operators`,
 `policy_changes`): older records are parsed again. The runtime gains `ember_cpp_object_adopt`
 (templates and generated files). New error pages `E5030`, `E5056`–`E5060`, `E9020`, `E9021`. New CLI
-option `ember build … --cpp`. `ember_typeck::ForeignImport` gains `trampolines` and
+options `ember build … --cpp` and `--cc-flags-from-target <target>`; new files `cmake/Ember.cmake.in`
+and the `cmake/Ember.cmake` `tools/generate_runtime.py` renders from it (`check_branding.py` knows it). `ember_typeck::ForeignImport` gains `trampolines` and
 `policy_changes`; `ember_codegen_c::HeaderOutput` gains `cpp_source`. `ember_build` keeps two
 process-wide settings a build sets before compiling (`inherit_msvc_runtime`, `inherit_gnu_lto`).
 
@@ -166,6 +167,32 @@ interoperability is not built").
   `the_cpp_header_takes_views_where_c_takes_pointer_and_length` (compiles a C++20 user of it).
   `[BLD-FFI-5a]` is not built (N3 question 8: no class handle reaches an exported signature).
 
+### N4.7 The CMake module, `[BLD-FFI-2]` (asked for after the first report)
+
+`cmake/Ember.cmake` is rendered by `tools/generate_runtime.py` from `cmake/Ember.cmake.in` with the
+branding's prefix, CLI name and manifest name (`[RT-5]`: the module is one of the files that may not
+spell them; `check_branding.py` treats the rendered file as generated, and `--check` fails when it is
+stale). `ember_add_library(<name> KIND staticlib|cdylib SOURCES … [PACKAGE <dir>] [PROFILE …]
+[FLAGS_FROM <target>])` and `ember_add_executable(<name> SOURCES … …)` add a custom command running
+`ember build <package> --cc <CMake's C compiler> [--cc-flags-from-target <target>]` in the CMake
+build folder, and an imported target (`STATIC`/`SHARED IMPORTED`, with the runtime archive, the
+header folders and C11 for a library; `IMPORTED` executable). `KIND` must be the manifest's
+`kind`. The module asks CMake for the File API reply in the same run (`cmake_file_api`, CMake 3.27
+and later; older ones get query files, answered by the next configure).
+
+`ember build --cc-flags-from-target <target>` reads the target's C compile group from the File API
+reply in the folder it runs in (defines, include folders, other flags), and, unless `--cc` names
+one, its C compiler from the toolchains reply. **Decision:** the flags are the package's C flags, as
+the `[c]` section's are (`[BLD-FFI-1]`, `[BLD-FFI-1a]`: the package's C imports are parsed and
+compiled with them), and the runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` among them are
+inherited by every translation unit (`[BLD-FFI-1b]`, the target first in `E9020`'s agreement);
+Ember's own C is not compiled with the rest, since a target's flags can contradict its profile's
+(MSVC's `/RTC1` refuses `/O2`) or its arithmetic (`-ffast-math`). With no reply the option says so
+and writes the queries. Test: package `the_cmake_module_builds_packages_as_targets_of_a_c_project`
+(configures and builds a C project with a static library, a shared one and an executable from Ember
+packages, runs the C program, checks the package took a Debug program's `/MDd`; skipped without
+CMake, which it looks for on the path and in Visual Studio's build tools).
+
 ## 2. Rules
 
 | rule | state | evidence |
@@ -180,13 +207,10 @@ interoperability is not built").
 | `[FFI-24c]` | unfinished: N3 question 7 | milestones |
 | `[FFI-44]` | unfinished: `std::function` objects, question 3 | `FFI-44/` |
 | `[BLD-FFI-1b]`, `[BLD-FFI-4]`, `[BLD-FFI-5]` | done | N4.6 |
+| `[BLD-FFI-2]` | done | N4.7 |
 | `[BLD-FFI-5a]` | unfinished: N3 question 8 | — |
 | `[FFI-48]` | unfinished: modules, coroutines, return-type overloads, unmodelled casts, class-type NTTPs not diagnosed (allocator containers built) | `FFI-48/` |
 | `[FFI-40a]`, `[FFI-41]` | unchanged: N3 questions 3 and 4 | — |
-
-Not done here, though it is a Part XVI rule with a C++ half: `[BLD-FFI-2]` (47 words, untested):
-the CMake module `ember_add_library`/`ember_add_executable` and `--cc-flags-from-target`. Nothing in
-it needs an owner answer.
 
 ## 3. Owner questions (option (a) is what is built)
 

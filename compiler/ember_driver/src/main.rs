@@ -402,6 +402,8 @@ struct Options {
     emit_header: bool,
     /// `[BLD-FFI-5]` — `--cpp`: a C++ header beside the C one.
     cpp_header: bool,
+    /// `[BLD-FFI-2]` — `--cc-flags-from-target <target>`: a CMake target's C compiler and flags.
+    cc_flags_target: Option<String>,
     cc: Option<String>,
     out_dir: Option<PathBuf>,
     json: bool,
@@ -682,6 +684,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             }
             if options.emit.as_deref() == Some("header") && command != "build" {
                 return Err("`--emit header` is only valid with `ember build`".to_string());
+            }
+            if options.cc_flags_target.is_some() && command != "build" {
+                return Err("`--cc-flags-from-target` is only valid with `ember build`, run in the CMake build folder".to_string());
             }
             if options.cpp_header && command != "build" {
                 return Err("`--cpp` writes a C++ header beside the C one: it is only valid with `ember build`".to_string());
@@ -3184,6 +3189,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--emit" => options.emit = Some(value(&mut index, arg)?),
             "--emit-header" => options.emit_header = true,
             "--cpp" => options.cpp_header = true,
+            "--cc-flags-from-target" => options.cc_flags_target = Some(value(&mut index, arg)?),
             "--emit-optimization-report" => options.optimization_report = true,
             "--timings" => options.timings = Some(false),
             "--timings=json" => options.timings = Some(true),
@@ -3375,13 +3381,16 @@ fn load_modules(
 ) -> Vec<ember_typeck::LoadedModule> {
     // Without a resolution (an error the build reports itself), the root package alone.
     let packages = packages::resolve(root_dir).unwrap_or_else(|_| packages::Packages::alone(root_dir));
-    load_package_modules(root, root_dir, &packages, map, sink)
+    load_package_modules(root, root_dir, &packages, &[], map, sink)
 }
 
+/// `target_flags` — the C flags `--cc-flags-from-target` takes from a CMake target (`[BLD-FFI-2]`),
+/// added to each package's `[c]` flags.
 fn load_package_modules(
     root: ember_ast::Module,
     root_dir: &Path,
     packages: &packages::Packages,
+    target_flags: &[String],
     map: &mut SourceMap,
     sink: &mut Sink,
 ) -> Vec<ember_typeck::LoadedModule> {
@@ -3429,7 +3438,8 @@ fn load_package_modules(
                 let importer = map.file(import.span.file).path.clone();
                 let package_dir = packages.list.get(package).map(|found| found.dir.clone());
                 let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
-                let flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
+                let mut flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
+                flags.extend(target_flags.iter().cloned());
                 let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
                 if let Some(written) = cimport::load(import, &importer, &base, &flags, manifest.as_deref(), &mut foreign_known, map, sink) {
                     seen.insert(written.path.join("."));
@@ -4422,7 +4432,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[MOD-1]`, `[MAN-2]` — the package's dependencies, and its lock.
     let packages = packages::resolve(&root_dir)?;
     packages::settle_lock(&packages, options.locked)?;
-    let mut modules = load_package_modules(module, &root_dir, &packages, &mut map, &mut sink);
+    // `[BLD-FFI-2]` — the C flags of the CMake target `--cc-flags-from-target` names, from the File
+    // API reply of the CMake build folder this runs in: the package's C imports are parsed and
+    // compiled with them, as with the `[c]` section's, and the runtime they name is inherited.
+    let target_flags = match &options.cc_flags_target {
+        Some(target) => cimport::cmake_c_flags(Path::new("."), target)?,
+        None => Vec::new(),
+    };
+    let mut modules = load_package_modules(module, &root_dir, &packages, &target_flags, &mut map, &mut sink);
     // `[BLD-13]` — what the program's source locations are written relative to: its package's
     // directory, each dependency's (by its name), the standard library's (`std`).
     let mut roots: Vec<(PathBuf, String)> = packages.list.iter().enumerate()
@@ -5175,15 +5192,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let exe = layout.bin.join(exe_name);
 
     // `--cc`, else the variable `cc_var()` names (CI's compiler matrix, D-251).
+    // `[BLD-FFI-2]` — between the two, the compiler of the CMake build whose target's flags it takes.
     let requested = options
         .cc
         .clone()
+        .or_else(|| options.cc_flags_target.as_ref().and_then(|_| cimport::cmake_c_compiler(Path::new(".")).map(str::to_string)))
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     // `[BLD-FFI-1b]` — the C++ projects' runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which
     // every translation unit of the target is compiled with.
     if matches!(toolchain, Toolchain::Msvc { .. }) {
-        match cimport::inherited_runtime(&modules) {
+        match cimport::inherited_runtime(&modules, options.cc_flags_target.as_deref().map(|target| (target, target_flags.as_slice()))) {
             Ok(flags) => ember_build::inherit_msvc_runtime(flags),
             Err(diagnostic) => {
                 sink.emit(diagnostic);

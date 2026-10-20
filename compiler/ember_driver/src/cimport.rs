@@ -3776,7 +3776,7 @@ pub fn load(
                     .note("the C++ project's flags are read from CMake's File API [FFI-50]"));
                 return None;
             };
-            match cmake_target(&base.join(&build_dir), &target) {
+            match cmake_target(&base.join(&build_dir), &target, "CXX") {
                 Ok(found) => {
                     options.defines.extend(found.defines);
                     options.include_paths.extend(found.includes);
@@ -4205,8 +4205,12 @@ pub fn inherited_lto(modules: &[ember_typeck::LoadedModule]) -> Option<&'static 
 /// inherits, byte for byte, from the projects of its imports (a C++ project's flags and defines, or
 /// the `[c]` flags a C import is compiled with); each import agreed with the others when it was
 /// loaded (`runtime_agrees`).
-pub fn inherited_runtime(modules: &[ember_typeck::LoadedModule]) -> Result<Vec<&'static str>, Diagnostic> {
+pub fn inherited_runtime(modules: &[ember_typeck::LoadedModule], target: Option<(&str, &[String])>) -> Result<Vec<&'static str>, Diagnostic> {
     let mut first = None;
+    // `[BLD-FFI-2]` — the CMake target whose flags the build takes, first.
+    if let Some((name, flags)) = target {
+        runtime_agrees(&mut first, flags, false, &format!("CMake target `{name}`"), Span::DUMMY)?;
+    }
     for module in modules {
         let Some(foreign) = module.foreign.as_ref().filter(|foreign| !foreign.shim.is_empty()) else { continue };
         runtime_agrees(&mut first, &foreign.flags, foreign.cpp.is_some(), &foreign.header, Span::DUMMY)?;
@@ -4286,35 +4290,20 @@ struct CmakeTarget {
 /// `[FFI-50]` — read `target`'s C++ compile from the File API reply in `build_dir` (its newest
 /// index, the codemodel it names, the target's own reply). With no reply yet, the query that asks
 /// for one is written, and configuring with CMake again makes it.
-fn cmake_target(build_dir: &Path, target: &str) -> Result<CmakeTarget, String> {
-    let api = build_dir.join(".cmake").join("api").join("v1");
-    let reply = api.join("reply");
-    let read = |path: &Path| -> Result<serde_json::Value, String> {
-        let text = std::fs::read_to_string(path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
-        serde_json::from_str(&text).map_err(|error| format!("`{}` is not JSON: {error}", path.display()))
-    };
-    let mut indexes: Vec<PathBuf> = std::fs::read_dir(&reply)
-        .map(|entries| entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("index-"))).collect())
-        .unwrap_or_default();
-    indexes.sort();
-    let Some(index) = indexes.last() else {
-        let query = api.join("query");
-        let _ = std::fs::create_dir_all(&query).and_then(|()| std::fs::write(query.join("codemodel-v2"), ""));
-        return Err(format!("`{}` has no CMake File API reply: the query for one is written there now, so configure it with CMake again", build_dir.display()));
-    };
-    let index = read(index)?;
+fn cmake_target(build_dir: &Path, target: &str, language: &str) -> Result<CmakeTarget, String> {
+    let (reply, index) = cmake_reply(build_dir)?;
     let codemodel = index["reply"]["codemodel-v2"]["jsonFile"].as_str().ok_or("the File API reply has no `codemodel-v2`")?;
-    let codemodel = read(&reply.join(codemodel))?;
+    let codemodel = read_json(&reply.join(codemodel))?;
     let target_file = codemodel["configurations"][0]["targets"]
         .as_array()
         .and_then(|targets| targets.iter().find(|entry| entry["name"].as_str() == Some(target)))
         .and_then(|entry| entry["jsonFile"].as_str())
         .ok_or_else(|| format!("the CMake build has no target `{target}`"))?;
-    let target_reply = read(&reply.join(target_file))?;
+    let target_reply = read_json(&reply.join(target_file))?;
     let group = target_reply["compileGroups"]
         .as_array()
-        .and_then(|groups| groups.iter().find(|group| group["language"].as_str() == Some("CXX")))
-        .ok_or_else(|| format!("CMake compiles no C++ for target `{target}`"))?;
+        .and_then(|groups| groups.iter().find(|group| group["language"].as_str() == Some(language)))
+        .ok_or_else(|| format!("CMake compiles no {} for target `{target}`", if language == "CXX" { "C++" } else { language }))?;
     let texts = |key: &str, field: &str| -> Vec<String> {
         group[key].as_array().into_iter().flatten().filter_map(|entry| entry[field].as_str().map(str::to_string)).collect()
     };
@@ -4327,6 +4316,56 @@ fn cmake_target(build_dir: &Path, target: &str) -> Result<CmakeTarget, String> {
         flags: texts("compileCommandFragments", "fragment").iter().flat_map(|fragment| fragment.split_whitespace().map(str::to_string)).collect(),
         standard: group["languageStandard"]["standard"].as_str().map(|standard| format!("c++{standard}")),
     })
+}
+
+/// A JSON file of the File API's reply.
+fn read_json(path: &Path) -> Result<serde_json::Value, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("`{}` is not JSON: {error}", path.display()))
+}
+
+/// `[FFI-50]`, `[BLD-FFI-2]` — the File API reply folder of a CMake build, and its newest index.
+/// With no reply yet, the queries that ask for one (the code model and the toolchains) are written,
+/// and the error says to configure again.
+fn cmake_reply(build_dir: &Path) -> Result<(PathBuf, serde_json::Value), String> {
+    let api = build_dir.join(".cmake").join("api").join("v1");
+    let reply = api.join("reply");
+    let mut indexes: Vec<PathBuf> = std::fs::read_dir(&reply)
+        .map(|entries| entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("index-"))).collect())
+        .unwrap_or_default();
+    indexes.sort();
+    let Some(index) = indexes.last() else {
+        let query = api.join("query");
+        let _ = std::fs::create_dir_all(&query).and_then(|()| std::fs::write(query.join("codemodel-v2"), "")).and_then(|()| std::fs::write(query.join("toolchains-v1"), ""));
+        return Err(format!("`{}` has no CMake File API reply: the query for one is written there now, so configure it with CMake again", build_dir.display()));
+    };
+    let index = read_json(index)?;
+    Ok((reply, index))
+}
+
+/// `[BLD-FFI-2]` — `--cc-flags-from-target <target>`: the C compile of a CMake target, as the File
+/// API reply in the CMake build folder `build_dir` gives it: its defines, include folders (made
+/// absolute) and other flags, in the forms cl, clang and gcc all read (`-D`, `-I`).
+pub fn cmake_c_flags(build_dir: &Path, target: &str) -> Result<Vec<String>, String> {
+    let found = cmake_target(build_dir, target, "C")?;
+    Ok(found.defines.iter().map(|define| format!("-D{define}")).chain(found.includes.iter().map(|dir| format!("-I{dir}"))).chain(found.flags).collect())
+}
+
+/// `[BLD-FFI-2]` — the C compiler of a CMake build, by the name `--cc` gives it, from the File API's
+/// toolchains reply: MSVC's `cl` is `msvc`, Clang with MSVC's driver `clang-cl`, other Clang
+/// `clang`, GCC `gcc`. `None` when the reply does not say.
+pub fn cmake_c_compiler(build_dir: &Path) -> Option<&'static str> {
+    let (reply, index) = cmake_reply(build_dir).ok()?;
+    let toolchains = read_json(&reply.join(index["reply"]["toolchains-v1"]["jsonFile"].as_str()?)).ok()?;
+    let compiler = &toolchains["toolchains"].as_array()?.iter().find(|toolchain| toolchain["language"].as_str() == Some("C"))?["compiler"];
+    let stem = Path::new(compiler["path"].as_str().unwrap_or_default()).file_stem().map(|stem| stem.to_string_lossy().to_lowercase()).unwrap_or_default();
+    match compiler["id"].as_str()? {
+        "MSVC" => Some("msvc"),
+        "Clang" | "AppleClang" if stem.starts_with("clang-cl") => Some("clang-cl"),
+        "Clang" | "AppleClang" => Some("clang"),
+        "GNU" => Some("gcc"),
+        _ => None,
+    }
 }
 
 /// `[FFI-50]` — a toolchain by the name a `[cpp.<project>]` section's `compiler` gives it.
