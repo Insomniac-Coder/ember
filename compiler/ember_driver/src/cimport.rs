@@ -2996,10 +2996,13 @@ pub fn load(
 }
 
 /// `[FFI-29]`, `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — each `import c`'s shim and C sources,
-/// compiled with that import's flags into objects of their own, and its libraries in order.
+/// compiled with that import's flags into objects of their own, and its libraries in order: by
+/// `toolchain`, the `[c]` section's compiler. `[BLD-FFI-4]` — each `import cpp`'s thunks by
+/// `backend`, the compiler of Ember's own C.
 pub fn build_objects(
     modules: &[ember_typeck::LoadedModule],
     toolchain: &ember_build::Toolchain,
+    backend: &ember_build::Toolchain,
     c_dir: &Path,
     obj_dir: &Path,
     profile: ember_build::Profile,
@@ -3017,17 +3020,17 @@ pub fn build_objects(
         // `[FFI-3]` — an `import cpp`'s thunks are C++, compiled as C++ by the build's compiler
         // (`[BLD-FFI-4]`), with the project's flags, and the C++ library linked.
         if let Some((standard, compiler)) = &foreign.cpp {
-            let named = toolchain_name(toolchain);
+            let named = toolchain_name(backend);
             if let Some(compiler) = compiler.as_deref().filter(|compiler| *compiler != named) {
                 return Err(format!("the C++ project of `{}` is compiled with `{compiler}`, and this build's C with `{named}`: one compiler builds both ([BLD-FFI-4])", foreign.header));
             }
             let thunks = c_dir.join(format!("{stem}.thunks.cpp"));
             std::fs::write(&thunks, &foreign.shim).map_err(|e| e.to_string())?;
-            let object = obj_dir.join(format!("{stem}.thunks.{ext}"));
-            ember_build::compile_cpp_object(toolchain, &thunks, &foreign.flags, &object, profile, standard).map_err(|e| e.to_string())?;
+            let object = obj_dir.join(format!("{stem}.thunks.{}", if matches!(backend, ember_build::Toolchain::Msvc { .. }) { "obj" } else { "o" }));
+            ember_build::compile_cpp_object(backend, &thunks, &foreign.flags, &object, profile, standard).map_err(|e| e.to_string())?;
             objects.push(object);
             libraries.extend(foreign.link.iter().cloned());
-            if !matches!(toolchain, ember_build::Toolchain::Msvc { .. }) {
+            if !matches!(backend, ember_build::Toolchain::Msvc { .. }) {
                 let library = if cfg!(target_os = "macos") { "c++" } else { "stdc++" };
                 if !libraries.iter().any(|known| known == library) {
                     libraries.push(library.to_string());

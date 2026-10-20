@@ -5103,7 +5103,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
         None => toolchain.clone(),
     };
-    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &layout.c, &layout.obj, options.profile)?;
+    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile)?;
     libraries.extend(foreign_libraries);
     library_relaxed.extend(foreign_objects.iter().cloned());
     // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
