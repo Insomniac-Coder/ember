@@ -19298,6 +19298,48 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// D-746 — an `@ffi(…)` argument on a foreign function that no contract form matched: a word
+    /// the vocabulary does not have is `E0104`; a form made of its words is one this compiler has
+    /// not built (`threads(…)`, `destroys(f)`, `callback(…)`), `E0900`.
+    fn unknown_ffi_argument(&mut self, arg: &ast::AttrArg, span: Span) {
+        let word_of = |expr: &ast::Expr| match &expr.kind {
+            ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
+            _ => ffi_contract_word(expr),
+        };
+        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name"];
+        let (top, inner): (Option<Symbol>, Vec<Symbol>) = match arg {
+            ast::AttrArg::Named { name, .. } => (Some(name.name), Vec::new()),
+            ast::AttrArg::Expr(value) => {
+                let top = word_of(value);
+                // `param(p, …)` names its parameter, then its words, as `result(…)` does; any other
+                // form's arguments are its own (`threads(main)`).
+                let skip = usize::from(top.is_some_and(|word| word.is("param")));
+                let inner = match &value.kind {
+                    ast::ExprKind::Call { args, .. } if top.is_some_and(|word| word.is("param") || word.is("result")) => {
+                        args.iter().skip(skip).filter_map(|arg| word_of(&arg.value)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                (top, inner)
+            }
+        };
+        let known = |word: &Symbol| FFI_CONTRACT_WORDS.contains(&word.as_str());
+        let unknown = top.filter(|word| !known(word) && !FORMS.contains(&word.as_str()))
+            .or_else(|| inner.iter().copied().find(|word| !known(word)));
+        match (top, unknown) {
+            (_, Some(word)) => self.sink.emit(
+                Diagnostic::error(codes::E0104, span, format!("`{word}` is not a contract word of `@ffi`"))
+                    .help(format!("`@ffi` on a foreign function takes {}; the contract words are {}", FORMS.join(", "), FFI_CONTRACT_WORDS.join(", ")))
+                    .note("a hand declaration's contract is written `@ffi(param(name, word, …), result(word, …))` [FFI-11]"),
+            ),
+            _ if inner.iter().any(|word| word.is("exclusive")) && inner.iter().any(|word| word.is("aliased")) => {
+                self.error(codes::E0104, span, "a contract is `exclusive` or `aliased`, not both");
+            }
+            (Some(word), None) => self.error(codes::E0900, span, format!("this `{word}(…)` contract is not implemented yet")),
+            (None, None) => self.error(codes::E0104, span, "an argument of `@ffi` is a contract form: `param(…)`, `result(…)`, `effects=[…]`, `deterministic` or `link_name=\"…\"`"),
+        }
+    }
+
     /// `[FFI-30]` (D-744) — what a C call passes and returns, as the C ABI sees it: each parameter
     /// then the result, a pointer, an integer or a float of its size, or a type by value.
     fn c_call_shape(&self, function: &Function) -> String {
@@ -37322,8 +37364,7 @@ impl<'a> Checker<'a> {
                                     }
                                     self.sink.emit(diagnostic);
                                 } else {
-                                    self.error(codes::E0900, attr.span,
-                                        "only `@ffi` link names and borrowed-one pointer contracts are implemented yet");
+                                    self.unknown_ffi_argument(arg, attr.span);
                                 }
                             }
                         }
