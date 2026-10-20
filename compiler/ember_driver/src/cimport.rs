@@ -3133,11 +3133,11 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                         matched = false;
                     }
                 }
-                if !matched || !take(applied, sink, layer, entry.is_override, "fn", name) {
+                if !matched {
                     continue;
                 }
                 // `[FFI-24b]`, `[FFI-43]` — the exception policy an entry declares, never one it
-                // declares twice over (`E5062`).
+                // declares twice over, nor one an earlier overlay's entry contradicts (`E5062`).
                 let (declared, arguments): (Vec<String>, Vec<String>) = arguments().into_iter().partition(|written| {
                     let written: String = written.chars().filter(|c| !c.is_whitespace()).collect();
                     matches!(written.as_str(), "noexcept" | "noexcept=true" | "noexcept=false")
@@ -3152,6 +3152,21 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     continue;
                 }
                 let policy = if asserts { Some(Policy::Asserted) } else if throws { Some(Policy::Catching) } else { None };
+                if !entry.is_override
+                    && let Some(earlier) = applied.functions.get(&function.name).and_then(|earlier| earlier.policy)
+                    && policy.is_some_and(|policy| policy != earlier)
+                {
+                    let said = |policy: Policy| if policy == Policy::Asserted { "`noexcept`" } else { "throwing" };
+                    sink.emit(
+                        Diagnostic::error(codes::E5062, name.span, format!("the overlays disagree on `{}`: an earlier one declares it {}, this one {}", name.name, said(earlier), said(policy.unwrap_or(earlier))))
+                            .help("begin this entry with `override` to replace the earlier one")
+                            .note("a C++ function has one exception policy, whichever overlays compose [FFI-43]"),
+                    );
+                    continue;
+                }
+                if !take(applied, sink, layer, entry.is_override, "fn", name) {
+                    continue;
+                }
                 applied.functions.insert(
                     function.name.clone(),
                     Entry {
