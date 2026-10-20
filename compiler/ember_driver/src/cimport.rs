@@ -523,6 +523,9 @@ struct Writer {
     enums: HashMap<String, Result<String, String>>,
     typedefs: HashMap<String, Result<String, String>>,
     seen: HashSet<String>,
+    /// `[FFI-8]` — the generated `<Parent>_anon<N>` types of anonymous members: C has no name for
+    /// them, so the shim checks their bytes through the parent.
+    anonymous: HashSet<String>,
 }
 
 impl Writer {
@@ -544,6 +547,9 @@ impl Writer {
     /// `[FFI-6b]` — the C spelling of a type just declared, by its Ember name: Clang's (`struct
     /// Pair`, `Point`), or the typedef's name of a struct with no tag of its own.
     fn spelled(&mut self, cursor: CXCursor, named: &str) {
+        if self.anonymous.contains(named) {
+            return;
+        }
         // SAFETY(ffi): a live cursor.
         let spelled = type_spelling(unsafe { clang_getCursorType(cursor) });
         let c = if spelled.is_empty() || spelled.contains('(') { named.to_string() } else { spelled };
@@ -848,11 +854,15 @@ impl Writer {
             let mut packed = false;
             let mut plain = Vec::new();
             let mut bits = Vec::new();
+            let mut anonymous = 0;
+            let mut members_seen = HashSet::new();
             for child in children(definition) {
                 match kind(child) {
                     CXCursor_PackedAttr => packed = true,
-                    CXCursor_FieldDecl => {
-                        let field = spelling(child);
+                    // A record declared inside is a member only when it is an anonymous one.
+                    CXCursor_StructDecl | CXCursor_UnionDecl if clang_Cursor_isAnonymousRecordDecl(child) == 0 => {}
+                    CXCursor_FieldDecl | CXCursor_StructDecl | CXCursor_UnionDecl => {
+                        let field = if kind(child) == CXCursor_FieldDecl { spelling(child) } else { String::new() };
                         if clang_Cursor_isBitField(child) != 0 {
                             // `[FFI-8]` — read and written by `get_<f>`/`set_<f>`; an unnamed one is padding.
                             let width = clang_getFieldDeclBitWidth(child).max(0) as u64;
@@ -873,17 +883,45 @@ impl Writer {
                             bits.push(BitField { name: ident(&field), offset, width, ty: mapped, signed, boolean });
                             continue;
                         }
-                        if field.is_empty() || clang_Cursor_isAnonymousRecordDecl(clang_getTypeDeclaration(clang_getCursorType(child))) != 0 {
-                            return self.opaque(cursor, &key, &named, Some("an anonymous member (its generated `<Parent>_anon<N>` type is not built yet)".to_string()));
-                        }
                         let field_ty = clang_getCursorType(child);
-                        let mapped = match self.ty(field_ty, false) {
-                            Ok(mapped) => mapped,
-                            Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("field `{field}`: {reason}"))),
+                        let member = if kind(child) == CXCursor_FieldDecl { clang_getTypeDeclaration(field_ty) } else { child };
+                        // `[FFI-8]` — an anonymous member is a field `_anon<N>` of a generated type
+                        // `<Parent>_anon<N>`, whose fields read through it (`p.x` is `p._anon0.x`).
+                        // libclang shows it as the record, or as an unnamed field too: once.
+                        let anonymous_member = field.is_empty() || clang_Cursor_isAnonymousRecordDecl(member) != 0;
+                        if anonymous_member && !members_seen.insert(usr(member)) {
+                            continue;
+                        }
+                        let offset = if anonymous_member {
+                            match anonymous_offset(ty, member) {
+                                Some(offset) => offset,
+                                None => return self.opaque(cursor, &key, &named, Some("an anonymous member with no named field".to_string())),
+                            }
+                        } else {
+                            (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8
+                        };
+                        let (field, mapped) = if anonymous_member {
+                            if kind(member) == CXCursor_UnionDecl {
+                                return self.opaque(cursor, &key, &named, Some("an anonymous union member (Ember's `union` is reserved for a later version)".to_string()));
+                            }
+                            let generated = format!("{named}_anon{anonymous}");
+                            self.anonymous.insert(generated.clone());
+                            match self.record(member, Some(&generated)) {
+                                Record::Full(_) => {}
+                                Record::Pending(_) | Record::Opaque(..) => {
+                                    return self.opaque(cursor, &key, &named, Some(format!("its anonymous member `{generated}` cannot be represented")));
+                                }
+                            }
+                            anonymous += 1;
+                            (format!("_anon{}", anonymous - 1), ident(&generated))
+                        } else {
+                            match self.ty(field_ty, false) {
+                                Ok(mapped) => (field, mapped),
+                                Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("field `{field}`: {reason}"))),
+                            }
                         };
                         let field_align = clang_Type_getAlignOf(field_ty).max(1) as u64;
                         natural = natural.max(field_align);
-                        let offset = (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8;
                         let line = format!("    pub {}: {mapped}\n", ident(&field));
                         layout.push((ident(&field), offset));
                         fields.push(line.clone());
@@ -929,11 +967,14 @@ impl Writer {
             // `struct Point`, or the typedef name of a struct with no tag of its own.
             let spelled = type_spelling(ty);
             let c_name = if spelled.contains('(') { named.clone() } else { spelled };
-            let _ = writeln!(self.shim, "_Static_assert(sizeof({c_name}) == {size}, \"{named}: size\");");
-            let _ = writeln!(self.shim, "_Static_assert(_Alignof({c_name}) == {align}, \"{named}: alignment\");");
-            for (field, offset) in &c_fields {
-                let c_field = field.trim_start_matches("r#");
-                let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
+            // An anonymous member's type has no C name: its parent's checks cover its bytes.
+            if !self.anonymous.contains(&named) {
+                let _ = writeln!(self.shim, "_Static_assert(sizeof({c_name}) == {size}, \"{named}: size\");");
+                let _ = writeln!(self.shim, "_Static_assert(_Alignof({c_name}) == {align}, \"{named}: alignment\");");
+                for (field, offset) in c_fields.iter().filter(|(field, _)| !field.starts_with("_anon")) {
+                    let c_field = field.trim_start_matches("r#");
+                    let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
+                }
             }
             self.layouts.push(RecordLayout { name: name.clone(), size, align, fields: layout });
             self.entities.push((key.clone(), name.clone(), fingerprint));
@@ -1326,6 +1367,21 @@ impl Writer {
             macro_functions: self.macro_functions,
             c_types: self.c_types,
         }
+    }
+}
+
+/// `[FFI-8]` — where in `parent` its anonymous member `member` starts, in bytes: Clang gives a field's
+/// offset by name through anonymous members, so the member's is its first named field's offset in
+/// the parent less that field's offset in the member.
+fn anonymous_offset(parent: CXType, member: CXCursor) -> Option<u64> {
+    // SAFETY(ffi): types and cursors of a live translation unit; the names live for the calls.
+    unsafe {
+        let member_ty = clang_getCursorType(member);
+        let named = children(member).into_iter().find(|child| kind(*child) == CXCursor_FieldDecl && !spelling(*child).is_empty())?;
+        let name = CString::new(spelling(named)).ok()?;
+        let in_parent = clang_Type_getOffsetOf(parent, name.as_ptr());
+        let in_member = clang_Type_getOffsetOf(member_ty, name.as_ptr());
+        (in_parent >= 0 && in_member >= 0 && in_parent >= in_member).then(|| ((in_parent - in_member) / 8) as u64)
     }
 }
 

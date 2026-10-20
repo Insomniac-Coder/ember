@@ -41773,6 +41773,10 @@ impl<'a> Checker<'a> {
                     self.check_field_visible(id, field.vis, field.name, name.span);
                     Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
                 }
+                // `[FFI-8]` — a field of an imported struct's anonymous member reads through it.
+                None if let Some(path) = self.anonymous_member_path(id, name.name) => {
+                    path.into_iter().fold(base, |base, (index, ty)| Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span })
+                }
                 None => {
                     self.sink
                         .emit(self.missing_field_diagnostic(base.ty, name.name, name.span));
@@ -41810,6 +41814,32 @@ impl<'a> Checker<'a> {
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
         }
+    }
+
+    /// `[FFI-8]` — the fields from struct `id` to `name` through anonymous members: a struct
+    /// `import c` wrote holds an anonymous member as a field `_anon<N>` of its generated type
+    /// `<Parent>_anon<N>`, and that type's fields (its own anonymous members' too) are the parent's.
+    fn anonymous_member_path(&self, id: StructId, name: Symbol) -> Option<Vec<(usize, Ty)>> {
+        let parent = self.types.struct_def(id);
+        if !self.foreign_skipped.get(parent.declaring_module).is_some_and(Option::is_some) {
+            return None;
+        }
+        let short = parent.name.as_str().rsplit('.').next().unwrap_or("");
+        for (index, field) in parent.fields.iter().enumerate() {
+            let TyKind::Struct(inner) = *self.types.kind(field.ty) else { continue };
+            let generated = self.types.struct_def(inner).name;
+            if !field.name.as_str().starts_with("_anon") || !generated.as_str().ends_with(&format!("{short}{}", field.name)) {
+                continue;
+            }
+            if let Some((found, member)) = self.types.struct_def(inner).field(name) {
+                return Some(vec![(index, field.ty), (found, member.ty)]);
+            }
+            if let Some(mut path) = self.anonymous_member_path(inner, name) {
+                path.insert(0, (index, field.ty));
+                return Some(path);
+            }
+        }
+        None
     }
 
     /// `[CLO-11]` — whether `ty`, read through references and boxes, has a
