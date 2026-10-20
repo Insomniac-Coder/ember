@@ -41,6 +41,49 @@ pub struct Config<'a> {
     pub cpp: Option<&'a str>,
     /// `[FFI-17b]` — the explicit template instantiations to import: `"Vec<int>"`, `"max<double>"`.
     pub instantiate: &'a [String],
+    /// `[FFI-39]` — the classes the import's overlays declare `@ffi(trampoline, …)`.
+    pub trampolines: &'a [TrampolineDecl],
+}
+
+/// `[FFI-39]`, `[FFI-17d]` — an overlay's `@ffi(trampoline, virtuals=[…], owner=…)` entry for a
+/// C++ class, read before the header is: the class (its Ember name), the virtuals Ember code
+/// overrides, and whether a foreign `delete` destroys the object (`owner="foreign"`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrampolineDecl {
+    pub class: String,
+    pub virtuals: Vec<String>,
+    pub foreign: bool,
+}
+
+/// `[FFI-39]` — the `@ffi(trampoline, …)` entries of overlay sources, as written: an attribute line
+/// naming `trampoline`, then `type Name`. The overlay is applied (and checked, `E5010`) later; this
+/// only tells the importer which classes get a trampoline.
+pub fn trampoline_decls(overlays: &str) -> Vec<TrampolineDecl> {
+    let quoted = |text: &str| -> Vec<String> { text.split('"').skip(1).step_by(2).map(str::to_string).collect() };
+    let mut found = Vec::new();
+    let mut attributes: Vec<String> = Vec::new();
+    for line in overlays.lines() {
+        let line = line.trim();
+        if line.starts_with('@') {
+            attributes.push(line.to_string());
+            continue;
+        }
+        let entry = line.trim_start_matches("override ").trim();
+        if let Some(name) = entry.strip_prefix("type ").map(str::trim)
+            && let Some(attribute) = attributes.iter().find(|attribute| attribute.starts_with("@ffi(") && attribute.contains("trampoline"))
+        {
+            let virtuals = attribute
+                .split_once("virtuals")
+                .and_then(|(_, rest)| rest.split_once('[').and_then(|(_, list)| list.split_once(']')).map(|(list, _)| quoted(list)))
+                .unwrap_or_default();
+            let foreign = attribute.split_once("owner").is_some_and(|(_, rest)| quoted(rest).first().is_some_and(|owner| owner == "foreign"));
+            found.push(TrampolineDecl { class: name.to_string(), virtuals, foreign });
+        }
+        if !line.is_empty() && !line.starts_with('#') {
+            attributes.clear();
+        }
+    }
+    found
 }
 
 /// `[FFI-30]` — a C declaration (by Clang's USR) an import of the build wrote: one Ember entity
@@ -154,6 +197,31 @@ pub struct CType {
     pub mode: String,
 }
 
+/// `[FFI-39]` — a virtual a trampoline overrides: its name, `const`-ness, purity, parameters and
+/// result.
+struct Slot {
+    name: String,
+    constant: bool,
+    pure: bool,
+    params: Vec<SlotParam>,
+    result: Option<CType>,
+    /// The result's C++ type (`void` for none).
+    result_spelled: String,
+}
+
+/// A parameter of a trampoline's virtual: its Ember name and type, the C type the entry function
+/// receives, the C++ expression that passes it there, its declaration in the override, and how
+/// the thunk of the base implementation passes it on.
+struct SlotParam {
+    name: String,
+    ty: CType,
+    c: String,
+    to_ember: String,
+    declaration: String,
+    to_base: String,
+    local: String,
+}
+
 /// What a declaration of the header became: an overlay finds it by its C name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -164,6 +232,8 @@ pub enum Kind {
     Opaque,
     /// An `extern static`.
     Static,
+    /// `[FFI-39]` — a trampoline's Ember class, with what it needs, written at the module's level.
+    Class,
 }
 
 /// One declaration of the module, without `pub` (an overlay may hide it).
@@ -211,6 +281,20 @@ pub struct Imported {
     /// namespace's module names which other's types.
     pub namespaces: Vec<Vec<String>>,
     pub ns_uses: Vec<(Vec<String>, Vec<String>)>,
+    /// `[FFI-39]` — each class with a trampoline.
+    pub trampolines: Vec<Trampoline>,
+}
+
+/// `[FFI-39]` — a C++ class an Ember class may derive from: its Ember class, the opaque type of
+/// the C++ object it owns, whether the C++ class has a default constructor (`E5058` for a
+/// subclass that declares no `init` otherwise), and the virtuals the trampoline does not override
+/// (`E5056` for a subclass that does).
+#[derive(Clone, Debug, Default)]
+pub struct Trampoline {
+    pub class: String,
+    pub opaque: String,
+    pub default_init: bool,
+    pub unnamed_virtuals: Vec<String>,
 }
 
 fn text(string: CXString) -> String {
@@ -493,6 +577,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         shared: config.shared.clone(),
         binding: config.binding.to_string(),
         cpp: config.cpp.is_some(),
+        trampoline_decls: config.trampolines.to_vec(),
         ..Writer::default()
     };
     let in_header = |cursor: CXCursor| {
@@ -690,6 +775,9 @@ struct Writer {
     homes: HashMap<String, Vec<String>>,
     namespaces: Vec<Vec<String>>,
     ns_uses: Vec<(Vec<String>, Vec<String>)>,
+    /// `[FFI-39]` — the trampolines the overlays declare, and those made.
+    trampoline_decls: Vec<TrampolineDecl>,
+    trampolines: Vec<Trampoline>,
 }
 
 impl Writer {
@@ -1121,6 +1209,11 @@ impl Writer {
                     return record;
                 }
             }
+            // `[FFI-39]` — the C++ object of a class with a trampoline: an opaque type of its own
+            // name, which the Ember class of the class's name owns.
+            if self.cpp && self.trampoline_decls.iter().any(|decl| decl.class == named) {
+                return self.opaque(cursor, &key, &format!("{}_cpp_{named}", ember_branding::SYMBOL_PREFIX), None);
+            }
             // `[FFI-32]` — a C++ class is a struct only when it is standard-layout and trivially
             // copyable; any other is opaque behind a pointer, made only by its constructors.
             if self.cpp && !self.by_value.get(&key).copied().unwrap_or(false) {
@@ -1523,12 +1616,28 @@ impl Writer {
             let class_spelled = cpp_spelling(clang_getCursorType(definition));
             let abstract_class = clang_CXXRecord_isAbstract(definition) != 0;
             let mutable_state = children(definition).into_iter().any(|child| kind(child) == CXCursor_FieldDecl && clang_CXXField_isMutable(child) != 0);
+            // `[FFI-39]` — a class with a trampoline: its methods are its Ember class's, its
+            // constructors and destructor the trampoline's, its named virtuals the Ember class's
+            // virtual methods. One the trampoline cannot be made for is imported as any class.
+            let opaque = owner.clone();
+            let trampoline = match self.trampoline_decls.iter().find(|decl| format!("{}_cpp_{}", ember_branding::SYMBOL_PREFIX, decl.class) == owner).cloned() {
+                Some(decl) => match self.trampoline_check(definition, &decl) {
+                    Ok(named) => Some((decl, named)),
+                    Err((code, why)) => {
+                        self.skip(definition, &decl.class, format!("[{code}] {why}"));
+                        None
+                    }
+                },
+                None => None,
+            };
+            let owner = trampoline.as_ref().map_or(owner, |(decl, _)| ident(&decl.class));
+            let mut unnamed_virtuals = Vec::new();
             // An opaque class's object is freed by its destructor: the one it declares, when that
             // is public, else the implicit one, which is.
             let declared = children(definition).into_iter().find(|child| kind(*child) == CXCursor_Destructor);
             let destructible = by_value
                 || declared.is_none_or(|destructor| clang_getCXXAccessSpecifier(destructor) == CX_CXXPublic && clang_getCursorAvailability(destructor) != CXAvailability_NotAvailable);
-            if !by_value && destructible {
+            if !by_value && destructible && trampoline.is_none() {
                 let destroys = format!("{}_cpp_delete_{owner}", ember_branding::SYMBOL_PREFIX);
                 let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
                 self.thunks += 1;
@@ -1562,6 +1671,14 @@ impl Writer {
                     }
                     _ => {}
                 }
+                if let Some((decl, _)) = &trampoline {
+                    if kind(child) == CXCursor_Constructor || decl.virtuals.contains(&name) {
+                        continue;
+                    }
+                    if kind(child) == CXCursor_CXXMethod && clang_CXXMethod_isVirtual(child) != 0 {
+                        unnamed_virtuals.push(name.clone());
+                    }
+                }
                 let member = match kind(child) {
                     CXCursor_Constructor => {
                         if abstract_class || clang_CXXConstructor_isCopyConstructor(child) != 0 || clang_CXXConstructor_isMoveConstructor(child) != 0 {
@@ -1593,6 +1710,317 @@ impl Writer {
                     Err(reason) => self.skip(child, &format!("{owner}.{key}"), reason),
                 }
             }
+            if let Some((decl, slots)) = trampoline {
+                self.trampoline(definition, &opaque, &decl, slots, unnamed_virtuals);
+            }
+        }
+    }
+
+    /// `[FFI-39]`, `[FFI-17d]` — whether a trampoline can be made for a class: it has a virtual
+    /// destructor (`E5059`), is not `final`, each virtual `virtuals` names is one virtual method of
+    /// it (`E5057`), every pure virtual it declares is named (`E5056`), and each named one passes
+    /// values a trampoline can pass (`E5031`). Its named virtuals, as the trampoline calls them.
+    fn trampoline_check(&mut self, definition: CXCursor, decl: &TrampolineDecl) -> Result<Vec<Slot>, (&'static str, String)> {
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            let spelled = cpp_spelling(clang_getCursorType(definition));
+            let key = usr(definition);
+            if !self.by_value.get(&format!("virtual_dtor {key}")).copied().unwrap_or(false) {
+                return Err(("E5059", format!("`{spelled}` has no virtual destructor, so its trampoline subclass cannot be destroyed through it ([FFI-17d])")));
+            }
+            if self.by_value.get(&format!("final {key}")).copied().unwrap_or(false) {
+                return Err(("E5034", format!("`{spelled}` is `final`: no class derives from it")));
+            }
+            let methods: Vec<CXCursor> = children(definition).into_iter().filter(|child| kind(*child) == CXCursor_CXXMethod).collect();
+            let mut slots = Vec::new();
+            for name in &decl.virtuals {
+                let found: Vec<CXCursor> = methods.iter().copied().filter(|method| spelling(*method) == *name).collect();
+                let method = match found.as_slice() {
+                    [method] if clang_CXXMethod_isVirtual(*method) != 0 => *method,
+                    [] => return Err(("E5057", format!("`virtuals` names `{name}`, and `{spelled}` declares no method `{name}`"))),
+                    [_] => return Err(("E5057", format!("`virtuals` names `{name}`, which is not virtual in `{spelled}`"))),
+                    _ => return Err(("E5057", format!("`virtuals` names `{name}`, which `{spelled}` overloads: a trampoline overrides one function of a name"))),
+                };
+                let ty = clang_getCursorType(method);
+                let mut params = Vec::new();
+                for index in 0..clang_Cursor_getNumArguments(method).max(0) as u32 {
+                    let argument = clang_Cursor_getArgument(method, index);
+                    let written = spelling(argument);
+                    let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
+                    let local = format!("a{index}");
+                    let argument_ty = clang_getArgType(ty, index);
+                    let (c_type, declaration, pass) = match self.cpp_parameter(argument_ty, &local) {
+                        Ok(found) if matches!(found.0.mode.as_str(), "" | "ref " | "ref mut ") => found,
+                        Ok(_) => return Err(("E5031", format!("parameter `{param}` of `{spelled}::{name}`: a trampoline passes values, and references to classes Ember holds behind a pointer"))),
+                        Err(reason) => return Err(("E5031", format!("parameter `{param}` of `{spelled}::{name}`: {reason}"))),
+                    };
+                    let Some(c) = declaration.strip_suffix(&local).map(str::trim_end).filter(|c| !c.is_empty() && !c.contains('(')) else {
+                        return Err(("E5031", format!("parameter `{param}` of `{spelled}::{name}`: a type a function pointer passes in another form")));
+                    };
+                    let to_ember = if pass.starts_with('*') { format!("&{local}") } else { local.clone() };
+                    params.push(SlotParam { name: param, ty: c_type, c: c.to_string(), to_ember, declaration: format!("{} {local}", cpp_spelling(argument_ty)), to_base: pass, local });
+                }
+                let result_ty = clang_getResultType(ty);
+                let result = if result_ty.kind == CXType_Void {
+                    None
+                } else {
+                    if matches!(clang_getCanonicalType(result_ty).kind, CXType_Record | CXType_LValueReference | CXType_RValueReference) {
+                        return Err(("E5031", format!("`{spelled}::{name}` returns `{}`: a trampoline returns a value Ember passes as C does", cpp_spelling(result_ty))));
+                    }
+                    Some(self.c_type(result_ty, false).map_err(|reason| ("E5031", format!("the result of `{spelled}::{name}`: {reason}")))?)
+                };
+                let result_spelled = if result.is_some() { cpp_spelling(result_ty) } else { "void".to_string() };
+                slots.push(Slot {
+                    name: name.clone(),
+                    constant: clang_CXXMethod_isConst(method) != 0,
+                    pure: clang_CXXMethod_isPureVirtual(method) != 0,
+                    params,
+                    result,
+                    result_spelled,
+                });
+            }
+            if let Some(pure) = methods.iter().find(|method| clang_CXXMethod_isPureVirtual(**method) != 0 && !decl.virtuals.contains(&spelling(**method))) {
+                return Err(("E5056", format!("`{spelled}::{}` is pure virtual, and `virtuals` does not name it: the trampoline overrides every pure virtual of its base", spelling(*pure))));
+            }
+            Ok(slots)
+        }
+    }
+
+    /// `[FFI-39]`, `[FFI-39b]`, `[FFI-39e]`, `[FFI-17c]`, `[FFI-17d]` — the trampoline of a class: a
+    /// C++ subclass whose named virtuals call Ember through entry functions it is given when made,
+    /// and an Ember `open class` of the class's name, which owns one. Its `init` (and an
+    /// `ember_cpp_init_<k>` for each other constructor, which `super.init(…)` selects among by
+    /// arity and types) makes the C++ object; its named virtuals are virtual methods whose own body
+    /// is the C++ base class's implementation; the C++ object is deleted when the Ember fields have
+    /// been dropped, through a base field of a struct whose `drop` deletes it. With
+    /// `owner="foreign"`, a foreign `delete` destroys the Ember object (which then holds no handle
+    /// but the one given to C++); with `owner="ember"` it panics. An exception that would leave a
+    /// constructor or a base implementation for Ember aborts, naming it.
+    fn trampoline(&mut self, definition: CXCursor, opaque: &str, decl: &TrampolineDecl, slots: Vec<Slot>, unnamed_virtuals: Vec<String>) {
+        let prefix = ember_branding::SYMBOL_PREFIX;
+        let class = ident(&decl.class);
+        let stem = self.stem.clone();
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            let spelled = cpp_spelling(clang_getCursorType(definition));
+            let tramp = format!("{prefix}_tramp_{stem}_{}", decl.class);
+            let entry = |k: &dyn std::fmt::Display| format!("{prefix}_cpp_tramp_{stem}_{}_{k}", decl.class);
+            // The entry functions' C types, as the trampoline holds them.
+            let pointer_types: Vec<String> = slots
+                .iter()
+                .enumerate()
+                .map(|(k, slot)| format!("{} (*v{k})(void*{})", slot.result_spelled, slot.params.iter().map(|param| format!(", {}", param.c)).collect::<String>()))
+                .collect();
+            let mut text = String::new();
+            let _ = writeln!(text, "\n/* `[FFI-39]` — the trampoline of `{spelled}`: its named virtuals call the Ember object it was made for. */");
+            let _ = writeln!(text, "struct {tramp} final : {spelled} {{");
+            let _ = writeln!(text, "    void* ember_self;\n    void (*ember_deleted)(void*);");
+            for pointer in &pointer_types {
+                let _ = writeln!(text, "    {};", pointer.replacen("(*v", "(*ember_v", 1));
+            }
+            let _ = writeln!(text, "    bool ember_cpp_deleting = false;");
+            let mut parameters = vec!["void* self".to_string(), "void (*deleted)(void*)".to_string()];
+            parameters.extend(pointer_types.iter().cloned());
+            let mut initialisers = vec![format!("{spelled}(static_cast<A&&>(a)...)"), "ember_self(self)".to_string(), "ember_deleted(deleted)".to_string()];
+            initialisers.extend((0..slots.len()).map(|k| format!("ember_v{k}(v{k})")));
+            let _ = writeln!(text, "    template <class... A>\n    explicit {tramp}({}, A&&... a) : {} {{}}", parameters.join(", "), initialisers.join(", "));
+            for (k, slot) in slots.iter().enumerate() {
+                let declared: Vec<&str> = slot.params.iter().map(|param| param.declaration.as_str()).collect();
+                let to_ember: String = slot.params.iter().map(|param| format!(", {}", param.to_ember)).collect();
+                let locals: Vec<&str> = slot.params.iter().map(|param| param.local.as_str()).collect();
+                let fallback = if slot.pure { "std::abort();".to_string() } else { format!("return {spelled}::{}({});", slot.name, locals.join(", ")) };
+                let _ = writeln!(
+                    text,
+                    "    {} {}({}){} noexcept override {{ if (ember_self != nullptr) return ember_v{k}(ember_self{to_ember}); {fallback} }}",
+                    slot.result_spelled,
+                    slot.name,
+                    declared.join(", "),
+                    if slot.constant { " const" } else { "" }
+                );
+            }
+            let _ = writeln!(
+                text,
+                "    ~{tramp}() override {{ if (ember_self != nullptr) {{ void* self = ember_self; ember_self = nullptr; ember_cpp_deleting = true; ember_deleted(self); }} }}\n}};"
+            );
+            self.shim.push_str(&text);
+
+            // The Ember side's raw declarations, entries and class.
+            let mut raw = String::new();
+            let mut body = String::new();
+            let fn_types: Vec<String> = slots
+                .iter()
+                .map(|slot| {
+                    let params: String = slot.params.iter().map(|param| format!(", {}", param.ty.ember)).collect();
+                    let result = slot.result.as_ref().map(|ty| format!(" -> {}", ty.ember)).unwrap_or_default();
+                    format!("extern \"C\" fn(*mut u8{params}){result}")
+                })
+                .collect();
+            let entries: Vec<String> = (0..slots.len()).map(|k| entry(&k)).collect();
+            let deleted = entry(&"deleted");
+            // Each constructor: the default one is `init`, any other an `ember_cpp_init_<k>`;
+            // a class that declares none has the implicit default one.
+            let mut ctors: Vec<Option<CXCursor>> = children(definition)
+                .into_iter()
+                .filter(|child| {
+                    kind(*child) == CXCursor_Constructor
+                        && clang_getCXXAccessSpecifier(*child) != CX_CXXPrivate
+                        && clang_getCursorAvailability(*child) != CXAvailability_NotAvailable
+                        && clang_CXXConstructor_isCopyConstructor(*child) == 0
+                        && clang_CXXConstructor_isMoveConstructor(*child) == 0
+                })
+                .map(Some)
+                .collect();
+            let declares_any = children(definition).into_iter().any(|child| kind(child) == CXCursor_Constructor);
+            if !declares_any {
+                ctors.push(None);
+            }
+            let default_at = ctors.iter().position(|ctor| ctor.is_none_or(|ctor| clang_CXXConstructor_isDefaultConstructor(ctor) != 0));
+            let init_at = default_at.unwrap_or(0);
+            for (j, ctor) in ctors.iter().enumerate() {
+                // A default constructor is called with no arguments, its own defaults applying.
+                let mut params: Vec<(String, CType, String, String)> = Vec::new();
+                if let Some(ctor) = ctor.filter(|_| Some(j) != default_at) {
+                    let ty = clang_getCursorType(ctor);
+                    for index in 0..clang_Cursor_getNumArguments(ctor).max(0) as u32 {
+                        let argument = clang_Cursor_getArgument(ctor, index);
+                        let written = spelling(argument);
+                        let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
+                        match self.cpp_parameter(clang_getArgType(ty, index), &format!("a{index}")) {
+                            Ok((c_type, declaration, pass)) => params.push((param, c_type, declaration, pass)),
+                            Err(reason) => {
+                                self.skip(ctor, &format!("{class}.init"), format!("[E5031] parameter `{param}`: {reason}"));
+                                params.clear();
+                                break;
+                            }
+                        }
+                    }
+                    if params.len() != clang_Cursor_getNumArguments(ctor).max(0) as usize {
+                        continue;
+                    }
+                }
+                let thunk = format!("{prefix}_cpp_{stem}_{}", self.thunks);
+                self.thunks += 1;
+                let declared: String = params.iter().map(|(_, _, declaration, _)| format!(", {declaration}")).collect();
+                let passed: String = params.iter().map(|(_, _, _, pass)| format!(", {pass}")).collect();
+                let entry_args: String = (0..slots.len()).map(|k| format!(", v{k}")).collect();
+                let _ = writeln!(
+                    self.shim,
+                    "extern \"C\" {spelled}* {thunk}({}{declared}) noexcept {{ try {{ return new {tramp}(self, deleted{entry_args}{passed}); }} catch (...) {{ crossed(\"the constructor of {spelled}\"); }} }}",
+                    parameters.join(", ")
+                );
+                let construct = format!("{prefix}_raw_{class}_make_{j}");
+                let mut raw_params = vec!["object: *mut u8".to_string(), "deleted: extern \"C\" fn(*mut u8)".to_string()];
+                raw_params.extend(fn_types.iter().enumerate().map(|(k, ty)| format!("v{k}: {ty}")));
+                raw_params.extend(params.iter().map(|(param, ty, _, _)| if wrapped(ty) { format!("{param}: {}", ty.ember) } else { format!("{}{param}: {}", ty.mode, ty.ember) }));
+                let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
+                let init = if j == init_at { "init".to_string() } else { format!("{prefix}_cpp_init_{j}") };
+                let wrapper_params: Vec<String> = params.iter().map(|(param, ty, _, _)| wrapper_param(param, ty)).collect();
+                let arguments: String = params.iter().map(|(param, ty, _, _)| format!(", {}", wrapper_argument(param, ty))).collect();
+                let receiver = if wrapper_params.is_empty() { "mut self".to_string() } else { format!("mut self, {}", wrapper_params.join(", ")) };
+                let _ = write!(
+                    body,
+                    "\n    pub fn {init}({receiver}):\n        unsafe:  # SAFETY: the C++ constructor takes this function's own arguments, and the object's address, which the trampoline keeps without a count\n            self.{prefix}_cpp_base = {prefix}_cpp_base_{class}(object = {construct}({prefix}_cpp_address(self), {deleted}{}{arguments}))\n",
+                    entries.iter().map(|entry| format!(", {entry}")).collect::<String>()
+                );
+            }
+            // The named virtuals: Ember's virtual methods, and the entries the trampoline calls.
+            let mut functions = String::new();
+            for (k, slot) in slots.iter().enumerate() {
+                let wrapper_params: Vec<String> = slot.params.iter().map(|param| wrapper_param(&param.name, &param.ty)).collect();
+                let names: Vec<String> = slot.params.iter().map(|param| param.name.clone()).collect();
+                let result = slot.result.as_ref().map(|ty| format!(" -> {}", ty.ember)).unwrap_or_default();
+                let receiver = if wrapper_params.is_empty() { "self".to_string() } else { format!("self, {}", wrapper_params.join(", ")) };
+                let name = ident(&slot.name);
+                if slot.pure {
+                    let _ = write!(body, "\n    pub virtual fn {name}({receiver}){result}:\n        panic(\"`{spelled}::{}` is pure virtual: a class deriving from `{class}` overrides it\")\n", slot.name);
+                } else {
+                    let helper = format!("{prefix}_cpp_base_{}", slot.name);
+                    let _ = write!(
+                        body,
+                        "\n    pub virtual fn {name}({receiver}){result}:\n        unsafe:  # SAFETY: the C++ class's own implementation; the overlay's trampoline entry asserts its virtuals\n            {}self.{helper}({})\n",
+                        if slot.result.is_some() { "return " } else { "" },
+                        names.join(", ")
+                    );
+                    // The base implementation, reached past the trampoline: an exception that would
+                    // leave it for Ember aborts ([FFI-39e]).
+                    let thunk = format!("{prefix}_cpp_{stem}_{}", self.thunks);
+                    self.thunks += 1;
+                    let declared: String = slot.params.iter().map(|param| format!(", {} {}", param.c, param.local)).collect();
+                    let passed: Vec<&str> = slot.params.iter().map(|param| param.to_base.as_str()).collect();
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" {} {thunk}({}{spelled}* self{declared}) noexcept {{ try {{ return self->{spelled}::{}({}); }} catch (...) {{ crossed(\"{spelled}::{}\"); }} }}",
+                        slot.result_spelled,
+                        if slot.constant { "const " } else { "" },
+                        slot.name,
+                        passed.join(", "),
+                        slot.name
+                    );
+                    let member = if slot.constant { Member::Method } else { Member::MutMethod };
+                    self.functions.push(Function {
+                        name: helper,
+                        params: slot.params.iter().map(|param| (param.name.clone(), param.ty.clone())).collect(),
+                        result: slot.result.clone(),
+                        link_name: Some(thunk),
+                        abi: "C",
+                        policy: Policy::Direct,
+                        owner: Some((class.clone(), member)),
+                        out: false,
+                        namespace: self.writing.clone(),
+                    });
+                }
+                let entry_params: String = slot.params.iter().map(|param| format!(", {}: {}", param.local, param.ty.ember)).collect();
+                let arguments: Vec<String> = slot
+                    .params
+                    .iter()
+                    .map(|param| match param.ty.mode.as_str() {
+                        "ref " => format!("{prefix}_cpp_ref({})", param.local),
+                        "ref mut " => format!("{prefix}_cpp_ref_mut({})", param.local),
+                        _ => param.local.clone(),
+                    })
+                    .collect();
+                let _ = write!(
+                    functions,
+                    "## `[FFI-39]` — `{spelled}::{}` as its trampoline calls it: the Ember object's own method, virtually.\nextern \"C\" fn {}(object: *mut u8{entry_params}){result}:\n    unsafe:  # SAFETY: the trampoline passes the address of the object it was made for, which lives while C++ calls it\n        {}{prefix}_cpp_handle[{class}](object).{name}({})\n\n",
+                    slot.name,
+                    entries[k],
+                    if slot.result.is_some() { "return " } else { "" },
+                    arguments.join(", ")
+                );
+            }
+            if decl.foreign {
+                let _ = write!(
+                    functions,
+                    "## `[FFI-17d]` — a foreign `delete` of the C++ object (`owner=\"foreign\"`): the Ember object ends with the handle C++ was given.\nextern \"C\" fn {deleted}(object: *mut u8):\n    unsafe:  # SAFETY: C++ deletes the object it was given, whose count is the one it holds\n        _ = {prefix}_cpp_adopt[{class}](object)\n\n"
+                );
+            } else {
+                let _ = write!(
+                    functions,
+                    "## `[FFI-17d]` — a foreign `delete` of an object Ember owns (`owner=\"ember\"`).\nextern \"C\" fn {deleted}(_object: *mut u8):\n    panic(\"a foreign `delete` of a `{class}`, which Ember owns: its trampoline declares `owner=\\\"ember\\\"` [FFI-17d]\")\n\n"
+                );
+            }
+            // The C++ object's end: after the Ember fields, by the base field's `drop` ([FFI-17c]).
+            let destroy_thunk = format!("{prefix}_cpp_{stem}_{}", self.thunks);
+            self.thunks += 1;
+            let _ = writeln!(
+                self.shim,
+                "extern \"C\" void {destroy_thunk}({spelled}* object) noexcept {{ auto* made = static_cast<{tramp}*>(object); if (made->ember_cpp_deleting) return; made->ember_self = nullptr; delete made; }}"
+            );
+            let destroy = format!("{prefix}_raw_{class}_destroy");
+            let _ = writeln!(raw, "    @ffi(link_name=\"{destroy_thunk}\")\n    fn {destroy}(object: *mut {opaque})");
+            let mut item = String::new();
+            let _ = write!(
+                item,
+                "## `[FFI-39]`, `[FFI-17c]` — the C++ object a `{class}` owns, deleted when its Ember fields have been dropped.\nstruct {prefix}_cpp_base_{class}:\n    object: *mut {opaque}\n\n    fn drop(mut self):\n        if not self.object.is_null():\n            unsafe:  # SAFETY: the C++ object this Ember object made, deleted once\n                {destroy}(self.object)\n\n"
+            );
+            let _ = write!(
+                item,
+                "## `[FFI-39]` — `{spelled}`, which an Ember class may derive from: its named virtuals are virtual methods.\npub open class {class}:\n    {prefix}_cpp_base: {prefix}_cpp_base_{class} = {prefix}_cpp_base_{class}(object = null[*mut {opaque}]())\n{body}\n"
+            );
+            item.push_str(&functions);
+            let _ = write!(item, "unsafe extern \"C\":\n{raw}");
+            self.push(&decl.class, Kind::Class, item);
+            self.trampolines.push(Trampoline { class: decl.class.clone(), opaque: opaque.to_string(), default_init: default_at.is_some(), unnamed_virtuals });
         }
     }
 
@@ -1736,6 +2164,20 @@ impl Writer {
         // SAFETY(ffi): types of a live translation unit.
         unsafe {
             let c = type_spelling(ty);
+            // `[FFI-39]` — a `T*` or `T&` of a class with a trampoline: the Ember object, whose C++
+            // object the wrapper passes on (`tramp`).
+            if matches!(ty.kind, CXType_LValueReference | CXType_Pointer) {
+                let pointee = clang_getPointeeType(ty);
+                let declaration = clang_getTypeDeclaration(clang_getCanonicalType(pointee));
+                let named = nested_name(declaration);
+                if clang_getCanonicalType(pointee).kind == CXType_Record && self.trampoline_decls.iter().any(|decl| decl.class == named) {
+                    let opaque = self.ty(pointee, true)?;
+                    let constant = clang_isConstQualifiedType(pointee) != 0;
+                    let pass = if ty.kind == CXType_LValueReference { format!("*{name}") } else { name.to_string() };
+                    let ember = CType { ember: format!("*{}{opaque}", if constant { "" } else { "mut " }), pointee: Some((ident(&named), constant)), char_pointer: false, c: c.clone(), mode: "tramp ".to_string() };
+                    return Ok((ember, format!("{}* {name}", cpp_spelling(pointee)), pass));
+                }
+            }
             let plain = |ember: String, mode: &str| CType { ember, pointee: None, char_pointer: false, c: c.clone(), mode: mode.to_string() };
             match ty.kind {
                 CXType_LValueReference => {
@@ -2115,6 +2557,7 @@ impl Writer {
             rvalue_members: self.rvalue_members,
             namespaces: self.namespaces,
             ns_uses: self.ns_uses,
+            trampolines: self.trampolines,
         }
     }
 }
@@ -2288,6 +2731,8 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
                         if !spelled.contains('(') {
                             out.push((true, usr(child), format!("__is_trivially_copyable({spelled}) && __is_standard_layout({spelled})")));
                             out.push((true, format!("movable {}", usr(child)), format!("__is_constructible({spelled}, {spelled}&&)")));
+                            out.push((true, format!("virtual_dtor {}", usr(child)), format!("__has_virtual_destructor({spelled})")));
+                            out.push((true, format!("final {}", usr(child)), format!("__is_final({spelled})")));
                         }
                         gather(child, in_header, out);
                     }
@@ -2330,6 +2775,7 @@ fn cpp_prelude(stem: &str) -> String {
     let prefix = ember_branding::SYMBOL_PREFIX;
     format!(
         r#"#include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -2361,6 +2807,12 @@ thread_local std::string caught_type, caught_what;
     catch (...) {{ caught_type = "an exception that is no std::exception"; caught_what.clear(); }}
 }}
 template <class T> [[maybe_unused]] T zero() noexcept {{ union {{ unsigned char bytes[sizeof(T)]; T value; }} none = {{}}; return none.value; }}
+[[noreturn]] [[maybe_unused]] void crossed(const char* where) noexcept {{
+    caught();
+    std::fprintf(stderr, "a C++ exception would cross into Ember from %s: %s: %s [FFI-39e]\n", where, caught_type.c_str(), caught_what.c_str());
+    std::fflush(stderr);
+    std::abort();
+}}
 }}
 
 extern "C" const char* {prefix}_cpp_{stem}_error_type(void) noexcept {{ return caught_type.c_str(); }}
@@ -2752,6 +3204,7 @@ pub fn load(
         binding: bound.as_str(),
         cpp: project.as_ref().map(|(standard, ..)| standard.as_str()),
         instantiate: &options.instantiate,
+        trampolines: &[],
     };
     // `[FFI-7]` — the overlays are part of what the record is for.
     let overlay_text = options
@@ -2760,6 +3213,9 @@ pub fn load(
         .map(|(written, _)| std::fs::read_to_string(base.join(written)).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("\n\0\n");
+    // `[FFI-39]` — the classes the overlays give a trampoline.
+    let trampolines = if cpp { trampoline_decls(&overlay_text) } else { Vec::new() };
+    let config = Config { trampolines: &trampolines, ..config };
     let mut cached = false;
     let imported = match import_cached(&config, &overlay_text, &mut cached) {
         Ok((imported, _)) => {
@@ -2796,7 +3252,22 @@ pub fn load(
     }
     // `[FFI-17b]` — a template is not reported: it is imported only as its instantiations, and
     // naming it is `E5055`. The code a reason carries for the type checker is not shown here.
-    for skipped in imported.skipped.iter().filter(|skipped| !skipped.reason.starts_with("[E5055]")) {
+    // `[FFI-39]` — a class an overlay gives a trampoline that cannot have one.
+    for skipped in imported.skipped.iter().filter(|skipped| trampolines.iter().any(|decl| decl.class == skipped.name)) {
+        let (code, why) = match skipped.reason.split_once("] ") {
+            Some(("[E5056", why)) => (codes::E5056, why),
+            Some(("[E5057", why)) => (codes::E5057, why),
+            Some(("[E5059", why)) => (codes::E5059, why),
+            Some(("[E5034", why)) => (codes::E5034, why),
+            Some((_, why)) => (codes::E5031, why),
+            None => (codes::E5031, skipped.reason.as_str()),
+        };
+        sink.emit(
+            Diagnostic::error(code, span, format!("`{}` from `{shown}` cannot have a trampoline: {why}", skipped.name))
+                .note(format!("declared at {}; its overlay entry declares `@ffi(trampoline, …)` [FFI-39]", skipped.at)),
+        );
+    }
+    for skipped in imported.skipped.iter().filter(|skipped| !skipped.reason.starts_with("[E5055]") && !trampolines.iter().any(|decl| decl.class == skipped.name)) {
         let reason = skipped.reason.split_once("] ").filter(|(tag, _)| tag.starts_with("[E")).map_or(skipped.reason.as_str(), |(_, rest)| rest);
         let help = if cpp {
             "to use it, wrap it in a C++ function of a header of yours whose types Ember has"
@@ -2963,6 +3434,12 @@ pub fn load(
             .map(|library| if ember_build::cdylib::is_library_path(library) { base.join(library).to_string_lossy().into_owned() } else { library.clone() })
             .collect(),
         cpp: project.map(|(standard, _, compiler)| (standard, compiler)),
+        trampolines: imported
+            .trampolines
+            .iter()
+            .filter(|found| imported.items.iter().any(|item| item.kind == Kind::Class && item.name == found.class && item.namespace.is_empty()))
+            .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
+            .collect(),
     };
     // `[FFI-41]` — each C++ namespace a module under the import's.
     let children = imported
@@ -2985,6 +3462,12 @@ pub fn load(
                     .map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone()))
                     .collect(),
                 cpp: foreign.cpp.clone(),
+                trampolines: imported
+                    .trampolines
+                    .iter()
+                    .filter(|found| imported.items.iter().any(|item| item.kind == Kind::Class && item.name == found.class && item.namespace == *namespace))
+                    .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
+                    .collect(),
                 ..Default::default()
             };
             (child, module, foreign)
@@ -3439,6 +3922,27 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     None => applied.macros.push((function, made, c_text)),
                 }
             }
+            // `[FFI-39]` — `@ffi(trampoline, virtuals=[…], owner=…) type Name`: the importer made
+            // the class's trampoline (it read the entry before the header); a class it could not
+            // make one for was reported there.
+            ast::OverlayItemKind::Type(name) if arguments().iter().any(|written| written == "trampoline") => {
+                let made = imported.trampolines.iter().any(|found| found.class == name.name.as_str());
+                let refused = imported.skipped.iter().any(|skipped| skipped.name == name.name.as_str() && skipped.reason.starts_with("[E50"));
+                if !made && !refused {
+                    mismatch(sink, name.span, format!("`{header}` declares no class `{}` that an Ember class could derive from", name.name));
+                    continue;
+                }
+                for written in arguments() {
+                    let key = written.split('=').next().unwrap_or("").trim();
+                    if !matches!(key, "trampoline" | "virtuals" | "owner") {
+                        mismatch(sink, name.span, format!("`@ffi({written})` is no argument of a trampoline entry: it takes `virtuals=[…]` and `owner=\"ember\" | \"foreign\"`"));
+                    }
+                    if key == "owner" && !matches!(written.split('=').nth(1).map(|owner| owner.trim().trim_matches('"')), Some("ember" | "foreign")) {
+                        mismatch(sink, name.span, format!("`{written}`: a trampoline's object is owned by `\"ember\"` (the default) or `\"foreign\"` [FFI-17d]"));
+                    }
+                }
+                let _ = take(applied, sink, layer, entry.is_override, "type", name);
+            }
             ast::OverlayItemKind::Type(name) | ast::OverlayItemKind::Enum(name) => {
                 let kind = if matches!(entry.kind, ast::OverlayItemKind::Type(_)) { Kind::Opaque } else { Kind::Type };
                 let found = imported.items.iter().any(|item| item.name == name.name.as_str() && item.kind == kind && (kind == Kind::Opaque || item.text.starts_with("@repr")));
@@ -3628,7 +4132,13 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     };
     let alias = |item: &Item| applied.renamed.get(&item.name).map(|to| format!("pub type {} = {}\n", ident(to), ident(&item.name)));
     let in_class = |item: &Item| item.kind == Kind::Const && item.name.contains("::");
-    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const) && !in_class(item) && item.namespace == namespace) {
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Type | Kind::Const | Kind::Class) && !in_class(item) && item.namespace == namespace) {
+        // `[FFI-39]` — a trampoline's class is written whole: its parts say what is public.
+        if item.kind == Kind::Class {
+            body.push_str(&item.text);
+            body.push_str("\n\n");
+            continue;
+        }
         body.push_str(&declare(item, ""));
         if let Some(alias) = alias(item) {
             body.push_str(&alias);
@@ -3676,7 +4186,11 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
             // `E5061` where it is used.
             (Policy::Unknown, _) => {}
             (policy, owner) => {
-                let (raw, wrapper) = render_wrapper(function, entry, renamed, hidden, policy);
+                // `[FFI-39]` — a method of a class with a trampoline is its Ember class's; the base
+                // implementations of its named virtuals are the class's own.
+                let trampoline = owner.as_ref().and_then(|(owner, _)| imported.trampolines.iter().find(|found| ident(&found.class) == *owner)).map(|found| found.opaque.as_str());
+                let hidden = hidden || (trampoline.is_some() && function.name.starts_with(&format!("{}_cpp_base_", ember_branding::SYMBOL_PREFIX)));
+                let (raw, wrapper) = render_wrapper(function, entry, renamed, hidden, policy, trampoline);
                 member(function.abi, raw);
                 catching |= policy != Policy::Direct;
                 match owner {
@@ -3760,7 +4274,32 @@ fn wrapped(ty: &CType) -> bool {
     ty.pointee.is_some() && !ty.mode.is_empty()
 }
 
-fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy) -> (String, String) {
+/// `[FFI-40]`, `[FFI-39]` — a wrapper's parameter as Ember code writes it.
+fn wrapper_param(param: &str, ty: &CType) -> String {
+    match &ty.pointee {
+        Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
+        Some((inner, _)) if ty.mode == "tramp " => format!("{param}: {inner}"),
+        Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
+        _ => format!("{}{param}: {}", ty.mode, ty.ember),
+    }
+}
+
+/// `[FFI-40]`, `[FFI-39]` — what a wrapper passes its thunk for a parameter.
+fn wrapper_argument(param: &str, ty: &CType) -> String {
+    let prefix = ember_branding::SYMBOL_PREFIX;
+    match &ty.pointee {
+        _ if ty.mode == "owned " && wrapped(ty) => format!("{param}.as_ptr()"),
+        // `[FFI-39]` — the C++ object a trampoline class's object owns.
+        Some((_, true)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object as {}", ty.ember),
+        Some((_, false)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object"),
+        Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
+        // The caller lent it mutably; the borrow the wrapper passes on is its own.
+        Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
+        _ => param.to_string(),
+    }
+}
+
+fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy, trampoline: Option<&str>) -> (String, String) {
     let prefix = ember_branding::SYMBOL_PREFIX;
     let (owner, member) = match &function.owner {
         Some((owner, member)) => (owner.as_str(), Some(*member)),
@@ -3780,13 +4319,17 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             ty.mode.clear();
         }
     }
-    let receiver = match member {
-        Some(Member::Method) => Some((format!("*{owner}"), "(ref self) as *", true)),
-        Some(Member::MutMethod | Member::Destructor) => Some((format!("*mut {owner}"), "(ref mut self) as *mut ", false)),
+    // The receiver: the opaque object's address; for a class with a trampoline, the C++ object
+    // its Ember object owns (`[FFI-39]`).
+    let receiver = match (member, trampoline) {
+        (Some(Member::Method), None) => Some((format!("*{owner}"), format!("(ref self) as *{owner}"), true)),
+        (Some(Member::MutMethod | Member::Destructor), None) => Some((format!("*mut {owner}"), format!("(ref mut self) as *mut {owner}"), false)),
+        (Some(Member::Method), Some(opaque)) => Some((format!("*{opaque}"), format!("self.{prefix}_cpp_base.object as *{opaque}"), true)),
+        (Some(Member::MutMethod), Some(opaque)) => Some((format!("*mut {opaque}"), format!("self.{prefix}_cpp_base.object"), false)),
         _ => None,
     };
     if let Some((pointer, _, constant)) = &receiver {
-        let this = CType { ember: pointer.clone(), pointee: Some((owner.to_string(), *constant)), char_pointer: false, c: String::new(), mode: String::new() };
+        let this = CType { ember: pointer.clone(), pointee: Some((trampoline.unwrap_or(owner).to_string(), *constant)), char_pointer: false, c: String::new(), mode: String::new() };
         raw.params.insert(0, ("this".to_string(), this));
     }
     let result_ty = function.result.as_ref().map(|ty| ty.ember.clone()).unwrap_or_default();
@@ -3809,34 +4352,27 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     };
     let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
     let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*') && !wrapped(ty));
-    let mut params: Vec<String> = function
-        .params
-        .iter()
-        .map(|(param, ty)| match &ty.pointee {
-            Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
-            Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
-            _ => format!("{}{param}: {}", ty.mode, ty.ember),
-        })
-        .collect();
+    let mut params: Vec<String> = function.params.iter().map(|(param, ty)| wrapper_param(param, ty)).collect();
     match member {
         Some(Member::Method) => params.insert(0, "self".to_string()),
+        // A class method's receiver is its handle, which any method may write through ([CLS-7]).
+        Some(Member::MutMethod) if trampoline.is_some() => params.insert(0, "self".to_string()),
         Some(Member::MutMethod) => params.insert(0, "mut self".to_string()),
         _ => {}
     }
-    let mut arguments: Vec<String> = function
+    let mut arguments: Vec<String> = function.params.iter().map(|(param, ty)| wrapper_argument(param, ty)).collect();
+    if let Some((_, argument, _)) = &receiver {
+        arguments.insert(0, argument.clone());
+    }
+    // `[FFI-17d]` — an `owned` object of a class with a trampoline goes to C++ with a count of its
+    // own, which a foreign `delete` ends.
+    let given: Vec<String> = function
         .params
         .iter()
-        .map(|(param, ty)| match &ty.pointee {
-            _ if ty.mode == "owned " && wrapped(ty) => format!("{param}.as_ptr()"),
-            Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
-            // The caller lent it mutably; the borrow the wrapper passes on is its own.
-            Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
-            _ => param.clone(),
-        })
+        .enumerate()
+        .filter(|(index, (_, ty))| ty.mode == "tramp " && entry.and_then(|entry| entry.params.get(*index)).is_some_and(|words| words.iter().any(|written| word(written) == "owned")))
+        .map(|(_, (param, _))| format!("{prefix}_cpp_give({param})"))
         .collect();
-    if let Some((_, conversion, _)) = &receiver {
-        arguments.insert(0, format!("{conversion}{owner}"));
-    }
     if function.out {
         arguments.push(format!("((ref mut slot) as *mut MaybeUninit[{result_ty}]) as *mut {result_ty}"));
     }
@@ -3911,6 +4447,10 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         (false, _) => {
             let _ = writeln!(text, "    unsafe:  {safety}\n        {call}\n    return {prefix}_cpp_result((), failed)");
         }
+    }
+    if !given.is_empty() {
+        let opened = format!("    unsafe:  {safety}\n");
+        text = text.replacen(&opened, &format!("{}{opened}", given.iter().map(|given| format!("    {given}\n")).collect::<String>()), 1);
     }
     text.push('\n');
     (raw_text, text)
@@ -3991,6 +4531,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         binding: if emit_cpp { "cpp" } else { "c" },
         cpp: emit_cpp.then_some(standard.as_str()),
         instantiate: &[],
+        trampolines: &[],
     };
     let (imported, files) = import_header(&config)?;
     if emit_cpp {
@@ -4324,7 +4865,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 4;
+const EMBIND_VERSION: u64 = 5;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -4404,7 +4945,7 @@ fn read_c_type(value: &Value) -> Option<CType> {
     })
 }
 
-const KINDS: [Kind; 4] = [Kind::Type, Kind::Const, Kind::Opaque, Kind::Static];
+const KINDS: [Kind; 5] = [Kind::Type, Kind::Const, Kind::Opaque, Kind::Static, Kind::Class];
 const ABIS: [&str; 4] = ["C", "system", "fastcall", "vectorcall"];
 
 /// `[FFI-14]` — the `.embind` record: the header's files and their hashes (`[FFI-7]`'s "content"),
@@ -4498,6 +5039,16 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ("rvalue_members".to_string(), skips(&imported.rvalue_members)),
         ("namespaces".to_string(), Value::Array(imported.namespaces.iter().map(|namespace| Value::Text(namespace.join("::"))).collect())),
         ("ns_uses".to_string(), Value::Array(imported.ns_uses.iter().map(|(from, to)| texts(&[&from.join("::"), &to.join("::")])).collect())),
+        (
+            "trampolines".to_string(),
+            Value::Array(
+                imported
+                    .trampolines
+                    .iter()
+                    .map(|found| texts(&[&found.class, &found.opaque, if found.default_init { "1" } else { "0" }, &found.unnamed_virtuals.join(",")]))
+                    .collect(),
+            ),
+        ),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -4599,6 +5150,19 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         rvalue_members: read_skips(field(&value, "rvalue_members")?)?,
         namespaces: array_of(field(&value, "namespaces")?)?.iter().map(read_namespace).collect::<Option<_>>()?,
         ns_uses: pairs(field(&value, "ns_uses")?)?.into_iter().map(|(from, to)| (split_namespace(&from), split_namespace(&to))).collect(),
+        trampolines: array_of(field(&value, "trampolines")?)?
+            .iter()
+            .map(|entry| {
+                let entry = array_of(entry)?;
+                let unnamed = text_of(entry.get(3)?)?;
+                Some(Trampoline {
+                    class: text_of(entry.first()?)?,
+                    opaque: text_of(entry.get(1)?)?,
+                    default_init: text_of(entry.get(2)?)? == "1",
+                    unnamed_virtuals: unnamed.split(',').filter(|name| !name.is_empty()).map(str::to_string).collect(),
+                })
+            })
+            .collect::<Option<_>>()?,
     };
     Some((files, imported))
 }

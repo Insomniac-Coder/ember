@@ -40,7 +40,9 @@ fn lint_body(body: &Body, types: &TypeTable, sink: &mut Sink) {
     // erased `ref dyn` call from a final class still has an indirect ABI, but
     // no unknown subclass can override its behavior, so it is not this lint's
     // long-term-access hazard.
-    if types.class_def(access.class).openness == ClassOpenness::Final {
+    // `[FFI-39d]` — a class deriving from a C++ class is called back by C++ whatever its own
+    // openness.
+    if types.class_def(access.class).openness == ClassOpenness::Final && !derives_from_cpp(types, access.class) {
         return;
     }
     let mut pending = vec![(0usize, true)];
@@ -122,8 +124,25 @@ fn dynamic_call_in_hierarchy(
         FuncRef::Interface { .. } => args
             .first()
             .is_some_and(|receiver| operand_derives_from_access(body, receiver, &access.place)),
+        // `[FFI-39d]` — a call into C++, which may call the object's virtuals back through its
+        // trampoline.
+        FuncRef::Direct { symbol, .. } => derives_from_cpp(types, access.class) && symbol.starts_with(&ember_branding::mangled("cpp.")),
         _ => false,
     }
+}
+
+/// `[FFI-39]` — whether a class derives from a C++ class through its trampoline (one a module
+/// `import cpp` wrote).
+fn derives_from_cpp(types: &TypeTable, class: ClassId) -> bool {
+    let mut current = Some(class);
+    for _ in 0..=types.classes().count() {
+        let Some(id) = current else { return false };
+        if types.class_def(id).name.as_str().starts_with("cpp.") {
+            return true;
+        }
+        current = types.class_def(id).base;
+    }
+    false
 }
 
 fn same_hierarchy(types: &TypeTable, left: ClassId, right: ClassId) -> bool {

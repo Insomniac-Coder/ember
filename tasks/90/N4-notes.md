@@ -1,0 +1,5 @@
+# Job N4 — the rest of Annex C: notes (paused 2026-10-20)
+
+- **Stopped at:** the trampoline group is built and committed as one WIP commit (`[FFI-39]`, `[FFI-39b]`, `[FFI-39d]`, `[FFI-39e]`, `[FFI-17c]`, `[FFI-17d]`: tests in `tests/conformance/FFI-39/`, `FFI-39d/`, `FFI-39e/`, `FFI-17c/`, `FFI-17d/`, all passing); the last full quick check showed 8 failures, among them `LNT-6`'s missing `L4002`/`L4003`, not yet diagnosed (they may predate this work or come from it).
+- **Uncommitted:** nothing; `docs/phase-status.json` is not updated yet (`FFI-39`'s unfinished entry still stands), and `[FFI-39a]` (overrides through permanent thunks under hot reload) and `[FFI-39c]` (`Retained` token, `E5060`) are not built.
+- **Next:** diagnose the 8 quick-check failures (run them on `main` too), then `[FFI-39a]`'s reload test, `[FFI-39c]` with its owner question, the phase-status entries, the gates (error pages for `E5056`–`E5059`), g++ checks of the trampoline thunks in WSL, and the rest of the job sheet in its order.

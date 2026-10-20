@@ -2443,6 +2443,20 @@ static void foreign_owned_rehash(size_t cap) {
     g_foreign_owned_filled = g_foreign_owned_used;
 }
 
+ember_obj_header* ember_cpp_object_adopt(ember_obj_header* object, ember_loc at) {
+    uint32_t strong = object_load_strong(object);
+    if (strong != 1) {
+        char buffer[256];
+        int written = snprintf(buffer, sizeof buffer,
+            "a foreign `delete` of a `%s` that Ember code still holds %u handle%s to: "
+            "its C++ object would be gone under them [FFI-17d]",
+            object->ti != NULL && object->ti->name != NULL ? object->ti->name : "object",
+            (unsigned)(strong - 1), strong == 2 ? "" : "s");
+        ember_panic(buffer, written > 0 ? (size_t)written : 0, at);
+    }
+    return object;
+}
+
 void* ember_ffi_adopt(void* object, ember_loc at) {
     if (object == NULL) {
         return object;

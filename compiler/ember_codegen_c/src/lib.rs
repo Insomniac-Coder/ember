@@ -8700,6 +8700,17 @@ impl Emitter<'_> {
                         };
                     }
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
+                    // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
+                    Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
+                    Builtin::CppObjectHandle { adopt: false } => {
+                        return format!("({RT}obj_retain(({RT}obj_header*)({0})), (void*)({0}))", rendered[0]);
+                    }
+                    Builtin::CppObjectHandle { adopt: true } => {
+                        return format!("((void*){RT}cpp_object_adopt(({RT}obj_header*)({}), {}))", rendered[0], self.location(span));
+                    }
+                    Builtin::CppObjectGive => {
+                        return format!("({RT}obj_retain(({RT}obj_header*)({0})), {RT}obj_pin(({RT}obj_header*)({0})))", rendered[0]);
+                    }
                     Builtin::ForeignDestructor { symbol, ret, fn_ty, .. } => {
                         if self.is_void(*ret) {
                             return format!("(({}){})", self.c_type(*fn_ty), rendered[0]);

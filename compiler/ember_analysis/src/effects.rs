@@ -1377,7 +1377,10 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         // and the second-owner panic; a box's end may panic on the wrong thread (`[FFI-33b]`).
         B::ForeignAdopt => (ALLOC | Effects::SYNC, "recording a foreign object Ember owns"),
         B::ForeignRelease => (Effects::SYNC | Effects::PANIC, "a foreign object's end"),
-        B::ForeignThread | B::ForeignDestructor { .. } | B::RetainedAddress => (Effects::NONE, ""),
+        B::ForeignThread | B::ForeignDestructor { .. } | B::RetainedAddress | B::CppObjectAddress => (Effects::NONE, ""),
+        // `[FFI-39]`, `[FFI-17d]` — a count of a class object, and the check that a foreign
+        // `delete` ends the only one.
+        B::CppObjectHandle { .. } | B::CppObjectGive => (Effects::SYNC | Effects::PANIC, "a count of an object C++ holds"),
         // `[FFI-23]` — setting a Sync object's pinned flag is an atomic or.
         B::RetainedPin => (Effects::SYNC, "pinning an object for foreign code"),
         // `[DET-2]` — a transcendental function from the platform library.
