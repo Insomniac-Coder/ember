@@ -167,7 +167,7 @@ pub fn shared_runtime(
             Toolchain::Msvc { .. } => {
                 let definitions = staging.join(format!("{stem}.def"));
                 write_definitions(&object, &definitions, &stem)?;
-                command.args(["/nologo", "/LD", "/MD"]).arg(&object).arg(format!("/Fe{}", library.display()));
+                command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).arg(&object).arg(format!("/Fe{}", library.display()));
                 command.arg("/link").arg(format!("/DEF:{}", definitions.display()))
                     .arg(format!("/IMPLIB:{}", staging.join(format!("{stem}.lib")).display()));
             }
@@ -224,7 +224,7 @@ pub fn link_image(
     let mut command = compiler_command(toolchain);
     match toolchain {
         Toolchain::Msvc { .. } => {
-            command.args(["/nologo", "/LD", "/MD"]).arg(&object).args(relaxed).arg(&runtime.link_with)
+            command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).arg(&object).args(relaxed).arg(&runtime.link_with)
                 .args(libraries.iter().map(|library| crate::cdylib::windows_library(library)))
                 .arg(format!("/Fe{}", output.display()))
                 .arg("/link").arg(format!("/INCLUDE:{manifest_symbol}"));

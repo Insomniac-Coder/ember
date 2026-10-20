@@ -342,6 +342,63 @@ fn the_manifest_names_the_language() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[BLD-FFI-1b]` — with MSVC, the C++ project's runtime switch (and `_DEBUG`,
+/// `_ITERATOR_DEBUG_LEVEL`) is inherited by every translation unit of the target: a project built
+/// with `/MDd` makes a program whose own C uses the debug C runtime too, and none of the release
+/// one. With any compiler, two projects that disagree are `E9020`, and a project whose flags pass a
+/// response file, which may name its runtime, is `E9021`.
+#[test]
+fn the_cpp_project_s_runtime_is_inherited() {
+    let probe = ember(&["--version"], &std::env::temp_dir());
+    let header = "#pragma once\n#include <string>\ninline int length(int n) { return static_cast<int>(std::string(static_cast<std::size_t>(n), 'x').size()); }\n";
+    let program = "import cpp \"engine.hpp\" with (project = \"engine\")\n\nfn main():\n    unsafe:  # SAFETY(ffi): a scalar call\n        \
+        match cpp.length(5):\n            Ok(n):\n                println(n)\n            Err(error):\n                println(error.what)\n";
+    // The MSVC runtime switch is cl's and clang-cl's: only their builds inherit it.
+    if probe.stdout.lines().any(|line| line.starts_with("C compiler: msvc")) {
+        let dir = scratch();
+        package(&dir, "[package]\nname = \"engine_user\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"/MDd\"]\n", &[("main", program)]);
+        std::fs::write(dir.join("src").join("engine.hpp"), header).unwrap();
+        let run = ember(&["run"], &dir);
+        assert!(run.ok, "{}", run.stderr);
+        assert_eq!(run.stdout.trim(), "5", "{}", run.stderr);
+        let exe = walk(&dir).into_iter().find(|path| path.file_name().is_some_and(|name| name == "main.exe")).expect("the program");
+        let image = String::from_utf8_lossy(&std::fs::read(&exe).unwrap()).to_lowercase();
+        assert!(image.contains("ucrtbased.dll") && image.contains("vcruntime140d.dll"), "the program does not use the debug C runtime");
+        assert!(!image.contains("api-ms-win-crt-") && !image.contains("vcruntime140.dll"), "the program's own C still uses the release C runtime");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    let dir = scratch();
+    let two = "import cpp \"engine.hpp\" with (project = \"engine\")\nimport cpp \"tools.hpp\" with (project = \"tools\")\n\nfn main():\n    pass\n";
+    package(&dir, "[package]\nname = \"two\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"/MDd\"]\n\n[cpp.tools]\nflags = [\"/MD\"]\n", &[("main", two)]);
+    std::fs::write(dir.join("src").join("engine.hpp"), header).unwrap();
+    std::fs::write(dir.join("src").join("tools.hpp"), "#pragma once\ninline int twice(int x) noexcept { return 2 * x; }\n").unwrap();
+    let built = ember(&["build"], &dir);
+    assert!(!built.ok && built.stderr.contains("error[E9020]") && built.stderr.contains("`/MDd`") && built.stderr.contains("`/MD`"), "{}", built.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = scratch();
+    package(&dir, "[package]\nname = \"rsp\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"@engine.rsp\"]\n", &[("main", program)]);
+    std::fs::write(dir.join("src").join("engine.hpp"), header).unwrap();
+    let built = ember(&["build"], &dir);
+    assert!(!built.ok && built.stderr.contains("error[E9021]") && built.stderr.contains("`engine.rsp`"), "{}", built.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Every file under `dir`.
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
 /// `[BLD-FFI-4]` — Ember's emitted C and the project's C++ are compiled by one compiler: a
 /// `[cpp.<project>]` section naming the compiler Ember's C is built with builds, and one naming
 /// another is refused, naming both.

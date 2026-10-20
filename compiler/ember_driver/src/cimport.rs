@@ -660,8 +660,35 @@ fn arguments(config: &Config) -> Vec<String> {
     };
     args.extend(config.include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     args.extend(config.defines.iter().map(|define| format!("-D{define}")));
-    args.extend(config.flags.iter().cloned());
+    args.extend(clang_flags(config.flags));
     args
+}
+
+/// A project's compile flags as libclang parses with them: GCC-style ones as written; MSVC's `/D`,
+/// `/U` and `/I` as their GCC forms; its runtime switch as the macros cl defines for it (`/MDd` is
+/// `_MT`, `_DLL` and `_DEBUG`, which set the C++ standard library's layout, `[BLD-FFI-1b]`); any
+/// other MSVC switch, and a response file, left out, since they change no declaration.
+fn clang_flags(flags: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = flags.iter();
+    while let Some(flag) = rest.next() {
+        let Some(switch) = flag.strip_prefix('/') else {
+            if !flag.starts_with('@') {
+                out.push(flag.clone());
+            }
+            continue;
+        };
+        match switch {
+            "MD" => out.extend(["-D_MT".to_string(), "-D_DLL".to_string()]),
+            "MDd" => out.extend(["-D_MT".to_string(), "-D_DLL".to_string(), "-D_DEBUG".to_string()]),
+            "MT" => out.push("-D_MT".to_string()),
+            "MTd" => out.extend(["-D_MT".to_string(), "-D_DEBUG".to_string()]),
+            "D" | "U" | "I" => out.extend(rest.next().map(|value| format!("-{switch}{value}"))),
+            _ if switch.len() > 1 && matches!(&switch[..1], "D" | "U" | "I") => out.push(format!("-{switch}")),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// `[FFI-6]` — parse the header and write its module.
@@ -3680,6 +3707,9 @@ pub struct Known {
     implementations: HashMap<(PathBuf, String), Span>,
     /// `[FFI-30]` — each C declaration an import wrote, by Clang's USR.
     shared: HashMap<String, Shared>,
+    /// `[BLD-FFI-1b]` — the first import whose flags name the runtime: its header, those flags, and
+    /// what they amount to, which every other import's must agree with.
+    runtime: Option<(String, Vec<&'static str>, (&'static str, bool, u8))>,
 }
 
 /// A module `import c` wrote: its path, its declarations, and what else the import found.
@@ -4020,6 +4050,12 @@ pub fn load(
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
+    // `[BLD-FFI-1b]` — the runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` the import's flags
+    // name, which the target inherits and every import must agree on.
+    if let Err(diagnostic) = runtime_agrees(&mut known.runtime, &c_flags, cpp, &shown, span) {
+        sink.emit(diagnostic);
+        return None;
+    }
     let mut identities = vec![("header".to_string(), imported.header.clone())];
     identities.extend(options.overlays.iter().map(|(written, _)| ("overlay".to_string(), base.join(written))));
     let foreign = ember_typeck::ForeignImport {
@@ -4147,6 +4183,70 @@ pub fn build_objects(
         libraries.extend(foreign.link.iter().cloned());
     }
     Ok((objects, libraries))
+}
+
+/// `[BLD-FFI-1b]` — the MSVC runtime-library switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` the build
+/// inherits, byte for byte, from the projects of its imports (a C++ project's flags and defines, or
+/// the `[c]` flags a C import is compiled with); each import agreed with the others when it was
+/// loaded (`runtime_agrees`).
+pub fn inherited_runtime(modules: &[ember_typeck::LoadedModule]) -> Result<Vec<&'static str>, Diagnostic> {
+    let mut first = None;
+    for module in modules {
+        let Some(foreign) = module.foreign.as_ref().filter(|foreign| !foreign.shim.is_empty()) else { continue };
+        runtime_agrees(&mut first, &foreign.flags, foreign.cpp.is_some(), &foreign.header, Span::DUMMY)?;
+    }
+    Ok(first.map(|(_, flags, _)| flags).unwrap_or_default())
+}
+
+/// `[BLD-FFI-1b]` — whether an import's flags agree on the runtime with the first import's that
+/// named it (`first`, which the first to name it becomes): every import that names any of the
+/// runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` must name the same, the implied ones
+/// included (`/MDd` defines `_DEBUG`, which makes the iterator debug level 2), or the target's
+/// translation units would disagree (`E9020`). A C++ project whose flags pass a response file,
+/// which may name them, leaves its runtime undetermined (`E9021`).
+fn runtime_agrees(first: &mut Option<(String, Vec<&'static str>, (&'static str, bool, u8))>, flags: &[String], cpp: bool, header: &str, span: Span) -> Result<(), Diagnostic> {
+    if cpp && let Some(file) = flags.iter().find(|flag| flag.starts_with('@')) {
+        return Err(Diagnostic::error(codes::E9021, span, format!("the C++ runtime of `{header}` could not be determined: its project's flags pass the response file `{}`", &file[1..]))
+            .note("the MSVC runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` change the C++ standard library's layout and heap, and the build inherits them byte for byte [BLD-FFI-1b]")
+            .help("write the project's runtime switch (`/MD`, `/MDd`, `/MT` or `/MTd`) and those defines in its `[cpp.<project>]` flags"));
+    }
+    let (named, meaning) = runtime_flags(flags);
+    if named.is_empty() {
+        return Ok(());
+    }
+    match first {
+        None => *first = Some((header.to_string(), named, meaning)),
+        Some((before, written, was)) if *was != meaning => {
+            return Err(Diagnostic::error(codes::E9020, span, format!("the imports of `{before}` and `{header}` disagree on the C++ runtime"))
+                .note(format!("`{before}` is compiled with `{}`, and `{header}` with `{}`", written.join(" "), named.join(" ")))
+                .note("one target's translation units are compiled with one runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which change the C++ standard library's layout [BLD-FFI-1b]")
+                .help("build the C++ projects with one runtime, and name it in each one's flags"));
+        }
+        Some(_) => {}
+    }
+    Ok(())
+}
+
+/// `[BLD-FFI-1b]` — what of the runtime a list of MSVC flags names: the flags as the build passes
+/// them on (`/MDd`, `/D_DEBUG`, `/D_ITERATOR_DEBUG_LEVEL=1`; `-` forms read too, the last switch
+/// winning as it does for cl), and what they amount to: the switch, whether `_DEBUG` is defined, and
+/// the iterator debug level.
+fn runtime_flags(flags: &[String]) -> (Vec<&'static str>, (&'static str, bool, u8)) {
+    const SWITCHES: [&str; 4] = ["/MD", "/MDd", "/MT", "/MTd"];
+    const LEVELS: [&str; 3] = ["/D_ITERATOR_DEBUG_LEVEL=0", "/D_ITERATOR_DEBUG_LEVEL=1", "/D_ITERATOR_DEBUG_LEVEL=2"];
+    let plain = |flag: &String| flag.replacen('-', "/", 1);
+    let switch = flags.iter().rev().map(plain).find_map(|flag| SWITCHES.into_iter().find(|known| *known == flag));
+    let debug = flags.iter().map(plain).any(|flag| flag == "/D_DEBUG" || flag == "/D_DEBUG=1");
+    let level = flags.iter().rev().map(plain).find_map(|flag| LEVELS.into_iter().find(|known| *known == flag));
+    let mut named: Vec<&'static str> = switch.into_iter().collect();
+    if debug {
+        named.push("/D_DEBUG");
+    }
+    named.extend(level);
+    let shown = switch.unwrap_or("/MD");
+    let debugging = debug || shown.ends_with('d');
+    let iterators = level.and_then(|flag| flag.rsplit('=').next()?.parse().ok()).unwrap_or(if debugging { 2 } else { 0 });
+    (named, (shown, debugging, iterators))
 }
 
 /// `[FFI-50]` — one key of a manifest inline table as written: `build_dir` of

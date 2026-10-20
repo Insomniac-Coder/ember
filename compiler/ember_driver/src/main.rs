@@ -5170,6 +5170,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .clone()
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+    // `[BLD-FFI-1b]` — the C++ projects' runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which
+    // every translation unit of the target is compiled with.
+    if matches!(toolchain, Toolchain::Msvc { .. }) {
+        match cimport::inherited_runtime(&modules) {
+            Ok(flags) => ember_build::inherit_msvc_runtime(flags),
+            Err(diagnostic) => {
+                sink.emit(diagnostic);
+                return Ok(finish(&sink, &map, options));
+            }
+        }
+    }
     if options.build_id {
         println!("{}", build_id(&map, options.profile, &toolchain, &runtime)?);
     }

@@ -1550,7 +1550,38 @@ fn msvc_flags(profile: Profile) -> Vec<&'static str> {
         Profile::Development => &["/O2", "/Zi", "/MD"],
         Profile::Release => &["/O2", "/GL", "/MD", "/DEMBER_RELEASE"],
     };
-    ["/nologo", "/std:c11", "/W3", "/fp:precise"].iter().chain(optimisation).copied().collect()
+    // `[BLD-FFI-1b]` — a C++ project's runtime switch and layout defines, where the build inherits them.
+    let inherited = inherited_msvc_runtime();
+    let switch = msvc_runtime_switch();
+    ["/nologo", "/std:c11", "/W3", "/fp:precise"]
+        .iter()
+        .chain(optimisation)
+        .copied()
+        .map(|flag| if flag == "/MD" { switch } else { flag })
+        .chain(inherited.into_iter().filter(|flag| !flag.starts_with("/M")))
+        .collect()
+}
+
+/// `[BLD-FFI-1b]` — the MSVC runtime-library switch and the defines that change the C++ standard
+/// library's layout (`_DEBUG`, `_ITERATOR_DEBUG_LEVEL`) that the build inherits from the C++ project
+/// it imports, which every translation unit of the target is then compiled with. Empty when there
+/// is none to inherit: the release runtime, `/MD` (D-252), and no define.
+static INHERITED_MSVC_RUNTIME: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+/// `[BLD-FFI-1b]` — inherit a C++ project's runtime switch and layout defines for this build.
+pub fn inherit_msvc_runtime(flags: Vec<&'static str>) {
+    if let Ok(mut inherited) = INHERITED_MSVC_RUNTIME.lock() {
+        *inherited = flags;
+    }
+}
+
+fn inherited_msvc_runtime() -> Vec<&'static str> {
+    INHERITED_MSVC_RUNTIME.lock().map(|inherited| inherited.clone()).unwrap_or_default()
+}
+
+/// `[BLD-FFI-1b]` — `/MD`, or the runtime switch the build inherits.
+pub fn msvc_runtime_switch() -> &'static str {
+    inherited_msvc_runtime().into_iter().find(|flag| flag.starts_with("/M")).unwrap_or("/MD")
 }
 
 /// clang's and gcc's flags for a profile, shared by the program's compile and

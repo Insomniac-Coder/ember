@@ -30,6 +30,9 @@
 #if defined(_WIN32)
 #include <malloc.h>
 #endif
+#if defined(_WIN32) && defined(_DEBUG)
+#include <crtdbg.h>
+#endif
 
 /* -- state ------------------------------------------------------------------
  *
@@ -972,6 +975,17 @@ int ember_rt_init_v2(const ember_rt_config* cfg, uint32_t caller_abi) {
     if (g_initialised) {
         return 0; /* idempotent */
     }
+#if defined(_WIN32) && defined(_DEBUG)
+    /* [BLD-FFI-1b] A program that inherits a C++ project's debug C runtime (`/MDd`, `/MTd`) gets
+     * its reports too: each goes to standard error, never to a window that waits for a click
+     * (D-252). */
+    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
     ember_rt_config config = ember_rt_config_default();
     if (cfg) {
         /* [VER-4] No field past the caller's `size` is read. */
