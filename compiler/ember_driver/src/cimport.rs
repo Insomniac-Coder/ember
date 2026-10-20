@@ -4248,7 +4248,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt"]).filter(|name| words.contains(name)).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained"]).filter(|name| words.contains(name)).collect();
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -4279,6 +4279,8 @@ fn wrapper_param(param: &str, ty: &CType) -> String {
     match &ty.pointee {
         Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
         Some((inner, _)) if ty.mode == "tramp " => format!("{param}: {inner}"),
+        // `[FFI-39c]` (ODR-156) — a `retained` one: the token the program pinned and keeps.
+        Some((inner, _)) if ty.mode == "token " => format!("{param}: Retained[{inner}]"),
         Some((inner, _)) if wrapped(ty) => format!("{param}: {}{inner}", ty.mode),
         _ => format!("{}{param}: {}", ty.mode, ty.ember),
     }
@@ -4292,6 +4294,8 @@ fn wrapper_argument(param: &str, ty: &CType) -> String {
         // `[FFI-39]` — the C++ object a trampoline class's object owns.
         Some((_, true)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object as {}", ty.ember),
         Some((_, false)) if ty.mode == "tramp " => format!("{param}.{prefix}_cpp_base.object"),
+        Some((_, true)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object as {}", ty.ember),
+        Some((_, false)) if ty.mode == "token " => format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"),
         Some((inner, true)) if wrapped(ty) => format!("(ref {param}) as *{inner}"),
         // The caller lent it mutably; the borrow the wrapper passes on is its own.
         Some((inner, false)) if wrapped(ty) => format!("((ref {param}) as *{inner}) as *mut {inner}"),
@@ -4352,7 +4356,22 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     };
     let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
     let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*') && !wrapped(ty));
-    let mut params: Vec<String> = function.params.iter().map(|(param, ty)| wrapper_param(param, ty)).collect();
+    // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline that C++ keeps (`retained`)
+    // is passed as the `Retained` token the program holds for as long as C++ does.
+    let retained = |index: usize| entry.and_then(|entry| entry.params.get(index)).is_some_and(|words| words.iter().any(|written| word(written) == "retained"));
+    let wrapper_params: Vec<(String, CType)> = function
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, (param, ty))| {
+            let mut ty = ty.clone();
+            if ty.mode == "tramp " && retained(index) {
+                ty.mode = "token ".to_string();
+            }
+            (param.clone(), ty)
+        })
+        .collect();
+    let mut params: Vec<String> = wrapper_params.iter().map(|(param, ty)| wrapper_param(param, ty)).collect();
     match member {
         Some(Member::Method) => params.insert(0, "self".to_string()),
         // A class method's receiver is its handle, which any method may write through ([CLS-7]).
@@ -4360,7 +4379,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         Some(Member::MutMethod) => params.insert(0, "mut self".to_string()),
         _ => {}
     }
-    let mut arguments: Vec<String> = function.params.iter().map(|(param, ty)| wrapper_argument(param, ty)).collect();
+    let mut arguments: Vec<String> = wrapper_params.iter().map(|(param, ty)| wrapper_argument(param, ty)).collect();
     if let Some((_, argument, _)) = &receiver {
         arguments.insert(0, argument.clone());
     }

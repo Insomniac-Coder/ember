@@ -15273,13 +15273,20 @@ impl<'a> Checker<'a> {
     /// to hold, the object pinned.
     fn synth_cpp_object(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
         let prefix = ember_branding::SYMBOL_PREFIX;
-        let which = ["address", "handle", "adopt", "give"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
+        let which = ["address", "handle", "adopt", "give", "token_object"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
         if !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
             return None;
         }
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let [arg] = args else { return Some(error) };
         let value = self.synth_committed(&arg.value);
+        // `[FFI-39c]` — the object a `Retained` token holds (a count of its own).
+        if which == 4 {
+            let Some(held) = self.lock_inner(value.ty, "std.ffi.Retained").filter(|held| matches!(self.types.kind(*held), TyKind::Class(_))) else {
+                return Some(error);
+            };
+            return Some(Expr { ty: held, kind: ExprKind::Field { base: Box::new(value), index: 0 }, span });
+        }
         if matches!(which, 0 | 3) {
             if !matches!(self.types.kind(value.ty), TyKind::Class(_)) {
                 return Some(error);
@@ -31959,6 +31966,34 @@ impl<'a> Checker<'a> {
             return Expr { ty: expected, kind: ExprKind::Builtin { which: Builtin::SpanSharedReborrow, args: vec![source] }, span };
         }
         if self.emit_callable_mode_mismatch(expr.span, expected, expr.ty) {
+            return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
+        }
+        // `[FFI-23]`, `[FFI-39c]` (ODR-156) — a `Retained` token of a class is a token of its base:
+        // the same object, held as long. The base's token holds the upcast handle, a count of its
+        // own that the token's end releases.
+        if let (Some(found), Some(wanted)) = (self.lock_inner(expr.ty, "std.ffi.Retained"), self.lock_inner(expected, "std.ffi.Retained"))
+            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(found).clone(), self.types.kind(wanted).clone())
+            && self.types.class_is_subclass_of(derived, base)
+            && let TyKind::Struct(token) = *self.types.kind(expected)
+        {
+            let span = expr.span;
+            let handle = Expr { ty: found, kind: ExprKind::Field { base: Box::new(expr), index: 0 }, span };
+            let upcast = Expr { ty: wanted, kind: ExprKind::Cast { expr: Box::new(handle), to: wanted }, span };
+            return Expr { ty: expected, kind: ExprKind::StructLit { struct_id: token, fields: vec![upcast] }, span };
+        }
+        // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline passed bare where C++
+        // keeps it: nothing would hold the token that keeps it alive.
+        if let Some(wanted) = self.lock_inner(expected, "std.ffi.Retained")
+            && let (TyKind::Class(derived), TyKind::Class(base)) = (self.types.kind(expr.ty).clone(), self.types.kind(wanted).clone())
+            && (derived == base || self.types.class_is_subclass_of(derived, base))
+            && self.cpp_trampoline(base).is_some()
+        {
+            let shown = self.types.display(wanted);
+            self.sink.emit(
+                Diagnostic::error(codes::E5060, expr.span, format!("C++ keeps this object, and nothing here holds the `Retained` token that keeps it alive for C++"))
+                    .help(format!("pin it and keep the token as long as C++ needs the object: `token = Retained.pin(…)`, then pass `token` (a `Retained[{shown}]`)"))
+                    .note("a parameter that keeps the object takes the token the program holds (ODR-156) [FFI-39c]"),
+            );
             return Expr { ty: expected, kind: ExprKind::Error, span: expr.span };
         }
         // `[CLS-4]`/`[DSP-1]` — single-inheritance handles upcast to an
