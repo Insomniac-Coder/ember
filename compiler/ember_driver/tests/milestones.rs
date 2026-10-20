@@ -7254,3 +7254,292 @@ fn main():
     assert_eq!(filtered.exit, 0, "{}{}", filtered.stdout, filtered.stderr);
     assert!(filtered.stdout.contains("2 passed; 0 failed; 0 quarantined; 9 filtered out"), "{}", filtered.stdout);
 }
+
+/// The header of the `ember bind` milestones: a pointer the header says nothing about, a scalar
+/// function, a `const` and a mutable pointer, and a variadic function the importer skips.
+const BIND_HEADER: &str = "\
+#include <stddef.h>
+static inline int bind_add(int a, int b) { return a + b; }
+static inline int bind_sum(const int* items, size_t n) { int t = 0; for (size_t i = 0; i < n; i++) t += items[i]; return t; }
+static inline void bind_zero(int* items, size_t n) { for (size_t i = 0; i < n; i++) items[i] = 0; }
+int bind_log(const char* format, ...);
+";
+
+/// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay: each fact the header cannot
+/// state a `TODO(…)` word, each derived one a comment, each skipped declaration a comment with its
+/// reason. It compiles unchanged (every call still `unsafe`), is never written over, and `--merge`
+/// adds only what it lacks, keeping what was written by hand.
+#[test]
+fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
+    let dir = temporary_directory("bind-init");
+    std::fs::write(dir.join("calc.h"), BIND_HEADER).unwrap();
+    let init = ember(&["bind", "calc.h", "--init"], &dir);
+    assert_eq!(init.exit, 0, "{}", init.stderr);
+    let overlay = dir.join(format!("calc.overlay.{SOURCE_EXT}"));
+    let written = std::fs::read_to_string(&overlay).expect("the starter overlay is written");
+    for line in [
+        "unsafe overlay c \"calc.h\":",
+        "    fn bind_add(a, b) -> unsafe",
+        "    # derived: `items` is a read-only borrow (`const`)",
+        "    fn bind_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)",
+        "    # derived: `items` is a mutable borrow (no `const`)",
+        "    # skipped: `bind_log` (calc.h:5): variadic",
+    ] {
+        assert!(written.contains(line), "the starter overlay lacks {line:?}:\n{written}");
+    }
+    // It compiles unchanged: every call is still the caller's assertion.
+    std::fs::write(dir.join(ember_branding::source_file("main")), format!(
+        "import c \"calc.h\" with (overlay = \"calc.overlay.{SOURCE_EXT}\")\n\nfn main():\n    \
+         items: Array[i32] = [1, 2]\n    unsafe:  # SAFETY(ffi): two live items\n        \
+         println(c.bind_add(1, 2), c.bind_sum(ref_to_ptr(ref items[0]), 2))\n")).unwrap();
+    let checked = ember(&["check", &ember_branding::source_file("main")], &dir);
+    assert_eq!(checked.exit, 0, "the starter overlay does not compile:\n{}", checked.stderr);
+    // Never written over.
+    std::fs::write(&overlay, written.replace("    fn bind_add(a, b) -> unsafe\n", "    fn bind_add(a, b)\n    # mine\n")).unwrap();
+    let again = ember(&["bind", "calc.h", "--init"], &dir);
+    assert_ne!(again.exit, 0, "an existing overlay was written over");
+    // `--merge` adds the new function only.
+    std::fs::write(dir.join("calc.h"), format!("{BIND_HEADER}static inline int bind_neg(int a) {{ return -a; }}\n")).unwrap();
+    let merged = ember(&["bind", "calc.h", "--init", "--merge"], &dir);
+    assert_eq!(merged.exit, 0, "{}", merged.stderr);
+    let after = std::fs::read_to_string(&overlay).unwrap();
+    assert!(after.contains("    fn bind_add(a, b)\n    # mine\n"), "a hand-written entry was lost:\n{after}");
+    assert!(after.contains("    fn bind_neg(a) -> unsafe\n"), "the new function is missing:\n{after}");
+    assert_eq!(after.matches("fn bind_sum(").count(), 1, "an entry was added twice:\n{after}");
+    assert_eq!(after.matches("# skipped: `bind_log`").count(), 1, "a skip was noted twice:\n{after}");
+}
+
+/// `[CLI-6]` — `ember bind --report` lists every skipped declaration and every declaration still
+/// `unsafe` with its unknown facts, and exits non-zero on a skip; `--baseline` limits that to skips
+/// the baseline does not list. `[FFI-35a]` — it lists, as an assumption, every pointer parameter
+/// the overlay gives no `retained` word: it does not retain the pointer. `[CLI-7]` — `ember bind
+/// --check <overlay>` checks `[FFI-12]` and prints how many declarations are safe, still `unsafe`,
+/// and skipped.
+#[test]
+fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
+    let dir = temporary_directory("bind-report");
+    std::fs::write(dir.join("calc.h"), BIND_HEADER).unwrap();
+    std::fs::write(dir.join(format!("good.{SOURCE_EXT}")), "unsafe overlay c \"calc.h\":\n    fn bind_add(a, b)\n    fn bind_sum(items: borrowed count(n), n)\n    fn bind_zero(items: borrowed TODO(count), n)\n").unwrap();
+    let report = ember(&["bind", "calc.h", "--report", "--overlay", &format!("good.{SOURCE_EXT}")], &dir);
+    assert_ne!(report.exit, 0, "a skip did not fail the report:\n{}", report.stdout);
+    for line in [
+        "skipped: `bind_log` (calc.h:5): variadic",
+        "unsafe: `bind_zero`: `items`: TODO(count)",
+        "assumes: `bind_sum`: `items` does not retain the pointer",
+        "1 skipped declaration(s)",
+    ] {
+        assert!(report.stdout.contains(line), "the report lacks {line:?}:\n{}", report.stdout);
+    }
+    assert!(!report.stdout.contains("unsafe: `bind_add`") && !report.stdout.contains("unsafe: `bind_sum`"), "{}", report.stdout);
+    let written = ember(&["bind", "calc.h", "--report", "--write-baseline", "skips.txt"], &dir);
+    assert!(written.stdout.contains("unsafe: `bind_add`: safe to call"), "{}", written.stdout);
+    let baselined = ember(&["bind", "calc.h", "--report", "--baseline", "skips.txt"], &dir);
+    assert_eq!(baselined.exit, 0, "a skip in the baseline failed the report:\n{}", baselined.stdout);
+
+    let check = ember(&["bind", "calc.h", "--check", &format!("good.{SOURCE_EXT}")], &dir);
+    assert_eq!(check.exit, 0, "{}", check.stderr);
+    assert!(check.stdout.contains("2 safe, 1 still unsafe, 1 skipped"), "{}", check.stdout);
+    std::fs::write(dir.join(format!("drifted.{SOURCE_EXT}")), "unsafe overlay c \"calc.h\":\n    fn bind_add(a)\n").unwrap();
+    let drifted = ember(&["bind", "calc.h", "--check", &format!("drifted.{SOURCE_EXT}")], &dir);
+    assert_ne!(drifted.exit, 0, "a drifted overlay passed the check");
+    assert!(drifted.stderr.contains("E5010") && drifted.stderr.contains("`bind_add` takes 2 parameters"), "{}", drifted.stderr);
+}
+
+/// `[FFI-29c]` — a call to a wrapped `static inline` function costs one extra call: `ember inspect
+/// --cost` reports it as `wrapped (static inline)`, beside an ordinary foreign call's one direct
+/// call; a variadic `static inline` function cannot be wrapped and is skipped with `W5002`.
+#[test]
+fn inspect_reports_a_wrapped_static_inline_call() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-wrapped");
+    std::fs::write(dir.join("wrapped.h"), "\
+static inline int wrapped_twice(int x) { return 2 * x; }
+static inline int wrapped_sum(int n, ...) { return n; }
+int wrapped_plain(int x);
+").unwrap();
+    std::fs::write(dir.join("wrapped.c"), "#include \"wrapped.h\"\nint wrapped_plain(int x) { return x + 1; }\n").unwrap();
+    let source = dir.join(format!("calls.{SOURCE_EXT}"));
+    std::fs::write(&source, "import c \"./wrapped.c\"\n\nfn main():\n    unsafe:  # SAFETY(ffi): scalar calls\n        \
+        println(c.wrapped_twice(2), c.wrapped_plain(2))\n").unwrap();
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
+    assert!(build.stderr.contains("W5002") && build.stderr.contains("`wrapped_sum` is not imported") && build.stderr.contains("variadic"),
+        "the variadic static inline function was not reported:\n{}", build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("calls.safety.json").to_string_lossy().into_owned();
+    let report = ember(&["inspect", &table, "--cost"], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    assert!(report.stdout.contains("wrapped_twice`, wrapped (static inline)"), "{}", report.stdout);
+    assert!(report.stdout.contains("wrapped_plain`, one direct call"), "{}", report.stdout);
+}
+
+/// `[FFI-7]` — a header is parsed again only when its content, its overlay, or a setting that can
+/// change a binding (its defines) changes; otherwise the import is read from its `.embind` record.
+/// `[FFI-14]` — the record is versioned CBOR holding the header's files and their hashes, the Clang
+/// configuration, the overlay's hash, and the declarations with their layouts; `ember bind
+/// --emit-embind` writes one, and `ember bind --explain <fn>` prints a function's contract and why.
+#[test]
+fn import_c_parses_a_header_again_only_when_it_changes() {
+    let root = workspace_root();
+    let dir = temporary_directory("embind");
+    let cache = temporary_directory("embind-cache");
+    let cache_arg = cache.to_string_lossy().into_owned();
+    std::fs::write(dir.join("cached.h"), "typedef struct Pair { int a; int b; } Pair;\nstatic inline int cached_sum(const int* items, int n) { return n > 0 ? items[0] : 0; }\nstatic inline int cached_one(int x) { return x; }\n").unwrap();
+    std::fs::write(dir.join(format!("overlay.{SOURCE_EXT}")), "unsafe overlay c \"cached.h\":\n    fn cached_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)\n").unwrap();
+    let source = dir.join(format!("main.{SOURCE_EXT}"));
+    let program = |defines: &str| format!("import c \"cached.h\" with (overlay = \"overlay.{SOURCE_EXT}\"{defines})\n\nfn main():\n    p = c.Pair(a=1, b=2)\n    println(p.a + p.b)\n");
+    std::fs::write(&source, program("")).unwrap();
+    let source_arg = source.to_string_lossy().into_owned();
+    let check = || ember_with_env(&["check", &source_arg, "--timings"], &root, &ember_branding::cache_dir_var(), &cache_arg);
+    let parsed = |run: &Run| run.stdout.contains("import c, parsed") || run.stderr.contains("import c, parsed");
+    let from_record = format!("import c, from its .{}", ember_branding::BINDING_EXT);
+    let reused = |run: &Run| run.stdout.contains(&from_record) || run.stderr.contains(&from_record);
+    let first = check();
+    assert_eq!(first.exit, 0, "{}", first.stderr);
+    assert!(parsed(&first), "the first build did not parse the header:\n{}{}", first.stdout, first.stderr);
+    let second = check();
+    assert!(reused(&second) && !parsed(&second), "nothing changed, and the header was parsed again:\n{}{}", second.stdout, second.stderr);
+    // The header's content.
+    std::fs::write(dir.join("cached.h"), "typedef struct Pair { int a; int b; } Pair;\nstatic inline int cached_sum(const int* items, int n) { return n; }\nstatic inline int cached_one(int x) { return x; }\n").unwrap();
+    assert!(parsed(&check()), "a changed header was not parsed again");
+    assert!(reused(&check()));
+    // Its overlay.
+    std::fs::write(dir.join(format!("overlay.{SOURCE_EXT}")), "unsafe overlay c \"cached.h\":\n    fn cached_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)\n    fn cached_one(x)\n").unwrap();
+    assert!(parsed(&check()), "a changed overlay did not parse the header again");
+    // A define.
+    std::fs::write(&source, program(", defines = [\"CACHED_EXTRA=1\"]")).unwrap();
+    assert!(parsed(&check()), "a new define did not parse the header again");
+    // The record: versioned CBOR, a map whose first key is `version`.
+    let records: Vec<PathBuf> = std::fs::read_dir(cache.join(ember_branding::BINDING_EXT)).expect("the records' folder").filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
+    assert!(!records.is_empty());
+    let bytes = std::fs::read(&records[0]).unwrap();
+    assert_eq!(bytes[0] >> 5, 5, "not a CBOR map");
+    assert_eq!(&bytes[1..9], b"\x67version", "the record does not open with its version");
+    for wanted in ["files", "clang", "overlay", "contracts", "layouts", "cached.h"] {
+        assert!(bytes.windows(wanted.len()).any(|window| window == wanted.as_bytes()), "the record lacks {wanted}");
+    }
+    let emitted = ember(&["bind", "cached.h", "--emit-embind"], &dir);
+    assert_eq!(emitted.exit, 0, "{}", emitted.stderr);
+    assert!(dir.join(format!("cached.{}", ember_branding::BINDING_EXT)).is_file());
+    let explained = ember(&["bind", "cached.h", "--explain", "cached_sum", "--overlay", &format!("overlay.{SOURCE_EXT}")], &dir);
+    assert_eq!(explained.exit, 0, "{}", explained.stderr);
+    for line in [
+        "`items`: `const int *` — a read-only borrow (derived: `const`); stated by the overlay: TODO(ownership) TODO(count) TODO(nullable)",
+        "`n`: `int` — a value: nothing to state",
+        "called through the import's shim",
+    ] {
+        assert!(explained.stdout.contains(line), "--explain lacks {line:?}:\n{}", explained.stdout);
+    }
+}
+
+/// `[FFI-30b]` — the package's interface hash (`[BLD-2]`) includes the layouts of what `pub import c`
+/// re-exports: the header's module is a dependency of the re-exporting module, its interface holds
+/// each imported struct's layout, and a header change that changes a layout changes the hash its
+/// dependants record, so they are rebuilt.
+#[test]
+fn a_reexported_header_layout_is_part_of_the_interface_hash() {
+    let dir = temporary_directory("reexport-interface");
+    let out_dir = dir.join("out");
+    std::fs::write(dir.join("shape.h"), "typedef struct Shape { int w; int h; } Shape;\n").unwrap();
+    std::fs::write(dir.join(format!("lib.{SOURCE_EXT}")), "pub import c \"shape.h\" as shape\n\npub fn area(s: shape.Shape) -> i32:\n    return s.w * s.h\n").unwrap();
+    std::fs::write(dir.join(format!("main.{SOURCE_EXT}")), "import lib\n\nfn main():\n    println(lib.area(lib.shape.Shape(w=2, h=3)))\n").unwrap();
+    let main = format!("main.{SOURCE_EXT}");
+    let check = || {
+        let run = ember(&["check", &main, "--out-dir", &out_dir.to_string_lossy()], &dir);
+        assert_eq!(run.exit, 0, "{}", run.stderr);
+    };
+    check();
+    let before = cached_interface(&out_dir, "lib");
+    let header_hash = before.dependencies.get("c.h_shape").cloned().expect("`lib` depends on the header's module");
+    let layouts = cached_interface(&out_dir, "c.h_shape").layouts;
+    assert!(layouts.iter().any(|(name, layout)| name.contains("Shape") && layout.contains("pub h: i32")), "{layouts:?}");
+    std::fs::write(dir.join("shape.h"), "typedef struct Shape { int w; int h; int d; } Shape;\n").unwrap();
+    std::fs::write(dir.join(format!("main.{SOURCE_EXT}")), "import lib\n\nfn main():\n    println(lib.area(lib.shape.Shape(w=2, h=3, d=4)))\n").unwrap();
+    check();
+    let after = cached_interface(&out_dir, "lib");
+    assert_ne!(after.dependencies.get("c.h_shape"), Some(&header_hash), "a changed layout left the dependency's hash as it was");
+}
+
+/// `[TCB-5]` — an instrumented fact of a declaration `import c` wrote is valid only for the header
+/// and overlay it was measured against: the evidence record stores their paths and hashes, and a
+/// changed header makes it stale (`[TCB-6]`), so the fact goes back to asserted.
+#[test]
+fn evidence_for_an_imported_declaration_rests_on_its_header_and_overlay() {
+    let package = test_package("imported_measured", "bin", "\
+import c \"measure.h\" with (overlay = \"overlays/measure.em\")
+
+@test
+fn twice():
+    assert(c.measure_twice(4) == 8)
+
+fn main():
+    println(c.measure_twice(1))
+");
+    std::fs::write(package.join("src").join("measure.h"), "static inline int measure_twice(int x) { return 2 * x; }\n").unwrap();
+    std::fs::create_dir_all(package.join("overlays")).unwrap();
+    std::fs::write(package.join("overlays").join(format!("measure.{SOURCE_EXT}")),
+        "unsafe overlay c \"measure.h\":\n    @ffi(effects=[])\n    fn measure_twice(x)\n").unwrap();
+    let out_arg = package.join("target").to_string_lossy().into_owned();
+    let run = ember(&["test", "--instrument-ffi", "--out-dir", &out_arg], &package);
+    assert_eq!(run.exit, 0, "{}{}", run.stdout, run.stderr);
+    let record_path = package.join(format!(".{}/ffi-evidence/main.json", ember_branding::SYMBOL_PREFIX));
+    let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&record_path).expect("the evidence record is written"))
+        .expect("the evidence record is JSON");
+    let function = record["functions"].as_array().expect("a function list").iter()
+        .find(|function| function["name"].as_str().is_some_and(|name| name.ends_with("measure_twice")))
+        .expect("`measure_twice` is recorded");
+    let roles: Vec<&str> = function["imported_from"].as_array().expect("its identities").iter()
+        .filter(|identity| identity["hash"].is_string())
+        .filter_map(|identity| identity["role"].as_str())
+        .collect();
+    assert_eq!(roles, ["header", "overlay"], "{function}");
+    let entry = package.join("src").join(ember_branding::source_file("main")).to_string_lossy().into_owned();
+    let fresh = ember(&["tcb", &entry], &package);
+    assert!(fresh.stdout.contains("no Alloc: instrumented"), "{}{}", fresh.stdout, fresh.stderr);
+    std::fs::write(package.join("src").join("measure.h"), "static inline int measure_twice(int x) { return x + x; }\n").unwrap();
+    let stale = ember(&["tcb", &entry], &package);
+    assert!(stale.stdout.contains("evidence stale") && stale.stdout.contains("its header"), "{}{}", stale.stdout, stale.stderr);
+}
+
+/// `[TCB-1]` — a grade written on an overlay entry is a claim. `@grade(instrumented)` with no
+/// evidence record is `W5050`, and `E5050` under `ember tcb --require` or `ember build
+/// --require-evidence`; once `ember test --instrument-ffi` has recorded the function's effect facts
+/// the claim is met; a changed header makes the record stale (`[TCB-6]`) and the claim unmet again.
+#[test]
+fn a_grade_on_an_overlay_entry_is_met_only_by_evidence_that_holds() {
+    let package = test_package("graded", "bin", "\
+import c \"grade.h\" with (overlay = \"overlays/grade.em\")
+
+@test
+fn doubles():
+    assert(c.grade_twice(2) == 4)
+
+fn main():
+    println(c.grade_twice(1))
+");
+    std::fs::write(package.join("src").join("grade.h"), "static inline int grade_twice(int x) { return 2 * x; }\n").unwrap();
+    std::fs::create_dir_all(package.join("overlays")).unwrap();
+    std::fs::write(package.join("overlays").join(format!("grade.{SOURCE_EXT}")),
+        "unsafe overlay c \"grade.h\":\n    @grade(instrumented)\n    @ffi(effects=[])\n    fn grade_twice(x)\n").unwrap();
+    let entry = package.join("src").join(ember_branding::source_file("main")).to_string_lossy().into_owned();
+    let out_arg = package.join("target").to_string_lossy().into_owned();
+    let claimed = "`instrumented` is claimed with no evidence";
+
+    let unbacked = ember(&["check", &entry], &package);
+    assert!(unbacked.exit == 0 && unbacked.stderr.contains("warning[W5050]") && unbacked.stderr.contains(claimed), "{}", unbacked.stderr);
+    let required = ember(&["tcb", "--require", &entry], &package);
+    assert!(required.exit != 0 && required.stderr.contains("error[E5050]"), "{}{}", required.stdout, required.stderr);
+    let build = ember(&["build", &entry, "--require-evidence", "--out-dir", &out_arg], &package);
+    assert!(build.exit != 0 && build.stderr.contains("error[E5050]"), "{}", build.stderr);
+
+    let run = ember(&["test", "--instrument-ffi", "--out-dir", &out_arg], &package);
+    assert_eq!(run.exit, 0, "{}{}", run.stdout, run.stderr);
+    let backed = ember(&["check", &entry], &package);
+    assert!(backed.exit == 0 && !backed.stderr.contains("W5050"), "{}", backed.stderr);
+    let met = ember(&["tcb", "--require", &entry], &package);
+    assert_eq!(met.exit, 0, "{}{}", met.stdout, met.stderr);
+
+    std::fs::write(package.join("src").join("grade.h"), "static inline int grade_twice(int x) { return x + x; }\n").unwrap();
+    let stale = ember(&["check", &entry], &package);
+    assert!(stale.stderr.contains("warning[W5050]"), "a stale record still met the claim:\n{}", stale.stderr);
+}

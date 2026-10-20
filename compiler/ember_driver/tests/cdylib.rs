@@ -698,3 +698,83 @@ fn pe_exports(image: &[u8]) -> Vec<String> {
         String::from_utf8_lossy(&image[name..name + end]).into_owned()
     }).collect()
 }
+
+/// `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — `import c "./bridge.c"` compiles `bridge.c` and
+/// imports `bridge.h`, both with the manifest's `[c] flags` (the header's macro and the source's
+/// function see the same definition), and the import's `link = […]` links its libraries in the
+/// order written: the first that defines `which_lib` is the one called. The `[c] compiler` is the
+/// one the import's C goes to.
+#[test]
+fn import_c_compiles_its_source_with_the_c_section_and_links_in_order() {
+    let dir = scratch();
+    let toolchain = toolchain();
+    let app = dir.join("app");
+    let vendor = app.join("vendor");
+    std::fs::create_dir_all(&vendor).unwrap();
+    std::fs::create_dir_all(app.join("src")).unwrap();
+    let ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+    let archive = |name: &str, source: &str| {
+        let c = vendor.join(format!("{name}.c"));
+        std::fs::write(&c, source).unwrap();
+        let object = vendor.join(format!("{name}.{ext}"));
+        ember_build::compile_object(&toolchain, &c, &[], &object, Profile::Debug).expect("the library's C compiles");
+        let file = vendor.join(ember_build::archive_name(&toolchain, name));
+        ember_build::archive_objects(&toolchain, &[object], &file).expect("the archive is made");
+        file.file_name().unwrap().to_string_lossy().into_owned()
+    };
+    let one = archive("one", "int which_lib(void) { return 1; }\n");
+    let two = archive("two", "int which_lib(void) { return 2; }\n");
+    std::fs::write(app.join("src/bridge.h"), "#define BRIDGE_FROM_FLAGS (BRIDGE_VALUE + 2)\nint bridge_value(void);\nint which_lib(void);\n").unwrap();
+    std::fs::write(app.join("src/bridge.c"), "#include \"bridge.h\"\nint bridge_value(void) { return BRIDGE_VALUE; }\n").unwrap();
+    std::fs::write(app.join(ember_branding::MANIFEST), "[package]\nname = \"app\"\nkind = \"bin\"\n\n[c]\nflags = [\"-DBRIDGE_VALUE=40\"]\n").unwrap();
+    let mut outputs = Vec::new();
+    for (first, second) in [(&one, &two), (&two, &one)] {
+        std::fs::write(app.join("src").join(ember_branding::source_file("main")), format!(
+            "import c \"./bridge.c\" with (link = [\"vendor/{first}\", \"vendor/{second}\"])\n\nfn main():\n    \
+             unsafe:  # SAFETY(ffi): scalar calls\n        println(c.BRIDGE_FROM_FLAGS, c.bridge_value(), c.which_lib())\n")).unwrap();
+        let built = ember(&["build"], &app);
+        assert_success(&built, "the build importing bridge.c");
+        let exe = app.join("target/debug/bin").join(if cfg!(windows) { "main.exe" } else { "main" });
+        let ran = run_host(&exe, &[], &dir);
+        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+        outputs.push(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"));
+    }
+    assert_eq!(outputs, ["42 40 1\n", "42 40 2\n"]);
+    // The `[c] compiler` is the one the import's C goes to.
+    std::fs::write(app.join(ember_branding::MANIFEST),
+        "[package]\nname = \"app\"\nkind = \"bin\"\n\n[c]\ncompiler = \"no-such-cc\"\nflags = [\"-DBRIDGE_VALUE=40\"]\n").unwrap();
+    let refused = ember(&["build"], &app);
+    assert!(!refused.status.success() && String::from_utf8_lossy(&refused.stderr).contains("no-such-cc"),
+        "the [c] compiler was not used: {}", String::from_utf8_lossy(&refused.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[FFI-5a]`, `[FFI-29]` — each `import c` has a shim, compiled into the program by the project's
+/// own C compiler, asserting the size and alignment of every imported struct and the offset of each
+/// field, so that compiler re-verifies Clang's layout on every build: a struct with a field only a
+/// compiler other than Clang sees stops the build at its assertion (unless the project's compiler is
+/// Clang, which agrees).
+#[test]
+fn import_c_shims_reverify_each_layout_with_the_projects_compiler() {
+    let dir = scratch();
+    let toolchain = toolchain();
+    std::fs::write(dir.join("probe.h"), "typedef struct Probe {\n    int first;\n#ifndef __clang__\n    int second;\n#endif\n} Probe;\n").unwrap();
+    std::fs::write(dir.join(ember_branding::source_file("main")), "import c \"probe.h\"\n\nfn main():\n    p = c.Probe(first=1)\n    println(p.first)\n").unwrap();
+    let built = ember(&["build", &ember_branding::source_file("main"), "--out-dir", "out"], &dir);
+    let shim = std::fs::read_to_string(dir.join("out/debug/c/c_h_probe.shim.c")).expect("the shim is written");
+    for assertion in ["_Static_assert(sizeof(struct Probe) == 4", "_Static_assert(_Alignof(struct Probe) == 4", "_Static_assert(offsetof(struct Probe, first) == 0"] {
+        assert!(shim.contains(assertion), "the shim lacks {assertion}:\n{shim}");
+    }
+    let clang = match &toolchain {
+        Toolchain::Clang(_) => true,
+        Toolchain::Msvc { cl, .. } => cl.file_stem().is_some_and(|stem| stem.to_string_lossy().eq_ignore_ascii_case("clang-cl")),
+        Toolchain::Gcc(_) => false,
+    };
+    let stderr = String::from_utf8_lossy(&built.stderr);
+    if clang {
+        assert_success(&built, "a layout Clang's compiler agrees with");
+    } else {
+        assert!(!built.status.success() && stderr.contains("Probe: size"), "the shim did not stop the build:\n{stderr}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

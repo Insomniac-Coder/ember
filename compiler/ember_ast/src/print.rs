@@ -71,9 +71,10 @@ impl Printer {
                 let list = if *glob { "*".to_string() } else { names.join(", ") };
                 self.line(&format!("From {} import {list}", join(path)));
             }
-            ImportKind::Foreign { language, header, .. } => {
-                self.line(&format!("ImportForeign {language:?} {header:?}"));
-            }
+            ImportKind::Foreign { language, header, alias, .. } => match alias {
+                Some(a) => self.line(&format!("ImportForeign {language:?} {header:?} as {}", a.name)),
+                None => self.line(&format!("ImportForeign {language:?} {header:?}")),
+            },
         }
     }
 

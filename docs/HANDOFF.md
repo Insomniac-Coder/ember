@@ -10770,6 +10770,8 @@ formal 1/9 count or Phase 2's estimate.
 > methods; methods still `E0900`, so the rule stays unfinished), D-735, D-736.
 > Then ADR-229: `some` on methods (`[TYP-32]` done); ODR-144 (0.9.10_Hardened_22): not in an
 > interface's method, `E2260`.
+> Then ADR-230: helper N merged, the C header importer (`import c`, `ember bind`, overlays); README
+> Overall **90%**. D-737..D-746 (D-742..D-746 open). N's questions in `tasks/90/owner-questions.md`.
 > **Before a push that touches C or the runtime:** `bench/gcc/gate.sh` in WSL (the workspace through
 > gcc) and `EMBER_CC=clang-cl cargo test --profile ci --workspace` on Windows, besides the full check.
 

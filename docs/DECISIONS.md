@@ -5017,6 +5017,25 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-230 — Helper N merged: the C header importer (`import c`)
+
+2026-10-20. Helper N's branch (20 commits on `e6dbf552`, notes in `tasks/90/N-notes.md`) merged
+cleanly. `compiler/ember_driver/src/cimport.rs` loads libclang at run time (`clang-sys` 1.9,
+`runtime`) and writes each imported header as an ordinary Ember module in the forms hand
+declarations use (`@layout(c)` structs, `@repr`/`@non_exhaustive` enums, aliases, constants, one
+`unsafe extern` block); the import becomes `import c.h_<stem> as <name>`, so checking, contracts and
+codegen are unchanged. Each import gets a shim C file compiled with its own flags (static inline
+functions, layout re-verification). Overlays, `ember bind --init/--report/--check`, the `.embind`
+record, evidence resting on header and overlay, grades backed by evidence, and link names C cannot
+spell (through `[MNG-2]`'s alias) are built. Rules done: FFI-2, FFI-2a, FFI-5, FFI-5a, FFI-6, FFI-7,
+FFI-12, FFI-13, FFI-14, FFI-20a, FFI-29a, FFI-29b, FFI-29c, FFI-30, FFI-30a, FFI-30b, FFI-35a,
+FFI-38, FFI-49, BLD-FFI-1, BLD-FFI-1a, BLD-FFI-3, CLI-5, CLI-6, CLI-7, TCB-1, TCB-5. Unfinished:
+FFI-6a (pointer macros), FFI-29 (macro wrappers), FFI-8 (unions, bit-fields, … and the C aliases),
+FFI-30c (several overlays) — the first, the second and the last wait on helper N's questions, now
+mine to rule (`tasks/90/owner-questions.md`). Without libclang an import is `E9002` naming what to
+install; CI installs `libclang-dev` on Ubuntu (the Windows image has LLVM). Defects D-737..D-746
+(helper N's D-N1..D-N8 and two more it noted). README Overall 90%.
+
 ## ADR-229 — `some I` on methods; not in an interface's method (ODR-144, 0.9.10_Hardened_22)
 
 2026-10-20. `[TYP-32]` is built for methods: a type's own (in its body or an `extend` block),

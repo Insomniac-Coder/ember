@@ -164,6 +164,8 @@ struct InstrumentedFunction {
 
 /// `[FFI-37]` — what an instrumented test binary counts, with what the program declares of it.
 pub struct InstrumentedRun {
+    /// `[TCB-5]` — per source file `import c` wrote: the header and overlay its declarations rest on.
+    pub imported: std::collections::HashMap<ember_span::FileId, Vec<(String, std::path::PathBuf)>>,
     functions: Vec<InstrumentedFunction>,
     sites: Vec<(u32, String)>,
     dir: std::path::PathBuf,
@@ -190,7 +192,7 @@ impl InstrumentedRun {
             Some(InstrumentedFunction { name: body.name.clone(), declared, span: body.span })
         }).collect::<Vec<_>>();
         debug_assert_eq!(functions.len(), instrument.functions.len());
-        InstrumentedRun { functions, sites: instrument.sites.clone(), dir, package: package.to_string(), exe: exe.to_path_buf(), toolchain }
+        InstrumentedRun { imported: Default::default(), functions, sites: instrument.sites.clone(), dir, package: package.to_string(), exe: exe.to_path_buf(), toolchain }
     }
 }
 
@@ -302,10 +304,22 @@ pub fn instrument_report(
             function.name, if calls == 1 { "" } else { "s" }, if total_sites == 1 { "" } else { "s" }));
         let file = map.file(function.span.file);
         let library = &observed.module[index];
+        let imported_from: Vec<serde_json::Value> = run
+            .imported
+            .get(&function.span.file)
+            .into_iter()
+            .flatten()
+            .map(|(role, path)| serde_json::json!({
+                "role": role,
+                "path": path.display().to_string(),
+                "hash": std::fs::read(path).ok().map(|bytes| ember_build::content_hash(&bytes)),
+            }))
+            .collect();
         records.push(serde_json::json!({
             "name": function.name,
             "declared_in": file.path.display().to_string(),
             "source_hash": ember_build::content_hash(file.text.as_bytes()),
+            "imported_from": imported_from,
             "library": {
                 "path": library,
                 "hash": std::fs::read(library).ok().map(|bytes| ember_build::content_hash(&bytes)),
@@ -390,6 +404,28 @@ pub fn load_evidence(input: &std::path::Path) -> Option<Evidence> {
     Some(Evidence { path, record, stale, elsewhere })
 }
 
+/// `[TCB-1]` — whether `evidence` backs an `instrumented` grade for the foreign function `name`,
+/// declared in a file whose text hashes to `source_hash`: the record is for this test binary and
+/// toolchain, names the function from that same declaration, every file it rests on (its library,
+/// header and overlay) is unchanged, and every effect fact it graded is `instrumented`.
+pub fn backs_instrumented(evidence: &Evidence, name: &str, source_hash: &str) -> bool {
+    let file_hash = |path: &str| std::fs::read(path).ok().map(|bytes| ember_build::content_hash(&bytes));
+    let Some(function) = evidence.record["functions"].as_array().into_iter().flatten().find(|function| function["name"] == name) else {
+        return false;
+    };
+    let unchanged = |identity: &serde_json::Value| {
+        let path = identity["path"].as_str().unwrap_or("");
+        path.is_empty() || file_hash(path).as_deref() == identity["hash"].as_str()
+    };
+    let facts = function["facts"].as_array().map(|facts| facts.as_slice()).unwrap_or(&[]);
+    evidence.stale.is_empty()
+        && function["source_hash"].as_str() == Some(source_hash)
+        && unchanged(&function["library"])
+        && function["imported_from"].as_array().into_iter().flatten().all(unchanged)
+        && !facts.is_empty()
+        && facts.iter().all(|fact| fact["grade"] == "instrumented")
+}
+
 /// `[FFI-37c]`, `[TCB-5]`, `[TCB-6]` — what the evidence says of the effect facts of `decl`: each
 /// graded fact (instrumented, partial when not every call site ran; contradicted; unexercised),
 /// or why the record no longer counts. `None` when the record holds nothing of `decl`.
@@ -404,6 +440,13 @@ pub fn evidence_lines(decl: &ForeignDecl, evidence: &Evidence, map: &SourceMap) 
     let library = function["library"]["path"].as_str().unwrap_or("");
     if !library.is_empty() && file_hash(library).as_deref() != function["library"]["hash"].as_str() {
         stale.push(format!("its library {library}"));
+    }
+    // `[TCB-5]` — an imported declaration's header and overlay.
+    for identity in function["imported_from"].as_array().into_iter().flatten() {
+        let path = identity["path"].as_str().unwrap_or("");
+        if file_hash(path).as_deref() != identity["hash"].as_str() {
+            stale.push(format!("its {} {path}", identity["role"].as_str().unwrap_or("source")));
+        }
     }
     let mut lines = Vec::new();
     if !stale.is_empty() {

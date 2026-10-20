@@ -18,8 +18,9 @@ A page marks its two programs with the fence's info string:
 
 `ember,fails,toolchain` marks an error only a C compiler decides (`E9041`): its
 program must check clean. Each example is compiled with the manifest of the last
-```toml block above it on the page, if any. `ember test --doc` builds the same
-examples by the same rules (ADR-192).
+```toml block above it on the page, if any, and beside every file a block such as
+```c,file=shape.h gives (a header an `import c` reads, `[FFI-6]`). `ember test --doc`
+builds the same examples by the same rules (ADR-192).
 
 Any other `ember` block on the page is prose and is not run.
 
@@ -51,6 +52,8 @@ BYTE = re.compile(r"<0x([0-9A-F]{2})>")
 FENCE = re.compile(r"^```ember,(fails|fixed)(,toolchain)?\s*$(.*?)^```\s*$", re.M | re.S)
 # A package manifest an example below it is compiled with.
 TOML = re.compile(r"^```toml\s*$(.*?)^```\s*$", re.M | re.S)
+# A file the page's examples are compiled beside: ```c,file=shape.h.
+FILE = re.compile(r"^```[\w+-]*,file=([\w.-]+)\s*$(.*?)^```\s*$", re.M | re.S)
 # Codes the compiler can actually emit. A page is required for those; a code
 # that is registered and never emitted (`E4071`, `E9032` — both reserved so the
 # number is not reused) cannot have a failing example, and `[DOC-1]` asks for
@@ -109,8 +112,11 @@ RUNTIME_CODES = {"L3017"}
 INSTRUMENTED_CODES = {"E5053", "W5054"}
 
 
-def run(source: str, work: Path, manifest: str | None = None, command: str = "check") -> tuple[int, str]:
+def run(source: str, work: Path, manifest: str | None = None, command: str = "check",
+        files: list[tuple[str, str]] = ()) -> tuple[int, str]:
     path = work / "page.em"
+    for name, body in files:
+        (work / name).write_text(body.lstrip("\n"), encoding="utf-8", newline="\n")
     manifest_path = work / "ember.toml"
     if manifest is None:
         manifest_path.unlink(missing_ok=True)
@@ -159,6 +165,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     code = path.stem
     text = path.read_text(encoding="utf-8")
     blocks = page_examples(text)
+    files = FILE.findall(text)
     problems = []
 
     # A warning or lint is not an error: the program that trips it **compiles**,
@@ -173,7 +180,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fails" not in blocks:
         problems.append(f"{code}: no ```ember,fails block — [DOC-1] wants the program that triggers it")
     else:
-        status, output = run(blocks["fails"][0], work, blocks["fails"][1], command)
+        status, output = run(blocks["fails"][0], work, blocks["fails"][1], command, files)
         if is_non_error:
             # It must compile — a lint does not reject — and it must actually
             # emit the lint. The second half is the one that matters: without
@@ -204,7 +211,7 @@ def check_page(path: Path, work: Path) -> list[str]:
     if "fixed" not in blocks:
         problems.append(f"{code}: no ```ember,fixed block — [DOC-1] wants the fix as compilable code")
     else:
-        status, output = run(blocks["fixed"][0], work, blocks["fixed"][1], command)
+        status, output = run(blocks["fixed"][0], work, blocks["fixed"][1], command, files)
         if status != 0:
             problems.append(
                 f"{code}: the ```ember,fixed program does not compile — [PHIL-8a]:\n"

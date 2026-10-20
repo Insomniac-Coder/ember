@@ -49,6 +49,32 @@ pub struct LoadedModule {
     /// `[MOD-2]` — the package it belongs to among the build's (0 is the root); `None` for the
     /// standard library's.
     pub package: Option<usize>,
+    /// `[FFI-6]` — a module `import c` wrote from a header: what else the import found.
+    pub foreign: Option<ForeignImport>,
+}
+
+/// `[FFI-6]` — what `import c` found in a header beside the declarations it wrote.
+#[derive(Clone, Debug, Default)]
+pub struct ForeignImport {
+    /// The header, as found.
+    pub header: String,
+    /// `[TCB-5]` — the files a declaration's facts rest on: the header (`header`) and the overlay
+    /// (`overlay`), by path.
+    pub identities: Vec<(String, std::path::PathBuf)>,
+    /// `[TCB-1]` — for the overlay module of an import: the function entries whose
+    /// `@grade(instrumented)` an evidence record that still holds backs.
+    pub backed: Vec<String>,
+    /// `[FFI-20a]` — each declaration not imported, with the construct that defeated it.
+    pub skipped: Vec<(String, String)>,
+    /// `[FFI-5]` — Clang's layout of each imported struct: its name, size, alignment, and each
+    /// field's offset.
+    pub layouts: Vec<(String, u64, u64, Vec<(String, u64)>)>,
+    /// The build's: `[FFI-29]` the shim's C, `[BLD-FFI-1]` the C sources to compile with it, the
+    /// flags both are compiled with (`[BLD-FFI-1a]`), and `[BLD-FFI-3]` the libraries to link.
+    pub shim: String,
+    pub sources: Vec<std::path::PathBuf>,
+    pub flags: Vec<String>,
+    pub link: Vec<String>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -195,7 +221,16 @@ pub fn check(
     checker.module_packages = modules.iter().map(|m| m.package).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
+    checker.foreign_backed = modules
+        .iter()
+        .map(|m| m.foreign.iter().flat_map(|foreign| foreign.backed.iter().map(|name| Symbol::intern(name))).collect())
+        .collect();
+    checker.foreign_skipped = modules
+        .iter()
+        .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
+        .collect();
     checker.namespaces = vec![HashMap::new(); modules.len()];
+    checker.public_namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
     checker.module_deterministic = vec![false; modules.len()];
 
@@ -281,6 +316,12 @@ pub fn check(
         checker.collect(&loaded.module);
     }
     checker.check_view_attributes();
+    // `[FFI-5]` — each struct `import c` wrote, laid out as Clang lays it out.
+    for (index, loaded) in modules.iter().enumerate() {
+        if let Some(foreign) = &loaded.foreign {
+            checker.check_foreign_layouts(index, foreign, &loaded.module);
+        }
+    }
     // `[CLS-4]` depends on the completed openness of every nominal base, so
     // validate inheritance only after all modules have been collected.
     for (index, loaded) in modules.iter().enumerate() {
@@ -2178,6 +2219,11 @@ struct Checker<'a> {
     /// `[MOD-8]` — per module: each name two glob imports bind to different
     /// items, with the modules they came from. Using one is `E1031`.
     ambiguous_globs: Vec<HashMap<Symbol, Vec<String>>>,
+    /// `[FFI-20a]` — per module `import c` wrote: its header, and each declaration it could not
+    /// represent with why.
+    foreign_skipped: Vec<Option<(String, HashMap<Symbol, String>)>>,
+    /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
+    foreign_backed: Vec<HashSet<Symbol>>,
     /// Declaration spans for module items, keyed by their canonical names.
     /// N1 uses each span's file identity before considering its offset, so
     /// imported aliases never compare unrelated source coordinates.
@@ -2188,6 +2234,9 @@ struct Checker<'a> {
     /// Per module: names bound to a whole module by `import a.b.c`, so that
     /// `c.thing` resolves.
     namespaces: Vec<HashMap<Symbol, usize>>,
+    /// `[FFI-30b]` — per module: the modules it re-exports (`pub import c "…" as vk`), by name. Only
+    /// these are reached through it (`m.vk.f`, `from m import vk`); a module's other imports are its own.
+    public_namespaces: Vec<HashMap<Symbol, usize>>,
     /// Which module is being collected or checked right now.
     current_module: usize,
     /// `[TYP-16]` — the type parameters in scope right now: opaque while a
@@ -2813,9 +2862,12 @@ impl<'a> Checker<'a> {
             module_packages: Vec::new(),
             visible: vec![HashMap::new()],
             ambiguous_globs: vec![HashMap::new()],
+            foreign_skipped: Vec::new(),
+            foreign_backed: Vec::new(),
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
             namespaces: vec![HashMap::new()],
+            public_namespaces: vec![HashMap::new()],
             current_module: 0,
             type_params: HashMap::new(),
             generic_aliases: HashMap::new(),
@@ -4015,7 +4067,7 @@ impl<'a> Checker<'a> {
                             Some(_) if decl.is_foreign_decl && !ffi_count_witnesses(&item.attrs).is_empty() =>
                                 mangle(qualified, false),
                             Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                                .unwrap_or(decl.name.name.as_str()).to_string(),
+                                .unwrap_or_else(|| decl.name.name.to_string()),
                             Some(_) => decl.name.name.to_string(),
                             None => mangle(qualified, qualified.is("main")),
                         };
@@ -4269,7 +4321,14 @@ impl<'a> Checker<'a> {
         };
         let mut module = first_module;
         for (index, segment) in segments.iter().enumerate().skip(1) {
-            let Some(&next) = self.namespaces[module].get(&segment.name) else {
+            // `[GRM-24]` — a module's child module by path (`paths.inner`), or `[FFI-30b]` one it
+            // re-exports; never one it merely imports, which is its own.
+            let child = format!("{}.{}", self.prefixes[module], segment.name);
+            let next = self.public_namespaces[module]
+                .get(&segment.name)
+                .copied()
+                .or_else(|| self.prefixes.iter().position(|prefix| *prefix == child));
+            let Some(next) = next else {
                 return Err(index);
             };
             module = next;
@@ -4378,6 +4437,17 @@ impl<'a> Checker<'a> {
         let by_path: HashMap<String, usize> =
             modules.iter().enumerate().map(|(i, m)| (m.path.join("."), i)).collect();
 
+        // `[FFI-30b]` — what each module re-exports, before any module binds through another.
+        for (index, loaded) in modules.iter().enumerate() {
+            for import in loaded.module.imports.iter().filter(|import| import.public) {
+                if let ast::ImportKind::Module { path, alias: Some(alias) } = &import.kind
+                    && let Some(&target) = by_path.get(&path.iter().map(|s| s.name.to_string()).collect::<Vec<_>>().join("."))
+                {
+                    self.public_namespaces[index].insert(alias.name, target);
+                }
+            }
+        }
+
         for (index, loaded) in modules.iter().enumerate() {
             self.current_module = index;
             // `[MOD-8]` — the glob imports, bound after everything else.
@@ -4429,6 +4499,12 @@ impl<'a> Checker<'a> {
                             continue;
                         }
                         for item in items {
+                            // `[FFI-30b]` — a module `target` re-exports.
+                            if let Some(&reexported) = self.public_namespaces[target].get(&item.name.name) {
+                                let bound = item.alias.map(|a| a.name).unwrap_or(item.name.name);
+                                self.namespaces[index].insert(bound, reexported);
+                                continue;
+                            }
                             let Some(vis) = public_item(&modules[target].module, item.name.name)
                             else {
                                 self.error(
@@ -4504,6 +4580,52 @@ impl<'a> Checker<'a> {
                     self.visible[index].remove(&name);
                     self.ambiguous_globs[index].insert(name, sources.into_iter().map(|(_, key)| key).collect());
                 }
+            }
+        }
+    }
+
+    /// `[FFI-20a]` — `E1010` naming why, when `name` is a declaration of the header `module` was
+    /// written from that `import c` could not represent: never just "cannot find".
+    fn report_skipped_foreign(&mut self, module: usize, name: Symbol, span: Span) -> bool {
+        let Some(Some((header, skipped))) = self.foreign_skipped.get(module) else { return false };
+        let Some(why) = skipped.get(&name) else { return false };
+        let diagnostic = Diagnostic::error(codes::E1010, span, format!("`{name}` was not imported from `{header}`: {why}"))
+            .note("`import c` skipped it, and said so at the import (W5002, W5001) [FFI-20a]");
+        self.sink.emit(diagnostic);
+        true
+    }
+
+    /// `[FFI-5]` — Ember's layout of each struct `import c` wrote against Clang's for the target
+    /// and flags: `E5001` names the type, the field and both numbers.
+    fn check_foreign_layouts(&mut self, module: usize, foreign: &ForeignImport, ast_module: &ast::Module) {
+        let prefix = self.prefixes[module].clone();
+        for (name, size, align, fields) in &foreign.layouts {
+            let qualified = Symbol::intern(&format!("{prefix}.{}", name.trim_start_matches("r#")));
+            let Some(&ty) = self.named_types.get(&qualified) else { continue };
+            let span = ast_module
+                .items
+                .iter()
+                .find(|item| matches!(&item.kind, ast::ItemKind::Struct(decl) if decl.name.name.as_str() == name.trim_start_matches("r#")))
+                .map_or(Span::DUMMY, |item| item.span);
+            let layout = self.types.layout(ty);
+            let mut wrong = Vec::new();
+            if layout.size != *size {
+                wrong.push(format!("its size is {} bytes in Ember and {size} in C", layout.size));
+            }
+            if layout.align != *align {
+                wrong.push(format!("its alignment is {} in Ember and {align} in C", layout.align));
+            }
+            for ((field, offset), ember) in fields.iter().zip(&layout.field_offsets) {
+                if ember != offset {
+                    wrong.push(format!("field `{}` is at offset {ember} in Ember and {offset} in C", field.trim_start_matches("r#")));
+                }
+            }
+            if !wrong.is_empty() {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5001, span, format!("the layout of `{name}` does not match `{}`'s: {}", foreign.header, wrong.join("; ")))
+                        .note("Clang's sizes, alignments and offsets are for this target and these flags; Ember's must equal them [FFI-5]")
+                        .help("a packing Ember cannot write (`#pragma pack(2)`) cannot be imported; wrap the struct in C functions"),
+                );
             }
         }
     }
@@ -8670,7 +8792,7 @@ impl<'a> Checker<'a> {
                             continue;
                         }
                         let name = self.qualified(decl.name.name);
-                        let symbol = Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str()));
+                        let symbol = Symbol::intern(&ffi_link_name(&item.attrs).unwrap_or_else(|| decl.name.name.to_string()));
                         if self.foreign_statics.values().any(|existing|
                             existing.symbol == symbol && (existing.ty != ty || existing.immutable != immutable)) {
                             self.error(codes::E5002, item.span,
@@ -8912,9 +9034,14 @@ impl<'a> Checker<'a> {
                     if decl.is_foreign_decl {
                         self.foreign_declarations.insert(def, decl.is_safe);
                         if !decl.is_safe {
-                            self.foreign_unknown_facts.insert(def, ffi_unknown_facts(decl, &item.attrs));
+                            let mut unknown = ffi_unknown_facts(decl, &item.attrs);
+                            // `[DIA-18]` — a header's function: the overlay line that states them.
+                            if let Some(Some((header, _))) = self.foreign_skipped.get(self.current_module) {
+                                unknown.line = overlay_unknown_line(decl, header);
+                            }
+                            self.foreign_unknown_facts.insert(def, unknown);
                         }
-                        self.foreign_symbols.insert(def, Symbol::intern(ffi_link_name(&item.attrs).unwrap_or(decl.name.name.as_str())));
+                        self.foreign_symbols.insert(def, Symbol::intern(&ffi_link_name(&item.attrs).unwrap_or_else(|| decl.name.name.to_string())));
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -13022,6 +13149,9 @@ impl<'a> Checker<'a> {
             && !self.generic_enums.contains_key(&qualified)
             && !self.generic_classes.contains_key(&qualified)
         {
+            if self.report_skipped_foreign(module, last.name, last.span) {
+                return self.common.error;
+            }
             let module_name = segments[..segments.len() - 1].iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(".");
             self.error(codes::E1010, last.span, format!("cannot find type `{}` in module `{module_name}`", last.name));
             return self.common.error;
@@ -17901,7 +18031,7 @@ impl<'a> Checker<'a> {
             } else { match &decl.abi {
                 Some(_) if ffi_counted.is_some() => mangle(name, false),
                 Some(_) if decl.is_foreign_decl => ffi_link_name(&item.attrs)
-                    .unwrap_or(decl.name.name.as_str()).to_string(),
+                    .unwrap_or_else(|| decl.name.name.to_string()),
                 Some(_) => decl.name.name.to_string(),
                 None if has_attribute(&item.attrs, "export") => decl.name.name.to_string(),
                 None => mangle(name, is_main),
@@ -19180,7 +19310,7 @@ impl<'a> Checker<'a> {
         if !decl.is_safe {
             if !borrowed_aggregate { return None; }
             return Some(hir::FfiCounted {
-                foreign_symbol: ffi_link_name(attrs).unwrap_or(decl.name.name.as_str()).to_string(),
+                foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
                 abi_params: visible.iter().enumerate().map(|(public_index, &(_, ty, mode, _))|
                     hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
                 result_array: None,
@@ -19334,7 +19464,7 @@ impl<'a> Checker<'a> {
             }
         }
         Some(hir::FfiCounted {
-            foreign_symbol: ffi_link_name(attrs).unwrap_or(decl.name.name.as_str()).to_string(),
+            foreign_symbol: ffi_link_name(attrs).unwrap_or_else(|| decl.name.name.to_string()),
             abi_params,
             result_array,
             result_span,
@@ -32304,6 +32434,15 @@ impl<'a> Checker<'a> {
                 if self.comptime_names_runtime_local(name, span) {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
+                // A module used as a value: what followed it is none of the things it reaches.
+                if self.namespaces[self.current_module].contains_key(&name) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1010, span, format!("`{name}` is a module, and what follows it is not one of its items"))
+                            .note("a module reaches its items, its child modules and the modules it re-exports (`pub import c`); \
+                                   its other imports are its own [MOD-2], [FFI-30b]"),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 let mut diagnostic = Diagnostic::error(
                     codes::E1010,
                     span,
@@ -32406,6 +32545,9 @@ impl<'a> Checker<'a> {
                             Some(entry) => self.expr_const_use(entry, span),
                             None => Expr { ty: self.common.error, kind: ExprKind::Error, span },
                         };
+                    }
+                    if self.report_skipped_foreign(module, name.name, name.span) {
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
                 }
                 let outer = self.soa_element_field.replace(base.span);
@@ -32775,6 +32917,9 @@ impl<'a> Checker<'a> {
                 // with the module's own candidates, written as the program
                 // wrote the module.
                 if self.visible[module].get(&name.name) != Some(&qualified) {
+                    if self.report_skipped_foreign(module, name.name, name.span) {
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     let written = self
                         .namespace_segments(recv)
                         .expect("just resolved")
@@ -33722,7 +33867,7 @@ impl<'a> Checker<'a> {
         };
 
         // `Vec3(1, 2, 3)` — the synthesised memberwise constructor (`[STR-1]`).
-        if let Some(&id) = self.struct_ids.get(&self.resolve_name(name)) {
+        if let Some(id) = self.struct_through_alias(self.resolve_name(name)) {
             return self.synth_struct_literal(id, name, args, span);
         }
 
@@ -36791,9 +36936,10 @@ impl<'a> Checker<'a> {
     }
 
     /// `[TCB-1]` — `@grade(asserted | instrumented | checked | proven)` on an overlay entry. A grade
-    /// above asserted is a claim that evidence backs: none is recorded here (no evidence record
-    /// under `[ffi] evidence` holds one), so the claim is unbacked, `W5050`, and the fact stays
-    /// asserted (`[TCB-2]`).
+    /// above asserted is a claim that evidence backs: `instrumented` on a function entry an
+    /// evidence record under `[ffi] evidence` backs, still holding (`[TCB-6]`), is met; any other
+    /// claim is unbacked, `W5050` (`E5050` under `--require-evidence`), and the fact stays asserted
+    /// (`[TCB-2]`).
     fn check_grade(&mut self, attr: &ast::Attribute, kind: &ast::OverlayItemKind) {
         if !matches!(kind, ast::OverlayItemKind::Fn { .. } | ast::OverlayItemKind::Type(_) | ast::OverlayItemKind::Enum(_)) {
             self.error(codes::E0104, attr.span, "`@grade` applies to an overlay entry that states facts");
@@ -36811,6 +36957,9 @@ impl<'a> Checker<'a> {
                         .help("write `@grade(asserted)`, `@grade(instrumented)`, `@grade(checked)` or `@grade(proven)` [TCB-1]"),
                 );
             }
+            Some(grade) if grade.is("instrumented")
+                && matches!(kind, ast::OverlayItemKind::Fn { name, .. }
+                    if self.foreign_backed.get(self.current_module).is_some_and(|backed| backed.contains(&name.name))) => {}
             Some(grade) if !grade.is("asserted") => {
                 let evidence = match grade.as_str() {
                     "instrumented" => "a run of `ember test --instrument-ffi` that observed it",
@@ -36892,9 +37041,9 @@ impl<'a> Checker<'a> {
                             }
                             saw_link_name = true;
                             match ffi_link_name_arg(arg) {
-                                Some(symbol) if c_link_identifier(symbol) => {}
-                                Some(_) => self.error(codes::E0900, attr.span,
-                                    "a `link_name` that is not a C identifier is not implemented yet"),
+                                Some(symbol) if linker_symbol(symbol) => {}
+                                Some(symbol) => self.error(codes::E0104, attr.span,
+                                    format!("`{symbol}` is not a symbol a linker takes: no space, quote, backslash or control character")),
                                 None => self.error(codes::E0900, attr.span,
                                     "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
                             }
@@ -37040,9 +37189,9 @@ impl<'a> Checker<'a> {
                                 }
                                 saw_link_name = true;
                                 match ffi_link_name_arg(arg) {
-                                    Some(symbol) if c_link_identifier(symbol) => {}
-                                    Some(_) => self.error(codes::E0900, attr.span,
-                                        "a `link_name` that is not a C identifier is not implemented yet"),
+                                    Some(symbol) if linker_symbol(symbol) => {}
+                                    Some(symbol) => self.error(codes::E0104, attr.span,
+                                        format!("`{symbol}` is not a symbol a linker takes: no space, quote, backslash or control character")),
                                     None => self.error(codes::E0900, attr.span,
                                         "only `@ffi(link_name=\"C_identifier\")` is implemented yet"),
                                 }
@@ -37585,7 +37734,7 @@ impl<'a> Checker<'a> {
         }
         // `[MOD-3]`, `[STR-1]` — `m.Point(3, 4)`: a type's constructor, reached
         // through its module as a function is.
-        if let Some(&id) = self.struct_ids.get(&qualified) {
+        if let Some(id) = self.struct_through_alias(qualified) {
             return self.synth_struct_literal(id, qualified, args, span);
         }
         if let Some(&id) = self.class_ids.get(&qualified) {
@@ -37642,7 +37791,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name,
             ast::ExprKind::Field { .. } => {
                 let qualified = self.item_through_module(expr)?;
-                return self.enum_ids.get(&qualified).copied();
+                return self.enum_through_alias(qualified);
             }
             ast::ExprKind::IndexOrInstantiate { base, .. } => {
                 let ast::ExprKind::Path { segments } = &base.kind else { return None };
@@ -37666,7 +37815,23 @@ impl<'a> Checker<'a> {
         if self.lookup(name).is_some() {
             return None;
         }
-        self.enum_ids.get(&self.resolve_name(name)).copied()
+        self.enum_through_alias(self.resolve_name(name))
+    }
+
+    /// `[RNG-1]` — a `type` alias with no `in` clause is transparent: the struct an alias names is
+    /// constructed through it (`Alias(x=1)`), and the enum one names gives its variants (`Alias.A`).
+    fn struct_through_alias(&self, qualified: Symbol) -> Option<StructId> {
+        self.struct_ids.get(&qualified).copied().or_else(|| match self.types.kind(*self.named_types.get(&qualified)?) {
+            TyKind::Struct(id) => Some(*id),
+            _ => None,
+        })
+    }
+
+    fn enum_through_alias(&self, qualified: Symbol) -> Option<EnumId> {
+        self.enum_ids.get(&qualified).copied().or_else(|| match self.types.kind(*self.named_types.get(&qualified)?) {
+            TyKind::Enum(id) => Some(*id),
+            _ => None,
+        })
     }
 
     /// A path naming a range type, for `Roughness.checked(x)`.
@@ -52806,10 +52971,13 @@ fn ffi_link_name_arg(arg: &ast::AttrArg) -> Option<&str> {
     Some(symbol)
 }
 
-fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<&str> {
-    attrs.iter()
+/// `[FFI-49]` — the C name a declaration binds: its `link_name`, or, for a symbol C cannot spell,
+/// the alias it is declared under in C (`[MNG-2]`'s), which the C binds to the symbol.
+fn ffi_link_name(attrs: &[ast::Attribute]) -> Option<String> {
+    let symbol = attrs.iter()
         .find(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
-        .and_then(ffi_link_name_attr)
+        .and_then(ffi_link_name_attr)?;
+    Some(if c_link_identifier(symbol) { symbol.to_string() } else { ember_branding::export_alias(symbol) })
 }
 
 /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — an opaque foreign type's `@ffi(…)`: `destroys(f)`,
@@ -52920,6 +53088,26 @@ fn ffi_unknown_facts(decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> ForeignUnk
         format!("`@ffi({})` over `safe fn {name}`, each `TODO(…)` replaced by its fact", clauses.join(", "))
     };
     ForeignUnknownFacts { facts, line }
+}
+
+/// `[DIA-18]`, `[FFI-2]` — the overlay entry that states an imported function's unknown facts.
+fn overlay_unknown_line(decl: &ast::FnDecl, header: &str) -> String {
+    let pointer = |ty: &ast::TypeExpr| matches!(ty.kind, ast::TypeKind::Ptr { .. });
+    let params: Vec<String> = decl
+        .params
+        .iter()
+        .filter_map(|param| match &param.kind {
+            ast::ParamKind::Named { name, ty } if pointer(ty) => Some(format!("{}: TODO(ownership) TODO(count) TODO(nullable)", name.name)),
+            ast::ParamKind::Named { name, .. } => Some(name.name.to_string()),
+            _ => None,
+        })
+        .collect();
+    let result = if decl.ret.as_ref().is_some_and(pointer) { " -> TODO(ownership) TODO(count) TODO(nullable) TODO(lifetime)" } else { "" };
+    format!(
+        "`fn {}({}){result}` in an `unsafe overlay c \"{header}\":` the import names with `overlay = \"…\"`, each `TODO(…)` replaced by its fact",
+        decl.name.name,
+        params.join(", ")
+    )
 }
 
 /// A contract clause as it is written: words, and calls of words and numbers.
@@ -53536,8 +53724,6 @@ fn ffi_count_siblings(decl: &ast::FnDecl, pointer: Option<Symbol>) -> Vec<String
     }).collect()
 }
 
-/// A C declaration cannot spell an arbitrary linker symbol portably. Names
-/// needing an assembler alias remain an explicit implementation gap.
 /// `[MNG-2]` — a symbol a linker takes: not empty, and no space, quote, backslash or control
 /// character (which no object format, module-definition file or version script can carry).
 fn linker_symbol(symbol: &str) -> bool {

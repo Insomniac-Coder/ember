@@ -4,6 +4,7 @@
 //! stage dumps. The rest of the CLI surface arrives with the phases that give
 //! each command something to do.
 
+mod cimport;
 mod comptime;
 mod foreign;
 mod packages;
@@ -71,9 +72,11 @@ this compiler does not have yet):
     ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <fn> <file>
                                                    the shortest call chain to that effect
     ember calls --foreign <item>                   every foreign function the item can reach
-    ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-baseline]
-                         | --check <overlay> | --explain <fn> | --emit-embind]
-                                                   C header bindings (not built yet)
+    ember bind <header> [-I <dir>] [-D <name[=value]>] (--init [--merge] | --report [--overlay <file>]
+                         [--baseline <file> | --write-baseline <file>] | --check <overlay>)
+                                                   a starter overlay, what is skipped or still unsafe,
+                                                   an overlay checked against the header
+                                                   (--explain and --emit-embind are not built yet)
     ember shader-bind <reflection.json>            Annex D (not built yet)
     ember tcb [--module <m>] [--json] <file.em>    the trusted-base report (Annex C)
     ember toolchain list|install|default           manage installed C toolchains (not built yet)
@@ -448,6 +451,9 @@ struct Options {
     /// `[FFI-37]` — `ember test --instrument-ffi`: the directory its evidence record goes to
     /// (`[TCB-1]`'s `[ffi] evidence`).
     ffi_evidence: Option<PathBuf>,
+    /// `[TCB-1]` — `ember build --require-evidence`, `ember tcb --require`: a claimed grade whose
+    /// evidence is missing or stale is `E5050`, not `W5050`.
+    require_evidence: bool,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -566,6 +572,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "tcb" => tcb(&args[1..]),
         "audit" => audit(&args[1..]),
         "calls" => calls(&args[1..]),
+        "bind" => cimport::bind(&args[1..]),
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "build" | "run" | "check" => {
@@ -1507,19 +1514,21 @@ fn inspect_cost(path: &Path, function: Option<&str>, json: bool) -> Result<ExitC
 /// `[UNS-8]` — `ember tcb [--module <m>] [--json] <file.em>`.
 fn tcb(args: &[String]) -> Result<ExitCode, String> {
     let mut request = TcbReport::default();
+    let mut require = false;
     let mut path = None;
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
         match argument.as_str() {
             "--json" => request.json = true,
             "--module" => request.module = Some(rest.next().ok_or("`--module` needs a module name")?.clone()),
+            "--require" => require = true,
             flag if flag.starts_with('-') => return Err(format!("unknown `ember tcb` option `{flag}`")),
             file if path.is_none() => path = Some(PathBuf::from(file)),
             extra => return Err(format!("unexpected `ember tcb` argument `{extra}`")),
         }
     }
     let path = path.ok_or("`ember tcb` needs a source file")?;
-    let options = Options { tcb_report: Some(request), ..Options::default() };
+    let options = Options { tcb_report: Some(request), require_evidence: require, ..Options::default() };
     compile(&path, "check", &options)
 }
 
@@ -2372,7 +2381,14 @@ fn safety_costs_json(
                 ember_mir::FuncRef::Indirect { .. } => add("Owned callable value", "guaranteed present", span, &body.name, "one indirect call".to_string()),
                 ember_mir::FuncRef::Direct { symbol, .. } => {
                     if let Some(callee) = by_symbol.get(symbol.as_str()) && callee.contracts.foreign.is_some() {
-                        add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, one direct call", callee.name));
+                        // `[FFI-29c]` — a `static inline` function is reached through the shim's wrapper.
+                        let detail = if symbol.starts_with(&format!("{}_cshim_", ember_branding::SYMBOL_PREFIX)) {
+                            format!("`{}`, wrapped (static inline): a direct call to the import's shim, which calls it \
+                                     (one call more, unless the shim takes part in link-time optimisation)", callee.name)
+                        } else {
+                            format!("`{}`, one direct call", callee.name)
+                        };
+                        add("FFI call", "guaranteed present", span, &body.name, detail);
                     }
                 }
                 _ => {}
@@ -3021,6 +3037,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--report=instantiations" => options.instantiation_report = true,
             "--report=engine" => options.engine_report = true,
             "--build-id" => options.build_id = true,
+            "--require-evidence" => options.require_evidence = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
@@ -3216,7 +3233,9 @@ fn load_package_modules(
 ) -> Vec<ember_typeck::LoadedModule> {
     let mut loaded: Vec<ember_typeck::LoadedModule> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut queue: Vec<(usize, Vec<String>, ember_ast::Module)> = Vec::new();
+    let mut queue: Vec<(usize, Vec<String>, ember_ast::Module, Option<ember_typeck::ForeignImport>)> = Vec::new();
+    // `[FFI-6]` — each `import c` loaded so far, by its header, folder and options.
+    let mut foreign_known = cimport::Known::default();
 
     // `[MOD-5]` — source-backed prelude interfaces must exist even when the
     // user did not write an import. Loading a module does not make all of its
@@ -3241,15 +3260,34 @@ fn load_package_modules(
         let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
         mark("read and parse", &key);
         seen.insert(key);
-        queue.push((usize::MAX, names, parsed));
+        queue.push((usize::MAX, names, parsed, None));
     }
-    queue.push((0, Vec::new(), root));
+    queue.push((0, Vec::new(), root, None));
 
-    while let Some((package, path, mut module)) = queue.pop() {
+    while let Some((package, path, mut module, foreign)) = queue.pop() {
         // Every import this module names, before it is moved into the list: one of a package
         // (`[MOD-1]`) is already resolved, its path rewritten to the module's in the build.
         let mut wanted: Vec<(Vec<String>, ember_span::Span, bool, Option<(usize, PathBuf)>)> = Vec::new();
         for import in &mut module.imports {
+            // `[FFI-6]` — `import c "header"`: a module written from the header, the import
+            // rewritten to bind it.
+            if matches!(import.kind, ember_ast::ImportKind::Foreign { .. }) {
+                let importer = map.file(import.span.file).path.clone();
+                let package_dir = packages.list.get(package).map(|found| found.dir.clone());
+                let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
+                let flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
+                let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
+                if let Some(written) = cimport::load(import, &importer, &base, &flags, &mut foreign_known, map, sink) {
+                    seen.insert(written.path.join("."));
+                    if let Some((overlay_path, overlay, backed)) = written.overlay {
+                        seen.insert(overlay_path.join("."));
+                        let graded = ember_typeck::ForeignImport { backed, ..Default::default() };
+                        queue.push((package, overlay_path, overlay, Some(graded)));
+                    }
+                    queue.push((package, written.path, written.module, Some(written.foreign)));
+                }
+                continue;
+            }
             let resolved = if package == usize::MAX { None } else { resolve_package_import(packages, package, import) };
             let segments = match &import.kind {
                 ember_ast::ImportKind::Module { path, .. } => path,
@@ -3285,6 +3323,7 @@ fn load_package_modules(
             path: path.clone(),
             module,
             package: if package == usize::MAX { None } else { Some(package) },
+            foreign,
         });
 
         for (names, span, removed, resolved) in wanted {
@@ -3308,7 +3347,7 @@ fn load_package_modules(
                 let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
                 check_safety_notes(&parsed, &lexed.comments, map, sink);
                 mark("read and parse", &key);
-                queue.push((found, names, parsed));
+                queue.push((found, names, parsed, None));
                 continue;
             }
             // `[MOD-3]` — a standard module may be named without `std.`
@@ -3372,7 +3411,7 @@ fn load_package_modules(
             let lexed = ember_lexer::lex(file, &text, sink);
             let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
             mark("read and parse", &names.join("."));
-            queue.push((usize::MAX, names, parsed));
+            queue.push((usize::MAX, names, parsed, None));
         }
     }
     loaded
@@ -3475,14 +3514,19 @@ fn module_interface_inputs(
             effects: None,
             inline_body: None,
         };
-        if import_visible_contracts
-            .insert(declaration.symbol.clone(), contract.clone())
-            .is_some()
-        {
-            return Err(format!(
-                "internal compiler error: [BLD-2] import-visible callable `{}` has more than one declaration contract",
-                declaration.symbol
-            ));
+        match import_visible_contracts.get(&declaration.symbol) {
+            // `[FFI-30]` — one C function declared by two modules (two imports of one header, or
+            // two hand declarations of it) is one callable when the declarations agree.
+            Some(existing) if *existing == contract => {}
+            Some(_) => {
+                return Err(format!(
+                    "internal compiler error: [BLD-2] import-visible callable `{}` has more than one declaration contract",
+                    declaration.symbol
+                ));
+            }
+            None => {
+                import_visible_contracts.insert(declaration.symbol.clone(), contract.clone());
+            }
         }
         let records = records_by_file.entry(declaration.span.file).or_default();
         if records
@@ -3726,7 +3770,8 @@ fn install_callable_metadata_from_artifacts(
     let mut records: BTreeMap<String, CallableInterfaceContract> = BTreeMap::new();
     for artifact in artifacts {
         for (symbol, contract) in &artifact.callables {
-            if records.insert(symbol.clone(), contract.clone()).is_some() {
+            // `[FFI-30]` — one C function two modules declare alike is one callable.
+            if records.insert(symbol.clone(), contract.clone()).is_some_and(|earlier| earlier != *contract) {
                 return Err(format!(
                     "internal compiler error: [LT-40] callable `{symbol}` is present in more than one interface artifact"
                 ));
@@ -4268,6 +4313,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             lint_settings.realtime,
         );
         if checked.comptime.is_empty() {
+            // `[TCB-1]` — under `--require-evidence` a grade claimed without evidence is an error.
+            if options.require_evidence {
+                for mut diagnostic in sink.take() {
+                    if diagnostic.code == Some(codes::W5050) {
+                        diagnostic.severity = ember_diag::Severity::Error;
+                        diagnostic.code = Some(codes::E5050);
+                        diagnostic.notes.push("a claimed grade needs its evidence under `--require-evidence` [TCB-1]".to_string());
+                    }
+                    sink.emit(diagnostic);
+                }
+            }
             break (types, common, checked);
         }
         sink.rollback(mark);
@@ -5010,7 +5066,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[BLD-FFI-3]` — `[link] libs`, in the order written.
     // A path is the package's: relative to the directory of its manifest.
     let package_dir = nearest_manifest_path(input).and_then(|path| path.parent().map(Path::to_path_buf));
-    let libraries: Vec<String> = manifest.as_deref().and_then(|text| manifest_list(text, "link", "libs")).unwrap_or_default()
+    let mut libraries: Vec<String> = manifest.as_deref().and_then(|text| manifest_list(text, "link", "libs")).unwrap_or_default()
         .into_iter()
         .map(|library| match &package_dir {
             Some(dir) if ember_build::cdylib::is_library_path(&library) && Path::new(&library).is_relative() =>
@@ -5018,6 +5074,16 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             _ => library,
         })
         .collect();
+    // `[FFI-29]`, `[BLD-FFI-1]` — each `import c`'s shim and C sources, compiled by the `[c]`
+    // section's compiler (the backend's by default) into objects of their own; `[BLD-FFI-3]` its
+    // libraries after the manifest's, in the order written.
+    let c_toolchain = match manifest.as_deref().and_then(|text| manifest_string(text, "c", "compiler")) {
+        Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+        None => toolchain.clone(),
+    };
+    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &layout.c, &layout.obj, options.profile)?;
+    libraries.extend(foreign_libraries);
+    library_relaxed.extend(foreign_objects.iter().cloned());
     // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
     // points; `[FFI-31c]` with `runtime = "shared"` it imports the runtime its process shares.
     if cdylib {
@@ -5099,6 +5165,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     .map_err(|e| e.to_string())?
     .unwrap_or(runtime_source);
     let mut sources = vec![c_path.clone(), runtime_input];
+    sources.extend(foreign_objects);
     // `[FFI-37]` — the instrumentation is a unit of its own (it defines the C library's entry
     // points it intercepts off Windows).
     if let Some(instrument) = &emitted.ffi_instrument {
@@ -5190,7 +5257,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         // `[FFI-37]` — what the instrumented binary counts, with what the program declares of it.
         let instrumented = emitted.ffi_instrument.as_ref().zip(options.ffi_evidence.as_ref()).map(|(instrument, dir)| {
             let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-            foreign::InstrumentedRun::new(instrument, &bodies, dir.clone(), &package, &exe, toolchain.identity())
+            let mut run = foreign::InstrumentedRun::new(instrument, &bodies, dir.clone(), &package, &exe, toolchain.identity());
+            run.imported = modules
+                .iter()
+                .filter_map(|loaded| loaded.foreign.as_ref().map(|foreign| (loaded.module.span.file, foreign.identities.clone())))
+                .collect();
+            run
         });
         return test_runner::run_tests(&exe, &tests, options, instrumented.as_ref(), &map);
     }

@@ -215,6 +215,8 @@ pub struct Import {
     pub id: NodeId,
     pub kind: ImportKind,
     pub span: Span,
+    /// `[FFI-30b]` — `pub import c "…" as vk`: the module the import binds is re-exported.
+    pub public: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -223,8 +225,9 @@ pub enum ImportKind {
     Module { path: Vec<Ident>, alias: Option<Ident> },
     /// `from a.b import x, y as z` / `from a.b import *`
     Items { path: Vec<Ident>, items: Vec<ImportItem>, glob: bool },
-    /// `import c "header.h" with (...)` / `import cpp "header.h" with (...)`
-    Foreign { language: ForeignLanguage, header: String, options: Vec<AttrArg> },
+    /// `import c "header.h" with (...) [as name]` / `import cpp "header.h" with (...)`
+    /// (`[FFI-6]`): the module is bound to `name`, or to `c`.
+    Foreign { language: ForeignLanguage, header: String, options: Vec<AttrArg>, alias: Option<Ident> },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

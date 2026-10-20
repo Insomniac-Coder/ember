@@ -5,6 +5,20 @@ ruled under the delegation (ODR-138..ODR-143, 0.9.10_Hardened_21, ADR-225), each
 overturn; **ECS question 1 and the Box question are open.** Each question is written out in full, with
 the specification quoted, a real example and the options, in the helper's notes.
 
+## The C header importer (`[FFI-6a]`, `[FFI-6b]`, `[CLI-5]`, `[FFI-30c]`), helper N — `tasks/90/N-notes.md` §4
+
+To be ruled under the delegation (the owner, 2026-10-19: issues a helper reports are mine to settle).
+1. A pointer-constant macro (`#define NIL ((void*)0)`, `((HANDLE)-1)`): `[FFI-6a]` imports it with its
+   C pointer type, `[CT-5]` forbids a pointer `const`. Built meanwhile: skipped with `W5001`.
+2. A macro that expands to nothing (include guards): a `W5001` each, as written, or not reported.
+   Built meanwhile: not reported.
+3. A function-like macro's signature (`[FFI-6b]`, `@ffi(macro_fn)`): the overlay grammar gives an
+   entry no types. Built meanwhile: nothing.
+4. Where `ember bind --init` writes its starter overlay (`[CLI-5]`). Built: `<stem>.overlay.em` beside
+   the header.
+5. Several overlays for one module, their order and `override` (`[FFI-30c]`). Built meanwhile: one
+   overlay file per import.
+
 ## Box (`[STR-5]`, IX.1), found 2026-10-20 (ADR-226)
 
 1. Is `Box[T]` `Clone` and `Eq` when `T` is? IX.1 gives `Box[T]` "one owner; `Box(v)`, auto-deref,

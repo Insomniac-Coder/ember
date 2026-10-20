@@ -152,10 +152,9 @@ impl CallableSignature {
             }
         }
         if let Some(borrows) = &self.borrows {
-            if borrows.is_empty()
-                && !(self.abi.is_some()
-                    && (self.result.starts_with("ref ") || self.result.starts_with("Option[ref ")))
-            {
+            // A foreign declaration's `from(static)` result borrows no parameter, whatever view it
+            // is: `ref T`, `cstr`, `Span[T]`, or an `Option` of one. Source `@borrows()` is `E2031`.
+            if borrows.is_empty() && self.abi.is_none() {
                 return Err("`@borrows` must name at least one parameter");
             }
             let mut previous = None;
