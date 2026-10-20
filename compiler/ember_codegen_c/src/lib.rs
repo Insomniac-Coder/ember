@@ -7615,10 +7615,22 @@ impl Emitter<'_> {
                     && let Some((rvalue, bool_ty)) = self.folded_tests.get(&(place.local.0 as usize)).cloned()
                 {
                     let cond = self.rvalue(&rvalue, body, bool_ty);
-                    self.line(&format!("    if (!({cond})) {{ goto bb{}; }} else {{ goto bb{}; }}", target.0, otherwise.0));
+                    // D-755 — the condition as C writes it, its true block first: MSVC lays out the
+                    // `if`'s first target as the fall-through path, so `if (!(c)) goto else` made the
+                    // false block the straight line (`fib`'s recursive case, where the C program falls
+                    // through to its base case).
+                    self.line(&format!("    if ({cond}) {{ goto bb{}; }} else {{ goto bb{}; }}", otherwise.0, target.0));
                     return;
                 }
+                let is_bool = self.operand_type(discr, body).is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Bool));
                 let discr = self.operand(discr, body);
+                // D-755 — a boolean as C tests it, the true block first.
+                if let [(0, target)] = targets.as_slice()
+                    && is_bool
+                {
+                    self.line(&format!("    if ({discr}) {{ goto bb{}; }} else {{ goto bb{}; }}", otherwise.0, target.0));
+                    return;
+                }
                 // Phase 0 only produces two-way branches on a boolean.
                 if let [(_, target)] = targets.as_slice() {
                     self.line(&format!(
