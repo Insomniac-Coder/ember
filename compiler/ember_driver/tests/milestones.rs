@@ -57,6 +57,9 @@ struct Expectations {
     stdin: Option<String>,
     /// `#$ args:` — one program argument per annotation, after `--`.
     args: Vec<String>,
+    /// `#$ flags:` — one compiler flag per annotation for the check of a test's diagnostics:
+    /// `--require-evidence` (`[TCB-1]`), under which a claimed grade's missing evidence is `E5050`.
+    flags: Vec<String>,
     /// `#$ stderr:` — text the run's standard error must contain, one needle
     /// per annotation: the debug leak report (`[WK-15]`) goes there.
     stderr: Vec<String>,
@@ -232,6 +235,8 @@ fn parse_expectations(source: &str) -> Expectations {
         } else if let Some(value) = rest.strip_prefix("panics:") {
             expectations.panics = Some(value.trim().to_string());
             collecting_stdout = false;
+        } else if let Some(value) = rest.strip_prefix("flags:") {
+            expectations.flags.push(value.trim().to_string());
         } else if let Some(value) = rest.strip_prefix("args:") {
             expectations.args.push(value.trim().to_string());
             collecting_stdout = false;
@@ -336,7 +341,9 @@ fn assert_exact_diagnostics(
     root: &Path,
     expectations: &Expectations,
 ) -> (i32, String) {
-    let checked = ember(&["check", "--json", relative, "--profile", profile], root);
+    let mut arguments = vec!["check", "--json", relative, "--profile", profile];
+    arguments.extend(expectations.flags.iter().map(String::as_str));
+    let checked = ember(&arguments, root);
     struct Produced {
         code: String,
         text: String,

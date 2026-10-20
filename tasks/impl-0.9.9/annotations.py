@@ -5,7 +5,8 @@ with that code whose text (message, labels, notes or helps) contains `text`; one
 line of code also needs the diagnostic's primary span on that line. A missing diagnostic and an
 unclaimed one both fail. Also `#$ help:`, `#$ not-help:`, and for run tests `#$ stdout:` (with its
 `#$` continuation lines), `#$ stdin:` (one input line each; stdin is otherwise empty),
-`#$ args:` (one program argument each, after `--`), `#$ exit:` and `#$ panics:`. A test uses its first listed profile. Files are checked side by side, one per
+`#$ args:` (one program argument each, after `--`), `#$ flags:` (one compiler flag
+each, for the check), `#$ exit:` and `#$ panics:`. A test uses its first listed profile. Files are checked side by side, one per
 core, and reported in order.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
@@ -98,8 +99,13 @@ def annotations(text):
     return out
 
 
-def produced(path, profile):
-    code, out, err = run(['check', '--json', '--profile', profile], path)
+def compiler_flags(text):
+    """`#$ flags:` lines, each one compiler flag for the check of the test's diagnostics."""
+    return [line[len('#$ flags:'):].strip() for line in text.splitlines() if line.startswith('#$ flags:')]
+
+
+def produced(path, profile, flags=()):
+    code, out, err = run(['check', '--json', '--profile', profile, *flags], path)
     found = []
     for line in (out + '\n' + err).split('\n'):
         line = line.strip()
@@ -131,7 +137,7 @@ def check(path):
         return []
     profile = (re.search(r'^#\$ profiles:\s*([a-z]+)', text, re.M) or [None, 'debug'])[1]
     problems = []
-    exit_code, found = produced(path, profile)
+    exit_code, found = produced(path, profile, compiler_flags(text))
     claimed = [False] * len(found)
     for _, code, message, line in annotations(text):
         index = next((i for i, d in enumerate(found)
