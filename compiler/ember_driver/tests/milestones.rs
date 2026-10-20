@@ -7458,3 +7458,44 @@ fn a_reexported_header_layout_is_part_of_the_interface_hash() {
     let after = cached_interface(&out_dir, "lib");
     assert_ne!(after.dependencies.get("c.h_shape"), Some(&header_hash), "a changed layout left the dependency's hash as it was");
 }
+
+/// `[TCB-5]` — an instrumented fact of a declaration `import c` wrote is valid only for the header
+/// and overlay it was measured against: the evidence record stores their paths and hashes, and a
+/// changed header makes it stale (`[TCB-6]`), so the fact goes back to asserted.
+#[test]
+fn evidence_for_an_imported_declaration_rests_on_its_header_and_overlay() {
+    let package = test_package("imported_measured", "bin", "\
+import c \"measure.h\" with (overlay = \"overlays/measure.em\")
+
+@test
+fn twice():
+    assert(c.measure_twice(4) == 8)
+
+fn main():
+    println(c.measure_twice(1))
+");
+    std::fs::write(package.join("src").join("measure.h"), "static inline int measure_twice(int x) { return 2 * x; }\n").unwrap();
+    std::fs::create_dir_all(package.join("overlays")).unwrap();
+    std::fs::write(package.join("overlays").join(format!("measure.{SOURCE_EXT}")),
+        "unsafe overlay c \"measure.h\":\n    @ffi(effects=[])\n    fn measure_twice(x)\n").unwrap();
+    let out_arg = package.join("target").to_string_lossy().into_owned();
+    let run = ember(&["test", "--instrument-ffi", "--out-dir", &out_arg], &package);
+    assert_eq!(run.exit, 0, "{}{}", run.stdout, run.stderr);
+    let record_path = package.join(format!(".{}/ffi-evidence/main.json", ember_branding::SYMBOL_PREFIX));
+    let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&record_path).expect("the evidence record is written"))
+        .expect("the evidence record is JSON");
+    let function = record["functions"].as_array().expect("a function list").iter()
+        .find(|function| function["name"].as_str().is_some_and(|name| name.ends_with("measure_twice")))
+        .expect("`measure_twice` is recorded");
+    let roles: Vec<&str> = function["imported_from"].as_array().expect("its identities").iter()
+        .filter(|identity| identity["hash"].is_string())
+        .filter_map(|identity| identity["role"].as_str())
+        .collect();
+    assert_eq!(roles, ["header", "overlay"], "{function}");
+    let entry = package.join("src").join(ember_branding::source_file("main")).to_string_lossy().into_owned();
+    let fresh = ember(&["tcb", &entry], &package);
+    assert!(fresh.stdout.contains("no Alloc: instrumented"), "{}{}", fresh.stdout, fresh.stderr);
+    std::fs::write(package.join("src").join("measure.h"), "static inline int measure_twice(int x) { return x + x; }\n").unwrap();
+    let stale = ember(&["tcb", &entry], &package);
+    assert!(stale.stdout.contains("evidence stale") && stale.stdout.contains("its header"), "{}{}", stale.stdout, stale.stderr);
+}

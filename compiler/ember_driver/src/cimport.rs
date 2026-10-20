@@ -1450,8 +1450,11 @@ pub fn load(
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
+    let mut identities = vec![("header".to_string(), imported.header.clone())];
+    identities.extend(options.overlay.as_ref().map(|(written, _)| ("overlay".to_string(), base.join(written))));
     let foreign = ember_typeck::ForeignImport {
         header: shown,
+        identities,
         skipped: imported
             .skipped
             .iter()

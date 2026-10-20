@@ -58,6 +58,9 @@ pub struct LoadedModule {
 pub struct ForeignImport {
     /// The header, as found.
     pub header: String,
+    /// `[TCB-5]` — the files a declaration's facts rest on: the header (`header`) and the overlay
+    /// (`overlay`), by path.
+    pub identities: Vec<(String, std::path::PathBuf)>,
     /// `[FFI-20a]` — each declaration not imported, with the construct that defeated it.
     pub skipped: Vec<(String, String)>,
     /// `[FFI-5]` — Clang's layout of each imported struct: its name, size, alignment, and each

@@ -188,6 +188,14 @@ says which happened ("import c, parsed" / "import c, from its .embind"): about 1
 here, most of the second being libclang's load, which the key needs. The overlay is still applied on
 each build (it is cheap and its diagnostics must be repeated).
 
+### N8c. Evidence rests on the header and overlay (`[TCB-5]`)
+
+`ember test --instrument-ffi`'s evidence record gives each function `import c` wrote an
+`imported_from` list: the header and the overlay, each with its path and hash
+(`ForeignImport::identities`, `InstrumentedRun::imported`). `ember tcb` reads them back: a changed
+header or overlay makes the record stale ("its header …"), and the facts go back to asserted
+(`[TCB-6]`).
+
 ### N8a. Wrapped calls in the cost report (`[FFI-29c]`)
 
 `ember inspect --cost`'s "FFI call" row says `wrapped (static inline)` for a call that goes through
@@ -228,6 +236,7 @@ the shim's wrapper (its symbol is the wrapper's), and "one direct call" otherwis
 | `CLI-5` | milestone `bind_init_writes_a_starter_overlay_that_compiles_unchanged` |
 | `CLI-6`, `CLI-7`, `FFI-35a` | milestone `bind_report_and_check_count_what_is_safe_unsafe_and_skipped` |
 | `FFI-29c` | milestone `inspect_reports_a_wrapped_static_inline_call` |
+| `TCB-5` | milestone `evidence_for_an_imported_declaration_rests_on_its_header_and_overlay` |
 | `FFI-7`, `FFI-14` | milestone `import_c_parses_a_header_again_only_when_it_changes`; the codec's unit test `cbor::tests::values_round_trip` |
 
 Test overlays live in an `overlays/` folder beside the tests: the runners take every `*.em` directly

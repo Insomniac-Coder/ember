@@ -5233,7 +5233,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         // `[FFI-37]` — what the instrumented binary counts, with what the program declares of it.
         let instrumented = emitted.ffi_instrument.as_ref().zip(options.ffi_evidence.as_ref()).map(|(instrument, dir)| {
             let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-            foreign::InstrumentedRun::new(instrument, &bodies, dir.clone(), &package, &exe, toolchain.identity())
+            let mut run = foreign::InstrumentedRun::new(instrument, &bodies, dir.clone(), &package, &exe, toolchain.identity());
+            run.imported = modules
+                .iter()
+                .filter_map(|loaded| loaded.foreign.as_ref().map(|foreign| (loaded.module.span.file, foreign.identities.clone())))
+                .collect();
+            run
         });
         return test_runner::run_tests(&exe, &tests, options, instrumented.as_ref(), &map);
     }
