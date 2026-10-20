@@ -4185,6 +4185,20 @@ pub fn build_objects(
     Ok((objects, libraries))
 }
 
+/// `[BLD-FFI-4]` — the link-time optimisation flag a C++ project's GCC or Clang flags give, the last
+/// one written (`-fno-lto` turning it off), which the program's own C inherits.
+pub fn inherited_lto(modules: &[ember_typeck::LoadedModule]) -> Option<&'static str> {
+    const KNOWN: [&str; 4] = ["-flto", "-flto=thin", "-flto=full", "-flto=auto"];
+    modules
+        .iter()
+        .filter_map(|module| module.foreign.as_ref().filter(|foreign| foreign.cpp.is_some()))
+        .find_map(|foreign| {
+            let last = foreign.flags.iter().rev().find(|flag| flag.starts_with("-flto") || *flag == "-fno-lto")?;
+            Some(KNOWN.into_iter().find(|known| known == last).unwrap_or(if last == "-fno-lto" { "" } else { "-flto" }))
+        })
+        .filter(|flag| !flag.is_empty())
+}
+
 /// `[BLD-FFI-1b]` — the MSVC runtime-library switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` the build
 /// inherits, byte for byte, from the projects of its imports (a C++ project's flags and defines, or
 /// the `[c]` flags a C import is compiled with); each import agreed with the others when it was

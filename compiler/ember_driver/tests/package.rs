@@ -385,6 +385,32 @@ fn the_cpp_project_s_runtime_is_inherited() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[BLD-FFI-4]` — with GCC or Clang, a C++ project whose flags ask for link-time optimisation
+/// (`-flto`) has the program's own C compiled and linked with it too, so the link inlines the
+/// calls into its thunks like any other call: the program runs, and (where `nm` reads it) the
+/// thunk's symbol is gone from it. MSVC's `release` builds both with `/GL` already.
+#[test]
+fn the_cpp_project_s_link_time_optimisation_reaches_the_program() {
+    let probe = ember(&["--version"], &std::env::temp_dir());
+    if probe.stdout.lines().any(|line| line.starts_with("C compiler: msvc")) {
+        return;
+    }
+    let dir = scratch();
+    let program = "import cpp \"engine.hpp\" with (project = \"engine\")\n\nfn main():\n    unsafe:  # SAFETY(ffi): a scalar call\n        println(cpp.twice(21))\n";
+    package(&dir, "[package]\nname = \"lto\"\nversion = \"0.1.0\"\n\n[cpp.engine]\nflags = [\"-flto\"]\n", &[("main", program)]);
+    std::fs::write(dir.join("src").join("engine.hpp"), "#pragma once\ninline int twice(int x) noexcept { return x * 2; }\n").unwrap();
+    let run = ember(&["run", "--profile", "release"], &dir);
+    assert!(run.ok, "{}", run.stderr);
+    assert_eq!(run.stdout.trim(), "42", "{}", run.stderr);
+    let program = walk(&dir).into_iter().find(|path| path.file_stem().is_some_and(|stem| stem == "main") && path.parent().is_some_and(|parent| parent.ends_with("bin"))).expect("the program");
+    if let Ok(listed) = Command::new("nm").arg(&program).output() && listed.status.success() {
+        let thunk = format!("{}_cpp_cpp_h_engine_0", ember_branding::SYMBOL_PREFIX);
+        let symbols = String::from_utf8_lossy(&listed.stdout);
+        assert!(!symbols.lines().any(|line| line.ends_with(&format!(" T {thunk}"))), "the thunk was not inlined across the boundary:\n{symbols}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Every file under `dir`.
 fn walk(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();

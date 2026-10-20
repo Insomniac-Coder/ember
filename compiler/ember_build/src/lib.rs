@@ -724,6 +724,14 @@ fn compile_and_link_impl(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(request.profile)).args(gcc_flags(toolchain, request.profile));
+            // `[BLD-FFI-4]` — the C++ project's link-time optimisation, for the program's C and its link.
+            if let Some(lto) = inherited_gnu_lto() {
+                command.arg(lto);
+                // Clang on Windows links link-time-optimised code only with LLVM's `lld-link`.
+                if cfg!(windows) && matches!(toolchain, Toolchain::Clang(_)) {
+                    command.arg("-fuse-ld=lld");
+                }
+            }
             command.args(layout_compile.iter());
             if warnings_as_errors() {
                 command.arg("-Werror");
@@ -1577,6 +1585,22 @@ pub fn inherit_msvc_runtime(flags: Vec<&'static str>) {
 
 fn inherited_msvc_runtime() -> Vec<&'static str> {
     INHERITED_MSVC_RUNTIME.lock().map(|inherited| inherited.clone()).unwrap_or_default()
+}
+
+/// `[BLD-FFI-4]` — the link-time optimisation a C++ project's GCC or Clang flags ask for (`-flto`,
+/// `-flto=thin`, …), which the program's own C is then compiled and linked with too, so the link
+/// inlines calls across the boundary as the project's own. `None` for none.
+static INHERITED_GNU_LTO: std::sync::Mutex<Option<&'static str>> = std::sync::Mutex::new(None);
+
+/// `[BLD-FFI-4]` — inherit a C++ project's link-time optimisation flag for this build.
+pub fn inherit_gnu_lto(flag: Option<&'static str>) {
+    if let Ok(mut inherited) = INHERITED_GNU_LTO.lock() {
+        *inherited = flag;
+    }
+}
+
+fn inherited_gnu_lto() -> Option<&'static str> {
+    INHERITED_GNU_LTO.lock().ok().and_then(|inherited| *inherited)
 }
 
 /// `[BLD-FFI-1b]` — `/MD`, or the runtime switch the build inherits.

@@ -5190,6 +5190,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
                 return Ok(finish(&sink, &map, options));
             }
         }
+    } else {
+        // `[BLD-FFI-4]` — and with GCC or Clang, its link-time optimisation.
+        ember_build::inherit_gnu_lto(cimport::inherited_lto(&modules));
     }
     if options.build_id {
         println!("{}", build_id(&map, options.profile, &toolchain, &runtime)?);
