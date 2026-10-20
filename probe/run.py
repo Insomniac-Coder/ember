@@ -22,7 +22,10 @@ def build(source):
     exe = OUT / f'{source.parent.name}_{source.stem}.exe'
     obj = OUT / f'{source.parent.name}_{source.stem}_obj'
     obj.mkdir(parents=True, exist_ok=True)
-    cmd = ['cl', *FLAGS, f'/I{RT / "include"}', str(source)]
+    text = source.read_text(encoding='utf-8')
+    first = text.splitlines()[0] if text else ''
+    extra = first[len('// probe-flags:'):].split() if first.startswith('// probe-flags:') else []
+    cmd = ['cl', *FLAGS, *extra, f'/I{RT / "include"}', str(source)]
     if 'ember_rt.h' in source.read_text(encoding='utf-8'):
         cmd.append(str(RT / 'src' / 'ember_rt.c'))
     cmd += [f'/Fo{obj}\\', f'/Fe{exe}', '/link', '/Brepro', '/INCREMENTAL:NO']
