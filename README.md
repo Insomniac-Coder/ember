@@ -44,10 +44,10 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 3 | Classes, reference counting, exclusivity | 98% |
 | 4 | Effects, compile time, reflection, derives | 89% |
 | 5 | C interoperability | 64% |
-| 6 | Concurrency and data-oriented design | 92% |
+| 6 | Concurrency and data-oriented design | 95% |
 | 7 | C++ interoperability and the interpreter | 0% |
 | 7a | Iteration, determinism, cost control | 80% |
-| 8 | Hardening and 1.0 | 42% |
+| 8 | Hardening and 1.0 | 43% |
 | | Overall (1.0) | 90% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 

@@ -7629,3 +7629,27 @@ fn every_example_of_the_specification_checks() {
     assert!(checked > 30, "the development target's blocks were not found ({checked})");
     assert!(failures.is_empty(), "{} specification example(s) fail:\n{}", failures.len(), failures.join("\n\n"));
 }
+
+/// `[TST-28]`, `[BEN-1]`, `[BEN-5]`, `[TST-29]` — `ember bench --compare` builds each pair of a folder (both sides by
+/// one toolchain with the release profile), checks
+/// the two outputs are the same, times the pair on one core, and reports each verdict, a summary
+/// with the baseline's size, and a failing exit status when a benchmark fails.
+#[test]
+fn bench_compare_times_each_pair_and_checks_its_output() {
+    let dir = temporary_directory("bench-compare");
+    let em = |name: &str, body: &str| std::fs::write(dir.join(format!("{name}.{SOURCE_EXT}")), format!("#$ perf: scalar\n{body}")).unwrap();
+    em("same", "fn main():\n    total = 0\n    for i in 0..1000:\n        total += i\n    println(total)\n");
+    std::fs::write(dir.join("same.c"), "#include <stdio.h>\nint main(void) {\n    long long total = 0;\n    for (int i = 0; i < 1000; i++) total += i;\n    printf(\"%lld\\n\", total);\n    return 0;\n}\n").unwrap();
+    em("differs", "fn main():\n    println(1)\n");
+    std::fs::write(dir.join("differs.c"), "#include <stdio.h>\nint main(void) {\n    printf(\"2\\n\");\n    return 0;\n}\n").unwrap();
+    let folder = dir.to_string_lossy().into_owned();
+    let run = ember(&["bench", "--compare", "--dir", &folder], &dir);
+    if run.stdout.contains("on battery power") {
+        return;
+    }
+    assert!(run.stdout.contains("differs: FAIL — its output differs from the C program's"), "the outputs were not compared:\n{}{}", run.stdout, run.stderr);
+    assert!(run.stdout.contains("same: ") && run.stdout.contains("ratio "), "the pair was not timed:\n{}", run.stdout);
+    assert!(run.stdout.contains("3 untimed and 30 timed runs each"), "{}", run.stdout);
+    assert!(run.stdout.contains("baseline 0 of 2 (green)"), "{}", run.stdout);
+    assert_ne!(run.exit, 0, "a failed benchmark fails the gate");
+}

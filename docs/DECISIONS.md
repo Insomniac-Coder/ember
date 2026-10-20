@@ -5017,6 +5017,30 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-233 — The performance gate: `ember bench --compare` (`[TST-28]`, `[BEN-1]`..`[BEN-3]`, `[BEN-5]`)
+
+2026-10-20. `compiler/ember_driver/src/bench.rs`. `tests/perf/<name>.em` and its twin `<name>.c`
+(`.cpp` for counted-object code) form a pair; `#$ perf: scalar | loop | soa | simd | counted` sets
+the threshold (1.05x, 1.10x, 1.15x, `[BEN-6]`), and `#$ threshold:` may only tighten it. The Ember
+side is built by this compiler with `--profile release`, the twin by `ember_build::compile_and_link`
+with the same toolchain and profile, so both share optimisation, LTO, floating-point model and
+target flags by construction (`[BEN-5]`). The process pins itself to one core (`--core N`, default
+1; Windows `SetProcessAffinityMask`, Linux `sched_setaffinity`; its children inherit it) and refuses
+to time on battery power (void, `[BEN-3]`). Outputs must be identical (`[TST-28]`'s checker). Each
+pair then runs 3 untimed and 30 timed times, Ember, C and a second copy of C interleaved and
+rotated; each side reports its median and the distribution-free 95 % interval of the median (order
+statistics 10 and 21 of 30), the ratio its interval (`[BEN-1]`). Fail only when the ratio's lower
+bound exceeds the threshold; a point estimate above it is inconclusive and the pair is run again,
+three times in all (`[BEN-2]`); a C program whose ratio to its own copy misses 1.00 ± 0.02 voids the
+run (`[BEN-3]`). `tests/perf/baseline` lists known failures, `name [compiler]` for one compiler; a
+baselined pair that passes fails the gate until it is taken out, and the summary reports the
+baseline's size and calls the gate `baselined` past a tenth of its cases (`[TST-29]`). On GitHub
+Actions a failure is also an annotation. CI runs it on Ubuntu with gcc and Windows with MSVC.
+The suite: 21 pairs (three new, 18 from `bench/`); two baselined with MSVC: `float_math` (D-752)
+and `a10_recursion` (the checked `+` of `[TYP-8]`). Not built: retired instruction counts
+(`[BEN-4]`), and `[BEN-6]`'s exact allocation counts on `@noalloc` paths, a direct FFI call's
+instructions, and counted-object code against a C++ intrusive count.
+
 ## ADR-232 — `[TST-7]`'s full check of the specification's examples (ODR-150, 0.9.10_Hardened_24)
 
 2026-10-20. `[TST-7]` asks that every ```` ```ember ```` block pass `ember check`; the cut's

@@ -1,0 +1,16 @@
+#$ perf: scalar
+## `[TST-28]` — `bench/programs/t2_bytes.em` and its twin, gated.
+
+fn make_text() -> String:
+    text = String.from("")
+    for i in 0..50000:
+        text.push_str("the quick brown fox, jumps over\tthe lazy dog; héllo wörld\n")
+    return text
+
+fn main():
+    text = make_text()
+    total = 0
+    for round in 0..20:
+        for b in text.bytes():
+            total += b as int
+    println(total)

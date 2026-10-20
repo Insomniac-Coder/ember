@@ -4,6 +4,7 @@
 //! stage dumps. The rest of the CLI surface arrives with the phases that give
 //! each command something to do.
 
+mod bench;
 mod cimport;
 mod comptime;
 mod foreign;
@@ -52,8 +53,8 @@ this compiler does not have yet):
                                                    of its own; --doc runs the documentation examples;
                                                    --instrument-ffi grades foreign effect facts by
                                                    what the tests observe
-    ember bench [filter] [--compare]               benchmarks; --compare runs the paired C programs
-                                                   (not built yet)
+    ember bench [filter] --compare [--core N]       time tests/perf/'s programs against their C twins on
+                                                   one core; fails past a threshold ([TST-28])
     ember fmt <file.em> [--check | --write | --migrate] [--json]
                                                    print the file in the canonical layout
                                                    (--migrate: 0.9.8 source rewritten into 0.9.9)
@@ -575,6 +576,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "bind" => cimport::bind(&args[1..]),
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
+        "bench" => bench::command(&args[1..]),
         "build" | "run" | "check" => {
             // The source file may sit before or after the flags. Requiring it
             // first made `ember check --syntax-only f.em` fail with "needs a

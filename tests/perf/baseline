@@ -1,0 +1,4 @@
+# `[TST-29]` — the benchmarks known to fail the gate, each with why; `name [compiler]` for one C
+# compiler only. The list only shrinks: one that passes again fails the gate until it is taken out.
+float_math [msvc]: D-752, the Mandelbrot loop is 1.15x C with MSVC under the same flags
+a10_recursion [msvc]: `fib`'s `+` is checked ([TYP-8]), which stops the C compiler regrouping it as C's unchecked `+` lets it (1.07x)
