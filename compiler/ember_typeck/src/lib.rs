@@ -31988,7 +31988,7 @@ impl<'a> Checker<'a> {
             && (derived == base || self.types.class_is_subclass_of(derived, base))
             && self.cpp_trampoline(base).is_some()
         {
-            let shown = self.types.display(wanted);
+            let shown = self.types.display(wanted).rsplit('.').next().unwrap_or_default().to_string();
             self.sink.emit(
                 Diagnostic::error(codes::E5060, expr.span, format!("C++ keeps this object, and nothing here holds the `Retained` token that keeps it alive for C++"))
                     .help(format!("pin it and keep the token as long as C++ needs the object: `token = Retained.pin(…)`, then pass `token` (a `Retained[{shown}]`)"))
