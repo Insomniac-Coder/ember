@@ -10825,6 +10825,9 @@ formal 1/9 count or Phase 2's estimate.
 > D-776 fixed: a pattern condition takes dotted paths, as a `match` arm does.
 > ADR-250: reflection — `[RFL-1]`..`[RFL-3]`, `[RT-3]` done (`std.ser`; ODR-158 in
 > `0.9.10_Hardened_29`; runtime ABI 3); D-777 fixed (a static of a view made of literals).
+> ADR-251: serialisation — `[SER-1]`, `[SER-2]`, `[RNG-10a]` (`std.ser.json`, `std.ser.binary`, the
+> derives in `ember_typeck/src/serial.rs`); D-778 fixed. Owner answered N3 Q3/Q4/Q8 2026-10-21
+> (tasks/90/owner-questions.md): all three to build.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

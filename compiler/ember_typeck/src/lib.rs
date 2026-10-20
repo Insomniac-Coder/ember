@@ -18,6 +18,7 @@ pub use name_suggestions::nearest as nearest_names;
 mod const_eval;
 mod errors;
 mod derives;
+mod serial;
 mod comptime;
 mod coroutines;
 
@@ -228,6 +229,9 @@ pub fn check(
     // `[RFL-2]` — `@reflect` is the implementation of `std.ser.Reflect` it stands for.
     let reflected = derives::desugar_reflect(modules);
     let modules: &[LoadedModule] = reflected.as_deref().unwrap_or(modules);
+    // `[SER-1]` — `@derive(Serialize)` and `@derive(Deserialize)` too.
+    let serialised = serial::desugar(modules, sink);
+    let modules: &[LoadedModule] = serialised.as_deref().unwrap_or(modules);
     // `[CORO-1]` — a `gen fn` is the frame, its implementations and its body.
     let generators = coroutines::desugar_generators(modules, sink);
     let modules: &[LoadedModule] = generators.as_ref().map_or(modules, |written| written.modules.as_slice());
@@ -2517,11 +2521,11 @@ struct Checker<'a> {
     /// not an inherent one of the same name (D-245). By the type `Self` names there too: a generic
     /// type's generic methods are checked once per instance of the type, each through its own bounds
     /// (D-765: `Map[String, V]`'s `AsKey[String]` is not `Map[str, V]`'s `AsKey[str]`).
-    bound_calls: HashMap<(Span, Option<Ty>), Symbol>,
+    bound_calls: HashMap<(Span, Symbol, Option<Ty>), Symbol>,
     /// D-765 — per call, the interface every record of it names, `None` when they differ: what an
     /// instance whose `Self` the opaque check did not see (a generic type's method, checked once
     /// over `Wrapper[T]`; an interface's default, over its `Self`) calls through.
-    bound_calls_by_span: HashMap<Span, Option<Symbol>>,
+    bound_calls_by_span: HashMap<(Span, Symbol), Option<Symbol>>,
     /// `[COST-1]` — the inherent extension methods a built-in instance took
     /// when a method was first looked up on it: emitted only if called.
     emit_if_used_methods: HashSet<DefId>,
@@ -20428,10 +20432,11 @@ impl<'a> Checker<'a> {
 
     /// D-245, D-765 — the interface a generic body's call at `span` went through, by the type `Self`
     /// names now.
-    fn note_bound_call(&mut self, span: Span, bound: Symbol) {
-        self.bound_calls.insert((span, self.self_ty), bound);
+    /// D-778 — by the method too: generated code (a derive's body) writes several calls at one span.
+    fn note_bound_call(&mut self, span: Span, method: Symbol, bound: Symbol) {
+        self.bound_calls.insert((span, method, self.self_ty), bound);
         self.bound_calls_by_span
-            .entry(span)
+            .entry((span, method))
             .and_modify(|all| {
                 if *all != Some(bound) {
                     *all = None;
@@ -20442,8 +20447,8 @@ impl<'a> Checker<'a> {
 
     /// D-245, D-765 — the interface the call at `span` goes through in this instance: its own
     /// `Self`'s record, else the one every record names.
-    fn bound_call(&self, span: Span) -> Option<Symbol> {
-        self.bound_calls.get(&(span, self.self_ty)).copied().or_else(|| self.bound_calls_by_span.get(&span).copied().flatten())
+    fn bound_call(&self, span: Span, method: Symbol) -> Option<Symbol> {
+        self.bound_calls.get(&(span, method, self.self_ty)).copied().or_else(|| self.bound_calls_by_span.get(&(span, method)).copied().flatten())
     }
 
     /// `[MONO-2]` — one more instance of `generic` (once each), made `made`-th, and the time its
@@ -30303,7 +30308,7 @@ impl<'a> Checker<'a> {
             );
             return Ok(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         };
-        self.note_bound_call(span, bound);
+        self.note_bound_call(span, Symbol::intern(method), bound);
         // D-257 — a call through a bound names no function that is emitted: a lambda making one
         // is over the body's opaque parameters, whatever its own types are.
         self.skipped_instances += 1;
@@ -38777,10 +38782,7 @@ impl<'a> Checker<'a> {
                     let built = matches!(derived, "Copy" | "Clone" | "Eq" | "Hash")
                         || matches!(derived, "Debug" | "Zeroable" | "Component") && matches!(site, "struct" | "enum");
                     if !built {
-                        let note = match derived {
-                            "Serialize" | "Deserialize" => "serialisation is `[SER-1]`'s, not built yet",
-                            _ => "a struct or an enum derives every built-in derive but `Serialize` and `Deserialize`; a class `Copy`, `Clone`, `Eq` and `Hash` [DRV-1]",
-                        };
+                        let note = "a struct or an enum derives every built-in derive; a class `Copy`, `Clone`, `Eq` and `Hash` [DRV-1]";
                         self.sink.emit(
                             Diagnostic::error(
                                 codes::E0900,
@@ -41129,12 +41131,16 @@ impl<'a> Checker<'a> {
             .named_interface_call
             .filter(|(_, at)| *at == span)
             .map(|(interface, _)| interface)
-            .or_else(|| self.bound_call(span));
+            .or_else(|| self.bound_call(span, name.name));
         if let Some(interface) = through
             && self.interface_methods.contains_key(&(receiver.ty, interface, name.name))
         {
-            self.named_interface_call = Some((interface, span));
-            return self.synth_registered_method(receiver, recv_span, name, args, explicit, span);
+            // D-778 — for this call only: another call at the same span (generated code writes
+            // several there) is not this one.
+            let outer = self.named_interface_call.replace((interface, span));
+            let call = self.synth_registered_method(receiver, recv_span, name, args, explicit, span);
+            self.named_interface_call = outer;
+            return call;
         }
         // `[WK-3]` — a weak handle exposes only `upgrade`; it must not
         // auto-dereference to the object because that would make a dead
@@ -42581,7 +42587,7 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
-        self.note_bound_call(span, bound);
+        self.note_bound_call(span, name.name, bound);
         // D-257 — a call through a bound names no function that is emitted: a lambda making one
         // is over the body's opaque parameters, whatever its own types are.
         self.skipped_instances += 1;
@@ -48468,7 +48474,7 @@ impl<'a> Checker<'a> {
         let concrete = place.ty;
         let receiver = self.pass_receiver(*place, receiver_mode, receiver_span);
         args.insert(0, receiver);
-        self.note_bound_call(span, bound);
+        self.note_bound_call(span, name, bound);
         // D-257 — a call through a bound names no function that is emitted: a lambda making one
         // is over the body's opaque parameters, whatever its own types are.
         self.skipped_instances += 1;
@@ -54577,6 +54583,7 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["sync"], &["class"], true),
     (&["reflect"], &["struct", "enum", "class"], true),
     (&["attribute"], &["struct"], true),
+    (&["ser"], &["field"], true),
     (&["borrows"], &["fn"], true),
     (&["safety"], &["fn"], true),
     (&["must_drop"], &["struct", "class"], true),

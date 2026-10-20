@@ -5017,6 +5017,21 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-251 — Serialisation: `@derive(Serialize, Deserialize)`, `std.ser.json`, `std.ser.binary` (`[SER-1]`, `[SER-2]`, `[RNG-10a]`)
+
+2026-10-21. `std.ser` (now `std/src/ser/mod.em`) declares `Writer`, `Reader`, `Serialize`,
+`Deserialize` and `SerError`, implements the interfaces for the numbers, `bool`, `String`, `Array`
+and `Option`, and gives the helpers a derived body calls (`put`, `take`, `required`, `or_default`,
+`in_range`); `std.ser.json` and `std.ser.binary` each provide a writer, a reader, and
+`to_string`/`from_str` or `to_bytes`/`from_bytes`. The derives are written out before checking
+(`ember_typeck/src/serial.rs`), as `Ord` and `Default` are: a struct is written as its version (the
+highest `@ser(since=N)`) and its fields by name (`@ser(rename=…)`, `@ser(skip)` leaves one out); an
+enum value as its variant's name and its payload's fields. Reading takes fields in any order, skips one
+it does not know, gives a missing one its default under `@ser(default)` or `@ser(since=N)` and is
+otherwise `MissingField`; an unknown variant is `UnknownVariant`; a range-typed field is read as its
+representation and checked with `checked` (`OutOfRange`). D-778: two calls at one span went through
+one interface. Not yet cut into the spec as an ODR (the formats' shapes).
+
 ## ADR-250 — Reflection: `reflect[T]()`, `@reflect` and user attributes (`[RFL-1]`..`[RFL-3]`, `[RT-3]`, ODR-158)
 
 2026-10-20. `std.ser` declares the descriptions (ODR-158, cut as `0.9.10_Hardened_29`); the

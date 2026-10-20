@@ -62,7 +62,23 @@ owner's to overturn.
 
 ## `import cpp`, helper N3, 2026-10-20 (ADR-245) — `tasks/90/N3-notes.md` §5
 
-Each has option (a) built; all **OPEN**.
+Each has option (a) built; all **OPEN** except 3, 4 and 8, which the owner answered 2026-10-21:
+
+- **Q3 ANSWERED (FFI-40a): none of (a)-(d); instead the compiler checks.** For a `const` method of a
+  class with a `mutable` field, the importer reads the method's body when the header has it: a write
+  to a field (assignment, `++`, a changing call, a call it cannot see) makes it `mut self`, none
+  `self`. A body it cannot see is `mut self`. The overlay may restate a method in a `class C:` section
+  as an ordinary Ember method line (`fn lookups(self) -> int`), which wins (an asserted fact, listed
+  by `ember tcb`). Real example: `tests/conformance/FFI-40a`, where `cache.get().lookups()` is then
+  accepted and `lookup()` still needs `get_mut()`. NOT BUILT YET.
+- **Q4 ANSWERED (FFI-41): (b).** A static data member (and a C++ namespace variable) reads and
+  writes like a global, `cpp.engine.Grid.made += 1`; underneath, each use still goes through the
+  address thunk that exists today. NOT BUILT YET.
+- **Q8 ANSWERED (BLD-FFI-5a): (b).** An object of a `@sync` class may be handed to C++ by an
+  `@export` function (FFI-31b gains that exception); the class needs no `@export` of its own, it
+  reaches the `--cpp` header through the exported function, with its `pub` methods; C++ sees an
+  ordinary class of the same name whose copies share the object and whose last copy frees it. A
+  class without `@sync` is still refused ("mark `World` `@sync` to hand it to C++"). NOT BUILT YET.
 
 1. How an instantiation is named (`[FFI-17b]` gives none): (a) the template-id's characters joined
    by `_` (`geo::Pair<int>` is `geo.Pair_int`); (b) an overlay `rename` for each; (c) another spelling.
