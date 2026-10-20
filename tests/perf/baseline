@@ -1,13 +1,5 @@
 # `[TST-29]` — the benchmarks known to fail the gate, each with why; `name [compiler]` for one C
 # compiler only. The list only shrinks: one that passes clearly again is reported (a warning on CI)
 # for it to be taken out; it does not fail the gate, since CI's runners differ from run to run.
-# The gate of record is CI's (`.github/workflows/ci.yml`, job `performance`): its runners' timings
-# decide these entries, and one runner may differ from the next (`s3_skip_step_take` with MSVC was
-# 0.98x C on one Windows run and 1.25x on the next, D-755).
-s3_skip_step_take [gcc]: D-754, 1.30x C on the Ubuntu runner
-s2_zip_and [gcc]: D-754, 1.09x C on the Ubuntu runner
-a06_enum_match [gcc]: D-754, 1.08x C on the Ubuntu runner
-s4_copied_enumerate_skip [msvc]: D-754, 1.27x C on the Windows runner; 1.058x on the owner's laptop with MSVC 14.51, 0.98x with 14.44
-w1_sum_loop [msvc]: D-755, 1.68x-1.79x C on the Windows runner (MSVC 14.51, AMD EPYC); 1.07x on the owner's laptop with 14.51, 1.007x with 14.44
-s3_skip_step_take [msvc]: D-755, 1.25x C on two of three Windows runs (0.98x on the third; 0.93x on the owner's laptop with MSVC 14.51)
-a10_recursion [msvc]: D-755, 1.10x-1.11x C on two of three Windows runs; 1.055x on the owner's laptop with MSVC 14.51
+# ODR-154 — the verdict of record is the reference machine's (docs/HANDOFF.md): an entry is added
+# only for a failure there, with its defect, and taken out when it passes there.

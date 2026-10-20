@@ -88,8 +88,11 @@ jobs:
         if: runner.os == 'Windows'
       - name: Build
         run: cargo build --locked --profile ci -p ember_driver --bin ember
-      - name: performance gate
-        run: ${{ runner.os == 'Windows' && 'target/ci/ember.exe' || 'target/ci/ember' }} bench --compare --core 1
+      # ODR-154 — a report: these runners' processors change from run to run (AMD EPYC of three
+      # generations), and a benchmark's ratio with them; the gate of record runs on the reference
+      # machine before each push (docs/HANDOFF.md).
+      - name: performance report
+        run: ${{ runner.os == 'Windows' && 'target/ci/ember.exe' || 'target/ci/ember' }} bench --compare --report --core 1
         env:
           EMBER_CC: ${{ matrix.platform.cc }}
 

@@ -6338,16 +6338,8 @@ impl Emitter<'_> {
         // A 128-bit counter is a runtime struct on MSVC: C's `<` and `++`
         // are for plain integers only.
         let inline_sizes = &self.inline_sizes;
-        // D-755 — `RangeNth`, a stepped range's value at an index, is the runtime header's inline
-        // arithmetic (`[CTL-3b]`: no call per element): MSVC 14.51 made `s5`'s loop 1.12x C as
-        // blocks.
         let inlined = |func: &FuncRef| {
-            self.for_msvc
-                && match func {
-                    FuncRef::Direct { symbol, .. } => inline_sizes.contains_key(symbol),
-                    FuncRef::Builtin { which: Builtin::RangeNth, .. } => true,
-                    _ => false,
-                }
+            self.for_msvc && matches!(func, FuncRef::Direct { symbol, .. } if inline_sizes.contains_key(symbol))
         };
         let mut for_loops = for_loops(body, &inlined);
         for_loops.retain(|_, counted| {
@@ -7623,10 +7615,25 @@ impl Emitter<'_> {
                     && let Some((rvalue, bool_ty)) = self.folded_tests.get(&(place.local.0 as usize)).cloned()
                 {
                     let cond = self.rvalue(&rvalue, body, bool_ty);
-                    self.line(&format!("    if (!({cond})) {{ goto bb{}; }} else {{ goto bb{}; }}", target.0, otherwise.0));
+                    // D-755 — the condition as C writes it, its true block first: MSVC lays out the
+                    // `if`'s first target as the fall-through path, so `if (!(c)) goto else` made the
+                    // false block the straight line (`fib`'s recursive case, where the C program falls
+                    // through to its base case).
+                    // `[CG-C-1]` — a comparison is already parenthesised; a second pair is clang's
+                    // `-Wparentheses-equality`.
+                    let cond = unparenthesised(&cond);
+                    self.line(&format!("    if ({cond}) {{ goto bb{}; }} else {{ goto bb{}; }}", otherwise.0, target.0));
                     return;
                 }
+                let is_bool = self.operand_type(discr, body).is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Bool));
                 let discr = self.operand(discr, body);
+                // D-755 — a boolean as C tests it, the true block first.
+                if let [(0, target)] = targets.as_slice()
+                    && is_bool
+                {
+                    self.line(&format!("    if ({discr}) {{ goto bb{}; }} else {{ goto bb{}; }}", otherwise.0, target.0));
+                    return;
+                }
                 // Phase 0 only produces two-way branches on a boolean.
                 if let [(_, target)] = targets.as_slice() {
                     self.line(&format!(
@@ -13002,6 +13009,24 @@ fn referenced_labels(
         }
     }
     referenced
+}
+
+/// `text` without one pair of parentheses around the whole of it, if it has one.
+fn unparenthesised(text: &str) -> &str {
+    let Some(inner) = text.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) else { return text };
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        depth += match c {
+            '(' => 1,
+            ')' => -1,
+            _ => 0,
+        };
+        // A `)` closing the outer `(` before the end: `(a) + (b)` is not one parenthesised whole.
+        if depth < 0 {
+            return text;
+        }
+    }
+    if depth == 0 { inner } else { text }
 }
 
 /// `[LEX-19]` — a parsed format spec as a C struct literal.

@@ -67,7 +67,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[BEN-1]` | XVII | Each benchmark runs at least 3 untimed and 30 timed repetitions on … |
+| `[BEN-1]` | XVII | *(changed in 0.9.10)* Each benchmark builds each side at several code … |
 | `[BEN-2]` | XVII | A gate fails only when the lower bound of the ratio's interval … |
 | `[BEN-3]` | XVII | Each run also measures the C program against a second copy of itself; … |
 | `[BEN-4]` | XVII | Each benchmark records retired instructions; a change beyond ± 0.5 % … |
@@ -1250,7 +1250,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TST-10]` | XVII | The acceptance rate is published with each release; a release that … |
 | `[TST-11]` | XVII | Besides the per-rule cases, the suite covers these scenarios: … |
 | `[TST-27]` | XVII | The C gate. Every accepted program in the test suite is compiled … |
-| `[TST-28]` | XVII | The performance gate. `tests/perf/` holds benchmark programs, each … |
+| `[TST-28]` | XVII | *(changed in 0.9.10)* The performance gate. `tests/perf/` holds … |
 | `[TST-29]` | XVII | Honest baselines. A gate with a baseline of known failures reports … |
 | `[TST-30]` | XVII | The test runner reports every failure of a run, not only the first, … |
 

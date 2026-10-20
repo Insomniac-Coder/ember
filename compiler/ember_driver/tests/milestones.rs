@@ -7717,7 +7717,13 @@ fn bench_compare_times_each_pair_and_checks_its_output() {
     }
     assert!(run.stdout.contains("differs: FAIL — its output differs from the C program's"), "the outputs were not compared:\n{}{}", run.stdout, run.stderr);
     assert!(run.stdout.contains("same: ") && run.stdout.contains("ratio "), "the pair was not timed:\n{}", run.stdout);
-    assert!(run.stdout.contains("3 untimed and 30 timed runs each"), "{}", run.stdout);
+    // `[BEN-1]` (ODR-153) — each side at its fastest code layout, then the timed runs.
+    assert!(run.stdout.contains("each side at its fastest of") && run.stdout.contains("3 untimed and 30 timed runs"), "{}", run.stdout);
+    assert!(run.stdout.contains("(layout "), "the chosen layouts are not shown:\n{}", run.stdout);
     assert!(run.stdout.contains("baseline 0 of 2 (green)"), "{}", run.stdout);
     assert_ne!(run.exit, 0, "a failed benchmark fails the gate");
+    // `[TST-28]` (ODR-154) — off the reference machine the gate reports the same and does not fail.
+    let report = ember(&["bench", "--compare", "--report", "--dir", &folder, "differs"], &dir);
+    assert!(report.stdout.contains("differs: FAIL"), "{}", report.stdout);
+    assert_eq!(report.exit, 0, "--report fails nothing:\n{}", report.stdout);
 }

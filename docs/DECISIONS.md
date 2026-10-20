@@ -5017,6 +5017,38 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-239 — The performance gate measures code, not where it lies (D-755, ODR-153, ODR-154)
+
+2026-10-20. CI's MSVC performance job failed a different set of benchmarks on each run. Measured
+on four processors (the owner's laptop's P-core and E-core, CI's AMD EPYC Zen 3/4/5) with a probe
+that compiles Ember's emitted C and hand-edited variants (scratchpad `probe/`, branch `perf-probe`,
+since deleted), three causes:
+
+* **Placement.** A loop of five to seven instructions runs up to twice as fast at one address as at
+  another: the C program of `w1_sum_loop` took 31.9 ms and 55.3 ms on the runner with only padding
+  changed, `s4`'s an Ember loop identical to the C's 1.4x-2x by where it lay. Every code change moves
+  every loop, so a single build per side measured placement as much as code. ODR-153: each side is
+  built at five layouts (`ember_build::LAYOUTS`; MSVC's linker pads before each function,
+  `/FUNCTIONPADMIN`, which moves a function in 16-byte steps; gcc and clang align loops,
+  `-falign-loops`), screened in a short interleaved run, and the fastest of each timed as before
+  (`[BEN-1]`). MSVC offers no finer control: a function is 16-byte aligned, and a loop's place within
+  its 16 bytes moves only with its own code.
+* **The processor.** CI's runners are AMD EPYC of three generations, the processor changing from run
+  to run; the same pair of binaries passes on one and fails on another (`a06` 1.003x on Zen 5,
+  1.24x on Zen 3), and the C twins swing up to 2x between processors (`s1`'s C: 190 ms on the
+  laptop's P-core, 97 ms on its E-core, the same file, because MSVC interchanges its loops). With the
+  owner's approval (ODR-154): the verdict of record is the reference machine's, the owner's laptop
+  (a P-core pinned, mains power), run before each push; CI runs `ember bench --compare --report`,
+  which annotates and never fails.
+* **A real difference.** A two-way branch was written `if (!(c)) goto else; else goto then;`, and
+  MSVC lays out the first target as the straight path, so `fib`'s recursive case was straight where
+  the C program falls through to its base case. Written as C writes it, `if (c) goto then; else goto
+  else;`: `a10_recursion` 1.072x to 1.005x (P-core), 1.055x to 0.974x (E-core).
+
+`s5`'s stepped loop as a C `for` (597b9e58) was reverted: 0.93x on the laptop, 2.05x on the runner.
+The gate now also annotates every result in one notice. On the reference machine 20 of 21 pairs
+pass and the baseline is empty; `t5_words` (1.098x) is D-759, open.
+
 ## ADR-238 — Helper N's second job merged: the importer's rulings and its defects
 
 2026-10-20. Branch `helper-N` (12 commits after 780c70da, notes in `tasks/90/N-notes.md` Part 2)

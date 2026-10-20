@@ -431,6 +431,8 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-150 | ruled under the delegation: the examples are corrected to the rules (`mut` on written `MutSpan` parameters, `[FN-1]`; `ember,fragment` where a block names undeclared items; XVII.5's expected diagnostic); every block is checked as `[TST-7]` says | `[TST-7]`, `[FN-1]`, `[TST-1]` |
 | ODR-151 | ruled under the delegation: a compiler declares its profile as `ember --version`'s `profile:` line; each profile holds the one before it; Ember Core's part of XV is XV.1 and XV.3–XV.6, and XV.2 and XV.7 (the io layer) join Ember Systems; Ember Dynamic adds Annex B to Ember Native | `[CONF-1]`, `[CONF-2]`, `[CONF-3]`, `[CONF-5]` |
 | ODR-152 | ruled under the delegation: the cost table gains the rows `Virtual method call` (conditionally elided, `[DSP-2]`, `[DSP-5]`), `Downcast check` (`[DSP-4]`), `assert_disjoint` comparison (`[DSJ-5]`), `Allocation` (`[EFF-1]`) and `contains` (`[STD-8a]`), the five costs `ember inspect --cost` reported with no row; `rule_index.py` compares the rows the compiler reports with the table | `[COST-3]`, `[COST-5]` |
+| ODR-153 | ruled with the owner's approval: each benchmark builds each side at several code layouts, the same for both sides, each moving the code to other addresses and changing nothing else, keeps each side's fastest by a short interleaved run, then times the two as before | `[BEN-1]` |
+| ODR-154 | ruled with the owner's approval: the performance gate's verdict of record is the one measured on the recorded reference machine before a change is published; CI on shared machines reports the results without failing (`--report`) | `[TST-28]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1074,3 +1076,17 @@ Generated: every rule whose text differs from 0.9.10_Hardened_24.
 | `[CONF-3]` | changed |
 | `[CONF-5]` | changed |
 | `[COST-3]` | changed |
+
+## H.31 Changes in 0.9.10_Hardened_26 (from 0.9.10_Hardened_25)
+
+**0.9.10_Hardened_26** records ODR-153 and ODR-154, ruled with the owner's approval (2026-10-20) when D-755 showed that a small loop's speed depends on where its code lies and on which processor runs it (`docs/DECISIONS.md` ADR-239):
+
+* The performance gate (`[BEN-1]`) builds each side at several code layouts, the same for both, and compares each side at its fastest. The C program of `w1_sum_loop` ran 31.9 ms at one layout and 55.3 ms at another on CI's runner, with no change to its code: a single build per side measured where the linker put the loop as much as the program.
+* The gate's verdict of record (`[TST-28]`) is the one measured on the recorded reference machine before a change is published. CI's shared runners were AMD EPYC processors of three generations, changing from run to run, and each failed a different benchmark; there CI reports the gate's results (`ember bench --compare --report`) without failing on them.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_25.
+
+| Rule | 0.9.10_Hardened_25 → 0.9.10_Hardened_26 |
+|---|---|
+| `[BEN-1]` | changed |
+| `[TST-28]` | changed |

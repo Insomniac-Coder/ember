@@ -490,7 +490,41 @@ pub struct LinkRequest<'a> {
 /// linked before from the same inputs is copied from the global cache instead
 /// (ADR-136, [`CachedProgram`]).
 pub fn compile_and_link(toolchain: &Toolchain, request: &LinkRequest) -> Result<(), BuildError> {
-    compile_and_link_impl(toolchain, request, None, &[], program_cache().as_deref())
+    compile_and_link_impl(toolchain, request, None, &[], program_cache().as_deref(), env_layout())
+}
+
+/// D-755, `[BEN-1]` — how many code layouts `ember bench` builds each side at.
+pub const LAYOUTS: usize = 5;
+
+/// D-755, `[BEN-1]` — as [`compile_and_link`], with the program's code at layout `layout` (below
+/// [`LAYOUTS`]): `0` is the toolchain's own; each other moves every function of the program to
+/// another address and changes nothing else. A small loop's speed depends on where it lies in
+/// the instruction cache's lines, so the same C runs up to twice as fast at one address as at
+/// another; `ember bench` times an Ember program and its C twin each at every layout and compares
+/// their fastest.
+pub fn compile_and_link_at_layout(toolchain: &Toolchain, request: &LinkRequest, layout: usize) -> Result<(), BuildError> {
+    compile_and_link_impl(toolchain, request, None, &[], program_cache().as_deref(), layout)
+}
+
+/// The layout a build of `ember bench`'s asks for (`ember_branding::bench_layout_var`); `0` otherwise.
+fn env_layout() -> usize {
+    std::env::var(ember_branding::bench_layout_var()).ok().and_then(|value| value.parse().ok()).filter(|layout| *layout < LAYOUTS).unwrap_or(0)
+}
+
+/// D-755 — the flags that put a program's code at `layout`: MSVC's linker pads before each function
+/// (`/FUNCTIONPADMIN`, which pads to the next 16 bytes), so a function's address moves by a multiple
+/// of 16 with the functions before it; gcc and clang align every loop to 16, 32, 64 or 128 bytes
+/// (`-falign-loops`), padding run once before the loop is entered. clang-cl's linker has no such
+/// option: one layout.
+fn layout_flags(toolchain: &Toolchain, layout: usize) -> (Option<String>, Option<String>) {
+    if layout == 0 {
+        return (None, None);
+    }
+    match toolchain {
+        Toolchain::Msvc { cl, .. } if !is_clang_cl(cl) => (None, Some(format!("/FUNCTIONPADMIN:{}", 16 * (layout - 1)))),
+        Toolchain::Msvc { .. } => (None, None),
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => (Some(format!("-falign-loops={}", 8 << layout)), None),
+    }
 }
 
 /// Link a driver-owned executable whose externally callable C definitions are
@@ -503,7 +537,7 @@ pub fn compile_and_link_executable_with_roots(
     request: &LinkRequest,
     retained_symbols: &[String],
 ) -> Result<(), BuildError> {
-    compile_and_link_impl(toolchain, request, Some(retained_symbols), &[], program_cache().as_deref())
+    compile_and_link_impl(toolchain, request, Some(retained_symbols), &[], program_cache().as_deref(), env_layout())
 }
 
 /// `[BLD-FFI-3]` — as [`compile_and_link_executable_with_roots`], linking `libraries` after the
@@ -518,7 +552,7 @@ pub fn compile_and_link_program(
     // ponytail: a program linking libraries is not kept in the program cache, whose key would
     // need each library's contents; key them by their files if the relink cost shows.
     let cache = if libraries.is_empty() { program_cache() } else { None };
-    compile_and_link_impl(toolchain, request, Some(retained_symbols), libraries, cache.as_deref())
+    compile_and_link_impl(toolchain, request, Some(retained_symbols), libraries, cache.as_deref(), env_layout())
 }
 
 fn executable_section_flags(toolchain: &Toolchain, managed_executable: bool) -> &'static [&'static str] {
@@ -652,8 +686,10 @@ fn compile_and_link_impl(
     retained_symbols: Option<&[String]>,
     libraries: &[String],
     cache: Option<&Path>,
+    layout: usize,
 ) -> Result<(), BuildError> {
     let mut command = compiler_command(toolchain);
+    let (layout_compile, layout_link) = layout_flags(toolchain, layout);
     match toolchain {
         Toolchain::Msvc { cl, .. } => {
             // `[TST-27]` (D-714) clang-cl ignores `/GL` with a warning, which `/WX` makes an error;
@@ -688,6 +724,7 @@ fn compile_and_link_impl(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(request.profile)).args(gcc_flags(toolchain, request.profile));
+            command.args(layout_compile.iter());
             if warnings_as_errors() {
                 command.arg("-Werror");
             }
@@ -755,6 +792,7 @@ fn compile_and_link_impl(
             if request.profile == Profile::Development {
                 command.args(["/OPT:REF", "/OPT:ICF"]);
             }
+            command.args(layout_link.iter());
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.arg("-o").arg(&request.output);
@@ -1805,7 +1843,7 @@ mod tests {
             compile_and_link_impl(&toolchain, &LinkRequest {
                 sources: &[source.clone()], include_dirs: &[], output: program(name),
                 profile: Profile::Debug, obj_dir: dir.join("obj"),
-            }, None, &[], Some(&cache)).expect("the program builds");
+            }, None, &[], Some(&cache), 0).expect("the program builds");
             let output = run_fresh(&mut Command::new(program(name))).expect("the program runs");
             String::from_utf8_lossy(&output.stdout).trim().to_string()
         };

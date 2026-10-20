@@ -53,8 +53,11 @@ this compiler does not have yet):
                                                    of its own; --doc runs the documentation examples;
                                                    --instrument-ffi grades foreign effect facts by
                                                    what the tests observe
-    ember bench [filter] --compare [--core N]       time tests/perf/'s programs against their C twins on
-                                                   one core; fails past a threshold ([TST-28])
+    ember bench [filter] --compare [--core N] [--report]
+                                                   time tests/perf/'s programs against their C twins on
+                                                   one core, each at its fastest code layout; fails
+                                                   past a threshold ([TST-28]), or only reports
+                                                   (--report, off the reference machine)
     ember fmt <file.em> [--check | --write | --migrate] [--json]
                                                    print the file in the canonical layout
                                                    (--migrate: 0.9.8 source rewritten into 0.9.9)

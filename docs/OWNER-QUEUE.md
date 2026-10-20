@@ -379,6 +379,32 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-153 — A benchmark's verdict depends on where its code lies — **CLOSED**
+
+    ID:        ODR-153
+    Status:    CLOSED — ruled with the owner's approval 2026-10-20; incorporated in 0.9.10_Hardened_26
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_25.md [BEN-1]
+
+**The question.** D-755: the same C program ran up to 1.98x slower when only padding before its code changed (CI's runner and the owner's laptop alike), and which programs passed changed with every runner's processor. `[BEN-1]` timed one build of each side, so the verdict measured code placement as much as the code.
+
+**Ruling.** Ruled with the owner's approval (2026-10-20): each side is built at several layouts, the same for both, and compared at its fastest. ADR-239.
+
+---
+
+## ODR-154 — Where the performance gate's verdict is measured — **CLOSED**
+
+    ID:        ODR-154
+    Status:    CLOSED — ruled with the owner's approval 2026-10-20; incorporated in 0.9.10_Hardened_26
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_25.md [TST-28]
+
+**The question.** D-755: CI's shared runners were AMD EPYC processors of three generations, changing from run to run; each failed a different benchmark, and the C programs themselves ran up to twice as fast on one processor as on another. `[TST-28]` made any of them fail CI.
+
+**Ruling.** Ruled with the owner's approval (2026-10-20): the verdict of record is the reference machine's (the owner's laptop, a performance core pinned, on mains power), run before each push; CI reports. ADR-239.
+
+---
+
 ## ODR-152 — Costs the compiler reports with no row in the table — **CLOSED**
 
     ID:        ODR-152

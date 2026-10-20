@@ -299,13 +299,19 @@ fn main():
 * `[TST-27]` *(new in 0.9.9)* **The C gate.** Every accepted program in the test suite is compiled
   through the C compiler with warnings as errors on each supported host compiler. A C compiler error
   on an accepted program is a compiler defect and fails CI (`[CG-C-2]`).
-* `[TST-28]` *(new in 0.9.9)* **The performance gate.** `tests/perf/` holds benchmark programs, each
-  with an equivalent C program, a checker of identical output, and a threshold (for example, within
-  10 % of C at `-O2`). A regression past a threshold fails CI. This is the instrument for "as fast as
-  C"; no performance claim in this document is considered met until its benchmark exists.
-  `ember bench --compare` runs the pairs.
-* `[BEN-1]` Each benchmark runs at least 3 untimed and 30 timed repetitions on one pinned core and
-  reports the median and the 95 % confidence interval of the median for each side and their ratio.
+* `[TST-28]` *(new in 0.9.9)* *(changed in 0.9.10)* **The performance gate.** `tests/perf/` holds
+  benchmark programs, each with an equivalent C program, a checker of identical output, and a
+  threshold (for example, within 10 % of C at `-O2`). A regression past a threshold fails the gate,
+  whose verdict of record is the one measured on the recorded reference machine before a change is
+  published; CI on shared machines, whose processor may change from run to run, reports the gate's
+  results without failing on them. This is the instrument for "as fast as C"; no performance claim
+  in this document is considered met until its benchmark exists. `ember bench --compare` runs the
+  pairs, and `--report` reports without failing.
+* `[BEN-1]` *(changed in 0.9.10)* Each benchmark builds each side at several code layouts, the same
+  for both sides, each moving the program's code to other addresses and changing nothing else, and
+  keeps each side's fastest layout, chosen by a short interleaved run; it then runs at least 3
+  untimed and 30 timed repetitions of the two on one pinned core and reports the median and the 95 %
+  confidence interval of the median for each side and their ratio.
 * `[BEN-2]` A gate fails only when the lower bound of the ratio's interval exceeds the threshold; a
   point estimate above it whose interval includes it is inconclusive and re-run.
 * `[BEN-3]` Each run also measures the C program against a second copy of itself; if that ratio's
