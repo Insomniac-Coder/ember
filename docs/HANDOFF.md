@@ -10828,11 +10828,10 @@ formal 1/9 count or Phase 2's estimate.
 > ADR-251: serialisation — `[SER-1]`, `[SER-2]`, `[RNG-10a]` (`std.ser.json`, `std.ser.binary`, the
 > derives in `ember_typeck/src/serial.rs`); D-778 fixed. Owner answered N3 Q3/Q4/Q8 2026-10-21
 > (tasks/90/owner-questions.md): all three to build.
-> Helper N4 merged locally 2026-10-21 (FFI-39*, FFI-17a/c/d/e/f, FFI-42/42a, FFI-24c/d, FFI-11f,
-> FFI-44, BLD-FFI-1b/2/4/5, TCB-4; D-N4-1..9; notes tasks/90/N4-notes.md). NOT YET: full check,
-> clang-cl, WSL gcc gate, laptop bench, push; ADR + DEFECTS rows for N4; ODR for the owner's
-> 2026-10-21 answers and the SER formats; D-N4-3 (unsafe fn implementing a safe interface method)
-> and D-N4-4 (struct `A_b` vs method `A.b` C symbol clash) open. Overall 94.97% (16 words to 95%).
+> ADR-252: helper N4 merged (the rest of Annex C; D-779..D-787, D-782 open under `[MNG-1]`); D-781
+> fixed (an `unsafe` implementation of a safe interface method is `E2040`). `[MNG-4]` and `[PHIL-6]`
+> tested. ODR-159 (serialisation formats) and ODR-160..162 (the owner's 2026-10-21 answers, to be built)
+> cut as `0.9.10_Hardened_30`. Overall 95% — the owner's goal (stop at 95%) is met.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

@@ -99,6 +99,18 @@ of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, whi
 asks for (`E2040` without it), and a class derived from a `@reflect` class is `@reflect` too;
 `reflect[T]()` outside what compile time evaluates is `E6010`.
 
+`std.ser` declares the serialisation interfaces (ODR-159): `Writer` (a struct's `begin_struct(name,
+version)`, `field(name)` before each field's value and `end_struct()`; an enum value's
+`begin_variant(name)` and `end_variant()`; `begin_list(count)`/`end_list()`; `write_none()`,
+`write_int`, `write_float`, `write_bool`, `write_str`) and `Reader` (the same, reading: `begin_struct()`
+gives the version and `next_field()` each field's name in the data's order, `None` after the last;
+`next_element()`, `read_none()`, `skip_value()`). A struct's version is the highest `@ser(since=N)` of its
+fields, 0 with none. `std.ser.json` writes a struct as an object of its fields, `"$version"` first when
+above 0; an enum value as an object whose `"$variant"` names the variant, followed by its payload's
+fields; `None` as `null`. `std.ser.binary` is self-describing, a tag byte before each value, so a reader
+skips a field it does not know. A field missing from the data takes its type's `Default` under
+`@ser(default)` or `@ser(since=N)`.
+
 ## XIV.3 Derives
 
 * `[DRV-1]` *(changed in 0.9.9)* `@derive(…)` requests generated implementations. The built-in derives,

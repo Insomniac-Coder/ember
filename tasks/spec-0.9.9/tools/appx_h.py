@@ -523,6 +523,14 @@ ODRS = [
      "`[LAY-2]`, `[SIMD-1]`"),
     ('ODR-158', "ruled under the delegation: `std.ser`'s descriptions own their text (`String`) and arrays; a field names its type by name; a class field's offset counts from the end of the header; attribute arguments are `(name, AttrValue)` pairs and an `@attribute` struct's fields are numbers, text, `bool` or `char` (`E0104`); `@reflect` implements `std.ser.Reflect` (`type_info` needs it, `E2040`), inherited by derived classes; `reflect[T]()` outside compile time is `E6010`",
      "`[RFL-1]`, `[RFL-2]`, `[RFL-3]`, `[RT-3]`"),
+    ('ODR-159', "ruled under the delegation: the serialisation interfaces and formats are as \u00a7XIV.2 says (`Writer`/`Reader`, the version, JSON's `\"$version\"`/`\"$variant\"`/`null`, a self-describing binary form, defaults for `@ser(default)`/`@ser(since=N)`)",
+     "`[SER-1]`, `[SER-2]`"),
+    ('ODR-160', "the owner's answer: a `const` method of a class with a `mutable` member is `self` when its visible body writes no field, else `mut self`; an overlay `class C:` method line wins; to be built",
+     "`[FFI-40a]`"),
+    ('ODR-161', "the owner's answer: a C++ static data member reads and writes as a global, through the address thunk; to be built",
+     "`[FFI-41]`"),
+    ('ODR-162', "the owner's answer: an `@export` function may hand C++ an object of a `@sync` class, presented by the `--cpp` header as a class of the same name; to be built",
+     "`[BLD-FFI-5a]`, `[FFI-31b]`"),
 ]
 
 H5_HEAD = """
@@ -591,7 +599,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 29)
+CURRENT = ('0.9.10', 30)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -621,6 +629,7 @@ V010_H25_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h25')
 V010_H26_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h26')
 V010_H27_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h27')
 V010_H28_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h28')
+V010_H29_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h29')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1300,8 +1309,29 @@ Generated: every rule whose text differs from 0.9.10_Hardened_28.
 """
 
 
-def v010_h28_to_now():
-    return H34_HEAD + rule_diff(V010_H28_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h28_to_h29():
+    return H34_HEAD + rule_diff(V010_H28_PARTS, V010_H29_PARTS)
+
+
+H35_HEAD = """
+## H.35 Changes in 0.9.10_Hardened_30 (from 0.9.10_Hardened_29)
+
+**0.9.10_Hardened_30** records ODR-159, ruled under the delegation when serialisation was built (`[SER-1]`, `[SER-2]`, `[RNG-10a]`, `docs/DECISIONS.md` ADR-251), and the owner's answers of 2026-10-21 on three Annex C questions (ADR-252), whose rule texts change when they are built:
+
+* `std.ser`'s `Writer` and `Reader` shapes, a struct's version (the highest `@ser(since=N)`), the JSON form (`"$version"`, `"$variant"`, `null`) and the self-describing binary form are as §XIV.2's paragraph on serialisation says (ODR-159).
+* For `[FFI-40a]`: a `const` method of a class with a `mutable` member takes `self` when its body, visible in the header, writes no field, and `mut self` otherwise or when its body is not visible; an overlay `class C:` section restates a method as an Ember method line, which wins (ODR-160, the owner).
+* For `[FFI-41]`: a static data member, and a namespace variable, reads and writes as a global (`cpp.engine.Grid.made += 1`), through the address thunk (ODR-161, the owner).
+* For `[BLD-FFI-5a]`, `[FFI-31b]`: an `@export` function may hand C++ an object of a `@sync` class, which the `--cpp` header presents as a class of the same name with its `pub` methods, copies sharing the object and the last one freeing it; a class without `@sync` is refused (ODR-162, the owner).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_29.
+
+| Rule | 0.9.10_Hardened_29 → 0.9.10_Hardened_30 |
+|---|---|
+"""
+
+
+def v010_h29_to_now():
+    return H35_HEAD + rule_diff(V010_H29_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1372,7 +1402,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

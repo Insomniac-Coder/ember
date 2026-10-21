@@ -405,6 +405,58 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-159 — What the serialisation interfaces and formats are — **CLOSED**
+
+    ID:        ODR-159
+    Status:    CLOSED — ruled under the delegation 2026-10-21; incorporated in 0.9.10_Hardened_30
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_29.md [SER-1], [SER-2]
+
+**The question.** `[SER-1]` names a writer and a reader for each format and a field-tagged, versioned format without declaring them.
+
+**Ruling.** Ruled under the delegation as §XIV.2's paragraph says. ADR-251.
+
+---
+
+## ODR-160 — How an overlay names a method for `[FFI-40a]` — **CLOSED**
+
+    ID:        ODR-160
+    Status:    CLOSED — the owner's answer 2026-10-21; to be built; incorporated in 0.9.10_Hardened_30
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_29.md [FFI-40a], [GRM-35]
+
+**The question.** N3 question 3: an overlay entry names one free function, so no `const` method could be marked.
+
+**Ruling.** The owner, 2026-10-21: the compiler reads each visible body; an overlay `class C:` method line wins. ADR-252.
+
+---
+
+## ODR-161 — How a C++ static data member is imported — **CLOSED**
+
+    ID:        ODR-161
+    Status:    CLOSED — the owner's answer 2026-10-21; to be built; incorporated in 0.9.10_Hardened_30
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_29.md [FFI-41], [FFI-3]
+
+**The question.** N3 question 4: `[FFI-41]`'s `extern static` needs the mangled symbol `[FFI-3]` forbids.
+
+**Ruling.** The owner, 2026-10-21: (b), it reads and writes as a global through the address thunk. ADR-252.
+
+---
+
+## ODR-162 — `[BLD-FFI-5a]` beside `[FFI-31b]` — **CLOSED**
+
+    ID:        ODR-162
+    Status:    CLOSED — the owner's answer 2026-10-21; to be built; incorporated in 0.9.10_Hardened_30
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_29.md [BLD-FFI-5a], [FFI-31b]
+
+**The question.** N3 question 8: `[FFI-31b]` keeps every class handle out of exported signatures, so `[BLD-FFI-5a]`'s handles have nothing to hold.
+
+**Ruling.** The owner, 2026-10-21: (b), objects of `@sync` classes may be handed to C++. ADR-252.
+
+---
+
 ## ODR-158 — What `TypeDesc`, `TypeInfo` and their descriptors are — **CLOSED**
 
     ID:        ODR-158

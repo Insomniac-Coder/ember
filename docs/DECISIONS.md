@@ -5017,6 +5017,22 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-252 — Helper N4 merged: the rest of Annex C; the owner's answers on N3 Q3, Q4, Q8
+
+2026-10-21. Helper N4's branch (16 commits, `tasks/90/N4-notes.md`), merged: Ember classes deriving
+from C++ classes through trampolines (`[FFI-39]`, `[FFI-39a]`..`[FFI-39e]`, `[FFI-17c]`, `[FFI-17d]`;
+`E5056`..`E5060`), the bridge types `CppVector`, `CppString`, `CppShared` (`[FFI-17a]`, `[FFI-17e]`,
+`[FFI-17f]`), C++ operators as Ember's operator interfaces and `begin`/`end` iteration (`[FFI-42]`,
+`[FFI-42a]`), call modes and `noexcept` changes (`[FFI-24c]`, `[FFI-24d]`), `[[clang::lifetimebound]]`
+(`[FFI-11f]`), `[FFI-44]`, the inherited MSVC runtime (`[BLD-FFI-1b]`, `E9020`, `E9021`), the CMake
+module and `--cc-flags-from-target` (`[BLD-FFI-2]`), a C++ project's LTO flag (`[BLD-FFI-4]`), the
+`--cpp` header (`[BLD-FFI-5]`) and `[TCB-4]`'s C++ bridge line. Defects D-779..D-787 (D-782 open,
+`[MNG-1]`); D-781 fixed on main: an `unsafe` implementation of a safe interface method is `E2040`.
+The owner answered N3's questions 3, 4 and 8 on 2026-10-21 (`tasks/90/owner-questions.md`): a
+`const` method's body decides `self` or `mut self` (`[FFI-40a]`), a static data member reads and
+writes as a global (`[FFI-41]`), and an object of a `@sync` class may be handed to C++ (`[BLD-FFI-5a]`,
+`[FFI-31b]`). They are to be built, and the rule texts change when they are.
+
 ## ADR-251 — Serialisation: `@derive(Serialize, Deserialize)`, `std.ser.json`, `std.ser.binary` (`[SER-1]`, `[SER-2]`, `[RNG-10a]`)
 
 2026-10-21. `std.ser` (now `std/src/ser/mod.em`) declares `Writer`, `Reader`, `Serialize`,

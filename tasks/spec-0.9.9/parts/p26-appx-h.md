@@ -437,6 +437,10 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-156 | the owner's answer: a C++ parameter that keeps the pointer takes a `Retained` token the program holds (`tok = Retained.pin(self)`, then `tok`); `self` there is `E5060`; a parameter borrowed for the call takes `self` | `[FFI-39c]`, `[FFI-23]` |
 | ODR-157 | ruled under the delegation: a `@packed` type holding a SIMD vector is `E0104`, as one holding an `@align` type is (ODR-138); a vector's alignment is its size (`[SIMD-1]`) | `[LAY-2]`, `[SIMD-1]` |
 | ODR-158 | ruled under the delegation: `std.ser`'s descriptions own their text (`String`) and arrays; a field names its type by name; a class field's offset counts from the end of the header; attribute arguments are `(name, AttrValue)` pairs and an `@attribute` struct's fields are numbers, text, `bool` or `char` (`E0104`); `@reflect` implements `std.ser.Reflect` (`type_info` needs it, `E2040`), inherited by derived classes; `reflect[T]()` outside compile time is `E6010` | `[RFL-1]`, `[RFL-2]`, `[RFL-3]`, `[RT-3]` |
+| ODR-159 | ruled under the delegation: the serialisation interfaces and formats are as §XIV.2 says (`Writer`/`Reader`, the version, JSON's `"$version"`/`"$variant"`/`null`, a self-describing binary form, defaults for `@ser(default)`/`@ser(since=N)`) | `[SER-1]`, `[SER-2]` |
+| ODR-160 | the owner's answer: a `const` method of a class with a `mutable` member is `self` when its visible body writes no field, else `mut self`; an overlay `class C:` method line wins; to be built | `[FFI-40a]` |
+| ODR-161 | the owner's answer: a C++ static data member reads and writes as a global, through the address thunk; to be built | `[FFI-41]` |
+| ODR-162 | the owner's answer: an `@export` function may hand C++ an object of a `@sync` class, presented by the `--cpp` header as a class of the same name; to be built | `[BLD-FFI-5a]`, `[FFI-31b]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1133,5 +1137,20 @@ Generated: every rule whose text differs from 0.9.10_Hardened_27.
 Generated: every rule whose text differs from 0.9.10_Hardened_28.
 
 | Rule | 0.9.10_Hardened_28 → 0.9.10_Hardened_29 |
+|---|---|
+
+
+## H.35 Changes in 0.9.10_Hardened_30 (from 0.9.10_Hardened_29)
+
+**0.9.10_Hardened_30** records ODR-159, ruled under the delegation when serialisation was built (`[SER-1]`, `[SER-2]`, `[RNG-10a]`, `docs/DECISIONS.md` ADR-251), and the owner's answers of 2026-10-21 on three Annex C questions (ADR-252), whose rule texts change when they are built:
+
+* `std.ser`'s `Writer` and `Reader` shapes, a struct's version (the highest `@ser(since=N)`), the JSON form (`"$version"`, `"$variant"`, `null`) and the self-describing binary form are as §XIV.2's paragraph on serialisation says (ODR-159).
+* For `[FFI-40a]`: a `const` method of a class with a `mutable` member takes `self` when its body, visible in the header, writes no field, and `mut self` otherwise or when its body is not visible; an overlay `class C:` section restates a method as an Ember method line, which wins (ODR-160, the owner).
+* For `[FFI-41]`: a static data member, and a namespace variable, reads and writes as a global (`cpp.engine.Grid.made += 1`), through the address thunk (ODR-161, the owner).
+* For `[BLD-FFI-5a]`, `[FFI-31b]`: an `@export` function may hand C++ an object of a `@sync` class, which the `--cpp` header presents as a class of the same name with its `pub` methods, copies sharing the object and the last one freeing it; a class without `@sync` is refused (ODR-162, the owner).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_29.
+
+| Rule | 0.9.10_Hardened_29 → 0.9.10_Hardened_30 |
 |---|---|
 

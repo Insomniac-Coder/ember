@@ -1,10 +1,12 @@
 #$ test: run-pass
 #$ command: lint
-#$ rules: LNT-6, FFI-15
+#$ rules: LNT-6, FFI-15, PHIL-6
 #$ stdout: 5
 #$ stdout: 3
 ## `[LNT-6]` — `L5002`: a conversion that copies at the FFI boundary, here `to_cstring`, whose result
-## is passed to C. A conversion whose result stays in Ember is no lint.
+## is passed to C. A conversion whose result stays in Ember is no lint. `[PHIL-6]`: an expensive
+## conversion at the FFI boundary is reported by the compiler; a dangerous one is written in
+## source (`unsafe extern`, the contract a `safe fn` states).
 
 import std.ffi
 

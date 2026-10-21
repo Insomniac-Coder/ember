@@ -10535,6 +10535,16 @@ impl<'a> Checker<'a> {
                     ),
                 );
             }
+            // D-781 — `[UNS-1]`: an `unsafe` implementation of a method the interface declares
+            // safe would be called through the interface (an operator, a bound, `dyn`) with no
+            // `unsafe` block.
+            if self.signatures[implementation.0 as usize].is_unsafe && !self.signatures[declaration.0 as usize].is_unsafe {
+                self.sink.emit(
+                    Diagnostic::error(codes::E2040, span, format!("`{shown}.{method}` is `unsafe`, and `{named}.{method}` is not"))
+                        .note(format!("a call through `{named}` (an operator, a bound, `dyn`) needs no `unsafe` block, so its implementation may not need one [UNS-1]"))
+                        .help("make the method safe, with the unsafe operation inside an `unsafe:` block whose safety note says why it is sound"),
+                );
+            }
         }
         // `[IFC-4]` — each associated type is given, and meets its bounds.
         for (name, bounds) in assoc {
