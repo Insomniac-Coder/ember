@@ -27,9 +27,9 @@ def rule_sizes(doc):
     """Every `* `[FAM-N]`` rule with its part, family and length in words."""
     rules, part, current = {}, 'front', None
     for line in doc.split('\n'):
-        heading = re.match(r'^# Part ([IVXL]+[a-zA-Z-]*)', line)
+        heading = re.match(r'^# (?:Part ([IVXL]+[a-zA-Z-]*)|(Annex [A-Z]|Appendix [A-Z]))\b', line)
         if heading:
-            part, current = heading.group(1), None
+            part, current = heading.group(1) or heading.group(2), None
             continue
         rule = re.match(r'^\* `\[([A-Z]+(?:-[A-Z]+)?)-([0-9]+[a-z0-9]*)\]`(.*)', line)
         if rule:

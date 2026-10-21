@@ -15,6 +15,10 @@
     "CXX": "7",
     "TST": "8", "LNT": "8", "DOC": "8", "TOOL": "8", "IDE": "8", "CONF": "8", "IMP": "8", "VER": "8"
   },
+  "placed_by_part_or_rule": {
+    "_what": "Rules whose phase their family does not give: Annex C's C++ rules share `FFI` with Part XVI's C rules, and `ember run --interp` is a `CLI` rule; both are the work of phase 7 (owner, 2026-10-21).",
+    "Annex C": "7", "CLI-21": "7"
+  },
   "post_1_0": {
     "_what": "Work the plan schedules after 1.0, counted in its own row and outside the Overall (owner, 2026-10-15).",
     "families": {"CG-LL": "the LLVM backend (v2)", "GPU": "the GPU host model (v0.6)"}

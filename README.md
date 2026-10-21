@@ -43,9 +43,9 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 2 | Ownership, borrowing, regions | 98% |
 | 3 | Classes, reference counting, exclusivity | 98% |
 | 4 | Effects, compile time, reflection, derives | 100% |
-| 5 | C interoperability | 88% |
+| 5 | C interoperability | 90% |
 | 6 | Concurrency and data-oriented design | 95% |
-| 7 | C++ interoperability and the interpreter | 0% |
+| 7 | C++ interoperability and the interpreter | 78% |
 | 7a | Iteration, determinism, cost control | 85% |
 | 8 | Hardening and 1.0 | 69% |
 | | Overall (1.0) | 95% |

@@ -43,10 +43,13 @@ RULE = re.compile(r'\[([A-Z]+(?:-[A-Z]+)?-[0-9]+[a-z0-9]*)\]')
 TABLE_HEAD = '| Phase | Scope | Done |'
 
 
-def phase_of(entry):
+def phase_of(rule, entry):
     family = entry['family']
     if family in STATUS['post_1_0']['families']:
         return 'post'
+    placed = STATUS['placed_by_part_or_rule']
+    if rule in placed or entry['part'] in placed:
+        return placed.get(rule) or placed[entry['part']]
     for phase, families in rs.PHASES.items():
         if family in families:
             return phase
@@ -130,7 +133,7 @@ def compute():
     phases = collections.defaultdict(lambda: {'rules': 0, 'words': 0, 'done_rules': 0, 'done_words': 0, 'untested': [], 'unfinished': []})
     phases['done'] = set()
     for rule, entry in rules.items():
-        phase = phase_of(entry)
+        phase = phase_of(rule, entry)
         if phase is None:
             sys.exit(f'{rule} is in no phase: give family {entry["family"]} one in docs/phase-status.json')
         row = phases[phase]
