@@ -5588,8 +5588,10 @@ fn assert_the_evaluator_agrees(relative: &str, profile: &str, out_dir: &str, roo
         run.stdout, compiled.stdout,
         "{relative} [{profile}]: the evaluator's standard output differs from the compiled program's
 evaluator's stderr:
+{}
+compiled exit {}, stderr:
 {}",
-        run.stderr
+        run.stderr, compiled.exit, compiled.stderr
     );
     assert_eq!(
         run.exit, compiled.exit,
