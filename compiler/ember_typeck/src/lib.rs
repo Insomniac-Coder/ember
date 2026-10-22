@@ -21256,6 +21256,10 @@ impl<'a> Checker<'a> {
                 params: c_params.iter().enumerate().filter(|(at, _)| *at != slot).map(|(_, param)| param.clone()).collect(),
                 ret,
                 once: contract.mode == hir::FfiCallbackMode::Once,
+                // A callable C keeps (`retained`) or calls later (`once`) is taken over: lent, it
+                // would leave C a pointer into the caller's frame (ODR-240 lends only what a call
+                // uses while it runs).
+                owned: contract.mode != hir::FfiCallbackMode::Borrowed,
                 latebound: false,
                 is_unsafe: false,
             };

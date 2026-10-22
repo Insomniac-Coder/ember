@@ -12,6 +12,7 @@
 mod arena;
 mod builtin;
 mod call;
+mod char_classes;
 pub mod comptime;
 mod leaks;
 mod memory;

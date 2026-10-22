@@ -291,6 +291,56 @@ impl Interp<'_, '_> {
                 }
                 return Ok(Vec::new());
             }
+            // ODR-183 — a character past ASCII in class `which` (0 alphabetic, 1 a digit, 2 numeric):
+            // the runtime's runs, generated for both by tools/unicode_case.py.
+            RuntimeFn::CharClass => {
+                let c = u32::from_le_bytes(self.operand(&args[0], None)?[..4].try_into().expect("a char"));
+                let which = i64::from_le_bytes(self.operand(&args[1], None)?[..8].try_into().expect("a word"));
+                let runs = match which {
+                    0 => crate::char_classes::ALPHABETIC,
+                    1 => crate::char_classes::DIGIT,
+                    _ => crate::char_classes::NUMERIC,
+                };
+                let held = runs
+                    .binary_search_by(|&(first, last)| {
+                        if c < first {
+                            std::cmp::Ordering::Greater
+                        } else if c > last {
+                            std::cmp::Ordering::Less
+                        } else {
+                            std::cmp::Ordering::Equal
+                        }
+                    })
+                    .is_ok();
+                vec![u8::from(held)]
+            }
+            // `[ALC-2]` (ODR-175, ODR-239) — `Global` and `System` both allocate from the evaluator's
+            // heap, which is the only memory a program run here has: null when it is full, as the
+            // runtime's `try_alloc` gives.
+            RuntimeFn::GlobalAllocate | RuntimeFn::SystemAllocate => {
+                let size = u64_of(&self.operand(&args[0], None)?);
+                let align = u64_of(&self.operand(&args[1], None)?);
+                self.mem.alloc(size, align).unwrap_or(0).to_le_bytes().to_vec()
+            }
+            RuntimeFn::GlobalDeallocate | RuntimeFn::SystemDeallocate => {
+                let p = u64_of(&self.operand(&args[0], None)?);
+                if p != 0 {
+                    self.mem.free(p)?;
+                }
+                return Ok(Vec::new());
+            }
+            RuntimeFn::GlobalReallocate | RuntimeFn::SystemReallocate => {
+                let p = u64_of(&self.operand(&args[0], None)?);
+                let old_size = u64_of(&self.operand(&args[1], None)?);
+                let new_size = u64_of(&self.operand(&args[2], None)?);
+                let align = u64_of(&self.operand(&args[3], None)?);
+                let Ok(fresh) = self.mem.alloc(new_size, align) else { return Ok(0u64.to_le_bytes().to_vec()) };
+                if p != 0 {
+                    self.mem.copy(p, fresh, old_size.min(new_size))?;
+                    self.mem.free(p)?;
+                }
+                fresh.to_le_bytes().to_vec()
+            }
         })
     }
 
