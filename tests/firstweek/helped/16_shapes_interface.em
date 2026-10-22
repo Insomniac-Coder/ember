@@ -69,5 +69,5 @@ fn main():
     for s in shapes:
         println(f"  {s.name()}")
 
-    big = shapes.iter().filter(fn(s) => s.area() > 5.0).count()
-    println(f"{big} shapes are bigger than 5")
+    big = [s for s in owned shapes if s.area() > 5.0]
+    println(f"{big.len()} shapes are bigger than 5")

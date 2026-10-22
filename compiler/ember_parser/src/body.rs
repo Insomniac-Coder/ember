@@ -1448,7 +1448,15 @@ impl Parser<'_> {
             if self.eat_kw(Kw::For) {
                 let pattern = self.parse_for_target();
                 self.expect_kw(Kw::In);
-                let iter = self.parse_expr_bp(BP_TERNARY + 1, false);
+                // `[GRM-15]` (ODR-236) — `owned xs` takes the collection over, as a `for` does.
+                let iter = if self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn) {
+                    let start = self.span();
+                    self.bump();
+                    let inner = self.parse_expr_bp(BP_TERNARY + 1, false);
+                    Expr { id: self.next_id(), kind: ExprKind::Owned(Box::new(inner)), span: start.to(self.prev_span()) }
+                } else {
+                    self.parse_expr_bp(BP_TERNARY + 1, false)
+                };
                 clauses.push(CompClause::For { pattern, iter });
             } else if self.eat_kw(Kw::If) {
                 clauses.push(CompClause::If(self.parse_expr_bp(BP_TERNARY + 1, false)));

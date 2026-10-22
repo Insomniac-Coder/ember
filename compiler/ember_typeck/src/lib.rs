@@ -2806,6 +2806,9 @@ struct Checker<'a> {
     /// `[STR-5]` (ODR-237) — the types whose derived `Clone` is being settled, taken as `Clone`
     /// while their fields are checked, so a recursive one (`Node(Box[Tree])`) derives it.
     assumed_cloneable: HashSet<Ty>,
+    /// `[GRM-27]` (ODR-236) — the borrowed items of the comprehension clauses being checked, with
+    /// the clause's iterable: kept whole and not `Copy`, one is a move out of the collection.
+    gather_items: Vec<(LocalId, Option<String>)>,
     /// `[HEAP-3]`–`[HEAP-6]` — every compiler-known `Shared[T]` and its
     /// payload. The public handle is Copy, but copy/drop use the same strong
     /// control-block operations as class handles rather than bitwise pointer
@@ -3346,6 +3349,7 @@ impl<'a> Checker<'a> {
             cells: HashMap::new(),
             boxes: HashMap::new(),
             assumed_cloneable: HashSet::new(),
+            gather_items: Vec::new(),
             shareds: HashMap::new(),
             sync_shareds: HashSet::new(),
             with_scope_item: None,
@@ -30113,7 +30117,7 @@ impl<'a> Checker<'a> {
             self.error(codes::E0100, span, "a generator expression begins with a `for` clause");
             return error;
         };
-        let source = self.synth_committed(iter);
+        let source = self.synth_comprehension_iterable(iter);
         if source.ty == self.common.error {
             return error;
         }
@@ -30216,6 +30220,23 @@ impl<'a> Checker<'a> {
         Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
     }
 
+    /// `[GRM-15]`, `[GRM-27]` (ODR-236) — a comprehension clause's iterable: `owned xs` takes the
+    /// collection over, checked as the call `xs.into_iter()` is, as a `for` loop's is.
+    fn synth_comprehension_iterable(&mut self, iter: &ast::Expr) -> Expr {
+        let ast::ExprKind::Owned(inner) = &iter.kind else { return self.synth_committed(iter) };
+        let call = ast::Expr {
+            id: iter.id,
+            kind: ast::ExprKind::MethodCall {
+                recv: inner.clone(),
+                name: ast::Ident { name: Symbol::intern("into_iter"), span: iter.span },
+                generic_args: Vec::new(),
+                args: Vec::new(),
+            },
+            span: iter.span,
+        };
+        self.synth_committed(&call)
+    }
+
     /// `[CTL-1]` — what a `for` loop over `source` iterates: the value itself when it has
     /// `next()`, a text's `char`s, or what its `iter()` gives.
     fn iterator_of(&mut self, source: Expr, span: Span) -> Option<Expr> {
@@ -30310,6 +30331,28 @@ impl<'a> Checker<'a> {
         match clauses.get(index) {
             None => {
                 let value = self.synth_committed(element);
+                // `[GRM-27]` (ODR-236) — a borrowed item kept whole moves out of its collection,
+                // which still owns it: the comprehension takes the collection over, or copies.
+                if let ExprKind::Deref(reference) = &value.kind
+                    && let ExprKind::Local(local) = reference.kind
+                    && let Some((_, iterable)) = self.gather_items.iter().find(|(item, _)| *item == local).cloned()
+                    && !self.types.is_copy(value.ty)
+                {
+                    let inner = value.ty;
+                    let name = self.locals[local.0 as usize].name.map(|name| name.to_string()).unwrap_or_else(|| "it".to_string());
+                    let collection = iterable.unwrap_or_else(|| "xs".to_string());
+                    let mut diagnostic = Diagnostic::error(codes::E3013, element.span, "cannot move a borrowed item into the new collection")
+                        .primary_label("each item is a reference into the collection, which still owns it")
+                        .help(format!(
+                            "take the collection over, `for {name} in owned {collection}`: the items kept move into the new one, the rest are dropped, and `{collection}` cannot be used after"
+                        ))
+                        .note("over a borrowed collection the items are references [GRM-27]");
+                    if self.is_cloneable(inner) {
+                        diagnostic = diagnostic.help(format!("or copy each item, `{name}.clone()`, `{collection}` staying as it was"));
+                    }
+                    self.sink.emit(diagnostic);
+                    return None;
+                }
                 let value = self.read_through(value);
                 if value.ty == self.common.error {
                     return None;
@@ -30425,7 +30468,7 @@ impl<'a> Checker<'a> {
             stmts.push(Stmt::ForRange { local, start, end, inclusive, body: Block { stmts: inner, span }, else_block: None });
             return Some(());
         }
-        let value = self.synth_committed(iter);
+        let value = self.synth_comprehension_iterable(iter);
         if value.ty == self.common.error {
             return None;
         }
@@ -30471,7 +30514,10 @@ impl<'a> Checker<'a> {
         if !simple {
             self.bind_borrowed_loop_pattern(pattern, item, item_ty, &mut body);
         }
-        body.extend(self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span)?);
+        self.gather_items.push((item, written_place(iter)));
+        let inner = self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span);
+        self.gather_items.pop();
+        body.extend(inner?);
         stmts.push(Stmt::ForRange {
             local: at,
             start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
@@ -56501,6 +56547,15 @@ fn is_compiler_known_struct(name: &str) -> bool {
         .iter()
         .any(|prefix| name.starts_with(prefix))
         || matches!(name, "Arena" | "FixedArena" | "ScopedArena")
+}
+
+/// `[GRM-27]` — how a place an iterable names is written (`xs`, `self.items`), for a help.
+fn written_place(expr: &ast::Expr) -> Option<String> {
+    match &expr.kind {
+        ast::ExprKind::Path { segments } => Some(segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".")),
+        ast::ExprKind::Field { base, name } => Some(format!("{}.{}", written_place(base)?, name.name)),
+        _ => None,
+    }
 }
 
 /// `[EFF-2]` — whether `decl` has a parameter of a written `fn` type: a callable bound, whose

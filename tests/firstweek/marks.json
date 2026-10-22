@@ -30,8 +30,8 @@
     "helps": ["R1:N9", "R1:N3", "R1:none:E2020", "R1:N1"]
   },
   "07_todo_list.em": {
-    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020"], "after_helps": "rejected",
-    "shapes": ["none:E2020", "N1", "N6"],
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020", "E3013"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N1", "N6", "O2"],
     "helps": ["R1:none:E2020", "R1:N1", "R1:N6", "R2:O2"]
   },
   "08_word_frequencies.em": {
@@ -70,8 +70,8 @@
     "helps": ["R1:N1", "R1:N6"]
   },
   "15_library_catalogue.em": {
-    "mark": "rejected", "shape": "N3", "codes": ["E2020", "E2072"], "after_helps": "rejected",
-    "shapes": ["N3", "none:E2020"],
+    "mark": "rejected", "shape": "N3", "codes": ["E2020", "E2072", "E3013"], "after_helps": "rejected",
+    "shapes": ["N3", "none:E2020", "O2"],
     "helps": ["R1:N3", "R1:none:E2020", "R2:B3", "R2:O2", "R2:O1"]
   },
   "16_shapes_interface.em": {
