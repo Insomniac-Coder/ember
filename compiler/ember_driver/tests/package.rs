@@ -507,6 +507,56 @@ fn the_cpp_corpus_binds_as_recorded() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[BLD-6]`, `[PRF-3]` — `lto = "off" | "thin" | "on"`: each profile's own (`debug` off,
+/// `development` thin, `release` on) unless the manifest's `[profiles.<name>] lto` says otherwise.
+/// A value the C compiler does not do is replaced by the nearest one it does (of two as near, the
+/// one that optimises more), and the build record, `inspect/<name>.build.json`, says what was asked,
+/// what was done, and why when they differ. Any other word is `E9001`. No correctness property
+/// depends on it: the program prints the same each time. With MSVC's `cl` the record is checked
+/// against the object itself: link-time code generation's own format exactly when it says `on`.
+#[test]
+fn link_time_optimisation_is_the_profiles_or_the_manifests_and_recorded() {
+    let dir = scratch();
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = ember_build::Toolchain::detect(requested.as_deref()).expect("a C toolchain");
+    let cl = matches!(&toolchain, ember_build::Toolchain::Msvc { cl, .. }
+        if !cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("clang-cl")));
+    let program = "fn twice(x: int) -> int:\n    return x * 2\n\nfn main():\n    println(twice(21))\n";
+    for (written, profile, asked) in [
+        (None, "debug", "off"), (None, "development", "thin"), (None, "release", "on"),
+        (Some("off"), "release", "off"), (Some("on"), "debug", "on"), (Some("thin"), "release", "thin"),
+    ] {
+        let manifest = match written {
+            Some(lto) => format!("[package]\nname = \"lto\"\n\n[profiles.{profile}]\nlto = \"{lto}\"\n"),
+            None => "[package]\nname = \"lto\"\n".to_string(),
+        };
+        package(&dir, &manifest, &[("main", program)]);
+        // Compiled each time: a program the cache served would leave no object to look at.
+        let output = ember_build::output_started(Command::new(EMBER).args(["run", "--profile", profile, "--out-dir", "out"])
+            .env(ember_branding::no_compile_cache_var(), "1").current_dir(&dir)).expect("ember starts");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{profile}, lto {written:?}: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n", "{profile}, lto {written:?}");
+        let inspect = dir.join("out").join(profile).join("inspect");
+        let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(inspect.join("main.build.json")).unwrap()).unwrap();
+        let used = toolchain.lto(ember_build::Lto::from_name(asked).unwrap(), ember_build::Link::Here);
+        assert_eq!(record["profile"], profile, "{record}");
+        assert_eq!(record["lto"]["asked"], asked, "[BLD-6] {profile}, lto {written:?}: {record}");
+        assert_eq!(record["lto"]["used"], used.name(), "[BLD-6] {profile}, lto {written:?}: {record}");
+        assert_eq!(record["lto"]["why"].is_null(), used.name() == asked, "[BLD-6] the record says why only when they differ: {record}");
+        if cl {
+            // `/GL`'s objects begin with the anonymous header (0x0000, 0xFFFF); plain COFF with the machine.
+            let object = std::fs::read(dir.join("out").join(profile).join("obj").join("main.obj")).unwrap();
+            assert_eq!(object.starts_with(&[0, 0, 0xFF, 0xFF]), used == ember_build::Lto::On, "[BLD-6] {profile}, lto {written:?}");
+        }
+    }
+    package(&dir, "[package]\nname = \"lto\"\n\n[profiles.release]\nlto = \"full\"\n", &[("main", program)]);
+    let refused = ember(&["check"], &dir);
+    assert!(!refused.ok && refused.stderr.contains("error[E9001]: `full` is not an `lto` value"), "{}", refused.stderr);
+    assert!(refused.stderr.contains("\"off\", \"thin\" or \"on\""), "{}", refused.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// CMake, from the path or, on Windows, the copy Visual Studio's build tools carry; `None` without.
 fn cmake() -> Option<PathBuf> {
     let works = |program: &Path| Command::new(program).arg("--version").output().is_ok_and(|output| output.status.success());

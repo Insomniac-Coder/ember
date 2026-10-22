@@ -42,6 +42,73 @@ impl Profile {
             _ => return None,
         })
     }
+
+    /// `[PRF-3]` — the profile's link-time optimisation, unless the manifest's
+    /// `[profiles.<name>] lto` gives another ([`set_lto`]).
+    pub fn lto(self) -> Lto {
+        match self {
+            Profile::Debug => Lto::Off,
+            Profile::Development => Lto::Thin,
+            Profile::Release => Lto::On,
+        }
+    }
+}
+
+/// `[BLD-6]` — link-time optimisation: none, ThinLTO's (each unit optimised with summaries of the
+/// others, in parallel), or the whole program's as one. No correctness property depends on it: it
+/// changes only how far the C compiler inlines and optimises across translation units.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Lto {
+    Off,
+    Thin,
+    On,
+}
+
+impl Lto {
+    /// In order of how much the link optimises: [`Toolchain::lto`]'s "nearest" is along it.
+    pub const ALL: [Lto; 3] = [Lto::Off, Lto::Thin, Lto::On];
+
+    /// The manifest's word for it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Lto::Off => "off",
+            Lto::Thin => "thin",
+            Lto::On => "on",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Lto> {
+        Lto::ALL.into_iter().find(|lto| lto.name() == name)
+    }
+
+    fn rank(self) -> isize {
+        Lto::ALL.iter().position(|lto| *lto == self).unwrap_or(0) as isize
+    }
+}
+
+/// `[BLD-6]` — who links a build's objects: this build (a program, a shared library), or a link it
+/// does not run (a static library's, `--emit obj`'s), which needs objects the toolchain's own
+/// linker reads whatever it is asked.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Link {
+    Here,
+    Elsewhere,
+}
+
+/// `[BLD-6]` — the manifest's `lto` for this build's profile; `None` is the profile's own.
+static LTO: std::sync::Mutex<Option<Lto>> = std::sync::Mutex::new(None);
+
+/// `[BLD-6]` — set the link-time optimisation this build asks for: the manifest's
+/// `[profiles.<name>] lto`, or `None` for the profile's own ([`Profile::lto`]).
+pub fn set_lto(lto: Option<Lto>) {
+    if let Ok(mut set) = LTO.lock() {
+        *set = lto;
+    }
+}
+
+/// `[BLD-6]` — the link-time optimisation a build of `profile` asks for.
+pub fn asked_lto(profile: Profile) -> Lto {
+    LTO.lock().ok().and_then(|set| *set).unwrap_or(profile.lto())
 }
 
 /// Which C compiler drives the backend. `[MAN-1]`'s `c_compiler = "auto"`
@@ -115,6 +182,43 @@ impl Toolchain {
                 named.unwrap_or_else(|| "ld".to_string())
             }
         }
+    }
+
+    /// `[BLD-6]` — whether this toolchain does `lto` for objects linked `link`. An object another
+    /// link reads must serve that link as it is. cl does the whole program's (`/GL`, `/LTCG`) at
+    /// its own link; a `/GL` object holds no code, binds an archive to that compiler's version and
+    /// turns its reader's link into link-time code generation, so not for a link elsewhere. gcc
+    /// does the whole program's (its partitions are not ThinLTO's summaries); its fat objects (code
+    /// beside the intermediate form) serve any link, optimised across only by one that asks. Clang
+    /// does both kinds, linked by LLVM's `lld` (every clang-cl link already is); its objects hold
+    /// only LLVM's intermediate form, so not for a link elsewhere either.
+    pub fn supports_lto(&self, lto: Lto, link: Link) -> bool {
+        match (self, lto, link) {
+            (_, Lto::Off, _) => true,
+            (Toolchain::Msvc { cl, .. }, lto, link) if !is_clang_cl(cl) => lto == Lto::On && link == Link::Here,
+            (Toolchain::Gcc(_), lto, _) => lto == Lto::On,
+            (Toolchain::Msvc { .. } | Toolchain::Clang(_), _, Link::Elsewhere) => false,
+            (Toolchain::Msvc { .. }, _, Link::Here) => true,
+            (Toolchain::Clang(_), _, Link::Here) => cfg!(target_os = "macos") || self.lld().is_some(),
+        }
+    }
+
+    /// `[BLD-6]` — `asked`, or the nearest kind this toolchain does when it does not; of two as
+    /// near, the one that optimises more (`thin` with cl or gcc is `on`): it is what `thin` is for,
+    /// and nothing a program means depends on it.
+    pub fn lto(&self, asked: Lto, link: Link) -> Lto {
+        Lto::ALL
+            .into_iter()
+            .filter(|lto| self.supports_lto(*lto, link))
+            .min_by_key(|lto| ((lto.rank() - asked.rank()).abs(), -lto.rank()))
+            .unwrap_or(Lto::Off)
+    }
+
+    /// LLVM's linker beside Clang or on `PATH`: `lld-link` on Windows, `ld.lld` elsewhere.
+    fn lld(&self) -> Option<PathBuf> {
+        let name = if cfg!(windows) { "lld-link.exe" } else { "ld.lld" };
+        let beside = self.compiler_path().parent().map(|dir| dir.join(name)).filter(|path| path.is_file());
+        beside.or_else(|| program_file(Path::new(name), std::env::var_os("PATH")))
     }
 
     /// Find a usable C compiler, preferring `requested` when it is given.
@@ -207,8 +311,8 @@ impl Toolchain {
     }
 
     /// clang's MSVC-compatible driver: MSVC's environment and flags, clang's
-    /// front end. It ignores `/GL`, so `release` gets no link-time code
-    /// generation from it.
+    /// front end. It ignores `/GL`: its link-time optimisation is clang's
+    /// (`[BLD-6]`, [`lto_compile_flags`]).
     fn find_clang_cl() -> Option<Toolchain> {
         let Toolchain::Msvc { env, .. } = Self::find_msvc()? else {
             return None;
@@ -690,12 +794,11 @@ fn compile_and_link_impl(
 ) -> Result<(), BuildError> {
     let mut command = compiler_command(toolchain);
     let (layout_compile, layout_link) = layout_flags(toolchain, layout);
+    let lto = build_lto(toolchain, request.profile, Link::Here);
     match toolchain {
         Toolchain::Msvc { cl, .. } => {
-            // `[TST-27]` (D-714) clang-cl ignores `/GL` with a warning, which `/WX` makes an error;
-            // its link-time optimisation is `-flto`, which an MSVC link cannot read.
             let clang_cl = is_clang_cl(cl);
-            command.args(msvc_flags(request.profile).into_iter().filter(|flag| !(clang_cl && *flag == "/GL")));
+            command.args(msvc_flags(request.profile)).args(lto_compile_flags(toolchain, lto, Link::Here));
             if warnings_as_errors() {
                 command.arg("/WX");
             }
@@ -724,12 +827,21 @@ fn compile_and_link_impl(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(request.profile)).args(gcc_flags(toolchain, request.profile));
-            // `[BLD-FFI-4]` — the C++ project's link-time optimisation, for the program's C and its link.
-            if let Some(lto) = inherited_gnu_lto() {
-                command.arg(lto);
-                // Clang on Windows links link-time-optimised code only with LLVM's `lld-link`.
-                if cfg!(windows) && matches!(toolchain, Toolchain::Clang(_)) {
-                    command.arg("-fuse-ld=lld");
+            match inherited_gnu_lto() {
+                // `[BLD-FFI-4]` — the C++ project's link-time optimisation, for the program's C and
+                // its link; an empty one is the project's `-fno-lto`.
+                Some(inherited) => {
+                    if !inherited.is_empty() {
+                        command.arg(inherited);
+                        // Clang on Windows links link-time-optimised code only with LLVM's `lld-link`.
+                        if cfg!(windows) && matches!(toolchain, Toolchain::Clang(_)) {
+                            command.arg("-fuse-ld=lld");
+                        }
+                    }
+                }
+                // `[BLD-6]` — compiled and linked in one: the link's flags hold the compile's.
+                None => {
+                    command.args(lto_link_flags(toolchain, lto));
                 }
             }
             command.args(layout_compile.iter());
@@ -788,7 +900,7 @@ fn compile_and_link_impl(
             if is_clang_cl(cl) {
                 command.arg("-fuse-ld=lld");
             }
-            command.args(["/link", "/Brepro", "/INCREMENTAL:NO"]);
+            command.args(["/link", "/Brepro", "/INCREMENTAL:NO"]).args(lto_link_flags(toolchain, lto));
             if request.profile != Profile::Release {
                 command.arg("/PDBALTPATH:%_PDB%");
                 if is_clang_cl(cl) {
@@ -1201,8 +1313,8 @@ fn refused_relaxation<'a>(output: &str, relaxing: &[&'a str]) -> Option<&'a str>
     })
 }
 
-/// The C compiler as a diagnostic names it.
-fn toolchain_name(toolchain: &Toolchain) -> String {
+/// The C compiler as a diagnostic or a build record names it.
+pub fn toolchain_name(toolchain: &Toolchain) -> String {
     let path = match toolchain {
         Toolchain::Msvc { cl, .. } => cl,
         Toolchain::Clang(path) | Toolchain::Gcc(path) => path,
@@ -1213,8 +1325,8 @@ fn toolchain_name(toolchain: &Toolchain) -> String {
 /// `[CG-C-11]` — the profile's MSVC flags with `/fp:precise` relaxed:
 /// `/fp:contract` added, or `/fp:fast` in its place. `/Z7` keeps the debug
 /// information in the object, as no program database is named for it. No
-/// `/GL`: link-time code generation could inline across the two modes, so
-/// the relaxed object is finished code the linker only places.
+/// link-time optimisation (`[BLD-6]`): it could inline across the two modes,
+/// so the relaxed object is finished code the linker only places.
 fn relaxed_msvc_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
     msvc_flags(profile)
         .into_iter()
@@ -1222,7 +1334,6 @@ fn relaxed_msvc_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
             "/fp:precise" if fast => vec!["/fp:fast"],
             "/fp:precise" => vec!["/fp:precise", "/fp:contract"],
             "/Zi" => vec!["/Z7"],
-            "/GL" => vec![],
             other => vec![other],
         })
         .collect()
@@ -1250,7 +1361,6 @@ fn relaxed_clang_cl_flags(profile: Profile, fast: bool) -> Vec<&'static str> {
             ],
             "/fp:precise" => vec!["/fp:precise", "/clang:-ffp-contract=fast"],
             "/Zi" => vec!["/Z7"],
-            "/GL" => vec![],
             other => vec![other],
         })
         .collect()
@@ -1302,16 +1412,18 @@ pub fn compile_object_with_flags(
 ) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = compiler_command(toolchain);
+    // `[BLD-6]` — for whichever link reads the object.
+    let lto = lto_compile_flags(toolchain, build_lto(toolchain, profile, Link::Elsewhere), Link::Elsewhere);
     match toolchain {
         Toolchain::Msvc { .. } => {
             command.args(msvc_flags(profile).into_iter().map(|flag|
-                if flag == "/Zi" { "/Z7" } else { flag }));
+                if flag == "/Zi" { "/Z7" } else { flag })).args(lto);
             command.arg("/c").args(flags);
             for dir in include_dirs { command.arg(format!("/I{}", dir.display())); }
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).arg("-c").args(flags);
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(lto).arg("-c").args(flags);
             folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
@@ -1347,16 +1459,18 @@ pub fn compile_cpp_object(
             command
         }
     };
+    // `[BLD-6]` — for whichever link reads the object, as the program's C.
+    let lto = lto_compile_flags(toolchain, build_lto(toolchain, profile, Link::Elsewhere), Link::Elsewhere);
     match toolchain {
         Toolchain::Msvc { .. } => {
             // cl's oldest C++ standard switch is C++14.
             let standard = if standard == "c++11" { "c++14" } else { standard };
             command.args(msvc_flags(profile).into_iter().filter(|flag| *flag != "/std:c11").map(|flag| if flag == "/Zi" { "/Z7" } else { flag }));
-            command.args(["/TP", "/EHsc", &format!("/std:{standard}")]).arg("/c").args(flags);
+            command.args(lto).args(["/TP", "/EHsc", &format!("/std:{standard}")]).arg("/c").args(flags);
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).arg(format!("-std={standard}")).arg("-c");
+            command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).args(lto).arg(format!("-std={standard}")).arg("-c");
             command.args(inherited_gnu_runtime()).args(flags);
             // D-790 — position-independent, for a reloadable image's shared library too (Annex B):
             // the thunks' `thread_local` record of a caught exception is otherwise reached as an
@@ -1394,7 +1508,7 @@ pub fn vectorisation_report(
     let mut command = compiler_command(toolchain);
     match toolchain {
         Toolchain::Msvc { .. } => {
-            command.args(msvc_flags(profile).into_iter().filter(|flag| *flag != "/Zi" && !flag.starts_with("/GL")));
+            command.args(msvc_flags(profile).into_iter().filter(|flag| *flag != "/Zi"));
             command.arg("/Qvec-report:2").arg("/c");
             for dir in include_dirs { command.arg(format!("/I{}", dir.display())); }
             command.arg(source).arg(format!("/Fo{}", object.display()));
@@ -1561,7 +1675,7 @@ fn msvc_flags(profile: Profile) -> Vec<&'static str> {
         // `[RT-4]` — development keeps its symbols in a PDB beside the program, for a panic's
         // backtrace; the code is the same (the link keeps `/OPT:REF,ICF`).
         Profile::Development => &["/O2", "/Zi", "/MD"],
-        Profile::Release => &["/O2", "/GL", "/MD", "/DEMBER_RELEASE"],
+        Profile::Release => &["/O2", "/MD", "/DEMBER_RELEASE"],
     };
     // `[BLD-FFI-1b]` — a C++ project's runtime switch and layout defines, where the build inherits them.
     let inherited = inherited_msvc_runtime();
@@ -1623,6 +1737,65 @@ pub fn inherit_gnu_runtime(flags: Vec<&'static str>) {
 
 fn inherited_gnu_runtime() -> Vec<&'static str> {
     INHERITED_GNU_RUNTIME.lock().map(|inherited| inherited.clone()).unwrap_or_default()
+}
+
+/// `[BLD-6]` — the link-time optimisation a build of `profile` does for objects linked `link`: what
+/// it asks for ([`asked_lto`]), or the nearest the toolchain does.
+pub fn build_lto(toolchain: &Toolchain, profile: Profile, link: Link) -> Lto {
+    toolchain.lto(asked_lto(profile), link)
+}
+
+/// `[BLD-6]` — what a build record says of link-time optimisation: what the build asked for, what
+/// it did, and why the two differ when they do. A C++ project's own flag, which the program's C
+/// inherits with GCC or Clang (`[BLD-FFI-4]`), is what it did then.
+pub fn lto_record(toolchain: &Toolchain, profile: Profile, link: Link) -> (Lto, Lto, Option<String>) {
+    let asked = asked_lto(profile);
+    if let (Toolchain::Clang(_) | Toolchain::Gcc(_), Some(flag)) = (toolchain, inherited_gnu_lto()) {
+        let used = match flag {
+            "" => Lto::Off,
+            "-flto=thin" => Lto::Thin,
+            _ => Lto::On,
+        };
+        let why = (used != asked).then(|| "the imported C++ project's own flags choose it [BLD-FFI-4]".to_string());
+        return (asked, used, why);
+    }
+    let used = toolchain.lto(asked, link);
+    let whose = if link == Link::Elsewhere { " for objects another link reads" } else { "" };
+    let why = (used != asked).then(|| {
+        format!("{} does not do `{}` link-time optimisation{whose}; `{}` is the nearest it does", toolchain_name(toolchain), asked.name(), used.name())
+    });
+    (asked, used, why)
+}
+
+/// `[BLD-6]` — the C compiler's flags for `lto`, one the toolchain does ([`Toolchain::lto`]): an
+/// object a link elsewhere reads is gcc's fat one, which holds the code too.
+fn lto_compile_flags(toolchain: &Toolchain, lto: Lto, link: Link) -> &'static [&'static str] {
+    match (toolchain, lto) {
+        (_, Lto::Off) => &[],
+        (Toolchain::Msvc { cl, .. }, _) if !is_clang_cl(cl) => &["/GL"],
+        (Toolchain::Msvc { .. } | Toolchain::Clang(_), Lto::Thin) => &["-flto=thin"],
+        (Toolchain::Msvc { .. } | Toolchain::Clang(_), _) => &["-flto"],
+        (Toolchain::Gcc(_), _) if link == Link::Elsewhere => &["-flto=auto", "-ffat-lto-objects"],
+        (Toolchain::Gcc(_), _) => &["-flto=auto"],
+    }
+}
+
+/// `[BLD-6]` — the link's flags for `lto`: cl's linker's, after `/link`; clang-cl links with
+/// `lld-link` already (`-fuse-ld=lld`), which reads its objects as they are; gcc and Clang
+/// optimise at the link with the compile's flag, Clang's linked by `lld` (Apple's linker reads
+/// them itself).
+fn lto_link_flags(toolchain: &Toolchain, lto: Lto) -> &'static [&'static str] {
+    let apple = cfg!(target_os = "macos");
+    match (toolchain, lto) {
+        (_, Lto::Off) => &[],
+        (Toolchain::Msvc { cl, .. }, _) if !is_clang_cl(cl) => &["/LTCG"],
+        (Toolchain::Msvc { .. }, _) => &[],
+        (Toolchain::Clang(_), Lto::Thin) if apple => &["-flto=thin"],
+        (Toolchain::Clang(_), _) if apple => &["-flto"],
+        (Toolchain::Clang(_), Lto::Thin) => &["-flto=thin", "-fuse-ld=lld"],
+        (Toolchain::Clang(_), _) => &["-flto", "-fuse-ld=lld"],
+        (Toolchain::Gcc(_), _) => &["-flto=auto"],
+    }
 }
 
 /// `[BLD-FFI-1b]` — `/MD`, or the runtime switch the build inherits.
@@ -1759,13 +1932,15 @@ fn runtime_object_impl(
     managed_executable: bool,
 ) -> Result<Option<PathBuf>, BuildError> {
     let mut command = compiler_command(toolchain);
+    // `[BLD-6]` — the program's link-time optimisation reaches into the runtime too.
+    let lto = build_lto(toolchain, profile, Link::Here);
     let extension = match toolchain {
-        Toolchain::Msvc { .. } if profile == Profile::Release => return Ok(None),
+        Toolchain::Msvc { cl, .. } if lto != Lto::Off && !is_clang_cl(cl) => return Ok(None),
         Toolchain::Msvc { .. } => {
             // `/Z7` keeps the debug information inside the object; `/Zi`
             // would tie a shared object to a PDB file beside it.
             let flags = msvc_flags(profile).into_iter().map(|f| if f == "/Zi" { "/Z7" } else { f });
-            command.args(flags).arg("/c");
+            command.args(flags).args(lto_compile_flags(toolchain, lto, Link::Here)).arg("/c");
             for dir in include_dirs {
                 command.arg(format!("/I{}", dir.display()));
             }
@@ -1774,6 +1949,10 @@ fn runtime_object_impl(
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile))
                 .args(executable_section_flags(toolchain, managed_executable)).arg("-c");
+            // A C++ project's own link-time optimisation leaves the runtime as it was (`[BLD-FFI-4]`).
+            if inherited_gnu_lto().is_none() {
+                command.args(lto_compile_flags(toolchain, lto, Link::Here));
+            }
             folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs {
                 command.arg("-I").arg(dir);
@@ -1920,6 +2099,44 @@ mod tests {
                 result => return result,
             }
         }
+    }
+
+    /// `[BLD-6]` — each toolchain's kinds of link-time optimisation, the nearest of them to what a
+    /// build asks for (of two as near, the one that optimises more), and their flags: cl does the
+    /// whole program's (`/GL`, `/LTCG`) at its own link; gcc the whole program's, as fat objects
+    /// for a link elsewhere; clang-cl both kinds at its own link. Neither cl's objects nor LLVM's
+    /// serve a link elsewhere as they are, so a library another link reads gets none from them.
+    /// `[PRF-3]`: `debug` off, `development` thin, `release` on.
+    #[test]
+    fn link_time_optimisation_is_the_nearest_the_toolchain_does() {
+        let cl = Toolchain::Msvc { cl: PathBuf::from("cl.exe"), env: BTreeMap::new() };
+        let clang_cl = Toolchain::Msvc { cl: PathBuf::from("clang-cl.exe"), env: BTreeMap::new() };
+        let gcc = Toolchain::Gcc(PathBuf::from("gcc"));
+        assert_eq!([Profile::Debug.lto(), Profile::Development.lto(), Profile::Release.lto()], [Lto::Off, Lto::Thin, Lto::On]);
+        assert_eq!(Lto::ALL.map(|lto| Lto::from_name(lto.name())), [Some(Lto::Off), Some(Lto::Thin), Some(Lto::On)]);
+        assert_eq!(Lto::from_name("full"), None);
+        for link in [Link::Here, Link::Elsewhere] {
+            assert_eq!(Lto::ALL.map(|asked| gcc.lto(asked, link)), [Lto::Off, Lto::On, Lto::On], "{link:?}");
+        }
+        assert_eq!(Lto::ALL.map(|asked| cl.lto(asked, Link::Here)), [Lto::Off, Lto::On, Lto::On]);
+        assert_eq!(Lto::ALL.map(|asked| clang_cl.lto(asked, Link::Here)), Lto::ALL);
+        for toolchain in [&cl, &clang_cl] {
+            assert_eq!(Lto::ALL.map(|asked| toolchain.lto(asked, Link::Elsewhere)), [Lto::Off; 3], "{toolchain:?}");
+        }
+        assert_eq!(lto_compile_flags(&cl, Lto::On, Link::Here), ["/GL"]);
+        assert_eq!(lto_link_flags(&cl, Lto::On), ["/LTCG"]);
+        assert_eq!(lto_compile_flags(&clang_cl, Lto::Thin, Link::Here), ["-flto=thin"]);
+        assert!(lto_link_flags(&clang_cl, Lto::On).is_empty(), "clang-cl links with lld-link already");
+        assert_eq!(lto_compile_flags(&gcc, Lto::On, Link::Here), ["-flto=auto"]);
+        assert_eq!(lto_compile_flags(&gcc, Lto::On, Link::Elsewhere), ["-flto=auto", "-ffat-lto-objects"]);
+        assert_eq!(lto_link_flags(&gcc, Lto::On), ["-flto=auto"]);
+        for toolchain in [&cl, &clang_cl, &gcc] {
+            assert!(lto_compile_flags(toolchain, Lto::Off, Link::Here).is_empty() && lto_link_flags(toolchain, Lto::Off).is_empty());
+        }
+        // The profile's flags carry none of it: a relaxed unit (`[CG-C-11]`) is never optimised
+        // across, and every other unit takes the build's own.
+        assert!(!msvc_flags(Profile::Release).contains(&"/GL"));
+        assert!(!gnu_flags(Profile::Release).iter().any(|flag| flag.starts_with("-flto")));
     }
 
     /// ADR-098 — gcc's development build asks for the vectoriser cost model that

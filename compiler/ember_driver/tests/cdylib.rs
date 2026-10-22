@@ -778,3 +778,31 @@ fn import_c_shims_reverify_each_layout_with_the_projects_compiler() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `[ABI-4]` — a release notes every protocol whose version changed, and why: each version of the
+/// runtime ABI, the module protocol and the hot-reload protocol, up to the number the runtime's
+/// header carries, has its row in `docs/RELEASE-NOTES.md` with a reason, and no row names a version
+/// the header has not reached. Bumping a number without its note fails here.
+#[test]
+fn every_protocol_version_is_in_the_release_notes() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).unwrap();
+    let header = std::fs::read_to_string(root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX))
+        .join("include").join(ember_branding::runtime_header())).unwrap();
+    let notes = std::fs::read_to_string(root.join("docs").join("RELEASE-NOTES.md")).unwrap();
+    let prefix = ember_branding::SYMBOL_PREFIX.to_uppercase();
+    for (name, label) in [("RUNTIME_ABI", "runtime ABI"), ("MODULE_PROTOCOL", "module protocol"), ("RELOAD_PROTOCOL", "hot-reload protocol")] {
+        let define = format!("#define {prefix}_{name} ");
+        let current: u32 = header.lines().find_map(|line| line.strip_prefix(&define)).and_then(|n| n.trim().parse().ok())
+            .unwrap_or_else(|| panic!("the runtime header defines no `{define}`"));
+        // This protocol's rows: `| label (`MACRO`) | version | symbol | why |`.
+        let rows: Vec<(u32, String)> = notes.lines().filter(|line| line.starts_with(&format!("| {label} ("))).map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            (cells[2].parse().unwrap_or_else(|_| panic!("a version that is no number: {line}")), cells[4].to_string())
+        }).collect();
+        for version in 1..=current {
+            let noted = rows.iter().find(|(v, _)| *v == version);
+            assert!(noted.is_some_and(|(_, why)| !why.is_empty()), "[ABI-4] {label} {version} has no row saying why it changed");
+        }
+        assert!(rows.iter().all(|(v, _)| *v <= current), "[ABI-4] the notes name a {label} version above the header's {current}");
+    }
+}

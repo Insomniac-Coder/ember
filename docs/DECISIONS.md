@@ -5017,6 +5017,28 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-256 — Helper Q merged: `[ABI-4]`, `[ABI-5]`, `[BLD-6]`, `[BLD-10]`; D-811
+
+2026-10-22 (helper Q, `tasks/95/Q-notes.md`). `[ABI-4]`: `docs/RELEASE-NOTES.md` notes every
+version of the runtime ABI, the module protocol and the hot-reload protocol, and a test reads the
+version macros from `ember_rt.h`, so a version bumped without its note fails. `[ABI-5]`: an `@export`'s
+C declaration is the same with reload on and off, in every profile (already so; tested).
+`[BLD-6]`: `lto = "off" | "thin" | "on"`, each profile's own (`debug` off, `development` thin,
+`release` on) unless `[profiles.<name>] lto` says otherwise (any other word `E9001`); a value the C
+compiler does not do becomes the nearest it does, `thin` with cl or gcc being `on` (ODR-169), and the
+build record (`target/<profile>/inspect/<name>.build.json`, ODR-170) says what was asked, done and
+why. `/GL` is no longer a profile flag: every compile of the program's own C takes the build's LTO
+flags; clang-cl's `release` now really does LTO (`-flto`, where `/GL` was ignored); a reload image
+and the shared runtime never do; objects another link reads (a static library) get none with cl,
+fat ones with gcc (ODR-171). `[BLD-10]`: `bench/bigpkg/generate.py` writes `[BUD-1]`'s package and
+`tools/compile_budgets.py` measures B1..B9 (median of 15 after 3 warm-ups, the spread, a calibration
+before and after, normalised to the reference machine; ODR-172, ODR-173), a gate on every `v*` tag
+(`.github/workflows/release.yml`); `--timings` reports the compiler's peak memory and four more
+stages; `ember check` stops after the checks unless a body has an `@simd(assert)` loop (14 s to
+1.5 s on a 10-module bigpkg). The gate fails today: D-811 (the MIR passes and single-call inlining,
+open). Not built: `[BLD-1]`, `[BLD-4]`, `[BLD-7]`, `[BLD-8]`, each needing a design decision first
+(the notes give the options).
+
 ## ADR-255 — `[STD-18]`: `format` and `format_to`
 
 2026-10-22. `format(value, spec="")`, a prelude name `[MOD-5]` listed and nothing declared (D-810),

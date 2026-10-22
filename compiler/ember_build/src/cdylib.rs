@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::reload::{SharedRuntime, compile_library_object, shared_library_name};
-use crate::{BuildError, Profile, Toolchain, compiler_command, run};
+use crate::{BuildError, Link, Lto, Profile, Toolchain, build_lto, compiler_command, lto_link_flags, run};
 
 /// What a `cdylib` build writes.
 pub struct Cdylib {
@@ -52,12 +52,14 @@ pub fn link_cdylib(
     std::fs::create_dir_all(lib)?;
     let ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
     let mut objects = vec![obj_dir.join(format!("{name}.{ext}"))];
-    compile_library_object(toolchain, source, include_dirs, &objects[0], profile, &[], false)?;
+    // `[BLD-6]` — the library's own link optimises across its package and its runtime.
+    let lto = build_lto(toolchain, profile, Link::Here);
+    compile_library_object(toolchain, source, include_dirs, &objects[0], profile, &[], false, lto)?;
     // `[CG-C-11]` — each relaxed unit, compiled by the caller with its own flags.
     objects.extend(relaxed.iter().cloned());
     if shared.is_none() {
         let runtime = obj_dir.join(format!("{}_rt.module.{ext}", ember_branding::SYMBOL_PREFIX));
-        compile_library_object(toolchain, runtime_source, include_dirs, &runtime, profile, &[], false)?;
+        compile_library_object(toolchain, runtime_source, include_dirs, &runtime, profile, &[], false, lto)?;
         objects.push(runtime);
     }
     let library = lib.join(shared_library_name(name));
@@ -73,6 +75,10 @@ pub fn link_cdylib(
             let definitions = obj_dir.join(format!("{name}.def"));
             write_definitions(&definitions, name, exports, !matches!(toolchain, Toolchain::Msvc { cl, .. } if crate::is_clang_cl(cl)))?;
             command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).args(&objects);
+            // clang-cl's link-time-optimised objects are read by LLVM's `lld-link` only.
+            if lto != Lto::Off && matches!(toolchain, Toolchain::Msvc { cl, .. } if crate::is_clang_cl(cl)) {
+                command.arg("-fuse-ld=lld");
+            }
             if let Some(shared) = shared {
                 command.arg(&shared.link_with);
             }
@@ -80,7 +86,8 @@ pub fn link_cdylib(
                 .arg(format!("/DEF:{}", definitions.display()))
                 .arg(format!("/IMPLIB:{}", import.display()))
                 // `[BLD-13]` — no time stamp, no incremental link (`lib.rs`'s program link).
-                .args(["/Brepro", "/INCREMENTAL:NO"]);
+                .args(["/Brepro", "/INCREMENTAL:NO"])
+                .args(lto_link_flags(toolchain, lto));
             if profile != Profile::Release {
                 command.arg("/DEBUG").arg(format!("/PDB:{}", library.with_extension("pdb").display()))
                     .arg("/PDBALTPATH:%_PDB%");
@@ -92,7 +99,7 @@ pub fn link_cdylib(
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
             let definitions = obj_dir.join(format!("{name}.def"));
             write_definitions(&definitions, name, exports, false)?;
-            command.arg("-shared").args(&objects);
+            command.arg("-shared").args(&objects).args(lto_link_flags(toolchain, lto));
             if let Some(shared) = shared {
                 command.arg(&shared.link_with);
             }
@@ -116,7 +123,7 @@ pub fn link_cdylib(
             }
             text.push_str("  local: *;\n};\n");
             std::fs::write(&script, text)?;
-            command.arg("-shared").args(&objects);
+            command.arg("-shared").args(&objects).args(lto_link_flags(toolchain, lto));
             if let Some(shared) = shared {
                 command.arg(&shared.link_with).arg("-Wl,-rpath,$ORIGIN");
             }

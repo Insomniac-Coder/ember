@@ -915,6 +915,43 @@ fn exports_are_the_module_protocol() {
     assert!(run.stdout.contains("the signature of export `game_frame` changed"), "{}", run.stdout);
 }
 
+/// `[ABI-5]` — the protocol versions are independent of the language version, and two compilers
+/// of one language version may differ in the reload protocol, never in the C ABI of exports: a
+/// program's `@export` is the same C declaration under the same symbol whether its build follows
+/// the hot-reload protocol or not, in each profile. Only the reloadable build names the protocol,
+/// by its own number (`ember_reload_protocol_vN`, N the runtime header's, not the language's), so
+/// builds of two protocols are not mixed in one process (`[ABI-1]`, `[ABI-2]`).
+#[test]
+fn an_exports_c_abi_is_the_same_under_every_protocol() {
+    let root = workspace_root();
+    let header = std::fs::read_to_string(root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX))
+        .join("include").join(ember_branding::runtime_header())).expect("the runtime header is readable");
+    let define = format!("#define {}_RELOAD_PROTOCOL ", ember_branding::SYMBOL_PREFIX.to_uppercase());
+    let protocol = header.lines().find_map(|line| line.strip_prefix(&define)).expect("the header defines the reload protocol").trim().to_string();
+    let marker = ember_branding::runtime(&format!("reload_protocol_v{protocol}"));
+    let source = "@export(\"game_frame\")\nextern \"C\" fn frame(turn: i64, scale: f64) -> i64:\n    return turn + 1\n\nfn main():\n    pass\n";
+    let mut declarations = Vec::new();
+    for (manifest, profile, reloadable) in [
+        ("", "debug", false), (RELOAD_ALL, "debug", true),
+        ("", "development", false), (RELOAD_ALL, "development", true), ("", "release", false),
+    ] {
+        let (package, file) = package("abi-export", manifest, source);
+        let out = package.join("target");
+        let built = ember(&["build", "--emit", "c", "--profile", profile, &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+        assert_eq!(built.exit, 0, "{profile}, reload {reloadable}:\n{}", built.stderr);
+        let c = std::fs::read_to_string(out.join(profile).join("c").join("main.c")).expect("the program's C");
+        let declaration = c.lines().find(|line| line.starts_with("int64_t game_frame(") && line.ends_with(");"))
+            .unwrap_or_else(|| panic!("{profile}, reload {reloadable}: no declaration of the export")).to_string();
+        assert_eq!(c.contains(&marker), reloadable, "{profile}, reload {reloadable}: the reload protocol `{marker}` named or missing");
+        declarations.push((profile, reloadable, declaration));
+    }
+    let (_, _, first) = &declarations[0];
+    assert_eq!(first, "int64_t game_frame(int64_t _1, double _2);", "the export's C ABI is its Ember signature's");
+    for (profile, reloadable, declaration) in &declarations {
+        assert_eq!(declaration, first, "[ABI-5] {profile}, reload {reloadable}: the export's C ABI moved with the protocol");
+    }
+}
+
 /// `[HR-18b]` — `ember build --reload --explain` predicts the reload against the running program,
 /// at its next checkpoint, and applies nothing: an edit to a `@noreload` body would be refused, and
 /// says why; an edit to a reloadable body would apply. The program runs its old code throughout,

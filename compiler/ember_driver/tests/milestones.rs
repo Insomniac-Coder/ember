@@ -4544,7 +4544,7 @@ fn timings_report_each_stage_and_module() {
     let out = out_dir.to_string_lossy().into_owned();
     let built = ember(&["build", &source, "--out-dir", &out, "--timings=json"], &root);
     assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
-    let line = built.stderr.lines().find(|line| line.starts_with("{\"timings\"")).expect("a JSON timings line");
+    let line = built.stderr.lines().find(|line| line.starts_with('{') && line.contains("\"timings\":")).expect("a JSON timings line");
     let value: serde_json::Value = serde_json::from_str(line).expect("the timings are JSON");
     let stages: Vec<(String, String)> = value["timings"]
         .as_array()
@@ -4573,6 +4573,58 @@ fn timings_report_each_stage_and_module() {
     let quiet = ember(&["check", &source], &root);
     assert!(!quiet.stderr.contains("timings"), "{}", quiet.stderr);
     let _ = std::fs::remove_dir_all(&out_dir);
+}
+
+/// `[BLD-10]` — the compile-time budgets are release gates. `tools/compile_budgets.py` holds
+/// `[BUD-2]`'s table as the specification writes it; it measures each figure over `bench/bigpkg`
+/// (here a small one, one run each, through this compiler), and the gate fails when a figure is
+/// over its budget and passes when none is (a run whose calibration moved is inconclusive, never
+/// passed). The release workflow runs it on every release tag.
+#[test]
+fn the_compile_time_budgets_are_a_release_gate() {
+    let root = workspace_root();
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let tool = root.join("tools").join("compile_budgets.py");
+    let listed = Command::new(python).arg(&tool).arg("--list").output().expect("python runs");
+    let table: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("the budgets as JSON");
+    let budgets: Vec<(&str, u64)> = vec![("B1", 250), ("B2", 1000), ("B3", 1500), ("B4", 2500), ("B5", 8000),
+        ("B6", 40_000), ("B7", 90_000), ("B8", 3000), ("B9", 3 * 1024)];
+    for (figure, budget) in &budgets {
+        assert_eq!(table[*figure]["budget"].as_u64(), Some(*budget), "[BLD-10] {figure}: {table}");
+    }
+    assert_eq!(table.as_object().map(|figures| figures.len()), Some(budgets.len()), "{table}");
+
+    let work = temporary_directory("budgets");
+    let none = work.join("none.json");
+    let measure = |budgets: &str, only: &str| {
+        let file = work.join("budgets.json");
+        std::fs::write(&file, budgets).unwrap();
+        let report = work.join("report.json");
+        let output = ember_build::output_started(Command::new(python).arg(&tool)
+            .args(["--ember", EMBER, "--modules", "4", "--lines", "300", "--header-lines", "100", "--runs", "1", "--warmups", "0"])
+            .arg("--only").arg(only).arg("--work").arg(work.join("work")).arg("--budgets").arg(&file)
+            .arg("--baseline").arg(&none).arg("--reference").arg(&none).arg("--json").arg(&report))
+            .expect("python runs");
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report)
+            .unwrap_or_else(|_| panic!("no report:\n{stdout}{}", String::from_utf8_lossy(&output.stderr)))).unwrap();
+        (output.status.code(), stdout, report)
+    };
+    let (status, stdout, report) = measure("{\"B1\": 600000, \"B3\": 600000, \"B9\": 100000}", "B1,B3,B9");
+    for figure in ["B1", "B3", "B9"] {
+        assert_eq!(report["figures"][figure]["verdict"], "pass", "{stdout}");
+        assert!(report["figures"][figure]["median"].as_f64().is_some_and(|value| value > 0.0), "{stdout}");
+    }
+    assert!(status == Some(0) && stdout.contains("release gate: passed")
+        || status == Some(2) && stdout.contains("inconclusive"), "{status:?}\n{stdout}");
+    let (status, stdout, report) = measure("{\"B1\": 0}", "B1");
+    assert_eq!(report["figures"]["B1"]["verdict"], "fail", "{stdout}");
+    assert!(status == Some(1) && stdout.contains("release gate: FAILED (B1)")
+        || status == Some(2) && stdout.contains("inconclusive"), "[BLD-10] a figure over its budget passed: {status:?}\n{stdout}");
+
+    let workflow = std::fs::read_to_string(root.join(".github").join("workflows").join("release.yml")).expect("the release workflow");
+    assert!(workflow.contains("tags: [\"v*\"]") && workflow.contains("tools/compile_budgets.py"), "{workflow}");
+    let _ = std::fs::remove_dir_all(&work);
 }
 
 /// `[DSP-5]` — `ember build --emit-optimization-report` lists, on standard
