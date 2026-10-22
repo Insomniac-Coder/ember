@@ -839,6 +839,14 @@ impl<'m, 'a> FnCx<'m, 'a> {
     pub(crate) fn scalar(&mut self, operand: &Operand) -> Result<(String, Sc)> {
         match self.operand(operand)? {
             Val::Imm(sc, value) => Ok((value, sc)),
+            // An enum without payloads that `@align` makes wide is its discriminant (`[LAY-2]`).
+            Val::Mem(ptr, align)
+                if self.operand_ty(operand).is_some_and(|ty| matches!(self.m.ty.kind(ty), TyKind::Enum(id) if self.m.ty.table.enum_def(*id).is_unit_only())) =>
+            {
+                let ty = self.operand_ty(operand).expect("checked above");
+                let (value, bits) = self.discriminant_at(&PlaceRef { ptr, ty, variant: None, align })?;
+                Ok((value, Sc::I(bits)))
+            }
             other => unsupported(format!("a scalar operand held as {other:?}")),
         }
     }
@@ -1648,11 +1656,66 @@ impl<'m, 'a> FnCx<'m, 'a> {
         Ok(Val::Imm(Sc::I(16), self.to_half(&wide)))
     }
 
+    /// A comparison of values held in memory: an enum without payloads by its discriminant (one
+    /// `@align` makes wide); `[FN-6]` — two callable values are equal when they call the same
+    /// entry with the same state (the descriptor and the three words).
+    fn memory_compare(&mut self, op: BinOp, lhs: &Operand, rhs: &Operand, ty: Ty) -> Result<Val> {
+        let (size, align) = self.m.ty.size_align(ty);
+        let a = self.operand(lhs)?;
+        let b = self.operand(rhs)?;
+        let (a, a_align) = self.spill(&a, size, align);
+        let (b, b_align) = self.spill(&b, size, align);
+        match self.m.ty.kind(ty).clone() {
+            TyKind::Enum(id) if self.m.ty.table.enum_def(id).is_unit_only() => {
+                let (x, bits) = self.discriminant_at(&PlaceRef { ptr: a, ty, variant: None, align: a_align })?;
+                let (y, _) = self.discriminant_at(&PlaceRef { ptr: b, ty, variant: None, align: b_align })?;
+                let signed = matches!(self.m.ty.kind(self.m.ty.table.enum_def(id).repr), TyKind::Int(_));
+                let cond = match (op, signed) {
+                    (BinOp::Eq | BinOp::Is, _) => "eq",
+                    (BinOp::Ne | BinOp::IsNot, _) => "ne",
+                    (BinOp::Lt, true) => "slt",
+                    (BinOp::Lt, false) => "ult",
+                    (BinOp::Le, true) => "sle",
+                    (BinOp::Le, false) => "ule",
+                    (BinOp::Gt, true) => "sgt",
+                    (BinOp::Gt, false) => "ugt",
+                    (_, true) => "sge",
+                    (_, false) => "uge",
+                };
+                Ok(Val::Imm(Sc::Bool, self.value(format!("icmp {cond} i{bits} {x}, {y}"))))
+            }
+            TyKind::Fn { abi: None, .. } if matches!(op, BinOp::Eq | BinOp::Ne) => {
+                let mut same = "true".to_string();
+                for word in 1..5u64 {
+                    let (x_at, y_at) = (self.gep(&a, 8 * word), self.gep(&b, 8 * word));
+                    let x = self.load(Sc::I(64), &x_at, 8);
+                    let y = self.load(Sc::I(64), &y_at, 8);
+                    let equal = self.value(format!("icmp eq i64 {x}, {y}"));
+                    same = self.value(format!("and i1 {same}, {equal}"));
+                }
+                if op == BinOp::Ne {
+                    same = self.value(format!("xor i1 {same}, true"));
+                }
+                Ok(Val::Imm(Sc::Bool, same))
+            }
+            _ => unsupported(format!("a comparison of `{}`", self.m.ty.table.display(ty))),
+        }
+    }
+
     fn binary(&mut self, op: BinOp, lhs: &Operand, rhs: &Operand, target: Ty) -> Result<Val> {
         let lhs_ty = self.operand_ty(lhs).or_else(|| self.operand_ty(rhs)).unwrap_or(target);
         let types = &self.m.ty;
         if types.is_f16(lhs_ty) || types.is_f16(target) {
             return self.half_binary(op, lhs, rhs);
+        }
+        // `[TYP-36]` — `void` has one value: equal to itself, never less.
+        let void = |operand: &Operand| matches!(operand, Operand::Const(Const::Void));
+        if (types.is_zst(lhs_ty) || void(lhs) || void(rhs)) && op.is_comparison() {
+            let holds = matches!(op, BinOp::Eq | BinOp::Is | BinOp::Le | BinOp::Ge);
+            return Ok(Val::Imm(Sc::Bool, holds.to_string()));
+        }
+        if matches!(types.repr(lhs_ty), Repr::Mem { .. }) && op.is_comparison() {
+            return self.memory_compare(op, lhs, rhs, lhs_ty);
         }
         let signed = types.is_signed(lhs_ty);
         let (a, sc) = self.scalar(lhs)?;

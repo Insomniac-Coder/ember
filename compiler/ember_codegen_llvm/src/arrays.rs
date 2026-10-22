@@ -389,6 +389,14 @@ pub(crate) fn clone_parts_fn(m: &mut Module<'_>, ty: Ty) -> Result<String> {
 /// merge sort. `None` where the element has no C spelling this needs.
 pub(crate) fn sort_fn(m: &mut Module<'_>, ty: Ty) -> Result<String> {
     let ty = m.ty.through_range(ty);
+    // Elements of no bytes are all equal: in order already.
+    if m.ty.is_zst(ty) {
+        let symbol = "ember.array.sort.void";
+        if !m.helper_defined(symbol) {
+            crate::glue::define_glue(m, symbol, &["ptr"], "", |_| Ok(()))?;
+        }
+        return Ok(global_name(symbol));
+    }
     let rt = ember_branding::RUNTIME_PREFIX;
     let (c_type, less, identical): (String, String, bool) = match m.ty.kind(ty).clone() {
         TyKind::Float(ember_types::FloatTy::F64) => ("double".into(), format!("{rt}total_lt_f64(*(const double*)a, *(const double*)b)"), true),

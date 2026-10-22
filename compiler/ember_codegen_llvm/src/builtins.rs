@@ -258,6 +258,8 @@ impl<'a> FnCx<'_, 'a> {
                 self.call_rt_into(&format!("range_{stem}_{suffix}"), values, dest)
             }
             // `[TYP-37]` — floats by totalOrder, everything else by `<` (text by its bytes).
+            // `[TYP-36]` — `void`'s one value is never less than itself.
+            Builtin::TotalLess if self.m.ty.is_zst(arg_ty) => self.store_result(dest, "false", Sc::Bool, false),
             Builtin::TotalLess => {
                 let ty = self.m.ty.through_range(arg_ty);
                 let a = self.operand(&args[0])?;
@@ -1069,6 +1071,11 @@ impl<'a> FnCx<'_, 'a> {
             }
             Builtin::Atomic { op, order } => self.atomic(*op, *order, arg_ty, args, dest, span),
             Builtin::Simd { op, vector } => self.simd(op, *vector, args, dest, span),
+            // `[CT-5]` — the constant data the evaluator computed.
+            Builtin::ConstStatic { name, ty } => {
+                let address = crate::statics::constant_static(self.m, name.as_str(), *ty)?;
+                self.store_result(dest, &address, Sc::Ptr, false)
+            }
             // `[STA-3]` — the accessor that runs the initialiser the first time any thread asks.
             Builtin::LazyStatic { name, init, ty } => {
                 let accessor = crate::statics::lazy_static(self.m, name.as_str(), init.as_str(), *ty)?;
