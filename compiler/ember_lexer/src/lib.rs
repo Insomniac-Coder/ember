@@ -1143,10 +1143,12 @@ impl EscapeError {
 /// Scan one escape sequence starting at `*pos` (which is on the backslash),
 /// advancing `*pos` past it.
 fn scan_escape(src: &str, pos: &mut usize, context: EscapeContext) -> Result<u32, EscapeError> {
-    let mut chars = src[*pos..].chars();
-    chars.next(); // the backslash
-    let c = chars.next().ok_or(EscapeError::Truncated)?;
-    *pos += 1 + c.len_utf8();
+    // The backslash is consumed whatever follows, so a caller that goes on after an error moves
+    // on: a backslash ending the text had left `pos` where it was, and a string lexed it again
+    // forever, a diagnostic each time.
+    *pos += 1;
+    let c = src[*pos..].chars().next().ok_or(EscapeError::Truncated)?;
+    *pos += c.len_utf8();
 
     let simple = match c {
         'n' => Some('\n' as u32),
@@ -1218,10 +1220,8 @@ fn decode_escapes(text: &str, context: EscapeContext, span: Span, sink: &mut Sin
                         out.push(ch);
                     }
                 }
-                Err(err) => {
-                    sink.emit(err.into_diagnostic(span));
-                    pos += 1;
-                }
+                // `scan_escape` has consumed what it read.
+                Err(err) => sink.emit(err.into_diagnostic(span)),
             }
         } else {
             pos += c.len_utf8();

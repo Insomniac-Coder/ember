@@ -767,3 +767,27 @@ fn a_doc_comment_above_an_import_does_not_swallow_a_later_one() {
     assert!(out.dump.contains("Doc \"kept\""), "{}", out.dump);
     assert!(!out.dump.contains("discarded"), "{}", out.dump);
 }
+
+/// `[FMT-1]`, `[IMP-11]` — the formatter's output is formatted as itself. Found by the fuzzer: a
+/// comprehension, an optional chain and a `=>` lambda were copied from the source, so one the
+/// formatter had broken over lines came back as it was broken and the line around it was laid
+/// out otherwise (`ember fmt --check` failed on `ember fmt`'s own output); and a long `with f =
+/// …:` was broken as an assignment, its `:` inside the parentheses, which did not parse.
+#[test]
+fn formatting_the_formatters_output_changes_nothing() {
+    let source = "fn f(m: Map[str, int]):\n    if true:\n        if true:\n            if true:\n                if true:\n                    value([alpha * (f\"{total} and {alpha + 1}\") for name in ((1) % total) if (xs - true)], (false?)?, (total(xs)) in (q as f64), b=false as int)\n                    record(m?.lookup(\"first key of several\", \"second key of several\", \"third key\")?.value, {k: v for k, v in m.items() if v > 0}, sum(x * x for x in xs))\n                    with handle = (first_value_of_the_left_side if condition else other) < limit <= upper_bound_of_the_range:\n                        pass\n                    q = fn(a) => [98.68 for b in values if (f\"{value} and {total + 1}\")] < (elan, f\"{value}\") <= (fn(v) => 256)\n";
+    let format = |text: &str| {
+        let mut map = SourceMap::new();
+        let file = map.add("<fmt>", text.to_string());
+        let mut sink = Sink::new();
+        let lexed = ember_lexer::lex(file, text, &mut sink);
+        let module = ember_parser::parse(file, text, lexed.tokens, &mut sink);
+        assert!(sink.diagnostics().is_empty(), "{}", sink.render(&map));
+        (ember_fmt::format(&module, text, &lexed.comments), ember_ast::dump(&module))
+    };
+    let (once, tree) = format(source);
+    let (twice, tree_again) = format(&once);
+    assert_eq!(tree, tree_again, "the formatter changed the program:\n{once}");
+    assert_eq!(once, twice, "formatting the formatter's output changed it");
+    assert!(once.contains("sum(x * x for x in xs)") && once.contains("{k: v for (k, v) in m.items() if v > 0}"), "{once}");
+}

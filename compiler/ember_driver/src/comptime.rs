@@ -96,13 +96,16 @@ pub fn evaluate(
             bodies[index] = ember_mir::lower_one(&checked.program.functions[index], &checked.program, types, common, map);
         }
     }
-    ember_mir::prune_unused_implicit(&mut bodies, types, &checked.std_instances);
+    // `[IMP-11]` — verified after each pass, as the program's own build is.
+    let mut mir = ember_mir::verify::Pipeline::new(bodies, types);
+    mir.pass("pruning unused implicit bodies", types, |bodies, types| ember_mir::prune_unused_implicit(bodies, types, &checked.std_instances));
     // What these passes would report, the final pass reports for the program.
     let mut scratch = Sink::new();
-    ember_analysis::elaborate_drops_all(&mut bodies, types, &mut scratch);
-    ember_analysis::coroutines::transform(&mut bodies, types);
-    ember_analysis::install_callable_regions_all(&mut bodies, types);
-    ember_analysis::insert_shared_accesses_all(&mut bodies, types);
+    mir.pass("drop elaboration", types, |bodies, types| ember_analysis::elaborate_drops_all(bodies, types, &mut scratch));
+    mir.pass("the coroutine transform", types, |bodies, types| ember_analysis::coroutines::transform(bodies, types));
+    mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+    mir.pass("inserting shared accesses", types, |bodies, types| ember_analysis::insert_shared_accesses_all(bodies, types));
+    let bodies = mir.into_bodies();
 
     // `[CT-2]` — what a request reaches that compile time cannot run.
     let mut roots = Vec::new();
