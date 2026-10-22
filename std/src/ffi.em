@@ -198,6 +198,19 @@ pub struct Retained[T]:
         retained_pin(value)
         return Retained(value)
 
+## `[FFI-21]` — what C keeps of a callback contracted `callback(retained, user_data=p)`: the
+## callable, moved into an allocation of its own whose address C was given as the user data. Only
+## the registering call makes one, held by the `Retained[ForeignCallback]` token it returns;
+## `tok.ptr()` is that address. Its end unregisters the callback through the registering
+## function's `destroys(f)`, then ends the callable and frees the allocation, once.
+pub struct ForeignCallback:
+    data: *mut u8
+    release: extern "C" fn(*mut u8)
+
+    fn drop(mut self):
+        release = self.release
+        release(self.data)
+
 ## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
 ## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
 ## token keeps it alive). To C it is one pointer to the object. Two are equal when they are the

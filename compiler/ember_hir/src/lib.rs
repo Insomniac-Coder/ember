@@ -141,6 +141,74 @@ pub struct FfiCounted {
     /// `[FFI-11]`, `[FFI-16]` — a call that returns its `out` parameters, or a
     /// status as a `Result`, in place of C's own result.
     pub outputs: Option<FfiOutputs>,
+    /// `[FFI-21]` — the callables C calls back, each named by an
+    /// `FfiAbiParam::Callback` (its trampoline) and an
+    /// `FfiAbiParam::CallbackData` (its user data).
+    pub callbacks: Vec<FfiCallback>,
+}
+
+/// `[FFI-21]`, `[FFI-11]` — a parameter contracted `callback(mode, user_data=p)`:
+/// a callable C calls through a trampoline, which finds it at the user data.
+/// The callable is the instance's own (a lambda's environment, or a callable
+/// value): the wrapper is monomorphised per callable, so a lambda is called
+/// directly, as through any callable parameter (`[CLO-3]`).
+#[derive(Debug, Clone)]
+pub struct FfiCallback {
+    /// The visible parameter holding the callable.
+    pub public_index: usize,
+    /// Its type: a lambda's environment struct, or a callable value.
+    pub callable: Ty,
+    /// The lambda's body, when the callable is one: called directly with its
+    /// environment. Otherwise the callable value's native entry is called.
+    pub closure: Option<String>,
+    /// The C function pointer type C calls (`extern "C" fn(…)`): its
+    /// parameters, the user data's among them, its result and its calling
+    /// convention.
+    pub c_fn: Ty,
+    /// Which of the C function pointer's parameters is the user data.
+    pub slot: usize,
+    /// The user data parameter's type as C has it: a pointer, or an integer.
+    pub data: Ty,
+    pub mode: FfiCallbackMode,
+    /// `[FFI-22]`, `[FFI-33b]` — the threads C calls it on: under `main` or
+    /// `creator` the debug profile checks each call.
+    pub threads: ExportThreadPolicy,
+    /// `[FFI-21]` — for `retained`: the function the token's end calls to
+    /// unregister it (`destroys(f)`), and the token's type.
+    pub unregister: Option<FfiUnregister>,
+}
+
+/// `[FFI-21]` — how long C keeps a callback: for the call (`borrowed`, the
+/// callable stays where the caller has it), until its one call (`once`), or
+/// until the `Retained` token the call returns ends (`retained`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiCallbackMode {
+    Borrowed,
+    Once,
+    Retained,
+}
+
+/// `[FFI-21]` — `destroys(f)` of a function registering a `retained` callback:
+/// `f`'s C symbol and result, what each of its parameters is given, and the
+/// `Retained[ForeignCallback]` token the call returns.
+#[derive(Debug, Clone)]
+pub struct FfiUnregister {
+    pub symbol: String,
+    pub ret: Ty,
+    pub args: Vec<FfiUnregisterArg>,
+    /// `f`'s parameter types, one per argument.
+    pub params: Vec<Ty>,
+    pub token: Ty,
+}
+
+/// What a parameter of `destroys(f)` is given: the trampoline, the user data,
+/// or what the registering call passed for one of its scalar parameters (kept
+/// with the callable).
+#[derive(Debug, Clone)]
+pub enum FfiUnregisterArg {
+    Entry,
+    Data,
+    Saved { public_index: usize, ty: Ty },
 }
 
 /// `[FFI-11]`, `[FFI-16]` — C's own result type, and with a status the value
@@ -199,6 +267,12 @@ pub enum FfiAbiParam {
     /// `[FFI-11]` — `param(p, out, one)`: the address of a local C writes,
     /// which the call returns; not a parameter of the Ember function.
     Out { ty: Ty },
+    /// `[FFI-21]` — the trampoline of `FfiCounted::callbacks[index]`.
+    Callback { index: usize },
+    /// `[FFI-21]` — the user data of `FfiCounted::callbacks[index]`: the
+    /// callable's address, or its allocation's; not a parameter of the Ember
+    /// function.
+    CallbackData { index: usize },
 }
 
 #[derive(Debug, Clone)]

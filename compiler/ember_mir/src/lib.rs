@@ -16,7 +16,7 @@ pub use lower::{lower, lower_one};
 /// Consumers of MIR should name this boundary fact rather than depending on
 /// HIR solely to construct or inspect a MIR body.
 pub use ember_hir::Mode as ParameterMode;
-pub use ember_hir::{FfiAbiParam, FfiCounted, FfiOutputs};
+pub use ember_hir::{FfiAbiParam, FfiCallback, FfiCallbackMode, FfiCounted, FfiOutputs, FfiUnregister, FfiUnregisterArg};
 pub use ember_hir::InlineHint;
 pub use ember_hir::BorrowSource;
 
@@ -1530,6 +1530,10 @@ pub fn reached_bodies(
             .collect::<Vec<_>>()
     };
     let mut reached = Vec::new();
+    // `[FFI-21]` — a lambda C calls back through the wrapper's trampoline.
+    for callback in body.ffi_counted.iter().flat_map(|counted| &counted.callbacks) {
+        reached.extend(callback.closure.as_ref().and_then(|symbol| by_symbol.get(symbol.as_str()).copied()));
+    }
     for block in &body.blocks {
         for stmt in &block.stmts {
             let StmtKind::Assign { rvalue, .. } = &stmt.kind else { continue };

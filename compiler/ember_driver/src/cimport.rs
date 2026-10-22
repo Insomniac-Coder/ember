@@ -204,6 +204,9 @@ pub struct CType {
     /// `[FFI-8]` — a data pointer to an incomplete type (an `extern type`): `one` makes it a
     /// reference, never a parameter mode (`[TYP-22]`).
     pub opaque: bool,
+    /// `[FFI-21]` — for a function pointer, through typedefs: the function it points to as
+    /// `extern "C" fn(…) -> R`, which a `callback(…)` contract's parameter is declared with.
+    pub function: Option<String>,
 }
 
 /// `[FFI-39]` — a virtual a trampoline overrides: its name, `const`-ness, purity, parameters and
@@ -1671,7 +1674,13 @@ impl Writer {
             }
         };
         let c = type_spelling(ty);
-        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c, mode: String::new(), opaque: false }) };
+        // `[FFI-21]` — a function pointer's function, for a callback's contract.
+        // SAFETY(ffi): types of a live translation unit.
+        let function = unsafe {
+            let canonical = clang_getCanonicalType(ty);
+            if canonical.kind == CXType_Pointer { self.function_type(clang_getPointeeType(canonical)).ok().flatten() } else { None }
+        };
+        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c, mode: String::new(), opaque: false, function }) };
         // SAFETY(ffi): as above.
         let (constant, character) = unsafe {
             let kind = clang_getCanonicalType(pointee).kind;
@@ -1683,7 +1692,7 @@ impl Writer {
             let canonical = clang_getCanonicalType(pointee);
             canonical.kind == CXType_Record && matches!(self.records.get(&usr(clang_getTypeDeclaration(canonical))), Some(Record::Opaque(..)))
         };
-        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c, mode: String::new(), opaque })
+        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c, mode: String::new(), opaque, function: None })
     }
 
     /// `[FFI-41]` — write a declaration in the module of its own namespace, and remember where.
@@ -2562,6 +2571,7 @@ impl Writer {
                 c: ADDRESS.to_string(),
                 mode: format!("bridge {walker}(range = @ as *mut u8, owner = ref mut self)"),
                 opaque: false,
+                function: None,
             };
             let owner = Some((owner.to_string(), Member::MutMethod));
             self.functions.push(Function {
@@ -3185,13 +3195,13 @@ impl Writer {
             };
             let (result, returned, call) = match (member, result_ty.kind) {
                 (Some((owner, Member::Constructor, class)), _) => {
-                    let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new(), opaque: false };
+                    let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new(), opaque: false, function: None };
                     (Some(ember), Some(class.to_string()), call)
                 }
                 // An object the caller comes to own is given as its address (`ADDRESS`, `usize`): a
                 // contracted declaration may return that (`[FFI-2]`), and the wrapper adopts it.
                 (Some((owner, Member::BoxedConstructor, _)), _) => {
-                    let ember = CType { ember: "usize".to_string(), pointee: Some((owner.to_string(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: String::new(), opaque: false };
+                    let ember = CType { ember: "usize".to_string(), pointee: Some((owner.to_string(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: String::new(), opaque: false, function: None };
                     (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>({call})"))
                 }
                 (_, CXType_Void) => (None, None, call),
@@ -3200,7 +3210,7 @@ impl Writer {
                 // wrapper adopts it into frees with the class's destructor.
                 _ if let Some(owner) = &boxed => {
                     let class = cpp_spelling(result_ty);
-                    let ember = CType { ember: "usize".to_string(), pointee: Some((owner.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: "boxed".to_string(), opaque: false };
+                    let ember = CType { ember: "usize".to_string(), pointee: Some((owner.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: "boxed".to_string(), opaque: false, function: None };
                     (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(new {class}({call}))"))
                 }
                 _ if let Some(found) = &viewed => {
@@ -3221,11 +3231,11 @@ impl Writer {
                     let bridge = bridged_result.clone().into_iter().next().expect("a bridge").map_err(|reason| tagged(None, "its result", &reason))?;
                     match &bridge.unique {
                         Some(_) => {
-                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: format!("bridge {}", bridge.make), opaque: false };
+                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: format!("bridge {}", bridge.make), opaque: false, function: None };
                             (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(({call}).release())"))
                         }
                         None => {
-                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: format!("bridge {}", bridge.make), opaque: false };
+                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: format!("bridge {}", bridge.make), opaque: false, function: None };
                             (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(new {}({call}))", bridge.spelled))
                         }
                     }
@@ -3258,7 +3268,7 @@ impl Writer {
                         let from: Vec<&str> = method.then_some("self").into_iter().chain(bound.iter().map(|(param, _)| param.as_str())).collect();
                         format!("ref{} from {}", if mutable { " mut" } else { "" }, from.join(", "))
                     };
-                    let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode, opaque: false };
+                    let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode, opaque: false, function: None };
                     (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
                 }
                 _ => {
@@ -3331,7 +3341,7 @@ impl Writer {
         unsafe {
             let spelled = cpp_spelling(canonical);
             let argument = clang_Type_getTemplateArgumentAsType(canonical, 0);
-            let made = |ember: &str, pointee: (String, bool), c: &str, mode: &str| CType { ember: ember.to_string(), pointee: Some(pointee), char_pointer: false, c: c.to_string(), mode: mode.to_string(), opaque: false };
+            let made = |ember: &str, pointee: (String, bool), c: &str, mode: &str| CType { ember: ember.to_string(), pointee: Some(pointee), char_pointer: false, c: c.to_string(), mode: mode.to_string(), opaque: false, function: None };
             match template.as_str() {
                 "basic_string_view" => Some(if matches!(clang_getCanonicalType(argument).kind, CXType_Char_S | CXType_Char_U) {
                     Ok((made("usize", ("u8".to_string(), true), ADDRESS, "view"), "char".to_string()))
@@ -3374,7 +3384,7 @@ impl Writer {
             let by_value = |writer: &mut Self, what: &str| {
                 writer.ty(argument, false).map_err(|reason| format!("`{spelled}`: {what} does not map by value ({reason}) [FFI-17a]"))
             };
-            let made = |ember: String, pointee: (String, bool), mode: &str| CType { ember, pointee: Some(pointee), char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false };
+            let made = |ember: String, pointee: (String, bool), mode: &str| CType { ember, pointee: Some(pointee), char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false, function: None };
             match template.as_str() {
                 "basic_string_view" | "span" => {
                     if lent {
@@ -3457,7 +3467,7 @@ impl Writer {
                         CXType_RValueReference => ("bridged owned ", format!("std::move(*static_cast<{}*>({name}))", bridge.spelled)),
                         _ => ("bridged ", format!("*static_cast<const {}*>({name})", bridge.spelled)),
                     };
-                    let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), mode == "bridged ")), char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false };
+                    let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), mode == "bridged ")), char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false, function: None };
                     return Ok((ember, format!("void* {name}"), pass));
                 }
             }
@@ -3471,11 +3481,11 @@ impl Writer {
                     let opaque = self.ty(pointee, true)?;
                     let constant = clang_isConstQualifiedType(pointee) != 0;
                     let pass = if ty.kind == CXType_LValueReference { format!("*{name}") } else { name.to_string() };
-                    let ember = CType { ember: format!("*{}{opaque}", if constant { "" } else { "mut " }), pointee: Some((ident(&named), constant)), char_pointer: false, c: c.clone(), mode: "tramp ".to_string(), opaque: false };
+                    let ember = CType { ember: format!("*{}{opaque}", if constant { "" } else { "mut " }), pointee: Some((ident(&named), constant)), char_pointer: false, c: c.clone(), mode: "tramp ".to_string(), opaque: false, function: None };
                     return Ok((ember, format!("{}* {name}", cpp_spelling(pointee)), pass));
                 }
             }
-            let plain = |ember: String, mode: &str| CType { ember, pointee: None, char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false };
+            let plain = |ember: String, mode: &str| CType { ember, pointee: None, char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false, function: None };
             match ty.kind {
                 CXType_LValueReference => {
                     let pointee = clang_getPointeeType(ty);
@@ -3492,6 +3502,7 @@ impl Writer {
                         c: c.clone(),
                         mode: if constant { "ref " } else { "ref mut " }.to_string(),
                         opaque: true,
+                        function: None,
                     };
                     Ok(match (constant, by_value) {
                         (true, Ok(mapped)) => (plain(mapped, ""), format!("{spelled} {name}"), name.to_string()),
@@ -3513,7 +3524,7 @@ impl Writer {
                                 return Err(format!("an rvalue reference to a type that is neither mapped by value ({reason}) nor a class that can be moved"));
                             }
                             let inner = self.ty(pointee, true)?;
-                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((inner, false)), char_pointer: false, c: c.clone(), mode: "owned ".to_string(), opaque: false };
+                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((inner, false)), char_pointer: false, c: c.clone(), mode: "owned ".to_string(), opaque: false, function: None };
                             Ok((ember, format!("{spelled}* {name}"), format!("std::move(*{name})")))
                         }
                     }
@@ -5559,7 +5570,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 let body = if result.is_some() { format!("return {call};") } else { format!("{call};") };
                 let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
                 let c_text = format!("{} {wrapper}({declared}) {{ {body} }}\n", c_result.as_deref().unwrap_or("void"));
-                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string(), mode: String::new(), opaque: false };
+                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string(), mode: String::new(), opaque: false, function: None };
                 let function = Function {
                     name: found.name.clone(),
                     params: params.iter().zip(&c_params).map(|((param, ty), c)| (param.name.to_string(), c_type(ty, c))).collect(),
@@ -5738,6 +5749,11 @@ fn slot_words(ty: &CType, written: &[String]) -> Vec<String> {
 fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
     let has = |wanted: &str| words.iter().any(|written| word(written) == wanted);
     let raw = format!("{name}: {}", ty.ember);
+    // `[FFI-21]` — a callback is declared as its function pointer, given (`Option` of one with
+    // `nullable`); the contract makes it the callable a caller passes.
+    if has("callback") && let Some(function) = &ty.function {
+        return if has("nullable") { format!("{name}: Option[{function}]") } else { format!("{name}: {function}") };
+    }
     let Some((inner, constant)) = &ty.pointee else { return raw };
     if has("out") || has("inout_count") {
         return format!("mut {name}: {inner}");
@@ -5809,8 +5825,13 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     let mut safe = false;
     if let Some(entry) = entry {
         let words = entry.params.iter().flatten().chain(&entry.result);
-        // `[FFI-11c]` — a `TODO(…)` or `unsafe` word leaves the call unsafe.
+        // `[FFI-11c]` — a `TODO(…)` or `unsafe` word leaves the call unsafe; `unsafe` says so on
+        // purpose (`[FFI-11]`), which the declaration keeps.
+        let left_unsafe = entry.params.iter().flatten().chain(&entry.result).any(|written| word(written) == "unsafe");
         safe = !words.into_iter().any(|written| matches!(word(written), "TODO" | "unsafe"));
+        if left_unsafe {
+            arguments.push("unsafe".to_string());
+        }
         for ((param, ty), written) in function.params.iter().zip(&entry.params) {
             let words = slot_words(ty, written);
             if !words.is_empty() {
@@ -6041,7 +6062,11 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject"]).filter(|name| words.contains(name)).collect();
+    let mut used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject"]).filter(|name| words.contains(name)).collect();
+    // `[FFI-21]` — a `retained` callback's call returns a `Retained[ForeignCallback]`.
+    if body.contains("callback(retained") {
+        used.push("ForeignCallback");
+    }
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -7107,7 +7132,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 10;
+const EMBIND_VERSION: u64 = 11;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -7173,6 +7198,7 @@ fn c_type_value(ty: &CType) -> Value {
         Value::Text(ty.c.clone()),
         Value::Text(ty.mode.clone()),
         Value::Uint(u64::from(ty.opaque)),
+        Value::Text(ty.function.clone().unwrap_or_default()),
     ])
 }
 
@@ -7186,6 +7212,7 @@ fn read_c_type(value: &Value) -> Option<CType> {
         c: text_of(entry.get(4)?)?,
         mode: text_of(entry.get(5)?)?,
         opaque: uint_of(entry.get(6)?)? == 1,
+        function: Some(text_of(entry.get(7)?)?).filter(|function| !function.is_empty()),
     })
 }
 

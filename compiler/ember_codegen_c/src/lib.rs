@@ -16,8 +16,8 @@ use std::fmt::Write as _;
 // resolves to it through Rust's implicit format arguments.
 use ember_branding::RUNTIME_PREFIX as RT;
 use ember_mir::{
-    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FfiCounted, FfiOutputs, FuncRef, LocalId, LocalKind, Operand, Place,
-    ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
+    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FfiCallback, FfiCallbackMode, FfiCounted, FfiOutputs, FfiUnregisterArg, FuncRef, LocalId, LocalKind, Operand, Place,
+    ExportThreadPolicy, ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_mir::verify::VerifiedMir;
 
@@ -103,6 +103,11 @@ pub const FFI_INTERPOSED: &[&str] = &[
 ];
 
 /// `[FFI-37]` — the instrumentation unit, for this build's runtime prefix.
+/// `[FFI-21]` — the trampoline of callback `index` of the wrapper `symbol`.
+fn ffi_callback_entry(symbol: &str, index: usize) -> String {
+    format!("{symbol}_cb{index}")
+}
+
 fn ffi_instrument_source() -> String {
     include_str!("ffi_instrument.c")
         .replace("@RT@", RT)
@@ -1481,7 +1486,7 @@ impl Emitter<'_> {
                 continue;
             }
             if body.ffi_counted.is_some() {
-                self.emit_ffi_counted_wrapper(body);
+                self.emit_ffi_counted_wrapper(body, bodies);
                 continue;
             }
             self.emit_body(body);
@@ -5968,6 +5973,8 @@ impl Emitter<'_> {
                 }
                 FfiAbiParam::Retained { .. } => "uint8_t*".to_string(),
                 FfiAbiParam::Out { ty } => format!("{}*", self.c_type(*ty)),
+                FfiAbiParam::Callback { index } => self.c_type(counted.callbacks[*index].c_fn),
+                FfiAbiParam::CallbackData { index } => self.c_type(counted.callbacks[*index].data),
             };
             format!("{ty} _ffi{index}")
         }).collect();
@@ -6145,15 +6152,241 @@ impl Emitter<'_> {
         Some("_ffi_value".to_string())
     }
 
-    fn emit_ffi_counted_wrapper(&mut self, body: &Body) {
+    /// `[FFI-21]` — what callback `index` of wrapper `body` keeps where C finds it: the callable
+    /// itself for `borrowed` (the caller's, for the call; with `threads(creator)` beside the
+    /// thread that made the call), and for `once` and `retained` an allocation holding the
+    /// callable (moved there), its creator thread under `threads(creator)`, and for `retained`
+    /// what the call passed for each scalar `destroys(f)` is given. `None` where the callable is
+    /// all of it.
+    fn ffi_callback_record(&self, body: &Body, index: usize, callback: &FfiCallback) -> Option<(String, Vec<String>)> {
+        let creator = callback.threads == ExportThreadPolicy::Creator;
+        let mut fields = Vec::new();
+        if callback.mode == FfiCallbackMode::Borrowed {
+            if !creator {
+                return None;
+            }
+            fields.push(format!("{}* env", self.c_type(callback.callable)));
+        } else {
+            fields.push(format!("{} env", self.c_type(callback.callable)));
+        }
+        if creator {
+            fields.push("uint32_t creator".to_string());
+        }
+        for arg in callback.unregister.iter().flat_map(|unregister| &unregister.args) {
+            if let FfiUnregisterArg::Saved { public_index, ty } = arg {
+                fields.push(format!("{} saved{public_index}", self.c_type(*ty)));
+            }
+        }
+        Some((format!("{}_record", ffi_callback_entry(&body.symbol, index)), fields))
+    }
+
+    /// `[FFI-21]` — the trampoline C calls for callback `index` of wrapper `body`, and for a
+    /// `retained` one the release its token's end calls. The trampoline attaches the thread
+    /// (`[FFI-22]`), checks in `debug` that C calls it on the thread its contract names
+    /// (`[FFI-33b]`), and calls the callable found at the user data: a lambda's body directly with
+    /// its environment, or a callable value through its entry. Under `once` it then ends the
+    /// callable and frees what held it. The release unregisters the callback through
+    /// `destroys(f)`, then ends the callable and frees the allocation.
+    fn emit_ffi_callback(&mut self, body: &Body, bodies: &[Body], index: usize, callback: &FfiCallback) {
+        let entry = ffi_callback_entry(&body.symbol, index);
+        let TyKind::Fn { abi, params, ret, .. } = self.types.kind(callback.c_fn).clone() else { unreachable!("a C function pointer") };
+        let env_c = self.c_type(callback.callable);
+        let record = self.ffi_callback_record(body, index, callback);
+        if let Some((name, fields)) = &record {
+            self.line(&format!("struct {name} {{ {}; }};", fields.join("; ")));
+        }
+        let declarations: Vec<String> = params.iter().enumerate()
+            .map(|(at, param)| format!("{} _cb{at}", self.callable_param_c_type(param.clone(), true)))
+            .collect();
+        let declarations = if declarations.is_empty() { "void".to_string() } else { declarations.join(", ") };
+        let convention = calling_convention(abi.as_ref().map(|abi| abi.as_str()));
+        self.line(&format!("static EMBER_MAYBE_UNUSED {} {convention}{entry}({declarations}) {{", self.c_type(ret)));
+        self.line(&format!("    {RT}rt_thread_attach();"));
+        let data = format!("((void*)(uintptr_t)_cb{})", callback.slot);
+        // Where the callable is, and the thread the contract names.
+        let (env, thread) = match &record {
+            Some((name, _)) => {
+                self.line(&format!("    struct {name}* _record = (struct {name}*){data};"));
+                let env = if callback.mode == FfiCallbackMode::Borrowed { "_record->env".to_string() } else { "(&_record->env)".to_string() };
+                (env, (callback.threads == ExportThreadPolicy::Creator).then(|| "_record->creator".to_string()))
+            }
+            None => (format!("(({env_c}*){data})"), None),
+        };
+        let thread = thread.or_else(|| (callback.threads == ExportThreadPolicy::Main).then(|| format!("{RT}FFI_MAIN_THREAD")));
+        if let Some(thread) = thread {
+            self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
+            self.line(&format!("    {RT}ffi_callback_thread({thread});"));
+            self.line("#endif");
+        }
+        // The other parameters, in the callable's own ABI.
+        let others: Vec<(usize, FnParam)> = params.iter().cloned().enumerate().filter(|(at, _)| *at != callback.slot).collect();
+        let closure = callback.closure.as_ref().and_then(|symbol| bodies.iter().find(|candidate| &candidate.symbol == symbol));
+        let (call, consumed) = match closure {
+            Some(closure) => {
+                let mut closure_args = closure.args();
+                let (_, env_param) = closure_args.next().expect("a closure takes its environment first");
+                let by_address = matches!(self.types.kind(env_param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
+                let locals: Vec<Ty> = closure_args.map(|(_, decl)| decl.ty).collect();
+                let arguments: Vec<String> = std::iter::once(if by_address { env.clone() } else { format!("(*{env})") })
+                    .chain(others.iter().zip(&locals).map(|((at, param), local)| {
+                        if param.mode == FnParamMode::Borrow && matches!(self.types.kind(*local), TyKind::Ref { .. } | TyKind::Ptr { .. }) {
+                            format!("&_cb{at}")
+                        } else {
+                            format!("_cb{at}")
+                        }
+                    }))
+                    .collect();
+                // A lambda that takes its environment over ends it itself.
+                (format!("{}({})", closure.symbol, arguments.join(", ")), closure.param_modes.first() == Some(&ParameterMode::Owned))
+            }
+            None => {
+                let native: Vec<String> = std::iter::once("void*".to_string())
+                    .chain(others.iter().map(|(_, param)| self.callable_param_c_type(param.clone(), false)))
+                    .collect();
+                let arguments: Vec<String> = std::iter::once(format!("(void*)({env})->w"))
+                    .chain(others.iter().map(|(at, param)| {
+                        if param.mode == FnParamMode::Borrow && self.types.passed_by_address(param.ty) { format!("&_cb{at}") } else { format!("_cb{at}") }
+                    }))
+                    .collect();
+                (format!("(({} (*)({}))({env})->native)({})", self.c_type(ret), native.join(", "), arguments.join(", ")), false)
+            }
+        };
+        let void = self.is_void(ret);
+        if self.reload.is_some() {
+            self.line(&format!("    {RT}reload_enter();"));
+        }
+        if void {
+            self.line(&format!("    {call};"));
+        } else {
+            self.line(&format!("    {} _cb_result = {call};", self.c_type(ret)));
+        }
+        if self.reload.is_some() {
+            self.line(&format!("    {RT}reload_leave();"));
+        }
+        if callback.mode == FfiCallbackMode::Once {
+            // Its one call is over: the callable ends (unless the call took it), and so does
+            // what held it.
+            if !consumed {
+                let mut drops = Vec::new();
+                match self.drop_glue_call(&format!("(*{env})"), callback.callable) {
+                    Some(call) => drops.push(call),
+                    None => self.drop_lines(&format!("(*{env})"), callback.callable, &mut drops),
+                }
+                for line in drops {
+                    self.line(&format!("    {line}"));
+                }
+            }
+            if let Some((name, _)) = &record {
+                self.line(&format!("    {RT}free(_record, sizeof(struct {name}), _Alignof(struct {name}));"));
+            }
+        }
+        if !void {
+            self.line("    return _cb_result;");
+        }
+        self.line("}");
+        let Some(unregister) = &callback.unregister else { return };
+        let Some((name, _)) = &record else { unreachable!("a retained callback is kept in a record") };
+        self.line(&format!("static EMBER_MAYBE_UNUSED void {entry}_release(uint8_t* _data) {{"));
+        self.line(&format!("    struct {name}* _record = (struct {name}*)(void*)_data;"));
+        if callback.threads == ExportThreadPolicy::Creator {
+            self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
+            self.line(&format!("    {RT}ffi_callback_thread(_record->creator);"));
+            self.line("#endif");
+        }
+        let arguments: Vec<String> = unregister.args.iter().zip(&unregister.params).map(|(arg, ty)| match arg {
+            FfiUnregisterArg::Entry => format!("({}){entry}", self.c_type(*ty)),
+            FfiUnregisterArg::Data => format!("({})(uintptr_t)_data", self.c_type(*ty)),
+            FfiUnregisterArg::Saved { public_index, .. } => format!("_record->saved{public_index}"),
+        }).collect();
+        let parameters: Vec<String> = unregister.params.iter().map(|ty| self.c_type(*ty)).collect();
+        let parameters = if parameters.is_empty() { "void".to_string() } else { parameters.join(", ") };
+        let ret_c = if self.is_void(unregister.ret) { "void".to_string() } else { self.c_type(unregister.ret) };
+        self.line(&format!("    extern {ret_c} {}({parameters});", unregister.symbol));
+        self.line(&format!("    {}{}({});", if self.is_void(unregister.ret) { "" } else { "(void)" }, unregister.symbol, arguments.join(", ")));
+        let mut drops = Vec::new();
+        match self.drop_glue_call("_record->env", callback.callable) {
+            Some(call) => drops.push(call),
+            None => self.drop_lines("_record->env", callback.callable, &mut drops),
+        }
+        for line in drops {
+            self.line(&format!("    {line}"));
+        }
+        self.line(&format!("    {RT}free(_record, sizeof(struct {name}), _Alignof(struct {name}));"));
+        self.line("}");
+    }
+
+    /// `[FFI-21]` — inside the wrapper, before the call: where callback `index`'s trampoline finds
+    /// its callable (`_ffi_data<index>`), and for a `retained` one the token the call returns.
+    fn emit_ffi_callback_data(&mut self, body: &Body, args: &[String], index: usize, callback: &FfiCallback) -> Option<String> {
+        let (_, local) = body.args().nth(callback.public_index).expect("the callback's parameter");
+        let arg = &args[callback.public_index];
+        let by_address = matches!(self.types.kind(local.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
+        let (address, value) = if by_address { (arg.clone(), format!("(*{arg})")) } else { (format!("&{arg}"), arg.clone()) };
+        let creator = callback.threads == ExportThreadPolicy::Creator;
+        match self.ffi_callback_record(body, index, callback) {
+            None => self.line(&format!("    void* _ffi_data{index} = (void*){address};")),
+            Some((name, _)) if callback.mode == FfiCallbackMode::Borrowed => {
+                self.line(&format!("    struct {name} _ffi_record{index} = {{ {address}, {RT}ffi_thread() }};"));
+                self.line(&format!("    void* _ffi_data{index} = (void*)&_ffi_record{index};"));
+            }
+            Some((name, _)) => {
+                // The callable moves into an allocation of its own: C keeps it past the call.
+                let mut parts = vec![value];
+                if creator {
+                    parts.push(format!("{RT}ffi_thread()"));
+                }
+                for arg in callback.unregister.iter().flat_map(|unregister| &unregister.args) {
+                    if let FfiUnregisterArg::Saved { public_index, .. } = arg {
+                        parts.push(args[*public_index].clone());
+                    }
+                }
+                self.line(&format!("    struct {name} _ffi_record{index} = {{ {} }};", parts.join(", ")));
+                self.line(&format!("    void* _ffi_data{index} = {RT}box_new_copy(sizeof(struct {name}), _Alignof(struct {name}), &_ffi_record{index});"));
+            }
+        }
+        let unregister = callback.unregister.as_ref()?;
+        let TyKind::Struct(token) = *self.types.kind(unregister.token) else { unreachable!("a `Retained` token is a struct") };
+        let held = self.types.struct_def(token).fields[0].ty;
+        let TyKind::Struct(record) = *self.types.kind(held) else { unreachable!("a `ForeignCallback` is a struct") };
+        let fields: Vec<Ty> = self.types.struct_def(record).fields.iter().map(|field| field.ty).collect();
+        Some(format!(
+            "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }} }}",
+            self.c_type(unregister.token),
+            self.c_type(held),
+            self.c_type(fields[0]),
+            self.c_type(fields[1]),
+            ffi_callback_entry(&body.symbol, index),
+        ))
+    }
+
+    fn emit_ffi_counted_wrapper(&mut self, body: &Body, bodies: &[Body]) {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
         let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
+        for (index, callback) in counted.callbacks.iter().enumerate() {
+            self.emit_ffi_callback(body, bodies, index, callback);
+        }
         let linkage = if self.internal_linkage() { "static " } else { "" };
         self.line(&format!("{linkage}{} {{", self.signature(body)));
         let mut foreign_args = Vec::new();
         let mut outs = Vec::new();
+        let tokens: Vec<Option<String>> = counted.callbacks.iter().enumerate()
+            .map(|(index, callback)| self.emit_ffi_callback_data(body, &args, index, callback))
+            .collect();
         for param in &counted.abi_params {
             match param {
+                // `[FFI-21]` — the trampoline, and where it finds the callable; a `retained`
+                // callback's token is an output in the callback's place.
+                FfiAbiParam::Callback { index } => {
+                    let callback = &counted.callbacks[*index];
+                    foreign_args.push(format!("({}){}", self.c_type(callback.c_fn), ffi_callback_entry(&body.symbol, *index)));
+                    if let Some(token) = &tokens[*index] {
+                        outs.push(token.clone());
+                    }
+                }
+                FfiAbiParam::CallbackData { index } => {
+                    let callback = &counted.callbacks[*index];
+                    foreign_args.push(format!("({})(uintptr_t)_ffi_data{index}", self.c_type(callback.data)));
+                }
                 // `[FFI-11]` — C writes the value here; the call returns it.
                 FfiAbiParam::Out { ty } => {
                     let local = format!("_ffi_out{}", outs.len());
@@ -8768,7 +9001,8 @@ impl Emitter<'_> {
                     // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
                     // its own, and needs nothing.
                     Builtin::RetainedPin => {
-                        let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(id) if self.box_inner_id(*id).is_some());
+                        // A `Box` needs nothing, and neither does a retained callback (`[FFI-21]`).
+                        let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(_));
                         return if boxed {
                             "((void)0)".to_string()
                         } else {

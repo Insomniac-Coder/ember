@@ -1858,6 +1858,12 @@ impl EngineReport {
                         ember_mir::FfiAbiParam::Owned { .. } => "a foreign box handed over".to_string(),
                         ember_mir::FfiAbiParam::Retained { .. } => "a retained object's address".to_string(),
                         ember_mir::FfiAbiParam::Out { .. } => "an `out` local zeroed and returned".to_string(),
+                        ember_mir::FfiAbiParam::Callback { index } => match counted.callbacks[*index].mode {
+                            ember_mir::FfiCallbackMode::Borrowed => "a callback's trampoline, its callable where the caller has it".to_string(),
+                            ember_mir::FfiCallbackMode::Once => "a callback's trampoline, its callable moved to an allocation freed after its one call".to_string(),
+                            ember_mir::FfiCallbackMode::Retained => "a callback's trampoline, its callable moved to an allocation its token frees".to_string(),
+                        },
+                        ember_mir::FfiAbiParam::CallbackData { .. } => continue,
                     });
                 }
                 if counted.result_span.is_some() {

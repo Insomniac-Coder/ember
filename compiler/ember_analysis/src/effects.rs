@@ -908,6 +908,18 @@ impl SiteBuilder<'_> {
             };
             own(declared, body.span, operation, &mut sites);
         }
+        // `[FFI-21]`, `[EFF-2]` — C calls back what the call is given: a lambda's body, or a
+        // callable value, whose effects nothing declares.
+        for callback in body.ffi_counted.iter().flat_map(|counted| &counted.callbacks) {
+            match callback.closure.as_ref().and_then(|symbol| self.index.get(symbol.as_str())) {
+                Some(&callee) => sites.push(Site { effects: Effects::ALL, span: body.span, origin: Origin::Call(callee) }),
+                None => sites.push(Site {
+                    effects: Effects::ALL,
+                    span: body.span,
+                    origin: Origin::Operation("a callback C calls, a callable value whose effects nothing declares"),
+                }),
+            }
+        }
         // `[DET-2]` — floating-point contraction and every `@fastmath` relaxation.
         if body.fp != ember_types::FpMode::Strict {
             own(Effects::NONDET, body.span, RELAXED, &mut sites);

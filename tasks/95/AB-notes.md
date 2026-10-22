@@ -39,3 +39,96 @@ compiler.
   outputs), `emit_ffi_status`, `ffi_tuple_of`, `emit_ffi_result_value`; the wrapper's end is one
   path.
 - `compiler/ember_mir/src/lib.rs` — re-exports `FfiCounted`.
+
+## AB2. `[FFI-11]`, `[FFI-21]`, `[FFI-22]`, `[FFI-33b]` — callbacks with user data, `destroys(f)`, `unsafe`
+
+**Built.** `param(p, callback(borrowed | once | retained[, user_data=q])[, nullable][, threads(…)])`
+on a `safe fn`, hand-declared or through an overlay entry (`visit: callback(borrowed, user_data=data)`).
+
+*The declaration.* The callback is written as C has it, its function pointer type with the user
+data among the parameters (`visit: extern "C" fn(*mut void, c_int)`, `data: *mut void`; any
+calling convention, `extern "system" fn` for Win32's `WNDENUMPROC`). The user data's slot in the
+callback is its one parameter of `q`'s type (a pointer or an integer: `LPARAM` is `isize`); none
+or several is `E5002` (spec question 1). In the callable signature the parameter becomes the
+callable a caller passes — a `[CLO-3]` bound of the other parameters (`fn(c_int)`), lent for the
+call under `borrowed`, taken over under `once` (a `once fn`) and `retained` (a `fn`) — and `q`
+leaves it, as a `count(n)` witness does (ODR-074's shape one level in).
+
+*The wrapper (why it is fast).* The callable is a bound, so the safe declaration is generic and
+**each instance has a C wrapper of its own**: `check_instantiations` makes one for a foreign
+declaration (`foreign_instance`), with the `FfiCounted` metadata of that instance's callable
+(`hir::FfiCallback`). The wrapper passes C a trampoline (`<wrapper>_cb<k>`) and the callable's
+address as the user data; the trampoline attaches the thread (`[FFI-22]`), and calls a lambda's
+body **directly** with its environment (a callable value through its entry). Under `borrowed` the
+callable stays where the caller has it: **no allocation, no copy** (the spec's "box" is the
+caller's frame for the call). Under `once` and `retained` the callable moves into one allocation
+(`<wrapper>_cb<k>_record`, `ember_box_new_copy`); `once`'s trampoline ends it after its call
+(unless the lambda took its environment over) and frees it.
+
+*`retained` and `destroys(f)`.* The call returns a `Retained[ForeignCallback]` token
+(`std.ffi.ForeignCallback`: the allocation's address and its release), an output in the
+callback's C position (C's own result first, as for `out`). Its end calls the generated release,
+which calls the function's `destroys(f)`, ends the callable and frees the allocation. `f` is a
+foreign function of the module whose parameters are each named as one of the registering
+function's: the callback (given the trampoline, as `Option[…]` too), its user data (the
+allocation's address), or a scalar parameter (what the call passed, kept in the allocation).
+Without `destroys(f)`: `E5041`; a parameter of `f` that is none of those: `E5002` (spec question
+2). `tok.ptr()` of such a token is the user data C keeps. One `retained` callback per function.
+
+*What a callback captures* (`foreign_callback_refused`, at the call): `Send` (`E7004`) unless
+`threads(main)` or `threads(creator)` (`[FFI-22]`); under `once`/`retained` a borrowing lambda is
+`E3026` (write `owned fn`; the region analysis keeps an `owned fn`'s views static, `E3063`). A
+callable value of unknown captures is not `Send`.
+
+*`threads(creator)` / `threads(main)`* (`[FFI-33b]`): the record keeps the creating thread; in
+`debug` the trampoline (and a `retained` release) calls `ember_ffi_callback_thread`, which panics
+naming both threads when C calls on another (new runtime function, `EMBER_FFI_MAIN_THREAD`).
+
+*Without user data*, `callback(…)` on an `extern "C" fn` parameter (`Option` with `nullable`) makes
+the plain function pointer safe to pass; a capturing lambda there is now `E5040` (was `E2020`,
+`FN-6/reject_capturing_closure_as_extern_pointer.em` updated to the code the spec's table gives,
+with a help naming `callback(…, user_data=p)`).
+
+*`unsafe`* (`[FFI-11]`: "leave the call unsafe"): `@ffi(unsafe)`, `param(p, unsafe)`,
+`result(unsafe)` on a hand declaration; on a `safe fn` `E5002`. The call's `E5002` then says the
+contract leaves it unsafe on purpose instead of asking for facts; an overlay's `unsafe` word now
+reaches the declaration as `@ffi(unsafe)`.
+
+*Elsewhere*: the effects analysis follows a callback to the lambda it calls (`[EFF-2]`; a callable
+value's are every effect), `reached_bodies` keeps the lambda, `ember inspect --cost` names each
+callback's handling, the importer gives a function pointer parameter its function type
+(`CType.function`, `.embind` version 11) and imports `ForeignCallback` for a module with a
+`retained` callback.
+
+Tests: `tests/conformance/FFI-21/accept_a_borrowed_callback_takes_a_lambda.em` (hand declarations,
+`visits.c`: user data first and last, an integer user data, local functions writing the caller's
+locals, a function), `accept_callbacks_c_keeps_past_the_call.em` (overlay `overlays/events.em`,
+`events.c`: `once` and `retained` with `destroys(unlisten)` given the kind, trampoline and data;
+strings moved into the callables; tokens ended), `reject_callback_contract_misuse.em`,
+`reject_what_a_callback_captures.em`; `tests/conformance/FFI-33b/accept_a_creator_callback_on_its_thread.em`,
+`run_fail_a_creator_callback_called_on_another_thread.em` (`ticks.c`: a C thread calls it, debug
+panics); `FFI-11/reject_a_contract_left_unsafe_asks_for_no_fact.em`. The emitted C of the run-pass
+tests and the C sources compiled with gcc 15 in WSL (`-Wall -Wextra -Werror`); MSVC and clang-cl
+with the C gate on.
+
+**Not built:** a `nullable` callback with user data (`E0900`: the callable bound has no `Option`
+form); callbacks of a C++ function reached through a wrapper (see AB-later).
+
+**Defect found and fixed:** a header typedef of a function pointer naming a C alias (`typedef void
+(*done_fn)(void*, int)`) was `E1010 cannot find type c_int` whenever the importing file itself
+imported from `std.ffi` (`main`'s compiler too): `alias_body_is_resolvable` did not look inside a
+function type, so the alias was resolved before `std.ffi`'s `c_int` was. Probe: a file with `from
+std.ffi import Retained` and `import c "./events.c"`.
+
+### Compiler changes for AB2
+
+- `ember_hir`: `FfiCounted.callbacks`, `FfiCallback`, `FfiCallbackMode`, `FfiUnregister`,
+  `FfiUnregisterArg`; `FfiAbiParam::Callback`, `CallbackData`.
+- `ember_typeck`: `ffi_callback_param_arg` (and `ffi_threads_word`, `ffi_destroys_arg`,
+  `ffi_unsafe_slot_arg`, `ffi_left_unsafe`), `collect_foreign_callbacks`, `check_foreign_callbacks`,
+  `foreign_unregister`, `foreign_callback_token`, `foreign_instance`, `foreign_callback_refused`;
+  `foreign_counted_metadata` gains the callbacks (now `&mut self`); `closure_symbols`;
+  `Retained[ForeignCallback]` is allowed; `alias_body_is_resolvable` looks into function types.
+- `ember_codegen_c`: `emit_ffi_callback` (record, trampoline, release), `emit_ffi_callback_data`.
+- `ember_analysis::effects`, `ember_mir::reached_bodies`, `ember_driver` (`inspect`, importer).
+- runtime: `ember_ffi_callback_thread`, `EMBER_FFI_MAIN_THREAD`; `std.ffi.ForeignCallback`.
