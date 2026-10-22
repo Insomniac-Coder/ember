@@ -418,7 +418,7 @@ def registry_rule_failures(registry, adopted_rules, development_target=None):
 def cost_rows_reported():
     """`[COST-5]` — the rows `ember inspect --cost` prints: each `add("…", …)` of the program's
     costs and each arm of `check_cost_row`."""
-    text = (ROOT / "compiler" / "ember_driver" / "src" / "main.rs").read_text(encoding="utf-8")
+    text = (ROOT / "compiler" / "ember_driver" / "src" / "lib.rs").read_text(encoding="utf-8")
     rows = set(re.findall(r'\badd\("([^"]+)"', text))
     start = text.index("fn check_cost_row")
     rows |= set(re.findall(r'=> "([^"]+)"', text[start:text.index("\n}\n", start)]))

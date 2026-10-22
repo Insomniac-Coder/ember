@@ -39,16 +39,16 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 95% |
-| 2 | Ownership, borrowing, regions | 80% |
+| 1 | Core language (Parts II–VI) | 98% |
+| 2 | Ownership, borrowing, regions | 99% |
 | 3 | Classes, reference counting, exclusivity | 100% |
 | 4 | Effects, compile time, reflection, derives | 100% |
-| 5 | C interoperability | 85% |
+| 5 | C interoperability | 87% |
 | 6 | Concurrency and data-oriented design | 91% |
-| 7 | C++ interoperability and the interpreter | 85% |
-| 7a | Iteration, determinism, cost control | 89% |
-| 8 | Hardening and 1.0 | 70% |
-| | Overall (1.0) | 90% |
+| 7 | C++ interoperability and the interpreter | 96% |
+| 7a | Iteration, determinism, cost control | 92% |
+| 8 | Hardening and 1.0 | 78% |
+| | Overall (1.0) | 96% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10

@@ -245,7 +245,7 @@ def main():
     start, end = readme_table(text)
     profile = conformance(phases['done'])
     evidence = json.dumps(profile, indent=2) + '\n'
-    declared = DECLARED.search((ROOT / 'compiler' / 'ember_driver' / 'src' / 'main.rs').read_text(encoding='utf-8')).group(1)
+    declared = DECLARED.search((ROOT / 'compiler' / 'ember_driver' / 'src' / 'lib.rs').read_text(encoding='utf-8')).group(1)
     if '--check' in sys.argv:
         if text[start:end] != new:
             print('README.md\'s phase table is not what tools/phase_progress.py computes; run it with --write.')
@@ -259,7 +259,7 @@ def main():
             return 1
         if declared != profile['earned']:
             print(f"[CONF-1] the compiler claims profile `{declared}` and the evidence earns `{profile['earned']}`: "
-                  'set PROFILE in compiler/ember_driver/src/main.rs to it')
+                  'set PROFILE in compiler/ember_driver/src/lib.rs to it')
             return 1
         print(f"README phase table and docs/conformance.json match the evidence; profile `{declared}` [CONF-1]")
         return 0
