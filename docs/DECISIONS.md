@@ -5017,6 +5017,23 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-259 — Helper S merged: the first-week corpus (`[TST-8]`, `[TST-9]`, `[TST-10]`)
+
+2026-10-22 (helper S, `tasks/95/S-notes.md`). `tests/firstweek/`: 30 programs a newcomer writes in
+week one, from Part I and Annex A only, committed unmodified (`[TST-8]`); `marks.json` holds each
+one's mark, `helped/` each with the helps applied round by round; `--test firstweek` fails when a
+mark or the published rate changes and `tests/firstweek/README.md` does not. As written 0 of 30
+compile; after the catalogue's helps, applied literally, 3 of 30 (counting only helps the compiler
+printed, 0). Of the 144 first errors, 50 are in no catalogue and 11 are programs the specification
+accepts. Recorded: D-815..D-821 (the compiler refuses what the specification accepts, G1..G7),
+D-822 (`[DIA-2]` breaches and missing helps, D1..D10), D-823 (helps that do not compile, B1..B7).
+`[TST-9]` and `[DIA-21]` (1 of 19 rows built) are unfinished. Ruled under the delegation:
+ODR-179..189 (S's questions: catalogued shape ids, `AnyError.msg`, `ref T` as `T` for `Eq`/`Ord`/
+`Hash`, a bare interface name in a type position, `char` classification, `float(x)`/`int(x)` by the
+argument's type, sequence repetition, single-quoted strings, a list operation on an iterator, the
+published rate counting the catalogue's helps, an `owned` callable parameter stored). Helpers V
+(diagnostics) and W (compiler gaps) build them; G5 is the lead's.
+
 ## ADR-258 — After merging Q and R: what the full verification found
 
 2026-10-22 (lead). `verify_all.sh` over main after the merges of helpers Q and R. Fixed: D-814 (an

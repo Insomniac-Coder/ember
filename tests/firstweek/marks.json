@@ -1,0 +1,152 @@
+{
+  "01_text_adventure.em": {
+    "mark": "rejected", "shape": "none:E0101", "codes": ["E0101"], "after_helps": "rejected",
+    "shapes": ["none:E0101"],
+    "helps": ["R1:none:E0101", "R2:gap:E2020", "R2:N3", "R2:N1", "R2:none:E2020", "R3:N3", "R3:none:E2020", "R4:none:E2060", "R5:O2", "R5:O1", "R5:B12", "R6:B3", "R7:O2"]
+  },
+  "02_csv_summariser.em": {
+    "mark": "rejected", "shape": "none:E0101", "codes": ["E0008", "E0101"], "after_helps": "rejected",
+    "shapes": ["none:E0101", "none:E0008"],
+    "helps": ["R1:none:E0101", "R1:none:E0008", "R2:N3", "R2:none:E2020", "R2:N6", "R2:N1", "R3:none:E2020", "R4:gap:E3021"]
+  },
+  "03_scene_graph.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020"],
+    "helps": ["R1:none:E2020", "R2:O2"]
+  },
+  "04_event_bus.em": {
+    "mark": "rejected", "shape": "none:E0100", "codes": ["E0100"], "after_helps": "rejected",
+    "shapes": ["none:E0100"],
+    "helps": ["R1:none:E0100", "R2:gap:E2020", "R2:B3", "R3:gap:E3021"]
+  },
+  "05_inventory.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020", "E2040"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N1", "N9"],
+    "helps": ["R1:none:E2020", "R1:N1", "R1:N9", "R2:O2", "R3:X1"]
+  },
+  "06_path_finder.em": {
+    "mark": "rejected", "shape": "N9", "codes": ["E1010", "E2020", "E2040"], "after_helps": "rejected",
+    "shapes": ["N9", "N3", "none:E2020", "N1"],
+    "helps": ["R1:N9", "R1:N3", "R1:none:E2020", "R1:N1"]
+  },
+  "07_todo_list.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N1", "N6"],
+    "helps": ["R1:none:E2020", "R1:N1", "R1:N6", "R2:O2"]
+  },
+  "08_word_frequencies.em": {
+    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100"], "after_helps": "rejected",
+    "shapes": ["DIA-21"],
+    "helps": ["R1:DIA-21", "R2:N3", "R2:none:E2020", "R2:N6", "R2:N9", "R3:N3", "R3:none:E2020", "R3:N9", "R4:gap:E2040", "R5:O2", "R5:gap:E3021"]
+  },
+  "09_bank_account.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["N1", "none:E2020"],
+    "helps": ["R1:N1", "R1:none:E2020", "R2:O2"]
+  },
+  "10_grade_book.em": {
+    "mark": "rejected", "shape": "gap:E2140", "codes": ["E1010", "E2020", "E2140"], "after_helps": "rejected",
+    "shapes": ["gap:E2140", "none:E2020", "N1", "N6"],
+    "helps": ["R1:gap:E2140", "R1:none:E2020", "R1:N1", "R1:N6", "R2:none:E2020", "R3:O2"]
+  },
+  "11_rpn_calculator.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "gap:E2020", "N6"],
+    "helps": ["R1:none:E2020", "R1:gap:E2020", "R1:N6"]
+  },
+  "12_tic_tac_toe.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N3"],
+    "helps": ["R1:none:E2020", "R1:N3", "R2:none:E2020"]
+  },
+  "13_game_of_life.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["N1", "none:E2020", "N3"],
+    "helps": ["R1:N1", "R1:none:E2020", "R1:N3"]
+  },
+  "14_queue_simulation.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["N1", "N6"],
+    "helps": ["R1:N1", "R1:N6"]
+  },
+  "15_library_catalogue.em": {
+    "mark": "rejected", "shape": "N3", "codes": ["E2020", "E2072"], "after_helps": "rejected",
+    "shapes": ["N3", "none:E2020"],
+    "helps": ["R1:N3", "R1:none:E2020", "R2:B3", "R2:O2", "R2:O1"]
+  },
+  "16_shapes_interface.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N6"],
+    "helps": ["R1:none:E2020", "R1:N6", "R2:none:E2020", "R3:O2"]
+  },
+  "17_linked_list.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010"], "after_helps": "accepted",
+    "shapes": ["N1", "N3"],
+    "helps": ["R1:N1", "R1:N3"]
+  },
+  "18_traffic_light.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010"], "after_helps": "accepted",
+    "shapes": ["N1"],
+    "helps": ["R1:N1"]
+  },
+  "19_tokenizer.em": {
+    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100"], "after_helps": "rejected",
+    "shapes": ["DIA-21"],
+    "helps": ["R1:DIA-21", "R2:none:E2020", "R2:N9", "R2:N3", "R2:none:E2020", "R3:N3"]
+  },
+  "20_matrix.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020", "E2040"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N3", "N9"],
+    "helps": ["R1:none:E2020", "R1:N3", "R1:N9"]
+  },
+  "21_particles.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["N1", "N4"],
+    "helps": ["R1:N1", "R1:N4"]
+  },
+  "22_undo_stack.em": {
+    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100"], "after_helps": "rejected",
+    "shapes": ["DIA-21"],
+    "helps": ["R1:DIA-21", "R2:N9", "R2:none:E2020", "R2:N1", "R3:O2"]
+  },
+  "23_recipe_scaler.em": {
+    "mark": "rejected", "shape": "N3", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["N3", "none:E2020", "gap:E2020", "N1"],
+    "helps": ["R1:N3", "R1:none:E2020", "R1:gap:E2020", "R1:N1", "R2:none:E2020", "R3:O2"]
+  },
+  "24_dice_game.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020"],
+    "helps": ["R1:none:E2020"]
+  },
+  "25_prime_generators.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010"], "after_helps": "rejected",
+    "shapes": ["N1", "N3"],
+    "helps": ["R1:N1", "R1:N3"]
+  },
+  "26_game_entities.em": {
+    "mark": "rejected", "shape": "N1", "codes": ["E1010"], "after_helps": "accepted",
+    "shapes": ["N1"],
+    "helps": ["R1:N1"]
+  },
+  "27_vending_machine.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020"],
+    "helps": ["R1:none:E2020", "R2:O2", "R3:O2", "R3:X1"]
+  },
+  "28_hangman.em": {
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020", "E2040", "E2072", "E3023"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N3", "B4", "N9"],
+    "helps": ["R1:none:E2020", "R1:N3", "R1:N9", "R1:B4", "R2:B10", "R3:B10"]
+  },
+  "29_temperature_stats.em": {
+    "mark": "rejected", "shape": "N3", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["N3", "none:E2020", "N1", "N6"],
+    "helps": ["R1:N3", "R1:none:E2020", "R1:N1", "R1:N6", "R2:none:E2250", "R2:none:E2020", "R3:O2", "R4:B3"]
+  },
+  "30_binary_search_tree.em": {
+    "mark": "rejected", "shape": "none:E0101", "codes": ["E0101"], "after_helps": "rejected",
+    "shapes": ["none:E0101"],
+    "helps": ["R1:none:E0101", "R2:N1", "R2:none:E2020", "R2:N3", "R3:O2"]
+  }
+}
