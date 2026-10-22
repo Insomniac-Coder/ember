@@ -158,6 +158,12 @@ fn compile_command(args: &[String]) -> ExitCode {
     }
 }
 
+/// `[MNG-1]` — whether a symbol is one of the standard library's items: its path's first component
+/// is `std`.
+fn standard_symbol(symbol: &str) -> bool {
+    ember_branding::symbol_path_starts_with(symbol, &[ember_branding::STD_PACKAGE])
+}
+
 /// Keep implicit standard-library loading from changing unrelated generated
 /// programs. `[MOD-5]` makes source-backed prelude interfaces available even
 /// without an import, but availability is not reachability: an unused
@@ -180,9 +186,8 @@ fn retain_referenced_standard_bodies(
 ) {
     use std::collections::{BTreeMap, BTreeSet};
 
-    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
     let standard =
-        |body: &ember_mir::Body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file);
+        |body: &ember_mir::Body| standard_symbol(&body.symbol) || standard_files.contains(&body.span.file);
     let by_symbol: BTreeMap<String, usize> = bodies
         .iter()
         .enumerate()
@@ -1774,10 +1779,9 @@ fn standard_parts(bodies: &[ember_mir::Body], modules: &[ember_typeck::LoadedMod
         .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
         .map(|loaded| loaded.module.span.file)
         .collect();
-    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
     let standard = bodies
         .iter()
-        .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
+        .map(|body| standard_symbol(&body.symbol) || standard_files.contains(&body.span.file))
         .collect();
     (standard, standard_files)
 }
@@ -2437,7 +2441,6 @@ fn effect_totals(
         .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
         .map(|loaded| loaded.module.span.file)
         .collect();
-    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
     let effects = ember_analysis::effect_sets(bodies, types);
     ember_hir::Effects::NAMED
         .iter()
@@ -2446,7 +2449,7 @@ fn effect_totals(
                 .iter()
                 .zip(&effects)
                 .filter(|(body, carried)| {
-                    !body.symbol.starts_with(&std_prefix) && !standard_files.contains(&body.span.file) && carried.contains(effect)
+                    !standard_symbol(&body.symbol) && !standard_files.contains(&body.span.file) && carried.contains(effect)
                 })
                 .count();
             (word, count)
@@ -2474,10 +2477,9 @@ fn safety_costs_json(
         .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
         .map(|loaded| loaded.module.span.file)
         .collect();
-    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
     let standard: Vec<bool> = bodies
         .iter()
-        .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
+        .map(|body| standard_symbol(&body.symbol) || standard_files.contains(&body.span.file))
         .collect();
     let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
     // `[FFI-24c]` — the modules `import cpp` wrote: their functions are the program's C++ calls, and
@@ -2529,7 +2531,7 @@ fn safety_costs_json(
                     }
                     // `[FFI-17f]` — an operation of a C++ bridge type is a call of its C++ thunk.
                     if let Some(callee) = by_symbol.get(symbol.as_str())
-                        && symbol.starts_with(&ember_branding::mangled("std.ffi."))
+                        && ember_branding::symbol_path_starts_with(symbol, &[ember_branding::STD_PACKAGE, "ffi"])
                         && let Some((_, receiver)) = callee.args().next()
                         && let Some(bridge) = bridge_type(types, receiver.ty)
                     {
@@ -2635,7 +2637,6 @@ fn safety_functions_json(
         .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
         .map(|loaded| loaded.module.span.file)
         .collect();
-    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
     let effects = ember_analysis::effect_sets(bodies, types);
     let checks = [
         (Effects::CHECK_ARITHMETIC, "Arithmetic"),
@@ -2646,7 +2647,7 @@ fn safety_functions_json(
     let functions: Vec<serde_json::Value> = bodies
         .iter()
         .zip(&effects)
-        .filter(|(body, _)| !body.symbol.starts_with(&std_prefix) && !standard_files.contains(&body.span.file))
+        .filter(|(body, _)| !standard_symbol(&body.symbol) && !standard_files.contains(&body.span.file))
         .map(|(body, effects)| {
             let contracts = body.contracts.forbidden | body.contracts.realtime;
             let kinds: Vec<&str> = checks.iter().filter(|(effect, _)| effects.contains(*effect)).map(|(_, name)| *name).collect();
@@ -2681,10 +2682,9 @@ fn print_alloc_report(
         .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
         .map(|loaded| loaded.module.span.file)
         .collect();
-    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
     let standard: Vec<bool> = bodies
         .iter()
-        .map(|body| body.symbol.starts_with(&std_prefix) || standard_files.contains(&body.span.file))
+        .map(|body| standard_symbol(&body.symbol) || standard_files.contains(&body.span.file))
         .collect();
     let sites: Vec<ember_analysis::AllocationSite> =
         ember_analysis::allocation_sites(bodies, types, &standard, &|file| standard_files.contains(&file))
@@ -5205,7 +5205,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // only frees memory changes nothing observable (`[PHIL-5]`). Debug
     // builds keep every drop, which their leak check counts.
     if program.main.is_some() && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
-        ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::mangled("main"));
+        ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::entry_symbol());
     }
     // Run after all body pruning and mutation. Retain the complete immutable
     // proof batch until the unconditional final verification below.

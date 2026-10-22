@@ -555,6 +555,10 @@ pub struct TypeTable {
     class_reflections: HashMap<ClassId, (Symbol, Ty)>,
     /// `[FFI-26]` — each `@export_table` of the program.
     export_tables: Vec<ExportTable>,
+    /// `[MNG-1]` — each generic instance's name (`Pair_i64`, `Option_i32`, an interface's
+    /// `FromIterator_char`), with the generic it instantiates and its arguments: what its symbol is
+    /// made from, never its name.
+    instance_origins: HashMap<Symbol, (Symbol, Vec<Ty>)>,
 }
 
 /// `[FFI-26]` — an `@export_table("Name", protocol=N)`: the struct exported as a constant table of
@@ -697,6 +701,7 @@ impl TypeTable {
             constant_statics: Vec::new(),
             class_reflections: HashMap::new(),
             export_tables: Vec::new(),
+            instance_origins: HashMap::new(),
             pointer_size: 8,
         };
         let u8_ty = table.intern(TyKind::Uint(UintTy::U8));
@@ -2889,6 +2894,313 @@ impl TypeTable {
             TyKind::Error => return Err(CanonicalTypeError::Error),
         })
     }
+
+    /// `[MNG-1]` — record that `instance` is `generic`'s instance over `args`, which is what its
+    /// symbol is made from.
+    pub fn note_instance(&mut self, instance: Symbol, generic: Symbol, args: &[Ty]) {
+        self.instance_origins.entry(instance).or_insert_with(|| (generic, args.to_vec()));
+    }
+
+    /// The generic a nominal type (or interface) named `name` instantiates and its arguments
+    /// (none for one that is no instance), by what the checker recorded (`note_instance`), else
+    /// by the type's own origin.
+    fn nominal_origin<'a>(&'a self, name: Symbol, origin: Option<&'a (Symbol, Vec<Ty>)>) -> (Symbol, &'a [Ty]) {
+        match self.instance_origins.get(&name).or(origin) {
+            Some((generic, args)) => (*generic, args),
+            None => (name, &[]),
+        }
+    }
+
+    /// `[MNG-1]` — the path of the item a nominal type (or interface) named `name` is, and the
+    /// canonical spelling of its arguments when it is a generic's instance.
+    fn nominal_path(&self, name: Symbol, origin: Option<&(Symbol, Vec<Ty>)>) -> (String, Option<String>) {
+        let (generic, args) = self.nominal_origin(name, origin);
+        (item_path(generic.as_str()).into_owned(), (!args.is_empty()).then(|| self.arguments_spelling(args)))
+    }
+
+    /// `[MNG-1]` — the path of the item `ty` is, as a symbol names it, and the canonical spelling
+    /// of its arguments when it is a generic's instance: a declared type's own path, a compiler-made
+    /// generic's in `std.core`, a scalar's keyword; a structural type (a tuple, a fixed array, a
+    /// function or pointer type), which has no item, is `std.core`'s pseudo-item of its kind with
+    /// its whole spelling as its arguments.
+    pub fn type_path(&self, ty: Ty) -> (String, Option<String>) {
+        let core = |kind: &str| format!("{}.core.{kind}", ember_branding::STD_PACKAGE);
+        match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                self.nominal_path(def.name, def.origin.as_ref().or(self.written_as.get(id)))
+            }
+            TyKind::Class(id) => {
+                let def = self.class_def(*id);
+                self.nominal_path(def.name, def.origin.as_ref())
+            }
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                self.nominal_path(def.name, def.origin.as_ref())
+            }
+            TyKind::ClassInterface(interface) => self.nominal_path(*interface, None),
+            TyKind::Opaque(name) => (item_path(name.as_str()).into_owned(), None),
+            TyKind::Range(id) => (item_path(self.range_def(*id).name.as_str()).into_owned(), None),
+            TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str
+            | TyKind::CStr | TyKind::Void => (self.spelling(ty), None),
+            TyKind::Never => ("Never".to_string(), None),
+            TyKind::Vec { text: true, .. } => (core("String"), None),
+            TyKind::Vec { elem, .. } => (core("Array"), Some(self.arguments_spelling(&[*elem]))),
+            TyKind::Span { elem, mutable } => {
+                (core(if *mutable { "MutSpan" } else { "Span" }), Some(self.arguments_spelling(&[*elem])))
+            }
+            kind => {
+                let pseudo = match kind {
+                    TyKind::Tuple(_) => "tuple",
+                    TyKind::Array { .. } | TyKind::ArrayN { .. } => "array",
+                    TyKind::Fn { .. } => "fn",
+                    TyKind::Ref { .. } => "ref",
+                    TyKind::Ptr { .. } => "ptr",
+                    TyKind::Dyn { .. } => "dyn",
+                    _ => "type",
+                };
+                (core(pseudo), Some(self.spelling(ty)))
+            }
+        }
+    }
+
+    /// `[MNG-1]`, `[MNG-4]` — `ty` as a symbol writes it after `em_` (and after `em_obj_`, `em_vt_`
+    /// and `em_ti_`): its path, mangled, then its instance hash (`3std4core6OptionG…`).
+    pub fn mangled(&self, ty: Ty) -> String {
+        let (path, arguments) = self.type_path(ty);
+        Self::mangled_of(&path, arguments.as_deref())
+    }
+
+    /// [`Self::mangled`] of the struct `id`.
+    pub fn mangled_struct(&self, id: StructId) -> String {
+        let def = self.struct_def(id);
+        let (path, arguments) = self.nominal_path(def.name, def.origin.as_ref().or(self.written_as.get(&id)));
+        Self::mangled_of(&path, arguments.as_deref())
+    }
+
+    /// [`Self::mangled`] of the class `id`.
+    pub fn mangled_class(&self, id: ClassId) -> String {
+        let def = self.class_def(id);
+        let (path, arguments) = self.nominal_path(def.name, def.origin.as_ref());
+        Self::mangled_of(&path, arguments.as_deref())
+    }
+
+    /// [`Self::mangled`] of the enum `id`.
+    pub fn mangled_enum(&self, id: EnumId) -> String {
+        let def = self.enum_def(id);
+        let (path, arguments) = self.nominal_path(def.name, def.origin.as_ref());
+        Self::mangled_of(&path, arguments.as_deref())
+    }
+
+    /// [`Self::mangled`] of an interface (or an interface's instance), by the checker's name for it.
+    pub fn mangled_interface(&self, interface: Symbol) -> String {
+        let (path, arguments) = self.nominal_path(interface, None);
+        Self::mangled_of(&path, arguments.as_deref())
+    }
+
+    fn mangled_of(path: &str, arguments: Option<&str>) -> String {
+        let mut out = ember_branding::mangled_path(path);
+        if let Some(arguments) = arguments {
+            out.push_str(&ember_branding::instance_suffix(arguments));
+        }
+        out
+    }
+
+    /// `[MNG-1]` — the symbol of `owner`'s method `name`: the owner's path, then the path of the
+    /// interface it implements when that is what tells it apart from another `name` of `owner`'s
+    /// (`[TYP-24]`), then `name`; and when the owner or the interface is a generic's instance, or
+    /// the method is (`own`, its own arguments' spelling), the instance hash of their spellings in
+    /// that order. For one path, which of them has arguments is fixed by its declarations, so the
+    /// order alone keeps them apart.
+    pub fn method_symbol(&self, owner: Ty, interface: Option<Symbol>, name: &str, own: Option<&str>) -> String {
+        let (path, arguments) = self.method_path(owner, interface, name, own);
+        ember_branding::instance_symbol(&path, arguments.as_deref())
+    }
+
+    /// [`Self::method_symbol`] of a method of the class `id` (`drop`, for its destructor).
+    pub fn class_method_symbol(&self, id: ClassId, name: &str) -> String {
+        let def = self.class_def(id);
+        let (path, arguments) = self.nominal_path(def.name, def.origin.as_ref());
+        ember_branding::instance_symbol(&format!("{path}.{name}"), arguments.as_deref())
+    }
+
+    /// What [`Self::method_symbol`] is made from: the method's path and its arguments' spelling.
+    pub fn method_path(&self, owner: Ty, interface: Option<Symbol>, name: &str, own: Option<&str>) -> (String, Option<String>) {
+        let (mut path, owner_arguments) = self.type_path(owner);
+        let mut arguments = owner_arguments.unwrap_or_default();
+        if let Some(interface) = interface {
+            let (interface_path, interface_arguments) = self.nominal_path(interface, None);
+            path.push('.');
+            path.push_str(&interface_path);
+            arguments.push_str(interface_arguments.as_deref().unwrap_or(""));
+        }
+        path.push('.');
+        path.push_str(name);
+        arguments.push_str(own.unwrap_or(""));
+        (path, (!arguments.is_empty()).then_some(arguments))
+    }
+
+    /// `[MNG-1]` — the canonical spelling of generic arguments: each [`Self::spelling`], in order,
+    /// in brackets (`[i64, std.core.Option[str]]`).
+    pub fn arguments_spelling(&self, args: &[Ty]) -> String {
+        let mut out = String::from("[");
+        for (index, &arg) in args.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            self.spell(arg, &mut out);
+        }
+        out.push(']');
+        out
+    }
+
+    /// `[MNG-1]` — the canonical spelling of a type as a generic argument: a declared type by its
+    /// path (never by the instance name the checker gave it, which depends on what else it named),
+    /// an instance with its arguments, a compiler-made generic as the prelude's
+    /// (`std.core.Option[i64]`), the rest as written (`(i64, str)`, `ref mut [u8; 4]`).
+    pub fn spelling(&self, ty: Ty) -> String {
+        let mut out = String::new();
+        self.spell(ty, &mut out);
+        out
+    }
+
+    fn spell(&self, ty: Ty, out: &mut String) {
+        let nominal = |this: &Self, name: Symbol, origin: Option<&(Symbol, Vec<Ty>)>, out: &mut String| {
+            let (generic, args) = this.nominal_origin(name, origin);
+            out.push_str(&item_path(generic.as_str()));
+            if !args.is_empty() {
+                out.push_str(&this.arguments_spelling(args));
+            }
+        };
+        let core = |kind: &str, out: &mut String| {
+            out.push_str(ember_branding::STD_PACKAGE);
+            out.push_str(".core.");
+            out.push_str(kind);
+        };
+        match self.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.struct_def(*id);
+                nominal(self, def.name, def.origin.as_ref().or(self.written_as.get(id)), out);
+            }
+            TyKind::Class(id) => {
+                let def = self.class_def(*id);
+                nominal(self, def.name, def.origin.as_ref(), out);
+            }
+            TyKind::Enum(id) => {
+                let def = self.enum_def(*id);
+                nominal(self, def.name, def.origin.as_ref(), out);
+            }
+            TyKind::ClassInterface(interface) => nominal(self, *interface, None, out),
+            TyKind::Opaque(name) => out.push_str(&item_path(name.as_str())),
+            TyKind::Range(id) => out.push_str(&item_path(self.range_def(*id).name.as_str())),
+            TyKind::Vec { text: true, .. } => core("String", out),
+            TyKind::Vec { elem, .. } => {
+                core("Array", out);
+                out.push_str(&self.arguments_spelling(&[*elem]));
+            }
+            TyKind::Span { elem, mutable } => {
+                core(if *mutable { "MutSpan" } else { "Span" }, out);
+                out.push_str(&self.arguments_spelling(&[*elem]));
+            }
+            TyKind::Tuple(items) => {
+                out.push('(');
+                for (index, &item) in items.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    self.spell(item, out);
+                }
+                if items.len() == 1 {
+                    out.push(',');
+                }
+                out.push(')');
+            }
+            TyKind::Array { elem, len } => {
+                out.push('[');
+                self.spell(*elem, out);
+                out.push_str(&format!("; {len}]"));
+            }
+            TyKind::ArrayN { elem, len } => {
+                out.push('[');
+                self.spell(*elem, out);
+                out.push_str(&format!("; {len}]"));
+            }
+            TyKind::Ref { mutable, inner } => {
+                out.push_str(if *mutable { "ref mut " } else { "ref " });
+                self.spell(*inner, out);
+            }
+            TyKind::Ptr { mutable, inner } => {
+                out.push_str(if *mutable { "*mut " } else { "*" });
+                self.spell(*inner, out);
+            }
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+                if *is_unsafe {
+                    out.push_str("unsafe ");
+                }
+                if let Some(abi) = abi {
+                    out.push_str(&format!("extern \"{abi}\" "));
+                } else if *latebound {
+                    out.push_str("@latebound ");
+                } else if *stateless {
+                    out.push_str("plain ");
+                }
+                out.push_str("fn(");
+                for (index, param) in params.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(match param.mode {
+                        FnParamMode::Borrow => "",
+                        FnParamMode::Mut => "mut ",
+                        FnParamMode::Owned => "owned ",
+                    });
+                    self.spell(param.ty, out);
+                }
+                out.push_str(") -> ");
+                self.spell(*ret, out);
+            }
+            TyKind::Dyn { interfaces } => {
+                out.push_str("dyn ");
+                for (index, &interface) in interfaces.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(" + ");
+                    }
+                    nominal(self, interface, None, out);
+                }
+            }
+            TyKind::Const(value) => out.push_str(&value.to_string()),
+            // D-306 — a parameter by its name and its slot, as the checker's instance names hold it.
+            TyKind::Param { name, index } => out.push_str(&format!("${name}{index}")),
+            TyKind::Assoc { name } => out.push_str(&format!("Self.{name}")),
+            TyKind::Never => out.push('!'),
+            TyKind::Infer(_) | TyKind::IntLit | TyKind::FloatLit | TyKind::Error => out.push('_'),
+            // A scalar, `str`, `cstr` and `void` as written.
+            _ => out.push_str(&self.render(ty, false)),
+        }
+    }
+}
+
+/// `[MNG-1]` — the generics the compiler makes instances of under a bare name. They are the
+/// prelude's (`[MOD-5]`), so their symbols name them as `std.core`'s: `Option[i64]` is
+/// `std.core.Option`'s instance.
+pub const COMPILER_GENERICS: [&str; 20] = [
+    "Option", "Result", "Box", "Shared", "SyncShared", "Weak", "Cell", "RefCell", "MaybeUninit", "UnsafeCell", "Ref",
+    "RefMut", "Span", "MutSpan", "Array", "String", "SoA", "ArenaSoA", "SoARef", "SoAMut",
+];
+
+/// `[MNG-1]` — an item's path as its symbol writes it, from the checker's name for it: a
+/// compiler-made generic's bare name (`Option`) is the prelude's `std.core.Option`, and a root
+/// module's type named like one (`root.Box`, D-305) is the root module's `Box`.
+pub fn item_path(name: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(own) = name.strip_prefix("root.")
+        && COMPILER_GENERICS.contains(&own)
+    {
+        return std::borrow::Cow::Borrowed(own);
+    }
+    if COMPILER_GENERICS.contains(&name) {
+        return std::borrow::Cow::Owned(format!("{}.core.{name}", ember_branding::STD_PACKAGE));
+    }
+    std::borrow::Cow::Borrowed(name)
 }
 
 impl fmt::Debug for Ty {

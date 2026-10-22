@@ -65,52 +65,235 @@ pub fn runtime_header() -> String {
 /// that function: the first two characters of the prefix, then an underscore.
 /// Short, because it is on every symbol in the emitted C, and a reader of that
 /// C should be able to tell a generated name from a runtime entry point at a
-/// glance — `em_game_update` against `ember_alloc`.
+/// glance — `em_3game6update` against `ember_alloc`.
 pub fn mangle_prefix() -> String {
-    let short: String = SYMBOL_PREFIX.chars().take(2).collect();
-    format!("{short}_")
+    prefix().to_string()
 }
 
-/// A mangled symbol for an Ember item: `em_std_math_Vec3_length`.
-pub fn mangled(name: &str) -> String {
-    format!("{}{}", mangle_prefix(), c_identifier(name))
+/// [`mangle_prefix`], made once: every symbol is built and read with it.
+fn prefix() -> &'static str {
+    static PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let short: String = SYMBOL_PREFIX.chars().take(2).collect();
+        format!("{short}_")
+    });
+    &PREFIX
 }
 
-/// `[MNG-3]` — an Ember name as C spells it: each `.` an `_`, and each character beyond ASCII as
-/// `_uXXXX_`, its code point in hex (four digits or more), so `café` is `caf_u00E9_`.
-pub fn c_identifier(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        match c {
-            '.' => out.push('_'),
-            c if c.is_ascii() => out.push(c),
-            c => out.push_str(&format!("_u{:04X}_", c as u32)),
-        }
+/// `[MNG-1]` — how many hex digits of the BLAKE3 hash of a generic instance's arguments its
+/// symbol keeps.
+pub const INSTANCE_HASH_DIGITS: usize = 16;
+
+/// `[MNG-1]` — the letter between an instance's path and its hash: `em_3maxG…`. A component
+/// begins with a digit, so the letter ends the path.
+pub const INSTANCE_MARK: char = 'G';
+
+/// `[MNG-1]` — an Ember path (`lib.m_x.f`) as a symbol writes it after `em_`: each component as its
+/// length in decimal and then its text (`3lib3m_x1f`), a character beyond ASCII transliterated
+/// first (`[MNG-3]`). The compiler spells a path with `.` between its components, which no
+/// identifier holds, so `.` is exactly where one component ends; the length prefixes then make the
+/// symbol name each component exactly too, where `_` between them did not (`m_x.f` and `m.x_f`).
+pub fn mangled_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len() + 8);
+    push_mangled_path(&mut out, path);
+    out
+}
+
+/// [`mangled_path`], written onto `out`.
+pub fn push_mangled_path(out: &mut String, path: &str) {
+    for component in path.split('.') {
+        push_component(out, component);
+    }
+}
+
+/// One path component: its length, then its text, transliterated (`[MNG-3]`) before the length
+/// is taken.
+fn push_component(out: &mut String, text: &str) {
+    use std::fmt::Write;
+    debug_assert!(!text.is_empty(), "an empty path component");
+    let text = transliterated(text);
+    let _ = write!(out, "{}{text}", text.len());
+}
+
+/// `[MNG-1]` — the end of a generic instance's symbol: `G` and the first 16 hex digits of the
+/// BLAKE3 hash of the canonical spelling of its arguments.
+pub fn instance_suffix(arguments: &str) -> String {
+    let hash = blake3::hash(arguments.as_bytes());
+    let mut out = String::with_capacity(1 + INSTANCE_HASH_DIGITS);
+    out.push(INSTANCE_MARK);
+    out.push_str(&hash.to_hex()[..INSTANCE_HASH_DIGITS]);
+    out
+}
+
+/// `[MNG-1]` — an item's symbol: `em_` and its path, mangled (`em_3lib3m_x1f`).
+pub fn item_symbol(path: &str) -> String {
+    let mut out = prefix().to_string();
+    push_mangled_path(&mut out, path);
+    out
+}
+
+/// `[FN-8]` — the root module's `main`, which the C entry point calls: `em_4main`.
+pub fn entry_symbol() -> String {
+    item_symbol("main")
+}
+
+/// `[MNG-1]` — a generic instance's symbol: its item's, then [`instance_suffix`] of `arguments`
+/// (the canonical spelling of its arguments); with none, the item's own.
+pub fn instance_symbol(path: &str, arguments: Option<&str>) -> String {
+    let mut out = item_symbol(path);
+    if let Some(arguments) = arguments {
+        out.push_str(&instance_suffix(arguments));
     }
     out
 }
 
+/// A symbol whose mangled form (path and instance hash) was made elsewhere: `em_` and it. A type's
+/// is its type table's (`ember_types::TypeTable::mangled`).
+pub fn symbol(mangled: &str) -> String {
+    format!("{}{mangled}", prefix())
+}
+
+/// A name the compiler makes for itself, not for an item: `em_` and `tag`, which begins with a
+/// letter (`em_closure3`, `em_drop_glue_2`), so it is never an item's (whose path begins with a
+/// digit). A name keyed by types or items writes their mangled forms after the tag, each after
+/// `_` (`em_vt_dyn_7Observe_6Reader`): a mangled form begins with a digit and its components'
+/// lengths say where it ends, so a `_` followed by a digit starts the next one, and one followed by
+/// a letter starts a tag of the name's own (`_slot0`).
+pub fn generated(tag: &str) -> String {
+    debug_assert!(tag.starts_with(|c: char| c.is_ascii_alphabetic()), "a generated name's tag begins with a letter: `{tag}`");
+    format!("{}{tag}", prefix())
+}
+
+/// `[MNG-3]` — a name with each character beyond ASCII written `_uXXXX_`, its code point in hex
+/// (four digits or more): `café` is `caf_u00E9_`.
+pub fn transliterated(name: &str) -> std::borrow::Cow<'_, str> {
+    if name.is_ascii() {
+        return std::borrow::Cow::Borrowed(name);
+    }
+    let mut out = String::with_capacity(name.len() + 8);
+    for c in name.chars() {
+        if c.is_ascii() {
+            out.push(c);
+        } else {
+            out.push_str(&format!("_u{:04X}_", c as u32));
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// `[MNG-3]` — an Ember name as C spells it where it is not a symbol (a field, a local): each
+/// character beyond ASCII transliterated, and each `.` an `_`.
+pub fn c_identifier(name: &str) -> String {
+    transliterated(name).replace('.', "_")
+}
+
+/// `[CG-C-10]` — an item symbol read back: its path's components (each transliteration undone)
+/// and, for a generic instance, its hash; `rest` is whatever follows (`__rl` on a reloadable
+/// function's body). `None` for a name that is not an item's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Demangled<'a> {
+    pub components: Vec<String>,
+    pub instance: Option<&'a str>,
+    pub rest: &'a str,
+}
+
+impl Demangled<'_> {
+    /// The Ember path: `lib.m_x.f`.
+    pub fn path(&self) -> String {
+        self.components.join(".")
+    }
+}
+
+/// [`Demangled`] — the length prefixes say exactly where each component ends.
+pub fn demangle(symbol: &str) -> Option<Demangled<'_>> {
+    let mut rest = symbol.strip_prefix(prefix())?;
+    let mut components = Vec::new();
+    while rest.starts_with(|c: char| c.is_ascii_digit()) && !rest.starts_with('0') {
+        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let length: usize = rest[..digits].parse().ok()?;
+        let text = rest.get(digits..digits + length)?;
+        components.push(untransliterated(text));
+        rest = &rest[digits + length..];
+    }
+    if components.is_empty() {
+        return None;
+    }
+    let mut instance = None;
+    if let Some(hash) = rest.strip_prefix(INSTANCE_MARK)
+        && hash.len() >= INSTANCE_HASH_DIGITS
+        && hash.as_bytes()[..INSTANCE_HASH_DIGITS].iter().all(u8::is_ascii_hexdigit)
+    {
+        instance = Some(&hash[..INSTANCE_HASH_DIGITS]);
+        rest = &hash[INSTANCE_HASH_DIGITS..];
+    }
+    Some(Demangled { components, instance, rest })
+}
+
+/// Whether `symbol` is an item's whose path begins with `components` (`["std"]` for
+/// the standard library's items), and goes on past them. ASCII components only; nothing is
+/// allocated, as the passes ask it of every body.
+pub fn symbol_path_starts_with(symbol: &str, components: &[&str]) -> bool {
+    let Some(mut rest) = symbol.strip_prefix(prefix()) else { return false };
+    for expected in components {
+        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        if digits == 0 || rest.starts_with('0') || rest[..digits].parse() != Ok(expected.len()) {
+            return false;
+        }
+        if rest.get(digits..digits + expected.len()) != Some(*expected) {
+            return false;
+        }
+        rest = &rest[digits + expected.len()..];
+    }
+    rest.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// `_uXXXX_` written back as the character it stands for.
+fn untransliterated(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("_u") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        let digits = after.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(after.len());
+        let decoded = (digits >= 4 && after[digits..].starts_with('_'))
+            .then(|| u32::from_str_radix(&after[..digits], 16).ok().and_then(char::from_u32))
+            .flatten()
+            .filter(|c| !c.is_ascii());
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &after[digits + 1..];
+            }
+            None => {
+                out.push_str("_u");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `[MNG-2]` — the C name of a function whose `@export` symbol is not a C identifier
-/// (`@export("game-update")`): `em_0x` and the symbol's bytes in hex (no mangled name has a digit
-/// after the prefix: an identifier does not start with one). The C names the function so, and
+/// (`@export("game-update")`): `em_0x` and the symbol's bytes in hex (an item's symbol has the
+/// length of its first component after the prefix, never a `0`). The C names the function so, and
 /// gives its object-file symbol exactly as written (an assembler label, or a linker alias with
 /// MSVC).
 pub fn export_alias(symbol: &str) -> String {
     let hex: String = symbol.bytes().map(|byte| format!("{byte:02x}")).collect();
-    format!("{}0x{hex}", mangle_prefix())
+    format!("{}0x{hex}", prefix())
 }
 
 /// `[FFI-6]` (D-743, D-744) — the C name of one foreign declaration of a function: the
-/// [`export_alias`] of the symbol it binds, then the declaration's qualified name, so each
-/// declaration of one symbol has a C name of its own, which the C binds to the symbol.
+/// [`export_alias`] of the symbol it binds, then the declaration's path, mangled
+/// (`[MNG-1]`), so each declaration of one symbol has a C name of its own, which the C binds to
+/// the symbol.
 pub fn foreign_alias(symbol: &str, owner: &str) -> String {
-    let owner: String = c_identifier(owner).chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    format!("{}_{owner}", export_alias(symbol))
+    format!("{}_{}", export_alias(symbol), mangled_path(owner))
 }
 
 /// The symbol an [`export_alias`] or a [`foreign_alias`] stands for, if `name` is one.
 pub fn export_alias_symbol(name: &str) -> Option<String> {
-    let hex = name.strip_prefix(&format!("{}0x", mangle_prefix()))?;
+    let hex = name.strip_prefix(prefix())?.strip_prefix("0x")?;
     // A foreign alias's qualified name follows the hex, after `_`.
     let hex = hex.split_once('_').map_or(hex, |(hex, _)| hex);
     if hex.is_empty() || hex.len() % 2 != 0 {
@@ -120,30 +303,26 @@ pub fn export_alias_symbol(name: &str) -> Option<String> {
     String::from_utf8(bytes?).ok()
 }
 
-/// A type's user-written `drop` function: `drop_function("Noisy")` is
-/// `em_Noisy_drop`. `owner` is the class name or the type's symbol name; any
-/// character that is not ASCII alphanumeric becomes `_`.
-pub fn drop_function(owner: &str) -> String {
-    let owner: String = owner.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    mangled(&format!("{}_drop", owner.trim_matches('_')))
-}
-
 /// A runtime entry point: `runtime("alloc")` is `ember_alloc`.
 pub fn runtime(symbol: &str) -> String {
     format!("{SYMBOL_PREFIX}_{symbol}")
 }
 
-/// `[MNG-4]` — class object structs, vtables and type infos.
-pub fn object_struct(class: &str) -> String {
-    format!("{}obj_{}", mangle_prefix(), c_identifier(class))
+/// `[MNG-4]` — a class's object struct: `em_obj_` and the class's mangled form
+/// (`ember_types::TypeTable::mangled`), `em_obj_6Animal`.
+pub fn object_struct(mangled_class: &str) -> String {
+    format!("{}obj_{mangled_class}", prefix())
 }
 
-pub fn vtable(name: &str) -> String {
-    format!("{}vt_{}", mangle_prefix(), c_identifier(name))
+/// `[MNG-4]` — a method table: `em_vt_` and the class's mangled form (`em_vt_6Animal`), or a
+/// tag and what the table is keyed by (`em_vt_dyn_…`, [`generated`]).
+pub fn vtable(mangled: &str) -> String {
+    format!("{}vt_{mangled}", prefix())
 }
 
-pub fn type_info(name: &str) -> String {
-    format!("{}ti_{}", mangle_prefix(), c_identifier(name))
+/// `[MNG-4]` — a class's type information: `em_ti_` and its mangled form (`em_ti_6Animal`).
+pub fn type_info(mangled_class: &str) -> String {
+    format!("{}ti_{mangled_class}", prefix())
 }
 
 /// `hello.em`, for a message that names a file the user should create.
@@ -251,7 +430,7 @@ mod tests {
         // `[MNG-5]`. If `SYMBOL_PREFIX` ever changes, this changes with it,
         // which is the whole point of deriving it.
         assert_eq!(mangle_prefix(), "em_");
-        assert_eq!(mangled("std.math.Vec3_length"), "em_std_math_Vec3_length");
+        assert_eq!(item_symbol("std.math.Vec3.length"), "em_3std4math4Vec36length");
         assert_eq!(runtime("alloc"), "ember_alloc");
         assert_eq!(runtime_header(), "ember_rt.h");
     }
@@ -261,6 +440,64 @@ mod tests {
         // The reason the mangled prefix is short: a reader of the emitted C
         // tells the two apart without a lookup.
         assert!(runtime("retain").starts_with(SYMBOL_PREFIX));
-        assert!(!mangled("retain").starts_with(&format!("{SYMBOL_PREFIX}_")));
+        assert!(!item_symbol("retain").starts_with(&format!("{SYMBOL_PREFIX}_")));
+    }
+
+    /// `[MNG-1]` — the specification's own pair, which `_` between components made one symbol.
+    #[test]
+    fn mangling_is_injective_by_length_prefixes() {
+        assert_eq!(item_symbol("lib.m_x.f"), "em_3lib3m_x1f");
+        assert_eq!(item_symbol("lib.m.x_f"), "em_3lib1m3x_f");
+        assert_ne!(item_symbol("m_x.f"), item_symbol("m.x_f"));
+        // A component of ten characters or more has a length of two digits.
+        assert_eq!(item_symbol("geometry.probe_cells"), "em_8geometry11probe_cells");
+    }
+
+    /// `[MNG-3]` — a character beyond ASCII is transliterated before the length is taken.
+    #[test]
+    fn a_name_beyond_ascii_is_transliterated_before_its_length() {
+        assert_eq!(item_symbol("café"), "em_10caf_u00E9_");
+        assert_eq!(demangle("em_10caf_u00E9_").map(|d| d.path()), Some("café".to_string()));
+    }
+
+    /// `[MNG-1]` — an instance's hash: `G` and 16 hex digits of BLAKE3 of its arguments' spelling.
+    #[test]
+    fn an_instance_ends_with_its_arguments_hash() {
+        let symbol = instance_symbol("max", Some("[i64]"));
+        let expected = format!("em_3maxG{}", &blake3::hash(b"[i64]").to_hex()[..16]);
+        assert_eq!(symbol, expected);
+        assert_ne!(symbol, instance_symbol("max", Some("[f64]")));
+        assert_eq!(instance_symbol("max", None), "em_3max");
+    }
+
+    /// `[CG-C-10]` — `ember demangle` reads a symbol back exactly: every component, the instance's
+    /// hash and what follows.
+    #[test]
+    fn demangling_round_trips() {
+        for path in ["lib.m_x.f", "lib.m.x_f", "geometry.Grid.at", "a.b2.c10", "std.core.Option.unwrap", "größe.maß"] {
+            let symbol = item_symbol(path);
+            let read = demangle(&symbol).expect("an item symbol");
+            assert_eq!(read.path(), path);
+            assert_eq!((read.instance, read.rest), (None, ""));
+        }
+        let symbol = instance_symbol("geometry.Grid.at", Some("[i64]"));
+        let rl = format!("{symbol}__rl");
+        let read = demangle(&rl).expect("an instance symbol");
+        assert_eq!(read.path(), "geometry.Grid.at");
+        assert_eq!(read.instance.map(str::len), Some(INSTANCE_HASH_DIGITS));
+        assert_eq!(read.rest, "__rl");
+        // Not an item's: a generated name, an export alias, the runtime's.
+        assert_eq!(demangle(&generated("closure3")), None);
+        assert_eq!(demangle(&export_alias("game-update")), None);
+        assert_eq!(demangle(&runtime("alloc")), None);
+        assert!(symbol_path_starts_with(&item_symbol("std.fmt.write"), &["std"]));
+        assert!(!symbol_path_starts_with(&item_symbol("std"), &["std"]));
+        assert!(!symbol_path_starts_with(&item_symbol("stdx.f"), &["std"]));
+    }
+
+    #[test]
+    fn a_foreign_alias_names_its_declaration_exactly() {
+        assert_ne!(foreign_alias("puts", "m_x.f"), foreign_alias("puts", "m.x_f"));
+        assert_eq!(export_alias_symbol(&foreign_alias("puts", "m_x.f")).as_deref(), Some("puts"));
     }
 }

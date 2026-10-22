@@ -83,11 +83,10 @@ pub fn evaluate(
     // unfinished in a way it did not see cannot stop the build.
     let roots: Vec<String> = checked.comptime.iter().map(|request| request.symbol.clone()).collect();
     let reached = reachable(&bodies, &roots);
-    let std_prefix = ember_branding::mangled(&format!("{}.", ember_branding::STD_PACKAGE));
     let unreached: Vec<usize> = bodies
         .iter()
         .enumerate()
-        .filter(|(_, body)| !reached.contains(&body.symbol) && !body.symbol.starts_with(&std_prefix) && !body.is_extern_declaration)
+        .filter(|(_, body)| !reached.contains(&body.symbol) && !ember_branding::symbol_path_starts_with(&body.symbol, &[ember_branding::STD_PACKAGE]) && !body.is_extern_declaration)
         .map(|(index, _)| index)
         .collect();
     if !unreached.is_empty() {

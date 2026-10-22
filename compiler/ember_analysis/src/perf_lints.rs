@@ -349,9 +349,17 @@ impl Lint<'_> {
     /// `WideString.to_string`) whose result is passed to a foreign function, or whose argument is
     /// what one returned.
     fn ffi_copies(&mut self, callee: &dyn Fn(&FuncRef) -> Option<usize>, bodies: &[Body], standard: &[bool]) {
-        // The standard functions' symbols: `str.to_cstring` and `String.to_cstring`, `str.to_wide`,
-        // `WideString.from_units`, `WideString.to_string`.
-        const COPYING: [&str; 4] = ["_to_cstring", "str_to_wide", "WideString_from_units", "WideString_to_string"];
+        // The standard functions, by how their paths end (`[MNG-1]`): `str.to_cstring` and
+        // `String.to_cstring`, `str.to_wide`, `WideString.from_units`, `WideString.to_string`.
+        const COPYING: [&[&str]; 4] = [&["to_cstring"], &["str", "to_wide"], &["WideString", "from_units"], &["WideString", "to_string"]];
+        let copying = |symbol: &str| {
+            ember_branding::demangle(symbol).is_some_and(|found| {
+                let path = &found.components;
+                COPYING.iter().any(|tail| {
+                    path.len() >= tail.len() && path[path.len() - tail.len()..].iter().zip(tail.iter()).all(|(a, b)| a == b)
+                })
+            })
+        };
         let body = self.body;
         let is_foreign = |func: &FuncRef| callee(func).is_some_and(|i| bodies[i].contracts.foreign.is_some());
         let foreign_results: Vec<LocalId> = body
@@ -366,7 +374,7 @@ impl Lint<'_> {
         for block in &body.blocks {
             let Terminator::Call { func, args, dest, .. } = &block.terminator else { continue };
             let Some(target) = callee(func).filter(|&i| standard[i]) else { continue };
-            if block.terminator_span.is_dummy() || !COPYING.iter().any(|suffix| bodies[target].symbol.ends_with(suffix)) {
+            if block.terminator_span.is_dummy() || !copying(&bodies[target].symbol) {
                 continue;
             }
             let name = &bodies[target].name;

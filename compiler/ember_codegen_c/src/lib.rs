@@ -117,59 +117,31 @@ pub struct HeaderOutput {
     pub cpp_source: String,
 }
 
-/// `[MNG-1]` — the C symbol of a type's `drop` method.
-///
-/// Must agree with `ember_typeck::method_symbol` exactly; the two are separated
-/// by a crate boundary and nothing checks that they match, so a change to one
-/// silently stops the destructor being found by the other. The
-/// `tests/conformance/OWN-2/` cases are what would notice.
-fn drop_symbol(owner: &str) -> String {
-    ember_branding::drop_function(owner)
+/// A name the backend makes for a class (`tag`, as `drop_fields`), keyed by the class's mangled
+/// form (`[MNG-1]`): `em_drop_fields_6Animal`.
+fn class_helper_symbol(tag: &str, mangled_class: &str) -> String {
+    format!("{}_{mangled_class}", ember_branding::generated(tag))
 }
 
-fn class_drop_fields_symbol(owner: &str) -> String {
-    let owner: String = owner
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    ember_branding::mangled(&format!("{}_drop_fields", owner.trim_matches('_')))
-}
-
-fn class_drop_adapter_symbol(owner: &str) -> String {
-    let owner: String = owner
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    ember_branding::mangled(&format!("{}_drop_adapter", owner.trim_matches('_')))
-}
-
-fn class_debug_edges_symbol(owner: &str) -> String {
-    let owner: String = owner
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    ember_branding::mangled(&format!("{}_debug_edges", owner.trim_matches('_')))
-}
-
-/// A C-table identity for one ordered `dyn` bound list. Single-interface
-/// identities retain their existing spelling; a composed carrier gets its own
-/// table rather than pretending its first bound describes every slot.
-fn dyn_table_identity(interfaces: &[Symbol]) -> String {
-    match interfaces {
-        [interface] => interface.to_string(),
-        _ => format!(
-            "multi__{}",
-            interfaces.iter().map(ToString::to_string).collect::<Vec<_>>().join("__")
-        ),
+/// A C-table identity for one ordered `dyn` bound list: each interface's mangled form (`[MNG-1]`),
+/// in order, after `_` (`_7Observe_4Bump`). A composed carrier gets its own table rather than
+/// pretending its first bound describes every slot.
+fn dyn_table_identity(types: &TypeTable, interfaces: &[Symbol]) -> String {
+    let mut out = String::new();
+    for interface in interfaces {
+        out.push('_');
+        out.push_str(&types.mangled_interface(*interface));
     }
+    out
 }
 
 /// `[DSP-3]` — each compiler-known interface is identified in the runtime
 /// table by the address of a translation-unit static marker. The address is
 /// opaque to Ember code; it only needs stable identity within this emitted
-/// program, not a source-visible numeric representation.
-fn interface_id_symbol(interface: &str) -> String {
-    ember_branding::mangled(&format!("interface_id_{interface}"))
+/// program, not a source-visible numeric representation. `identity` is the
+/// interface's `dyn_table_identity`.
+fn interface_id_symbol(identity: &str) -> String {
+    format!("{}{identity}", ember_branding::generated("interface_id"))
 }
 
 /// `[DSP-3]` — at most this many implementing classes are tried directly
@@ -303,9 +275,6 @@ fn check_split_views(split: &BTreeMap<String, Vec<bool>>, c: &str) {
     }
 }
 
-fn class_itable_symbol(class: &str) -> String {
-    ember_branding::mangled(&format!("itables_{class}"))
-}
 
 /// `[CT-1]` — one function the compile-time evaluator runs, and the type of
 /// the value it prints.
@@ -512,12 +481,13 @@ fn emit_with(
         } else {
             Vec::new()
         },
+        mangled_types: std::cell::RefCell::new(BTreeMap::new()),
         array_helpers: std::cell::RefCell::new(Vec::new()),
         clone_fns: bodies
             .iter()
             .filter(|body| {
                 body.arg_count == 1
-                    && body.symbol.ends_with("_clone")
+                    && body.name == "clone"
                     && body.locals.get(1).is_some_and(|local| local.name.as_deref() == Some("self"))
             })
             .filter_map(|body| {
@@ -942,6 +912,9 @@ struct Emitter<'a> {
     lazy_statics: BTreeMap<String, (Ty, String)>,
     /// Annex B — every body's name, symbol and return type, for the functions the driver wrote.
     reload_bodies: Vec<(String, String, Ty)>,
+    /// `[MNG-1]` — each type's mangled form (`TypeTable::mangled`), made once: a type is named
+    /// wherever a value of it is.
+    mangled_types: std::cell::RefCell<BTreeMap<TypeNode, String>>,
 }
 
 struct NativeFnValue {
@@ -1169,6 +1142,53 @@ impl Emitter<'_> {
     fn line(&mut self, text: &str) {
         self.out.push_str(text);
         self.out.push('\n');
+    }
+
+    /// `[MNG-1]` — a type's mangled form (`TypeTable::mangled`): what its C name, its object struct,
+    /// method table and type information (`[MNG-4]`) and the backend's helpers for it are named by.
+    fn mangled_type(&self, node: TypeNode) -> String {
+        if let Some(found) = self.mangled_types.borrow().get(&node) {
+            return found.clone();
+        }
+        let made = match node {
+            TypeNode::Struct(id) => self.types.mangled_struct(id),
+            TypeNode::Class(id) => self.types.mangled_class(id),
+            TypeNode::Enum(id) => self.types.mangled_enum(id),
+            TypeNode::Structural(ty) => self.types.mangled(ty),
+        };
+        self.mangled_types.borrow_mut().insert(node, made.clone());
+        made
+    }
+
+    /// `[MNG-4]` — a class's object struct: `em_obj_6Animal`.
+    fn object_struct(&self, id: ClassId) -> String {
+        ember_branding::object_struct(&self.mangled_type(TypeNode::Class(id)))
+    }
+
+    /// `[MNG-4]` — a class's method table: `em_vt_6Animal`.
+    fn class_vtable(&self, id: ClassId) -> String {
+        ember_branding::vtable(&self.mangled_type(TypeNode::Class(id)))
+    }
+
+    /// `[MNG-4]` — a class's type information: `em_ti_6Animal`.
+    fn class_type_info(&self, id: ClassId) -> String {
+        ember_branding::type_info(&self.mangled_type(TypeNode::Class(id)))
+    }
+
+    /// A function the backend writes for a class (`drop_fields`, `drop_adapter`, `debug_edges`,
+    /// `itables`): its tag and the class's mangled form.
+    fn class_helper(&self, tag: &str, id: ClassId) -> String {
+        class_helper_symbol(tag, &self.mangled_type(TypeNode::Class(id)))
+    }
+
+    /// `[OWN-2]` — the symbol of the class `id`'s own `drop` method, as the checker named it.
+    fn class_drop_symbol(&self, id: ClassId) -> String {
+        self.types.class_method_symbol(id, "drop")
+    }
+
+    /// `[OWN-2]` — the symbol of a struct's or enum's own `drop` method, as the checker named it.
+    fn drop_symbol(&self, ty: Ty) -> String {
+        self.types.method_symbol(ty, None, "drop", None)
     }
 
     fn collect_native_fn_values(&mut self, bodies: &[Body]) {
@@ -1470,7 +1490,7 @@ impl Emitter<'_> {
         }
 
         if has_main && self.unit.is_none() {
-            let entry = bodies.iter().any(|body| body.symbol == ember_branding::mangled("main_entry"));
+            let entry = bodies.iter().any(|body| body.symbol == ember_branding::generated("main_entry"));
             let named = self.emit_frame_names(bodies, true);
             let coded = self.emit_code_names(bodies);
             self.emit_entry_point(leak_check, entry, named, coded);
@@ -1519,7 +1539,7 @@ impl Emitter<'_> {
             helpers.push(ty);
             helpers.len() - 1
         });
-        ember_branding::mangled(&format!("clone_parts_{index}"))
+        ember_branding::generated(&format!("clone_parts_{index}"))
     }
 
     /// Discover the helpers before defining either family: an Array helper
@@ -1594,7 +1614,7 @@ impl Emitter<'_> {
             let pending: Vec<Ty> = self.clone_parts_fns.borrow()[emitted..].to_vec();
             if pending.is_empty() { break; }
             for ty in pending {
-                let symbol = ember_branding::mangled(&format!("clone_parts_{emitted}"));
+                let symbol = ember_branding::generated(&format!("clone_parts_{emitted}"));
                 let c_ty = self.c_type(ty);
                 let signature = format!("static void {symbol}({c_ty} const* src, {c_ty}* dst)");
                 prototypes.push(format!("{signature};"));
@@ -1649,7 +1669,7 @@ impl Emitter<'_> {
             helpers.push((helper, ty));
             helpers.len() - 1
         });
-        ember_branding::mangled(&format!("array_helper_{index}"))
+        ember_branding::generated(&format!("array_helper_{index}"))
     }
 
     /// Whether two elements of `ty` that compare equal are the same value, so
@@ -1704,7 +1724,7 @@ impl Emitter<'_> {
                 break;
             }
             for (helper, ty) in pending {
-                let symbol = ember_branding::mangled(&format!("array_helper_{emitted}"));
+                let symbol = ember_branding::generated(&format!("array_helper_{emitted}"));
                 // `[STD-15]` — `sort` is stable. Where equal elements are the
                 // same value (numbers, `bool`, `char`), no order among them
                 // can be seen, so introsort; otherwise a stable merge sort.
@@ -2833,9 +2853,8 @@ impl Emitter<'_> {
             if !self.class_has_user_drop(id) {
                 continue;
             }
-            let owner = def.name.to_string();
-            let object = ember_branding::object_struct(&owner);
-            let adapter = class_drop_adapter_symbol(&owner);
+            let object = self.object_struct(id);
+            let adapter = self.class_helper("drop_adapter", id);
             self.line(&format!("static void {adapter}(void* raw) {{"));
             self.line(&format!(
                 "    {object}* handle = ({object}*)raw;",
@@ -2853,7 +2872,7 @@ impl Emitter<'_> {
                 while let Some(class) = chain {
                     let class_def = self.types.class_def(class);
                     if class_def.has_drop {
-                        let symbol = drop_symbol(&class_def.name.to_string());
+                        let symbol = self.class_drop_symbol(class);
                         found = bodies.iter().find(|body| body.symbol == symbol).map(|body| self.location(body.span));
                         break;
                     }
@@ -2872,7 +2891,7 @@ impl Emitter<'_> {
                 })
             };
             if def.has_drop {
-                let symbol = drop_symbol(&owner);
+                let symbol = self.class_drop_symbol(id);
                 let argument = if by_address(&symbol) { "&handle" } else { "handle" };
                 self.line(&format!("    {symbol}({argument});"));
             }
@@ -2885,17 +2904,14 @@ impl Emitter<'_> {
             while let Some(base_id) = base {
                 let base_def = self.types.class_def(base_id);
                 if base_def.has_drop {
-                    let base_object = ember_branding::object_struct(&base_def.name.to_string());
+                    let base_object = self.object_struct(base_id);
                     let base_handle = format!("base_handle_{depth}");
                     self.line(&format!(
                         "    {base_object}* {base_handle} = ({base_object}*)raw;"
                     ));
-                    let symbol = drop_symbol(&base_def.name.to_string());
+                    let symbol = self.class_drop_symbol(base_id);
                     let address = if by_address(&symbol) { "&" } else { "" };
-                    self.line(&format!(
-                        "    {}({address}{base_handle});",
-                        drop_symbol(&base_def.name.to_string())
-                    ));
+                    self.line(&format!("    {symbol}({address}{base_handle});"));
                 }
                 base = base_def.base;
                 depth += 1;
@@ -3032,7 +3048,7 @@ impl Emitter<'_> {
         for (id, element) in soas {
             // A generic body's `SoA[T]` is never emitted; each use is checked again concretely.
             let TyKind::Struct(element_id) = *self.types.kind(element) else { continue };
-            let name = self.c_named(&self.types.struct_def(id).name.to_string());
+            let name = self.c_named(TypeNode::Struct(id));
             let soa_c = self.c_type(self.types.find(&TyKind::Struct(id)).expect("an SoA's type is interned"));
             let element_c = self.c_type(element);
             // `[SOA-1]` — one column per field, a flattened field's split into its own; `access` is
@@ -3272,7 +3288,7 @@ impl Emitter<'_> {
         self.types.all().find_map(|(ty, kind)| match kind {
             TyKind::Struct(id) => match &self.types.struct_def(*id).origin {
                 Some((origin, args)) if origin.as_str() == "std.thread.JoinHandle" && args.first() == Some(&result) => {
-                    Some((ty, self.c_named(&self.types.struct_def(*id).name.to_string())))
+                    Some((ty, self.c_named(TypeNode::Struct(*id))))
                 }
                 _ => None,
             },
@@ -3288,11 +3304,11 @@ impl Emitter<'_> {
         let handles: Vec<(String, Ty, bool)> = self
             .types
             .structs()
-            .filter_map(|(_, def)| match &def.origin {
+            .filter_map(|(id, def)| match &def.origin {
                 Some((origin, args))
                     if matches!(origin.as_str(), "std.thread.JoinHandle" | "std.thread.ScopedJoinHandle") && args.len() == 1 =>
                 {
-                    Some((self.c_named(&def.name.to_string()), args[0], origin.as_str() == "std.thread.ScopedJoinHandle"))
+                    Some((self.c_named(TypeNode::Struct(id)), args[0], origin.as_str() == "std.thread.ScopedJoinHandle"))
                 }
                 _ => None,
             })
@@ -3475,9 +3491,8 @@ impl Emitter<'_> {
             if !self.class_has_dropping_fields(id) {
                 continue;
             }
-            let def = self.types.class_def(id);
-            let object = ember_branding::object_struct(&def.name.to_string());
-            let symbol = class_drop_fields_symbol(&def.name.to_string());
+            let object = self.object_struct(id);
+            let symbol = self.class_helper("drop_fields", id);
             self.line(&format!("static void {symbol}(void* raw) {{"));
             self.line(&format!("    struct {object}* object = (struct {object}*)raw;"));
 
@@ -3570,7 +3585,7 @@ impl Emitter<'_> {
                     continue;
                 };
                 if *class_handle {
-                    self.class_interface_call_interfaces.insert(interface.to_string());
+                    self.class_interface_call_interfaces.insert(dyn_table_identity(self.types, &[*interface]));
                 }
                 let layout = layout
                     .iter()
@@ -3579,7 +3594,7 @@ impl Emitter<'_> {
                         ret: slot.ret,
                     }))
                     .collect();
-                self.register_interface_layout(dyn_table_identity(interfaces), layout);
+                self.register_interface_layout(dyn_table_identity(self.types, interfaces), layout);
             }
         }
     }
@@ -3628,7 +3643,7 @@ impl Emitter<'_> {
                         } => {
                             self.register_interface_adapter(
                                 *concrete,
-                                dyn_table_identity(interfaces),
+                                dyn_table_identity(self.types, interfaces),
                                 layout
                                     .iter()
                                     .map(|slot| slot.as_ref().map(|slot| InterfaceMethod {
@@ -3661,7 +3676,7 @@ impl Emitter<'_> {
                                 },
                             ..
                         } => {
-                            let identity = interface.to_string();
+                            let identity = dyn_table_identity(self.types, &[*interface]);
                             self.register_interface_adapter(
                                 *concrete,
                                 identity.clone(),
@@ -3707,7 +3722,7 @@ impl Emitter<'_> {
                 {
                     self.register_interface_adapter(
                         *concrete,
-                        dyn_table_identity(interfaces),
+                        dyn_table_identity(self.types, interfaces),
                         layout
                             .iter()
                             .map(|slot| {
@@ -3743,7 +3758,7 @@ impl Emitter<'_> {
     /// `slot`; empty when any of them has no function in that slot.
     fn interface_implementers(&self, interface: &str, slot: usize) -> Vec<(String, String)> {
         let mut known = Vec::new();
-        for (id, def) in self.types.runtime_classes() {
+        for (id, _) in self.types.runtime_classes() {
             let Some((_, concrete)) = self.class_itable_entries(id).into_iter().find(|(name, _)| name == interface)
             else {
                 continue;
@@ -3757,7 +3772,7 @@ impl Emitter<'_> {
                 return Vec::new();
             }
             let table = self.interface_adapter_table(concrete, interface);
-            known.push((ember_branding::type_info(&def.name.to_string()), format!("{table}_slot{slot}")));
+            known.push((self.class_type_info(id), format!("{table}_slot{slot}")));
         }
         known
     }
@@ -3814,7 +3829,7 @@ impl Emitter<'_> {
         }
         self.line("/* dynamic interface vtable types */");
         if has_dyn_box {
-            let header = ember_branding::mangled("dyn_vtable_header");
+            let header = ember_branding::generated("dyn_vtable_header");
             self.line(&format!("struct {header} {{"));
             self.line("    void (*drop)(void*);");
             self.line("    size_t size;");
@@ -3846,7 +3861,7 @@ impl Emitter<'_> {
                     }
                 }
             }
-            let table = ember_branding::vtable(&format!("dyn_{interface}"));
+            let table = Self::interface_vtable_type(&interface);
             self.line(&format!("struct {table} {{"));
             self.line("    void (*drop)(void*);");
             self.line("    size_t size;");
@@ -3876,27 +3891,26 @@ impl Emitter<'_> {
         self.line("");
     }
 
-    fn interface_adapter_table(&self, concrete: Ty, interface: &str) -> String {
-        ember_branding::vtable(&format!(
-            "dyn_{interface}_{}",
-            self.interface_adapter_concrete_name(concrete)
-        ))
+    /// The method table adapting `concrete` to the interfaces of `identity` (`dyn_table_identity`):
+    /// `em_vt_dyn_7Observe_for_6Reader`.
+    fn interface_adapter_table(&self, concrete: Ty, identity: &str) -> String {
+        ember_branding::vtable(&format!("dyn{identity}_for_{}", self.interface_adapter_concrete_name(concrete)))
     }
 
+    /// The concrete type an adapter table is for, by its mangled form (`[MNG-1]`).
     fn interface_adapter_concrete_name(&self, concrete: Ty) -> String {
-        if self.types.is_primitive_scalar(concrete) {
-            return self.types.symbol_name(concrete);
-        }
         match self.types.kind(concrete) {
-            TyKind::Class(id) => self.types.class_def(*id).name.to_string(),
-            TyKind::Struct(id) => self.types.struct_def(*id).name.to_string(),
-            TyKind::Enum(id) => self.types.enum_def(*id).name.to_string(),
+            TyKind::Class(id) => self.mangled_type(TypeNode::Class(*id)),
+            TyKind::Struct(id) => self.mangled_type(TypeNode::Struct(*id)),
+            TyKind::Enum(id) => self.mangled_type(TypeNode::Enum(*id)),
+            _ if self.types.is_primitive_scalar(concrete) => self.mangled_type(TypeNode::Structural(concrete)),
             _ => unreachable!("only concrete class, struct, enum, and scalar adapters reach C emission"),
         }
     }
 
-    fn interface_vtable_type(interface: &str) -> String {
-        ember_branding::vtable(&format!("dyn_{interface}"))
+    /// The C struct of the method tables of the interfaces of `identity`: `em_vt_dyn_7Observe`.
+    fn interface_vtable_type(identity: &str) -> String {
+        ember_branding::vtable(&format!("dyn{identity}"))
     }
 
     /// Emit one C adapter per concrete/interface slot. Class receivers need
@@ -3917,10 +3931,7 @@ impl Emitter<'_> {
             let table_type = Self::interface_vtable_type(&adapter.interface);
             let (payload_ty, receiver_ty, class_handle) = match self.types.kind(adapter.concrete) {
                 TyKind::Class(class) => {
-                    let object = ember_branding::object_struct(
-                        &self.types.class_def(*class).name.to_string(),
-                    );
-                    let object = format!("struct {object}");
+                    let object = format!("struct {}", self.object_struct(*class));
                     (object.clone(), format!("{object}*"), true)
                 }
                 _ => {
@@ -4045,7 +4056,7 @@ impl Emitter<'_> {
                                 })
                             })
                             .map(|slot| {
-                                let table = ember_branding::vtable(&self.types.class_def(*class).name.to_string());
+                                let table = self.class_vtable(*class);
                                 format!("(((const struct {table}*)(((const {RT}obj_header*)_0)->ti->vtable))->slot{slot})")
                             })
                     }
@@ -4199,7 +4210,7 @@ impl Emitter<'_> {
         }
         self.line("/* class virtual tables */");
         for (id, slots) in &tables {
-            let name = ember_branding::vtable(&self.types.class_def(*id).name.to_string());
+            let name = self.class_vtable(*id);
             self.line(&format!("struct {name} {{"));
             for (slot, signature) in slots.iter().enumerate() {
                 let Some(signature) = signature else { continue };
@@ -4214,8 +4225,7 @@ impl Emitter<'_> {
         self.line("");
 
         for (id, slots) in &tables {
-            let class_name = self.types.class_def(*id).name.to_string();
-            let table_name = ember_branding::vtable(&class_name);
+            let table_name = self.class_vtable(*id);
             for (slot, implementation) in slots.iter().enumerate() {
                 let Some(implementation) = implementation else { continue };
                 if implementation.is_abstract {
@@ -4268,7 +4278,7 @@ impl Emitter<'_> {
             if !slots.iter().flatten().any(|method| !method.is_abstract) {
                 continue;
             }
-            let table_name = ember_branding::vtable(&self.types.class_def(*id).name.to_string());
+            let table_name = self.class_vtable(*id);
             self.line(&format!("static const struct {table_name} {table_name} = {{"));
             for (slot, implementation) in slots.iter().enumerate() {
                 let Some(implementation) = implementation else { continue };
@@ -4304,7 +4314,7 @@ impl Emitter<'_> {
         }
         self.line("/* class type information */");
         for id in &classes {
-            let name = ember_branding::type_info(&self.types.class_def(*id).name.to_string());
+            let name = self.class_type_info(*id);
             self.line(&format!(
                 "extern const {} {name};",
                 ember_branding::runtime("type_info")
@@ -4320,8 +4330,7 @@ impl Emitter<'_> {
             if tables.is_empty() {
                 continue;
             }
-            let class = self.types.class_def(*id).name.to_string();
-            let entries = class_itable_symbol(&class);
+            let entries = self.class_helper("itables", *id);
             self.line(&format!(
                 "static const {} {entries}[] = {{",
                 ember_branding::runtime("itable_entry")
@@ -4337,8 +4346,8 @@ impl Emitter<'_> {
         }
         for id in classes {
             let def = self.types.class_def(id);
-            let object = ember_branding::object_struct(&def.name.to_string());
-            let info = ember_branding::type_info(&def.name.to_string());
+            let object = self.object_struct(id);
+            let info = self.class_type_info(id);
             // `[EXC-19]` — every access word of the class, its bases' included,
             // for a whole-object access to find through the dynamic class.
             let words: Vec<String> = (0..self.types.class_field_count(id))
@@ -4366,12 +4375,9 @@ impl Emitter<'_> {
             };
             let base = def
                 .base
-                .map(|base| {
-                    let name = self.types.class_def(base).name.to_string();
-                    format!("&{}", ember_branding::type_info(&name))
-                })
+                .map(|base| format!("&{}", self.class_type_info(base)))
                 .unwrap_or_else(|| "NULL".to_string());
-            let identity = reload::class_identity_symbol(&def.name.to_string());
+            let identity = reload::class_identity_symbol(&self.mangled_type(TypeNode::Class(id)));
             if self.reload.is_some() {
                 self.line(&format!("static {RT}rl_identity {identity} = {{ {}, NULL }};", c_string_literal(&info)));
             }
@@ -4404,18 +4410,12 @@ impl Emitter<'_> {
             // that need destruction. Virtual tables are compiler-owned and
             // use the stable runtime type-info pointer boundary.
             if self.class_has_user_drop(id) {
-                self.line(&format!(
-                    "    &{},",
-                    class_drop_adapter_symbol(&def.name.to_string())
-                ));
+                self.line(&format!("    &{},", self.class_helper("drop_adapter", id)));
             } else {
                 self.line("    NULL,");
             }
             if self.class_has_dropping_fields(id) {
-                self.line(&format!(
-                    "    &{},",
-                    class_drop_fields_symbol(&def.name.to_string())
-                ));
+                self.line(&format!("    &{},", self.class_helper("drop_fields", id)));
             } else {
                 self.line("    NULL,");
             }
@@ -4424,7 +4424,7 @@ impl Emitter<'_> {
                 .get(&id)
                 .is_some_and(|slots| slots.iter().flatten().any(|method| !method.is_abstract))
             {
-                let table = ember_branding::vtable(&def.name.to_string());
+                let table = self.class_vtable(id);
                 self.line(&format!("    (const {}*)&{},", ember_branding::runtime("vtable"), table));
             } else {
                 self.line("    NULL,");
@@ -4432,10 +4432,7 @@ impl Emitter<'_> {
             if let Some(table_count) =
                 Some(self.class_itable_entries(id).len()).filter(|count| *count != 0)
             {
-                self.line(&format!(
-                    "    {},",
-                    class_itable_symbol(&def.name.to_string())
-                ));
+                self.line(&format!("    {},", self.class_helper("itables", id)));
                 self.line(&format!("    UINT32_C({table_count}),"));
             } else {
                 self.line("    NULL,");
@@ -4480,9 +4477,8 @@ impl Emitter<'_> {
         let visitor = ember_branding::runtime("debug_edge_visitor");
         self.line("/* runtime ownership edge enumerators */");
         for id in classes {
-            let def = self.types.class_def(id);
-            let object = ember_branding::object_struct(&def.name.to_string());
-            let symbol = class_debug_edges_symbol(&def.name.to_string());
+            let object = self.object_struct(id);
+            let symbol = self.class_helper("debug_edges", id);
             self.line(&format!(
                 "static void {symbol}({header}* raw, {visitor} visitor, void* context) {{"
             ));
@@ -4810,17 +4806,17 @@ impl Emitter<'_> {
 
     fn node_name(&self, node: TypeNode) -> String {
         match node {
-            TypeNode::Struct(id) => self.c_named(&self.types.struct_def(id).name.to_string()),
-            TypeNode::Class(id) => {
-                ember_branding::object_struct(&self.types.class_def(id).name.to_string())
-            }
-            TypeNode::Enum(id) => self.c_named(&self.types.enum_def(id).name.to_string()),
+            TypeNode::Struct(id) => self.c_named(TypeNode::Struct(id)),
+            TypeNode::Class(id) => self.object_struct(id),
+            TypeNode::Enum(id) => self.c_named(TypeNode::Enum(id)),
             TypeNode::Structural(ty) => self.structural_name(ty),
         }
     }
 
-    fn c_named(&self, name: &str) -> String {
-        format!("{}{}", self.type_namespace, c_name(name))
+    /// `[MNG-1]` — a declared struct's or enum's C name: `em_` and its mangled form, in a library's
+    /// own namespace (`[CG-C-11]`).
+    fn c_named(&self, node: TypeNode) -> String {
+        format!("{}{}", self.type_namespace, ember_branding::symbol(&self.mangled_type(node)))
     }
 
     /// The payload of the compiler-known `Box[T]` structural wrapper, by its
@@ -4855,15 +4851,15 @@ impl Emitter<'_> {
     }
 
     fn shared_type_info_symbol(&self, id: StructId) -> String {
-        format!("{}_type_info", self.c_named(&self.types.struct_def(id).name.to_string()))
+        format!("{}_type_info", self.c_named(TypeNode::Struct(id)))
     }
 
     fn shared_debug_edges_symbol(&self, id: StructId) -> String {
-        format!("{}_debug_edges", self.c_named(&self.types.struct_def(id).name.to_string()))
+        format!("{}_debug_edges", self.c_named(TypeNode::Struct(id)))
     }
 
     fn shared_drop_symbol(&self, id: StructId) -> String {
-        format!("{}_drop_payload", self.c_named(&self.types.struct_def(id).name.to_string()))
+        format!("{}_drop_payload", self.c_named(TypeNode::Struct(id)))
     }
 
     /// The counted-owner payload of a compiler-known `Weak[O]` wrapper. Unlike
@@ -5159,7 +5155,7 @@ impl Emitter<'_> {
                 if let Some(inner) = self.box_inner_id(*id)
                     && matches!(self.types.kind(inner), TyKind::Dyn { .. })
                 {
-                    let table = ember_branding::mangled("dyn_vtable_header");
+                    let table = ember_branding::generated("dyn_vtable_header");
                     out.push(format!(
                         "((const struct {table}*){access}.vtable)->drop({access}.data);"
                     ));
@@ -5212,7 +5208,7 @@ impl Emitter<'_> {
                     }
                     // `[SOA-1]` — its elements' fields, then its block.
                     Some("SoA") => {
-                        let name = self.c_named(&def.name.to_string());
+                        let name = self.c_named(TypeNode::Struct(*id));
                         out.push(format!("{name}_drop(&({access}));"));
                         return;
                     }
@@ -5286,8 +5282,7 @@ impl Emitter<'_> {
                 // all* here, so the `Drop` statement lowered to nothing and a
                 // declared destructor never ran.
                 if def.has_drop {
-                    let owner = self.types.symbol_name(ty);
-                    out.push(format!("{}(&{access});", drop_symbol(&owner)));
+                    out.push(format!("{}(&{access});", self.drop_symbol(ty)));
                 }
                 if def.drops_fields {
                     let packed = self.types.layout_attrs(ty).packed;
@@ -5327,8 +5322,7 @@ impl Emitter<'_> {
                 // payload is dropped, and a unit-only enum with a `drop` still
                 // has one to run.
                 if def.has_drop {
-                    let owner = self.types.symbol_name(ty);
-                    out.push(format!("{}(&{access});", drop_symbol(&owner)));
+                    out.push(format!("{}(&{access});", self.drop_symbol(ty)));
                 }
                 if def.is_unit_only() {
                     return;
@@ -6387,7 +6381,7 @@ impl Emitter<'_> {
                 }
             }
         }
-        self.interface_caches = interface_cache_plan(body);
+        self.interface_caches = interface_cache_plan(body, self.types);
         // A 128-bit counter is a runtime struct on MSVC: C's `<` and `++`
         // are for plain integers only.
         let inline_sizes = &self.inline_sizes;
@@ -6499,7 +6493,7 @@ impl Emitter<'_> {
         // `[OPT-1]` — a class object made in the frame: its own C struct, header and all.
         for local in &body.frame_objects {
             if let TyKind::Class(class) = self.types.kind(body.locals[local.0 as usize].ty) {
-                let object = ember_branding::object_struct(&self.types.class_def(*class).name.to_string());
+                let object = self.object_struct(*class);
                 self.line(&format!("    struct {object} _fo{};", local.0));
             }
         }
@@ -7234,7 +7228,7 @@ impl Emitter<'_> {
         };
         if dyn_place {
             let fat = self.place_in(place, body);
-            let header = ember_branding::mangled("dyn_vtable_header");
+            let header = ember_branding::generated("dyn_vtable_header");
             let code = match operation {
                 "begin_read" => DYN_BEGIN_READ,
                 "end_read" => DYN_END_READ,
@@ -7885,7 +7879,7 @@ impl Emitter<'_> {
                     && body.frame_objects.contains(&dest.local)
                 {
                     let class_ty = self.c_type(*arg_ty);
-                    let type_info = ember_branding::type_info(&self.types.class_def(*class_id).name.to_string());
+                    let type_info = self.class_type_info(*class_id);
                     let target = self.place_in(dest, body);
                     self.line(&format!("    {target} = (({class_ty}){RT}obj_new_frame(&_fo{}, &{type_info}));", dest.local.0));
                     self.emit_next(next.0 as usize, index);
@@ -8585,7 +8579,7 @@ impl Emitter<'_> {
                     Some(TyKind::Ref { .. }) => format!("*({receiver})"),
                     _ => receiver.clone(),
                 };
-                let table = ember_branding::vtable(&self.types.class_def(*owner).name.to_string());
+                let table = self.class_vtable(*owner);
                 format!(
                     "(((const struct {table}*)(((const {RT}obj_header*)({object}))->ti->vtable))->slot{slot})({})",
                     rendered.join(", ")
@@ -8593,8 +8587,8 @@ impl Emitter<'_> {
             }
             FuncRef::Interface { interfaces, interface, slot, class_handle, .. } => {
                 let receiver = rendered.first().expect("interface call has a receiver");
-                let table_identity = dyn_table_identity(interfaces);
-                let table = ember_branding::vtable(&format!("dyn_{table_identity}"));
+                let table_identity = dyn_table_identity(self.types, interfaces);
+                let table = Self::interface_vtable_type(&table_identity);
                 let call_args = rendered.iter().skip(1).cloned().collect::<Vec<_>>().join(", ");
                 if *class_handle {
                     // A mutable one-word class-interface receiver reaches this
@@ -8625,7 +8619,7 @@ impl Emitter<'_> {
                     // search stays for any other class (one loaded from
                     // elsewhere, or a reloaded type). The same method runs.
                     let known = if cached.is_none() && interfaces.len() == 1 && self.reload.is_none() {
-                        self.interface_implementers(&interface.to_string(), *slot)
+                        self.interface_implementers(&table_identity, *slot)
                     } else {
                         Vec::new()
                     };
@@ -8639,7 +8633,7 @@ impl Emitter<'_> {
                         format!(
                             "{}(((const {RT}obj_header*)({receiver}))->ti, &{})",
                             ember_branding::runtime(lookup),
-                            interface_id_symbol(&interface.to_string()),
+                            interface_id_symbol(&dyn_table_identity(self.types, &[*interface])),
                         )
                     });
                     let mut call = format!(
@@ -8664,7 +8658,7 @@ impl Emitter<'_> {
             }
             FuncRef::DynBoxNew { concrete, boxed, interfaces, .. } => {
                 let concrete_c = self.c_type(*concrete);
-                let table_identity = dyn_table_identity(interfaces);
+                let table_identity = dyn_table_identity(self.types, interfaces);
                 let table = self.interface_adapter_table(*concrete, &table_identity);
                 let data = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
                     rendered[0].clone()
@@ -8869,7 +8863,7 @@ impl Emitter<'_> {
                     }
                     Builtin::ThreadJoin | Builtin::ScopedJoin => {
                         let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("join takes the handle") };
-                        let name = self.c_named(&self.types.struct_def(id).name.to_string());
+                        let name = self.c_named(TypeNode::Struct(id));
                         return format!("{name}_join(({RT}thread*)({}).thread)", rendered[0]);
                     }
                     // `[SIMD-1]` — through the helpers `emit_simd_helpers` instantiates.
@@ -8963,7 +8957,7 @@ impl Emitter<'_> {
                     // `[SOA-1]`..`[SOA-7]` — through the helpers `emit_soa_helpers` writes.
                     Builtin::SoA { op, soa } => {
                         let TyKind::Struct(id) = *self.types.kind(*soa) else { unreachable!("an SoA is a struct") };
-                        let name = self.c_named(&self.types.struct_def(id).name.to_string());
+                        let name = self.c_named(TypeNode::Struct(id));
                         let r = |i: usize| rendered[i].clone();
                         return match op {
                             ember_mir::SoAOp::WithCapacity => format!("{name}_with_capacity({})", r(0)),
@@ -8998,7 +8992,7 @@ impl Emitter<'_> {
                                 let scope = format!("&(({})->pending)", rendered[0]);
                                 let deps = if *after {
                                     let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("a scope's job is a `ScopedJob`") };
-                                    let record = self.c_named(&self.types.struct_def(id).name.to_string());
+                                    let record = self.c_named(TypeNode::Struct(id));
                                     format!("({0}).ptr, ({0}).len, sizeof({record}), offsetof({record}, id)", rendered[1])
                                 } else {
                                     "NULL, 0, 0, 0".to_string()
@@ -9067,7 +9061,7 @@ impl Emitter<'_> {
                     // environment, or given, for a function.
                     Builtin::ScopeSpawn { closure } => {
                         let TyKind::Struct(id) = *self.types.kind(*arg_ty) else { unreachable!("spawn gives the handle") };
-                        let name = self.c_named(&self.types.struct_def(id).name.to_string());
+                        let name = self.c_named(TypeNode::Struct(id));
                         let callable = match (closure, &args[..]) {
                             (Some(_), [_, Operand::Const(Const::Fn(body_symbol)), env]) => {
                                 let (descriptor, env_ty) = self.closure_values.get(body_symbol).cloned().expect("the scan registered the task");
@@ -9256,9 +9250,7 @@ impl Emitter<'_> {
                     // type information.
                     Builtin::ClassNew { class_id, .. } => {
                         let class_ty = self.c_type(*arg_ty);
-                        let type_info = ember_branding::type_info(
-                            &self.types.class_def(*class_id).name.to_string(),
-                        );
+                        let type_info = self.class_type_info(*class_id);
                         return format!("(({class_ty}){RT}obj_new(&{type_info}))");
                     }
                     // `[DSP-4]` — the runtime walks the object's type-info
@@ -9267,9 +9259,7 @@ impl Emitter<'_> {
                     // it constructs `Some` or the forced result.
                     Builtin::ClassDowncast { target, .. } => {
                         let class_ty = self.c_type(*arg_ty);
-                        let type_info = ember_branding::type_info(
-                            &self.types.class_def(*target).name.to_string(),
-                        );
+                        let type_info = self.class_type_info(*target);
                         return format!(
                             "(({class_ty}){RT}downcast(({RT}obj_header*){}, &{type_info}))",
                             rendered[0]
@@ -10067,7 +10057,7 @@ impl Emitter<'_> {
         self.interface_caches
             .get(&InterfaceCacheKey {
                 local,
-                interface: interface.to_string(),
+                interface: dyn_table_identity(self.types, &[*interface]),
             })
             .cloned()
     }
@@ -10598,7 +10588,7 @@ impl Emitter<'_> {
                     CastKind::FnToC => format!("(({ty}){RT}fn_value_c_entry(&({value}), {}))",
                         self.location(self.statement_span.get())),
                     CastKind::InterfaceUpcast { concrete, interfaces, .. } => {
-                        let table_identity = dyn_table_identity(interfaces);
+                        let table_identity = dyn_table_identity(self.types, interfaces);
                         let table = self.interface_adapter_table(*concrete, &table_identity);
                         let data = if matches!(self.types.kind(*concrete), TyKind::Class(_)) {
                             format!("*({value})")
@@ -10647,7 +10637,7 @@ impl Emitter<'_> {
                 }
                 let name = match kind {
                     AggregateKind::Struct(id) => {
-                        self.c_named(&self.types.struct_def(*id).name.to_string())
+                        self.c_named(TypeNode::Struct(*id))
                     }
                     _ => self.c_type(target),
                 };
@@ -10861,7 +10851,7 @@ impl Emitter<'_> {
             return self.niche_none(&niche);
         }
         let def = self.types.enum_def(id);
-        let name = self.c_named(&def.name.to_string());
+        let name = self.c_named(TypeNode::Enum(id));
         let tag = def.variants[variant].discriminant;
         if self.types.enum_is_bare(id) {
             return format!("(({name}){tag})");
@@ -11100,19 +11090,16 @@ impl Emitter<'_> {
                 if *mutable { format!("{RT}mutspan") } else { format!("{RT}span") }
             }
             TyKind::Opaque(name) => format!("struct {}", name.as_str().rsplit('.').next().unwrap_or(name.as_str())),
-            TyKind::Struct(id) => self.c_named(&self.types.struct_def(*id).name.to_string()),
+            TyKind::Struct(id) => self.c_named(TypeNode::Struct(*id)),
             // Class handles are pointers to the compiler-generated object
             // struct. The name comes from the shared branding helper so a
             // future prefix change cannot create a mismatched type spelling.
-            TyKind::Class(id) => format!(
-                "struct {}*",
-                ember_branding::object_struct(&self.types.class_def(*id).name.to_string())
-            ),
+            TyKind::Class(id) => format!("struct {}*", self.object_struct(*id)),
             // `[OBJ-2]` — the erased class interface remains exactly one
             // object-header pointer. Its dynamic vtable is found through
             // `type_info`, never carried in this value's representation.
             TyKind::ClassInterface(_) => format!("{RT}obj_header*"),
-            TyKind::Enum(id) => self.c_named(&self.types.enum_def(*id).name.to_string()),
+            TyKind::Enum(id) => self.c_named(TypeNode::Enum(*id)),
             // `[COST-3]` — a range type is "not observable": erased to the
             // representation, with the construction site carrying the check.
             // It emits no C type of its own, so `Roughness` and `f32` are the
@@ -11198,7 +11185,7 @@ impl Emitter<'_> {
             .map(|(index, body)| (body.return_ty(), index))
             .collect();
         let tests = self.tests.clone().unwrap_or_default();
-        let entry = [ember_branding::mangled("main"), ember_branding::mangled("main_entry")];
+        let entry = [ember_branding::entry_symbol(), ember_branding::generated("main_entry")];
         let mut live: Vec<bool> = bodies
             .iter()
             .map(|body| {
@@ -11238,7 +11225,7 @@ impl Emitter<'_> {
             let path = self.map.artefact_path(body.span.file);
             let name = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
             // The C entry point is `main`'s frame when the C compiler inlines `main` into it.
-            if entry_runs_main && body.symbol == ember_branding::mangled("main") {
+            if entry_runs_main && body.symbol == ember_branding::entry_symbol() {
                 entries.push(("main".to_string(), name.clone(), path.clone(), line));
             }
             entries.push((body.symbol.clone(), name, path, line));
@@ -11276,7 +11263,7 @@ impl Emitter<'_> {
                 continue;
             }
             let mut callers = vec![body.symbol.clone()];
-            if entry_runs_main && body.symbol == ember_branding::mangled("main") {
+            if entry_runs_main && body.symbol == ember_branding::entry_symbol() {
                 callers.push("main".to_string());
             }
             for block in &body.blocks {
@@ -11357,11 +11344,11 @@ impl Emitter<'_> {
             self.emit_debug_edge_registrations();
         }
         if entry {
-            self.line(&format!("    int status = (int){}();", ember_branding::mangled("main_entry")));
+            self.line(&format!("    int status = (int){}();", ember_branding::generated("main_entry")));
             self.line(&format!("    {RT}rt_shutdown();"));
             self.line("    return status;");
         } else {
-            self.line(&format!("    {}();", ember_branding::mangled("main")));
+            self.line(&format!("    {}();", ember_branding::entry_symbol()));
             self.line(&format!("    {RT}rt_shutdown();"));
             self.line("    return 0;");
         }
@@ -11913,9 +11900,10 @@ impl Emitter<'_> {
     }
 
     fn emit_debug_edge_registrations(&mut self) {
-        for (_, def) in self.types.runtime_classes() {
-            let info = ember_branding::type_info(&def.name.to_string());
-            let edges = class_debug_edges_symbol(&def.name.to_string());
+        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
+        for id in classes {
+            let info = self.class_type_info(id);
+            let edges = self.class_helper("debug_edges", id);
             self.line(&format!("    {RT}debug_register_type_edges(&{info}, &{edges});"));
         }
         for (id, _) in self.types.structs() {
@@ -11941,16 +11929,9 @@ fn plan_types(types: &TypeTable, type_namespace: &str) -> (Vec<TypeNode>, BTreeM
         names: BTreeMap::new(),
         done: BTreeSet::new(),
         active: BTreeSet::new(),
-        taken: types
-            .structs()
-            .map(|(_, d)| format!("{type_namespace}{}", c_name(&d.name.to_string())))
-            .chain(
-                types
-                    .classes()
-                    .map(|(_, d)| ember_branding::object_struct(&d.name.to_string())),
-            )
-            .chain(types.enums().map(|(_, d)| format!("{type_namespace}{}", c_name(&d.name.to_string()))))
-            .collect(),
+        // `[MNG-1]` — a declared type's name has a digit after the prefix, a structural one's a
+        // letter (`em_tup_`), so only the structural ones can meet each other.
+        taken: BTreeSet::new(),
     };
     // Named types first, so the output stays close to declaration order; each
     // pulls in whatever it contains.
@@ -12129,11 +12110,6 @@ fn identifier_from(shown: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
-/// The C name of a declared Ember type. A name from another module carries a
-/// dotted prefix (`math.ops.Point`), which C cannot spell.
-fn c_name(name: &str) -> String {
-    ember_branding::mangled(name)
-}
 
 /// Public C type names must coexist when a host includes two static-library
 /// headers. Encode the exact package bytes so punctuation and Unicode names
@@ -12242,7 +12218,7 @@ fn interface_cache_parameter_root(body: &Body, receiver: &Place) -> Option<usize
 /// only the compiler-created reborrow of that same parameter. Ordinary locals
 /// and projections remain direct lookups until they have an equally explicit
 /// control-flow and invalidation proof.
-fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
+fn interface_cache_plan(body: &Body, types: &TypeTable) -> BTreeMap<InterfaceCacheKey, String> {
     let mut counts = BTreeMap::<InterfaceCacheKey, usize>::new();
     for block in &body.blocks {
         let Terminator::Call {
@@ -12263,7 +12239,7 @@ fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
         *counts
             .entry(InterfaceCacheKey {
                 local,
-                interface: interface.to_string(),
+                interface: dyn_table_identity(types, &[*interface]),
             })
             .or_default() += 1;
     }
@@ -12271,10 +12247,7 @@ fn interface_cache_plan(body: &Body) -> BTreeMap<InterfaceCacheKey, String> {
         .into_iter()
         .filter(|(_, count)| *count > 1)
         .map(|(key, _)| {
-            let name = ember_branding::mangled(&format!(
-                "itable_cache_{}_{}",
-                key.local, key.interface
-            ));
+            let name = format!("{}_{}{}", ember_branding::generated("itable_cache"), key.local, key.interface);
             (key, name)
         })
         .collect()
@@ -13255,12 +13228,12 @@ fn hir_spec_is_more_than_a_conversion(spec: &ember_mir::FormatSpec) -> bool {
 
 /// `[TYP-39]` — the `index`th generated `Display` function.
 fn fmt_fn_symbol(index: usize) -> String {
-    ember_branding::mangled(&format!("fmt_{index}"))
+    ember_branding::generated(&format!("fmt_{index}"))
 }
 
 /// D-187 — the `index`th generated equality function.
 fn eq_fn_symbol(index: usize) -> String {
-    ember_branding::mangled(&format!("eq_{index}"))
+    ember_branding::generated(&format!("eq_{index}"))
 }
 
 /// `parts` joined with `&&`; true when there are none.
@@ -13521,11 +13494,11 @@ fn payload_zero_name(c_type: &str) -> String {
 }
 
 fn retain_glue_symbol(index: usize) -> String {
-    ember_branding::mangled(&format!("retain_glue_{index}"))
+    ember_branding::generated(&format!("retain_glue_{index}"))
 }
 
 fn drop_glue_symbol(index: usize) -> String {
-    ember_branding::mangled(&format!("drop_glue_{index}"))
+    ember_branding::generated(&format!("drop_glue_{index}"))
 }
 
 /// The `ember_ck_*` stem for an operator.
@@ -13646,7 +13619,7 @@ mod string_descriptor_view_parts_tests {
         let span = ember_span::Span::DUMMY;
         Body {
             name: "view_parts_test".into(),
-            symbol: ember_branding::mangled("view_parts_test"),
+            symbol: ember_branding::item_symbol("view_parts_test"),
             is_unsafe: false,
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
@@ -13777,6 +13750,7 @@ mod string_descriptor_view_parts_tests {
             rl_frame_active: false,
             lazy_statics: BTreeMap::new(),
             reload_bodies: Vec::new(),
+            mangled_types: std::cell::RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -14130,5 +14104,6 @@ static void ember_ct_print_128(uint64_t lo, uint64_t hi, int is_signed) {
 
 /// `[CT-5]` — the C name of a constant static's data.
 fn constant_static_symbol(name: &str) -> String {
-    format!("{}cs_{}", ember_branding::mangle_prefix(), ember_branding::c_identifier(&name.replace(':', "_")))
+    // `[MNG-1]` — a static is an item: its symbol is its path's.
+    ember_branding::item_symbol(&ember_types::item_path(name))
 }

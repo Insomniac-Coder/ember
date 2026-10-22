@@ -212,7 +212,7 @@ fn copyable(body: &Body, types: &TypeTable) -> bool {
             matches!(types.kind(decl.ty), TyKind::ClassInterface(_) | TyKind::Dyn { .. })
                 || matches!(types.kind(decl.ty), TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::ClassInterface(_) | TyKind::Dyn { .. }))
         })
-        && body.symbol != ember_branding::mangled("main")
+        && body.symbol != ember_branding::entry_symbol()
         // Dynamic access checks stay with their function: each is reported
         // under it (`[EFF-10]`), and its interval is the call's.
         && !body.blocks.iter().any(|block| {

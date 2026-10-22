@@ -1167,7 +1167,7 @@ impl SiteBuilder<'_> {
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(id);
                 if def.has_drop {
-                    self.push_drop_body(&self.types.symbol_name(ty), &mut callees);
+                    self.push_drop_body(&self.types.method_symbol(ty, None, "drop", None), &mut callees);
                 }
                 parts.extend(def.fields.iter().map(|field| field.ty));
                 if let Some((_, args)) = &def.origin {
@@ -1177,7 +1177,7 @@ impl SiteBuilder<'_> {
             TyKind::Enum(id) => {
                 let def = self.types.enum_def(id);
                 if def.has_drop {
-                    self.push_drop_body(&self.types.symbol_name(ty), &mut callees);
+                    self.push_drop_body(&self.types.method_symbol(ty, None, "drop", None), &mut callees);
                 }
                 parts.extend(def.variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)));
             }
@@ -1196,7 +1196,7 @@ impl SiteBuilder<'_> {
                     for link in chain {
                         let link_def = self.types.class_def(*link);
                         if link_def.has_drop {
-                            let symbol = ember_branding::drop_function(&link_def.name.to_string());
+                            let symbol = self.types.class_method_symbol(*link, "drop");
                             if let Some(&callee) = self.index.get(symbol.as_str()) {
                                 callees.push(callee);
                             }
@@ -1223,9 +1223,9 @@ impl SiteBuilder<'_> {
         (effects, callees)
     }
 
-    fn push_drop_body(&self, owner: &str, callees: &mut Vec<usize>) {
-        let symbol = ember_branding::drop_function(owner);
-        if let Some(&callee) = self.index.get(symbol.as_str()) {
+    /// `[OWN-2]` — the body of a type's own `drop`, by its symbol.
+    fn push_drop_body(&self, symbol: &str, callees: &mut Vec<usize>) {
+        if let Some(&callee) = self.index.get(symbol) {
             callees.push(callee);
         }
     }

@@ -413,10 +413,10 @@ pub fn remove_never_firing_checks_all(bodies: &mut [Body], types: &TypeTable) ->
 /// function value, an interface table, a static's initialiser, or as a
 /// written `Debug` formatting a value runs (ADR-186).
 fn program_bodies(bodies: &[Body], types: &TypeTable) -> Vec<bool> {
-    let std_prefix = ember_branding::mangled("std.");
     let index: std::collections::HashMap<&str, usize> =
         bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
-    let mut runs: Vec<bool> = bodies.iter().map(|body| !body.symbol.starts_with(&std_prefix)).collect();
+    let mut runs: Vec<bool> =
+        bodies.iter().map(|body| !ember_branding::symbol_path_starts_with(&body.symbol, &[ember_branding::STD_PACKAGE])).collect();
     let mut work: Vec<usize> = (0..bodies.len()).filter(|&at| runs[at]).collect();
     fn function(operand: &Operand) -> Option<&str> {
         match operand {

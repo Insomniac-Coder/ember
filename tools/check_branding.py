@@ -73,7 +73,9 @@ LINE_COMMENT = re.compile(r"^\s*(//|/\*|\*|#)")
 
 VIOLATIONS = [
     (re.compile(r"\bember_[a-z]"), "the runtime symbol prefix", "ember_branding::runtime(…) or {RT}"),
-    (re.compile(r"\bem_[a-zA-Z]"), "the mangled prefix", "ember_branding::mangled(…)"),
+    # `[MNG-1]` — an item's symbol has a digit after the prefix (`em_3lib3m_x1f`), a name the
+    # compiler makes for itself a letter (`em_closure3`).
+    (re.compile(r"\bem_\w"), "the mangled prefix", "ember_branding::item_symbol(…) or ember_branding::generated(…)"),
     (re.compile(r"\bember\.toml\b"), "the manifest name", "ember_branding::MANIFEST"),
     (re.compile(r"\.embind\b"), "the binding-cache extension", "ember_branding::BINDING_EXT"),
     (re.compile(r"\.em\b(?!bind)"), "the source extension", "ember_branding::SOURCE_EXT"),
