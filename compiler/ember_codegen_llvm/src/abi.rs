@@ -131,6 +131,11 @@ pub enum Ext {
     None,
     Zero,
     Sign,
+    /// `[CG-LL-3]` — a pointer the type system proves non-null (a reference).
+    NonNull,
+    /// `[CG-LL-3]`, `[SIMD-3]` — a view's elements a derived fact proves apart from every other
+    /// pointer the function reaches them by (the C backend's `restrict`).
+    NoAlias,
 }
 
 impl Ext {
@@ -139,6 +144,8 @@ impl Ext {
             Ext::None => "",
             Ext::Zero => " zeroext",
             Ext::Sign => " signext",
+            Ext::NonNull => " nonnull",
+            Ext::NoAlias => " noalias",
         }
     }
 }

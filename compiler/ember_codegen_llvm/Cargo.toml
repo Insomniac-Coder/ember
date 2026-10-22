@@ -11,6 +11,8 @@ ember_span.workspace = true
 ember_types.workspace = true
 ember_mir.workspace = true
 ember_hir.workspace = true
+# `[CG-C-3]`'s choice of the bodies inlined (`inline_header_symbols`): one rule for both backends.
+ember_codegen_c.workspace = true
 
 [lints]
 workspace = true

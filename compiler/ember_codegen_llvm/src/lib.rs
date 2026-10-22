@@ -65,6 +65,9 @@ pub struct Options<'a> {
     /// The triple Clang compiles the module for (`clang -print-effective-triple`), so it has none
     /// to override; `None` leaves it out.
     pub triple: Option<String>,
+    /// `[TST-3]` — a test binary's tests, by symbol, in the runner's order: its entry runs the one
+    /// its argument numbers.
+    pub tests: Option<Vec<String>>,
 }
 
 pub struct Output {
@@ -123,6 +126,11 @@ pub(crate) struct Module<'a> {
     pub clone_fns: HashMap<ember_types::Ty, (String, bool)>,
     /// `[CG-LL-3]` — the debug information.
     pub debug: debug::Debug,
+    /// `[CG-C-3]` — the bodies the C backend makes `static inline` (`inlinehint` here), with
+    /// whether it forces them (`alwaysinline`): the same bodies inline whichever backend builds.
+    pub inline_bodies: BTreeMap<String, bool>,
+    /// `[FFI-21]` — the lambdas C calls back through a trampoline, with what C passes.
+    pub callback_closures: BTreeSet<String>,
 }
 
 impl<'a> Module<'a> {
@@ -215,7 +223,13 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
                 (body.return_ty() == owner).then(|| (owner, (body.symbol.clone(), by_address)))
             })
             .collect(),
-        debug: debug::Debug::new(map, options.target, options.module_name, options.profile != Profile::Debug),
+        debug: debug::Debug::new(map, options.target, options.module_name, options.profile != Profile::Debug, options.profile == Profile::Debug),
+        inline_bodies: ember_codegen_c::inline_header_symbols(bodies, mir.types()),
+        callback_closures: bodies
+            .iter()
+            .filter_map(|body| body.ffi_counted.as_ref())
+            .flat_map(|counted| counted.callbacks.iter().filter_map(|callback| callback.closure.clone()))
+            .collect(),
     };
     module.dispatch = dispatch::Dispatch::collect(&module, bodies);
     module.callables = closures::Callables::collect(&module, bodies);
@@ -234,8 +248,10 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         }
         func::emit_body(&mut module, body)?;
     }
-    if options.has_main {
-        func::emit_entry(&mut module, bodies, options)?;
+    if let Some(tests) = &options.tests {
+        func::emit_entry(&mut module, bodies, options, Some(tests))?;
+    } else if options.has_main {
+        func::emit_entry(&mut module, bodies, options, None)?;
     }
     glue::emit_pending(&mut module)?;
     // `[FFI-26]` — each export table: a constant of its struct holding each field's function, under

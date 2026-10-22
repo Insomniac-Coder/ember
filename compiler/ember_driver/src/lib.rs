@@ -5522,6 +5522,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             input,
             manifest: manifest.as_deref(),
             modules: &modules,
+            tests: &tests,
         };
         return llvm::build(request, options, &sink);
     }

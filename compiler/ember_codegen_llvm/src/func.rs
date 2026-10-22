@@ -77,7 +77,34 @@ fn signature(m: &Module<'_>, ret: Ty, params: impl Iterator<Item = Ty>) -> Signa
 
 pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     let values = ffi_value_params(m, body);
-    signature(m, body.return_ty(), body.args().enumerate().map(|(index, (_, decl))| passed_ty(m, &values, index, decl.ty)))
+    let passed: Vec<Ty> = body.args().enumerate().map(|(index, (_, decl))| passed_ty(m, &values, index, decl.ty)).collect();
+    let mut sig = signature(m, body.return_ty(), passed.iter().copied());
+    // `[CG-LL-3]` — the facts the types and the borrow checker give, derived, never assumed
+    // (`[SIMD-3]`): a reference is never null; a list kernel's views (`restrict_views`, the C
+    // backend's `restrict` parameters) are each their elements' pointer, apart from every other,
+    // and their length. Such a kernel is internal: its parameters are this backend's own.
+    // An export's caller is foreign code, which the type system does not bind: no fact there; nor
+    // in a function C may call through its value's C entry (`[FN-6b]`).
+    let given_to_c = m.callables.natives.get(&body.symbol).is_some_and(|ty| m.callables.given_to_c.contains(ty))
+        || m.callback_closures.contains(&body.symbol);
+    let internal = body.abi.is_none() && !body.is_extern_declaration && !given_to_c;
+    for (pass, ty) in sig.params.iter_mut().zip(&passed) {
+        match (pass, m.ty.kind(*ty)) {
+            (Pass::Direct(parts), TyKind::Ref { inner, .. })
+                if internal && parts.len() == 1 && parts[0].ty == PartTy::Ptr && !m.ty.is_zst(*inner) =>
+            {
+                parts[0].ext = abi::Ext::NonNull;
+            }
+            (pass, TyKind::Span { .. }) if body.restrict_views && body.abi.is_none() => {
+                *pass = Pass::Direct(vec![
+                    Part { offset: 0, ty: PartTy::Ptr, ext: abi::Ext::NoAlias },
+                    Part { offset: 8, ty: PartTy::I(64), ext: abi::Ext::None },
+                ]);
+            }
+            _ => {}
+        }
+    }
+    sig
 }
 
 /// `[FFI-10]` — which parameters an exported function takes by value though its body borrows
@@ -174,8 +201,10 @@ pub(crate) fn ir_params(sig: &Signature, named: bool) -> Vec<String> {
         }
         index += 1;
     };
+    // The result's slot is a fresh one at every call (`lowered_call`), as C's ABI has it: nothing
+    // else reaches it.
     if let Return::Sret { size, align } = sig.ret {
-        name(&mut out, format!("ptr sret([{size} x i8]) align {align}"));
+        name(&mut out, format!("ptr noalias sret([{size} x i8]) align {align}"));
     }
     for pass in &sig.params {
         match pass {
@@ -226,13 +255,60 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
         return unsupported(format!("the calling convention `{}`", body.abi.as_deref().unwrap_or_default()));
     }
     define_body(m, body, |cx| {
-        for (index, block) in body.blocks.iter().enumerate() {
+        for index in block_order(body) {
+            let block = &body.blocks[index];
             cx.start(&format!("bb{index}"));
             cx.stmts(&block.stmts)?;
             cx.terminator(&block.terminator, block.terminator_span)?;
         }
         Ok(())
     })
+}
+
+/// The blocks in reverse postorder from the entry, then any no path reaches: a loop's body before
+/// the step that ends its turn and the code after it. At `-O0` the machine code keeps this order,
+/// so a line's first code is where its statement starts (a debugger's breakpoint on the line stops
+/// before it runs, `[TST-5]`), and a forward branch is the common case.
+fn block_order(body: &Body) -> Vec<usize> {
+    let successors = |index: usize| -> Vec<usize> {
+        match &body.blocks[index].terminator {
+            Terminator::Goto(next) => vec![next.0 as usize],
+            Terminator::SwitchInt { targets, otherwise, .. } => {
+                targets.iter().map(|(_, target)| target.0 as usize).chain(std::iter::once(otherwise.0 as usize)).collect()
+            }
+            Terminator::Call { next, .. } | Terminator::Assert { next, .. } => vec![next.0 as usize],
+            Terminator::Return | Terminator::Unreachable => Vec::new(),
+        }
+    };
+    let count = body.blocks.len();
+    let mut seen = vec![false; count];
+    let mut post = Vec::with_capacity(count);
+    // An explicit stack of (block, its successors not yet visited).
+    let mut stack: Vec<(usize, Vec<usize>)> = Vec::new();
+    if count > 0 {
+        seen[0] = true;
+        let mut next = successors(0);
+        next.reverse();
+        stack.push((0, next));
+    }
+    while let Some((block, pending)) = stack.last_mut() {
+        match pending.pop() {
+            Some(successor) if successor < count && !seen[successor] => {
+                seen[successor] = true;
+                let mut next = successors(successor);
+                next.reverse();
+                stack.push((successor, next));
+            }
+            Some(_) => {}
+            None => {
+                post.push(*block);
+                stack.pop();
+            }
+        }
+    }
+    post.reverse();
+    post.extend((0..count).filter(|index| !seen[*index]));
+    post
 }
 
 /// The function `body` names, its frame laid out and its code what `build` writes from `bb0`.
@@ -258,12 +334,17 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
         folded,
     };
     cx.frame()?;
+    cx.declare_locals(subprogram, line);
     build(&mut cx)?;
     let mut attrs = fn_attrs(cx.m).to_string();
-    if body.inline.always {
-        attrs.push_str(" alwaysinline");
-    } else if body.inline.never {
-        attrs.push_str(" noinline");
+    // `[CG-C-3]`, `[CG-C-3a]` — the C backend's choice: `@inline` and the standard accessors
+    // forced, small bodies hinted, `@noinline` never.
+    match cx.m.inline_bodies.get(&body.symbol) {
+        _ if body.inline.never => attrs.push_str(" noinline"),
+        Some(true) => attrs.push_str(" alwaysinline"),
+        Some(false) => attrs.push_str(" inlinehint"),
+        None if body.inline.always => attrs.push_str(" alwaysinline"),
+        None => {}
     }
     if body.inline.cold {
         attrs.push_str(" cold");
@@ -460,6 +541,28 @@ impl<'m, 'a> FnCx<'m, 'a> {
     pub(crate) fn tmp(&mut self) -> String {
         self.next += 1;
         format!("%t{}", self.next)
+    }
+
+    /// `[TST-5]`, `[CG-LL-3]` — in the `debug` profile, each parameter and named local the debugger
+    /// shows, by its Ember name and type, at its slot.
+    fn declare_locals(&mut self, scope: usize, line: u32) {
+        if !self.m.debug.full {
+            return;
+        }
+        let body = self.mir();
+        let by_value = ffi_value_params(self.m, body);
+        let at = self.m.debug.location(line, 0, scope);
+        for (index, decl) in body.locals.iter().enumerate() {
+            let arg = (index >= 1 && index <= body.arg_count).then_some(index);
+            let named = matches!(decl.kind, ember_mir::LocalKind::User | ember_mir::LocalKind::Arg);
+            let (Some(name), Some(slot)) = (decl.name.as_deref(), self.addr[index].clone()) else { continue };
+            if !named || self.m.ty.is_zst(decl.ty) || arg.is_some_and(|arg| by_value.get(arg - 1) == Some(&true)) {
+                continue;
+            }
+            let ty = self.m.debug.describe(&self.m.ty, decl.ty);
+            let variable = self.m.debug.variable(self.m.map, name, arg, scope, decl.span, ty);
+            let _ = writeln!(self.prologue, "  #dbg_declare(ptr {slot}, !{variable}, !DIExpression(), !{at})");
+        }
     }
 
     /// The result's slot, when it has bytes.
@@ -2764,7 +2867,7 @@ pub(crate) fn float_literal(value: f64, sc: Sc) -> String {
 
 /// `[FN-8]` — the C entry point: the runtime initialised, Ember's `main` called (through the
 /// checker's `main_entry` when it takes `args` or returns a status), the runtime shut down.
-pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<'_>) -> Result<()> {
+pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<'_>, tests: Option<&[String]>) -> Result<()> {
     let entry_symbol = ember_branding::entry_symbol();
     let main_entry = ember_branding::generated("main_entry");
     let (allocate, deallocate) = ember_branding::global_allocator_glue();
@@ -2773,12 +2876,14 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     }
     let entry = bodies.iter().any(|body| body.symbol == main_entry);
     let called = if entry { main_entry.clone() } else { entry_symbol.clone() };
-    let Some(called_body) = m.bodies.get(called.as_str()).copied() else {
+    let called_body = m.bodies.get(called.as_str()).copied();
+    if tests.is_none() && called_body.is_none() {
         return unsupported("a program without `main`");
-    };
+    }
     // The C `main` is a frame of the backtrace too, at the Ember `main`'s declaration.
     let optimized = m.profile != Profile::Debug;
-    let (subprogram, line) = m.debug.subprogram(m.map, "main", called_body.span, optimized);
+    let declared = called_body.map_or(ember_span::Span::DUMMY, |body| body.span);
+    let (subprogram, line) = m.debug.subprogram(m.map, "main", declared, optimized);
     let mut cx = FnCx {
         m,
         body: None,
@@ -2794,6 +2899,12 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         locations: HashMap::new(),
         folded: HashMap::new(),
     };
+    // `[TST-3]` — a test binary runs the test its one argument numbers (`2` for anything else),
+    // its crash a status rather than Windows' error window (D-252).
+    let which = match tests {
+        Some(tests) => Some(test_argument(&mut cx, tests.len())),
+        None => None,
+    };
     // `ember_rt_config_default()`: its size, and nothing else set.
     let cfg = cx.alloca(48, 8);
     cx.zero(&cfg, 8, 48);
@@ -2803,7 +2914,14 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         // `EMBER_RT_DEBUG_OBJECTS`
         cx.emit(format!("store i32 1, ptr {flags}, align 8"));
     }
-    cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "%argc".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
+    if which.is_some() {
+        // A test's panic is marked for the runner.
+        let on_panic = cx.gep(&cfg, 32);
+        cx.emit(format!("store ptr @ember_ll_test_on_panic, ptr {on_panic}, align 8"));
+        cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "1".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
+    } else {
+        cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "%argc".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
+    }
     cx.call_rt("rt_init_v3", vec![Val::Imm(Sc::Ptr, cfg.clone()), Val::Imm(Sc::I(32), "3".to_string())], None);
     let (named, sites) = if options.profile != Profile::Release { frame_tables(cx.m, bodies) } else { (0, 0) };
     if named > 0 {
@@ -2820,6 +2938,26 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     if options.leak_check {
         cx.register_edges()?;
     }
+    if let (Some(tests), Some(which)) = (tests, which) {
+        let done = cx.label();
+        let labels: Vec<String> = tests.iter().map(|_| cx.label()).collect();
+        let cases: Vec<String> = labels.iter().enumerate().map(|(index, label)| format!("i64 {index}, label %{label}")).collect();
+        cx.emit(format!("switch i64 {which}, label %{done} [ {} ]", cases.join(" ")));
+        for (test, label) in tests.iter().zip(&labels) {
+            cx.start(label);
+            cx.call_body(test, Vec::new(), None)?;
+            cx.emit(format!("br label %{done}"));
+        }
+        cx.start(&done);
+        cx.emit("call void @ember_ll_test_end()");
+        cx.call_rt("rt_shutdown", Vec::new(), None);
+        cx.emit("ret i32 0");
+        let attrs = fn_attrs(cx.m);
+        let text = format!("define i32 @main(i32 %argc, ptr %argv) {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", cx.allocas, cx.out);
+        cx.m.fns.push_str(&text);
+        return Ok(());
+    }
+    let called_body = called_body.expect("checked above");
     cx.declare_body(&called)?;
     let sig = body_signature(cx.m, called_body);
     let ret_ty = called_body.return_ty();
@@ -2844,6 +2982,64 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     );
     cx.m.fns.push_str(&text);
     Ok(())
+}
+
+/// `[TST-3]` — a test binary's argument: the number of the test it runs, in decimal, below
+/// `count`; anything else ends the binary with status `2`. The C its runner needs (the error mode,
+/// the markers on standard error) is the module's shim's.
+fn test_argument(cx: &mut FnCx<'_, '_>, count: usize) -> String {
+    let panicked = format!("{}-test: panicked", ember_branding::SYMBOL_PREFIX);
+    let returned = format!("{}-test: returned", ember_branding::SYMBOL_PREFIX);
+    let shim = format!(
+        "\n/* [TST-3] what a test binary's runner reads. */\n\
+         #if defined(_WIN32)\n__declspec(dllimport) unsigned int __stdcall SetErrorMode(unsigned int mode);\n#endif\n\
+         void ember_ll_test_quiet(void) {{\n#if defined(_WIN32)\n    SetErrorMode(0x0001u | 0x0002u);\n#endif\n}}\n\
+         void ember_ll_test_on_panic(const char* msg, size_t len) {{ (void)msg; (void)len; fputs(\"{panicked}\\n\", stderr); }}\n\
+         void ember_ll_test_end(void) {{ fflush(stdout); fputs(\"{returned}\\n\", stderr); }}\n"
+    );
+    cx.m.shim_functions.insert("ember_ll_test".to_string(), shim);
+    cx.m.declare("ember_ll_test_quiet", || "declare void @ember_ll_test_quiet()".to_string());
+    cx.m.declare("ember_ll_test_on_panic", || "declare void @ember_ll_test_on_panic(ptr, i64)".to_string());
+    cx.m.declare("ember_ll_test_end", || "declare void @ember_ll_test_end()".to_string());
+    cx.emit("call void @ember_ll_test_quiet()");
+    let (bad, read, head, step, end) = (cx.label(), cx.label(), cx.label(), cx.label(), cx.label());
+    let few = cx.value("icmp sle i32 %argc, 1");
+    cx.emit(format!("br i1 {few}, label %{bad}, label %{read}"));
+    cx.start(&read);
+    let at = cx.value("getelementptr ptr, ptr %argv, i64 1");
+    let text = cx.value(format!("load ptr, ptr {at}, align 8"));
+    let first = cx.value(format!("load i8, ptr {text}, align 1"));
+    let empty = cx.value(format!("icmp eq i8 {first}, 0"));
+    let entry = cx.block_label();
+    cx.emit(format!("br i1 {empty}, label %{bad}, label %{head}"));
+    cx.start(&head);
+    let (which, digit, next_which, next_digit) = (cx.tmp(), cx.tmp(), cx.tmp(), cx.tmp());
+    cx.emit(format!("{which} = phi i64 [ 0, %{entry} ], [ {next_which}, %{step} ]"));
+    cx.emit(format!("{digit} = phi ptr [ {text}, %{entry} ], [ {next_digit}, %{step} ]"));
+    let c = cx.value(format!("load i8, ptr {digit}, align 1"));
+    let low = cx.value(format!("icmp uge i8 {c}, 48"));
+    let high = cx.value(format!("icmp ule i8 {c}, 57"));
+    let small = cx.value(format!("icmp slt i64 {which}, 1000000000"));
+    let is_digit = cx.value(format!("and i1 {low}, {high}"));
+    let goes_on = cx.value(format!("and i1 {is_digit}, {small}"));
+    cx.emit(format!("br i1 {goes_on}, label %{step}, label %{end}"));
+    cx.start(&step);
+    let wide = cx.value(format!("zext i8 {c} to i64"));
+    let value = cx.value(format!("sub i64 {wide}, 48"));
+    let tens = cx.value(format!("mul i64 {which}, 10"));
+    cx.emit(format!("{next_which} = add i64 {tens}, {value}"));
+    cx.emit(format!("{next_digit} = getelementptr i8, ptr {digit}, i64 1"));
+    cx.emit(format!("br label %{head}"));
+    cx.start(&end);
+    let finished = cx.value(format!("icmp eq i8 {c}, 0"));
+    let known = cx.value(format!("icmp slt i64 {which}, {count}"));
+    let good = cx.value(format!("and i1 {finished}, {known}"));
+    let run = cx.label();
+    cx.emit(format!("br i1 {good}, label %{run}, label %{bad}"));
+    cx.start(&bad);
+    cx.emit("ret i32 2");
+    cx.start(&run);
+    which
 }
 
 /// `[RT-4]`, `[CG-C-10]` — outside `release`, each function's C symbol with its Ember path and

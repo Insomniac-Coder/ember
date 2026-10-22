@@ -56,6 +56,8 @@ pub(crate) struct Build<'a> {
     pub manifest: Option<&'a str>,
     /// Each module, an `import c`'s with its shim and C sources.
     pub modules: &'a [ember_typeck::LoadedModule],
+    /// `[TST-3]` — for `ember test`, the package's tests in the runner's order.
+    pub tests: &'a [&'a ember_hir::TestFn],
 }
 
 fn profile(profile: Profile) -> ember_codegen_llvm::Profile {
@@ -74,9 +76,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
     if request.reload {
         return Err("the LLVM backend does not build a reloadable program yet".to_string());
     }
-    if request.command == "test" {
-        return Err("the LLVM backend does not build tests yet (`ember test`)".to_string());
-    }
+    let testing = request.command == "test";
     match options.emit.as_deref() {
         None | Some("llvm-ir") => {}
         Some(other) => return Err(format!("`--emit {other}` is the C backend's; the LLVM backend emits `llvm-ir`")),
@@ -88,6 +88,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         profile: profile(options.profile),
         target: ember_codegen_llvm::Target::host(),
         triple: None,
+        tests: testing.then(|| request.tests.iter().map(|test| test.symbol.clone()).collect()),
     };
     let output = ember_codegen_llvm::emit(request.mir, request.map, &emit_options).map_err(|error| error.to_string())?;
     super::mark("LLVM IR generation", "all modules");
@@ -101,7 +102,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         }
         return Ok(super::finish(sink, request.map, options));
     }
-    if !request.has_main {
+    if !request.has_main && !testing {
         return Err("this file declares no `main`, so there is nothing to run".to_string());
     }
     let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
@@ -116,6 +117,8 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         sources.push(shim_path);
     }
     let toolchain = clang(options)?;
+    // `[BLD-6]` — the build record: the IR goes through the same Clang link, ThinLTO's included.
+    super::write_build_record(&layout, request.module_name, options.profile, &toolchain, ember_build::Link::Here, false)?;
     let runtime = super::runtime_dir()?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
@@ -173,6 +176,9 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
     .map_err(|e| e.to_string())?;
     super::mark("LLVM compile and link", "all modules");
     super::report(sink, request.map, options);
+    if testing {
+        return super::test_runner::run_tests(&exe, request.tests, options, None, request.map);
+    }
     if request.command == "run" {
         return super::run_program(&exe, options);
     }
