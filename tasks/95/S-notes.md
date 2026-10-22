@@ -10,7 +10,8 @@
   `tests/firstweek/marks.json` records each mark; `tests/firstweek/helped/NN_*.em` is each program with
   the helps applied round by round until it checks clean (all 30 do). The per-round log of every help
   applied, and whether the compiler emitted it, is in the section "Chains" below.
-* **Phase C**: `compiler/ember_driver/tests/firstweek.rs` and `tests/firstweek/README.md` (see the end).
+* **Phase C**: `compiler/ember_driver/tests/firstweek.rs` and `tests/firstweek/README.md` (section
+  "Phase C" below).
 
 ## The marks
 
@@ -72,7 +73,7 @@ gaps G3–G6 below.
 What a newcomer gets right first time, by this corpus: classes with `init`, `open class`/`virtual`/
 `override`, `let` and `pub(read)` fields, `Weak` parent links with `upgrade()`, `Option` class links
 (linked list, tree), enums with payloads and `match` expressions, `Result` with `?`, `gen fn`
-generators and generator expressions, comprehensions, `with`-free code, f-strings with format specs,
+generators and generator expressions, comprehensions, f-strings with format specs,
 `@derive(Copy)`, `std.math.Vec3`, keyword construction of structs, chained comparisons.
 
 ## Release-blocking findings
@@ -380,6 +381,28 @@ specification accepts it. "R2" is the second `ember check`.
   writes through the reference; B4 above) → `clone()` both. Clean.
 * **30** R1 NONE:E0101 `', '`. R2 N1[missing] ×3 (with the `Tree` fix-it, D6); NONE str→String ×3;
   N3[missing] `", ".join`. R3 O2(E3012)[emitted] → `clone()`. Clean.
+
+## Phase C — the harness and the published rate
+
+* `compiler/ember_driver/tests/firstweek.rs`, one test, `the_first_week_corpus_keeps_its_marks`
+  (doc comment cites `[TST-8]`, `[TST-9]`, `[TST-10]`): at least 24 programs, one mark each, a `# `
+  first line and no `#$` lines; each original's `ember check --json` errors equal its recorded codes
+  and the first fits its shape (a table of §XVII.6's shapes and codes; `none:`/`gap:` name the code);
+  `helped/` holds exactly the rejected programs and each checks clean; the rate the marks give (0 and 3
+  of 30) equals `tests/firstweek/README.md`'s `Acceptance rate:` line and its history's last row, and a
+  change fails with "the rate … rose/fell from A to B of N", a fall asking for the reason. It prints
+  the number of programs with a release-blocking step (24). The checks run on parallel threads: 2 s.
+* Break tests: a wrong published rate (5 for 3) → "the rate after the helps fell from 5 to 3 of 30";
+  wrong codes and a wrong shape in `marks.json`, and an un-helped `helped/24` → each named.
+* `cargo test --profile ci -p ember_driver --test firstweek`: passes.
+* **For the lead:** with this test in, `python tools/phase_progress.py --check` fails (phase 8 goes
+  69 % → 75 %: `[TST-8]`, `[TST-9]`, `[TST-10]` now have a test); without it the check passes. Run
+  `--write` when merging — and consider listing `TST-9` under `unfinished` in `docs/phase-status.json`,
+  since 24 programs meet a rejection in no catalogue or a compiler gap, which `[TST-9]` says blocks a
+  release (`[DIA-21]` likewise: one row of nineteen is built, D6).
+* Other tools that walk `tests/**/*.em`: `phase_progress.py` and `rule_index.py` read only `#$`
+  lines (the corpus has none); `c_warning_sweep.py` (manual) will sweep the 30 helped copies too;
+  `check_branding.py` passes.
 
 ## Process notes
 
