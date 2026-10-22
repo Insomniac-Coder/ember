@@ -4,7 +4,7 @@
 #$ stdout: 42
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(em_Payload_i32_project__)
+#$ assert-c: contains(em_7Payload7projectG99f65fd6187c945d)
 
 interface Project:
     fn project[T](self, value: T) -> T:

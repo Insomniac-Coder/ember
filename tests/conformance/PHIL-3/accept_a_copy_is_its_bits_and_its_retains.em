@@ -3,7 +3,7 @@
 #$ profiles: debug, development
 #$ stdout: 3 2 2
 #$ drop 2
-#$ assert-c: !contains(em_Pair_clone)
+#$ assert-c: !contains(em_4Pair5clone)
 # `[PHIL-3]` — a non-`Copy` value is copied only when the program says so (`clone`), and a copy
 # of a `Copy` value is its bits, with each class handle in it retained: no other code runs, so the
 # object is dropped once, when the last copy goes.

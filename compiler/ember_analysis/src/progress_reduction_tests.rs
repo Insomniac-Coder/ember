@@ -135,7 +135,7 @@ fn fixture() -> (TypeTable, CommonTypes, Body) {
     ];
     let b = Body {
         name: "semantic_walk".into(),
-        symbol: ember_branding::mangled("semantic_walk"),
+        symbol: ember_branding::item_symbol("semantic_walk"),
         is_unsafe: false,
         abi: None,
         overflow: ember_types::OverflowPolicy::Panic,
@@ -205,7 +205,7 @@ fn general_term_families_not_names_or_xor_recognition() {
     for family in 0..5 {
         let (t, c, mut b) = fixture();
         b.name = format!("walk_{family}");
-        b.symbol = ember_branding::mangled(&format!("walk_{family}"));
+        b.symbol = ember_branding::item_symbol(&format!("walk_{family}"));
         b.blocks[4].stmts[2] = stmt(
             11,
             match family {
@@ -412,7 +412,7 @@ fn preentry_call_write_after_zero_is_not_a_zero_reaching_definition() {
     let (t, c, mut b) = fixture();
     b.blocks[0].terminator = Terminator::Call {
         func: FuncRef::Direct {
-            symbol: ember_branding::mangled("unknown_usize"),
+            symbol: ember_branding::item_symbol("unknown_usize"),
             latebound: false,
         },
         args: vec![],
@@ -471,7 +471,7 @@ fn alias_stale_carry_mixed_sign_unsupported_edges_and_metadata_decline() {
     let mut hook = b.clone();
     hook.blocks[3].terminator = Terminator::Call {
         func: FuncRef::Direct {
-            symbol: ember_branding::mangled("observable_effect"),
+            symbol: ember_branding::item_symbol("observable_effect"),
             latebound: false,
         },
         args: vec![copy(LocalId(7))],
@@ -517,7 +517,7 @@ fn valid_unrelated_fn5_metadata_declines_whole_body() {
         ],
         Terminator::Call {
             func: FuncRef::Direct {
-                symbol: ember_branding::mangled("fn5_outside"),
+                symbol: ember_branding::item_symbol("fn5_outside"),
                 latebound: false,
             },
             args: vec![copy(binding)],

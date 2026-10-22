@@ -4,16 +4,16 @@
 #$ stdout: 12
 #$ 21
 #$ 7
-#$ assert-c: contains("int64_t em_add_one(int64_t _1) {")
+#$ assert-c: contains("int64_t em_7add_one(int64_t _1) {")
 #$ assert-c: contains("return ((int64_t (*)(int64_t))em_rl_targets[")
-#$ assert-c: contains("int64_t em_add_one__rl(int64_t x) {")
-#$ assert-c: contains("em_add_one(11LL)")
-#$ assert-c: !contains("static inline EMBER_MAYBE_UNUSED int64_t em_add_one")
+#$ assert-c: contains("int64_t em_7add_one__rl(int64_t x) {")
+#$ assert-c: contains("em_7add_one(11LL)")
+#$ assert-c: !contains("static inline EMBER_MAYBE_UNUSED int64_t em_7add_one")
 #$ assert-c: contains("((const struct ember_native_fn_descriptor*)em_rl_descriptors[")
 #$ assert-c: contains("->ti->vtable))->slot0)(s)")
 #$ assert-c: contains("EMBER_RL_MANIFEST const ember_rl_manifest em_reload_manifest = {")
 #$ assert-c: contains("EMBER_RELOAD_MAGIC, EMBER_RELOAD_PROTOCOL,")
-#$ assert-c: contains("{ "em_add_one", (void (*)(void))em_add_one__rl, (void (*)(void))em_add_one,")
+#$ assert-c: contains("{ "em_7add_one", (void (*)(void))em_7add_one__rl, (void (*)(void))em_7add_one,")
 # In a reloadable build (this directory's manifest says `reload = "all"`) a call to `add_one` goes
 # to its symbol, which is its thunk: the thunk loads the current target from the image's copy of
 # the call table and calls it. The body has a name of its own and is never inlined, however small

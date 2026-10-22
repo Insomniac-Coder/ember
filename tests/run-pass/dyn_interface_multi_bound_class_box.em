@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 20
 #$ stdout: 22
-#$ assert-c: contains(em_vt_dyn_multi__Left__Right_Pair)
+#$ assert-c: contains(em_vt_dyn_4Left_5Right_for_4Pair)
 #$ assert-c: !contains(ember_box_new_copy)
 
 interface Left:

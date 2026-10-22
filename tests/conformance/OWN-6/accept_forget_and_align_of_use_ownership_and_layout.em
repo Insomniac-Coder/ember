@@ -1,9 +1,9 @@
 #$ test: run-pass
 #$ rules: OWN-6, OWN-3, TYP-11
 #$ assert-c: contains("/* mem.forget */")
-#$ assert-c: !contains("em_Resource_drop(&")
+#$ assert-c: !contains("em_8Resource4drop(&")
 #$ assert-c: !contains("ember_vec_free")
-#$ assert-c: !contains("_Alignof(em_Padded)")
+#$ assert-c: !contains("_Alignof(em_6Padded)")
 
 import std.mem
 

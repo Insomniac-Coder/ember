@@ -1,6 +1,6 @@
 #$ test: compile-pass
 #$ rules: TYP-22, DSP-3, BRW-1
-#$ assert-c: contains(struct em_vt_dyn_Accumulator)
+#$ assert-c: contains(struct em_vt_dyn_11Accumulator)
 #$ assert-c: contains(->slot0)
 
 interface Accumulator:

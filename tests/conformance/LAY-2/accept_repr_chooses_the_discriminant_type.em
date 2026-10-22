@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: LAY-2
 #$ profiles: debug, development, release
-#$ assert-c: contains("typedef uint16_t em_Port;")
+#$ assert-c: contains("typedef uint16_t em_4Port;")
 #$ stdout: 1 2 4 8 1 2 4 8
 #$ 2 16 16
 #$ 443 65535 -300 -5000000000

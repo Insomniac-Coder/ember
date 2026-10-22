@@ -3,8 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 7
-#$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Signal)
-#$ assert-c: contains(em_vt_dyn_Render_Signal_drop)
+#$ assert-c: contains(static const struct em_vt_dyn_6Render em_vt_dyn_6Render_for_6Signal)
+#$ assert-c: contains(em_vt_dyn_6Render_for_6Signal_drop)
 #$ assert-c: contains(.data = ember_box_new_copy)
 
 interface Render:

@@ -16,6 +16,6 @@ fn main():
     println(0)
 #$ stdout: 0
 #$ 5
-#$ assert-c-order: "em_Resource_drop(&" then "ember_free((*value)"
+#$ assert-c-order: "em_8Resource4drop(&" then "ember_free((*value)"
 #$ assert-c-order: "em_drop_glue_0(&" then "ember_free(_1,"
 #$ assert-c-count: contains("ember_free(") == 2

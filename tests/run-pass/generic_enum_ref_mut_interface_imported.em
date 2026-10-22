@@ -2,8 +2,8 @@
 #$ rules: MOD-1, MOD-2, MOD-3, TYP-16, TYP-22, IFC-1, ENM-1, MONO-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: em_vt_dyn_generic_enum_mut_interface_imported_support_traits_Bump_generic_enum_mut_interface_imported_support_model_Signal_i32
-#$ assert-c: em_vt_dyn_generic_enum_mut_interface_imported_support_traits_Bump_generic_enum_mut_interface_imported_support_model_Signal_i32_slot0
+#$ assert-c: em_vt_dyn_43generic_enum_mut_interface_imported_support6traits4Bump_for_43generic_enum_mut_interface_imported_support5model6SignalG2c2a47066b4fc729
+#$ assert-c: em_vt_dyn_43generic_enum_mut_interface_imported_support6traits4Bump_for_43generic_enum_mut_interface_imported_support5model6SignalG2c2a47066b4fc729_slot0
 
 from generic_enum_mut_interface_imported_support.model import Signal
 from generic_enum_mut_interface_imported_support.traits import Bump

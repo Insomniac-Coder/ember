@@ -3,9 +3,9 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Payload)
+#$ assert-c: contains(static const struct em_vt_dyn_6Render em_vt_dyn_6Render_for_7Payload)
 #$ assert-c: contains(.data = ember_box_new_copy)
-#$ assert-c-order: "em_Payload_drop(&(*(em_Payload*)_0));" then "ember_free("
+#$ assert-c-order: "em_7Payload4drop(&(*(em_7Payload*)_0));" then "ember_free("
 
 interface Render:
     fn render(self) -> i32

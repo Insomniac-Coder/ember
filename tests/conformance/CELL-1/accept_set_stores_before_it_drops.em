@@ -41,7 +41,7 @@ fn main():
 #$ stdout: 1
 #$ 99
 #$ 2
-#$ assert-c-order: ".value = " then "em_Bag_drop(&"
+#$ assert-c-order: ".value = " then "em_3Bag4drop(&"
 
 # The needles are chosen not to depend on MIR local numbering: `.value = ` is
 # the store and occurs once, and `em_Bag_drop(&` is the *call* — the prototype

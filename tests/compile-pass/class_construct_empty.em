@@ -1,6 +1,6 @@
 #$ test: compile-pass
 #$ rules: CLS-1, CLS-3, OWN-2
-#$ assert-c: contains(ember_obj_new(&em_ti_Empty))
+#$ assert-c: contains(ember_obj_new(&em_ti_5Empty))
 
 class Empty:
     fn answer(self) -> i32:

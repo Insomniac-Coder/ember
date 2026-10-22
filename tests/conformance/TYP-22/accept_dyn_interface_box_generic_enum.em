@@ -3,9 +3,9 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 7
-#$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Signal_Token)
-#$ assert-c: contains(em_vt_dyn_Render_Signal_Token_drop)
-#$ assert-c: contains(em_vt_dyn_Render_Signal_Token_slot0)
+#$ assert-c: contains(static const struct em_vt_dyn_6Render em_vt_dyn_6Render_for_6SignalGaf29ae0d2798f0fb)
+#$ assert-c: contains(em_vt_dyn_6Render_for_6SignalGaf29ae0d2798f0fb_drop)
+#$ assert-c: contains(em_vt_dyn_6Render_for_6SignalGaf29ae0d2798f0fb_slot0)
 #$ assert-c: contains(.data = ember_box_new_copy)
 
 interface Render:

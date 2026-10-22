@@ -146,6 +146,41 @@ pub fn instance_symbol(path: &str, arguments: Option<&str>) -> String {
     out
 }
 
+/// `[MNG-1]`, `[CLO-3]` — a further instance of the item `symbol` names, over more `arguments`
+/// (their canonical spelling): its path, then the hash of its own instance's hash (when it is one)
+/// and `arguments`. `[CLO-3]`'s copy of a function for a function passed to it is such an
+/// instance. A name the compiler made for itself (a lambda's, `em_closure3`) is no item's: it
+/// keeps itself, then `_` and the hash.
+pub fn reinstance(symbol: &str, arguments: &str) -> String {
+    let Some((path, instance)) = item_parts(symbol) else {
+        return format!("{symbol}_{}", instance_suffix(arguments));
+    };
+    let spelling = match instance {
+        Some(hash) => format!("{INSTANCE_MARK}{hash}{arguments}"),
+        None => arguments.to_string(),
+    };
+    format!("{path}{}", instance_suffix(&spelling))
+}
+
+/// An item symbol's prefix and path (`em_5apply`) and its instance hash, when that is all it is.
+fn item_parts(symbol: &str) -> Option<(&str, Option<&str>)> {
+    let mut rest = symbol.strip_prefix(prefix())?;
+    let mut components = 0;
+    while rest.starts_with(|c: char| c.is_ascii_digit()) && !rest.starts_with('0') {
+        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let length: usize = rest[..digits].parse().ok()?;
+        rest = rest.get(digits + length..)?;
+        components += 1;
+    }
+    let path = &symbol[..symbol.len() - rest.len()];
+    match rest.strip_prefix(INSTANCE_MARK) {
+        _ if components == 0 => None,
+        None if rest.is_empty() => Some((path, None)),
+        Some(hash) if hash.len() == INSTANCE_HASH_DIGITS && hash.bytes().all(|b| b.is_ascii_hexdigit()) => Some((path, Some(hash))),
+        _ => None,
+    }
+}
+
 /// A symbol whose mangled form (path and instance hash) was made elsewhere: `em_` and it. A type's
 /// is its type table's (`ember_types::TypeTable::mangled`).
 pub fn symbol(mangled: &str) -> String {
@@ -493,6 +528,21 @@ mod tests {
         assert!(symbol_path_starts_with(&item_symbol("std.fmt.write"), &["std"]));
         assert!(!symbol_path_starts_with(&item_symbol("std"), &["std"]));
         assert!(!symbol_path_starts_with(&item_symbol("stdx.f"), &["std"]));
+    }
+
+    /// `[CLO-3]` — a copy of a function for a function passed to it is an instance of that
+    /// function; of an instance, an instance over its hash and the new arguments.
+    #[test]
+    fn a_further_instance_keeps_the_path() {
+        let plain = item_symbol("apply");
+        let copy = reinstance(&plain, "[0 = em_6triple]");
+        assert_eq!(copy, instance_symbol("apply", Some("[0 = em_6triple]")));
+        let instance = instance_symbol("apply", Some("[i64]"));
+        let again = reinstance(&instance, "[0 = em_6triple]");
+        assert_eq!(demangle(&again).map(|found| found.path()), Some("apply".to_string()));
+        assert_ne!(again, copy);
+        assert_ne!(again, instance);
+        assert_eq!(reinstance(&generated("closure3"), "[0]"), format!("{}_{}", generated("closure3"), instance_suffix("[0]")));
     }
 
     #[test]

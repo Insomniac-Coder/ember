@@ -2,7 +2,7 @@
 #$ rules: OBJ-2, DSP-3, RC-1, IFC-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const ember_itable_entry em_itables_Pixel[])
+#$ assert-c: contains(static const ember_itable_entry em_itables_5Pixel[])
 #$ assert-c: contains(ember_itable_lookup)
 
 # `[OBJ-2]` keeps this erased class handle one pointer wide. `[DSP-3]` then

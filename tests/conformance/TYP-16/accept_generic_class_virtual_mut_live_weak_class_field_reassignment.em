@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 8
 #$ stdout: 5
-#$ assert-c: contains("static int32_t em_vt_Derived_bool_slot0")
+#$ assert-c: contains("static int32_t em_vt_7DerivedGda5cc12a188c7619_slot0")
 #$ assert-c: contains("->slot0")
 #$ assert-c: contains("ember_object_begin_write")
 #$ assert-c: contains("ember_weak_retain(")

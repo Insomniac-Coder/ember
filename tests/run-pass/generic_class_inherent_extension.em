@@ -2,7 +2,7 @@
 #$ rules: TYP-16, IFC-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_Holder_i32_get)
+#$ assert-c: contains(em_6Holder3getG2c2a47066b4fc729)
 
 class Holder[T]:
     value: T

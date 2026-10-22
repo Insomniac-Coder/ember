@@ -2,7 +2,7 @@
 #$ rules: TYP-16, CLS-6, DRP-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_Marker_bool_drop)
+#$ assert-c: contains(em_6Marker4dropGda5cc12a188c7619)
 
 class Marker[T]:
     value: i32

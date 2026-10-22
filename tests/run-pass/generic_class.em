@@ -2,7 +2,7 @@
 #$ rules: TYP-16, CLS-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(ember_obj_new(&em_ti_Holder_i32))
+#$ assert-c: contains(ember_obj_new(&em_ti_6HolderG2c2a47066b4fc729))
 
 class Holder[T]:
     value: T

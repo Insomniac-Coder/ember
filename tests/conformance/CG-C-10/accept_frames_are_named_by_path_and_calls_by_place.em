@@ -2,11 +2,11 @@
 #$ rules: CG-C-10
 #$ profiles: debug
 #$ stdout: 9
-#$ assert-c: contains("{"em_geometry_Grid_at", "geometry.Grid.at", "geometry.em", 7u},")
-#$ assert-c: contains("{"em_geometry_probe", "geometry.probe", "geometry.em", 10u},")
-#$ assert-c: contains("{"em_geometry_probe", "em_geometry_Grid_at", "geometry.em", 11u, 17u},")
-#$ assert-c: contains("{"em_geometry_probe", "em_geometry_Grid_at", "geometry.em", 11u, 27u},")
-#$ assert-c: contains("{"em_outer", "em_geometry_probe", "accept_frames_are_named_by_path_and_calls_by_place.em", 22u, 30u},")
+#$ assert-c: contains("{"em_8geometry4Grid2at", "geometry.Grid.at", "geometry.em", 7u},")
+#$ assert-c: contains("{"em_8geometry5probe", "geometry.probe", "geometry.em", 10u},")
+#$ assert-c: contains("{"em_8geometry5probe", "em_8geometry4Grid2at", "geometry.em", 11u, 17u},")
+#$ assert-c: contains("{"em_8geometry5probe", "em_8geometry4Grid2at", "geometry.em", 11u, 27u},")
+#$ assert-c: contains("{"em_5outer", "em_8geometry5probe", "accept_frames_are_named_by_path_and_calls_by_place.em", 22u, 30u},")
 #$ assert-c: contains("ember_backtrace_sites(em_call_sites, ")
 # `[CG-C-10]`: what a stack trace is printed from. Outside `release` the program names each of its
 # functions by its Ember path, a method by its type's path and its name (`geometry.Grid.at`), and

@@ -22715,7 +22715,9 @@ impl<'a> Checker<'a> {
             let shown = shown.unwrap_or_else(|| path.to_string());
             let from = format!("{path}{arguments}");
             match self.instance_symbols.get(&symbol) {
-                Some((first, first_from, first_shown, first_span)) if *first != made => {
+                // Two definitions of one instance (overlapping implementations of one method) are
+                // their own rules' errors (`[TYP-19]`), not two instances.
+                Some((first, first_from, first_shown, first_span)) if *first != made && *first_shown != shown => {
                     let diagnostic = instance_collision(&symbol, first_shown, *first_span, &shown, span, *first_from == from);
                     self.sink.emit(diagnostic);
                 }

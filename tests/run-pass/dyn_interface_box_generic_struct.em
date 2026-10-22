@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Payload_i64)
+#$ assert-c: contains(static const struct em_vt_dyn_6Render em_vt_dyn_6Render_for_7PayloadG73498f1dbd18d400)
 
 interface Render:
     fn render(self) -> i32

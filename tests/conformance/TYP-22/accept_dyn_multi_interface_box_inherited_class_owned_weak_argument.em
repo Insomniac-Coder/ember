@@ -3,8 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 7
 #$ stdout: 1
-#$ assert-c: contains("em_vt_dyn_multi__Observe__Bump_Pixel_slot0")
-#$ assert-c: contains("em_vt_dyn_multi__Observe__Bump_Pixel_slot1")
+#$ assert-c: contains("em_vt_dyn_7Observe_4Bump_for_5Pixel_slot0")
+#$ assert-c: contains("em_vt_dyn_7Observe_4Bump_for_5Pixel_slot1")
 #$ assert-c: contains("ember_weak_retain(")
 #$ assert-c: contains("ember_weak_release(")
 #$ assert-c: contains("ember_weak_upgrade(")

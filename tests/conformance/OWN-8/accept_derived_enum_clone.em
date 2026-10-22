@@ -3,9 +3,9 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(em_Leaf_clone)
+#$ assert-c: contains(em_4Leaf5clone)
 #$ assert-c: contains(&(*self).payload.Value._0)
-#$ assert-c: contains(em_Entry_clone)
+#$ assert-c: contains(em_5Entry5clone)
 
 struct Leaf:
     value: i32

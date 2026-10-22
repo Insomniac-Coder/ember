@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: IFC-1, TYP-16
 #$ profiles: debug, development, release
-#$ assert-c: contains(em_Payload_i32_project__)
+#$ assert-c: contains(em_7Payload7projectG99f65fd6187c945d)
 
 interface Project:
     fn project[T](self, value: T) -> T:

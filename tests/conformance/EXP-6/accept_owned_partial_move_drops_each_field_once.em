@@ -20,5 +20,5 @@ fn main():
     _first = pair.first
 #$ stdout: 1
 #$ 2
-#$ assert-c: contains("em_Part_drop(&pair.second)")
-#$ assert-c: !contains("em_Part_drop(&pair.first)")
+#$ assert-c: contains("em_4Part4drop(&pair.second)")
+#$ assert-c: !contains("em_4Part4drop(&pair.first)")

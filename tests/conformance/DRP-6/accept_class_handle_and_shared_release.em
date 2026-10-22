@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: shared
 #$ stdout: handle
-#$ assert-c: contains(&em_ti_Handle))
+#$ assert-c: contains(&em_ti_6Handle))
 #$ assert-c: contains(ember_obj_new_copy)
 #$ assert-c: contains(ember_release((ember_obj_header*)
 

@@ -1704,21 +1704,39 @@ fn calls(args: &[String]) -> Result<ExitCode, String> {
     compile(&path, "check", &options)
 }
 
-/// `[CG-C-10]` — `text` (a C stack trace) with each C symbol of the program's functions written
-/// as the function's Ember path (`em_geometry_Grid_at` is `geometry.Grid.at`): a whole identifier
-/// only, so `em_geometry_probe` inside `em_geometry_probe2` is left alone. A reloadable function's
-/// body (`…__rl`) is its function's. Everything else is copied as it is.
+/// `[CG-C-10]` — `text` (a C stack trace) with each Ember symbol written as its Ember path
+/// (`em_8geometry4Grid2at` is `geometry.Grid.at`): `[MNG-1]`'s length prefixes say exactly where
+/// each component ends, so any whole identifier that is an item's symbol is read back, and one that
+/// is not quite (`em_8geometry5probe2`) is left alone. A function of the program is named as its
+/// backtrace names it (a lambda as one); an instance it does not have, by its path and its hash
+/// (`max[#3f…]`). A reloadable function's body (`…__rl`) is its function's. Everything else is
+/// copied as it is.
 fn demangle(text: &str, bodies: &[ember_mir::Body]) -> String {
-    let mut paths: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for body in bodies {
-        let path = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
-        paths.insert(format!("{}__rl", body.symbol), path.clone());
-        paths.insert(body.symbol.clone(), path);
-    }
+    let paths: std::collections::HashMap<&str, String> = bodies
+        .iter()
+        .map(|body| {
+            let path = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
+            (body.symbol.as_str(), path)
+        })
+        .collect();
+    let shown = |word: &str| -> Option<String> {
+        let symbol = word.strip_suffix("__rl").unwrap_or(word);
+        if let Some(path) = paths.get(symbol) {
+            return Some(path.clone());
+        }
+        let found = ember_branding::demangle(symbol).filter(|found| found.rest.is_empty())?;
+        Some(match found.instance {
+            Some(hash) => format!("{}[#{hash}]", found.path()),
+            None => found.path(),
+        })
+    };
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
     let flush = |word: &mut String, out: &mut String| {
-        out.push_str(paths.get(word.as_str()).map_or(word.as_str(), String::as_str));
+        match shown(word) {
+            Some(path) => out.push_str(&path),
+            None => out.push_str(word),
+        }
         word.clear();
     };
     for c in text.chars() {

@@ -3,9 +3,9 @@
 #$ profiles: debug, development, release
 #$ stdout: 1
 #$ stdout: 2
-#$ assert-c: contains(em_itables_Base)
-#$ assert-c: contains(em_itables_Child)
-#$ assert-c: contains(->ti->vtable))->slot0)((struct em_obj_Base*)_0)
+#$ assert-c: contains(em_itables_4Base)
+#$ assert-c: contains(em_itables_5Child)
+#$ assert-c: contains(->ti->vtable))->slot0)((struct em_obj_4Base*)_0)
 
 # Only a Base-typed handle is ever made a Named, so the Named entry is Base's.
 # Child's list carries it as well (the inline lookup scans the object's own

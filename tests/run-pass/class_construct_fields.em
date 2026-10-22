@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: CLS-1, CLS-2, CLS-3, OWN-2
-#$ assert-c: contains(ember_obj_new(&em_ti_Point))
+#$ assert-c: contains(ember_obj_new(&em_ti_5Point))
 #$ stdout: 42
 
 class Point:

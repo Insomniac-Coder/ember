@@ -1,9 +1,9 @@
 #$ test: run-pass
 #$ rules: TYP-16
 #$ stdout: 5 3 9 7 8 true
-#$ assert-c: contains("em_Wrap_ptr_i64")
-#$ assert-c: contains("em_Pair_tup2_i64_i64_i64")
-#$ assert-c: contains("em_Pair_i64_tup2_i64_i64")
+#$ assert-c: contains("em_4WrapG8ef61d1636bee0fa")
+#$ assert-c: contains("em_4PairGc18cb6ac64a1d8e8")
+#$ assert-c: contains("em_4PairGc3df1f8a1d550c39")
 # `[TYP-16]` (D-412) — each distinct instantiation is a distinct type. An
 # instance was found by a name that dropped its arguments' structure, so
 # `Wrap[*int]` and `Wrap[int]` were one type (the second had the first's

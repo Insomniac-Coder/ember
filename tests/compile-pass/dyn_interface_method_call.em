@@ -1,6 +1,6 @@
 #$ test: compile-pass
 #$ rules: TYP-22, DSP-3
-#$ assert-c: contains(struct em_vt_dyn_Drawable)
+#$ assert-c: contains(struct em_vt_dyn_8Drawable)
 #$ assert-c: contains(->slot0)
 
 interface Drawable:

@@ -2,7 +2,7 @@
 #$ rules: RNG-4, TYP-8
 #$ profiles: debug, development, release
 #$ stdout: 2998
-#$ assert-c-count: contains("em_scale") == 0
+#$ assert-c-count: contains("em_5scale") == 0
 #$ assert-c-count: contains("ember_ck_") == 0
 # `[RNG-4]` — `scale` is called from one place, so it is inlined there and
 # the range facts see its argument: `i` is below 1,000, so `x * 3 + 1` cannot

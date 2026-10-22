@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ assert-c: contains(int32_t (*slot0)(void*, int32_t, int32_t*))
-#$ assert-c: contains(return em_Adjuster_adjust((struct em_obj_Adjuster*)_0, _1, _2);)
+#$ assert-c: contains(return em_8Adjuster6adjust((struct em_obj_8Adjuster*)_0, _1, _2);)
 
 interface Adjust:
     fn adjust(self, amount: i32, mut value: i32) -> i32

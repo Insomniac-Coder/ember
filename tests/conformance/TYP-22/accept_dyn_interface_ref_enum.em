@@ -2,8 +2,8 @@
 #$ rules: TYP-22, IFC-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Render em_vt_dyn_Render_Signal)
-#$ assert-c: contains(return em_Signal_render(*(em_Signal*)_0);)
+#$ assert-c: contains(static const struct em_vt_dyn_6Render em_vt_dyn_6Render_for_6Signal)
+#$ assert-c: contains(return em_6Signal6render(*(em_6Signal*)_0);)
 
 interface Render:
     fn render(self) -> i32

@@ -24,7 +24,7 @@ fn main():
 #$ stdout: 1
 #$ 0
 #$ 2
-#$ assert-c-order: ".n = 2;" then "em_R_drop(&"
+#$ assert-c-order: ".n = 2;" then "em_1R4drop(&"
 # The parenthetical, asserted rather than inferred (the new value is built
 # by its fields, ADR-106). "after evaluating the new value: `x = f(x)` moves
 # `x` into `f`, then stores" — so the new value must be built before the old

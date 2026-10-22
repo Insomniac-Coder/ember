@@ -1,8 +1,8 @@
 #$ test: run-pass
 #$ rules: STR-5, COST-1
 #$ stdout: 1 1
-#$ assert-c: contains(em_Used_clone)
-#$ assert-c: !contains(em_Unused_clone)
+#$ assert-c: contains(em_4Used5clone)
+#$ assert-c: !contains(em_6Unused5clone)
 # `[COST-1]` — an implicit `clone` is code only where the program clones:
 # `Used` is cloned and has its function; `Unused` never is, and has none.
 

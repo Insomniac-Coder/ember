@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 20
 #$ stdout: 22
-#$ assert-c: contains(static const struct em_vt_dyn_multi__Left__Right em_vt_dyn_multi__Left__Right_Pair)
+#$ assert-c: contains(static const struct em_vt_dyn_4Left_5Right em_vt_dyn_4Left_5Right_for_4Pair)
 
 interface Left:
     fn left(self) -> i32

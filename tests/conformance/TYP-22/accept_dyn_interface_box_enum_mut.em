@@ -2,7 +2,7 @@
 #$ rules: TYP-22, IFC-1, HEAP-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_vt_dyn_Bump_Signal_slot0)
+#$ assert-c: contains(em_vt_dyn_4Bump_for_6Signal_slot0)
 
 interface Bump:
     fn bump(mut self) -> i32

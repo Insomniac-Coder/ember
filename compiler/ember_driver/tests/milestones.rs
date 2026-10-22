@@ -1069,9 +1069,9 @@ fn build_writes_debugger_visualisers_beside_the_program() {
     let program = if cfg!(windows) { "shapes.exe" } else { "shapes" };
     let read = |name: &str| std::fs::read_to_string(bin.join(name)).unwrap_or_else(|error| panic!("{name} beside the program: {error}"));
     let natvis = read("shapes.natvis");
-    let shape = ember_branding::mangled("Shape");
-    let bag = ember_branding::mangled("Bag");
-    let node = ember_branding::object_struct("Node");
+    let shape = ember_branding::item_symbol("Shape");
+    let bag = ember_branding::item_symbol("Bag");
+    let node = ember_branding::object_struct(&ember_branding::mangled_path("Node"));
     let runtime = ember_branding::RUNTIME_PREFIX;
     for wanted in [
         "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\">".to_string(),
@@ -1106,18 +1106,33 @@ fn build_writes_debugger_visualisers_beside_the_program() {
 fn demangle_writes_a_c_stack_in_ember_paths() {
     let root = workspace_root();
     let source = format!("tests/conformance/CG-C-10/accept_frames_are_named_by_path_and_calls_by_place.{SOURCE_EXT}");
-    let symbol = ember_branding::mangled;
+    let symbol = ember_branding::item_symbol;
+    let instance = ember_branding::instance_symbol("lib.max", Some("[i64]"));
+    let hash = &ember_branding::instance_suffix("[i64]")[1..];
+    // `[MNG-1]` — the length prefixes make it exact: a symbol the program does not have is read
+    // back as well (`lib.m_x.f`, an instance by its hash, a name beyond ASCII), and one that is not
+    // quite a symbol (a digit too many) is left alone.
     let stack = format!(
-        "program!{}+0x1a\n{} (g=0x0) at program.c:12\n{} {} {}\n",
+        "program!{}+0x1a\n{} (g=0x0) at program.c:12\n{} {}2 {} {}__rl\n{} {} {}\n",
         symbol("geometry.Grid.at"),
         symbol("geometry.probe"),
         symbol("outer"),
-        symbol("outer_2"),
-        symbol("main")
+        symbol("outer"),
+        ember_branding::entry_symbol(),
+        symbol("geometry.probe"),
+        symbol("lib.m_x.f"),
+        instance,
+        symbol("größe.maß"),
     );
     let shown = ember_with_input(&["demangle", &source], &root, stack.as_bytes());
     assert_eq!(shown.exit, 0, "{}", shown.stderr);
-    assert_eq!(shown.stdout, format!("program!geometry.Grid.at+0x1a\ngeometry.probe (g=0x0) at program.c:12\nouter {} main\n", symbol("outer_2")));
+    assert_eq!(
+        shown.stdout,
+        format!(
+            "program!geometry.Grid.at+0x1a\ngeometry.probe (g=0x0) at program.c:12\nouter {}2 main geometry.probe\nlib.m_x.f lib.max[#{hash}] größe.maß\n",
+            symbol("outer")
+        )
+    );
 }
 
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
@@ -1397,7 +1412,7 @@ fn gcc_executables_keep_c_exports_and_discard_unreachable_native_bodies() {
             for symbol in ["imported_root", "selected_root", "plain_root", "relaxed_root"] {
                 assert!(symbols.contains(&symbol), "{} cached={cached}: missing C definition {symbol}", profile.name());
             }
-            assert_eq!(symbols.contains(&ember_branding::mangled("unused_native").as_str()), !gc_available,
+            assert_eq!(symbols.contains(&ember_branding::item_symbol("unused_native").as_str()), !gc_available,
                 "{} cached={cached}: unreachable native body survived or fallback lost it", profile.name());
             assert!(!symbols.contains(&"absent_foreign"));
         }
@@ -2073,8 +2088,8 @@ fn export_headers_link_from_separate_c_and_cpp_translation_units() {
         "header-only emission also wrote a C translation unit"
     );
     let header = std::fs::read_to_string(&header_only_path).expect("header is readable");
-    let leaf_type = ember_branding::mangled("HeaderLeaf");
-    let envelope_type = ember_branding::mangled("HeaderEnvelope");
+    let leaf_type = ember_branding::item_symbol("HeaderLeaf");
+    let envelope_type = ember_branding::item_symbol("HeaderEnvelope");
     let runtime_header = ember_branding::runtime_header();
     for declaration in [
         "header_score",
@@ -3449,8 +3464,8 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
             .join("accept_stable_class_receiver_loop.c");
         let c = std::fs::read_to_string(&c_path)
             .unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
-        let main_symbol = ember_branding::mangled("main");
-        let bump_symbol = ember_branding::mangled("Counter_bump");
+        let main_symbol = ember_branding::entry_symbol();
+        let bump_symbol = ember_branding::item_symbol("Counter.bump");
         let main_start = c
             .find(&format!("void {main_symbol}(void)"))
             .expect("main is emitted");
@@ -3514,7 +3529,7 @@ fn an_outer_loop_reports_the_inner_access_it_holds() {
 fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results.{SOURCE_EXT}");
-    let main_loop = format!("{}_loop0(", ember_branding::mangled("main"));
+    let main_loop = format!("{}_loop0(", ember_branding::entry_symbol());
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
@@ -3541,7 +3556,7 @@ fn a_known_callable_value_is_called_directly() {
     for cc in ["msvc", "clang", "gcc"] {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
-        let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+        let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
         assert!(!main.contains(".native))("), "{cc}: the loop calls through the value:\n{main}");
         assert!(!main.contains("ck_mul_i64("), "{cc}: the lambda's check stayed:\n{main}");
     }
@@ -3558,8 +3573,8 @@ fn view_parameters_go_as_two_words_on_windows() {
     for cc in if cfg!(windows) { &["msvc", "clang"][..] } else { &["clang"][..] } {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
-        let count = ember_branding::mangled("count_spaces");
-        let first = ember_branding::mangled("first_len");
+        let count = ember_branding::item_symbol("count_spaces");
+        let first = ember_branding::item_symbol("first_len");
         let split = format!("{count}(const unsigned char* _1_p, size_t _1_n, int64_t _2)");
         assert_eq!(c.stdout.contains(&split), cfg!(windows), "{cc}: count_spaces's text parameter:\n{}", c.stdout);
         assert!(!c.stdout.contains(&format!("{first}(const unsigned char*")), "{cc}: a function used as a value keeps its view whole");
@@ -3581,7 +3596,7 @@ fn views_proved_apart_get_restrict_functions_and_nothing_else_does() {
         // A kernel's name as code uses it, followed by its call or parameter list: the backtrace's
         // table of names (`[RT-4]`) writes it as a string too, which is no use.
         let kernels = |name: &str| {
-            let stem = format!("{}_loop", ember_branding::mangled(name));
+            let stem = format!("{}_loop", ember_branding::item_symbol(name));
             c.stdout
                 .match_indices(&stem)
                 .filter(|(at, _)| {
@@ -3658,7 +3673,7 @@ fn distinct_soa_columns_get_restrict_functions() {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:
 {}", c.stderr);
-        let kernel = format!("{}_loop", ember_branding::mangled("step"));
+        let kernel = format!("{}_loop", ember_branding::item_symbol("step"));
         assert!(c.stdout.contains(&kernel), "{cc}: the columns' loop did not move:
 {}", c.stdout);
         assert!(c.stdout.contains("float* restrict _1_ptr, float* restrict _2_ptr"), "{cc}: the columns are not restrict:
@@ -3839,7 +3854,7 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
     assert!(msvc.stdout.contains("_bump(&_"), "the call does not take the object's address directly:\n{}", msvc.stdout);
-    let total_of = format!("{}(", ember_branding::mangled("total_of"));
+    let total_of = format!("{}(", ember_branding::item_symbol("total_of"));
     let start = msvc
         .stdout
         .match_indices(&total_of)
@@ -3862,7 +3877,7 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
 fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results.{SOURCE_EXT}");
-    let main_loop = format!("{}_loop0(", ember_branding::mangled("main"));
+    let main_loop = format!("{}_loop0(", ember_branding::entry_symbol());
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
@@ -3890,7 +3905,7 @@ fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
 fn loop_nests_carrying_a_running_value_get_their_own_function_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_carrying_a_running_value_keeps_its_results.{SOURCE_EXT}");
-    let main_loop = format!("{}_loop", ember_branding::mangled("main"));
+    let main_loop = format!("{}_loop", ember_branding::entry_symbol());
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert_eq!(msvc.stdout.matches(&format!("EMBER_NOINLINE int64_t {main_loop}")).count(), 4, "two whole-number nests move (prototype and definition each):\n{}", msvc.stdout);
@@ -3930,7 +3945,7 @@ fn loop_totals_are_block_local_copies_for_msvc() {
 fn exit_drops_that_only_free_memory_go_in_release() {
     let root = workspace_root();
     let source = format!("tests/conformance/DRP-2/accept_drops_at_the_end_of_main.{SOURCE_EXT}");
-    let main_symbol = ember_branding::mangled("main");
+    let main_symbol = ember_branding::entry_symbol();
     let vec_free = format!("{}(", ember_branding::runtime("vec_free"));
     let mut frees = Vec::new();
     for profile in ["debug", "development", "release"] {
@@ -5751,11 +5766,11 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     assert_eq!(before_helper.callables.len(), 4);
     assert!(before_helper
         .callables
-        .contains_key(&ember_branding::mangled("helper.select")));
+        .contains_key(&ember_branding::item_symbol("helper.select")));
     assert!(before_helper
         .callables
-        .contains_key(&ember_branding::mangled("helper.package_select")));
-    let signature = &before_helper.callables[&ember_branding::mangled("helper.signature_only")]
+        .contains_key(&ember_branding::item_symbol("helper.package_select")));
+    let signature = &before_helper.callables[&ember_branding::item_symbol("helper.signature_only")]
         .signature;
     assert_eq!(signature.parameters.len(), 1);
     assert_eq!(signature.parameters[0].ty, "i32");
@@ -5813,7 +5828,7 @@ fn callable_region_summary_changes_invalidate_importers_interface_key() {
     assert_ne!(after_public_helper.interface_hash, after_signature_helper.interface_hash);
     assert_ne!(after_public_root.cache_key, after_signature_root.cache_key);
     let signature = &after_signature_helper.callables
-        [&ember_branding::mangled("helper.signature_only")]
+        [&ember_branding::item_symbol("helper.signature_only")]
         .signature;
     assert_eq!(signature.parameters[0].ty, "i64");
     assert_eq!(signature.result, "i64");
@@ -5851,7 +5866,7 @@ fn a_callee_gaining_an_effect_rechecks_its_callers_contracts() {
     let quiet = check();
     assert!(quiet.status.success(), "the quiet callee is refused:\n{}", String::from_utf8_lossy(&quiet.stderr));
     let before = cached_interface(&out_dir, "helper");
-    let effectful = &before.callables[&ember_branding::mangled("helper.effectful")];
+    let effectful = &before.callables[&ember_branding::item_symbol("helper.effectful")];
     assert!(!effectful.effects.as_ref().expect("a body's effects").iter().any(|effect| effect == "Io"), "{effectful:?}");
 
     std::fs::write(test_root.join(&helper), helper_source("    println(\"loud\")\n    return 1")).expect("edit helper");
@@ -5904,9 +5919,9 @@ fn effects_inline_bodies_and_layouts_are_in_the_interface_hash() {
         (cached_interface(&out_dir, "helper"), cached_interface(&out_dir, "root"))
     };
     let (helper0, root0) = check("initial");
-    let effectful = &helper0.callables[&ember_branding::mangled("helper.effectful")];
+    let effectful = &helper0.callables[&ember_branding::item_symbol("helper.effectful")];
     assert!(!effectful.effects.as_ref().expect("a body's effects").iter().any(|e| e == "Io"), "{effectful:?}");
-    assert!(helper0.callables[&ember_branding::mangled("helper.small")].inline_body.is_some());
+    assert!(helper0.callables[&ember_branding::item_symbol("helper.small")].inline_body.is_some());
     assert!(helper0.layouts.keys().any(|name| name.ends_with("Point")), "{:?}", helper0.layouts);
     assert!(!helper0.layouts.keys().any(|name| name.ends_with("Hidden")), "{:?}", helper0.layouts);
 
@@ -5920,7 +5935,7 @@ fn effects_inline_bodies_and_layouts_are_in_the_interface_hash() {
     // A private body gains `IO`, and so does the public function calling it.
     std::fs::write(test_root.join(&helper), helper_source(loud, small, point, private)).expect("make quiet loud");
     let (helper2, root2) = check("after an effect change");
-    let effectful = &helper2.callables[&ember_branding::mangled("helper.effectful")];
+    let effectful = &helper2.callables[&ember_branding::item_symbol("helper.effectful")];
     assert!(effectful.effects.as_ref().expect("a body's effects").iter().any(|e| e == "Io"), "{effectful:?}");
     assert_ne!(helper1.interface_hash, helper2.interface_hash);
     assert_ne!(root1.cache_key, root2.cache_key);
@@ -5928,7 +5943,7 @@ fn effects_inline_bodies_and_layouts_are_in_the_interface_hash() {
     // An exported inline body changes; its signature and effects do not.
     std::fs::write(test_root.join(&helper), helper_source(loud, "    return x + 2", point, private)).expect("edit small");
     let (helper3, root3) = check("after an inline body change");
-    let symbol = ember_branding::mangled("helper.small");
+    let symbol = ember_branding::item_symbol("helper.small");
     assert_eq!(helper2.callables[&symbol].signature, helper3.callables[&symbol].signature);
     assert_eq!(helper2.callables[&symbol].effects, helper3.callables[&symbol].effects);
     assert_ne!(helper2.callables[&symbol].inline_body, helper3.callables[&symbol].inline_body);
@@ -6028,7 +6043,7 @@ fn callable_signature_modes_unsafe_and_abi_cross_the_interface_boundary() {
     );
 
     let artifact = cached_interface(&out_dir, "root");
-    let replace = &artifact.callables[&ember_branding::mangled("replace")].signature;
+    let replace = &artifact.callables[&ember_branding::item_symbol("replace")].signature;
     assert_eq!(replace.parameters.len(), 2);
     assert_eq!(replace.parameters[0].mode, CallableParameterMode::Mut);
     assert_eq!(replace.parameters[0].ty, "i32");
@@ -6086,7 +6101,7 @@ fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_b
     check("initial");
     let before_helper = cached_interface(&out_dir, "helper");
     let before_root = cached_interface(&out_dir, "root");
-    let identity = &before_helper.callables[&ember_branding::mangled("helper.identity")];
+    let identity = &before_helper.callables[&ember_branding::item_symbol("helper.identity")];
     assert!(identity.metadata.is_none());
     assert_eq!(identity.signature.generics.len(), 1);
     assert_eq!(identity.signature.generics[0].bounds.len(), 1);
@@ -6102,12 +6117,12 @@ fn generic_callable_bounds_invalidate_importers_without_an_emitted_declaration_b
 
     assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
     assert_ne!(before_root.cache_key, after_root.cache_key);
-    let identity = &after_helper.callables[&ember_branding::mangled("helper.identity")];
+    let identity = &after_helper.callables[&ember_branding::item_symbol("helper.identity")];
     assert!(identity.metadata.is_none());
     assert_eq!(identity.signature.generics.len(), 1);
     assert_eq!(identity.signature.generics[0].bounds.len(), 1);
     assert_ne!(
-        before_helper.callables[&ember_branding::mangled("helper.identity")]
+        before_helper.callables[&ember_branding::item_symbol("helper.identity")]
             .signature
             .generics[0]
             .bounds,
@@ -6156,7 +6171,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     check("initial");
     let before_helper = cached_interface(&out_dir, "helper");
     let before_root = cached_interface(&out_dir, "root");
-    let apply = &before_helper.callables[&ember_branding::mangled("helper.apply")];
+    let apply = &before_helper.callables[&ember_branding::item_symbol("helper.apply")];
     let bound = apply.signature.generics[0]
         .callable
         .as_ref()
@@ -6180,7 +6195,7 @@ fn generic_callable_parameter_modes_cross_the_interface_boundary() {
     let after_root = cached_interface(&out_dir, "root");
     assert_ne!(before_helper.interface_hash, after_helper.interface_hash);
     assert_ne!(before_root.cache_key, after_root.cache_key);
-    let bound = after_helper.callables[&ember_branding::mangled("helper.apply")]
+    let bound = after_helper.callables[&ember_branding::item_symbol("helper.apply")]
         .signature
         .generics[0]
         .callable
@@ -6741,7 +6756,7 @@ fn text_iterator_loops_are_counted_loops_without_the_iterator() {
     for cc in ["msvc", "clang"] {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
-        let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+        let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
         // ADR-155: MSVC's native step behind the ASCII test takes the lead byte.
         let native = main.contains("str_char_next_usize(") || main.contains("str_char_next_wide_usize(");
         assert!(native, "{cc}: no native text loop in main:\n{main}");
@@ -6770,7 +6785,7 @@ fn aggregates_and_views_are_written_field_by_field() {
     // the writes by fields are every compiler's.
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
-    let next = c_definition(&c.stdout, &format!("{}_CharIndices_next", ember_branding::mangled("std_string")));
+    let next = c_definition(&c.stdout, &ember_branding::item_symbol("std.string.CharIndices.next"));
     // ADR-135 (G7-2): the item's tuple is a literal written in place, its own
     // fields under the payload's.
     assert!(
@@ -6778,7 +6793,7 @@ fn aggregates_and_views_are_written_field_by_field() {
         "the item is not written by fields:\n{next}"
     );
     assert!(next.contains("(_0).tag = 0;") && !next.contains("memset(") && !next.contains(".tag = 1, .payload"), "`None` or `Some` is a literal:\n{next}");
-    let lines = c_definition(&c.stdout, &format!("{}_Lines_next", ember_branding::mangled("std_string")));
+    let lines = c_definition(&c.stdout, &ember_branding::item_symbol("std.string.Lines.next"));
     // `[CG-C-7]` — the receiver is `self` in the C, as in the source.
     assert!(lines.contains("((*self).rest).ptr = ") && lines.contains("((*self).rest).len = "), "the slice is a literal:\n{lines}");
     assert!(lines.contains("(_0).ptr = NULL;") && !lines.contains("{ .ptr = NULL"), "`None` of a view is a literal:\n{lines}");
@@ -6791,7 +6806,7 @@ fn aggregates_and_views_are_written_field_by_field() {
     // whose address is never taken lives in registers and is copied whole.
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
-    let words = c_definition(&c.stdout, &format!("{}_SplitWhitespace_next", ember_branding::mangled("std_string")));
+    let words = c_definition(&c.stdout, &ember_branding::item_symbol("std.string.SplitWhitespace.next"));
     assert!(words.contains("(rest).ptr = ((*self).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
     assert_eq!(register_field_copies(words), 0, "a register local is copied by its fields:\n{words}");
 }
@@ -6833,7 +6848,7 @@ fn split_once_view_fields_stay_field_copies_through_niche_options() {
     for cc in ["msvc", "clang"] {
         let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
-        let first = c_definition(&c.stdout, &ember_branding::mangled("first_view"));
+        let first = c_definition(&c.stdout, &ember_branding::item_symbol("first_view"));
         assert!(first.contains(").tag = 0;") && !first.contains("{ .tag = 0 }"), "split None is not tag-only:\n{first}");
         payload_copied_by_fields(first, ".payload.Some._0._0).ptr;");
         payload_copied_by_fields(first, ".payload.Some._0._1).ptr;");
@@ -6853,23 +6868,24 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
     // its loops, ADR-107); how it is marked is every compiler's.
     let c = ember(&["build", &iterators, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
-    let std_string = ember_branding::mangled("std_string");
-    assert!(c.stdout.contains(&format!("EMBER_INLINED EMBER_MAYBE_UNUSED {} {std_string}_Chars_next(", ember_branding::mangled("Option_char"))), "`Chars.next` is not forced inline:\n{}", c.stdout);
-    assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {std_string}_Chars {}(", ember_branding::mangled("str_chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
+    let (chars, next) = (ember_branding::item_symbol("std.string.Chars"), ember_branding::item_symbol("std.string.Chars.next"));
+    let option_char = ember_branding::instance_symbol("std.core.Option", Some("[char]"));
+    assert!(c.stdout.contains(&format!("EMBER_INLINED EMBER_MAYBE_UNUSED {option_char} {next}(")), "`Chars.next` is not forced inline:\n{}", c.stdout);
+    assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {chars} {}(", ember_branding::item_symbol("str.chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
     let attributes = format!("tests/conformance/CG-C-3a/accept_inline_noinline_cold_and_hot.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
         let c = ember(&["build", &attributes, "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let header = |name: &str| {
-            let call = format!("{}(", ember_branding::mangled(name));
+            let call = format!("{}(", ember_branding::item_symbol(name));
             c.stdout.lines().find(|line| line.contains(&call) && line.ends_with('{')).map(str::to_string).unwrap_or_default()
         };
         assert!(header("twice").starts_with("EMBER_INLINED "), "{cc}: `@inline` is not forced: {}", header("twice"));
         assert!(header("thrice").starts_with("EMBER_NOINLINE "), "{cc}: `@noinline` is lost: {}", header("thrice"));
         assert!(header("failed").starts_with("EMBER_COLD "), "{cc}: `@cold` is lost: {}", header("failed"));
         assert!(header("step").starts_with("EMBER_HOT "), "{cc}: `@hot` is lost: {}", header("step"));
-        let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
-        assert!(main.contains(&format!("{}(", ember_branding::mangled("thrice"))), "{cc}: the `@noinline` call was inlined:\n{main}");
+        let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
+        assert!(main.contains(&format!("{}(", ember_branding::item_symbol("thrice"))), "{cc}: the `@noinline` call was inlined:\n{main}");
     }
 }
 
@@ -6881,7 +6897,7 @@ fn a_loop_pushing_a_literal_reserves_its_text() {
     let source = format!("tests/conformance/TXT-11/accept_a_string_has_every_str_method.{SOURCE_EXT}");
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
-    let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+    let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
     assert!(main.contains("vec_reserve_hint(") && main.contains(", 2u)"), "no room is reserved for the pushes:\n{main}");
 }
 
@@ -6893,7 +6909,7 @@ fn an_iterator_loop_without_else_has_no_flag() {
     let source = format!("tests/conformance/TYP-17/accept_an_inherent_next_is_the_iterators_for_a_bound_call.{SOURCE_EXT}");
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
-    let main = c_definition(&c.stdout, &ember_branding::mangled("main"));
+    let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
     assert!(main.contains("Countdown_next(") && !main.contains("__done"), "the loop keeps a flag:\n{main}");
 }
 
@@ -6907,7 +6923,7 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
-    let main = c_definition(&msvc.stdout, &ember_branding::mangled("main"));
+    let main = c_definition(&msvc.stdout, &ember_branding::entry_symbol());
     for step in ["Lines_next(", "Split_next(", "SplitWhitespace_next("] {
         assert!(!main.contains(step), "the loop still calls {step}:\n{main}");
     }
@@ -6919,7 +6935,7 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     assert!(!entered_test, "a loop still tests what its step gave back:\n{main}");
     let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
-    assert!(c_definition(&clang.stdout, &ember_branding::mangled("main")).contains("Split_next("), "clang's loop lost its call");
+    assert!(c_definition(&clang.stdout, &ember_branding::entry_symbol()).contains("Split_next("), "clang's loop lost its call");
 }
 
 /// D-474 — a body instantiated from `std` (a generic function's instance, a
@@ -6931,11 +6947,10 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
 #[test]
 fn std_instances_nothing_reaches_are_not_kept() {
     let root = workspace_root();
-    let std_string = ember_branding::mangled("std_string");
     let unused = [
-        format!("fn {std_string}_Chars_count:"),
-        format!("fn {std_string}_Split_step_by:"),
-        format!("fn {}_Enumerate_std_string_Lines_next:", ember_branding::mangled("std_core")),
+        format!("fn {}:", ember_branding::item_symbol("std.string.Chars.count")),
+        format!("fn {}:", ember_branding::item_symbol("std.string.Split.step_by")),
+        format!("fn {}:", ember_branding::instance_symbol("std.core.Enumerate.next", Some("[std.string.Lines]"))),
     ];
     let plain = format!("tests/milestones/m1_value_code_has_no_runtime_cost.{SOURCE_EXT}");
     let mir = ember(&["build", &plain, "--emit", "mir", "--profile", "development"], &root);
@@ -6992,7 +7007,7 @@ fn memreplace_span_results_refresh_their_index_pointer() {
         for cc in ["msvc", "clang"] {
             let c = ember(&["build", &source, "--emit", "c", "--profile", profile, "--cc", cc], &root);
             assert_eq!(c.exit, 0, "{cc}/{profile} C generation failed:\n{}", c.stderr);
-            let replaced = c_definition(&c.stdout, &ember_branding::mangled("replace_shared_view"));
+            let replaced = c_definition(&c.stdout, &ember_branding::item_symbol("replace_shared_view"));
             assert_memreplace_span_result_pointer_is_refreshed(replaced);
         }
     }
@@ -7031,7 +7046,7 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
             c.stderr
         );
         for name in ["reduce", "reduce_skipping_nul"] {
-            let body = c_definition(&c.stdout, &ember_branding::mangled(name));
+            let body = c_definition(&c.stdout, &ember_branding::item_symbol(name));
             assert!(
                 !body.contains("._1"),
                 "{cc}: a text descriptor length was emitted as a tuple field:\n{body}"
@@ -7092,7 +7107,7 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
             "{cc}: effectful loop failed to emit:\n{}",
             c.stderr
         );
-        let body = c_definition(&c.stdout, &ember_branding::mangled("effectful"));
+        let body = c_definition(&c.stdout, &ember_branding::item_symbol("effectful"));
         // One decoder call (MSVC's takes the tested lead byte, ADR-155), and one
         // each in gcc's mixed and short loops (ADR-199).
         assert_eq!(
@@ -7185,7 +7200,7 @@ fn string_descriptor_fields_keep_their_source_and_projected_copy_route() {
                 c.stderr
             );
             for name in ["borrow_explicit", "borrow_implicit", "descriptor_chain"] {
-                let function = c_definition(&c.stdout, &ember_branding::mangled(name));
+                let function = c_definition(&c.stdout, &ember_branding::item_symbol(name));
                 assert!(
                     !function.contains("vec_as_str("),
                     "{cc}/{profile}: {name} retains the helper:\n{function}"

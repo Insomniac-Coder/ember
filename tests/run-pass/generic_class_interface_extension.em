@@ -2,7 +2,7 @@
 #$ rules: TYP-16, IFC-1, TYP-22
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Measure em_vt_dyn_Measure_Holder_bool)
+#$ assert-c: contains(static const struct em_vt_dyn_7Measure em_vt_dyn_7Measure_for_6HolderGda5cc12a188c7619)
 
 interface Measure:
     fn measure(self) -> i32

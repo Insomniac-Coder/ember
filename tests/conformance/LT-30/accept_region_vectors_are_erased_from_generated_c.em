@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LT-30, LT-31, LT-31a, TST-17
-#$ assert-c: contains("typedef struct em_Pair")
+#$ assert-c: contains("typedef struct em_4Pair")
 #$ assert-c: !contains("region_slot")
 #$ stdout: 8
 

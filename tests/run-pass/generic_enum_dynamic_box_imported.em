@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 7
-#$ assert-c: contains(em_vt_dyn_generic_enum_dynamic_box_imported_support_traits_Render_generic_enum_dynamic_box_imported_support_model_Signal_generic_enum_dynamic_box_imported_support_model_Token)
+#$ assert-c: contains(em_vt_dyn_41generic_enum_dynamic_box_imported_support6traits6Render_for_41generic_enum_dynamic_box_imported_support5model6SignalGc5e577ec125bc548)
 #$ assert-c: contains(ember_box_new_copy)
 
 from generic_enum_dynamic_box_imported_support.model import Signal

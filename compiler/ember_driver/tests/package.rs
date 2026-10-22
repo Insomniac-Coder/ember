@@ -117,8 +117,14 @@ fn two_majors_of_a_dependency_coexist() {
     assert_eq!(ran.stdout, "2\n1\n18\n9\n");
     let c = std::fs::read_to_string(app.join("target/debug/c/main.c")).unwrap();
     // (Their small functions are inlined into `main`; the types and the unused functions remain.)
-    let symbols = ["geometry.shapes.Square ", "geometry__1.shapes.Square ", "geometry.inner(", "geometry__1.inner("];
-    for symbol in symbols.map(ember_branding::mangled) {
+    let symbol = ember_branding::item_symbol;
+    let symbols = [
+        format!("{} ", symbol("geometry.shapes.Square")),
+        format!("{} ", symbol("geometry__1.shapes.Square")),
+        format!("{}(", symbol("geometry.inner")),
+        format!("{}(", symbol("geometry__1.inner")),
+    ];
+    for symbol in symbols {
         assert!(c.contains(&symbol), "no `{symbol}` in the C");
     }
     std::fs::write(app.join("src").join(ember_branding::source_file("main")),

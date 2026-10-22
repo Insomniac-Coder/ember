@@ -27,7 +27,7 @@ fn assert_success(output: &std::process::Output, step: &str) {
 
 fn public_type_name(package: &str, name: &str) -> String {
     let bytes = package.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-    format!("{}pkg_{bytes}_{}", ember_branding::mangle_prefix(), ember_branding::mangled(name))
+    format!("{}pkg_{bytes}_{}", ember_branding::mangle_prefix(), ember_branding::item_symbol(name))
 }
 
 fn compile_cpp_object(toolchain: &Toolchain, source: &Path, object: &Path, include: &Path) {
@@ -232,7 +232,7 @@ kind = \"staticlib\"
         let built = build(&["build", "--out-dir", out_arg.as_str()], &dir);
         assert_success(&built, name);
         let c = std::fs::read_to_string(out.join("debug/c/lib.fastmath.c")).unwrap();
-        assert!(!c.contains(&format!(" {}scaled(", ember_branding::mangle_prefix())), "{name}: `scaled` kept a bare symbol:
+        assert!(!c.contains(&format!(" {}(", ember_branding::item_symbol("scaled"))), "{name}: `scaled` kept a bare symbol:
 {c}");
     }
     let lib = out.join("debug/lib");

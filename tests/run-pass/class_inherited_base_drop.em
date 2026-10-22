@@ -1,8 +1,8 @@
 #$ test: run-pass
 #$ rules: CLS-4, CLS-6, DRP-1, OWN-2
 #$ profiles: debug, development, release
-#$ assert-c: contains(em_Derived_drop_adapter)
-#$ assert-c: contains(em_Base_drop(&)
+#$ assert-c: contains(em_drop_adapter_7Derived)
+#$ assert-c: contains(em_4Base4drop(&)
 #$ stdout: base
 
 open class Base:
