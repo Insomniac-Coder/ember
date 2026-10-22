@@ -72,6 +72,33 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   in a `for`, in a `while`); `accept_once_closure_satisfies_owned_callable_parameter.em` became
   `reject_a_once_closure_given_to_an_owned_fn_parameter.em` (and the same closure given to a
   `once fn` parameter compiles); `accept_owned_callable_parameter_is_consumed_once.em`'s comment.
+* **`[CLO-6a]`** — an owned `once fn(A) -> R` value: a type (`TyKind::Fn { once: true }`, never
+  `Copy`) anywhere a type is written outside a parameter. It holds a closure that moves a capture
+  out (`owned fn`), any `fn` value or function (a `fn` is a `once fn`, not the other way:
+  `E2020`), and is called wherever it is held: a local, a struct's field, a `Box`, an element its
+  collection's API hands over (`pop_front`, `pop`, `Option.take`). The call moves it out of its
+  place, so the move rules refuse a second call (`E3040`), a call in a loop (`E3041`), through a
+  borrowed parameter (`E3013`), out of an element in place (`E3011`) or a class field
+  (`E3012`); given to a `fn(A) -> R` parameter it is `E3030` at the argument. The C side: each
+  callable descriptor gains a `once` entry (a closure taking its environment whole is given it
+  and only its allocation is freed; any other is called and then dropped), a `once fn` call goes
+  through it, and one in a `Box` through a helper that moves the value out and frees the box
+  first. `CLO-6a/accept_an_owned_once_fn_value_is_called_and_emptied.em` (three profiles,
+  shown in `release` too), `CLO-6a/reject_a_once_fn_value_called_twice_or_from_a_borrowed_place.em`,
+  `CLO-6a/reject_a_once_fn_value_where_fn_is_wanted.em`. `phase-status.json`: the `CLO-6a`
+  entry removed. For the lead: `tools/phase_progress.py --check` now differs from the README
+  (not mine to edit).
+
+## Added to the job by the coordinator (owner answers, binding)
+
+* ODR-218 `[ECS-4]` — `world.run_parallel([…])` runs systems whose sets do not conflict at once,
+  on threads; an owned callable value is `Send` when everything it captures is; a component used
+  by `run_parallel` must be `Send`.
+* ODR-236 — a comprehension may take its list over (`[s for s in owned shapes if …]`, moving the
+  chosen items) or copy them (`s.clone()`); first-week 16 re-marked after.
+* ODR-237 — `Box[T]` is `Clone` when `T` is (recursive types' derived clone a function);
+  `interface Shape: Clone:` requires implementers be `Clone`, and `Box[dyn Shape]` is `Clone`
+  through a copy entry in the method table. Not `Eq` for `Box`.
 
 ## Not done
 
@@ -102,6 +129,14 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `is_owned_callable_param` (the consuming call) is `once fn` only;
   `reject_once_closures_for_callable_bounds` returns whether it refused, and the call is then
   not instantiated.
+* `ember_types`: `TyKind::Fn.once` (display, canonical name and spelling `once fn`, unify).
+  `ember_typeck`: `once fn` types outside parameters; coercions (`fn` → `once fn`, a once
+  closure into a `once fn`, an owned `once fn` parameter only into a `once fn`); a `once fn`
+  call consumes its callee (`synth_indirect_call`); `through_callable_ref` reads through a `Box`;
+  `reject_once_closures_for_callable_bounds` refuses a `once fn` value at a `fn` bound.
+  `ember_mir`: a consumed callee in a `Box` moves the box. `ember_codegen_c`: the descriptor's
+  `once` entry (after `captures`, so the runtime's reload view of the prefix is unchanged), the
+  `_once` thunks, `ArrayHelper::OnceBoxCall`.
 
 ## Defects found
 

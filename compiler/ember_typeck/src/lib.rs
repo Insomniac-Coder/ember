@@ -1943,7 +1943,7 @@ enum TyShape {
     Array(u64),
     Vec(bool),
     Tuple,
-    Fn(Option<Symbol>, bool, bool, bool, Vec<ember_types::FnParamMode>),
+    Fn(Option<Symbol>, bool, bool, bool, bool, Vec<ember_types::FnParamMode>),
     /// Any other type: equal only to itself.
     Leaf(Ty),
 }
@@ -7242,7 +7242,7 @@ impl<'a> Checker<'a> {
                 ret: item.decl.ty.clone(),
                 body: ast::LambdaBody::Expr(Box::new(item.decl.value.clone())),
             };
-            let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params: Vec::new(), ret: item.ty });
+            let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: Vec::new(), ret: item.ty });
             let value = self.synth_lambda_fresh(&lambda, Some(expected), item.span, None);
             self.current_module = module;
             let ExprKind::FnValue(def) = value.kind else { continue };
@@ -13560,8 +13560,8 @@ impl<'a> Checker<'a> {
             TyKind::Array { elem, len } => (TyShape::Array(len), vec![elem]),
             TyKind::Vec { elem, text } => (TyShape::Vec(text), vec![elem]),
             TyKind::Tuple(items) => (TyShape::Tuple, items),
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => (
-                TyShape::Fn(abi, latebound, stateless, is_unsafe, params.iter().map(|param| param.mode).collect()),
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => (
+                TyShape::Fn(abi, latebound, stateless, is_unsafe, once, params.iter().map(|param| param.mode).collect()),
                 params.iter().map(|param| param.ty).chain([ret]).collect(),
             ),
             _ => (TyShape::Leaf(ty), Vec::new()),
@@ -13807,14 +13807,12 @@ impl<'a> Checker<'a> {
             // coercion target, which every named function fits and which
             // `[CLO-3]`'s closure parameter is a generic over.
             ast::TypeKind::Fn { abi, latebound, params, ret, once, is_unsafe } => {
-                // `[CLO-6a]` — a `once fn` is built as a parameter's bound; as a value that is
-                // called and so emptied, it is not.
-                if *once && !std::mem::take(&mut self.once_fn_parameter) {
-                    self.error(
-                        codes::E0900,
-                        ty.span,
-                        "a `once fn` value outside a parameter is not implemented yet",
-                    );
+                // `[CLO-6]`, `[CLO-6a]` — a `once fn` parameter is a bound (`callable_param_ty`
+                // reads `once` from what is written); anywhere else it is an owned callable value
+                // called at most once, whose call moves it out of its place.
+                let once_value = *once && !std::mem::take(&mut self.once_fn_parameter);
+                if once_value && abi.is_some() {
+                    self.error(codes::E2020, ty.span, "a C function pointer may be called any number of times: `once` is for an Ember callable");
                     return self.common.error;
                 }
                 if let Some(abi) = abi.as_deref()
@@ -13853,6 +13851,7 @@ impl<'a> Checker<'a> {
                 // ODR-102 — written outside a parameter, `fn(A) -> R` is an
                 // owned callable value; `extern "C" fn` is a C pointer.
                 self.types.intern(TyKind::Fn {
+                    once: once_value,
                     abi: abi.as_ref().map(|abi| Symbol::intern(abi)),
                     latebound: *latebound,
                     stateless: abi.is_some(),
@@ -16664,7 +16663,7 @@ impl<'a> Checker<'a> {
                     .collect();
                 self.types.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -16673,7 +16672,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 let ret = map(self, ret);
-                self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret })
+                self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
             }
             TyKind::Struct(id) => {
                 if let Some(inner) = self.boxes.get(&id).copied() {
@@ -17606,8 +17605,8 @@ impl<'a> Checker<'a> {
             TyKind::Span { elem, mutable } => {
                 format!("{}_{}", if mutable { "MutSpan" } else { "Span" }, self.instance_stem(elem))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
-                let mut out = String::from("fn");
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
+                let mut out = String::from(if once { "oncefn" } else { "fn" });
                 if let Some(abi) = abi {
                     out.push_str("extern");
                     out.push_str(&type_stem(abi.as_str()));
@@ -33632,14 +33631,14 @@ impl<'a> Checker<'a> {
         // `[FN-6]` (ODR-115) — a function, or a lambda, where an `unsafe` callable type is wanted:
         // the value converts as it would to the safe form, and only its calls change, needing
         // `unsafe`. The other way, an `unsafe fn` to a safe type, is the `E2020` below.
-        if let TyKind::Fn { abi, latebound, stateless, is_unsafe: true, params, ret } = self.types.kind(expected).clone()
+        if let TyKind::Fn { abi, latebound, stateless, is_unsafe: true, once, params, ret } = self.types.kind(expected).clone()
             && !matches!(self.types.kind(expr.ty), TyKind::Fn { is_unsafe: true, .. })
             && let Some(signature) = self.callable_signature_of_value(expr.ty)
             && let TyKind::Fn { params: found, ret: found_ret, .. } = self.types.kind(signature).clone()
             && found == params
             && found_ret == ret
         {
-            let safe = self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe: false, params, ret });
+            let safe = self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe: false, once, params, ret });
             let converted = self.coerce(expr, safe);
             return Expr { ty: expected, ..converted };
         }
@@ -33665,8 +33664,18 @@ impl<'a> Checker<'a> {
         // ODR-102 — a function, or a lambda that captures nothing, is an owned
         // callable value holding no state: the same bits, nothing to drop.
         if let (
-            TyKind::Fn { abi: None, latebound: found_late, stateless: true, is_unsafe: found_unsafe, params: found, ret: found_ret },
-            TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, params: wanted, ret: wanted_ret },
+            TyKind::Fn { abi: None, latebound: found_late, stateless: true, is_unsafe: found_unsafe, params: found, ret: found_ret, .. },
+            TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, params: wanted, ret: wanted_ret, .. },
+        ) = (self.types.kind(expr.ty), self.types.kind(expected))
+            && found_late == wanted_late && found_unsafe == wanted_unsafe && found == wanted && found_ret == wanted_ret
+        {
+            return Expr { ty: expected, ..expr };
+        }
+        // `[CLO-6a]` — an owned callable value is a `once fn` value too, the same bits: what may be
+        // called many times may be called once. Not the other way round.
+        if let (
+            TyKind::Fn { abi: None, latebound: found_late, stateless: false, is_unsafe: found_unsafe, once: false, params: found, ret: found_ret },
+            TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, once: true, params: wanted, ret: wanted_ret },
         ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && found_late == wanted_late && found_unsafe == wanted_unsafe && found == wanted && found_ret == wanted_ret
         {
@@ -33677,11 +33686,13 @@ impl<'a> Checker<'a> {
         // This is the generic body's check, with the parameter opaque; each instance converts its
         // concrete argument as the rules below do (a function or capture-free lambda by its bits,
         // an `owned fn` by `MakeCallable`, a lambda that borrows or moves a capture out refused).
-        if let Some((signature, _)) = self.callable_bound_of(expr.ty)
+        if let Some((signature, bound_once)) = self.callable_bound_of(expr.ty)
             && self.consumed_callable_parameter(expr.ty)
+            // `[CLO-6a]` — a `once fn` parameter becomes a `once fn` value only.
+            && (!bound_once || matches!(self.types.kind(expected), TyKind::Fn { once: true, .. }))
             && let TyKind::Fn { params: found, ret: found_ret, latebound: found_late, is_unsafe: found_unsafe, .. } =
                 self.types.kind(signature).clone()
-            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe } =
+            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe, .. } =
                 self.types.kind(expected).clone()
             && found == wanted
             && found_ret == wanted_ret
@@ -33724,11 +33735,13 @@ impl<'a> Checker<'a> {
                 );
                 return Expr { ty: expected, kind: ExprKind::Error, span };
             }
-            if once {
+            // `[CLO-6a]` — a `once fn` value takes a closure that moves a capture out.
+            let wanted_once = matches!(self.types.kind(expected), TyKind::Fn { once: true, .. });
+            if once && !wanted_once {
                 self.sink.emit_classified(
                     Diagnostic::error(codes::E3030, span, "closure would move a captured value out")
                         .primary_label("this closure is callable only once")
-                        .help(format!("`{wanted_shown}` may be called many times; take `once fn` where it is called once"))
+                        .help(format!("`{wanted_shown}` may be called many times; write `once {wanted_shown}` where it is called once"))
                         .note("the closure moves a non-`Copy` capture out of its environment [CLO-6]"),
                 );
                 return Expr { ty: expected, kind: ExprKind::Error, span };
@@ -34134,6 +34147,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 Some(self.types.intern(TyKind::Fn {
+                    once: false,
                     abi: None,
                     latebound: false,
                     stateless: true,
@@ -37656,9 +37670,13 @@ impl<'a> Checker<'a> {
             if bound.once {
                 continue;
             }
-            let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
-            if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
-                continue;
+            // `[CLO-6a]` — a `once fn` value is called at most once, as such a closure is.
+            let once_value = matches!(self.types.kind(value.ty), TyKind::Fn { once: true, .. });
+            if !once_value {
+                let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
+                if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
+                    continue;
+                }
             }
             // A routed method's parameter is not the user's to change.
             let help = match self.routed_method {
@@ -37668,16 +37686,26 @@ impl<'a> Checker<'a> {
                 ),
                 None => "declare the parameter `f: once fn(...) -> ...` when it is called at most once, or use `mem.take` when the capture implements `Default`; clone only as a last resort".to_string(),
             };
-            self.sink.emit_classified(
-                Diagnostic::error(
-                    codes::E3030,
-                    arg.value.span,
-                    "closure would move a captured value out",
-                )
-                .primary_label("this closure is callable only once")
-                .help(help)
-                .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
-            );
+            if once_value {
+                let shown = self.types.display(value.ty);
+                self.sink.emit_classified(
+                    Diagnostic::error(codes::E3030, arg.value.span, format!("a `{shown}` value may be called only once"))
+                        .primary_label("this value is callable only once")
+                        .help("declare the parameter `f: once fn(...) -> ...` when it is called at most once")
+                        .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
+                );
+            } else {
+                self.sink.emit_classified(
+                    Diagnostic::error(
+                        codes::E3030,
+                        arg.value.span,
+                        "closure would move a captured value out",
+                    )
+                    .primary_label("this closure is callable only once")
+                    .help(help)
+                    .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
+                );
+            }
             rejected = true;
         }
         rejected
@@ -37785,7 +37813,7 @@ impl<'a> Checker<'a> {
         });
         // A stateless `fn` type: the parameter types and the result, with
         // none of the copy-capture a stored callable value would ask for.
-        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params: param_tys, ret });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: param_tys, ret });
         let lambda = ast::Lambda {
             is_owned: false,
             params: decl.params.clone(),
@@ -37873,6 +37901,13 @@ impl<'a> Checker<'a> {
     /// closure's environment struct, or the caller's own callable passed on).
     /// What is called is the value it refers to.
     fn through_callable_ref(&mut self, value: Expr) -> Expr {
+        // `[CLO-6a]` — a callable value in a `Box` is called through it; a `once fn` there is
+        // moved out of it by the call.
+        if let Some(inner) = self.box_inner(value.ty)
+            && matches!(self.types.kind(inner), TyKind::Fn { abi: None, .. })
+        {
+            return self.read_box_through(value);
+        }
         let TyKind::Ref { inner, .. } = *self.types.kind(value.ty) else { return value };
         let callable = match *self.types.kind(inner) {
             TyKind::Fn { .. } => true,
@@ -37893,6 +37928,7 @@ impl<'a> Checker<'a> {
         let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
         let bound = self.current_generics.get(index as usize)?.callable.clone()?;
         let signature = self.types.intern(TyKind::Fn {
+            once: false,
             abi: None,
             latebound: bound.latebound,
             stateless: true,
@@ -38202,6 +38238,7 @@ impl<'a> Checker<'a> {
             .collect();
         let ret = self.substitute_ty(bound.ret, &substitution);
         Some(self.types.intern(TyKind::Fn {
+            once: false,
             abi: None,
             latebound: bound.latebound,
             stateless: true,
@@ -44356,9 +44393,12 @@ impl<'a> Checker<'a> {
         consumes_callee: bool,
         latebound_override: bool,
     ) -> Expr {
-        let TyKind::Fn { latebound, stateless, is_unsafe, params, ret, .. } = self.types.kind(callee.ty).clone() else {
+        let TyKind::Fn { latebound, stateless, is_unsafe, once, params, ret, .. } = self.types.kind(callee.ty).clone() else {
             unreachable!("checked by the caller")
         };
+        // `[CLO-6a]` — calling a `once fn` value moves it out of its place, which the move check
+        // then holds empty: a second call is `E3040`, a call through a borrowed place `E3013`.
+        let consumes_callee = consumes_callee || once;
         // `[UNS-1]`, `[FN-6]` (ODR-115) — the callee is some `unsafe fn`, whose obligation the
         // `unsafe` block takes on.
         if is_unsafe && !self.unsafe_context() {
@@ -44372,7 +44412,7 @@ impl<'a> Checker<'a> {
         // `[CLO-2]` — an owned callable value may write its captured state, so
         // it is called from a mutable place. A callable parameter is lent
         // mutably by its caller (ODR-102).
-        if !stateless && is_place(&callee.kind) {
+        if !stateless && !once && is_place(&callee.kind) {
             if !self.is_lent_callable(&callee) {
                 self.reject_readonly_write(&callee, span);
                 if !self.reject_write_through_shared_ref(&callee, span) {
@@ -44631,6 +44671,7 @@ impl<'a> Checker<'a> {
             let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before, reserved);
             let is_unsafe = self.signatures[def.0 as usize].is_unsafe;
             let ty = self.types.intern(TyKind::Fn {
+                once: false,
                 abi: None,
                 latebound: false,
                 stateless: true,
@@ -45900,7 +45941,7 @@ impl<'a> Checker<'a> {
             }
             _ => Vec::new(),
         };
-        let ty = self.types.intern(TyKind::Fn { abi: signature.abi, latebound: false, stateless: true, is_unsafe: signature.is_unsafe, params, ret });
+        let ty = self.types.intern(TyKind::Fn { once: false, abi: signature.abi, latebound: false, stateless: true, is_unsafe: signature.is_unsafe, params, ret });
         // D-284 (ODR-048) — an instance may take a parameter by address, as
         // its generic's declaration does, where a callable type of the same
         // parameters takes a copy; the two calls would disagree.
@@ -46704,6 +46745,7 @@ impl<'a> Checker<'a> {
                     return error;
                 }
                 let fn_ty = self.types.intern(TyKind::Fn {
+                    once: false,
                     abi: None,
                     latebound: false,
                     stateless: true,
@@ -47847,7 +47889,7 @@ impl<'a> Checker<'a> {
         let task = match closure {
             Some(_) => f,
             None => {
-                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
+                let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
                 self.coerce(f, callable_ty)
             }
         };
@@ -48332,6 +48374,7 @@ impl<'a> Checker<'a> {
             None => Expr { ty: int, kind: ExprKind::Int(0), span },
         };
         let expected = self.types.intern(TyKind::Fn {
+            once: false,
             abi: None,
             latebound: false,
             stateless: false,
@@ -48449,7 +48492,7 @@ impl<'a> Checker<'a> {
         };
         let lambda = ast::Lambda { is_owned: false, params: vec![param("$a", self), param("$b", self)], ret: None, body: ast::LambdaBody::Expr(Box::new(value)) };
         let param_ty = |ty: Ty| ember_types::FnParam { ty, mode: ember_types::FnParamMode::Borrow };
-        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params: vec![param_ty(result_ty), param_ty(result_ty)], ret: result_ty });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: vec![param_ty(result_ty), param_ty(result_ty)], ret: result_ty });
         let combiner = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
         match combiner.kind {
             ExprKind::FnValue(def) => Some(def),
@@ -48643,7 +48686,7 @@ impl<'a> Checker<'a> {
             Some(_) => f,
             None => {
                 let void = self.common.void;
-                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
+                let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
                 self.coerce(f, callable_ty)
             }
         };
@@ -48657,7 +48700,7 @@ impl<'a> Checker<'a> {
     /// dropped, as anywhere a `fn()` is wanted), but kept as the closure it is.
     fn synth_job_function(&mut self, expr: &ast::Expr) -> Expr {
         let void = self.common.void;
-        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
         let value = self.synth_with_expectation(expr, Some(expected));
         self.commit(value)
     }
@@ -48783,7 +48826,7 @@ impl<'a> Checker<'a> {
             Some(_) => f,
             None => {
                 let void = self.common.void;
-                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
+                let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
                 self.coerce(f, callable_ty)
             }
         };
@@ -48895,7 +48938,7 @@ impl<'a> Checker<'a> {
         if refused {
             return error;
         }
-        let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
+        let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
         let callable = self.coerce(f, callable_ty);
         if callable.ty == self.common.error || matches!(callable.kind, ExprKind::Error) {
             return error;
@@ -53097,7 +53140,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let ret = if place { self.types.intern(TyKind::Ref { mutable: true, inner: ty }) } else { ty };
-        let fn_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params, ret });
+        let fn_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params, ret });
         let ident = |name: Symbol| ast::Ident { name, span };
         let lambda = ast::Lambda {
             is_owned: false,

@@ -197,7 +197,7 @@ pub enum TyKind {
     /// (`[CLO-3]`): it may hold captured state, so it moves and drops. Both
     /// have one representation, and the first converts to the second.
     /// `is_unsafe` (ODR-115): `unsafe fn(A) -> R`, whose call needs `unsafe`; the same value.
-    Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, params: Vec<FnParam>, ret: Ty },
+    Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, once: bool, params: Vec<FnParam>, ret: Ty },
     /// `[TYP-22]` — an unsized interface value. The interface identities are
     /// retained in declaration order; runtime fat-pointer/vtable lowering is
     /// a later backend slice, so this kind must never acquire a guessed
@@ -934,7 +934,7 @@ impl TypeTable {
                     items.iter().map(|&t| self.substitute_self(t, concrete)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -943,7 +943,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute_self(ret, concrete);
-                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
             }
             _ => ty,
         }
@@ -1010,7 +1010,7 @@ impl TypeTable {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -1019,7 +1019,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute(ret, args);
-                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
             }
             _ => ty,
         }
@@ -1183,11 +1183,12 @@ impl TypeTable {
             // type's identity.  Inference may solve the nested types, but it
             // must never erase `borrow`/`mut`/`owned` on its way there.
             (
-                TyKind::Fn { abi: a_abi, latebound: a_latebound, params: a, ret: a_ret, .. },
-                TyKind::Fn { abi: b_abi, latebound: b_latebound, params: b, ret: b_ret, .. },
+                TyKind::Fn { abi: a_abi, latebound: a_latebound, once: a_once, params: a, ret: a_ret, .. },
+                TyKind::Fn { abi: b_abi, latebound: b_latebound, once: b_once, params: b, ret: b_ret, .. },
             ) if a.len() == b.len()
                     && a_abi == b_abi
                     && a_latebound == b_latebound
+                    && a_once == b_once
                     && a.iter().zip(&b).all(|(left, right)| left.mode == right.mode) =>
             {
                 a.iter()
@@ -2775,7 +2776,7 @@ impl TypeTable {
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
             TyKind::ArrayN { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
             TyKind::Const(value) => value.to_string(),
-            TyKind::Fn { abi, latebound, is_unsafe, params, ret, .. } => {
+            TyKind::Fn { abi, latebound, is_unsafe, once, params, ret, .. } => {
                 let inner: Vec<String> = params
                     .iter()
                     .map(|param| {
@@ -2791,7 +2792,8 @@ impl TypeTable {
                 format!(
                     "{}fn({}) -> {}",
                     if let Some(abi) = abi { format!("{is_unsafe}extern \"{abi}\" ") }
-                    else if *latebound { format!("@latebound {is_unsafe}") } else { is_unsafe.to_string() },
+                    else if *latebound { format!("@latebound {is_unsafe}") }
+                    else if *once { format!("{is_unsafe}once ") } else { is_unsafe.to_string() },
                     inner.join(", "),
                     self.render(*ret, user)
                 )
@@ -2895,13 +2897,15 @@ impl TypeTable {
             TyKind::Const(value) => format!("const {value}"),
             TyKind::Vec { text: true, .. } => "String".to_string(),
             TyKind::Vec { elem, .. } => format!("Array[{}]", self.canonical_name(*elem)?),
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let mut out = if let Some(abi) = abi {
                     format!("extern \"{abi}\" fn(")
                 } else if *latebound {
                     String::from("@latebound fn(")
                 } else if *stateless {
                     String::from("plain fn(")
+                } else if *once {
+                    String::from("once fn(")
                 } else {
                     String::from("fn(")
                 };
@@ -3170,7 +3174,7 @@ impl TypeTable {
                 out.push_str(if *mutable { "*mut " } else { "*" });
                 self.spell(*inner, out);
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 if *is_unsafe {
                     out.push_str("unsafe ");
                 }
@@ -3180,6 +3184,8 @@ impl TypeTable {
                     out.push_str("@latebound ");
                 } else if *stateless {
                     out.push_str("plain ");
+                } else if *once {
+                    out.push_str("once ");
                 }
                 out.push_str("fn(");
                 for (index, param) in params.iter().enumerate() {

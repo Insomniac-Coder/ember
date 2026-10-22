@@ -957,6 +957,9 @@ enum ArrayHelper {
     Sorted,
     /// `[OWN-8]` — a new buffer holding a clone of each element.
     Clone,
+    /// `[CLO-6a]` — a call through a `once fn` value held in a `Box`, keyed by the `once fn`
+    /// type: the value is moved out, the box freed, and the value's `once` entry called.
+    OnceBoxCall,
 }
 
 #[derive(Clone)]
@@ -1912,6 +1915,34 @@ impl Emitter<'_> {
                         body.push("return r;".to_string());
                         (format!("static {RT}vec {symbol}(const void* elems, size_t count)"), body)
                     }
+                    ArrayHelper::OnceBoxCall => {
+                        let TyKind::Fn { params, ret, .. } = self.types.kind(ty).clone() else {
+                            unreachable!("a `once fn` type")
+                        };
+                        let declarations = std::iter::once("void* _b".to_string())
+                            .chain(params.iter().enumerate().map(|(index, param)| format!("{} _a{index}", self.callable_param_c_type(*param, false))))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let parameters = std::iter::once("void*".to_string())
+                            .chain(params.iter().map(|param| self.callable_param_c_type(*param, false)))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let arguments = std::iter::once("(void*)&_v.w".to_string())
+                            .chain((0..params.len()).map(|index| format!("_a{index}")))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let ret_c = self.c_type(ret);
+                        let call = format!("(({ret_c} (*)({parameters}))_v.d->once)({arguments})");
+                        (
+                            format!("static {ret_c} {symbol}({declarations})"),
+                            vec![
+                                format!("struct {RT}fn_value _v;"),
+                                "memcpy(&_v, _b, sizeof _v);".to_string(),
+                                format!("{RT}free(_b, sizeof _v, _Alignof(struct {RT}fn_value));"),
+                                if self.is_void(ret) { format!("{call};") } else { format!("return {call};") },
+                            ],
+                        )
+                    }
                     ArrayHelper::Sorted => {
                         let sort = self.array_helper(ArrayHelper::Sort, ty);
                         (
@@ -2657,6 +2688,9 @@ impl Emitter<'_> {
             if self.reload.is_some() {
                 self.line(&format!("    const {RT}rl_field* captures;"));
             }
+            // `[CLO-6a]` — a call through a `once fn` value: the call and the end of the state,
+            // which the call consumes (a closure that moves a capture out takes it whole).
+            self.line("    void (*once)(void);");
             self.line("};");
             self.line(&format!("struct {RT}fn_value {{"));
             self.line("    void (*native)(void);");
@@ -5789,7 +5823,7 @@ impl Emitter<'_> {
                 |adapter| format!("(void (*)(void)){adapter}"));
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
             let captures = if self.reload.is_some() { ", NULL" } else { "" };
-            self.line(&format!("    (void (*)(void)){thunk}, {c_entry}, NULL{captures}"));
+            self.line(&format!("    (void (*)(void)){thunk}, {c_entry}, NULL{captures}, (void (*)(void)){thunk}"));
             self.line("};");
         }
         if !self.native_fn_values.is_empty() { self.line(""); }
@@ -5859,9 +5893,31 @@ impl Emitter<'_> {
             }
             self.line(&format!("    if ({boxed}) {{ {RT}free(_e, sizeof({env_c}), _Alignof({env_c})); }}"));
             self.line("}");
+            // `[CLO-6a]` — the call a `once fn` value makes, which ends its state: a closure that
+            // takes its environment whole (one that moves a capture out) is given it and drops
+            // what it keeps, and only an allocation holding it is freed here; any other is called
+            // as by `native` and then dropped.
+            self.line(&format!("static EMBER_MAYBE_UNUSED {} {descriptor}_once({declarations}) {{", self.c_type(ret)));
+            let forwarded = std::iter::once("_env".to_string())
+                .chain(params.iter().map(|(id, _)| format!("_{id}")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let result = if self.is_void(ret) { String::new() } else { format!("{} _r = ", self.c_type(ret)) };
+            if body.param_modes.first() == Some(&ParameterMode::Owned) {
+                self.line(&find);
+                self.line(&format!("    {result}{closure}({arguments});"));
+                self.line(&format!("    if ({boxed}) {{ {RT}free(_e, sizeof({env_c}), _Alignof({env_c})); }}"));
+            } else {
+                self.line(&format!("    {result}{descriptor}_native({forwarded});"));
+                self.line(&format!("    {descriptor}_drop(_env);"));
+            }
+            if !self.is_void(ret) {
+                self.line("    return _r;");
+            }
+            self.line("}");
             let captures = if self.reload.is_some() { format!(", {}", self.reload_captures(env)) } else { String::new() };
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
-            self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop{captures}"));
+            self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop{captures}, (void (*)(void)){descriptor}_once"));
             self.line("};");
             // `[JOB-1]` — the job's entry and drop, on the state its slot holds as it is.
             if self.job_closures.contains(&closure) {
@@ -8680,6 +8736,7 @@ impl Emitter<'_> {
             // Cast its native field back to this call's exact signature.
             // A C function value remains a raw C function pointer.
             FuncRef::Indirect { operand: callee, ty, .. } => {
+                let callee_operand = callee;
                 let mut rendered = rendered;
                 if let TyKind::Fn { abi: Some(_), params, .. } = self.types.kind(*ty) {
                     for (argument, param) in rendered.iter_mut().zip(params) {
@@ -8687,7 +8744,7 @@ impl Emitter<'_> {
                             *argument = format!("*({argument})");
                         }
                     }
-                } else if let TyKind::Fn { abi: None, params, ret, .. } = self.types.kind(*ty) {
+                } else if let TyKind::Fn { abi: None, params, ret, once, .. } = self.types.kind(*ty) {
                     let parameters = params.iter()
                         .map(|param| self.callable_param_c_type(*param, false))
                         .collect::<Vec<_>>();
@@ -8697,10 +8754,24 @@ impl Emitter<'_> {
                     let parameters = if parameters == "void" { "void*".to_string() }
                         else { format!("void*, {parameters}") };
                     let arguments = std::iter::once(format!("(void*)&({callee}).w"))
-                        .chain(rendered)
+                        .chain(rendered.iter().cloned())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    return format!("(({} (*)({parameters}))(({callee}).native))({arguments})",
+                    // `[CLO-6a]` — a `once fn` value's call ends its state (`_once`); one in a `Box`
+                    // is taken out of the box, which is freed, first.
+                    if *once
+                        && let Some(boxed) = self.operand_type(callee_operand, body)
+                        && matches!(*self.types.kind(boxed), TyKind::Struct(id) if self.box_inner_id(id).is_some())
+                    {
+                        let helper = self.array_helper(ArrayHelper::OnceBoxCall, *ty);
+                        let arguments = std::iter::once(format!("(void*)({callee})"))
+                            .chain(rendered)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return format!("{helper}({arguments})");
+                    }
+                    let entry = if *once { format!("({callee}).d->once") } else { format!("({callee}).native") };
+                    return format!("(({} (*)({parameters}))({entry}))({arguments})",
                         self.c_type(*ret));
                 }
                 format!("({})({})", self.operand(callee, body), rendered.join(", "))
