@@ -66,3 +66,23 @@ Defects the fuzzers found, fixed:
 - **Formatter: a long `with f = …:` did not parse after formatting**: it was broken as an
   assignment, with its `:` inside the parentheses. A compound statement's `:` stays after them.
   Test for both: `ember_parser` `formatting_the_formatters_output_changes_nothing`.
+
+### Fuzzing the type checker and the borrow checker (done)
+
+`compiler/ember_driver/tests/fuzz.rs`, through `ember check --json` (files side by side; any
+internal error or panic fails the case):
+- `well_typed_programs_are_accepted_and_one_wrong_type_is_found_where_it_is`: 60 programs of
+  structs and functions from a typed generator (int, float, bool, `String`, `Array[int]`, `Copy`
+  structs; arithmetic, casts, comparisons and chains, conditionals, fields, calls of earlier
+  functions, f-strings; declarations, assignments, pushes, `if`/`for`/`while`); every function is
+  well typed by construction and must be accepted; in half the programs some functions have one
+  `v: T = e` given a value of another type, which must be `E2020` at that line, with no error
+  elsewhere.
+- `the_borrow_checker_agrees_with_a_model_of_loans_and_moves`: 40 programs of 8 functions over
+  three arrays: views (`Span`), `ref mut` element references, their uses, reads, pushes,
+  assignments and moves. A model of `[BRW-1]`/`[BRW-2]`/`[OWN-3]` for straight-line code (a loan
+  lives to the last use of its holder; a conflicting access or a moved array is an error) builds
+  sequences it accepts, and in half the functions inserts one access it rejects; the checker must
+  accept the first and reject the second at that line (`E3020`–`E3022`, or `E3040` for a move).
+Ran with 10x the cases on five seeds: the compiler agreed with both oracles everywhere (one
+generator error fixed on the way: a variable made from a bare literal is a `str`, `[TXT-9]`).
