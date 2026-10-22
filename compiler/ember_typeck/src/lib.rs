@@ -470,6 +470,15 @@ pub fn check(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    // A default body gives the implementing type a method it did not write. These have to exist
+    // before any body is checked, or a call to one would not resolve. D-878 — once every module's
+    // implementations are collected: given module by module, an implementation in a module after
+    // its interface's had none (`std.ffi`'s `CppError` had no `Error.source`), so what checked
+    // depended on the order of the module list.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.register_defaults(&loaded.module);
+    }
     // An instance a signature made before the implementations were collected
     // may have missed an extension whose bound they meet (`Map[String, V]`'s
     // `K: Hash` needs `String`'s); it is offered each one again. One whose
@@ -10521,10 +10530,6 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
-        // A default body gives the implementing type a method it did not
-        // write. These have to exist before any body is checked, or a call to
-        // one would not resolve.
-        self.register_defaults(module);
     }
 
     /// Every implementation has every method the interface requires, and every

@@ -169,3 +169,22 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   whichever it holds (an instance per lambda would be more precise and cost code size; not built).
   `EFF-1/accept_a_call_through_a_plain_fn_value_has_the_effects_of_its_functions.em` (three
   profiles), `EFF-1/reject_a_plain_fn_value_of_a_shape_some_function_allocates_in.em`.
+
+* **D-878 `[TYP-24]`, `[BLD-13]`** — an implementation got its interface's default methods module by
+  module (`register_defaults` at the end of each module's `collect_methods`), so one in a module
+  the list holds after the interface's had none: `std.ffi`'s `extend CppError implements Error`
+  had no `source` once `std.ffi` came after `std.core`. The defaults are now given once every
+  module's implementations are collected (a pass of its own after `collect_methods`).
+  `TYP-24/accept_a_default_method_reaches_an_implementation_in_a_later_module.em` (three
+  profiles; support `TYP-24/order/named.em`, `order/circle.em`, imported in the order that puts
+  the interface's module first; `E2040` and `E2072` before).
+* **D-881 — not a compiler defect; a question.** `{name: name.char_count() for _, name in pairs}`
+  with `name: str` is `E2020` because `[TYP-38]` makes a map written with no type own its text
+  (its key type `String`) and `[TXT-9]` never converts a `str` value implicitly; a map literal
+  `{name: 1}` is the same error, and both written forms work (`sizes: Map[str, int] = {…}`, or
+  `{name.to_string(): …}`). The diagnostic is the defect's real part: it names `Map.insert`'s
+  parameter in `std/src/collections.em`, the comprehension's desugaring, and does not offer the
+  map's type. Options: (a) as the spec reads, a better `E2020` at the key (help: `.to_string()`, or
+  name the type `Map[str, V]`; no std location); (b) a key whose type is `str` (not a literal)
+  makes `Map[str, V]`, as a list comprehension's elements stay `str`, only a literal defaulting to
+  `String`; (c) convert implicitly, copying (contradicts `[TXT-9]`). Recommend (a). Not built.
