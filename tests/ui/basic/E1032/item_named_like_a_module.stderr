@@ -1,0 +1,15 @@
+error[E1032]: item `grid` has the path of module `grid`
+ --> tests/ui/basic/E1032/item_named_like_a_module.em:3:8
+  |
+3 | struct grid:
+  |        ^^^^ an item named like a module in the same scope
+  |
+ ::: tests/ui/basic/E1032/grid.em:1:1
+  |
+1 | # Module `grid` of item_named_like_a_module.em and its fixed form.
+  | - module `grid` is this file
+  |
+  = help: rename the item, or the module's file
+  = note: every item has one path [MOD-1] [MNG-1], and the item's members and the module's items would both be `grid.<name>`
+
+error: could not compile due to 1 error(s)

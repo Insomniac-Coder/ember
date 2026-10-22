@@ -358,6 +358,7 @@ pub fn check(
         checker.current_module = index;
         checker.declare_names(&loaded.module);
     }
+    checker.check_item_paths(modules);
     checker.bind_prelude(modules);
     checker.bind_imports(modules);
     // `[RFL-1]`, `[RFL-3]` — every type's written attributes, and the `@attribute` structs, before
@@ -1361,6 +1362,14 @@ fn changed_declarations(module: &ast::Module, changes: &[(String, String)]) -> V
 const COMPILER_KNOWN_TYPES: [&str; 16] = [
     "Option", "Result", "Box", "Shared", "Weak", "Cell", "RefCell", "MaybeUninit", "Ref", "RefMut", "Span",
     "MutSpan", "Array", "SoA", "SoARef", "SoAMut",
+];
+
+/// `[TYP-1]`'s scalar table (IV.2), ODR-201 — the built-in types' names, which a type the program
+/// declares may not take (`E1032`). The prelude's aliases (`int`, `float`, `Never`) and `str` are
+/// names a declaration may shadow (`[MOD-5]`); `void` is a keyword.
+const BUILT_IN_TYPES: [&str; 19] = [
+    "i8", "i16", "i32", "i64", "i128", "i256", "u8", "u16", "u32", "u64", "u128", "u256", "isize", "usize", "f16", "f32",
+    "f64", "bool", "char",
 ];
 
 /// A root-module item's qualified name. The root module's names are not
@@ -2630,6 +2639,9 @@ struct Checker<'a> {
     /// `[MNG-1]` — each instance symbol made, with the instance it was made for: another instance
     /// with it is `E9040`.
     instance_symbols: InstanceSymbols,
+    /// ODR-201 — the paths `E1032` found two items or an item and a module at: instances under one
+    /// meeting are its cascade (`[DIA-14]`), not `E9040`s.
+    path_conflicts: HashSet<String>,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
     /// Enums declared with type parameters, by qualified name.
@@ -3243,6 +3255,7 @@ impl<'a> Checker<'a> {
             generic_of: HashMap::new(),
             instance_spellings: HashMap::new(),
             instance_symbols: InstanceSymbols::default(),
+            path_conflicts: HashSet::new(),
             generic_structs: HashMap::new(),
             generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
@@ -4742,6 +4755,69 @@ impl<'a> Checker<'a> {
             self.item_visibility.insert(qualified, item.vis.kind);
             if let ast::ItemKind::Const(decl) = &item.kind {
                 self.const_values.insert(qualified, (decl.value.clone(), index));
+            }
+        }
+    }
+
+    /// ODR-201, `[MOD-1]`, `[MNG-1]` — every item has one path. An item named like a module of the
+    /// build in its scope (module `a`'s `b` beside module `a.b`, the root module's `grid` beside
+    /// module `grid`) would give its members the module's items' paths; one named like a module its
+    /// module imports (`import paths.grid` beside `struct grid`) leaves `grid.at` meaning either;
+    /// and a type the program declares under a built-in type's name (`struct i32`) would have the
+    /// built-in's path. Each is `E1032`. A declaration `import c` wrote keeps its header's name.
+    fn check_item_paths(&mut self, modules: &[LoadedModule]) {
+        let by_path: HashMap<&str, usize> =
+            self.prefixes.iter().enumerate().map(|(index, prefix)| (prefix.as_str(), index)).collect();
+        for (index, loaded) in modules.iter().enumerate() {
+            let prefix = self.prefixes[index].as_str();
+            // The names this module's `import a.b [as c]` bind to modules, as `bind_imports` binds them.
+            let mut imported: HashMap<Symbol, (Span, String)> = HashMap::new();
+            for import in &loaded.module.imports {
+                let ast::ImportKind::Module { path, alias } = &import.kind else { continue };
+                let key = path.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".");
+                let target = by_path.get(key.as_str()).or_else(|| by_path.get(format!("std.{key}").as_str()));
+                if let (Some(&target), Some(bound)) = (target, alias.as_ref().or(path.last())) {
+                    imported.insert(bound.name, (import.span, self.prefixes[target].clone()));
+                }
+            }
+            for item in &loaded.module.items {
+                let Some(name) = item_ident(item) else { continue };
+                let path = if prefix.is_empty() { name.name.to_string() } else { format!("{prefix}.{}", name.name) };
+                if let Some(&module) = by_path.get(path.as_str()) {
+                    let file = modules[module].module.span.file;
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1032, name.span, format!("item `{path}` has the path of module `{path}`"))
+                            .primary_label("an item named like a module in the same scope")
+                            .secondary(Span::new(file, 0, 0), format!("module `{path}` is this file"))
+                            .help("rename the item, or the module's file")
+                            .note(format!(
+                                "every item has one path [MOD-1] [MNG-1], and the item's members and the module's items would both be `{path}.<name>`"
+                            )),
+                    );
+                    self.path_conflicts.insert(path.clone());
+                } else if let Some((import, module)) = imported.get(&name.name) {
+                    let bound = name.name;
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1032, name.span, format!("item `{bound}` has the name of module `{module}`, which this module imports"))
+                            .primary_label("an item named like an imported module")
+                            .secondary(*import, format!("this binds `{bound}` to module `{module}`"))
+                            .help("rename the item, or import the module under another name with `as`")
+                            .note(format!("a module and an item of one name in one scope [MOD-1]: `{bound}.<name>` would mean either")),
+                    );
+                }
+                let is_type = matches!(
+                    item.kind,
+                    ast::ItemKind::Struct(_) | ast::ItemKind::Class(_) | ast::ItemKind::Enum(_) | ast::ItemKind::Interface(_) | ast::ItemKind::TypeAlias(_)
+                );
+                if is_type && loaded.foreign.is_none() && BUILT_IN_TYPES.contains(&name.name.as_str()) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1032, name.span, format!("type `{}` has the name of a built-in type", name.name))
+                            .primary_label(format!("`{}` is a built-in type", name.name))
+                            .help("rename the type")
+                            .note("a built-in type's name means the built-in wherever a type is written, and its path is the built-in's [MNG-1]"),
+                    );
+                    self.path_conflicts.insert(path);
+                }
             }
         }
     }
@@ -22775,12 +22851,22 @@ impl<'a> Checker<'a> {
         let symbol = ember_branding::instance_symbol(path, arguments.as_deref());
         if let Some(arguments) = &arguments {
             let from = format!("{path}{arguments}");
-            if let Some((first, first_from, first_span)) = self.instance_symbols.note(&symbol, made, &from, span) {
+            if let Some((first, first_from, first_span)) = self.instance_symbols.note(&symbol, made, &from, span)
+                && !(first_from == from && self.under_path_conflict(path))
+            {
                 let (first_shown, shown) = (self.instance_shown(first, &first_from), self.instance_shown(made, &from));
                 self.sink.emit(instance_collision(&symbol, &first_shown, first_span, &shown, span, first_from == from));
             }
         }
         symbol
+    }
+
+    /// Whether `path` is one `E1032` reported, or an item's under it: two instances of it with one
+    /// list of arguments are that error's cascade.
+    fn under_path_conflict(&self, path: &str) -> bool {
+        self.path_conflicts.iter().any(|conflict| {
+            path.strip_prefix(conflict.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
     }
 
     /// How an instance is written in `E9040`: a function's by its path and arguments, a method's
@@ -54539,15 +54625,20 @@ fn has_static_region(expr: &ast::Expr) -> bool {
 
 /// The name an item declares, if it declares one.
 fn item_name(item: &ast::Item) -> Option<Symbol> {
+    item_ident(item).map(|ident| ident.name)
+}
+
+/// The name a named item declares, with its place.
+fn item_ident(item: &ast::Item) -> Option<&ast::Ident> {
     Some(match &item.kind {
-        ast::ItemKind::Fn(d) => d.name.name,
-        ast::ItemKind::Struct(d) => d.name.name,
-        ast::ItemKind::Enum(d) => d.name.name,
-        ast::ItemKind::Interface(d) => d.name.name,
-        ast::ItemKind::Const(d) => d.name.name,
-        ast::ItemKind::Static(d) => d.name.name,
-        ast::ItemKind::Class(d) => d.name.name,
-        ast::ItemKind::TypeAlias(d) => d.name.name,
+        ast::ItemKind::Fn(d) => &d.name,
+        ast::ItemKind::Struct(d) => &d.name,
+        ast::ItemKind::Enum(d) => &d.name,
+        ast::ItemKind::Interface(d) => &d.name,
+        ast::ItemKind::Const(d) => &d.name,
+        ast::ItemKind::Static(d) => &d.name,
+        ast::ItemKind::Class(d) => &d.name,
+        ast::ItemKind::TypeAlias(d) => &d.name,
         ast::ItemKind::Extend(_)
         | ast::ItemKind::ExternBlock(_)
         | ast::ItemKind::ExternClass(_)
@@ -54681,8 +54772,9 @@ mod instance_symbol_tests {
 }
 
 /// `[MNG-1]` — `E9040`: two generic instances, written `first` and `second`, whose symbols are one.
-/// The instance hash of different arguments meeting is one way; two items of one path (a module
-/// and a type of one name, each with a generic `at`) another (`one_path`).
+/// The instance hash of different arguments meeting is one way; two items of one path another
+/// (`one_path`), though a module and a type of one name, the way a program could write one, are
+/// `E1032` (ODR-201) and their instances its cascade.
 fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str, span: Span, one_path: bool) -> Diagnostic {
     let diagnostic = Diagnostic::error(
         codes::E9040,
@@ -54696,9 +54788,7 @@ fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str,
         ember_branding::INSTANCE_HASH_DIGITS
     ));
     if one_path {
-        diagnostic
-            .note("both have one path and one list of arguments: a module and a type of one name in one module make their items' paths one")
-            .help("rename the module or the type")
+        diagnostic.note("both have one path and one list of arguments").help("rename one of the two items")
     } else {
         diagnostic.help("rename one of the types their arguments name, which changes the hash")
     }
