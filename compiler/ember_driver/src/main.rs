@@ -989,6 +989,7 @@ fn cycle_analysis(
         true,
         &ember_typeck::ComptimeAnswers::new(),
         lint_settings.realtime,
+        &Exports::new(&entry, &root_dir),
     );
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -3078,6 +3079,7 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
                     true,
                     &ember_typeck::ComptimeAnswers::new(),
                     lints.realtime,
+                    &Exports::new(input, &root_dir),
                 );
                 // What a compile-time evaluation would answer is not this command's.
                 if !checked.comptime.is_empty() {
@@ -4394,6 +4396,97 @@ fn build_id(map: &SourceMap, profile: Profile, toolchain: &Toolchain, runtime: &
     Ok(ember_build::content_hash(&bytes))
 }
 
+/// `[DIA-12]` N2, `[DIA-15]` — the index of exported names a diagnostic offers import lines from:
+/// every `pub` item of the standard library's modules, and every `pub` or `pub(package)` item of
+/// the root package's (its source tree when it has a manifest, else the files beside the root
+/// file). Read from the modules' declarations, parsed and never type checked, the first time a
+/// name is not found, and only then: a program that compiles never builds it.
+struct Exports {
+    root_file: Option<PathBuf>,
+    root_dir: PathBuf,
+    whole_tree: bool,
+    index: std::cell::OnceCell<std::collections::HashMap<String, Vec<ember_typeck::Exported>>>,
+}
+
+impl Exports {
+    fn new(input: &Path, root_dir: &Path) -> Exports {
+        Exports {
+            root_file: std::fs::canonicalize(input).ok(),
+            root_dir: root_dir.to_path_buf(),
+            whole_tree: nearest_manifest_path(input).is_some(),
+            index: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn build(&self) -> std::collections::HashMap<String, Vec<ember_typeck::Exported>> {
+        let mut index = std::collections::HashMap::new();
+        if let Some(std_root) = ember_branding::std_root() {
+            self.scan(&std_root, &[ember_branding::STD_PACKAGE.to_string()], true, false, &mut index);
+        }
+        self.scan(&self.root_dir, &[], self.whole_tree, true, &mut index);
+        index
+    }
+
+    /// The modules under `dir`, whose path starts `prefix` (`a/b.em` is `a.b`, `a/mod.em` is `a`,
+    /// and the standard library's `lib.em` is `std`).
+    fn scan(&self, dir: &Path, prefix: &[String], recursive: bool, package: bool, index: &mut std::collections::HashMap<String, Vec<ember_typeck::Exported>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<PathBuf> = entries.filter_map(|entry| entry.ok().map(|entry| entry.path())).collect();
+        entries.sort();
+        for path in entries {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()).map(str::to_owned) else { continue };
+            if path.is_dir() {
+                if recursive && !name.starts_with('.') && name != "target" {
+                    let mut inner = prefix.to_vec();
+                    inner.push(name);
+                    self.scan(&path, &inner, recursive, package, index);
+                }
+                continue;
+            }
+            let Some(stem) = name.strip_suffix(&format!(".{}", ember_branding::SOURCE_EXT)) else { continue };
+            if self.root_file.as_ref().is_some_and(|root| std::fs::canonicalize(&path).ok().as_ref() == Some(root)) {
+                continue;
+            }
+            let module = if stem == "mod" || (stem == "lib" && prefix == [ember_branding::STD_PACKAGE]) {
+                prefix.join(".")
+            } else {
+                prefix.iter().map(String::as_str).chain([stem]).collect::<Vec<_>>().join(".")
+            };
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let mut quiet = Sink::new();
+            let lexed = ember_lexer::lex(ember_span::FileId::DUMMY, &text, &mut quiet);
+            let parsed = ember_parser::parse(ember_span::FileId::DUMMY, &text, lexed.tokens, &mut quiet);
+            for item in &parsed.items {
+                let exported = match item.vis.kind {
+                    ember_ast::VisKind::Public => true,
+                    ember_ast::VisKind::Package => package,
+                    ember_ast::VisKind::Private => false,
+                };
+                let (name, is_type) = match &item.kind {
+                    ember_ast::ItemKind::Fn(decl) => (decl.name.name, false),
+                    ember_ast::ItemKind::Const(decl) => (decl.name.name, false),
+                    ember_ast::ItemKind::Static(decl) => (decl.name.name, false),
+                    ember_ast::ItemKind::Struct(decl) => (decl.name.name, true),
+                    ember_ast::ItemKind::Enum(decl) => (decl.name.name, true),
+                    ember_ast::ItemKind::Class(decl) => (decl.name.name, true),
+                    ember_ast::ItemKind::Interface(decl) => (decl.name.name, true),
+                    ember_ast::ItemKind::TypeAlias(decl) => (decl.name.name, true),
+                    _ => continue,
+                };
+                if exported {
+                    index.entry(name.to_string()).or_insert_with(Vec::new).push(ember_typeck::Exported { module: module.clone(), is_type });
+                }
+            }
+        }
+    }
+}
+
+impl ember_typeck::ExportIndex for Exports {
+    fn exporters(&self, name: &str) -> &[ember_typeck::Exported] {
+        self.index.get_or_init(|| self.build()).get(name).map_or(&[], Vec::as_slice)
+    }
+}
+
 fn package_source_root(input: &Path) -> PathBuf {
     // A bare file name's parent is the empty path: its folder is the working one.
     let fallback = input.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new(".")).to_path_buf();
@@ -4495,6 +4588,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // answered, until nothing is left to evaluate; a pass that asks for
     // values says nothing (its errors are the next pass's too).
     let mut answers = ember_typeck::ComptimeAnswers::new();
+    let exports = Exports::new(input, &root_dir);
     let mut reports = Vec::new();
     let mut blocked = Vec::new();
     let mut passes = 0;
@@ -4514,6 +4608,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             options.profile == Profile::Debug,
             &answers,
             lint_settings.realtime,
+            &exports,
         );
         if checked.comptime.is_empty() {
             // `[TCB-1]` — under `--require-evidence` a grade claimed without evidence is an error.

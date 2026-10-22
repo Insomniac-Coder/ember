@@ -34,7 +34,7 @@ use ember_hir::{
     BinOp, Block, Builtin, DefId, DestructureBinding, DisjointMode, Expr, ExprKind, Function, LocalDecl,
     LocalId, MatchArm, MatchArmBody, Mode, Param, Pattern, PatternKind, Program, Stmt, UnOp,
 };
-use ember_span::{Span, Symbol};
+use ember_span::{FileId, Span, Symbol};
 use ember_types::{FpMode, 
     Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
     OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
@@ -52,6 +52,30 @@ pub struct LoadedModule {
     pub package: Option<usize>,
     /// `[FFI-6]` — a module `import c` wrote from a header: what else the import found.
     pub foreign: Option<ForeignImport>,
+}
+
+/// `[DIA-12]` N2, `[DIA-15]` — the index of names other modules export, in which a name a module
+/// cannot find is looked up so that the diagnostic can offer the import line. The build supplies it
+/// from the modules' declarations, never by type checking them.
+pub trait ExportIndex {
+    /// Every module that exports `name` to the program being checked.
+    fn exporters(&self, name: &str) -> &[Exported];
+}
+
+/// One exporter of a name: its module's path (`std.math`) and whether the item is a type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Exported {
+    pub module: String,
+    pub is_type: bool,
+}
+
+/// An index that knows of no exports, for a check that offers no import lines.
+pub struct NoExports;
+
+impl ExportIndex for NoExports {
+    fn exporters(&self, _: &str) -> &[Exported] {
+        &[]
+    }
 }
 
 /// `[FFI-6]` — what `import c` found in a header beside the declarations it wrote.
@@ -225,6 +249,7 @@ pub fn check(
     debug_assertions: bool,
     comptime_answers: &ComptimeAnswers,
     realtime: Option<hir::Effects>,
+    exports: &dyn ExportIndex,
 ) -> CheckOutput {
     // `[FFI-16]` — a status enum's error type, `struct N(code: E)` implementing `Error`.
     let status_errors = errors::desugar_status_errors(modules);
@@ -265,6 +290,17 @@ pub fn check(
     checker.derive_requests = derive_requests;
     checker.realtime_contracts = realtime.unwrap_or(hir::Effects::REALTIME_DEFAULT);
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
+    checker.exports = Some(exports);
+    // `[DIA-12]` N2 — where each module's import line goes: after its last import, or at the top
+    // of its file.
+    checker.import_insertions = modules
+        .iter()
+        .map(|m| match (m.module.imports.last(), m.module.items.first()) {
+            (Some(last), _) => Some((Span::new(last.span.file, last.span.end, last.span.end), true)),
+            (None, Some(first)) if first.span.file != FileId::DUMMY => Some((Span::new(first.span.file, 0, 0), false)),
+            _ => None,
+        })
+        .collect();
     checker.module_packages = modules.iter().map(|m| m.package).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
@@ -2206,6 +2242,9 @@ struct Checker<'a> {
     types: &'a mut TypeTable,
     common: &'a CommonTypes,
     sink: &'a mut Sink,
+    /// `[DIA-12]` N2 — the names other modules export, and where each module's import line goes.
+    exports: Option<&'a dyn ExportIndex>,
+    import_insertions: Vec<Option<(Span, bool)>>,
     struct_ids: HashMap<Symbol, StructId>,
     class_ids: HashMap<Symbol, ClassId>,
     enum_ids: HashMap<Symbol, EnumId>,
@@ -3016,6 +3055,8 @@ impl<'a> Checker<'a> {
             types,
             common,
             sink,
+            exports: None,
+            import_insertions: Vec::new(),
             struct_ids: HashMap::new(),
             class_ids: HashMap::new(),
             enum_ids: HashMap::new(),
@@ -22873,6 +22914,34 @@ impl<'a> Checker<'a> {
             diagnostic =
                 diagnostic.suggest(format!("did you mean `{candidate}`?"), use_span, candidate);
         }
+        self.add_import_suggestions(diagnostic, written, false)
+    }
+
+    /// `[DIA-12]` N2, `[DIA-15]` — a name this module cannot find that other modules export: the
+    /// import line for each (at most three, by module path), as a fix-it placed after the module's
+    /// imports. Read from the index of exported names (`ExportIndex`); of the right kind for the
+    /// position (`[DIA-24]`): only types where a type is expected.
+    fn add_import_suggestions(&self, mut diagnostic: Diagnostic, written: Symbol, values: bool) -> Diagnostic {
+        let Some(exports) = self.exports else { return diagnostic };
+        let current = self.prefixes.get(self.current_module).map_or("", String::as_str);
+        let mut modules: Vec<&str> = exports
+            .exporters(written.as_str())
+            .iter()
+            .filter(|exported| (values || exported.is_type) && exported.module != current)
+            .map(|exported| exported.module.as_str())
+            .collect();
+        modules.sort_unstable();
+        modules.dedup();
+        let insertion = self.import_insertions.get(self.current_module).copied().flatten();
+        for module in modules.into_iter().take(3) {
+            let line = format!("from {module} import {written}");
+            let message = format!("`{written}` is exported by `{module}`: import it, `{line}`");
+            diagnostic = match insertion {
+                Some((at, true)) => diagnostic.suggest(message, at, format!("\n{line}")),
+                Some((at, false)) => diagnostic.suggest(message, at, format!("{line}\n")),
+                None => diagnostic.help(message),
+            };
+        }
         diagnostic
     }
 
@@ -33741,6 +33810,7 @@ impl<'a> Checker<'a> {
                         candidate,
                     );
                 }
+                let diagnostic = self.add_import_suggestions(diagnostic, name, true);
                 self.sink.emit(diagnostic);
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
@@ -35666,6 +35736,7 @@ impl<'a> Checker<'a> {
                         candidate,
                     );
                 }
+                diagnostic = self.add_import_suggestions(diagnostic, name, true);
             } else {
                 let namespace = namespace.expect("a qualified call has a namespace prefix");
                 let source_prefix = segments[..segments.len() - 1]
