@@ -369,8 +369,8 @@ def _shown(value, shown):
         length = int(value["len"])
         if length == 0:
             return "[]"
-        elements = value["ptr"].cast(_pointer_to(shown[1]))
-        return elements.dereference().cast(elements.dereference().type.array(length - 1))
+        element = _pointer_to(shown[1]).target()
+        return value["ptr"].cast(element.array(length - 1).pointer()).dereference()
     if kind == "unit":
         variants = TYPES.get(shown[1], {}).get("variants", {})
         return variants.get(int(value), str(int(value)))

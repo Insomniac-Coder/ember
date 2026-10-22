@@ -32,6 +32,7 @@ pub mod packed;
 pub mod range_facts;
 pub mod regions;
 pub mod stack_lists;
+pub mod frame_objects;
 pub mod static_safe;
 pub mod effects;
 pub mod stores;
@@ -68,6 +69,7 @@ pub use progress_reduction::{
     version_progress_reductions_all,
 };
 pub use stack_lists::give_stack_buffers_all;
+pub use frame_objects::place_frame_objects_all;
 pub use strength_reduce::reduce_induction_values_all;
 pub use uncounted_handles::mark_uncounted_handles_all;
 pub use temporary_owners::transfer_temporary_owners_all;

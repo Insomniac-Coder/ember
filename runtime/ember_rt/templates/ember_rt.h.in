@@ -1396,6 +1396,9 @@ struct ember_type_info {
  * before user or field drop glue runs. */
 #define EMBER_OBJ_DEINITIALISING UINT32_C(1)
 #define EMBER_OBJ_PINNED UINT32_C(2)
+/* [OPT-1] The object is in its function's frame (`ember_obj_new_frame`): its last release frees
+ * nothing. */
+#define EMBER_OBJ_FRAME UINT32_C(4)
 
 typedef struct ember_obj_header {
     uint32_t strong;
@@ -1444,6 +1447,10 @@ static inline void* ember_obj_payload(ember_obj_header* object, size_t payload_a
 /* Allocate a zeroed object header with one strong and one implicit weak
  * reference. Class fields are initialized by generated constructor code. */
 ember_obj_header* ember_obj_new(const ember_type_info* ti);
+/* [OPT-1] An object made in its function's frame, at `storage` (the class's own C struct there),
+ * with the header `ember_obj_new` gives: the compiler proved that no handle to it outlives the
+ * function, so its last release runs its `drop` and frees nothing. */
+ember_obj_header* ember_obj_new_frame(void* storage, const ember_type_info* ti);
 ember_obj_header* ember_obj_new_copy(
     const ember_type_info* ti, size_t payload_align, size_t payload_size, const void* value);
 

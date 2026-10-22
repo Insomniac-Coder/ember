@@ -54,7 +54,7 @@ pub fn give_stack_buffers_all(bodies: &mut [Body], types: &TypeTable) -> usize {
 /// direct calls, or it reaches a call the compiler cannot follow (through a
 /// value, a vtable or an interface, into foreign code, or a built-in given a
 /// function), which may call anything.
-fn may_come_back(bodies: &[Body]) -> Vec<bool> {
+pub(crate) fn may_come_back(bodies: &[Body]) -> Vec<bool> {
     let at: HashMap<&str, usize> = bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
     let mut calls: Vec<Vec<usize>> = vec![Vec::new(); bodies.len()];
     let mut open = vec![false; bodies.len()];

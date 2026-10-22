@@ -188,6 +188,9 @@ pub struct Body {
     /// ADR-141 — lists and strings that start in a buffer of this function's
     /// own frame (`stack_lists.rs`); set last, for C only.
     pub stack_buffers: Vec<StackBuffer>,
+    /// `[OPT-1]` — the locals whose class constructor makes its object in this function's frame
+    /// (`frame_objects.rs`); set last, for C only.
+    pub frame_objects: Vec<LocalId>,
     /// `[SIMD-2]`, `[SIMD-5]` — what the loops' attributes ask of the loop
     /// passes, and their verdicts.
     pub loop_notes: LoopNotes,

@@ -208,3 +208,78 @@ Rules: DIA-15, CG-C-9, PHIL-1, CG-C-7, VER-3, CG-C-6, CG-C-10, DIA-5, LT-39, SEL
   to the runtime as `&x.v`) — every value shown typed everywhere, a large backend change; (b) a
   typedef per instance — typed locals in GDB/LLDB only, small; (c) leave as is. Recommendation: (a)
   when the backend is next reworked; (b) is cheap but helps only Linux/macOS debuggers.
+
+## OPT-1 — done (built)
+- Tests: `tests/conformance/OPT-1/accept_an_object_no_handle_outlives_is_made_in_the_frame.em` (a
+  class object made, used through a call and dropped each turn of a loop is in the frame, its
+  `drop` printing as before; one pushed onto a list and one a variable keeps past its turn stay on
+  the heap), `accept_a_handle_that_may_outlive_its_function_stays_on_the_heap.em` (through two
+  calls: frame; a method returning `self`, a `Weak` made of it: heap). Debug and release, the
+  emitted C checked.
+- What was missing: nothing was ever promoted (a MAY, but the owner's C-speed goal and HANDOFF's
+  plan named it).
+- Compiler:
+  - `compiler/ember_analysis/src/frame_objects.rs` (new) — `place_frame_objects_all`: escape
+    analysis over MIR. Aliases of a constructed handle (copies and class upcasts into locals);
+    escape = stored anywhere but a local, returned, aggregated, borrowed as the local itself,
+    cast to an interface, or passed to a built-in, a callable value, a virtual/interface method, a
+    foreign function or a direct call whose parameter escapes (per-parameter summaries, a greatest
+    fixpoint over the call graph). A class whose `drop` (or a base's) lets `self` escape is never
+    promoted (the runtime calls it, no call this analysis follows). Reuse in a loop: backward
+    liveness over the aliases; at the constructor no alias holding the earlier object may be live
+    (MIR drops a counted handle explicitly before it is overwritten, a use). Not in a function
+    that can come back to itself (`stack_lists::may_come_back`, now `pub(crate)`), at most 256
+    bytes of fields, at most four a function, not in closures or reloadable builds.
+  - `ember_mir::Body::frame_objects` (all constructors), the pass run last for C in
+    `compiler/ember_driver/src/main.rs`.
+  - `compiler/ember_codegen_c/src/lib.rs` — the object's own C struct in the frame (`_fo<N>`) and
+    `ember_obj_new_frame(&_fo<N>, &em_ti_X)` for its constructor.
+  - Runtime templates (regenerated): `EMBER_OBJ_FRAME`, `ember_obj_new_frame` (the heap path's
+    header, counts, exclusivity words and debug tracking), and the last weak release untracks a
+    frame object and frees nothing.
+- Checked: the whole conformance tree through `annotations.py` with MSVC and with clang.
+- Speed: changes allocation in programs with short-lived class objects: the laptop bench should
+  run before pushing.
+
+## VER-3 — not done: blocked on a spec question
+- Today `@deprecated(…)` is `E0900` (`[ATT-6]`: an attribute whose effect is not built is
+  refused). Building it means: accept `@deprecated(since = "…", note = "…")` (the one form, F-020)
+  on any item, and warn at each use of the item outside its own module, naming `since` and `note`.
+- The question: that warning needs a code, and `[DIA-6a]` requires every code the compiler emits
+  to be one the specification names (registry, §XVII.9); none is named for a deprecated use.
+  Options: (a) a new warning `W2192` "use of a deprecated item", defined by `[VER-3]` — every user
+  of the item sees it by default; (b) a lint (`L2003`), opt-in — too quiet for a removal notice;
+  (c) a note on nothing (no diagnostic) — the attribute would be documentation only. Recommendation:
+  (a), with `-D warnings` making it an error where a package wants that. "Removal no earlier than
+  the next major version" is a rule for whoever maintains `std` and packages, not something the
+  compiler can check before versioned packages exist (`[VER-2]`, after 1.0).
+
+## ALC-2 — not done: blocked on two spec questions
+- `std.mem` has no `Allocator` interface (nor `Layout` or `Global`, which XV's table lists);
+  `[ALC-1]` and `[ALC-3]` wait on it too (`docs/phase-status.json`'s `ALC-3` entry).
+- Question 1 — the interface's methods: the specification names `Allocator` but gives none.
+  Recommendation: `allocate(self, layout: Layout) -> *mut u8` (null on failure),
+  `deallocate(self, p: *mut u8, layout: Layout)`, `reallocate(self, p: *mut u8, old: Layout,
+  new_size: usize) -> *mut u8`, with `Layout { size: usize, align: usize }` and `Global` the
+  runtime's `ember_alloc`/`ember_free`.
+- Question 2 — how "implementing `Allocator` is `unsafe`" is written: `[TYP-43]` (ODR-111) makes
+  "an `unsafe extend` of any interface but a marker" `E2040`. Options: (a) declare `pub unsafe
+  interface Allocator` and let `unsafe extend A implements Allocator:` (with members) implement an
+  unsafe interface, `E3100` without `unsafe` as for the markers — amending `[TYP-43]`'s sentence to
+  "any interface but a marker or an `unsafe interface`"; (b) keep `extend` safe and make each
+  method `unsafe fn` — but then implementing is not unsafe, only calling, which is not what ALC-2
+  says. Recommendation: (a), as Rust's `unsafe impl GlobalAlloc`.
+- Tests changed with it: `OBJ-4/accept_objects_are_made_by_the_runtime_allocator.em` (its point now
+  sits in a list, so the heap path it is about stays exercised; a lone local point is promoted),
+  `DRP-6/accept_class_handle_and_shared_release.em` (its needle names the type information, made
+  either way; its subject, the release at scope exit, is unchanged).
+- Spec question: `[CLS-1]` "a class instance lives on the heap" and `[OBJ-4]` "objects are allocated
+  through the runtime allocator" read as absolute, while `[OPT-1]` permits the frame. Built on the
+  reading that `[OPT-1]`'s MAY is the as-if exception to both (the header, counts and `drop` are
+  the same; "this cannot be observed"). One thing a program can see: an embedding host's
+  allocation functions (`[FFI-27]`) are not called for a promoted object. Options: (a) add "except
+  as `[OPT-1]` permits" to `[CLS-1]` and `[OBJ-4]` and say in `[OPT-1]` that the host's allocator
+  count is not behaviour; (b) restrict `[OPT-1]` to builds without a host allocator. Recommendation
+  (a).
+- Also in this commit: the CG-C-9 GDB script's typed-elements child (a cast to an array pointer,
+  then a dereference: GDB does not cast a value to an array type).

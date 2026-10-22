@@ -5119,6 +5119,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if command != "check" && options.emit.as_deref() != Some("mir") {
         ember_analysis::give_stack_buffers_all(&mut bodies, &types);
     }
+    // `[OPT-1]` — last, for C: a class object no handle of which outlives its function is made in
+    // the function's frame. Not in a reloadable build, whose objects a reload moves.
+    if command != "check" && options.emit.as_deref() != Some("mir") && matches!(reload, ReloadMode::None) {
+        ember_analysis::place_frame_objects_all(&mut bodies, &types);
+    }
     if command == "check" {
         interface_cache
             .commit()

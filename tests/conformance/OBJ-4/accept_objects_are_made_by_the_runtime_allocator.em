@@ -7,12 +7,15 @@
 #$ stdout: 3 4
 # `[OBJ-4]` — a class object is made by the runtime's object allocator
 # (`ember_obj_new`, which takes its memory from `[RT-1]`'s allocator and sets
-# the header), never by a C allocation in the program's own code.
+# the header), never by a C allocation in the program's own code. The point is
+# kept in a list, where `[OPT-1]`'s escape analysis does not follow it, so it is
+# not placed in `main`'s frame.
 
 class Point:
     x: int
     y: int
 
 fn main():
-    p = Point(3, 4)
+    points = [Point(3, 4)]
+    p = points[0]
     println(p.x, p.y)

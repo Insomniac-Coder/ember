@@ -3060,6 +3060,28 @@ ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     return object;
 }
 
+ember_obj_header* ember_obj_new_frame(void* storage, const ember_type_info* ti) {
+    if (storage == NULL || ti == NULL || ti->size < sizeof(ember_obj_header)
+        || ti->align < _Alignof(ember_obj_header)
+        || (ti->align & (ti->align - 1)) != 0
+        || ((uintptr_t)storage & (ti->align - 1)) != 0) {
+        object_panic_text("invalid class type information");
+    }
+    ember_obj_header* object = (ember_obj_header*)storage;
+    memset(object, 0, ti->size);
+    object->strong = 1;
+    object->weak = 1;
+    object->ti = ti;
+    object->flags = EMBER_OBJ_FRAME;
+#ifdef EMBER_RT_DEBUG_ACCESS
+    if ((ti->flags & EMBER_TI_SYNC) == 0) {
+        object->flags |= (thread_number() & 0xFFFFu) << EMBER_OBJ_CREATOR_SHIFT;
+    }
+#endif
+    debug_track_object(object);
+    return object;
+}
+
 ember_obj_header* ember_obj_new_copy(
     const ember_type_info* ti, size_t payload_align, size_t payload_size, const void* value) {
     if (payload_align == 0 || (payload_align & (payload_align - 1)) != 0
@@ -3175,6 +3197,10 @@ void ember_weak_release(ember_obj_header* object) {
     if (previous == 1 && object_load_strong(object) == 0) {
         const ember_type_info* ti = object->ti;
         debug_untrack_object(object);
+        /* [OPT-1] An object in its function's frame is the frame's to free. */
+        if ((object_load_flags(object) & EMBER_OBJ_FRAME) != 0) {
+            return;
+        }
 #if defined(EMBER_RELOAD_INSTANCES)
         rl_live_remove(object);
 #endif

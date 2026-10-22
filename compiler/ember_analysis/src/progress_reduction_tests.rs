@@ -172,7 +172,7 @@ fn fixture() -> (TypeTable, CommonTypes, Body) {
         uncounted_handles: vec![],
         removed_checks: vec![],
         restrict_views: false,
-        stack_buffers: Vec::new(), loop_notes: Default::default(),
+        stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(),
     };
     (types, c, b)
 }

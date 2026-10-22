@@ -6496,6 +6496,13 @@ impl Emitter<'_> {
         for buffer in &body.stack_buffers {
             self.line(&format!("    uint64_t _sb{}[8];", buffer.local.0));
         }
+        // `[OPT-1]` — a class object made in the frame: its own C struct, header and all.
+        for local in &body.frame_objects {
+            if let TyKind::Class(class) = self.types.kind(body.locals[local.0 as usize].ty) {
+                let object = ember_branding::object_struct(&self.types.class_def(*class).name.to_string());
+                self.line(&format!("    struct {object} _fo{};", local.0));
+            }
+        }
         if body.locals.iter().any(|d| d.kind != LocalKind::Arg && !self.is_void(d.ty)) {
             self.line("");
         }
@@ -7871,6 +7878,19 @@ impl Emitter<'_> {
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Call { func, args, dest, next } => {
+                // `[OPT-1]` — a class object made in the frame (`frame_objects.rs`): its storage,
+                // with the same header the heap's would have.
+                if let FuncRef::Builtin { which: Builtin::ClassNew { class_id, .. }, arg_ty } = func
+                    && dest.projection.is_empty()
+                    && body.frame_objects.contains(&dest.local)
+                {
+                    let class_ty = self.c_type(*arg_ty);
+                    let type_info = ember_branding::type_info(&self.types.class_def(*class_id).name.to_string());
+                    let target = self.place_in(dest, body);
+                    self.line(&format!("    {target} = (({class_ty}){RT}obj_new_frame(&_fo{}, &{type_info}));", dest.local.0));
+                    self.emit_next(next.0 as usize, index);
+                    return;
+                }
                 if let FuncRef::Builtin { which: Builtin::StrSplitOnce { none, some }, .. } = func {
                     self.emit_str_split_once(dest, args, *none, *some, body, index);
                     self.emit_next(next.0 as usize, index);
@@ -13672,7 +13692,7 @@ mod string_descriptor_view_parts_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(), loop_notes: Default::default(),
+            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(),
         }
     }
 

@@ -484,6 +484,7 @@ impl<'a> Builder<'a> {
             removed_checks: Vec::new(),
             restrict_views: false,
             stack_buffers: Vec::new(),
+            frame_objects: Vec::new(),
             loop_notes,
         }
     }
