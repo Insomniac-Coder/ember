@@ -1,0 +1,3 @@
+# The C++ project the FFI-17a tests of views import from: C++20, for `std::span` ([FFI-50]).
+[cpp.views]
+standard = "c++20"

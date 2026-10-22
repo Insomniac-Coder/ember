@@ -201,6 +201,9 @@ pub struct CType {
     /// (`ref `, `ref mut `) or as the `ForeignBox` it moves from (`owned `), and passes on as the
     /// raw pointer `ember` names ([`wrapped`]).
     pub mode: String,
+    /// `[FFI-8]` — a data pointer to an incomplete type (an `extern type`): `one` makes it a
+    /// reference, never a parameter mode (`[TYP-22]`).
+    pub opaque: bool,
 }
 
 /// `[FFI-39]` — a virtual a trampoline overrides: its name, `const`-ness, purity, parameters and
@@ -1300,6 +1303,14 @@ struct Writer {
     sources: HashMap<String, String>,
 }
 
+/// The C++ type a thunk gives a new object's address as, when the caller comes to own the object
+/// (an opaque class by value or from its constructor, a bridge value's object, a released
+/// `std::unique_ptr`, an iteration's range): Ember's `usize`, which the wrapper adopts
+/// (`[FFI-36a]`) or wraps (`[FFI-17a]`). An integer, so that a declaration whose contract is
+/// complete may return it (`[FFI-2]`: a scalar can be an address), and the C and C++ sides declare
+/// one type.
+const ADDRESS: &str = "std::uintptr_t";
+
 /// `[FFI-17a]` — a C++ standard-library type as its bridge type: the Ember type, the C++ type, and
 /// how a value of it is made from the C++ object's address (`@`): `CppVector.from_thunks(@, …)`
 /// with its element type's thunks, or `adopt[T](@)` for a `std::unique_ptr<T>`.
@@ -1526,7 +1537,13 @@ impl Writer {
                         return Err(match self.bridge(ty) {
                             Some(Ok(bridge)) => format!("`{}` by value or behind a pointer: it crosses as `{}`, by reference or as a result ([FFI-17a])", cpp_spelling(ty), bridge.ember),
                             Some(Err(reason)) => reason,
-                            None => format!("`{}`: a C++ standard library type with no bridge type ([FFI-17a] bridges `std::vector`, `std::string`, `std::shared_ptr` and `std::unique_ptr`)", cpp_spelling(ty)),
+                            None if matches!(std_template(clang_getCanonicalType(ty)).as_deref(), Some("basic_string_view" | "span" | "optional")) => {
+                                format!("`{}` here: a view or an optional value crosses as a function's parameter or result ([FFI-17a])", cpp_spelling(ty))
+                            }
+                            None => format!(
+                                "`{}`: a C++ standard library type with no bridge type ([FFI-17a] bridges `std::vector`, `std::string`, `std::string_view`, `std::span`, `std::optional`, `std::shared_ptr`, `std::weak_ptr` and `std::unique_ptr`)",
+                                cpp_spelling(ty)
+                            ),
                         });
                     }
                     // A struct with no tag is known by its typedef's name once that is written
@@ -1643,14 +1660,19 @@ impl Writer {
             }
         };
         let c = type_spelling(ty);
-        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c, mode: String::new() }) };
+        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c, mode: String::new(), opaque: false }) };
         // SAFETY(ffi): as above.
         let (constant, character) = unsafe {
             let kind = clang_getCanonicalType(pointee).kind;
             (clang_isConstQualifiedType(pointee) != 0, matches!(kind, CXType_Char_S | CXType_Char_U))
         };
         let inner = self.ty(pointee, true)?;
-        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c, mode: String::new() })
+        // SAFETY(ffi): as above.
+        let opaque = unsafe {
+            let canonical = clang_getCanonicalType(pointee);
+            canonical.kind == CXType_Record && matches!(self.records.get(&usr(clang_getTypeDeclaration(canonical))), Some(Record::Opaque(..)))
+        };
+        Ok(CType { ember, pointee: Some((inner, constant)), char_pointer: character, c, mode: String::new(), opaque })
     }
 
     /// `[FFI-41]` — write a declaration in the module of its own namespace, and remember where.
@@ -2489,7 +2511,7 @@ impl Writer {
             let _ = writeln!(
                 self.shim,
                 "struct {ops}_range {{ decltype(std::declval<{spelled}&>().begin()) at; decltype(std::declval<{spelled}&>().end()) end; }};\n\
-                 extern \"C\" void* {ops}_begin({spelled}* self) noexcept {{ try {{ return new {ops}_range{{self->begin(), self->end()}}; }} catch (...) {{ crossed(\"{spelled}::begin\"); }} }}\n\
+                 extern \"C\" {ADDRESS} {ops}_begin({spelled}* self) noexcept {{ try {{ return reinterpret_cast<{ADDRESS}>(new {ops}_range{{self->begin(), self->end()}}); }} catch (...) {{ crossed(\"{spelled}::begin\"); }} }}\n\
                  extern \"C\" void* {ops}_next(void* range) noexcept {{ try {{ auto* walk = static_cast<{ops}_range*>(range); if (walk->at == walk->end) return nullptr; auto* item = std::addressof(*walk->at); ++walk->at; return const_cast<void*>(static_cast<const void*>(item)); }} catch (...) {{ crossed(\"the iterator of {spelled}\"); }} }}\n\
                  extern \"C\" void {ops}_end(void* range) noexcept {{ delete static_cast<{ops}_range*>(range); }}"
             );
@@ -2517,11 +2539,12 @@ impl Writer {
                 ),
             );
             let result = CType {
-                ember: "*mut u8".to_string(),
+                ember: "usize".to_string(),
                 pointee: Some((walker.clone(), false)),
                 char_pointer: false,
-                c: "void*".to_string(),
-                mode: format!("bridge {walker}(range = @, owner = ref mut self)"),
+                c: ADDRESS.to_string(),
+                mode: format!("bridge {walker}(range = @ as *mut u8, owner = ref mut self)"),
+                opaque: false,
             };
             let owner = Some((owner.to_string(), Member::MutMethod));
             self.functions.push(Function {
@@ -2546,7 +2569,7 @@ impl Writer {
         unsafe {
             let ty = clang_getCanonicalType(ty);
             let name = std_template(ty)?;
-            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "unique_ptr") {
+            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "weak_ptr" | "unique_ptr") {
                 return None;
             }
             let declaration = clang_getTypeDeclaration(ty);
@@ -2607,7 +2630,7 @@ impl Writer {
                     Bridge {
                         ember: format!("CppVector[{mapped}]"),
                         spelled: spelled.clone(),
-                        make: format!("CppVector.from_thunks(@, {ops}_data, {ops}_size, {ops}_push, {ops}_destroy)"),
+                        make: format!("CppVector.from_thunks(@ as *mut u8, {ops}_data, {ops}_size, {ops}_push, {ops}_destroy)"),
                         unique: None,
                     }
                 }
@@ -2624,7 +2647,7 @@ impl Writer {
                     declare(&mut decls, "data", "(object: *mut u8) -> *u8");
                     declare(&mut decls, "size", "(object: *mut u8) -> usize");
                     declare(&mut decls, "destroy", "(object: *mut u8)");
-                    Bridge { ember: "CppString".to_string(), spelled: spelled.clone(), make: format!("CppString.from_thunks(@, {ops}_data, {ops}_size, {ops}_destroy)"), unique: None }
+                    Bridge { ember: "CppString".to_string(), spelled: spelled.clone(), make: format!("CppString.from_thunks(@ as *mut u8, {ops}_data, {ops}_size, {ops}_destroy)"), unique: None }
                 }
                 "shared_ptr" => {
                     let mapped = match self.ty(argument, true) {
@@ -2643,7 +2666,41 @@ impl Writer {
                     Bridge {
                         ember: format!("CppShared[{mapped}]"),
                         spelled: spelled.clone(),
-                        make: format!("CppShared.from_thunks(@, {ops}_pointee, {ops}_copy, {ops}_destroy)"),
+                        make: format!("CppShared.from_thunks(@ as *mut u8, {ops}_pointee, {ops}_copy, {ops}_destroy)"),
+                        unique: None,
+                    }
+                }
+                // `[WK-14]` — a `std::weak_ptr<T>` is a `CppWeak[T]`, never a `Weak`: its `lock()` gives
+                // the `CppShared[T]` C++ counts, so it carries that bridge's thunks too.
+                "weak_ptr" => {
+                    let mapped = match self.ty(argument, true) {
+                        Ok(mapped) => mapped,
+                        Err(reason) => return Some(Err(format!("`{spelled}`: the type it observes does not map ({reason}) [FFI-17a]"))),
+                    };
+                    let shared = format!("std::shared_ptr<{element}>");
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" void* {ops}_lock(void* w) noexcept {{ auto locked = static_cast<{spelled}*>(w)->lock(); return locked ? new {shared}(std::move(locked)) : nullptr; }}\n\
+                         extern \"C\" bool {ops}_expired(void* w) noexcept {{ return static_cast<{spelled}*>(w)->expired(); }}\n\
+                         extern \"C\" void* {ops}_copy(void* w) noexcept {{ return new {spelled}(*static_cast<{spelled}*>(w)); }}\n\
+                         extern \"C\" void {ops}_destroy(void* w) noexcept {{ delete static_cast<{spelled}*>(w); }}\n\
+                         extern \"C\" {element}* {ops}_pointee(void* p) noexcept {{ return static_cast<{shared}*>(p)->get(); }}\n\
+                         extern \"C\" void* {ops}_shared_copy(void* p) noexcept {{ return new {shared}(*static_cast<{shared}*>(p)); }}\n\
+                         extern \"C\" void {ops}_shared_destroy(void* p) noexcept {{ delete static_cast<{shared}*>(p); }}"
+                    );
+                    declare(&mut decls, "lock", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "expired", "(object: *mut u8) -> bool");
+                    declare(&mut decls, "copy", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    declare(&mut decls, "pointee", &format!("(object: *mut u8) -> *mut {mapped}"));
+                    declare(&mut decls, "shared_copy", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "shared_destroy", "(object: *mut u8)");
+                    Bridge {
+                        ember: format!("CppWeak[{mapped}]"),
+                        spelled: spelled.clone(),
+                        make: format!(
+                            "CppWeak.from_thunks(@ as *mut u8, {ops}_lock, {ops}_expired, {ops}_copy, {ops}_destroy, {ops}_pointee, {ops}_shared_copy, {ops}_shared_destroy)"
+                        ),
                         unique: None,
                     }
                 }
@@ -2657,7 +2714,7 @@ impl Writer {
                         Ok(_) => return Some(Err(format!("`{spelled}`: a `std::unique_ptr` crosses as a `ForeignBox` of a class Ember holds behind a pointer ([FFI-17a])"))),
                         Err(reason) => return Some(Err(format!("`{spelled}`: the type it owns does not map ({reason}) [FFI-17a]"))),
                     };
-                    let bridge = Bridge { ember: format!("ForeignBox[{mapped}]"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@)"), unique: Some(mapped) };
+                    let bridge = Bridge { ember: format!("ForeignBox[{mapped}]"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@ as *mut {mapped})"), unique: Some(mapped) };
                     self.bridges.insert(key, bridge.clone());
                     return Some(Ok(bridge));
                 }
@@ -3096,20 +3153,29 @@ impl Writer {
             } else {
                 self.bridge(clang_getCanonicalType(result_ty))
             };
+            // `[FFI-17a]` — a view or an optional value: the thunk gives the view's address and writes
+            // its length, or says whether the optional has a value and writes it.
+            let viewed = if discarded || result_ty.kind == CXType_Void || bridged_result.is_some() || member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) {
+                None
+            } else {
+                self.std_result(clang_getCanonicalType(result_ty))
+            };
             // `[FFI-32]` (ODR-166) — an opaque class by value is held as a constructor's object is.
-            let boxed = if member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) || bridged_result.is_some() {
+            let boxed = if member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) || bridged_result.is_some() || viewed.is_some() {
                 None
             } else {
                 self.boxed_class(result_ty)
             };
             let (result, returned, call) = match (member, result_ty.kind) {
                 (Some((owner, Member::Constructor, class)), _) => {
-                    let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new() };
+                    let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new(), opaque: false };
                     (Some(ember), Some(class.to_string()), call)
                 }
-                (Some((owner, Member::BoxedConstructor, class)), _) => {
-                    let ember = CType { ember: format!("*mut {owner}"), pointee: Some((owner.to_string(), false)), char_pointer: false, c: format!("{class}*"), mode: String::new() };
-                    (Some(ember), Some(format!("{class}*")), call)
+                // An object the caller comes to own is given as its address (`ADDRESS`, `usize`): a
+                // contracted declaration may return that (`[FFI-2]`), and the wrapper adopts it.
+                (Some((owner, Member::BoxedConstructor, _)), _) => {
+                    let ember = CType { ember: "usize".to_string(), pointee: Some((owner.to_string(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: String::new(), opaque: false };
+                    (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>({call})"))
                 }
                 (_, CXType_Void) => (None, None, call),
                 _ if discarded => (None, None, call),
@@ -3117,21 +3183,33 @@ impl Writer {
                 // wrapper adopts it into frees with the class's destructor.
                 _ if let Some(owner) = &boxed => {
                     let class = cpp_spelling(result_ty);
-                    let ember = CType { ember: format!("*mut {owner}"), pointee: Some((owner.clone(), false)), char_pointer: false, c: format!("{class}*"), mode: "boxed".to_string() };
-                    (Some(ember), Some(format!("{class}*")), format!("new {class}({call})"))
+                    let ember = CType { ember: "usize".to_string(), pointee: Some((owner.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: "boxed".to_string(), opaque: false };
+                    (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(new {class}({call}))"))
+                }
+                _ if let Some(found) = &viewed => {
+                    let (ember, element) = found.clone().map_err(|reason| tagged(None, "its result", &reason))?;
+                    if ember.mode == "optional" {
+                        let made = format!(
+                            "[&] {{ auto optional = {call}; if (optional) {{ ::new (static_cast<void*>(value)) {element}(*optional); return true; }} std::memset(static_cast<void*>(value), 0, sizeof *value); return false; }}()"
+                        );
+                        (Some(ember), Some("bool".to_string()), made)
+                    } else {
+                        let made = format!("[&] {{ auto view = {call}; *size = view.size(); return reinterpret_cast<{ADDRESS}>(view.data()); }}()");
+                        (Some(ember), Some(ADDRESS.to_string()), made)
+                    }
                 }
                 // `[FFI-17a]` — a standard-library value: moved to the heap (or, for a
                 // `std::unique_ptr`, given up) for its bridge type to own.
                 _ if bridged_result.is_some() => {
                     let bridge = bridged_result.clone().into_iter().next().expect("a bridge").map_err(|reason| tagged(None, "its result", &reason))?;
                     match &bridge.unique {
-                        Some(inner) => {
-                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: "void*".to_string(), mode: format!("bridge {}", bridge.make) };
-                            (Some(ember), Some("void*".to_string()), format!("({call}).release()"))
+                        Some(_) => {
+                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: format!("bridge {}", bridge.make), opaque: false };
+                            (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(({call}).release())"))
                         }
                         None => {
-                            let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: "void*".to_string(), mode: format!("bridge {}", bridge.make) };
-                            (Some(ember), Some("void*".to_string()), format!("static_cast<void*>(new {}({call}))", bridge.spelled))
+                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: format!("bridge {}", bridge.make), opaque: false };
+                            (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(new {}({call}))", bridge.spelled))
                         }
                     }
                 }
@@ -3163,7 +3241,7 @@ impl Writer {
                         let from: Vec<&str> = method.then_some("self").into_iter().chain(bound.iter().map(|(param, _)| param.as_str())).collect();
                         format!("ref{} from {}", if mutable { " mut" } else { "" }, from.join(", "))
                     };
-                    let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode };
+                    let ember = CType { ember: pointer, pointee: Some((inner, constant)), char_pointer: false, c, mode, opaque: false };
                     (Some(ember), Some(format!("{}*", cpp_spelling(pointee))), format!("&{call}"))
                 }
                 _ => {
@@ -3183,6 +3261,7 @@ impl Writer {
                     && clang_getCanonicalType(result_ty).kind == CXType_Record
                     && !matches!(member, Some((_, Member::BoxedConstructor, _)))
                     && boxed.is_none()
+                    && viewed.is_none()
                     && !result.as_ref().is_some_and(|ty| ty.mode.starts_with("bridge ")));
             let (returned, call) = match (class_result, returned) {
                 (true, Some(class)) => {
@@ -3192,21 +3271,142 @@ impl Writer {
                 }
                 (_, returned) => (returned, call),
             };
+            // What the thunk writes beside its result, cleared when it caught.
+            let cleared = match result.as_ref().map(|ty| ty.mode.as_str()) {
+                _ if class_result => " std::memset(static_cast<void*>(out), 0, sizeof *out);",
+                Some("view" | "view mut") => {
+                    declared.push("std::size_t* size".to_string());
+                    " *size = 0;"
+                }
+                Some("optional") => {
+                    let element = viewed.clone().and_then(Result::ok).map(|(_, element)| element).unwrap_or_default();
+                    declared.push(format!("{element}* value"));
+                    " std::memset(static_cast<void*>(value), 0, sizeof *value);"
+                }
+                _ => "",
+            };
             if catching {
                 declared.push("int* failed".to_string());
             }
             let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
-            let cleared = if class_result { " std::memset(static_cast<void*>(out), 0, sizeof *out);" } else { "" };
             let body = match (&returned, catching) {
                 (None, false) => format!("{call};"),
                 (Some(_), false) => format!("return {call};"),
                 (None, true) => format!("try {{ *failed = 0; {call}; }} catch (...) {{ *failed = 1; caught();{cleared} }}"),
-                (Some(returned), true) => format!("try {{ *failed = 0; return {call}; }} catch (...) {{ *failed = 1; caught(); return zero<{returned}>(); }}"),
+                (Some(returned), true) => format!("try {{ *failed = 0; return {call}; }} catch (...) {{ *failed = 1; caught();{cleared} return zero<{returned}>(); }}"),
             };
             let returned = returned.unwrap_or_else(|| "void".to_string());
             let _ = writeln!(self.shim, "extern \"C\" {returned} {thunk}({declared}) noexcept {{ {body} }}");
             let owner = member.map(|(owner, member, _)| (owner.to_string(), member));
             Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result, namespace: Vec::new() })
+        }
+    }
+
+    /// `[FFI-17a]` — a standard-library result the wrapper makes in its own way: a view
+    /// (`std::string_view` as `Span[u8]`, `std::span<const T>` as `Span[T]`, `std::span<T>` as
+    /// `MutSpan[T]`) from the address and length its thunk gives, borrowing what the overlay's
+    /// lifetime word names (`[FFI-11]`: a result's lifetime is never derived); a
+    /// `std::optional<T>` of a `T` that maps by value as `Option[T]`. Its Ember type and mode, and
+    /// the C++ type of what the thunk writes; `None` for any other type.
+    fn std_result(&mut self, canonical: CXType) -> Option<Result<(CType, String), String>> {
+        let template = std_template(canonical)?;
+        // SAFETY(ffi): types of a live translation unit.
+        unsafe {
+            let spelled = cpp_spelling(canonical);
+            let argument = clang_Type_getTemplateArgumentAsType(canonical, 0);
+            let made = |ember: &str, pointee: (String, bool), c: &str, mode: &str| CType { ember: ember.to_string(), pointee: Some(pointee), char_pointer: false, c: c.to_string(), mode: mode.to_string(), opaque: false };
+            match template.as_str() {
+                "basic_string_view" => Some(if matches!(clang_getCanonicalType(argument).kind, CXType_Char_S | CXType_Char_U) {
+                    Ok((made("usize", ("u8".to_string(), true), ADDRESS, "view"), "char".to_string()))
+                } else {
+                    Err(format!("`{spelled}`: only a view of `char` crosses, as `Span[u8]` ([FFI-17a])"))
+                }),
+                "span" => Some(match self.ty(argument, false) {
+                    Ok(mapped) => {
+                        let constant = clang_isConstQualifiedType(argument) != 0;
+                        Ok((made("usize", (mapped, constant), ADDRESS, if constant { "view" } else { "view mut" }), cpp_spelling(argument)))
+                    }
+                    Err(reason) => Err(format!("`{spelled}`: its element does not map by value ({reason}) [FFI-17a]")),
+                }),
+                "optional" => Some(match self.ty(argument, false) {
+                    Ok(mapped) => Ok((made("bool", (mapped, false), "bool", "optional"), cpp_spelling(argument))),
+                    Err(reason) => Err(format!("`{spelled}`: its value does not map by value ({reason}) [FFI-17a]")),
+                }),
+                _ => None,
+            }
+        }
+    }
+
+    /// `[FFI-17a]` — a standard-library parameter the wrapper passes in its own way, zero-copy: a view
+    /// (`std::string_view` as `Span[u8]`, `std::span<const T>` as `Span[T]`, `std::span<T>` as
+    /// `MutSpan[T]`) as its pointer and its length, from which the thunk makes the view the callee
+    /// takes; a `std::optional<T>` of a `T` that maps by value (`Option[T]`) as a pointer to its
+    /// value, null for none; a `std::unique_ptr<T>` taken by value or `&&` as the object the
+    /// caller's `ForeignBox[T]` gives up. `value` is the parameter's type without its reference,
+    /// `ty` its type as written. `None` for any other type.
+    fn std_parameter(&mut self, value: CXType, ty: CXType, name: &str) -> Result<Option<(CType, String, String)>, String> {
+        // SAFETY(ffi): types and cursors of a live translation unit.
+        unsafe {
+            let canonical = clang_getCanonicalType(value);
+            let Some(template) = std_template(canonical) else { return Ok(None) };
+            // The type as its declaration names it: without the parameter's `const`.
+            let spelled = cpp_spelling(clang_getCursorType(clang_getTypeDeclaration(canonical)));
+            let lent = ty.kind == CXType_LValueReference && clang_isConstQualifiedType(value) == 0;
+            let c = type_spelling(ty);
+            let argument = clang_Type_getTemplateArgumentAsType(canonical, 0);
+            let by_value = |writer: &mut Self, what: &str| {
+                writer.ty(argument, false).map_err(|reason| format!("`{spelled}`: {what} does not map by value ({reason}) [FFI-17a]"))
+            };
+            let made = |ember: String, pointee: (String, bool), mode: &str| CType { ember, pointee: Some(pointee), char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false };
+            match template.as_str() {
+                "basic_string_view" | "span" => {
+                    if lent {
+                        return Err(format!("`{spelled}` lent mutably (`&`): a view crosses by value or by `const&` ([FFI-17a])"));
+                    }
+                    let (element, mapped, constant) = if template == "basic_string_view" {
+                        if !matches!(clang_getCanonicalType(argument).kind, CXType_Char_S | CXType_Char_U) {
+                            return Err(format!("`{spelled}`: only a view of `char` crosses, as `Span[u8]` ([FFI-17a])"));
+                        }
+                        ("const char".to_string(), "u8".to_string(), true)
+                    } else {
+                        // `std::span<T, N>`: its length is part of its type, which a `Span` has not.
+                        let declaration = clang_getTypeDeclaration(canonical);
+                        let extent = clang_Cursor_getTemplateArgumentUnsignedValue(declaration, 1);
+                        if clang_Cursor_getNumTemplateArguments(declaration) > 1 && extent != u64::MAX && extent != u64::from(u32::MAX) {
+                            return Err(format!("`{spelled}`: a span of fixed extent (a `std::span<T>` of any length crosses as a `Span`) [FFI-17a]"));
+                        }
+                        let mapped = by_value(self, "its element")?;
+                        (cpp_spelling(argument), mapped, clang_isConstQualifiedType(argument) != 0)
+                    };
+                    let mode = if constant { "view " } else { "view mut " };
+                    let ember = made(format!("*{}{mapped}", if constant { "" } else { "mut " }), (mapped, constant), mode);
+                    Ok(Some((ember, format!("{element}* {name}, std::size_t {name}_size"), format!("{spelled}({name}, {name}_size)"))))
+                }
+                "optional" => {
+                    if lent {
+                        return Err(format!("`{spelled}` lent mutably (`&`): an optional value crosses by value or by `const&` ([FFI-17a])"));
+                    }
+                    let mapped = by_value(self, "its value")?;
+                    let element = cpp_spelling(argument);
+                    let ember = made(format!("*{mapped}"), (mapped, true), "optional ");
+                    Ok(Some((ember, format!("const {element}* {name}"), format!("({name} ? {spelled}(*{name}) : {spelled}())"))))
+                }
+                "unique_ptr" => {
+                    if ty.kind == CXType_LValueReference {
+                        return Err(format!("`{spelled}` by reference: the callee takes no ownership a `ForeignBox` could give; take it by value or by `&&` ([FFI-17a])"));
+                    }
+                    let bridge = match self.bridge(canonical) {
+                        Some(Ok(bridge)) => bridge,
+                        Some(Err(reason)) => return Err(reason),
+                        None => return Ok(None),
+                    };
+                    let inner = bridge.unique.clone().unwrap_or_default();
+                    let element = cpp_spelling(argument);
+                    let ember = made(format!("*mut {inner}"), (inner, false), "unique ");
+                    Ok(Some((ember, format!("{element}* {name}"), format!("{spelled}({name})"))))
+                }
+                _ => Ok(None),
+            }
         }
     }
 
@@ -3229,18 +3429,18 @@ impl Writer {
                         cpp_spelling(clang_getCanonicalType(value))
                     ));
                 }
+                if let Some(found) = self.std_parameter(value, ty, name)? {
+                    return Ok(found);
+                }
                 if let Some(found) = self.bridge(clang_getCanonicalType(value)) {
                     let bridge = found?;
-                    if bridge.unique.is_some() {
-                        return Err(format!("`{}`: a `std::unique_ptr` crosses as a result only", cpp_spelling(value)));
-                    }
                     let constant = clang_isConstQualifiedType(value) != 0;
                     let (mode, pass) = match ty.kind {
                         CXType_LValueReference if !constant => ("bridged mut ", format!("*static_cast<{}*>({name})", bridge.spelled)),
                         CXType_RValueReference => ("bridged owned ", format!("std::move(*static_cast<{}*>({name}))", bridge.spelled)),
                         _ => ("bridged ", format!("*static_cast<const {}*>({name})", bridge.spelled)),
                     };
-                    let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), mode == "bridged ")), char_pointer: false, c: c.clone(), mode: mode.to_string() };
+                    let ember = CType { ember: "*mut u8".to_string(), pointee: Some((bridge.ember.clone(), mode == "bridged ")), char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false };
                     return Ok((ember, format!("void* {name}"), pass));
                 }
             }
@@ -3254,11 +3454,11 @@ impl Writer {
                     let opaque = self.ty(pointee, true)?;
                     let constant = clang_isConstQualifiedType(pointee) != 0;
                     let pass = if ty.kind == CXType_LValueReference { format!("*{name}") } else { name.to_string() };
-                    let ember = CType { ember: format!("*{}{opaque}", if constant { "" } else { "mut " }), pointee: Some((ident(&named), constant)), char_pointer: false, c: c.clone(), mode: "tramp ".to_string() };
+                    let ember = CType { ember: format!("*{}{opaque}", if constant { "" } else { "mut " }), pointee: Some((ident(&named), constant)), char_pointer: false, c: c.clone(), mode: "tramp ".to_string(), opaque: false };
                     return Ok((ember, format!("{}* {name}", cpp_spelling(pointee)), pass));
                 }
             }
-            let plain = |ember: String, mode: &str| CType { ember, pointee: None, char_pointer: false, c: c.clone(), mode: mode.to_string() };
+            let plain = |ember: String, mode: &str| CType { ember, pointee: None, char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false };
             match ty.kind {
                 CXType_LValueReference => {
                     let pointee = clang_getPointeeType(ty);
@@ -3274,6 +3474,7 @@ impl Writer {
                         char_pointer: false,
                         c: c.clone(),
                         mode: if constant { "ref " } else { "ref mut " }.to_string(),
+                        opaque: true,
                     };
                     Ok(match (constant, by_value) {
                         (true, Ok(mapped)) => (plain(mapped, ""), format!("{spelled} {name}"), name.to_string()),
@@ -3295,7 +3496,7 @@ impl Writer {
                                 return Err(format!("an rvalue reference to a type that is neither mapped by value ({reason}) nor a class that can be moved"));
                             }
                             let inner = self.ty(pointee, true)?;
-                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((inner, false)), char_pointer: false, c: c.clone(), mode: "owned ".to_string() };
+                            let ember = CType { ember: format!("*mut {inner}"), pointee: Some((inner, false)), char_pointer: false, c: c.clone(), mode: "owned ".to_string(), opaque: false };
                             Ok((ember, format!("{spelled}* {name}"), format!("std::move(*{name})")))
                         }
                     }
@@ -3992,6 +4193,7 @@ fn cpp_prelude(stem: &str) -> String {
     let prefix = ember_branding::SYMBOL_PREFIX;
     format!(
         r#"#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -5204,7 +5406,10 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
     let mismatch = |sink: &mut Sink, span: Span, message: String| {
         sink.emit(Diagnostic::error(codes::E5010, span, message).note("an overlay entry matches the header's declaration, so overlays cannot drift [FFI-12]"));
     };
-    for entry in &overlay.items {
+    // A `class` section's method lines come last: a line restates the method as the import gives
+    // it, which an entry for the method changes (`[FFI-11]`).
+    let class = |entry: &&ast::OverlayItem| matches!(entry.kind, ast::OverlayItemKind::Class { .. });
+    for entry in overlay.items.iter().filter(|entry| !class(entry)).chain(overlay.items.iter().filter(class)) {
         let attributes = || entry.attrs.iter().map(|attr| snippet(attr.span)).collect::<Vec<_>>();
         // The entry's own `@ffi(…)` arguments, as written; `macro_fn` is what the entry is.
         let arguments = || -> Vec<String> {
@@ -5268,6 +5473,19 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     );
                     continue;
                 }
+                // `[FFI-17a]`, `[FFI-11]` — a view's lifetime is never derived: the entry names what it
+                // borrows.
+                // An entry that leaves a fact unknown (`TODO(…)`, `unsafe`) asserts nothing yet.
+                let unknown = params.iter().flat_map(|param| &param.contract).chain(result).any(|written| matches!(word(&snippet(written.span)), "TODO" | "unsafe"));
+                let lifetime = unknown || result.iter().any(|written| word(&snippet(written.span)) == "from");
+                if function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view")) && !lifetime {
+                    sink.emit(
+                        Diagnostic::error(codes::E5002, name.span, format!("`{}` returns a view (a `std::string_view` or a `std::span`), whose lifetime only its entry states", name.name))
+                            .help(format!("write what the view borrows: `fn {}(…) -> from(self)`, `from(<parameter>)` or `from(static)`", name.name))
+                            .note("a result's lifetime is never derived from a header [FFI-11], [FFI-17a]"),
+                    );
+                    continue;
+                }
                 if !take(applied, sink, layer, entry.is_override, "fn", name) {
                     continue;
                 }
@@ -5324,7 +5542,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 let body = if result.is_some() { format!("return {call};") } else { format!("{call};") };
                 let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
                 let c_text = format!("{} {wrapper}({declared}) {{ {body} }}\n", c_result.as_deref().unwrap_or("void"));
-                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string(), mode: String::new() };
+                let c_type = |ty: &ast::TypeExpr, c: &str| CType { ember: snippet(ty.span), pointee: None, char_pointer: false, c: c.to_string(), mode: String::new(), opaque: false };
                 let function = Function {
                     name: found.name.clone(),
                     params: params.iter().zip(&c_params).map(|((param, ty), c)| (param.name.to_string(), c_type(ty, c))).collect(),
@@ -5428,15 +5646,20 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                         }
                     };
                     let tight = |written: &str| written.split_whitespace().collect::<String>();
-                    let declared: Vec<String> = function.params.iter().map(|(param, ty)| wrapper_param(param, ty)).collect();
+                    // The method as its wrapper gives it: contracted when an entry states every fact.
+                    let stated = applied.functions.get(&function.name);
+                    let policy = match (function.policy, stated.and_then(|stated| stated.policy)) {
+                        (Policy::Direct, _) => Policy::Direct,
+                        (_, Some(declared)) => declared,
+                        (derived, None) => derived,
+                    };
+                    let (declared, value) = signature_of(&render_wrapper(function, stated, None, false, policy, None, &|_| None).1).unwrap_or_default();
+                    let declared: Vec<String> = declared.into_iter().skip(1).collect();
                     let written: Vec<String> = params.iter().map(|param| tight(&snippet(param.span))).collect();
-                    let value = method_value(function);
                     let result = method.ret.as_ref().map(|ty| tight(&snippet(ty.span)));
                     let result_matches = match (&value, &result) {
                         (None, None) => true,
-                        (value, Some(result)) => {
-                            value.as_deref().is_some_and(|value| tight(value) == *result) || tight(&format!("Result[{}, CppError]", value.as_deref().unwrap_or("void"))) == *result
-                        }
+                        (Some(value), Some(result)) => tight(value) == *result,
                         _ => false,
                     };
                     if written != declared.iter().map(|param| tight(param)).collect::<Vec<_>>() || !result_matches || method.is_unsafe || !method.generics.is_empty() {
@@ -5465,6 +5688,34 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
     }
 }
 
+/// `[GRM-35]` — an overlay writes a slot's words in any order; a hand declaration's `param(…)` and
+/// `result(…)` read the ownership word first, then the count word, then the rest.
+fn canonical(mut words: Vec<String>) -> Vec<String> {
+    words.sort_by_key(|written| match word(written) {
+        "borrowed" | "owned" | "retained" | "returns_owned" | "out" | "inout_count" => 0,
+        "one" | "count" | "fixed" | "nul_terminated" => 1,
+        _ => 2,
+    });
+    words
+}
+
+/// `[FFI-11]` — the words a declaration's `param(p, …)` gives a parameter: the entry's (`unsafe`
+/// states no fact), in a hand declaration's order. `[FFI-40]` — a C++ `T&` of a type by value
+/// (`mut p: T`) is what the header says when the entry writes nothing: one `T`, borrowed
+/// exclusively for the call. `[FFI-2a]` — a `T*` is a mutable borrow, which Ember's is when
+/// exclusive.
+fn slot_words(ty: &CType, written: &[String]) -> Vec<String> {
+    let mut words: Vec<String> = written.iter().filter(|written| word(written) != "unsafe").cloned().collect();
+    if words.is_empty() && ty.mode == "mut " && ty.pointee.is_none() {
+        words = ["borrowed", "one", "exclusive"].map(str::to_string).to_vec();
+    }
+    let has = |wanted: &str| words.iter().any(|written| word(written) == wanted);
+    if ty.pointee.as_ref().is_some_and(|(_, constant)| !constant) && has("borrowed") && !has("exclusive") && !has("aliased") {
+        words.push("exclusive".to_string());
+    }
+    canonical(words)
+}
+
 /// `[FFI-11]` — the Ember type a contracted pointer parameter is, as a hand declaration writes it:
 /// `T*` is a mutable borrow and `const T*` a shared one (`[FFI-2a]`, derived, never written).
 fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
@@ -5491,7 +5742,9 @@ fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
     } else if let Some(length) = fixed {
         format!("ref {}[{inner}; {length}]", if mutable { "mut " } else { "" })
     } else if has("one") {
-        if mutable && !nullable {
+        // `[TYP-22]` — an incomplete type takes no parameter mode: its exclusive borrow is a
+        // `ref mut`.
+        if mutable && !nullable && !ty.opaque {
             return format!("mut {name}: {inner}");
         }
         format!("ref {}{inner}", if mutable { "mut " } else { "" })
@@ -5542,21 +5795,12 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
         // `[FFI-11c]` — a `TODO(…)` or `unsafe` word leaves the call unsafe.
         safe = !words.into_iter().any(|written| matches!(word(written), "TODO" | "unsafe"));
         for ((param, ty), written) in function.params.iter().zip(&entry.params) {
-            // `[FFI-11]` — `unsafe` states no fact: it leaves the call unsafe.
-            let mut words: Vec<String> = written.iter().filter(|written| word(written) != "unsafe").cloned().collect();
-            if words.is_empty() {
-                continue;
+            let words = slot_words(ty, written);
+            if !words.is_empty() {
+                arguments.push(format!("param({param}, {})", words.join(", ")));
             }
-            // `[FFI-2a]` — `T*` is a mutable borrow: Ember's is exclusive.
-            if ty.pointee.as_ref().is_some_and(|(_, constant)| !constant)
-                && words.iter().any(|written| word(written) == "borrowed")
-                && !words.iter().any(|written| matches!(word(written), "exclusive" | "aliased"))
-            {
-                words.push("exclusive".to_string());
-            }
-            arguments.push(format!("param({param}, {})", words.join(", ")));
         }
-        let result_words: Vec<&str> = entry.result.iter().map(String::as_str).filter(|written| word(written) != "unsafe").collect();
+        let result_words = canonical(entry.result.iter().filter(|written| word(written) != "unsafe").cloned().collect());
         if !result_words.is_empty() {
             arguments.push(format!("result({})", result_words.join(", ")));
         }
@@ -5651,6 +5895,14 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     let mut catching = false;
     let mut operators: Vec<(String, String, String)> = Vec::new();
+    // `[FFI-16]` — the error type a status enum's `@ffi(status=E, ok=X, error=N)` names.
+    let status_error = |status: &str| -> Option<String> {
+        let attributes = applied.attributes.get(status.rsplit('.').next().unwrap_or(status))?;
+        attributes.iter().flat_map(|attribute| attribute.split(['(', ',', ')'])).find_map(|argument| {
+            let (key, value) = argument.split_once('=')?;
+            (key.trim() == "error").then(|| value.trim().to_string())
+        })
+    };
     for function in imported.functions.iter().filter(|function| function.namespace == namespace) {
         let hidden = applied.hidden.contains(&function.name);
         let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
@@ -5674,7 +5926,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
                 // implementations of its named virtuals are the class's own.
                 let trampoline = owner.as_ref().and_then(|(owner, _)| imported.trampolines.iter().find(|found| ident(&found.class) == *owner)).map(|found| found.opaque.as_str());
                 let hidden = hidden || (trampoline.is_some() && function.name.starts_with(&format!("{}_cpp_base_", ember_branding::SYMBOL_PREFIX)));
-                let (raw, wrapper) = render_wrapper(function, entry, renamed, hidden, policy, trampoline);
+                let (raw, wrapper) = render_wrapper(function, entry, renamed, hidden, policy, trampoline, &status_error);
                 member(function.abi, raw);
                 catching |= policy != Policy::Direct;
                 // `[FFI-42]` — a member operator, for its interface below.
@@ -5772,7 +6024,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared"]).filter(|name| words.contains(name)).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject"]).filter(|name| words.contains(name)).collect();
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -5818,31 +6070,14 @@ fn operator_interface(interface: &str, owner: &str, wrapper: &str) -> Option<(St
     }
 }
 
-/// `[FFI-24]`, `[FFI-24b]`, `[FFI-40]` — a C++ function reached through an Ember function of the
-/// module: the raw declaration of its thunk, private (taking the receiver first for a method, and
-/// last, when the thunk catches, where it says it caught), and the function the module exports —
-/// a method, associated function or constructor of the class's type in an `extend` block, or a
-/// function returning `Result[T, CppError]` (or `T`, panicking on a throw, when an overlay asserts
-/// `@ffi(noexcept)`). It is safe to call when an overlay entry says so and no parameter is a raw
-/// pointer; a destructor has only its raw declaration, which the type's `ForeignBox` calls.
 /// `[FFI-40]` — a parameter of an opaque class, which the wrapper takes as a reference or a
-/// `ForeignBox` and passes on as a raw pointer.
+/// `ForeignBox` and passes on as a raw pointer, or one the importer passes in its own way (a bridge
+/// value's object, a trampoline's, a view, an optional value).
 fn wrapped(ty: &CType) -> bool {
     ty.pointee.is_some() && !ty.mode.is_empty()
 }
 
 /// `[FFI-40]`, `[FFI-39]` — a wrapper's parameter as Ember code writes it.
-/// `[FFI-40a]` — the value a method's wrapper gives, as `render_wrapper` writes it: a bridge
-/// value's type, a `ref` for a `T&`, else the result's Ember type.
-fn method_value(function: &Function) -> Option<String> {
-    let ty = function.result.as_ref()?;
-    match &ty.pointee {
-        Some((inner, _)) if ty.mode.starts_with("bridge ") => Some(inner.clone()),
-        Some((inner, _)) if ty.mode.starts_with("ref") => Some(format!("ref {}{inner}", if ty.mode.starts_with("ref mut") { "mut " } else { "" })),
-        _ => Some(ty.ember.clone()),
-    }
-}
-
 fn wrapper_param(param: &str, ty: &CType) -> String {
     match &ty.pointee {
         Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
@@ -5876,7 +6111,24 @@ fn wrapper_argument(param: &str, ty: &CType) -> String {
     }
 }
 
-fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy, trampoline: Option<&str>) -> (String, String) {
+/// `[FFI-24]`, `[FFI-24b]`, `[FFI-40]` — a C++ function reached through an Ember function of the
+/// module: the declaration of its thunk, private (the receiver first for a method; then each
+/// parameter, a view as its pointer and its length; then what the thunk writes — a class by value,
+/// a view's length, an optional's value — and, when the thunk catches, where it says it caught),
+/// and the function the module exports — a method, associated function or constructor of the
+/// class's type in an `extend` block, or a function returning `Result[T, CppError]` (or `T`,
+/// panicking on a throw, when an overlay asserts `@ffi(noexcept)`). A destructor has only its
+/// declaration, which the type's `ForeignBox` calls.
+///
+/// `[FFI-2]`, `[FFI-11]` (D-808) — when an overlay entry states every fact, the declaration is
+/// contracted as a C function's is (`safe fn`, `@ffi(param(…), result(…))`), so the checker lowers
+/// each safe type to what the thunk takes, as for any hand declaration (`[FFI-10]`): a `count(n)`
+/// witness and an `out` leave its callable signature, a `Span` gives the pointer and its length.
+/// What the importer passes itself is a `borrowed one` reference, a `Span` or an `out` of the
+/// declaration too, and the wrapper takes the safe types, needing `unsafe` only to name an object
+/// by its address or to own one the thunk gives (`ADDRESS`). Otherwise the declaration takes raw
+/// pointers, and the wrapper is `unsafe`: its calls are the caller's to keep (`[FFI-38]`).
+fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&String>, hidden: bool, policy: Policy, trampoline: Option<&str>, status_error: &dyn Fn(&str) -> Option<String>) -> (String, String) {
     let prefix = ember_branding::SYMBOL_PREFIX;
     let (owner, member) = match &function.owner {
         Some((owner, member)) => (owner.as_str(), Some(*member)),
@@ -5888,38 +6140,227 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         None => format!("{prefix}_raw_{}", function.name),
     };
     let catching = policy != Policy::Direct;
-    let mut raw = function.clone();
-    raw.name = raw_name.clone();
-    raw.owner = None;
-    for (_, ty) in &mut raw.params {
-        if wrapped(ty) {
-            ty.mode.clear();
-        }
-    }
-    // The receiver: the opaque object's address; for a class with a trampoline, the C++ object
-    // its Ember object owns (`[FFI-39]`).
+    let contract = entry.filter(|entry| member != Some(Member::Destructor) && contracts_everything(entry));
+    let contracted = contract.is_some();
+    let words_of = |index: usize| contract.and_then(|entry| entry.params.get(index)).map_or(&[][..], Vec::as_slice);
+    // The words the importer itself acts on, whatever else the entry leaves unknown.
+    let said = |index: usize, wanted: &str| entry.and_then(|entry| entry.params.get(index)).is_some_and(|words| words.iter().any(|written| word(written) == wanted));
+    let has = |words: &[String], wanted: &str| words.iter().any(|written| word(written) == wanted);
+    let one = |exclusive: bool| -> Vec<String> { ["borrowed", "one"].into_iter().chain(exclusive.then_some("exclusive")).map(str::to_string).collect() };
+    let deref = |pointer: String, constant: bool| format!("{prefix}_cpp_ref{}({pointer})", if constant { "" } else { "_mut" });
+    let self_name = format!("{prefix}_self");
+    // Each slot of the declaration: its name, its text, its contract words, and what the wrapper
+    // passes (`None`: it leaves the callable signature).
+    let mut slots: Vec<(String, String, Vec<String>, Option<String>)> = Vec::new();
+    let mut params: Vec<String> = Vec::new();
+    let mut locals: Vec<String> = Vec::new();
+    // Lines before the call that need no `unsafe`, each indented as written.
+    let mut prelude: Vec<String> = Vec::new();
+    // Whether passing the arguments needs `unsafe` (to name an object by its address).
+    let mut call_unsafe = !contracted;
+    // The receiver: the object `self` is, or the C++ object a trampoline class's object owns.
     let receiver = match (member, trampoline) {
-        (Some(Member::Method), None) => Some((format!("*{owner}"), format!("(ref self) as *{owner}"), true)),
-        (Some(Member::MutMethod | Member::Destructor), None) => Some((format!("*mut {owner}"), format!("(ref mut self) as *mut {owner}"), false)),
-        (Some(Member::Method), Some(opaque)) => Some((format!("*{opaque}"), format!("self.{prefix}_cpp_base.object as *{opaque}"), true)),
-        (Some(Member::MutMethod), Some(opaque)) => Some((format!("*mut {opaque}"), format!("self.{prefix}_cpp_base.object"), false)),
+        (Some(Member::Method), None) => Some((owner, false, "ref self".to_string(), format!("(ref self) as *{owner}"))),
+        (Some(Member::MutMethod), None) => Some((owner, true, "ref mut self".to_string(), format!("(ref mut self) as *mut {owner}"))),
+        (Some(Member::Destructor), _) => Some((owner, true, String::new(), String::new())),
+        (Some(Member::Method), Some(opaque)) => Some((opaque, false, deref(format!("self.{prefix}_cpp_base.object"), true), format!("self.{prefix}_cpp_base.object as *{opaque}"))),
+        (Some(Member::MutMethod), Some(opaque)) => Some((opaque, true, deref(format!("self.{prefix}_cpp_base.object"), false), format!("self.{prefix}_cpp_base.object"))),
         _ => None,
     };
-    if let Some((pointer, _, constant)) = &receiver {
-        let this = CType { ember: pointer.clone(), pointee: Some((trampoline.unwrap_or(owner).to_string(), *constant)), char_pointer: false, c: String::new(), mode: String::new() };
-        raw.params.insert(0, ("this".to_string(), this));
+    if let Some((object, mutable, reference, address)) = receiver {
+        let mutable_word = if mutable { "mut " } else { "" };
+        if contracted {
+            call_unsafe |= trampoline.is_some();
+            slots.push((self_name.clone(), format!("{self_name}: ref {mutable_word}{object}"), one(mutable), Some(reference)));
+        } else {
+            slots.push((self_name.clone(), format!("{self_name}: *{mutable_word}{object}"), Vec::new(), Some(address)));
+        }
     }
+    match member {
+        Some(Member::Method) => params.push("self".to_string()),
+        // A class method's receiver is its handle, which any method may write through ([CLS-7]).
+        Some(Member::MutMethod) if trampoline.is_some() => params.push("self".to_string()),
+        Some(Member::MutMethod) => params.push("mut self".to_string()),
+        _ => {}
+    }
+    // A `count(n)` witness, an `out` and an `inout_count`'s count leave the callable signature.
+    let words: Vec<Vec<String>> = function.params.iter().enumerate().map(|(index, (_, ty))| slot_words(ty, words_of(index))).collect();
+    let witnesses: HashSet<&str> = words.iter().flatten().filter_map(|written| written.strip_prefix("count(").and_then(|rest| rest.strip_suffix(')'))).map(str::trim).collect();
+    let (mut outs, mut inout) = (Vec::new(), None);
+    let mut given = Vec::new();
+    for (index, (param, ty)) in function.params.iter().enumerate() {
+        let constant = ty.pointee.as_ref().is_some_and(|(_, constant)| *constant);
+        let inner = ty.pointee.as_ref().map_or(String::new(), |(inner, _)| inner.clone());
+        let opaque = ty.ember.trim_start_matches('*').trim_start_matches("mut ").to_string();
+        let mutable_word = if constant { "" } else { "mut " };
+        let mut ty = ty.clone();
+        // `[FFI-39c]` (ODR-156), `[FFI-17d]` — an object of a class with a trampoline that C++ keeps
+        // is passed as the token the program holds; one given up gets a count of its own.
+        if ty.mode == "tramp " && said(index, "retained") {
+            ty.mode = "token ".to_string();
+        }
+        if ty.mode == "tramp " && said(index, "owned") {
+            given.push(format!("{prefix}_cpp_give({param})"));
+        }
+        if !wrapped(&ty) {
+            // A pointer the entry's words contract, a scalar, a value, and a C++ reference to a
+            // type by value (`[FFI-40]`: `mut p: T`, `owned p: T`).
+            let (text, contract_words) = if contracted {
+                (safe_parameter(&format!("{}{param}", ty.mode), &ty, &words[index]), words[index].clone())
+            } else {
+                (format!("{}{param}: {}", ty.mode, ty.ember), Vec::new())
+            };
+            if has(&contract_words, "out") {
+                outs.push(inner.clone());
+            } else if has(&contract_words, "inout_count") {
+                inout = Some(inner.clone());
+            }
+            let leaves = contracted && (witnesses.contains(param.trim_start_matches("r#")) || has(&contract_words, "out") || has(&contract_words, "inout_count"));
+            if !leaves {
+                params.push(text.clone());
+            }
+            slots.push((param.clone(), text, contract_words, (!leaves).then(|| param.clone())));
+            continue;
+        }
+        params.push(match ty.mode.as_str() {
+            // `[FFI-17a]` — a view, an optional value, a `std::unique_ptr` given up.
+            "view " => format!("{param}: Span[{inner}]"),
+            "view mut " => format!("{param}: MutSpan[{inner}]"),
+            "optional " => format!("{param}: Option[{inner}]"),
+            "unique " => format!("owned {param}: ForeignBox[{inner}]"),
+            _ => wrapper_param(param, &ty),
+        });
+        // `[FFI-17a]` — a view is its pointer and its length: a `Span` the declaration counts, or a
+        // raw pointer and the length beside it.
+        if ty.mode.starts_with("view ") {
+            let length = format!("{prefix}_{}_size", param.trim_start_matches("r#"));
+            if contracted {
+                let mut contract_words = vec!["borrowed".to_string(), format!("count({length})")];
+                contract_words.extend((!constant).then(|| "exclusive".to_string()));
+                slots.push((param.clone(), format!("{param}: {}[{inner}]", if constant { "Span" } else { "MutSpan" }), contract_words, Some(param.clone())));
+                slots.push((length.clone(), format!("{length}: usize"), Vec::new(), None));
+            } else {
+                // A `MutSpan` the caller lent: its elements are the callee's to write.
+                let pointer = if constant { format!("{param}.as_ptr()") } else { format!("{param}.as_ptr() as *mut {inner}") };
+                slots.push((param.clone(), format!("{param}: {}", ty.ember), Vec::new(), Some(pointer)));
+                slots.push((length.clone(), format!("{length}: usize"), Vec::new(), Some(format!("{param}.len()"))));
+            }
+            continue;
+        }
+        let (text, contract_words, argument) = match (ty.mode.as_str(), contracted) {
+            ("ref ", true) => (format!("{param}: ref {inner}"), one(false), param.clone()),
+            ("ref mut ", true) => (format!("{param}: ref mut {inner}"), one(true), param.clone()),
+            // The `ForeignBox` the callee moves from, whose drop frees what is left.
+            ("owned ", true) => (format!("{param}: ref mut {inner}"), one(true), format!("{param}.get_mut()")),
+            ("bridged ", true) => (format!("{param}: ref CppObject"), one(false), deref(format!("{param}.as_ptr() as *CppObject"), true)),
+            ("bridged mut " | "bridged owned ", true) => (format!("{param}: ref mut CppObject"), one(true), deref(format!("{param}.as_ptr() as *mut CppObject"), false)),
+            ("tramp ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{param}.{prefix}_cpp_base.object"), constant)),
+            ("token ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"), constant)),
+            // `[FFI-17a]` — `std::optional<T>`: a pointer to the value, null for none.
+            ("optional ", true) => (format!("{param}: Option[ref {inner}]"), ["borrowed", "one", "nullable"].map(str::to_string).to_vec(), format!("{param}.as_ref()")),
+            ("optional ", false) => {
+                let at = format!("{prefix}_{}_at", param.trim_start_matches("r#"));
+                prelude.extend([
+                    format!("{at} = null[*{inner}]()"),
+                    format!("match {param}:"),
+                    "    Some(ref inner):".to_string(),
+                    format!("        {at} = (ref inner) as *{inner}"),
+                    "    None:".to_string(),
+                    "        pass".to_string(),
+                ]);
+                (format!("{param}: {}", ty.ember), Vec::new(), at)
+            }
+            // `[FFI-17a]` — a `std::unique_ptr<T>` parameter: the box is given up (`owned`).
+            ("unique ", true) => (format!("owned {param}: ForeignBox[{inner}]"), vec!["owned".to_string(), "one".to_string()], param.clone()),
+            ("unique ", false) => (format!("{param}: {}", ty.ember), Vec::new(), format!("{param}.into_raw()")),
+            (_, _) => (format!("{param}: {}", ty.ember), Vec::new(), wrapper_argument(param, &ty)),
+        };
+        call_unsafe |= ty.mode.starts_with("bridged ") || matches!(ty.mode.as_str(), "tramp " | "token ");
+        slots.push((param.clone(), text, contract_words, Some(argument)));
+    }
+    // What the thunk writes where the caller says: a class by value (`[FFI-32]`), a view's length,
+    // an optional's value (`[FFI-17a]`) — an `out`, which the call returns, or a slot the wrapper
+    // gives.
     let result_ty = function.result.as_ref().map(|ty| ty.ember.clone()).unwrap_or_default();
-    if function.out {
-        let out = CType { ember: format!("*mut {result_ty}"), pointee: Some((result_ty.clone(), false)), char_pointer: false, c: String::new(), mode: String::new() };
-        raw.params.push(("out".to_string(), out));
-        raw.result = None;
+    let result_mode = function.result.as_ref().map_or("", |ty| ty.mode.as_str());
+    let pointee = function.result.as_ref().and_then(|ty| ty.pointee.clone()).map(|(inner, _)| inner).unwrap_or_default();
+    let written: Option<(String, String)> = if function.out {
+        Some(("out".to_string(), result_ty.clone()))
+    } else if result_mode.starts_with("view") {
+        Some(("size".to_string(), "usize".to_string()))
+    } else if result_mode == "optional" {
+        Some(("value".to_string(), pointee.clone()))
+    } else {
+        None
+    };
+    if let Some((what, ty)) = &written {
+        let name = format!("{prefix}_{what}");
+        if contracted {
+            slots.push((name.clone(), format!("mut {name}: {ty}"), vec!["out".to_string(), "one".to_string()], None));
+        } else if what == "size" {
+            locals.push(format!("{name}: usize = 0"));
+            slots.push((name.clone(), format!("{name}: *mut usize"), Vec::new(), Some(format!("(ref mut {name}) as *mut usize"))));
+        } else {
+            locals.push(format!("{prefix}_slot: MaybeUninit[{ty}] = MaybeUninit[{ty}].uninit()"));
+            slots.push((name.clone(), format!("{name}: *mut {ty}"), Vec::new(), Some(format!("((ref mut {prefix}_slot) as *mut MaybeUninit[{ty}]) as *mut {ty}"))));
+        }
     }
     if catching {
-        let failed = CType { ember: "*mut c_int".to_string(), pointee: Some(("c_int".to_string(), false)), char_pointer: false, c: "int*".to_string(), mode: String::new() };
-        raw.params.push(("failed".to_string(), failed));
+        let failed = format!("{prefix}_failed");
+        locals.push(format!("{failed}: c_int = 0"));
+        if contracted {
+            slots.push((failed.clone(), format!("mut {failed}: c_int"), one(true), Some(failed.clone())));
+        } else {
+            slots.push((failed.clone(), format!("{failed}: *mut c_int"), Vec::new(), Some(format!("(ref mut {failed}) as *mut c_int"))));
+        }
     }
-    let raw_text = render_function(&raw, None, None, true);
+    // The result the declaration gives: the entry's words for a pointer, a `T&`'s reference, the
+    // address of an object the caller comes to own, a view's data, whether an optional has a value.
+    let from_self = |written: &String| if written.replace(' ', "") == "from(self)" { format!("from({self_name})") } else { written.clone() };
+    let user_words: Vec<String> = contract.map_or(Vec::new(), |entry| canonical(entry.result.iter().filter(|written| word(written) != "unsafe").cloned().collect()));
+    // `[FFI-11]` — the region a result borrows, as the entry's `from(…)` names it.
+    let lifetime = user_words.iter().find_map(|written| written.strip_prefix("from(").and_then(|rest| rest.strip_suffix(')'))).map(|from| from.trim().to_string());
+    let (result, result_words, borrows) = match &function.result {
+        None => (None, Vec::new(), None),
+        Some(_) if function.out => (None, Vec::new(), None),
+        // `[FFI-40]` — a method's `T&` borrows its receiver; `[FFI-11f]` — and each parameter
+        // `[[clang::lifetimebound]]` names, of which a contracted declaration names the first.
+        Some(ty) if ty.mode.starts_with("ref") => {
+            let mutable = ty.mode.starts_with("ref mut");
+            let bound = ty.mode.split_once(" from ").map(|(_, from)| from.to_string());
+            if contracted {
+                let first = bound.as_deref().and_then(|from| from.split(", ").next()).unwrap_or("self");
+                let source = if first == "self" { self_name.clone() } else { first.to_string() };
+                let mut words = one(mutable);
+                words.push(format!("from({source})"));
+                (Some(format!("ref {}{pointee}", if mutable { "mut " } else { "" })), words, bound)
+            } else {
+                (Some(ty.ember.clone()), Vec::new(), bound)
+            }
+        }
+        Some(ty) if ty.mode.is_empty() && contracted => {
+            let borrows = lifetime.clone().filter(|from| from != "static");
+            (Some(safe_result(ty, &user_words)), user_words.iter().map(from_self).collect(), borrows)
+        }
+        // A view's lifetime is the entry's word (`[FFI-17a]`, `[FFI-11]`).
+        Some(ty) if ty.mode.starts_with("view") => (Some(ty.ember.clone()), Vec::new(), lifetime.clone().filter(|from| from != "static")),
+        Some(ty) => (Some(ty.ember.clone()), Vec::new(), None),
+    };
+    let declared: Vec<&str> = slots.iter().map(|(_, text, _, _)| text.as_str()).collect();
+    let arrow = result.as_ref().map_or(String::new(), |result| format!(" -> {result}"));
+    let link = function.link_name.as_deref().map(|link| format!("link_name=\"{link}\""));
+    let raw_text = if contracted {
+        let mut arguments: Vec<String> = slots.iter().filter(|(_, _, words, _)| !words.is_empty()).map(|(name, _, words, _)| format!("param({name}, {})", words.join(", "))).collect();
+        if !result_words.is_empty() {
+            arguments.push(format!("result({})", result_words.join(", ")));
+        }
+        arguments.extend(contract.iter().flat_map(|entry| entry.arguments.iter().cloned()));
+        arguments.extend(link);
+        format!("    @ffi({})\n    safe fn {raw_name}({}){arrow}\n", arguments.join(", "), declared.join(", "))
+    } else {
+        let attribute = link.map_or(String::new(), |link| format!("    @ffi({link})\n"));
+        format!("{attribute}    @safety(\"{UNCONTRACTED}\")\n    fn {raw_name}({}){arrow}\n", declared.join(", "))
+    };
     if member == Some(Member::Destructor) {
         return (raw_text, String::new());
     }
@@ -5927,155 +6368,211 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         Some(Member::Constructor | Member::BoxedConstructor) => "new".to_string(),
         _ => ident(renamed.unwrap_or(&function.name)),
     };
-    let words_safe = entry.is_some_and(|entry| !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe")));
-    let safe = words_safe && !function.params.iter().any(|(_, ty)| ty.ember.starts_with('*') && !wrapped(ty));
-    // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline that C++ keeps (`retained`)
-    // is passed as the `Retained` token the program holds for as long as C++ does.
-    let retained = |index: usize| entry.and_then(|entry| entry.params.get(index)).is_some_and(|words| words.iter().any(|written| word(written) == "retained"));
-    let wrapper_params: Vec<(String, CType)> = function
-        .params
-        .iter()
-        .enumerate()
-        .map(|(index, (param, ty))| {
-            let mut ty = ty.clone();
-            if ty.mode == "tramp " && retained(index) {
-                ty.mode = "token ".to_string();
+    // What the call gives (`[FFI-11b]`, `[FFI-16]`, ODR-137): a status's `Result` of the outputs,
+    // else the C++ function's own result first, then each output in its order.
+    let call = format!("{raw_name}({})", slots.iter().filter_map(|(_, _, _, argument)| argument.clone()).collect::<Vec<_>>().join(", "));
+    let tuple = |parts: &[String]| if parts.len() == 1 { parts[0].clone() } else { format!("({})", parts.join(", ")) };
+    // The value of the C++ function's own result, from what the declaration returns (`given`) and
+    // what the thunk wrote (`slot`).
+    let own = |given: Option<String>, slot: Option<String>| -> (Option<String>, Option<String>, bool) {
+        let given_or = |default: &str| given.clone().unwrap_or_else(|| default.to_string());
+        match (member, result_mode) {
+            _ if function.out => (slot, Some(result_ty.clone()), false),
+            (Some(Member::BoxedConstructor), _) => (Some(format!("adopt[{owner}]({} as *mut {owner})", given_or("0"))), Some(format!("ForeignBox[{owner}]")), true),
+            (_, "boxed") => (Some(format!("adopt[{pointee}]({} as *mut {pointee})", given_or("0"))), Some(format!("ForeignBox[{pointee}]")), true),
+            (_, made) if made.starts_with("bridge ") => (Some(made.trim_start_matches("bridge ").replace('@', &given_or("0"))), Some(pointee.clone()), true),
+            (_, made) if made.starts_with("view") => {
+                let (span, mutable) = if made == "view mut" { ("MutSpan", true) } else { ("Span", false) };
+                let constant = if mutable { "mut " } else { "" };
+                let data = format!("{} as *{constant}{pointee}", given_or("0"));
+                let size = slot.unwrap_or_default();
+                if !contracted {
+                    // No lifetime word: the pointer and the length, the caller's to keep (`[FFI-38]`).
+                    return (Some(format!("({data}, {size})")), Some(format!("(*{constant}{pointee}, usize)")), false);
+                }
+                let span_of = format!("{prefix}_cpp_span{}", if mutable { "_mut" } else { "" });
+                let made = match lifetime.as_deref() {
+                    Some("static") | None => format!("{span_of}({data}, {size})"),
+                    Some("self") => format!("{span_of}(ref {}self, {data}, {size})", if mutable { "mut " } else { "" }),
+                    Some(source) => format!("{span_of}({source}, {data}, {size})"),
+                };
+                (Some(made), Some(format!("{span}[{pointee}]")), true)
             }
-            (param.clone(), ty)
-        })
-        .collect();
-    let mut params: Vec<String> = wrapper_params.iter().map(|(param, ty)| wrapper_param(param, ty)).collect();
-    match member {
-        Some(Member::Method) => params.insert(0, "self".to_string()),
-        // A class method's receiver is its handle, which any method may write through ([CLS-7]).
-        Some(Member::MutMethod) if trampoline.is_some() => params.insert(0, "self".to_string()),
-        Some(Member::MutMethod) => params.insert(0, "mut self".to_string()),
-        _ => {}
-    }
-    let mut arguments: Vec<String> = wrapper_params.iter().map(|(param, ty)| wrapper_argument(param, ty)).collect();
-    if let Some((_, argument, _)) = &receiver {
-        arguments.insert(0, argument.clone());
-    }
-    // `[FFI-17d]` — an `owned` object of a class with a trampoline goes to C++ with a count of its
-    // own, which a foreign `delete` ends.
-    let given: Vec<String> = function
-        .params
-        .iter()
-        .enumerate()
-        .filter(|(index, (_, ty))| ty.mode == "tramp " && entry.and_then(|entry| entry.params.get(*index)).is_some_and(|words| words.iter().any(|written| word(written) == "owned")))
-        .map(|(_, (param, _))| format!("{prefix}_cpp_give({param})"))
-        .collect();
-    if function.out {
-        arguments.push(format!("((ref mut slot) as *mut MaybeUninit[{result_ty}]) as *mut {result_ty}"));
-    }
-    if catching {
-        arguments.push("(ref mut failed) as *mut c_int".to_string());
-    }
-    let mut call = format!("{raw_name}({})", arguments.join(", "));
-    // `[FFI-40]` — a method's `T&` result: the reference the thunk's pointer is.
-    let reference = function.result.as_ref().filter(|ty| ty.mode.starts_with("ref")).and_then(|ty| Some((ty.pointee.clone()?.0, !ty.mode.starts_with("ref mut"))));
-    // `[FFI-11f]` — the parameters a `[[clang::lifetimebound]]` result borrows.
-    let lifetime_bound = function.result.as_ref().and_then(|ty| ty.mode.split_once(" from ")).map(|(_, from)| from.to_string());
-    if let Some((_, shared)) = &reference {
-        call = format!("{prefix}_cpp_ref{}({call})", if *shared { "" } else { "_mut" });
-    }
-    // `[FFI-17a]` — a bridge result: the value its bridge type makes of the thunk's object.
-    if let Some(make) = function.result.as_ref().and_then(|ty| ty.mode.strip_prefix("bridge ")) {
-        call = make.replace('@', &call);
-    }
-    let bridged = function.result.as_ref().filter(|ty| ty.mode.starts_with("bridge ")).and_then(|ty| ty.pointee.clone()).map(|(ember, _)| ember);
-    let value = match (member, &reference) {
-        _ if bridged.is_some() => bridged.clone(),
-        (_, Some((inner, shared))) => Some(format!("ref {}{inner}", if *shared { "" } else { "mut " })),
-        (member, None) => match member {
-        // `[FFI-36a]` — the object a constructor made, owned through its destructor.
-        Some(Member::BoxedConstructor) => {
-            call = format!("adopt[{owner}]({call})");
-            Some(format!("ForeignBox[{owner}]"))
+            (_, "optional") => (Some(format!("Some({}) if {} else None", slot.unwrap_or_default(), given_or("false"))), Some(format!("Option[{pointee}]")), false),
+            (_, mode) if mode.starts_with("ref") && !contracted => {
+                let mutable = mode.starts_with("ref mut");
+                (Some(format!("{prefix}_cpp_ref{}({})", if mutable { "_mut" } else { "" }, given_or("0"))), Some(format!("ref {}{pointee}", if mutable { "mut " } else { "" })), true)
+            }
+            _ => (given, result.clone(), false),
         }
-        // `[FFI-32]` (ODR-166) — and an opaque class a function gives by value, alike.
-        _ if let Some(class) = function.result.as_ref().filter(|ty| ty.mode == "boxed").and_then(|ty| ty.pointee.clone()) => {
-            call = format!("adopt[{}]({call})", class.0);
-            Some(format!("ForeignBox[{}]", class.0))
+    };
+    let mut statements = Vec::new();
+    // Whether making the value needs `unsafe` (to own an object the thunk gives, or view it).
+    let mut value_unsafe = !contracted;
+    let status = has(&result_words, "status");
+    let (value_expr, value) = if contracted && status {
+        let error = result.as_deref().and_then(status_error).unwrap_or_default();
+        (Some(call.clone()), Some(format!("Result[{}, {error}]", if outs.is_empty() { "void".to_string() } else { tuple(&outs) })))
+    } else if contracted && let Some(count) = &inout {
+        (Some(call.clone()), Some(result.as_ref().map_or(count.clone(), |result| format!("({result}, {count})"))))
+    } else if contracted {
+        // The parts the call returns: the declaration's own result, each `out` of the entry, and
+        // what the thunk wrote for the importer.
+        let parts = usize::from(result.is_some()) + outs.len() + usize::from(written.is_some());
+        let names: Vec<String> = (0..parts).map(|index| format!("{prefix}_part{index}")).collect();
+        let (given, user, slot) = if parts == 0 {
+            statements.push(call.clone());
+            (None, Vec::new(), None)
+        } else if parts == 1 {
+            let whole = Some(call.clone());
+            match (result.is_some(), written.is_some()) {
+                (true, _) => (whole, Vec::new(), None),
+                (false, true) => (None, Vec::new(), whole),
+                (false, false) => (None, outs.iter().map(|_| call.clone()).collect(), None),
+            }
+        } else {
+            statements.push(format!("{} = {call}", names.join(", ")));
+            let mut rest = names.iter().cloned();
+            let given = result.is_some().then(|| rest.next()).flatten();
+            let user: Vec<String> = rest.by_ref().take(outs.len()).collect();
+            (given, user, rest.next())
+        };
+        let (own_value, own_ty, unsafe_made) = own(given, slot);
+        value_unsafe |= unsafe_made;
+        let value_expr = std::iter::once(own_value.clone()).flatten().chain(user.iter().cloned()).collect::<Vec<_>>();
+        let value_ty = std::iter::once(own_ty.clone()).flatten().chain(outs.iter().cloned()).collect::<Vec<_>>();
+        if value_expr.is_empty() {
+            (None, None)
+        } else {
+            (Some(tuple(&value_expr)), Some(tuple(&value_ty)))
         }
-        _ => function.result.as_ref().map(|ty| ty.ember.clone()),
-        },
+    } else {
+        // The thunk's slot is read once the call has written it.
+        let slot = written.as_ref().map(|(what, _)| if what == "size" { format!("{prefix}_size") } else { format!("{prefix}_slot.assume_init()") });
+        let given = if result_mode == "optional" {
+            // Whether there is a value, before the slot is read.
+            statements.push(format!("{prefix}_has = {call}"));
+            Some(format!("{prefix}_has"))
+        } else if result.is_some() {
+            Some(call.clone())
+        } else {
+            statements.push(call.clone());
+            None
+        };
+        let (own_value, own_ty, _) = own(given, slot);
+        (own_value, own_ty)
     };
     let returned = match (policy, &value) {
         (Policy::Direct | Policy::Asserted, Some(value)) => format!(" -> {value}"),
         (Policy::Direct | Policy::Asserted, None) => String::new(),
         (_, value) => format!(" -> Result[{}, CppError]", value.as_deref().unwrap_or("void")),
     };
+    // An entry that states every fact contracts the declaration; one that leaves a fact unknown
+    // leaves the call unsafe (`[FFI-11c]`).
+    let safe = contracted;
     let quoted = function.name.replace('"', "");
+    let failed = format!("{prefix}_failed");
     let mut text = String::new();
     if !safe {
         let _ = writeln!(text, "@safety(\"{UNCONTRACTED}\")");
     }
-    let public = if hidden { "" } else { "pub " };
-    let note = if safe { String::new() } else { "  # SAFETY: the caller keeps what the header does not state".to_string() };
-    if let Some(from) = &lifetime_bound {
+    if let Some(from) = &borrows {
         let _ = writeln!(text, "@borrows({from})");
     }
+    let public = if hidden { "" } else { "pub " };
+    let note = if safe { String::new() } else { "  # SAFETY: the caller keeps what the header does not state".to_string() };
     let _ = writeln!(text, "{public}{}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, params.join(", "));
-    let safety = match &lifetime_bound {
+    for local in locals.iter().chain(&given).chain(&prelude) {
+        let _ = writeln!(text, "    {local}");
+    }
+    // The body's lines, each with whether it needs `unsafe`: the statements (which make the call),
+    // the line that returns the value (which makes it, and the call when no statement does), and
+    // what follows. Consecutive lines that need it share one `unsafe:` block, and no other line is
+    // in one (`L3010`).
+    let mut lines: Vec<(String, bool)> = statements.iter().map(|statement| (statement.clone(), call_unsafe)).collect();
+    let returned_unsafe = value_unsafe || (statements.is_empty() && call_unsafe);
+    match (value_expr, policy) {
+        (Some(value), Policy::Direct) => lines.push((format!("return {value}"), returned_unsafe)),
+        (Some(value), Policy::Asserted) => lines.push((format!("return {prefix}_cpp_value({value}, {failed}, \"{quoted}\")"), returned_unsafe)),
+        (Some(value), _) => lines.push((format!("return {prefix}_cpp_result({value}, {failed})"), returned_unsafe)),
+        (None, Policy::Direct) => {}
+        (None, Policy::Asserted) => lines.push((format!("{prefix}_cpp_value((), {failed}, \"{quoted}\")"), false)),
+        (None, _) => lines.push((format!("return {prefix}_cpp_result((), {failed})"), false)),
+    }
+    let lifetime_bound = function.result.as_ref().and_then(|ty| ty.mode.split_once(" from ")).map(|(_, from)| from.to_string()).filter(|_| !contracted);
+    let safety = match lifetime_bound {
         Some(from) => format!(
             "# SAFETY: the thunk takes this function's own arguments; its result lives as long as `{from}`, as the header's `[[clang::lifetimebound]]` states: asserted, never checked, since C++ does not enforce it [FFI-11f]"
         ),
+        None if contracted => {
+            let mut reasons = Vec::new();
+            if call_unsafe {
+                reasons.push("each object named by its address is the one this function's argument holds, borrowed for the call".to_string());
+            }
+            if result_mode.starts_with("view") {
+                let lives = lifetime.as_deref().filter(|from| *from != "static").map_or("for the program's whole run".to_string(), |from| format!("as long as `{from}`"));
+                reasons.push(format!("the view the thunk gives lives {lives}, as the overlay's entry asserts [FFI-17a]"));
+            } else if result_mode == "boxed" || result_mode.starts_with("bridge ") || member == Some(Member::BoxedConstructor) {
+                reasons.push("the object the thunk gives is a new one, which nothing else owns".to_string());
+            }
+            format!("# SAFETY: {}", reasons.join("; "))
+        }
         None => "# SAFETY: the thunk takes this function's own arguments".to_string(),
     };
-    if catching {
-        let _ = writeln!(text, "    failed: c_int = 0");
-    }
-    // A class result: the thunk writes it into an uninitialised slot (zeroed when it caught).
-    if function.out {
-        let _ = writeln!(text, "    slot: MaybeUninit[{result_ty}] = MaybeUninit[{result_ty}].uninit()");
-        let _ = writeln!(text, "    unsafe:  {}\n        {call}\n        result = slot.assume_init()", "# SAFETY: the thunk writes the slot, and zeroes it when it caught");
-        let _ = writeln!(text, "    {}", match policy {
-            Policy::Direct => "return result".to_string(),
-            Policy::Asserted => format!("return {prefix}_cpp_value(result, failed, \"{}\")", function.name.replace('"', "")),
-            _ => format!("return {prefix}_cpp_result(result, failed)"),
-        });
-        text.push('\n');
-        let declared = format!("    result: {result_ty}\n");
-        let at = text.find("    slot: ").unwrap_or(text.len());
-        text.insert_str(at, &declared);
-        return (raw_text, text);
-    }
-    match (value.is_some(), policy) {
-        (true, Policy::Direct) => {
-            let _ = writeln!(text, "    unsafe:  {safety}\n        return {call}");
+    let mut open = false;
+    for (line, needs) in lines {
+        if needs && !open {
+            let _ = writeln!(text, "    unsafe:  {safety}");
         }
-        (false, Policy::Direct) => {
-            let _ = writeln!(text, "    unsafe:  {safety}\n        {call}");
-        }
-        (true, Policy::Asserted) => {
-            let _ = writeln!(text, "    unsafe:  {safety}\n        return {prefix}_cpp_value({call}, failed, \"{quoted}\")");
-        }
-        (true, _) => {
-            let _ = writeln!(text, "    unsafe:  {safety}\n        return {prefix}_cpp_result({call}, failed)");
-        }
-        (false, Policy::Asserted) => {
-            let _ = writeln!(text, "    unsafe:  {safety}\n        {call}\n    {prefix}_cpp_value((), failed, \"{quoted}\")");
-        }
-        (false, _) => {
-            let _ = writeln!(text, "    unsafe:  {safety}\n        {call}\n    return {prefix}_cpp_result((), failed)");
-        }
-    }
-    if !given.is_empty() {
-        let opened = format!("    unsafe:  {safety}\n");
-        text = text.replacen(&opened, &format!("{}{opened}", given.iter().map(|given| format!("    {given}\n")).collect::<String>()), 1);
+        open = needs;
+        let _ = writeln!(text, "{}{line}", if needs { "        " } else { "    " });
     }
     text.push('\n');
     (raw_text, text)
+}
+
+/// `[FFI-2]`, `[FFI-11c]` — whether an entry states every fact: no `TODO(…)` word, and no `unsafe`.
+fn contracts_everything(entry: &Entry) -> bool {
+    !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe"))
+}
+
+/// A wrapper's parameters, its receiver first, and its result, as `render_wrapper` writes its
+/// line.
+fn signature_of(wrapper: &str) -> Option<(Vec<String>, Option<String>)> {
+    let line = wrapper.lines().find(|line| !line.starts_with('@') && !line.starts_with('#'))?;
+    let (_, rest) = line.split_once('(')?;
+    let (params, after) = rest.rsplit_once(')')?;
+    let mut split = Vec::new();
+    let (mut depth, mut start) = (0, 0);
+    for (at, c) in params.char_indices() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                split.push(params[start..at].trim().to_string());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    if !params.trim().is_empty() {
+        split.push(params[start..].trim().to_string());
+    }
+    // What follows the parameters, up to the line's `:` and its comment.
+    let after = after.split('#').next().unwrap_or("").trim().trim_end_matches(':');
+    let returned = after.trim().strip_prefix("->").map(|returned| returned.trim().to_string());
+    Some((split, returned))
 }
 
 /// The overlay entry that states nothing yet for a function: each unknown fact a `TODO(…)` word
 /// (`[FFI-11c]`), and `-> unsafe` where every parameter and the result are scalars, since being safe
 /// to call is the one fact no header states (`[FFI-2]`).
 fn starter_entry(function: &Function) -> String {
-    let todo = |ty: &CType| ty.pointee.is_some() || ty.ember.starts_with("Option[");
+    // A pointer the header declares; what the importer passes in its own way (a C++ reference, a
+    // bridge value, a view, an optional value) states its facts.
+    let todo = |ty: &CType| (ty.pointee.is_some() && ty.mode.is_empty()) || ty.ember.starts_with("Option[");
     let mut text = String::new();
-    for (name, ty) in &function.params {
+    for (name, ty) in function.params.iter().filter(|(_, ty)| ty.mode.is_empty()) {
         if let Some((_, constant)) = &ty.pointee {
             let borrow = if *constant { "a read-only borrow (`const`)" } else { "a mutable borrow (no `const`)" };
             let _ = writeln!(text, "    # derived: `{name}` is {borrow}");
@@ -6087,6 +6584,8 @@ fn starter_entry(function: &Function) -> String {
         .map(|(name, ty)| if todo(ty) { format!("{name}: TODO(ownership) TODO(count) TODO(nullable)") } else { name.trim_start_matches("r#").to_string() })
         .collect();
     let result = match &function.result {
+        // `[FFI-17a]` — a view's lifetime, which no header states.
+        Some(ty) if ty.mode.starts_with("view") => " -> TODO(lifetime)",
         Some(ty) if todo(ty) => " -> TODO(ownership) TODO(count) TODO(nullable) TODO(lifetime)",
         _ if function.params.iter().any(|(_, ty)| todo(ty)) => "",
         _ => " -> unsafe",
@@ -6442,9 +6941,11 @@ fn outcome_lines(imported: &Imported, applied: &Applied) -> String {
         let pointers: Vec<&str> = function
             .params
             .iter()
-            .filter(|(_, ty)| ty.pointee.is_some())
+            // `[FFI-17a]` — a view, an optional value and a `std::unique_ptr` state their facts; a view
+            // result its lifetime only in an overlay.
+            .filter(|(_, ty)| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "view " | "view mut " | "optional " | "unique "))
             .map(|(param, _)| param.as_str())
-            .chain(function.result.iter().filter(|ty| ty.pointee.is_some() && ty.mode != "boxed").map(|_| "the result"))
+            .chain(function.result.iter().filter(|ty| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "boxed" | "optional")).map(|_| "the result"))
             .collect();
         let line = if applied.functions.contains_key(&function.name) {
             format!("overlay  fn     {} ({policy}; stated)", path(&function.namespace, &name))
@@ -6654,6 +7155,7 @@ fn c_type_value(ty: &CType) -> Value {
         Value::Uint(u64::from(ty.char_pointer)),
         Value::Text(ty.c.clone()),
         Value::Text(ty.mode.clone()),
+        Value::Uint(u64::from(ty.opaque)),
     ])
 }
 
@@ -6666,6 +7168,7 @@ fn read_c_type(value: &Value) -> Option<CType> {
         char_pointer: uint_of(entry.get(3)?)? == 1,
         c: text_of(entry.get(4)?)?,
         mode: text_of(entry.get(5)?)?,
+        opaque: uint_of(entry.get(6)?)? == 1,
     })
 }
 

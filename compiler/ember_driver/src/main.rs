@@ -1657,7 +1657,7 @@ fn cpp_bridge(modules: &[ember_typeck::LoadedModule]) -> String {
         return "none: the program imports no C++".to_string();
     }
     format!(
-        "the `extern \"C\"` thunks of {}, compiled by the C++ compiler with the project's flags, and `std.ffi`'s bridge types (`CppVector`, `CppString`, `CppShared`) over the C++ standard library",
+        "the `extern \"C\"` thunks of {}, compiled by the C++ compiler with the project's flags, and `std.ffi`'s bridge types (`CppVector`, `CppString`, `CppShared`, `CppWeak`) over the C++ standard library",
         headers.iter().map(|header| format!("`{header}`")).collect::<Vec<_>>().join(", ")
     )
 }
@@ -2664,7 +2664,7 @@ fn cpp_call_mode(
     })
 }
 
-/// `[FFI-17e]` — the name of a C++ bridge type (`std.ffi`'s `CppVector`, `CppString`, `CppShared`),
+/// `[FFI-17e]` — the name of a C++ bridge type (`std.ffi`'s `CppVector`, `CppString`, `CppShared`, `CppWeak`),
 /// for `ty` or a reference to one.
 fn bridge_type(types: &TypeTable, ty: ember_types::Ty) -> Option<&'static str> {
     let ty = match types.kind(ty) {
@@ -2674,7 +2674,7 @@ fn bridge_type(types: &TypeTable, ty: ember_types::Ty) -> Option<&'static str> {
     let ember_types::TyKind::Struct(id) = types.kind(ty) else { return None };
     let def = types.struct_def(*id);
     let name = def.origin.as_ref().map_or(def.name, |(name, _)| *name);
-    ["CppVector", "CppString", "CppShared"].into_iter().find(|bridge| name.as_str() == format!("std.ffi.{bridge}"))
+    ["CppVector", "CppString", "CppShared", "CppWeak"].into_iter().find(|bridge| name.as_str() == format!("std.ffi.{bridge}"))
 }
 
 /// `[EFF-16]` — each function of the program with the two facts that together say it has no panic

@@ -1,5 +1,6 @@
 /* The thunks of `import cpp "nlohmann_json.hpp"` ([FFI-3], [FFI-29]): the layout checks and the `extern "C"` functions Ember calls. */
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -121,11 +122,11 @@ extern "C" void ember_cpp_bind_41(char *a0, int* a1, int* a2, nlohmann::detail::
 extern "C" char * ember_cpp_bind_42(char *a0, int a1, int* failed) noexcept { try { *failed = 0; return ::nlohmann::detail::dtoa_impl::append_exponent(a0, a1); } catch (...) { *failed = 1; caught(); return zero<char *>(); } }
 extern "C" char * ember_cpp_bind_43(char *a0, int a1, int a2, int a3, int a4, int* failed) noexcept { try { *failed = 0; return ::nlohmann::detail::dtoa_impl::format_buffer(a0, a1, a2, a3, a4); } catch (...) { *failed = 1; caught(); return zero<char *>(); } }
 extern "C" void ember_cpp_bind_44(nlohmann::basic_json<>* self) noexcept { delete self; }
-extern "C" nlohmann::basic_json<>* ember_cpp_bind_45(int* failed) noexcept { try { *failed = 0; return new nlohmann::basic_json<>(::nlohmann::basic_json<>::meta()); } catch (...) { *failed = 1; caught(); return zero<nlohmann::basic_json<>*>(); } }
+extern "C" std::uintptr_t ember_cpp_bind_45(int* failed) noexcept { try { *failed = 0; return reinterpret_cast<std::uintptr_t>(new nlohmann::basic_json<>(::nlohmann::basic_json<>::meta())); } catch (...) { *failed = 1; caught(); return zero<std::uintptr_t>(); } }
 extern "C" const char* ember_cpp_bind_bridge_0_data(void* s) noexcept { return static_cast<std::basic_string<char>*>(s)->data(); }
 extern "C" std::size_t ember_cpp_bind_bridge_0_size(void* s) noexcept { return static_cast<std::basic_string<char>*>(s)->size(); }
 extern "C" void ember_cpp_bind_bridge_0_destroy(void* s) noexcept { delete static_cast<std::basic_string<char>*>(s); }
-extern "C" void* ember_cpp_bind_46(const nlohmann::basic_json<>* self, const int a0, const char a1, const bool a2, const nlohmann::detail::error_handler_t a3, int* failed) noexcept { try { *failed = 0; return static_cast<void*>(new std::basic_string<char>(self->dump(a0, a1, a2, a3))); } catch (...) { *failed = 1; caught(); return zero<void*>(); } }
+extern "C" std::uintptr_t ember_cpp_bind_46(const nlohmann::basic_json<>* self, const int a0, const char a1, const bool a2, const nlohmann::detail::error_handler_t a3, int* failed) noexcept { try { *failed = 0; return reinterpret_cast<std::uintptr_t>(new std::basic_string<char>(self->dump(a0, a1, a2, a3))); } catch (...) { *failed = 1; caught(); return zero<std::uintptr_t>(); } }
 extern "C" nlohmann::detail::value_t ember_cpp_bind_47(const nlohmann::basic_json<>* self) noexcept { return self->type(); }
 extern "C" bool ember_cpp_bind_48(const nlohmann::basic_json<>* self) noexcept { return self->is_primitive(); }
 extern "C" bool ember_cpp_bind_49(const nlohmann::basic_json<>* self) noexcept { return self->is_structured(); }
@@ -145,9 +146,9 @@ extern "C" unsigned long ember_cpp_bind_62(const nlohmann::basic_json<>* self) n
 extern "C" unsigned long ember_cpp_bind_63(const nlohmann::basic_json<>* self) noexcept { return self->max_size(); }
 extern "C" void ember_cpp_bind_64(nlohmann::basic_json<>* self) noexcept { self->clear(); }
 extern "C" const char * ember_cpp_bind_65(const nlohmann::basic_json<>* self) noexcept { return self->type_name(); }
-extern "C" nlohmann::basic_json<>* ember_cpp_bind_66(const nlohmann::basic_json<>* self, int* failed) noexcept { try { *failed = 0; return new nlohmann::basic_json<>(self->flatten()); } catch (...) { *failed = 1; caught(); return zero<nlohmann::basic_json<>*>(); } }
-extern "C" nlohmann::basic_json<>* ember_cpp_bind_67(const nlohmann::basic_json<>* self, int* failed) noexcept { try { *failed = 0; return new nlohmann::basic_json<>(self->unflatten()); } catch (...) { *failed = 1; caught(); return zero<nlohmann::basic_json<>*>(); } }
+extern "C" std::uintptr_t ember_cpp_bind_66(const nlohmann::basic_json<>* self, int* failed) noexcept { try { *failed = 0; return reinterpret_cast<std::uintptr_t>(new nlohmann::basic_json<>(self->flatten())); } catch (...) { *failed = 1; caught(); return zero<std::uintptr_t>(); } }
+extern "C" std::uintptr_t ember_cpp_bind_67(const nlohmann::basic_json<>* self, int* failed) noexcept { try { *failed = 0; return reinterpret_cast<std::uintptr_t>(new nlohmann::basic_json<>(self->unflatten())); } catch (...) { *failed = 1; caught(); return zero<std::uintptr_t>(); } }
 extern "C" void ember_cpp_bind_68(nlohmann::basic_json<>* self, const nlohmann::basic_json<>* a0, int* failed) noexcept { try { *failed = 0; self->patch_inplace(*a0); } catch (...) { *failed = 1; caught(); } }
-extern "C" nlohmann::basic_json<>* ember_cpp_bind_69(const nlohmann::basic_json<>* self, const nlohmann::basic_json<>* a0, int* failed) noexcept { try { *failed = 0; return new nlohmann::basic_json<>(self->patch(*a0)); } catch (...) { *failed = 1; caught(); return zero<nlohmann::basic_json<>*>(); } }
-extern "C" nlohmann::basic_json<>* ember_cpp_bind_70(const nlohmann::basic_json<>* a0, const nlohmann::basic_json<>* a1, void* a2, int* failed) noexcept { try { *failed = 0; return new nlohmann::basic_json<>(::nlohmann::basic_json<>::diff(*a0, *a1, *static_cast<const std::basic_string<char>*>(a2))); } catch (...) { *failed = 1; caught(); return zero<nlohmann::basic_json<>*>(); } }
+extern "C" std::uintptr_t ember_cpp_bind_69(const nlohmann::basic_json<>* self, const nlohmann::basic_json<>* a0, int* failed) noexcept { try { *failed = 0; return reinterpret_cast<std::uintptr_t>(new nlohmann::basic_json<>(self->patch(*a0))); } catch (...) { *failed = 1; caught(); return zero<std::uintptr_t>(); } }
+extern "C" std::uintptr_t ember_cpp_bind_70(const nlohmann::basic_json<>* a0, const nlohmann::basic_json<>* a1, void* a2, int* failed) noexcept { try { *failed = 0; return reinterpret_cast<std::uintptr_t>(new nlohmann::basic_json<>(::nlohmann::basic_json<>::diff(*a0, *a1, *static_cast<const std::basic_string<char>*>(a2)))); } catch (...) { *failed = 1; caught(); return zero<std::uintptr_t>(); } }
 extern "C" void ember_cpp_bind_71(nlohmann::basic_json<>* self, const nlohmann::basic_json<>* a0, int* failed) noexcept { try { *failed = 0; self->merge_patch(*a0); } catch (...) { *failed = 1; caught(); } }

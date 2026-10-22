@@ -16074,6 +16074,37 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// `[FFI-17a]` — in a module `import cpp` wrote, and nowhere else: a C++ view's elements, from the
+    /// address and length its thunk gave, as the view its function's lifetime word says it is
+    /// (`[FFI-11]`): `ember_cpp_span(owner, pointer, count)` borrows `owner` (`ember_cpp_span_mut`,
+    /// a `MutSpan`), `ember_cpp_span(pointer, count)` is `static`. Reading through the address needs
+    /// `unsafe`.
+    fn synth_cpp_span(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let cpp_span = format!("{}_cpp_span", ember_branding::SYMBOL_PREFIX);
+        if !(name.is(&cpp_span) || name.is(&format!("{cpp_span}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
+            return None;
+        }
+        let mutable = name.as_str().ends_with("_mut");
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if args.iter().any(|arg| arg.name.is_some()) || !(2..=3).contains(&args.len()) {
+            return Some(error);
+        }
+        // A view no argument owns borrows what a string literal does: nothing, for the program's
+        // whole run (`[LT-3]`).
+        let owner = match args {
+            [owner, _, _] => self.synth_committed(&owner.value),
+            _ => Expr { ty: self.common.str_, kind: ExprKind::Str(String::new()), span },
+        };
+        let pointer = self.synth_committed(&args[args.len() - 2].value);
+        let count = self.check_expr(&args[args.len() - 1].value, self.common.usize);
+        let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else { return Some(error) };
+        if !self.unsafe_context() {
+            self.error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block");
+        }
+        let ty = self.types.intern(TyKind::Span { elem: inner, mutable });
+        Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppSpan { mutable }, args: vec![owner, pointer, count] }, span })
+    }
+
     fn synth_cpp_ref(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
         let cpp_ref = format!("{}_cpp_ref", ember_branding::SYMBOL_PREFIX);
         if !(name.is(&cpp_ref) || name.is(&format!("{cpp_ref}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
@@ -19908,7 +19939,7 @@ impl<'a> Checker<'a> {
             }
             if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ty) {
-                if !self.types.is_ffi_safe(inner) {
+                if !self.foreign_referent(inner) {
                     self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
@@ -19926,7 +19957,7 @@ impl<'a> Checker<'a> {
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ty) {
-                if !self.types.is_ffi_safe(*inner) {
+                if !self.foreign_referent(*inner) {
                     self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
@@ -19963,13 +19994,13 @@ impl<'a> Checker<'a> {
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ret) {
-                if !self.types.is_ffi_safe(inner) {
+                if !self.foreign_referent(inner) {
                     self.error(codes::E5015, decl.name.span,
                         "the nullable reference result refers to a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ret) {
-                if !self.types.is_ffi_safe(*inner) {
+                if !self.foreign_referent(*inner) {
                     self.error(codes::E5015, decl.name.span,
                         "the reference result refers to a type with no foreign representation");
                 }
@@ -20025,16 +20056,16 @@ impl<'a> Checker<'a> {
                         let matches_safe_form = match kind {
                             FfiPointerContract::NulTerminated { nullable } => mode == Mode::Borrow &&
                                 if nullable { self.foreign_nullable_cstr(ty) } else { ty == self.common.cstr },
-                            FfiPointerContract::MutOne => mode == Mode::Mut && self.types.is_ffi_safe(ty),
+                            FfiPointerContract::MutOne => self.foreign_mut_one(ty, mode),
                             FfiPointerContract::SharedOne => mode == Mode::Borrow && matches!(
                                 self.types.kind(ty), TyKind::Ref { mutable: false, inner }
-                                    if self.types.is_ffi_safe(*inner)),
+                                    if self.foreign_referent(*inner)),
                             FfiPointerContract::NullableSharedOne => mode == Mode::Borrow
                                 && self.foreign_nullable_ref_inner(ty)
-                                    .is_some_and(|(inner, mutable)| !mutable && self.types.is_ffi_safe(inner)),
+                                    .is_some_and(|(inner, mutable)| !mutable && self.foreign_referent(inner)),
                             FfiPointerContract::NullableMutOne => mode == Mode::Borrow
                                 && self.foreign_nullable_ref_inner(ty)
-                                    .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)),
+                                    .is_some_and(|(inner, mutable)| mutable && self.foreign_referent(inner)),
                             FfiPointerContract::Count { exclusive, nullable, .. } => {
                                 let span = if nullable {
                                     self.foreign_nullable_span_elem(ty)
@@ -20111,22 +20142,22 @@ impl<'a> Checker<'a> {
                         "`@ffi` nullable NUL-terminated result contract needs `Option[cstr]`"),
                 Some(FfiResultContract::SharedOneStatic | FfiResultContract::SharedOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
-                        if self.types.is_ffi_safe(*inner)) =>
+                        if self.foreign_referent(*inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` result contract needs a shared reference result"),
                 Some(FfiResultContract::NullableSharedOneStatic | FfiResultContract::NullableSharedOneFrom(_))
                     if !self.foreign_nullable_ref_inner(ret)
-                        .is_some_and(|(inner, mutable)| !mutable && self.types.is_ffi_safe(inner)) =>
+                        .is_some_and(|(inner, mutable)| !mutable && self.foreign_referent(inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` result contract needs a nullable shared reference result"),
                 Some(FfiResultContract::ExclusiveOneStatic | FfiResultContract::ExclusiveOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: true, inner }
-                        if self.types.is_ffi_safe(*inner)) =>
+                        if self.foreign_referent(*inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` exclusive result contract needs a mutable reference result"),
                 Some(FfiResultContract::NullableExclusiveOneStatic | FfiResultContract::NullableExclusiveOneFrom(_))
                     if !self.foreign_nullable_ref_inner(ret)
-                        .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)) =>
+                        .is_some_and(|(inner, mutable)| mutable && self.foreign_referent(inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` nullable exclusive result contract needs an optional mutable reference result"),
                 Some(FfiResultContract::SharedFixedStatic { len } | FfiResultContract::SharedFixedFrom { len, .. })
@@ -20234,7 +20265,7 @@ impl<'a> Checker<'a> {
                         format!("`safe fn` needs an `@ffi` nullable NUL-terminated contract for `{name}`"));
                 }
                 if matches!(self.types.kind(ty), TyKind::Ref { .. })
-                    && !matches!(contract, Some(FfiPointerContract::SharedOne | FfiPointerContract::Fixed { nullable: false, .. }))
+                    && !matches!(contract, Some(FfiPointerContract::SharedOne | FfiPointerContract::MutOne | FfiPointerContract::Fixed { nullable: false, .. }))
                     && unknown.is_empty() {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for reference parameter `{name}`"));
@@ -20507,6 +20538,22 @@ impl<'a> Checker<'a> {
         matches!(signature.params.as_slice(),
             [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee))
             .then_some((def, symbol, signature.ret))
+    }
+
+    /// `[FFI-8]`, `[FFI-11]` — what a `one` contract's reference may refer to: a type C lays out,
+    /// or an incomplete one (`extern type`), which is only ever behind the pointer.
+    fn foreign_referent(&self, ty: Ty) -> bool {
+        self.types.is_ffi_safe(ty) || matches!(self.types.kind(ty), TyKind::Opaque(_))
+    }
+
+    /// `[FFI-11]` — the safe forms of `borrowed one exclusive`: the table's `ref mut T`, or the
+    /// parameter mode `mut p: T` (`[FFI-10]`), which an incomplete `T` cannot take (`[TYP-22]`,
+    /// `E5015`).
+    fn foreign_mut_one(&self, ty: Ty, mode: Mode) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Ref { mutable: true, inner } => mode == Mode::Borrow && self.foreign_referent(*inner),
+            _ => mode == Mode::Mut && self.types.is_ffi_safe(ty),
+        }
     }
 
     fn foreign_pointer_contract_required(&self, ty: Ty) -> bool {
@@ -35518,6 +35565,9 @@ impl<'a> Checker<'a> {
         // compiler-known constructor: a declared `Box[T]` is built by
         // `Box(5)` (D-305).
         if segments.len() == 1 && let Some(built) = self.synth_cpp_ref(name, args, span) {
+            return built;
+        }
+        if segments.len() == 1 && let Some(built) = self.synth_cpp_span(name, args, span) {
             return built;
         }
         if segments.len() == 1 && let Some(built) = self.synth_cpp_object(name, args, &explicit, span) {
@@ -55622,6 +55672,8 @@ fn ffi_link_name_attr(attr: &ast::Attribute) -> Option<&str> {
 fn ffi_out_param_arg(arg: &ast::AttrArg) -> Option<Symbol> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || args.len() != 3
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -56014,6 +56066,8 @@ enum FfiResultContract {
 fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 0);
+    let args = &ordered[..];
     let fixed = ffi_fixed_length(&args.get(1)?.value);
     let count = ffi_count_target(&args.get(1)?.value);
     let nul_terminated = ffi_contract_word(&args.get(1)?.value).is_some_and(|word| word.is("nul_terminated"));
@@ -56095,6 +56149,8 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
 fn ffi_owned_result_arg(arg: &ast::AttrArg) -> Option<(ast::Ident, bool, bool)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 0);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("result")) || args.len() < 2
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -56134,6 +56190,8 @@ fn ffi_owned_result_arg(arg: &ast::AttrArg) -> Option<(ast::Ident, bool, bool)> 
 fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -56157,6 +56215,8 @@ fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
 fn ffi_retained_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -56213,6 +56273,8 @@ fn ffi_result_contract(attrs: &[ast::Attribute]) -> Option<FfiResultContract> {
 fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContract)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) {
         return None;
     }
@@ -56254,6 +56316,29 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
         _ => return None,
     };
     Some((name, kind))
+}
+
+/// `[FFI-10]`, `[FFI-11]` — a slot's contract words in the order the readers here take them: its
+/// ownership word, then its count word, then the rest as written (after the first `skip` arguments,
+/// a parameter's name). The vocabulary gives its words no order — an overlay writes them in any
+/// (`[GRM-35]`) — so neither does a hand declaration: `param(p, nullable, borrowed, one)` is
+/// `param(p, borrowed, one, nullable)`.
+fn ffi_ordered(args: &[ast::Arg], skip: usize) -> Vec<ast::Arg> {
+    let rank = |arg: &ast::Arg| {
+        let word = match &arg.value.kind {
+            ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
+            _ => ffi_contract_word(&arg.value),
+        };
+        match word.as_ref().map(|word| word.as_str()) {
+            Some("borrowed" | "owned" | "retained" | "returns_owned" | "out" | "inout_count") => 0,
+            Some("one" | "count" | "fixed" | "nul_terminated") => 1,
+            _ => 2,
+        }
+    };
+    let skip = skip.min(args.len());
+    let mut words = args[skip..].to_vec();
+    words.sort_by_key(rank);
+    args[..skip].iter().cloned().chain(words).collect()
 }
 
 fn ffi_contract_word(expr: &ast::Expr) -> Option<Symbol> {
@@ -56370,6 +56455,8 @@ fn ffi_unknown_fact_contracts(attrs: &[ast::Attribute]) -> Vec<(Symbol, Symbol)>
 fn ffi_missing_count_arg(arg: &ast::AttrArg) -> Option<Symbol> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param"))
         || args.len() < 2 || args.iter().any(|arg| arg.name.is_some())
         || !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed") || word.is("out")) {
@@ -56425,6 +56512,8 @@ fn ffi_unknown_result_fact_contracts(attrs: &[ast::Attribute]) -> Vec<Symbol> {
 fn ffi_result_missing_count_arg(arg: &ast::AttrArg) -> bool {
     let ast::AttrArg::Expr(expr) = arg else { return false };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return false };
+    let ordered = ffi_ordered(args, 0);
+    let args = &ordered[..];
     ffi_contract_word(callee).is_some_and(|word| word.is("result"))
         && args.first().is_some_and(|arg| arg.name.is_none()
             && ffi_contract_word(&arg.value).is_some_and(|word| word.is("borrowed")))
