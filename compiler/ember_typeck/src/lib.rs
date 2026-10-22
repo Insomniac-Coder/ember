@@ -5693,8 +5693,8 @@ impl<'a> Checker<'a> {
         if !def.is_sync { return; }
         let name = def.name.as_str().rsplit('.').next().unwrap_or(def.name.as_str()).to_string();
         let offenders = def.fields.iter().filter_map(|field| {
-            let send = self.types.is_send(field.ty);
-            let sync = self.types.is_sync(field.ty);
+            let send = self.is_send(field.ty);
+            let sync = self.is_sync(field.ty);
             (!send || !sync).then_some((field.name, field.ty, field.ty_span, send, sync))
         }).collect::<Vec<_>>();
         for (field, ty, span, send, sync) in offenders {
@@ -5714,7 +5714,7 @@ impl<'a> Checker<'a> {
         let span = self.types.class_def(id).span;
         let class_ty = self.types.intern(TyKind::Class(id));
         for arg in self.types.phantoms(class_ty).to_vec() {
-            let property = match (self.types.is_send(arg), self.types.is_sync(arg)) {
+            let property = match (self.is_send(arg), self.is_sync(arg)) {
                 (true, true) => continue,
                 (false, false) => "Send or Sync",
                 (false, true) => "Send",
@@ -9625,7 +9625,7 @@ impl<'a> Checker<'a> {
                     // one, and a foreign one read safely (`@ffi(immutable)`). A foreign static read
                     // only in `unsafe` (Part XVI's table) is the programmer's to share (the owner's
                     // ruling of 2026-10-21, ODR-163).
-                    if !self.types.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
+                    if !self.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
                         let shown = self.types.display(ty);
                         self.error(codes::E7002, decl.ty.span,
                             format!("{}static type `{shown}` is not Sync",
@@ -12074,7 +12074,7 @@ impl<'a> Checker<'a> {
         // Resolved for the same reason the bounds and the implementation
         // record are: `interface Ord: Eq` in one module and
         // `implements Eq` in another name the same interface.
-        let supertraits = decl
+        let supertraits: Vec<Symbol> = decl
             .supertraits
             .iter()
             .filter_map(interface_name)
@@ -12084,6 +12084,7 @@ impl<'a> Checker<'a> {
         self.assoc_scope = saved_assoc;
         self.type_params = saved_type_params;
         let _ = &assoc;
+        self.types.declare_interface_parents(name, supertraits.clone());
         self.interfaces.insert(
             name,
             InterfaceDef {
@@ -12349,7 +12350,7 @@ impl<'a> Checker<'a> {
             .collect();
         let saved_type_params = std::mem::replace(&mut self.type_params, interface_bindings);
         let saved_module = std::mem::replace(&mut self.current_module, definition.declaring_module);
-        let supertraits = definition
+        let supertraits: Vec<Symbol> = definition
             .supertrait_exprs
             .iter()
             .filter_map(|supertrait| self.resolve_interface_use(supertrait))
@@ -12369,6 +12370,7 @@ impl<'a> Checker<'a> {
                 (self.substitute_bound(bound, args), associated, self.substitute_ty(value, args))
             }).collect())
         }).collect();
+        self.types.declare_interface_parents(instance, supertraits.clone());
         self.interfaces.insert(
             instance,
             InterfaceDef {
@@ -16185,6 +16187,10 @@ impl<'a> Checker<'a> {
             (Builtin::SizeOf, 0, false)
         } else if name.is("align_of") || resolved.is("std.mem.align_of") {
             (Builtin::AlignOf, 0, false)
+        } else if resolved.is("std.ecs.type_is_send") {
+            (Builtin::TypeIsSend, 0, false)
+        } else if resolved.is("std.ecs.type_is_sync") {
+            (Builtin::TypeIsSync, 0, false)
         } else {
             return None;
         };
@@ -16213,7 +16219,7 @@ impl<'a> Checker<'a> {
         // `read`, and `write` take it from the pointer they are given.
         let mut checked: Vec<Expr> = Vec::new();
         let elem = match which {
-            Builtin::MemAlloc | Builtin::SizeOf | Builtin::AlignOf => match explicit.first() {
+            Builtin::MemAlloc | Builtin::SizeOf | Builtin::AlignOf | Builtin::TypeIsSend | Builtin::TypeIsSync => match explicit.first() {
                 Some(&ty) => ty,
                 None => {
                     self.error(
@@ -16243,7 +16249,7 @@ impl<'a> Checker<'a> {
             }
         };
 
-        if self.types.has_unsized_by_value(elem) {
+        if !matches!(which, Builtin::TypeIsSend | Builtin::TypeIsSync) && self.types.has_unsized_by_value(elem) {
             let shown = self.types.display(elem);
             self.error(codes::E5015, span,
                 format!("`{shown}` is incomplete and has no size or alignment"));
@@ -16258,6 +16264,7 @@ impl<'a> Checker<'a> {
             Builtin::MemFree => (vec![usize_ty], void),
             Builtin::PtrRead => (vec![usize_ty], elem),
             Builtin::PtrWrite => (vec![usize_ty, elem], void),
+            Builtin::TypeIsSend | Builtin::TypeIsSync => (Vec::new(), self.common.bool_),
             _ => (Vec::new(), usize_ty),
         };
         for (arg, &param_ty) in args.iter().skip(checked.len()).zip(rest.iter()) {
@@ -16267,7 +16274,7 @@ impl<'a> Checker<'a> {
         // Layout queries have no arguments, so the element type has to travel
         // somewhere; a zero-sized placeholder of that type carries it through
         // generic substitution.
-        if matches!(which, Builtin::SizeOf | Builtin::AlignOf) {
+        if matches!(which, Builtin::SizeOf | Builtin::AlignOf | Builtin::TypeIsSend | Builtin::TypeIsSync) {
             checked.push(Expr { ty: elem, kind: ExprKind::Error, span });
         }
         Some(Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span })
@@ -21464,7 +21471,7 @@ impl<'a> Checker<'a> {
             match retained.iter().find(|(slot, _)| *slot == name) {
                 Some(&(_, bound)) => match token {
                     Some(held) if mode == Mode::Borrow => {
-                        if !bound && !self.types.is_send(held) {
+                        if !bound && !self.is_send(held) {
                             let shown = self.types.display(held);
                             self.sink.emit(
                                 Diagnostic::error(codes::E7004, span, format!("`{name}` hands foreign code a `{shown}` to keep, and a `{shown}` is not `Send`"))
@@ -38020,6 +38027,87 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        let call = self.synth_generic_call_checked(def, name, args, explicit, expected, span);
+        if self.fn_ids.get(&Symbol::intern("std.ecs.system")) == Some(&def) {
+            self.check_ecs_system_sendable(&call, args);
+        }
+        call
+    }
+
+    /// `[ECS-4]` (ODR-218) — `std.ecs.system(body, name)` makes a system `run_parallel` runs on
+    /// another thread: what `body` captures, and every component its query reads or writes, must
+    /// be `Send` (`E7004`, naming it). A function captures nothing.
+    fn check_ecs_system_sendable(&mut self, call: &Expr, args: &[ast::Arg]) {
+        let ExprKind::Call { args: checked, .. } = &call.kind else { return };
+        let Some(body) = checked.first() else { return };
+        let span = args.first().map_or(call.span, |arg| arg.value.span);
+        let name = match args.get(1).map(|arg| &arg.value.kind) {
+            Some(ast::ExprKind::Lit(ast::Literal::Str(text))) => format!("the system `{text}`"),
+            _ => "the system".to_string(),
+        };
+        let note = "`run_parallel` runs each system on another thread [ECS-4]";
+        // A named callable lent to `system` (ODR-240) is checked as what it refers to.
+        let body_ty = match *self.types.kind(body.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => body.ty,
+        };
+        let signature = self.callable_signature_of_value(body_ty);
+        if let TyKind::Struct(id) = *self.types.kind(body_ty)
+            && self.closure_calls.contains_key(&id)
+        {
+            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+            for (capture, ty) in captures {
+                if !self.is_send(ty) {
+                    let shown = self.types.display(ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E7004, span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
+                            .note(note),
+                    );
+                }
+            }
+        } else if !self.is_send(body_ty) {
+            let shown = self.types.display(body_ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, span, format!("{name} is a `{shown}` value, which may hold anything, so it is not Send"))
+                    .help("pass the function, or the lambda itself, so what it captures can be checked")
+                    .note(note),
+            );
+        }
+        // The query: the callable's first parameter, `Query[Q]`.
+        let Some(TyKind::Fn { params, .. }) = signature.map(|signature| self.types.kind(signature).clone()) else { return };
+        let Some(query) = params.first().map(|param| param.ty) else { return };
+        let TyKind::Struct(id) = *self.types.kind(query) else { return };
+        let Some((origin, query_args)) = self.types.struct_def(id).origin.clone() else { return };
+        if !origin.is("std.ecs.Query") {
+            return;
+        }
+        let Some(&param) = query_args.first() else { return };
+        let mut components = self.ecs_access_set(param, "Reads");
+        for written in self.ecs_access_set(param, "Writes") {
+            if !components.contains(&written) {
+                components.push(written);
+            }
+        }
+        for component in components {
+            if !self.is_send(component) {
+                let shown = self.types.display(component);
+                self.sink.emit(
+                    Diagnostic::error(codes::E7004, span, format!("{name}'s query uses `{shown}`, which is not Send"))
+                        .note("a component `run_parallel` uses moves to another thread with its system (ODR-218) [ECS-4]"),
+                );
+            }
+        }
+    }
+
+    fn synth_generic_call_checked(
+        &mut self,
+        def: DefId,
+        name: Symbol,
+        args: &[ast::Arg],
+        explicit: Vec<Ty>,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
         self.check_direct_call_safety(def, span);
         let generics = self.signatures[def.0 as usize].generics.clone();
         let declared = self.signatures[def.0 as usize].params.clone();
@@ -39089,6 +39177,24 @@ impl<'a> Checker<'a> {
         if callable { self.read_through(value) } else { value }
     }
 
+    /// `[THR-8]`, `[THR-9]` — whether `ty` is `Send` (`.0`) and `Sync` (`.1`) here: a type
+    /// parameter is what its bounds require (`T: Send`, a bound interface requiring `Sync`).
+    fn thread_facts(&self, ty: Ty) -> (bool, bool) {
+        self.types.thread_properties_with(ty, &|param| {
+            let TyKind::Param { index, .. } = *self.types.kind(param) else { return None };
+            let generic = self.current_generics.get(index as usize)?;
+            Some(self.types.interfaces_thread_properties(&generic.bounds))
+        })
+    }
+
+    fn is_send(&self, ty: Ty) -> bool {
+        self.thread_facts(ty).0
+    }
+
+    fn is_sync(&self, ty: Ty) -> bool {
+        self.thread_facts(ty).1
+    }
+
     /// Whether `ty` is a callable value's: a function value, a closure, or a parameter bounded by a
     /// callable type.
     fn is_callable_value_type(&mut self, ty: Ty) -> bool {
@@ -40085,8 +40191,8 @@ impl<'a> Checker<'a> {
         // hand (`unsafe extend`), never a recorded implementation alone.
         match interface.as_str() {
             "std.core.Copy" => return self.types.is_copy(ty),
-            "std.core.Send" => return self.types.is_send(ty),
-            "std.core.Sync" => return self.types.is_sync(ty),
+            "std.core.Send" => return self.is_send(ty),
+            "std.core.Sync" => return self.is_sync(ty),
             "std.core.Sized" => return !matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)),
             _ => {}
         }
@@ -43139,7 +43245,24 @@ impl<'a> Checker<'a> {
                     .find(|component| reads.contains(component) || writes.contains(component))
                     .map(|&component| (*first, component))
                     .or_else(|| writes.iter().find(|component| first_reads.contains(component)).map(|&component| (*name, component)));
-                let Some((writer, component)) = conflict else { continue };
+                let Some((writer, component)) = conflict else {
+                    // ODR-255 — two systems that read one component at once read it from two
+                    // threads: it must be `Sync`.
+                    if let Some(&shared) = reads.iter().find(|component| first_reads.contains(component) && !self.is_sync(**component)) {
+                        let shown = self.types.display(shared);
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E7005,
+                                *span,
+                                format!("systems `{first}` and `{name}` cannot run at once: both read `{shown}`, which is not Sync"),
+                            )
+                            .secondary(*first_span, format!("`{first}` is here"))
+                            .help("run them one after the other (`world.run_parallel` once for each)")
+                            .note("two systems of one parallel run read a component they share from two threads (ODR-255) [ECS-4]"),
+                        );
+                    }
+                    continue;
+                };
                 let shown = self.types.display(component);
                 self.sink.emit(
                     Diagnostic::error(
@@ -49363,7 +49486,7 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         let mut refused = self.scoped_task_refused(f.ty, closure, args[0].span, &THREAD_WORDS);
-        if !self.types.is_send(ret) {
+        if !self.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(
                 Diagnostic::error(codes::E7004, args[0].span, format!("the task returns a `{ret_shown}`, which is not Send"))
@@ -50002,20 +50125,20 @@ impl<'a> Checker<'a> {
             let (code, message) = match *self.types.kind(ty) {
                 TyKind::Ref { mutable: true, inner } => {
                     let spans = matches!(self.types.kind(inner), TyKind::Span { mutable: true, .. }) || self.soa_inner(inner).is_some();
-                    if spans || self.types.is_send(inner) && matches!(self.types.kind(inner), TyKind::Span { .. }) {
+                    if spans || self.is_send(inner) && matches!(self.types.kind(inner), TyKind::Span { .. }) {
                         continue;
                     }
                     let shown = self.types.display(inner);
                     (codes::E7010, format!("the parallel loop writes `{capture}`, a `{shown}`, which its chunks share"))
                 }
                 // A span only read here: its chunks read its elements at once.
-                TyKind::Ref { mutable: false, inner } if let TyKind::Span { elem, .. } = *self.types.kind(inner) && self.types.is_sync(elem) => continue,
-                TyKind::Ref { mutable: false, inner } if !self.types.is_sync(inner) => {
+                TyKind::Ref { mutable: false, inner } if let TyKind::Span { elem, .. } = *self.types.kind(inner) && self.is_sync(elem) => continue,
+                TyKind::Ref { mutable: false, inner } if !self.is_sync(inner) => {
                     let shown = self.types.display(inner);
                     (codes::E7005, format!("the parallel loop's chunks borrow `{capture}`, a `{shown}`, which is not Sync"))
                 }
                 TyKind::Ref { .. } => continue,
-                _ if !self.types.is_send(ty) => {
+                _ if !self.is_send(ty) => {
                     let shown = self.types.display(ty);
                     (codes::E7004, format!("the parallel loop's chunks capture `{capture}`, a `{shown}`, which is not Send"))
                 }
@@ -50123,7 +50246,7 @@ impl<'a> Checker<'a> {
                             .note(words.outlive_note),
                     );
                     refused = true;
-                } else if !self.types.is_send(ty) {
+                } else if !self.is_send(ty) {
                     let mut diagnostic =
                         Diagnostic::error(codes::E7004, arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
                             .note(words.moves_note);
@@ -50170,7 +50293,7 @@ impl<'a> Checker<'a> {
                             .note("a callback contracted `once` or `retained` outlives the call [FFI-21]"),
                     );
                     refused = true;
-                } else if send && !self.types.is_send(capture_ty) {
+                } else if send && !self.is_send(capture_ty) {
                     let mut diagnostic = Diagnostic::error(codes::E7004, arg_span,
                         format!("the callback `{}` captures `{capture}`, a `{shown}`, which is not Send", callback.param))
                         .help(format!("if C calls it on one thread, say so in its contract: `param({}, callback(…), threads(main))` or `threads(creator)`", callback.param))
@@ -50416,9 +50539,9 @@ impl<'a> Checker<'a> {
             let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
             for (capture, ty) in captures {
                 let (code, what, ok) = match *self.types.kind(ty) {
-                    TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.types.is_sync(inner)),
-                    TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.types.is_send(inner)),
-                    _ => (codes::E7004, (ty, "captures", "Send"), self.types.is_send(ty)),
+                    TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.is_sync(inner)),
+                    TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.is_send(inner)),
+                    _ => (codes::E7004, (ty, "captures", "Send"), self.is_send(ty)),
                 };
                 if !ok {
                     let (ty, verb, marker) = what;
@@ -50454,7 +50577,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let name = self.types.class_display_name(id);
-        match def.fields.iter().find(|f| !(self.types.is_send(f.ty) && self.types.is_sync(f.ty))) {
+        match def.fields.iter().find(|f| !(self.is_send(f.ty) && self.is_sync(f.ty))) {
             None => Some(format!("declare it `@sync class {name}`: its fields are all `Send` and `Sync` [THR-1]")),
             Some(field) => Some(format!(
                 "`@sync` would not help: `{name}.{}` is a `{}`, which is not `Send` and `Sync` [THR-1]",
@@ -50498,7 +50621,7 @@ impl<'a> Checker<'a> {
             return error;
         }
         let mut refused = self.owned_task_refused(&f, args[0].span, &THREAD_WORDS);
-        if !self.types.is_send(ret) {
+        if !self.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(
                 Diagnostic::error(codes::E7004, args[0].span, format!("the thread's function returns a `{ret_shown}`, which is not Send"))

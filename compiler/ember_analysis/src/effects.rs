@@ -1454,7 +1454,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         | B::ArraySort | B::ArrayReverse | B::ArrayClear | B::ArrayPop { .. } | B::ArrayCapacity
         | B::ArrayTruncate | B::ValueCompare { .. } | B::ClassSuperInit { .. } | B::WeakNew { .. }
         | B::WeakEmpty { .. } | B::StrIsCharBoundary | B::StrAsBytes | B::ArrayLen | B::StringLen
-        | B::StringAsStr | B::PtrIsNull | B::SizeOf | B::AlignOf | B::MemReplace { .. } | B::MemTake { .. }
+        | B::StringAsStr | B::PtrIsNull | B::SizeOf | B::AlignOf | B::TypeIsSend | B::TypeIsSync | B::MemReplace { .. } | B::MemTake { .. }
         | B::MemSwap { .. } | B::MemForget { .. } | B::MemDrop { .. } | B::SpanLen | B::SpanGet
         | B::SpanFrom { .. } | B::SpanReborrow | B::SpanSharedReborrow | B::SpanIterNext { .. }
         | B::SpanIterNextBack { .. } | B::SpanIterLen | B::SpanChunksNext { .. } | B::SpanWindowsNext { .. }

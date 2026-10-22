@@ -3459,7 +3459,9 @@ impl<'a> Builder<'a> {
                     | hir::Builtin::JobSubmit { .. } => expr.ty,
                     hir::Builtin::SoA { soa, .. } => *soa,
                     hir::Builtin::Simd { vector, .. } => *vector,
-                    hir::Builtin::SizeOf => args.last().map(|a| a.ty).unwrap_or(expr.ty),
+                    hir::Builtin::SizeOf | hir::Builtin::TypeIsSend | hir::Builtin::TypeIsSync => {
+                        args.last().map(|a| a.ty).unwrap_or(expr.ty)
+                    }
                     _ => args.first().map(|a| a.ty).unwrap_or(expr.ty),
                 };
                 // `push` copies the value through a pointer, so a constant

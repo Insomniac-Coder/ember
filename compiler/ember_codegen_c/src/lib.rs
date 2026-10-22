@@ -10431,6 +10431,13 @@ impl Emitter<'_> {
                     Builtin::SizeOf => {
                         return c_size(&self.c_type(*arg_ty));
                     }
+                    // `[ECS-4]` — a constant of the instance.
+                    Builtin::TypeIsSend => {
+                        return if self.types.is_send(*arg_ty) { "true" } else { "false" }.to_string();
+                    }
+                    Builtin::TypeIsSync => {
+                        return if self.types.is_sync(*arg_ty) { "true" } else { "false" }.to_string();
+                    }
                     // `[RNG-3a]` — total: no failure mode, no `Panic`, no
                     // `RuntimeCheck(k)`. "On the C backend it lowers to two
                     // compares or the target's `min`/`max` instruction pair,

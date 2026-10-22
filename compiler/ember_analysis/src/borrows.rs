@@ -3925,6 +3925,8 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::RangeCount
             | Builtin::RangeNth
             | Builtin::SizeOf
+            | Builtin::TypeIsSend
+            | Builtin::TypeIsSync
             | Builtin::PtrIsNull
             | Builtin::PtrAdd
             | Builtin::AlignOf

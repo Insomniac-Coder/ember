@@ -2032,6 +2032,10 @@ pub enum Builtin {
     SizeOf,
     /// `align_of[T]() -> usize`, folded from the canonical target layout.
     AlignOf,
+    /// `[ECS-4]` (ODR-218, ODR-255) — `std.ecs`'s `type_is_send[T]()` and `type_is_sync[T]()`:
+    /// whether `T` is `Send` (`Sync`), a constant each instance decides (`[THR-8]`, `[THR-9]`).
+    TypeIsSend,
+    TypeIsSync,
     /// `[OWN-6]` — atomically move the old value out of a mutable place and
     /// install an owned replacement without dropping the old value.
     MemReplace { elem: Ty },
@@ -2434,6 +2438,8 @@ impl Builtin {
             Builtin::PtrAdd => "add",
             Builtin::SizeOf => "size_of",
             Builtin::AlignOf => "align_of",
+            Builtin::TypeIsSend => "type_is_send",
+            Builtin::TypeIsSync => "type_is_sync",
             Builtin::MemReplace { .. } => "replace",
             Builtin::MemTake { .. } => "take",
             Builtin::MemSwap { .. } => "swap",

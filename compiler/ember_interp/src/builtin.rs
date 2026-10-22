@@ -634,6 +634,8 @@ impl Interp<'_, '_> {
                 return Ok(None);
             }
             Builtin::SizeOf => self.int_result(dest_ty, self.size(arg_ty) as i128),
+            Builtin::TypeIsSend => vec![u8::from(self.types.is_send(arg_ty))],
+            Builtin::TypeIsSync => vec![u8::from(self.types.is_sync(arg_ty))],
             Builtin::AlignOf => self.int_result(dest_ty, self.layout(arg_ty).align as i128),
             Builtin::MemAlloc => {
                 let n = self.word(&args[0])?;

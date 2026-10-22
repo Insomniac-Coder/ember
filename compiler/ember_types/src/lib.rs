@@ -584,6 +584,9 @@ pub struct TypeTable {
     /// `[TYP-22]` (ODR-237) — the interfaces that require `Clone`, of the `dyn` tables formed: each
     /// such table holds an entry copying its value into a new box.
     dyn_clone: HashSet<Symbol>,
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — each interface's supertraits, so a `dyn I` is `Send` when
+    /// `I` requires `Send` and `Sync` when it requires `Sync`, itself or through a parent.
+    interface_parents: HashMap<Symbol, Vec<Symbol>>,
 }
 
 /// `[BLD-FFI-5a]` (ODR-162) — a `@sync` class whose objects an export hands to C and C++: the class,
@@ -746,6 +749,7 @@ impl TypeTable {
             layout_attrs: HashMap::new(),
             must_drop_declared: HashSet::new(),
             dyn_clone: HashSet::new(),
+            interface_parents: HashMap::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
             coroutine_frames: HashMap::new(),
@@ -1666,20 +1670,38 @@ impl TypeTable {
     }
 
     pub fn is_send(&self, ty: Ty) -> bool {
-        self.thread_properties(ty, &mut HashSet::new()).0
+        self.thread_properties(ty, &mut HashSet::new(), &|_| None).0
     }
 
     pub fn is_sync(&self, ty: Ty) -> bool {
-        self.thread_properties(ty, &mut HashSet::new()).1
+        self.thread_properties(ty, &mut HashSet::new(), &|_| None).1
     }
 
-    fn thread_properties(&self, ty: Ty, visiting: &mut HashSet<Ty>) -> (bool, bool) {
+    /// `[THR-8]`, `[THR-9]` — whether `ty` is `Send` and `Sync`, a type parameter (or an
+    /// associated type) being what `params` says its bounds make it (`T: Send`), and `(false,
+    /// false)` where it says nothing.
+    pub fn thread_properties_with(&self, ty: Ty, params: &dyn Fn(Ty) -> Option<(bool, bool)>) -> (bool, bool) {
+        self.thread_properties(ty, &mut HashSet::new(), params)
+    }
+
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — whether one of `interfaces` requires `Send` and `Sync`.
+    pub fn interfaces_thread_properties(&self, interfaces: &[Symbol]) -> (bool, bool) {
+        (self.interfaces_require(interfaces, "std.core.Send"), self.interfaces_require(interfaces, "std.core.Sync"))
+    }
+
+    fn thread_properties(&self, ty: Ty, visiting: &mut HashSet<Ty>, params: &dyn Fn(Ty) -> Option<(bool, bool)>) -> (bool, bool) {
         if !visiting.insert(ty) {
             // Recursive value storage is impossible without indirection. A
             // recursive @sync handle is safe once its declaration is checked.
             return (true, true);
         }
-        let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting);
+        if matches!(self.kind(ty), TyKind::Param { .. } | TyKind::Assoc { .. })
+            && let Some(facts) = params(ty)
+        {
+            visiting.remove(&ty);
+            return facts;
+        }
+        let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting, params);
         let result = match self.kind(ty) {
             // `[TYP-41]` — a number, sent and shared as one is.
             TyKind::Const(_) => (true, true),
@@ -1700,7 +1722,14 @@ impl TypeTable {
                 let (send, sync) = both(*inner, visiting);
                 if *mutable { (send, false) } else { (sync, sync) }
             }
-            TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Dyn { .. } | TyKind::Opaque(_)
+            // ODR-255 — a `dyn I` holds a value of some type implementing `I`: `Send` when `I`
+            // requires `Send` (every implementation is then `Send`, `E2040` otherwise), `Sync`
+            // when it requires `Sync`.
+            TyKind::Dyn { interfaces } => (
+                self.interfaces_require(interfaces, "std.core.Send"),
+                self.interfaces_require(interfaces, "std.core.Sync"),
+            ),
+            TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Opaque(_)
             | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_)
             | TyKind::IntLit | TyKind::FloatLit => (false, false),
             TyKind::Struct(id) => {
@@ -2091,6 +2120,29 @@ impl TypeTable {
     /// requires `Clone`.
     pub fn dyn_clones(&self, interfaces: &[Symbol]) -> bool {
         interfaces.iter().any(|interface| self.dyn_clone.contains(interface))
+    }
+
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — record `interface`'s supertraits.
+    pub fn declare_interface_parents(&mut self, interface: Symbol, parents: Vec<Symbol>) {
+        self.interface_parents.insert(interface, parents);
+    }
+
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — whether one of `interfaces` is `marker` (`Send`, `Sync`)
+    /// or requires it, through any supertrait.
+    fn interfaces_require(&self, interfaces: &[Symbol], marker: &str) -> bool {
+        let mut pending: Vec<Symbol> = interfaces.to_vec();
+        let mut seen = HashSet::new();
+        while let Some(next) = pending.pop() {
+            if next.is(marker) {
+                return true;
+            }
+            if seen.insert(next)
+                && let Some(parents) = self.interface_parents.get(&next)
+            {
+                pending.extend(parents.iter().copied());
+            }
+        }
+        false
     }
 
     /// `[THR-6]` — record a struct's or class's `@must_drop`.

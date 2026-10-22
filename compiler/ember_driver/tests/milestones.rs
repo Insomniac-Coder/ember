@@ -4943,6 +4943,7 @@ fn std_panics_name_their_twins_and_allocations_are_documented() {
         ("core", "step_by", "must be positive", "ODR-089: a step of zero or less"),
         ("core", "nth", "cannot be negative", "ODR-089: a negative index panics when the consumer is called"),
         ("ecs", "run_parallel", "cannot run at once", "[ECS-4]: a conflict panics before any system starts"),
+        ("ecs", "add", "which is not Send", "[ECS-4] (ODR-218): a component `run_parallel` uses is `Send`"),
         // ODR-254: the twin `[STD-14]` asks for is an accessor's (`[ERR-13]`); a constructor's or a
         // mutation's caller's bug panics with none.
         ("core", "stepped", "step must not be zero", "ODR-254: a constructor's argument"),

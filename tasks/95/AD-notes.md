@@ -64,3 +64,50 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   every view argument, the lent `ref mut` callable among them, so `r.map(inc)` with an `E = str`
   keeps `inc`'s captures lent while the result lives (the elision rule, `[LT-1]`), as for any
   function given a reference.
+
+* **ODR-218, ODR-255 `[THR-8]`, `[THR-9]`, `[CLO-10]`, `[ECS-4]`.**
+  * `dyn I` is `Send` when `I` requires `Send` and `Sync` when it requires `Sync`, itself or
+    through a parent (`TypeTable::interface_parents`, filled where an interface or an instance of a
+    generic one is declared; `thread_properties` of `Dyn`). An implementation of such an
+    interface by a type that is not `Send` was `E2040` already.
+  * A type parameter is `Send` (`Sync`) when its bounds require it: every thread check of the
+    checker goes through `thread_facts` (`TypeTable::thread_properties_with`, consulting the
+    current generics' bounds). Before, `T: Send` was never `Send` inside its function (a thread
+    capturing a `T: Send` was `E7004`, and `need_send[T](x)` forwarding it `E2040`).
+  * An owned callable value whose type is its closure's (a lambda written or named) is `Send` when
+    its captures are, structurally, as before; with the bounds above, a generic `F: fn() + Send`
+    is too.
+  * `[ECS-4]` — `run_parallel` runs its systems at once, on jobs of the pool (`jobs.scope()`).
+    std.ecs reworked so nothing a job reaches is a class handle of the calling thread: a `Query`
+    holds its entities as a raw view (`entities`, `count`: the driving storage's list, which its
+    view holds, or the world's live list, which the run holds for a query requiring no component)
+    instead of the world's handle; the `Commands` buffer is a `@sync class` holding
+    `Mutex[Array[Box[dyn Change]]]`, `interface Change: Send` (ODR-255), its changes structs
+    (`DestroyChange`, `RemoveChange` by the type's identity, `AddChange[T]`); a `System` keeps an
+    erased `run_nested(world, rest, commands)`: each system's storages are taken and its query made
+    in a frame of the calling thread, its function submitted as a job while the next systems are
+    staged inside that frame's scope, so the scopes end innermost first; the `Commands` are applied
+    in the systems' order once all have returned. `World.run` is unchanged in what it borrows (the
+    world's live list only for a query requiring no component). Checks: `std.ecs.system(body,
+    name)` (and the literal's systems, which the compiler makes with it) is `E7004` for a capture
+    that is not `Send` and for a component its query reads or writes that is not `Send`
+    (`check_ecs_system_sendable`); two systems of a `run_parallel` literal that both read a
+    component that is not `Sync` are `E7005` naming both (`check_system_conflicts`); systems
+    passed as values carry `Access.sync` and panic so before any starts. A system `run_parallel`
+    runs that adds through its `Commands` a component that is not `Send` panics before it queues it
+    (`AddChange[T]` is `Send` by hand; `World.run` adds any). New compiler-known
+    `std.ecs.type_is_send[T]()`/`type_is_sync[T]()` (`Builtin::TypeIsSend`/`TypeIsSync`, a
+    constant per instance, in both backends).
+  * Tests: `THR-8/accept_a_dyn_of_an_interface_requiring_send_moves_to_a_thread.em`,
+    `THR-8/reject_a_dyn_of_an_interface_not_requiring_send_or_sync.em` (`E7004`, `E7005`,
+    `E2040`), `CLO-10/accept_an_owned_callable_value_is_send_when_its_captures_are.em`,
+    `CLO-10/reject_an_owned_callable_value_capturing_what_is_not_send.em`,
+    `ECS-4/accept_run_parallel_runs_its_systems_at_once_on_threads.em` (two systems that each wait
+    up to ten seconds for the other to start see each other; commands applied in the systems'
+    order; lambda systems capturing a `@sync` object), `ECS-4/reject_a_system_or_component_run_parallel_cannot_send.em`,
+    `ECS-4/run_fail_systems_passed_as_values_share_a_component_that_is_not_sync.em`,
+    `ECS-4/run_fail_a_parallel_system_adds_a_component_that_is_not_send.em`;
+    `ECS-4/accept_run_parallel_runs_systems_whose_sets_do_not_conflict.em` changed: its two
+    readers printed from two threads at once, which interleaves (below), so they record what they
+    saw for `main` to print. `phase-status.json`: `ECS-4` removed; `THR-8`, `CLO-10` say what is
+    left (question 1).
