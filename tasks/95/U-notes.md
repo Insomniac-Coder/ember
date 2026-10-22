@@ -183,6 +183,30 @@ noise (the laptop was running other helpers' suites at the time); no laptop benc
    D-782 (a struct `A_b` and a method `A.b`) is gone with the scheme (the C++ importer's
    `<Class>_cpp_iter` workaround can go; not touched, another helper's file).
 
+## Test runs (this branch)
+
+- `cdylib` 10/10, `package` 14/14, `staticlib` 4/4, `reload` 38/38 (`every_type_has_a_schema` found
+  `Mote`'s rows by `_Mote*)0)->`; now by its object struct's name).
+- `milestones`: every failure is one ac4d75ac has too (its own test binary, built from that commit,
+  run on each): `help_lists_every_command_and_flag_of_the_specification` (`--outcomes`, `--emit-cpp`,
+  `--flag`, `--instantiate` not in `--help`), `memreplace_span_results_refresh_their_index_pointer`,
+  `ember_lint_reports_its_lints_at_the_levels_the_manifest_gives` (an `error` lint exits 0),
+  `compile_pass_programs_compile` and `run_pass_programs_pass` (defect 3 above, exactly those five
+  cases), `the_conformance_suite_runs` (defect 2). Fixed here: the needles naming symbols
+  (`Countdown_next(`, `Lines_next(`… now `item_symbol(…)`), the native-callback fixture's C types
+  (`em_4Pair`, `em_5Large`), and `msvc_writes_small_checked_loops_several_turns_a_pass`, failing at
+  ac4d75ac too: it looked for `_bump(&_`, but `[CG-C-7]` names the local `t`, as its own comment
+  (`bump(&t)`) says.
+- Conformance tree: `annotations.py` over every rule directory; every C needle (script above); and
+  `the_conformance_suite_runs` itself (C gate, `/WX`) with `geometry.em` made a case for the run
+  only: 2 failing cases of the tree, both the same with ac4d75ac's compiler (identical diagnostics,
+  identical link error): `DIA-15/reject_suggestions_come_from_scopes_types_and_exports.em` (its
+  helps in another order than its annotations) and `DIA-5/accept_an_import_with_its_facts_stated_reports_nothing.em`
+  (a `compile-pass` case whose `label_length` the header only declares: `LNK2019`).
+- Every `em_<digit>` word in the C of 1881 programs (`tests/conformance`, `tests/run-pass`) reads back
+  as `[MNG-1]` says (components of the lengths written, then nothing, `G` and 16 hex digits, or a
+  suffix after `_`): 0 malformed.
+
 ## Spec questions (options, recommendation)
 
 1. **Paths are not unique.** `[MNG-1]` makes symbols injective over paths, and "Two distinct items
