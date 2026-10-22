@@ -1,11 +1,11 @@
 {
   "01_text_adventure.em": {
-    "mark": "rejected", "shape": "none:E0101", "codes": ["E0101"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "none:E0101", "codes": ["E0101", "E1010", "E2020", "E2072"], "after_helps": "rejected",
     "shapes": ["none:E0101"],
     "helps": ["R1:none:E0101", "R2:N3", "R2:N1", "R2:none:E2020", "R3:N3", "R3:none:E2020", "R4:none:E2060", "R5:O2", "R5:O1", "R5:B12", "R6:B3", "R7:O2"]
   },
   "02_csv_summariser.em": {
-    "mark": "rejected", "shape": "none:E0101", "codes": ["E0008", "E0101"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "none:E0101", "codes": ["E0008", "E0101", "E1010", "E2020"], "after_helps": "rejected",
     "shapes": ["none:E0101", "none:E0008"],
     "helps": ["R1:none:E0101", "R1:none:E0008", "R2:N3", "R2:none:E2020", "R2:N6", "R2:N1", "R3:none:E2020"]
   },
@@ -15,7 +15,7 @@
     "helps": ["R1:none:E2020", "R2:O2"]
   },
   "04_event_bus.em": {
-    "mark": "rejected", "shape": "none:E0100", "codes": ["E0100"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "none:E0100", "codes": ["E0100", "E2020", "E3021"], "after_helps": "rejected",
     "shapes": ["none:E0100"],
     "helps": ["R1:none:E0100", "R2:B3"]
   },
@@ -35,7 +35,7 @@
     "helps": ["R1:none:E2020", "R1:N1", "R1:N6", "R2:O2"]
   },
   "08_word_frequencies.em": {
-    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100", "E2020", "E2040", "E2072"], "after_helps": "rejected",
     "shapes": ["DIA-21"],
     "helps": ["R1:DIA-21", "R2:N3", "R2:none:E2020", "R2:N6", "R2:N9", "R3:N3", "R3:none:E2020", "R3:N9", "R4:O2"]
   },
@@ -90,7 +90,7 @@
     "helps": ["R1:N1"]
   },
   "19_tokenizer.em": {
-    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100", "E1010", "E2020", "E2040"], "after_helps": "rejected",
     "shapes": ["DIA-21"],
     "helps": ["R1:DIA-21", "R2:none:E2020", "R2:N9", "R2:N3", "R2:none:E2020", "R3:N3"]
   },
@@ -105,7 +105,7 @@
     "helps": ["R1:N1", "R1:N4"]
   },
   "22_undo_stack.em": {
-    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "DIA-21", "codes": ["E0100", "E1010", "E2020", "E2040"], "after_helps": "rejected",
     "shapes": ["DIA-21"],
     "helps": ["R1:DIA-21", "R2:N9", "R2:none:E2020", "R2:N1", "R3:O2"]
   },
@@ -145,7 +145,7 @@
     "helps": ["R1:N3", "R1:none:E2020", "R1:N1", "R1:N6", "R2:none:E2250", "R2:none:E2020", "R3:O2", "R4:B3"]
   },
   "30_binary_search_tree.em": {
-    "mark": "rejected", "shape": "none:E0101", "codes": ["E0101"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "none:E0101", "codes": ["E0101", "E1010", "E2020"], "after_helps": "rejected",
     "shapes": ["none:E0101"],
     "helps": ["R1:none:E0101", "R2:N1", "R2:none:E2020", "R2:N3", "R3:O2"]
   }

@@ -198,7 +198,11 @@ so a merge carries other branches' edits of `main.rs` into it; the `ember` progr
     checks `if x = e:` (`E2036`) without the `else` it makes unreachable (`W2091`), does not report
     a missing module again (the loader's `E1060`), and treats the names a failed import binds, and
     the names a foreign import skipped in the module it wrote, as placeholders.
-  - Every compile-fail test passes unchanged with this.
+  - Every compile-fail test passes unchanged with this. The first-week corpus's marks
+    (`tests/firstweek/marks.json`) record every code `ember check` reports: seven programs now
+    report more of their own errors after their first parse error (`False`/`True`, a `str` where a
+    `String` is wanted, `lower()`), so their `codes` lists are updated, as the corpus's README says
+    a compiler change does; no mark, shape or rate changes.
 - Tests: `ember_driver/tests/editor.rs` — `queries_keep_working_in_a_file_with_errors_of_every_stage`
   (`[IDE-3]`: an unclosed bracket, an unresolvable name, an untypable `+`: four errors, none
   following from another; hover, completion and symbols in and around the broken functions),
