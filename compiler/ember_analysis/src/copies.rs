@@ -212,14 +212,24 @@ fn propagate(body: &mut Body, copies: &[(LocalId, Vec<(usize, usize)>)]) -> usiz
 
     let mut replaced = 0;
     let mut changed = vec![false; facts.len()];
+    // A read takes the first source of a chain of copies that all hold where it is (`b = a`,
+    // `c = b`: `c` reads `a`), as copies replaced one after another in a round would; every copy
+    // passed is one whose read changed.
     let mut swap = |operand: &mut Operand, set: &[u64], replaced: &mut usize| {
         if let Operand::Copy(place) | Operand::Move(place) = operand
-            && let Some(fact) = fact_of[place.local.0 as usize]
-            && holds(set, fact)
+            && let Some(first) = fact_of[place.local.0 as usize]
+            && holds(set, first)
         {
+            let mut fact = first;
+            for _ in 0..facts.len() {
+                changed[fact] = true;
+                match fact_of[facts[fact].1.0 as usize] {
+                    Some(next) if holds(set, next) => fact = next,
+                    _ => break,
+                }
+            }
             *operand = Operand::Copy(Place::local(facts[fact].1));
             *replaced += 1;
-            changed[fact] = true;
         }
     };
     for (block, entry) in holds_in.iter().enumerate() {
