@@ -48,6 +48,20 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   (codes `E1010 E2020`, the `R1:N9` step dropped) after replaying rounds 2–4 with this compiler,
   and `helped/05_inventory.em` keeps the idiom as written (`sorted(self.items.keys())`). The rate
   did not move (0 of 30, 3 of 30), so the README has no new line.
+* **ODR-174 `[VER-3]`** — `@deprecated(since, note)` (both text, by position or by name; any
+  other form `E0104`) on any item and on a type's or an extension's method; `W2192` "use of a
+  deprecated item" at each use outside the item's module, naming `since` and `note`: a call, a
+  function value, a type (plain, generic, through a module), a construction, a constant, a
+  `static`, a type alias, an enum (its paths and patterns), an interface (an `implements`
+  clause, a bound, `dyn`), a method or an associated function. Once per use (a generic body is
+  checked per instance; a closure probe's discarded diagnostics do not count). Error page
+  `docs/errors/W2192.md` (with a module beside it); `tools/error_pages.py` and
+  `tools/rule_index.py` pass.
+  * `VER-3/warning_a_use_of_a_deprecated_item_outside_its_module.em`,
+    `VER-3/warning_a_deprecated_interface_static_alias_or_associated_function.em`,
+    `VER-3/accept_a_deprecated_item_used_in_its_own_module.em`,
+    `VER-3/reject_a_deprecated_attribute_without_its_version_and_note.em`; support module
+    `VER-3/support/old.em`.
 
 ## Not done
 
@@ -69,6 +83,10 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   one type: keeps the named sources this type makes views), `receiver_view_field` (fields of a
   type parameter's type), `method_signature_inner` (an interface method's attribute against
   `self` first).
+* `ember_diag`: `W2192`. `ember_typeck`: `Deprecation`, `read_deprecation`,
+  `record_member_deprecations` (in `declare_names`), `note_item_use` / `warn_deprecated` at the
+  resolution sites, `method_deprecation` read in `check_method_visible`; the attribute table marks
+  `@deprecated` built (`@allow` stays `E0900`).
 
 ## Defects found
 

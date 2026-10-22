@@ -419,6 +419,7 @@ codes! {
     W2016 = (Warning, 2016, Types, "[PAN-1]", "`debug_assert` argument has side effects");
     W2111 = (Warning, 2111, Types, "[CLS-4]", "`virtual` has no effect in a final class");
     W2190 = (Warning, 2190, Types, "[ERR-5]", "unused `Result`");
+    W2192 = (Warning, 2192, Resolve, "[VER-3]", "use of a deprecated item");
     W5001 = (Warning, 5001, Ffi, "[FFI-6]", "function-like macro ignored");
     W5031 = (Warning, 5031, Ffi, "[FFI-20a]", "C++ declaration skipped: the header could not be parsed");
 
