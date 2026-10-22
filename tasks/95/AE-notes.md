@@ -107,6 +107,22 @@ Defects found and fixed on the way (all in this branch):
 - A test's subclass was of a final class (it did not compile, which the test did not notice); the
   test now asserts each step's status.
 
+`bench/bigpkg`, `ember check` after a one-function-body edit (`generate.edit(.., "body", n)`),
+release compilers, 7 runs interleaved before/after after one unmeasured run of each: before
+(`3922e110`) 4.75 s CPU / 4.89 s wall median; after 1.08 s CPU / 1.11 s wall. One function is
+checked (`functions checked: em_4m2008work_200`). What remains of the 1 s: the C import's `.embind`
+read (~240 ms), the type checker's declarations and finding the kept types again, and the generic
+instances, which every build type-checks again (~220 ms; their MIR is kept).
+
+### D-882: the error pages of the codes only an instrumented run reports (`[DOC-4]`, `[FFI-37]`)
+
+`ember test --doc` runs an error page's examples with the command that reports its code; for
+`E5053` and `W5054` (`foreign::reported_by_an_instrumented_run`) that is `ember test
+--instrument-ffi`, on a package whose `src/main` is the example: the failing program's run must
+report the code (an error's must fail), the fixed one's must pass without it. Test:
+`compiler/ember_driver/tests/guide.rs`,
+`the_pages_of_the_codes_an_instrumented_run_reports_run_their_examples_instrumented`.
+
 ## Plan (in progress)
 
 `[BLD-4]`/ODR-244: `ember build` through the kept forms, one C unit per module in `debug`, Ninja.
