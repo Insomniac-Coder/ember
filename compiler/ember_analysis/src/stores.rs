@@ -102,9 +102,13 @@ pub fn with_stores(
 
 /// Infer every body's store summary to a fixpoint: a caller's depends on its
 /// callees', so a body is summarised again whenever a callee's grows.
+///
+/// `[BLD-1]` — a kept body's summary is `kept`'s (an earlier build's, with the same callees): it is
+/// not inferred again.
 pub fn infer_store_summaries(
     bodies: &[Body],
     types: &TypeTable,
+    kept: &HashMap<String, StoreSummary>,
     base: &dyn Fn(&FuncRef) -> CallRegionContract,
     capture_paths: &dyn Fn(&Body) -> HashMap<Point, Vec<Vec<Projection>>>,
     dynamic: &HashSet<String>,
@@ -123,9 +127,13 @@ pub fn infer_store_summaries(
         }
     }
     let eligible = |body: &Body| {
-        !dynamic.contains(&body.symbol) && body.args().any(|(_, decl)| types.is_view(decl.ty))
+        !body.kept && !dynamic.contains(&body.symbol) && body.args().any(|(_, decl)| types.is_view(decl.ty))
     };
-    let mut summaries: HashMap<String, StoreSummary> = HashMap::new();
+    let mut summaries: HashMap<String, StoreSummary> = bodies
+        .iter()
+        .filter(|body| body.kept)
+        .filter_map(|body| kept.get(&body.symbol).map(|summary| (body.symbol.clone(), summary.clone())))
+        .collect();
     let mut queue: VecDeque<usize> = (0..bodies.len()).filter(|&position| eligible(&bodies[position])).collect();
     let mut queued: HashSet<usize> = queue.iter().copied().collect();
     let mut rounds = 0usize;
@@ -209,7 +217,12 @@ fn judge(
     let mut callers = BTreeSet::new();
     let mut culprit = None;
     let mut parameters = HashSet::new();
-    for &root in roots {
+    // In order, so the culprit named is the same in every run (`[BLD-13]`).
+    let mut roots: Vec<RegionVid> = roots.iter().copied().collect();
+    roots.sort_unstable();
+    let mut origins: Vec<&Origin> = origins.iter().collect();
+    origins.sort_unstable();
+    for root in roots {
         if let Some(place) = regions.loan_place(root) {
             if !copies_only(types, place_type(body, types, place), ty) {
                 culprit.get_or_insert(Culprit::Local(place.local));

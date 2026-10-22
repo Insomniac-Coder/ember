@@ -18,15 +18,15 @@ use ember_span::{Span, Symbol};
 use ember_types::{ClassId, EnumId, FpMode, OverflowPolicy, RangeId, StructId, Ty};
 
 /// A resolved item: a function, a struct, a constant.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct DefId(pub u32);
 
 /// A local slot within one function body. Parameters occupy the first slots,
 /// in declaration order.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct LocalId(pub u32);
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Program {
     pub functions: Vec<Function>,
     /// The entry point, if this compilation unit declares one (`[FN-8]`).
@@ -37,11 +37,14 @@ pub struct Program {
     /// `[EFF-7]` — the calls written `@assume_noalloc(call)`, by span: the effect analysis takes
     /// each to carry no `Alloc`.
     pub assume_noalloc: Vec<Span>,
+    /// `[BLD-1]` — the functions of the modules whose checked form an earlier build kept: their
+    /// bodies were not checked, and lowering leaves them out (the kept MIR stands for them).
+    pub reused: std::collections::HashSet<DefId>,
 }
 
 /// `[TST-3]` — one `@test` function: a free function with no parameters
 /// that returns nothing.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct TestFn {
     pub def: DefId,
     /// The module-qualified name the runner reports and filters by.
@@ -65,7 +68,7 @@ impl Program {
 }
 
 /// `[FN-1]` — how a parameter is passed.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
     Borrow,
     Mut,
@@ -77,7 +80,7 @@ pub enum Mode {
 /// call borrows what that field borrows, and the call's loan on the receiver ends with the call.
 /// Ordered by parameter, a whole parameter before its fields; a list names a parameter whole or
 /// by fields, never both.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct BorrowSource {
     pub parameter: usize,
     pub field: Option<usize>,
@@ -89,7 +92,7 @@ impl BorrowSource {
     }
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct LocalDecl {
     /// `None` for a compiler-introduced temporary.
     pub name: Option<Symbol>,
@@ -117,7 +120,7 @@ pub struct LocalDecl {
     pub declared_reduction: bool,
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Param {
     pub local: LocalId,
     pub mode: Mode,
@@ -127,7 +130,7 @@ pub struct Param {
 /// `count(n)`, `fixed(N)`, or a borrowed aggregate passed by C value.
 /// Indices name visible Ember parameters; count witnesses have no visible
 /// parameter and are supplied from the associated span(s).
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiCounted {
     pub foreign_symbol: String,
     pub abi_params: Vec<FfiAbiParam>,
@@ -152,7 +155,7 @@ pub struct FfiCounted {
 /// The callable is the instance's own (a lambda's environment, or a callable
 /// value): the wrapper is monomorphised per callable, so a lambda is called
 /// directly, as through any callable parameter (`[CLO-3]`).
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiCallback {
     /// The visible parameter holding the callable.
     pub public_index: usize,
@@ -181,7 +184,7 @@ pub struct FfiCallback {
 /// `[FFI-21]` — how long C keeps a callback: for the call (`borrowed`, the
 /// callable stays where the caller has it), until its one call (`once`), or
 /// until the `Retained` token the call returns ends (`retained`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiCallbackMode {
     Borrowed,
     Once,
@@ -191,7 +194,7 @@ pub enum FfiCallbackMode {
 /// `[FFI-21]` — `destroys(f)` of a function registering a `retained` callback:
 /// `f`'s C symbol and result, what each of its parameters is given, and the
 /// `Retained[ForeignCallback]` token the call returns.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiUnregister {
     pub symbol: String,
     pub ret: Ty,
@@ -204,7 +207,7 @@ pub struct FfiUnregister {
 /// What a parameter of `destroys(f)` is given: the trampoline, the user data,
 /// or what the registering call passed for one of its scalar parameters (kept
 /// with the callable).
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum FfiUnregisterArg {
     Entry,
     Data,
@@ -215,7 +218,7 @@ pub enum FfiUnregisterArg {
 /// of its success code: the Ember result is `Result[T, N]` then, `T` the
 /// `out` parameters (`void`, the one, or a tuple), and otherwise C's result
 /// followed by them (ODR-137).
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiOutputs {
     pub c_result: Ty,
     pub status_ok: Option<i128>,
@@ -224,7 +227,7 @@ pub struct FfiOutputs {
 /// `[FFI-36a]`, `[FFI-33b]` — a new foreign object the caller owns: freed by
 /// `destructor` (whose result, when it has one, is dropped), `None` for null
 /// when `nullable`, and its box records its creator thread when `creator`.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiOwnedResult {
     pub destructor: Symbol,
     pub destructor_ret: Ty,
@@ -233,7 +236,7 @@ pub struct FfiOwnedResult {
     pub creator: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiSpanResult {
     pub public_index: usize,
     pub elem: Ty,
@@ -242,13 +245,13 @@ pub struct FfiSpanResult {
     pub source_nullable: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiArrayResult {
     pub elem: Ty,
     pub mutable: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub enum FfiAbiParam {
     Value { public_index: usize, ty: Ty, mode: Mode },
     SpanPointer { public_index: usize, elem: Ty, mutable: bool, nullable: bool },
@@ -275,14 +278,14 @@ pub enum FfiAbiParam {
     CallbackData { index: usize },
 }
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct FfiCountSource {
     pub public_index: usize,
     pub nullable: bool,
 }
 
 /// The resolved calling-thread contract of a defined C export (`[FFI-33]`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExportThreadPolicy {
     #[default]
     Any,
@@ -302,7 +305,7 @@ impl ExportThreadPolicy {
 
 /// `[CG-C-3a]` — `@inline` is binding: the function is always inlined.
 /// `@noinline`, `@cold` and `@hot` are hints passed to the C compiler.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InlineHint {
     pub always: bool,
     pub never: bool,
@@ -312,7 +315,7 @@ pub struct InlineHint {
 
 /// `[EFF-1]` — an effect set: which kinds of effect occur, never where (Part X.1). The
 /// `RuntimeCheck(k)` effects are one bit per kind (`[EFF-9]`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Effects(pub u16);
 
 impl Effects {
@@ -412,7 +415,7 @@ impl std::ops::BitAnd for Effects {
 
 /// `[EFF-5]` — a function's contracts (Part X.2): the effects it may not have, and whether
 /// `@realtime` named some of them (`[EFF-19]`, whose diagnostics name both).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Contracts {
     pub forbidden: Effects,
     pub realtime: Effects,
@@ -427,7 +430,7 @@ pub struct Contracts {
     pub foreign_threads: Option<ExportThreadPolicy>,
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct Function {
     pub def: DefId,
     pub name: Symbol,
@@ -532,13 +535,13 @@ impl Function {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum Stmt {
     /// Bring a local into scope, optionally initialised.
     Let { local: LocalId, init: Option<Expr> },
@@ -574,13 +577,13 @@ pub enum Stmt {
     Continue { depth: usize },
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum DestructureBinding {
     Let { local: LocalId, value: Expr },
     Assign { place: Expr, value: Expr },
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Expr {
     pub ty: Ty,
     pub kind: ExprKind,
@@ -590,7 +593,7 @@ pub struct Expr {
 /// One ABI-visible slot in a `[TYP-22]` dynamic interface table. The HIR
 /// retains this declaration-derived fact because interface declarations do
 /// not otherwise cross the type checking to MIR boundary.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct InterfaceSlot {
     pub params: Vec<Ty>,
     pub ret: Ty,
@@ -600,13 +603,13 @@ pub struct InterfaceSlot {
 /// The interface declaration establishes the erased slot signature; this
 /// records only the concrete body and receiver mode that its adapter
 /// must call.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct InterfaceAdapterSlot {
     pub implementation: DefId,
     pub receiver: Mode,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum ExprKind {
     /// An integer literal, already narrowed to `ty`.
     Int(u128),
@@ -896,7 +899,7 @@ pub fn visit_expr<'a>(expr: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
 }
 
 /// One piece of an f-string: literal text, or a value to format into it.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum FStringPart {
     Text(String),
     /// A value, and how `{x:spec}`, `{x!r}` or `{x=}` asks for it to be
@@ -919,7 +922,7 @@ impl FStringPart {
 }
 
 /// `[TXT-10]` (ODR-029) — what `parse` reads.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ParseKind {
     Signed,
     Unsigned,
@@ -941,7 +944,7 @@ pub enum ParseKind {
 /// `[LEX-19]` — a format spec in Python's mini-language,
 /// `[[fill]align][sign][#][0][width][,|_][.precision][type]`, parsed. A
 /// `kind` of `?` is `Debug` (`{x!r}`).
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub struct FormatSpec {
     pub fill: char,
     pub align: Option<char>,
@@ -1034,7 +1037,7 @@ impl FormatSpec {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct MatchArm {
     pub pattern: Pattern,
     /// `case p if c:` — a guard runs after the pattern matches, and a guard
@@ -1046,21 +1049,21 @@ pub struct MatchArm {
 
 /// `[GRM-10]` — statement arms are blocks, expression arms are expressions.
 /// One `match` never mixes them; the parser rejects that with `E0103`.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum MatchArmBody {
     Block(Block),
     Expr(Expr),
 }
 
 /// A pattern with its type resolved and its bindings already given locals.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Pattern {
     pub ty: Ty,
     pub kind: PatternKind,
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum PatternKind {
     /// `_`, and anything that always matches.
     Wild,
@@ -1086,7 +1089,7 @@ pub enum PatternKind {
 
 /// `[SOA-1]`..`[SOA-7]` — the operations on an `SoA[T]`. Arguments are listed with each; `ps` is
 /// the `SoA` (borrowed as the operation needs), `i` an `int`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SoAOp {
     /// `SoA[T].with_capacity(n)`: `[n]`.
     WithCapacity,
@@ -1129,7 +1132,7 @@ pub enum SoAOp {
 /// `[SIMD-1]`, `[SIMD-4]`, `[SIMD-8]`, `[SIMD-9]` — an operation of a `std.simd` vector or mask
 /// type. The arguments are listed with each; `v` is a vector (or mask) by value, `s` a `Span` or
 /// `MutSpan` of its lane type, `idx` an integer vector of as many lanes.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SimdOp {
     /// `V.splat(x)`: `[x]`.
     Splat,
@@ -1235,7 +1238,7 @@ impl SoAOp {
 
 /// `[THR-14]` — the atomic operations the C compilers give, which `Atomic[T]`'s methods are built
 /// from. `FetchAdd` and `FetchSub` wrap.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AtomicOp {
     Load,
     Store,
@@ -1283,7 +1286,7 @@ impl AtomicOp {
 }
 
 /// `[THR-14]` — `std.sync.MemoryOrder`'s variants, in their declared order.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MemoryOrder {
     Relaxed,
     Acquire,
@@ -1320,7 +1323,7 @@ impl MemoryOrder {
 /// `wrapping_`, `saturating_` and `overflowing_` methods exist for, named as
 /// their operator interfaces' methods are (`floordiv` is `//`, `rem` is `%`).
 /// `pow` is built from `Mul`.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum IntOp {
     Add,
     Sub,
@@ -1362,7 +1365,7 @@ impl IntOp {
 }
 
 /// `[STD-20]` — an integer's bit counts.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum IntBits {
     CountOnes,
     LeadingZeros,
@@ -1390,7 +1393,7 @@ impl IntBits {
 
 /// `[STD-20]`, `[STD-27]` — the float methods that are one C library function
 /// each: the `f64` one by `c_name`, the `f32` one with an `f` after it.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FloatLib {
     Sqrt,
     Cbrt,
@@ -1495,7 +1498,7 @@ impl FloatLib {
 /// library is written in Ember. Each lowers to one `ember_rt` call.
 /// `[DSJ-1]`, `[DSJ-5]`, `[DSJ-7]` — what `assert_disjoint` and its siblings
 /// do with two views that overlap.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum DisjointMode {
     /// `assert_disjoint`: `Ok((a, b))`, or `Err((a, b))` when they overlap.
     Result,
@@ -1511,7 +1514,7 @@ pub enum DisjointMode {
 /// `[STD-22]`, `[STD-24]`, `[STD-25]` — a standard function whose body is the runtime's: a call to
 /// the declaration at `path` is a call to the runtime's function `runtime` (with its prefix). The
 /// declaration's own body is a staging body that never runs; its signature is the call's.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RuntimeFn {
     Entropy,
     ProcessExit,
@@ -1691,7 +1694,7 @@ impl RuntimeFn {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Builtin {
     /// A standard function whose body is the runtime's (`RuntimeFn`).
     Runtime(RuntimeFn),
@@ -2545,7 +2548,7 @@ impl Builtin {
 
 /// Binary operators on scalars. Operators on non-scalar types desugar to
 /// interface method calls (`[TYP-21]`) and never reach here.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum BinOp {
     Add,
     Sub,
@@ -2641,7 +2644,7 @@ impl BinOp {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UnOp {
     Neg,
     Not,

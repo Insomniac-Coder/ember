@@ -43,6 +43,9 @@ pub struct Output {
     /// functions, which the build compiles with that mode's flags. The main
     /// unit declares them and does not define them.
     pub relaxed_units: Vec<(FpMode, String)>,
+    /// `[BLD-4]` (ODR-244) — written one unit per module (`emit`'s `units`), each module's unit, by
+    /// the name it was given; the main unit (`c_source`) defines the functions of no module.
+    pub module_units: Vec<(String, String)>,
     /// `[DSP-5]` — each call made direct because the whole program showed
     /// one body for it, as `--emit-optimization-report` prints it (location
     /// first), in source order.
@@ -289,7 +292,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false, None)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -320,8 +323,9 @@ pub fn emit(
     tests: Option<Vec<String>>,
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
+    units: Option<&[(String, BTreeSet<String>)]>,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi, units)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -339,6 +343,7 @@ fn emit_with(
     tests: Option<Vec<String>>,
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
+    units: Option<&[(String, BTreeSet<String>)]>,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -359,7 +364,7 @@ fn emit_with(
         .filter(|body| !body.is_abstract && !body.is_extern_declaration && body.fp != FpMode::Strict)
         .map(|body| body.fp)
         .collect();
-    let split = !modes.is_empty();
+    let split = !modes.is_empty() || units.is_some();
     let make = |unit: Option<FpMode>| -> Emitter<'_> {
     let type_namespace = if library_mode { package_type_namespace(package_name) } else { String::new() };
     let (order, structural) = plan_types(types, &type_namespace);
@@ -374,6 +379,10 @@ fn emit_with(
         map,
         out: String::new(),
         unit,
+        defines: None,
+        deferred: false,
+        type_filter: None,
+        prototype_filter: None,
         split,
         for_msvc,
         payload_zeros: BTreeMap::new(),
@@ -512,36 +521,14 @@ fn emit_with(
     let write = |emitter: &mut Emitter<'_>| {
         emitter.collect_native_fn_values(bodies);
         emitter.emit_module(bodies, module_name, has_main, leak_check);
-        // ODR-082 — `@ffi(immutable)` declares the object itself `const`: after
-        // a pointer type the qualifier has to follow it (`const char* const`).
-        let mut foreign_declarations = emitter.foreign_statics.borrow().iter()
-            .map(|(symbol, (ty, immutable, thunk))| {
-                let c_ty = emitter.c_type(*ty);
-                let declaration = match (*immutable, c_ty.ends_with('*')) {
-                    // `[FFI-41]` — a C++ variable: the thunk giving its address.
-                    (false, _) if *thunk => format!("extern {c_ty}* {symbol}(void)"),
-                    (true, _) if *thunk => format!("extern const {c_ty}* {symbol}(void)"),
-                    (false, _) => format!("extern {c_ty} {symbol}"),
-                    (true, false) => format!("extern const {c_ty} {symbol}"),
-                    (true, true) => format!("extern {c_ty} const {symbol}"),
-                };
-                // `[FFI-49]` — a symbol C cannot spell is declared under its alias, bound to it.
-                match ember_branding::export_alias_symbol(symbol) {
-                    Some(exact) => format!("{}\n", foreign_symbol_declaration(&declaration, symbol, &exact)),
-                    None => format!("{declaration};\n"),
-                }
-            })
-            .collect::<String>();
-        for (init, (ty, _)) in &lazy_statics {
-            foreign_declarations.push_str(&format!("{}* {init}_static(void);\n", emitter.c_type(*ty)));
-        }
-        emitter.out = emitter.out.replace(FOREIGN_STATIC_DECLARATIONS, &foreign_declarations);
-        if emitter.unit.is_none() {
-            let definitions = emitter.lazy_static_definitions(&lazy_statics);
-            emitter.out.push_str(&definitions);
-        }
+        emitter.declare_foreign_statics(&lazy_statics);
     };
     let mut emitter = make(None);
+    // `[BLD-4]` — written one unit per module, the main unit defines the functions of no module.
+    if let Some(units) = units {
+        let in_units: BTreeSet<&String> = units.iter().flat_map(|(_, symbols)| symbols).collect();
+        emitter.defines = Some(bodies.iter().map(|body| &body.symbol).filter(|symbol| !in_units.contains(symbol)).cloned().collect());
+    }
     emitter.comptime = comptime.clone();
     emitter.tests = tests;
     if instrument_ffi {
@@ -556,6 +543,24 @@ fn emit_with(
     let header_source = header::render(&emitter, bodies, package_name);
     let visualisers = visualisers::render(&emitter);
     let mut direct_calls = emitter.direct_calls.take();
+    // `[BLD-4]` (ODR-244) — each module's unit, written by one emitter in turn.
+    let module_units: Vec<(String, String)> = match units {
+        Some(units) => {
+            let mut unit = make(Some(FpMode::Strict));
+            unit.collect_native_fn_values(bodies);
+            let names = UnitNames {
+                functions: bodies.iter().map(|body| body.symbol.clone()).collect(),
+                types: unit.order.clone().into_iter().map(|node| (unit.node_name(node), node)).collect(),
+            };
+            let written = units
+                .iter()
+                .map(|(name, symbols)| (name.clone(), unit.emit_module_unit(bodies, module_name, leak_check, symbols.clone(), &lazy_statics, &names)))
+                .collect();
+            direct_calls.append(&mut unit.direct_calls.take());
+            written
+        }
+        None => Vec::new(),
+    };
     let mut relaxed_units = Vec::new();
     for mode in modes {
         let mut unit = make(Some(mode));
@@ -605,12 +610,20 @@ fn emit_with(
     Output {
         c_source,
         relaxed_units,
+        module_units,
         optimization_report: direct_calls.into_iter().map(|(_, _, line)| line).collect(),
         header_source,
         safety_json: safety_json(bodies, map),
         ffi_instrument,
         visualisers,
     }
+}
+
+/// `[BLD-4]` — what a module's unit may name of the program: every function's symbol, and each
+/// type's C name with the type.
+struct UnitNames {
+    functions: BTreeSet<String>,
+    types: BTreeMap<String, TypeNode>,
 }
 
 /// `[CG-C-11]` — the head of a relaxed unit: contraction on for
@@ -758,6 +771,15 @@ struct Emitter<'a> {
     /// `[CG-C-11]` — the relaxed unit being written, or `None` for the main
     /// one.
     unit: Option<FpMode>,
+    /// `[BLD-4]` (ODR-244) — the functions this unit defines, when the program is written one unit
+    /// per module (`None`: every function of its floating point).
+    defines: Option<BTreeSet<String>>,
+    /// `[BLD-4]` — a module's unit is written first with its type declarations and prototypes left
+    /// to the end (`TYPES_MARKER`, `PROTOTYPES_MARKER`), then they are written for what its text
+    /// names (`type_filter`, `prototype_filter`).
+    deferred: bool,
+    type_filter: Option<BTreeSet<TypeNode>>,
+    prototype_filter: Option<BTreeSet<String>>,
     /// `[CG-C-11]` — the program has relaxed units besides the main one.
     split: bool,
     /// The C is for MSVC, whose loop optimiser wants some shapes clang and
@@ -954,6 +976,11 @@ struct NativeFnValue {
 
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
 const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
+
+/// `[BLD-4]` — where a module's unit's type declarations and prototypes go, once its text says
+/// which it names.
+const TYPES_MARKER: &str = "/* @@types@@ */";
+const PROTOTYPES_MARKER: &str = "/* @@prototypes@@ */";
 const FOREIGN_STATIC_DECLARATIONS: &str = "/* @@foreign-static-declarations@@ */";
 
 /// Replaced the same way by the D-187 equality-function prototypes.
@@ -1364,6 +1391,116 @@ impl Emitter<'_> {
         has_main: bool,
         leak_check: bool,
     ) {
+        self.emit_preamble(bodies, module_name, leak_check);
+        self.emit_definitions(bodies, has_main, leak_check);
+    }
+
+    /// `[BLD-4]` (ODR-244) — one module's unit: the functions `defines` names (of the unit's
+    /// floating point), declaring of the program only what they name. The unit is written with its
+    /// type declarations and prototypes left out; then the prototypes of the functions its text
+    /// names are written, and the declarations of the types its text and those prototypes name and
+    /// every type those name in turn, in the program's order of them. So a unit's text depends on
+    /// its own functions and on the declarations they reach, and an edit elsewhere leaves it as it
+    /// was.
+    fn emit_module_unit(
+        &mut self,
+        bodies: &[Body],
+        module_name: &str,
+        leak_check: bool,
+        defines: BTreeSet<String>,
+        lazy_statics: &BTreeMap<String, (Ty, String)>,
+        names: &UnitNames,
+    ) -> String {
+        self.begin_unit(defines);
+        self.deferred = true;
+        self.emit_preamble(bodies, module_name, leak_check);
+        self.emit_definitions(bodies, false, leak_check);
+        self.deferred = false;
+        self.declare_foreign_statics(lazy_statics);
+        let text = std::mem::take(&mut self.out);
+        let named: BTreeSet<&str> = c_identifiers(&text).map(|(_, name)| name).collect();
+        self.prototype_filter = Some(names.functions.iter().filter(|symbol| named.contains(symbol.as_str())).cloned().collect());
+        self.emit_prototypes(bodies);
+        let prototypes = std::mem::take(&mut self.out);
+        // The types the unit names, and those their definitions name, to a fixed point.
+        let mut wanted: BTreeSet<TypeNode> = BTreeSet::new();
+        let mut pending: Vec<TypeNode> =
+            named.iter().copied().chain(c_identifiers(&prototypes).map(|(_, name)| name)).filter_map(|name| names.types.get(name).copied()).collect();
+        while let Some(node) = pending.pop() {
+            if !wanted.insert(node) {
+                continue;
+            }
+            let parts = match self.definition(node) {
+                Definition::Struct(members) => members.join("\n"),
+                Definition::Alias(underlying) => underlying,
+                Definition::FnPointer { ret, args, .. } => format!("{ret} {args}"),
+            };
+            pending.extend(c_identifiers(&parts).filter_map(|(_, name)| names.types.get(name).copied()));
+        }
+        self.type_filter = Some(wanted);
+        self.emit_type_declarations();
+        let types = std::mem::take(&mut self.out);
+        self.type_filter = None;
+        self.prototype_filter = None;
+        text.replacen(TYPES_MARKER, types.trim_end(), 1).replacen(PROTOTYPES_MARKER, prototypes.trim_end(), 1)
+    }
+
+    /// `[BLD-4]` — the start of another unit written by this emitter: what the last one asked for
+    /// (its helpers, its foreign statics) is forgotten.
+    fn begin_unit(&mut self, defines: BTreeSet<String>) {
+        self.defines = Some(defines);
+        self.out.clear();
+        self.current_line = None;
+        self.current_line_used = false;
+        self.statement_span.set(ember_span::Span::DUMMY);
+        self.drop_glue.borrow_mut().clear();
+        self.retain_glue.borrow_mut().clear();
+        self.eq_fns.borrow_mut().clear();
+        self.clone_parts_fns.borrow_mut().clear();
+        self.array_helpers.borrow_mut().clear();
+        self.fmt_fns.borrow_mut().clear();
+        self.fmt_prints.borrow_mut().clear();
+        self.fmt_specs.borrow_mut().clear();
+        self.foreign_statics.borrow_mut().clear();
+    }
+
+    /// The foreign statics the unit's functions named, and each lazily initialised static's
+    /// accessor, declared where the unit's preamble left room for them; in the main unit, the
+    /// accessors' definitions after its functions (`[STA-3]`).
+    fn declare_foreign_statics(&mut self, lazy_statics: &BTreeMap<String, (Ty, String)>) {
+        // ODR-082 — `@ffi(immutable)` declares the object itself `const`: after
+        // a pointer type the qualifier has to follow it (`const char* const`).
+        let mut foreign_declarations = self.foreign_statics.borrow().iter()
+            .map(|(symbol, (ty, immutable, thunk))| {
+                let c_ty = self.c_type(*ty);
+                let declaration = match (*immutable, c_ty.ends_with('*')) {
+                    // `[FFI-41]` — a C++ variable: the thunk giving its address.
+                    (false, _) if *thunk => format!("extern {c_ty}* {symbol}(void)"),
+                    (true, _) if *thunk => format!("extern const {c_ty}* {symbol}(void)"),
+                    (false, _) => format!("extern {c_ty} {symbol}"),
+                    (true, false) => format!("extern const {c_ty} {symbol}"),
+                    (true, true) => format!("extern {c_ty} const {symbol}"),
+                };
+                // `[FFI-49]` — a symbol C cannot spell is declared under its alias, bound to it.
+                match ember_branding::export_alias_symbol(symbol) {
+                    Some(exact) => format!("{}\n", foreign_symbol_declaration(&declaration, symbol, &exact)),
+                    None => format!("{declaration};\n"),
+                }
+            })
+            .collect::<String>();
+        for (init, (ty, _)) in lazy_statics {
+            foreign_declarations.push_str(&format!("{}* {init}_static(void);\n", self.c_type(*ty)));
+        }
+        self.out = self.out.replace(FOREIGN_STATIC_DECLARATIONS, &foreign_declarations);
+        if self.unit.is_none() {
+            let definitions = self.lazy_static_definitions(lazy_statics);
+            self.out.push_str(&definitions);
+        }
+    }
+
+    /// What every unit of the program declares before its functions: the types, the prototypes,
+    /// the class and interface tables, the per-program helpers.
+    fn emit_preamble(&mut self, bodies: &[Body], module_name: &str, leak_check: bool) {
         self.line("/* Generated by the Ember compiler. Do not edit. */");
         match self.unit {
             None => self.line(&format!("/* module: {module_name} */")),
@@ -1508,9 +1645,21 @@ impl Emitter<'_> {
         if self.comptime.is_some() && self.unit.is_none() {
             self.emit_comptime_env_helpers(bodies);
         }
+    }
 
+    /// The unit's functions — those of its floating point and, in a unit of one module, of that
+    /// module (`defines`) — then, in the main unit, the entry point and the program's tables, and
+    /// the helpers its functions asked for.
+    fn emit_definitions(&mut self, bodies: &[Body], has_main: bool, leak_check: bool) {
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration {
+                continue;
+            }
+            // `[BLD-4]` (ODR-244) — a module's functions are its unit's; the main unit's are those of
+            // no module.
+            if let Some(defines) = &self.defines
+                && !defines.contains(&body.symbol)
+            {
                 continue;
             }
             // `[CG-C-11]` — each body in the unit of its floating point; the
@@ -2747,6 +2896,10 @@ impl Emitter<'_> {
     /// which is declaration order, so a struct's fields are always already
     /// complete types.
     fn emit_type_declarations(&mut self) {
+        if self.deferred {
+            self.line(TYPES_MARKER);
+            return;
+        }
         // `[CLO-10]` — an owned callable value is its entry, its descriptor
         // and three words of captured state; the entry takes the state's
         // address first, and `drop` (NULL when there is nothing to drop) ends
@@ -2825,6 +2978,7 @@ impl Emitter<'_> {
             .order
             .clone()
             .into_iter()
+            .filter(|node| self.type_filter.as_ref().is_none_or(|wanted| wanted.contains(node)))
             .map(|node| (self.node_name(node), self.definition(node), node))
             .collect();
 
@@ -5774,6 +5928,18 @@ impl Emitter<'_> {
         if bodies.is_empty() {
             return;
         }
+        if self.deferred {
+            self.line(PROTOTYPES_MARKER);
+            return;
+        }
+        let filtered: Vec<Body>;
+        let bodies = match &self.prototype_filter {
+            Some(wanted) => {
+                filtered = bodies.iter().filter(|body| wanted.contains(&body.symbol)).cloned().collect();
+                &filtered[..]
+            }
+            None => bodies,
+        };
         self.line("/* prototypes */");
         // `[FFI-37]` — the instrumentation unit's entry points.
         if self.ffi_instrument.is_some() {
@@ -14149,6 +14315,7 @@ mod string_descriptor_view_parts_tests {
         Body {
             name: "view_parts_test".into(),
             symbol: ember_branding::item_symbol("view_parts_test"),
+            kept: false,
             is_unsafe: false,
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
@@ -14223,6 +14390,10 @@ mod string_descriptor_view_parts_tests {
             usize_ty,
             out: String::new(),
             unit: None,
+            defines: None,
+            deferred: false,
+            type_filter: None,
+            prototype_filter: None,
             split: false,
             for_msvc: false,
             payload_zeros: BTreeMap::new(),

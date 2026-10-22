@@ -46,8 +46,10 @@ pub mod unused;
 pub use borrows::{
     convert_quiet_calls_all,
     check_all as check_borrows_all, check_all_with_installed_callable_regions, explain_loans, LoanReport,
-    insert_shared_accesses_all, install_callable_regions_all, verify_callable_regions_all,
+    insert_shared_accesses_all, install_callable_regions_all, install_callable_regions_kept, verify_callable_regions_all,
+    BorrowFacts,
 };
+pub use regions::CallRegionContract;
 pub use access::{elide_static_accesses_all, remove_never_firing_checks_all};
 pub use kernels::{elide_known_disjoint_comparisons_all, restrict_views};
 pub use adoptions::check_adoptions_all;

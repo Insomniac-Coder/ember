@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+pub mod codec;
 pub mod symbol;
 pub use symbol::Symbol;
 
@@ -210,6 +211,11 @@ impl SourceMap {
 
     pub fn files(&self) -> impl Iterator<Item = &SourceFile> {
         self.files.iter()
+    }
+
+    /// The file read from `path`, as it was given, if it was read.
+    pub fn find(&self, path: &Path) -> Option<FileId> {
+        self.by_path.get(path).copied()
     }
 
     /// `[BLD-13]` — the directories `artefact_path` writes a file relative to: the package's own

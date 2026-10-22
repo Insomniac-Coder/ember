@@ -208,7 +208,125 @@ pub struct ContainsUse {
     pub cost: &'static str,
 }
 
+/// `[BLD-1]`, `[BLD-2]` — what an earlier build kept of some modules' checks: those modules'
+/// bodies are not checked again (each function comes back with an empty body, listed in
+/// `Program::reused`, and what checking them would report is rolled back: the build has it), and
+/// the types their kept checked forms name are found again, after every declaration and before
+/// any body ([`CheckOutput::found`], one per record, in order).
+pub struct Reuse<'a> {
+    /// The modules kept whole, by their place in the loaded list.
+    pub modules: &'a HashSet<usize>,
+    /// `[BLD-8]` — the modules checked again in part: for each, the bodies (by their spans now)
+    /// whose kept checked forms stand for them. Each such function comes back with an empty body,
+    /// listed in `Program::reused`, and what checking it would report is rolled back; the rest of
+    /// the module is checked.
+    pub types: &'a [ember_types::codec::TypeRecord],
+    pub partial: &'a HashMap<usize, HashSet<Span>>,
+    /// What each record's module asked of the program besides its bodies (`Kept`), read with the
+    /// types found again for that record: all of it for a module kept whole, its kept functions'
+    /// for one checked again in part.
+    pub kept: &'a dyn Fn(usize, &ember_types::codec::Found) -> Result<Kept, String>,
+    /// Whether the closure written at a span is in a body this build keeps. One that is not — in a
+    /// generic's body, which every build checks, or in one checked again — is made by that check,
+    /// not found again: its types, and what names them, are absent from what is found.
+    pub kept_closure: &'a dyn Fn(Span) -> bool,
+}
+
+/// `[BLD-1]` — what checking one module's bodies asked of the program besides them: the generic
+/// functions' and methods' instances its bodies call (`[MONO-1]`: the package makes every
+/// instance, so a later build makes these again for a module it does not check again), and the
+/// `dyn` values it formats, whose `Debug` writers the program then has.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct Kept {
+    pub requests: Vec<KeptRequest>,
+    pub holders: Vec<Ty>,
+}
+
+/// One instance a module's bodies asked for: the generic — a function as `KeptFunction` names it,
+/// a method's own generic by its type and how that type names it — its type arguments, and the
+/// functions given for its callable parameters.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct KeptRequest {
+    pub generic: KeptFunction,
+    pub method: Option<KeptMethod>,
+    pub args: Vec<Ty>,
+    pub callable_values: Vec<Option<KeptFunction>>,
+}
+
+/// A function a kept module's bodies name: one a module declares by its qualified name, which an
+/// edit elsewhere in its file leaves as it was; any other by where it is declared (its name's
+/// span), which the record's files hold.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum KeptFunction {
+    Named(Symbol),
+    At(Span),
+}
+
+/// A method by its type, its name and, for one an interface gives the type, the interface; and
+/// whether it takes a receiver.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct KeptMethod {
+    pub owner: Ty,
+    pub name: Symbol,
+    pub interface: Option<Symbol>,
+    pub receiver: bool,
+}
+
+/// `[BLD-1]` — one module's check, as a later build keeps it: where in the sink its bodies'
+/// checks reported, the symbols of the functions they made (closures too), and what they asked
+/// of the program (`None` when a request names what no later build can find again).
+#[derive(Clone, Debug)]
+pub struct ModuleCheck {
+    pub diagnostics: std::ops::Range<usize>,
+    pub functions: Vec<String>,
+    pub kept: Option<Kept>,
+    /// `[BLD-8]` — each function with a body of its own (not a generic's), its part of the above.
+    pub parts: Vec<FunctionCheck>,
+}
+
+/// `[BLD-8]` — one function's part of its module's check: its body (its span now); where in the
+/// sink its check reported and what it asked of the program (ranges of `ModuleCheck::kept`'s
+/// requests and holders); the functions it made, its own and its closures', by symbol; and whether
+/// its body was kept rather than checked (`Reuse::partial`: its ranges are then empty).
+#[derive(Clone, Debug)]
+pub struct FunctionCheck {
+    pub body: Span,
+    pub diagnostics: std::ops::Range<usize>,
+    pub requests: std::ops::Range<usize>,
+    pub holders: std::ops::Range<usize>,
+    pub functions: Vec<String>,
+    pub kept: bool,
+}
+
+/// `[BLD-8]` — where one function's check began (`Checker::part_start`).
+struct PartStart {
+    mark: usize,
+    requests: usize,
+    holders: usize,
+    lambdas: usize,
+    functions: usize,
+}
+
 pub struct CheckOutput {
+    /// `[BLD-1]` — this run's number for each type of each of [`Reuse::types`]' records, or the
+    /// first type not found again (that module is then checked again).
+    pub found: Vec<Result<ember_types::codec::Found, String>>,
+    /// `[BLD-1]` — the structs the checker made for one body (closures' environments), which a
+    /// kept checked form describes whole, since no name finds them again, each with what calling it
+    /// calls.
+    pub made_structs: HashMap<StructId, Option<ember_types::codec::MadeCall>>,
+    /// `[BLD-1]` — whether a closure was named by a count of the whole program's (one made
+    /// outside every function): a check that did is not kept.
+    pub closure_names_unstable: bool,
+    /// `[BLD-1]` — where in the sink the bodies' checks began: what came before is the
+    /// declarations', reported by every build.
+    pub body_mark: usize,
+    /// `[BLD-1]` — each module's check, by its place in the loaded list; `None` for one whose
+    /// checked form an earlier build kept.
+    pub modules: Vec<Option<ModuleCheck>>,
+    /// `[BLD-1]` — where in the sink the needless `unsafe` blocks of every checked body were
+    /// reported (`L3010`, after all bodies).
+    pub unneeded_unsafe: std::ops::Range<usize>,
     /// `[MONO-2]`, `[MONO-3]` — each generic instantiated, in the order first instantiated.
     pub instantiations: Vec<Instantiation>,
     /// `[STD-8a]` — each `x in c`, with the `contains` it selects.
@@ -253,6 +371,7 @@ pub fn check(
     realtime: Option<hir::Effects>,
     exports: &dyn ExportIndex,
     reload_if_default: &HashSet<Span>,
+    reuse: Option<&Reuse>,
 ) -> CheckOutput {
     // `[FFI-16]` — a status enum's error type, `struct N(code: E)` implementing `Error`.
     let status_errors = errors::desugar_status_errors(modules);
@@ -520,11 +639,32 @@ pub fn check(
     // `[TYP-17]` — each generic type's methods, and each generic extension's,
     // are checked once with the parameters opaque, as a generic function's
     // body is (D-248).
+    // `[BLD-1]` — the types the kept modules' checked forms name, found again before any body.
+    let mut found: Vec<Result<ember_types::codec::Found, String>> =
+        reuse.map(|reuse| reuse.types.iter().map(|record| checker.find_again(record, reuse.kept_closure)).collect()).unwrap_or_default();
+    // What each kept module asked of the program, asked again once every body is checked, as it
+    // was asked then.
+    let mut asks: Vec<(usize, Kept)> = Vec::new();
+    if let Some(reuse) = reuse {
+        for (index, result) in found.iter_mut().enumerate() {
+            let read = match result {
+                Ok(types) => (reuse.kept)(index, types),
+                Err(_) => continue,
+            };
+            match read {
+                Ok(kept) => asks.push((index, kept)),
+                Err(why) => *result = Err(why),
+            }
+        }
+    }
     checker.check_generic_type_methods(modules);
     checker.check_pending_user_attributes();
+    let body_mark = checker.sink.mark();
     let mut functions = Vec::new();
     let mut main = None;
     let mut tests = Vec::new();
+    let mut reused = HashSet::new();
+    let mut module_checks = Vec::with_capacity(modules.len());
     // `[TYP-32]` — the functions returning `some I` first, so the type each returns is whole (its
     // field, and the methods it forwards) before any caller is checked.
     for program in checker.check_some_bodies(modules) {
@@ -534,10 +674,43 @@ pub fn check(
     }
     for (index, loaded) in modules.iter().enumerate() {
         checker.current_module = index;
+        // `[BLD-1]` — a kept module's functions, each with the empty body its kept checked form
+        // stands for; what checking them reports here is the earlier build's to report.
+        let kept = reuse.is_some_and(|reuse| reuse.modules.contains(&index));
+        let mark = checker.sink.mark();
+        let lambdas = checker.lambdas.len();
+        checker.skip_bodies = kept;
+        checker.module_skipped = kept;
+        checker.keep_bodies = reuse.and_then(|reuse| reuse.partial.get(&index)).cloned().unwrap_or_default();
+        checker.parts.clear();
+        checker.part_holders = 0;
+        checker.recording = (!kept).then(|| (Kept::default(), true));
         let program = checker.check_bodies(&loaded.module);
+        checker.skip_bodies = false;
+        checker.module_skipped = false;
+        checker.keep_bodies.clear();
+        let recorded = checker.recording.take();
+        if kept {
+            checker.sink.rollback(mark);
+            reused.extend(program.functions.iter().map(|function| function.def));
+            module_checks.push(None);
+        } else {
+            reused.extend(checker.kept_defs.drain(..));
+            module_checks.push(Some(ModuleCheck {
+                diagnostics: mark..checker.sink.mark(),
+                functions: program.functions.iter().chain(&checker.lambdas[lambdas..]).map(|function| function.symbol.clone()).collect(),
+                kept: recorded.and_then(|(kept, complete)| complete.then_some(kept)),
+                parts: std::mem::take(&mut checker.parts),
+            }));
+        }
         main = main.or(program.main);
         functions.extend(program.functions);
         tests.extend(program.tests);
+    }
+    for (index, kept) in &asks {
+        if let Err(why) = checker.ask_again(kept) {
+            found[*index] = Err(why);
+        }
     }
     // `[FN-8]` — before the instantiations drain: printing `main`'s error
     // may need one.
@@ -568,6 +741,10 @@ pub fn check(
     functions.extend(
         std::mem::take(&mut checker.lambdas).into_iter().filter(|lambda| !opaque.contains(&lambda.def)),
     );
+    // `[BLD-1]` — a kept module's closures, whose kept forms the program names.
+    let kept_closures = std::mem::take(&mut checker.kept_closures);
+    reused.extend(kept_closures.iter().map(|function| function.def));
+    functions.extend(kept_closures);
     // `[FFI-26]`/`[MNG-2]` — a stable C name is an asserted linker identity.
     // Diagnose collisions while both source locations are still available,
     // before a backend reports only a duplicate C definition.
@@ -642,7 +819,9 @@ pub fn check(
     }
     checker.note_changed_declarations();
     checker.note_c_declarations();
+    let unsafe_mark = checker.sink.mark();
     checker.report_unneeded_unsafe();
+    let unneeded_unsafe = unsafe_mark..checker.sink.mark();
     let callable_declarations = checker.callable_declarations(modules);
     // `[CT-1]` — the functions computing what is still to be evaluated go to
     // the evaluator with the rest; a pass with nothing outstanding has none.
@@ -651,13 +830,49 @@ pub fn check(
         functions.extend(std::mem::take(&mut checker.comptime_functions));
     }
     CheckOutput {
+        found,
+        made_structs: checker.closure_env_spans.keys().map(|&id| (id, checker.made_call(id))).collect(),
+        closure_names_unstable: checker.closure_names_unstable,
+        body_mark,
+        modules: module_checks,
+        unneeded_unsafe,
         instantiations: std::mem::take(&mut checker.instantiations),
         contains_uses: std::mem::take(&mut checker.contains_uses),
-        program: Program { functions, main, tests, assume_noalloc: std::mem::take(&mut checker.assume_noalloc) },
+        program: Program { functions, main, tests, assume_noalloc: std::mem::take(&mut checker.assume_noalloc), reused },
         callable_declarations,
         std_instances: std::mem::take(&mut checker.std_instances),
         comptime,
         incomplete: std::mem::take(&mut checker.incomplete),
+    }
+}
+
+/// `[BLD-1]` — a record's types found so far (`Checker::find_again`), those being found, and those
+/// absent (`Reuse::kept_closure`).
+struct Finding {
+    tys: Vec<Option<Ty>>,
+    structs: Vec<Option<StructId>>,
+    enums: Vec<Option<EnumId>>,
+    classes: Vec<Option<ClassId>>,
+    ranges: Vec<Option<ember_types::RangeId>>,
+    open: HashSet<ember_types::codec::Part>,
+    absent: HashSet<ember_types::codec::Part>,
+}
+
+impl ember_types::codec::Lookup for Finding {
+    fn ty(&self, number: u32) -> Option<Ty> {
+        self.tys.get(number as usize).copied().flatten()
+    }
+    fn struct_id(&self, number: u32) -> Option<StructId> {
+        self.structs.get(number as usize).copied().flatten()
+    }
+    fn enum_id(&self, number: u32) -> Option<EnumId> {
+        self.enums.get(number as usize).copied().flatten()
+    }
+    fn class_id(&self, number: u32) -> Option<ClassId> {
+        self.classes.get(number as usize).copied().flatten()
+    }
+    fn range_id(&self, number: u32) -> Option<ember_types::RangeId> {
+        self.ranges.get(number as usize).copied().flatten()
     }
 }
 
@@ -2440,6 +2655,14 @@ struct Checker<'a> {
     /// environment `closureN_env`). It never goes back, so a dropped or
     /// re-checked lambda never lets two closures share a name in the C.
     closure_numbers: usize,
+    /// `[BLD-1]` — the function whose body is being checked, as the closures made in it are named
+    /// (its mangled path, then its instance's hash), and how many it has made: a closure is named
+    /// by its function and its place in it, so an edit elsewhere renames none, and a module's kept
+    /// checked form names the closures a later build makes as that build does.
+    closure_scope: Option<(String, usize)>,
+    /// Whether a closure was made outside every function and named by a count of the whole
+    /// program's: such a check's result is not kept for a later build.
+    closure_names_unstable: bool,
     /// `[GRM-28]` — the local functions whose bodies are being checked,
     /// innermost last.
     local_fn_self: Vec<LocalFnSelf>,
@@ -3168,6 +3391,29 @@ struct Checker<'a> {
     some_checking: Vec<Symbol>,
     /// `[TYP-32]` — the one function `check_bodies` checks, for `check_some_bodies`.
     body_filter: Option<DefId>,
+    /// `[BLD-1]` — the module being walked is one whose checked form an earlier build kept: its
+    /// bodies are not checked (`check_body` gives an empty block).
+    skip_bodies: bool,
+    /// `[BLD-1]` — what the module whose bodies are being checked asks of the program, and whether
+    /// all of it can be asked again by a later build (`Kept`).
+    recording: Option<(Kept, bool)>,
+    /// `[BLD-1]` — a generic's body is being checked with its parameters opaque: what it asks for,
+    /// every build asks (a kept module's generics are checked still), so it is not recorded.
+    checking_template: bool,
+    /// `[BLD-8]` — the module being walked is kept whole (`skip_bodies` for each of its bodies);
+    /// the bodies of the one being walked that are kept (`Reuse::partial`); each function's part of
+    /// its check so far; the functions of the kept bodies; and where the holders recorded for the
+    /// function being checked begin.
+    module_skipped: bool,
+    keep_bodies: HashSet<Span>,
+    parts: Vec<FunctionCheck>,
+    kept_defs: Vec<DefId>,
+    part_holders: usize,
+    /// `[BLD-1]` — each declared function's qualified name (`fn_ids`, the least where several
+    /// name one), made when a request is first recorded.
+    function_names: Option<HashMap<DefId, Symbol>>,
+    /// `[BLD-1]` — the functions of the closures a kept module's types name, signatures only.
+    kept_closures: Vec<Function>,
     /// `[TYP-32]` — forwarding methods whose bodies are made last: the method, the wrapper
     /// instance, the interface and the name (the held type's method is found then).
     some_forwarders: Vec<(DefId, Ty, Symbol, Symbol)>,
@@ -3338,6 +3584,8 @@ impl<'a> Checker<'a> {
             body_marks: Vec::new(),
             incomplete: HashSet::new(),
             closure_numbers: 0,
+            closure_scope: None,
+            closure_names_unstable: false,
             local_fn_self: Vec::new(),
             written_attributes: HashMap::new(),
             attribute_structs: HashSet::new(),
@@ -3519,6 +3767,16 @@ impl<'a> Checker<'a> {
             some_quiet: false,
             some_checking: Vec::new(),
             body_filter: None,
+            skip_bodies: false,
+            recording: None,
+            checking_template: false,
+            module_skipped: false,
+            keep_bodies: HashSet::new(),
+            parts: Vec::new(),
+            kept_defs: Vec::new(),
+            part_holders: 0,
+            function_names: None,
+            kept_closures: Vec::new(),
             some_forwarders: Vec::new(),
             noted_assoc: HashMap::new(),
             method_call_expected: None,
@@ -6752,7 +7010,7 @@ impl<'a> Checker<'a> {
             let errors = self.sink.error_count();
             if self.some_methods.contains_key(&def) {
                 let functions = self.check_method_bodies(&modules[module_index].module);
-                programs.push(Program { functions, main: None, tests: Vec::new(), assume_noalloc: Vec::new() });
+                programs.push(Program { functions, main: None, tests: Vec::new(), assume_noalloc: Vec::new(), reused: HashSet::new() });
             } else {
                 programs.push(self.check_bodies(&modules[module_index].module));
             }
@@ -14941,6 +15199,12 @@ impl<'a> Checker<'a> {
             let mut holders = Vec::new();
             self.dyn_parts(ty, &mut HashSet::new(), &mut holders);
             for holder in holders {
+                // Once in each function's part: a later build may keep one and not another.
+                if let Some((kept, _)) = &mut self.recording
+                    && !kept.holders[self.part_holders.min(kept.holders.len())..].contains(&holder)
+                {
+                    kept.holders.push(holder);
+                }
                 if !self.dyn_debug_holders.contains(&holder) {
                     self.dyn_debug_holders.push(holder);
                 }
@@ -19721,7 +19985,13 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
+            // `[BLD-8]` — a body whose kept checked form stands for it is not checked again.
+            let keep_body = decl.body.as_ref().is_some_and(|block| self.keep_bodies.contains(&block.span));
+            self.skip_bodies = self.module_skipped || keep_body;
+            let part = self.part_start(functions.len());
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+            let function = self.closure_function(&ember_types::item_path(self.qualified(decl.name.name).as_str()), def);
+            self.closure_scope = Some((function, 0));
             if self.reload_if_default.contains(&item.span)
                 && !self.implements(self.signatures[def.0 as usize].ret, Symbol::intern("std.core.Default"))
             {
@@ -19836,7 +20106,13 @@ impl<'a> Checker<'a> {
                     self.check_declared_defaults(def, decl, &signature_params);
                     let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
                     self.in_generic_template = true;
+                    // `[BLD-1]` — a kept module's generic is checked still: checking its instances,
+                    // which the package makes every build, reads what its own check found.
+                    let skip = std::mem::replace(&mut self.skip_bodies, false);
+                    let template = std::mem::replace(&mut self.checking_template, true);
                     self.check_body(block);
+                    self.checking_template = template;
+                    self.skip_bodies = skip;
                     self.in_generic_template = false;
                     self.in_unsafe = outer_unsafe;
                 }
@@ -19996,13 +20272,18 @@ impl<'a> Checker<'a> {
             self.end_body_marks(&symbol);
             self.active_overflow = outer_overflow;
             self.active_fp = outer_fp;
+            if let Some(block) = &decl.body {
+                self.part_end(part, block.span, &functions, keep_body);
+            }
         }
+        self.skip_bodies = self.module_skipped;
 
         self.some_checking.clear();
+        self.closure_scope = None;
         if self.body_filter.is_none() {
             functions.extend(self.check_method_bodies(module));
         }
-        Program { functions, main, tests, assume_noalloc: Vec::new() }
+        Program { functions, main, tests, assume_noalloc: Vec::new(), reused: HashSet::new() }
     }
 
     /// `[TYP-16]` — one real body per instantiation. Each is the generic body
@@ -22184,6 +22465,8 @@ impl<'a> Checker<'a> {
         directives: &[ast::Directive],
         span: Span,
     ) -> Function {
+        let function = self.closure_function(&ember_types::item_path(self.qualified(decl.name.name).as_str()), def);
+        let outer_closures = self.closure_scope.replace((function, 0));
         self.locals = Vec::new();
         self.begin_body_marks();
         self.scopes = vec![HashMap::new()];
@@ -22297,6 +22580,7 @@ impl<'a> Checker<'a> {
             ffi_counted: None,
         };
         self.end_body_marks(&function.symbol);
+        self.closure_scope = outer_closures;
         function
     }
 
@@ -22339,6 +22623,10 @@ impl<'a> Checker<'a> {
             for member in members {
                 let ast::MemberKind::Fn(decl) = &member.kind else { continue };
                 let Some(block) = &decl.body else { continue };
+                // `[BLD-8]` — a body whose kept checked form stands for it is not checked again.
+                let keep_body = self.keep_bodies.contains(&block.span);
+                self.skip_bodies = self.module_skipped || keep_body;
+                let part = self.part_start(out.len());
                 let has_receiver = decl
                     .params
                     .iter()
@@ -22381,6 +22669,8 @@ impl<'a> Checker<'a> {
                         });
                         self.type_params.insert(param.name, ty);
                     }
+                    let skip = std::mem::replace(&mut self.skip_bodies, false);
+                    let template = std::mem::replace(&mut self.checking_template, true);
                     let _ = self.check_one_method(
                         owner,
                         decl,
@@ -22389,6 +22679,8 @@ impl<'a> Checker<'a> {
                         &member.attrs,
                         member.span,
                     );
+                    self.checking_template = template;
+                    self.skip_bodies = skip;
                     self.type_params.clear();
                     self.current_generics.clear();
                     continue;
@@ -22398,10 +22690,46 @@ impl<'a> Checker<'a> {
                 {
                     out.push(function);
                 }
+                self.part_end(part, block.span, &out, keep_body);
             }
         }
+        self.skip_bodies = self.module_skipped;
         out.extend(self.check_default_bodies(module));
         out
+    }
+
+    /// `[BLD-8]` — where the check of a function with a body of its own begins: what the sink, the
+    /// recorded requests and holders, the closures made and `functions` (the module's functions
+    /// so far) hold.
+    fn part_start(&mut self, functions: usize) -> PartStart {
+        let (requests, holders) = self.recording.as_ref().map_or((0, 0), |(kept, _)| (kept.requests.len(), kept.holders.len()));
+        self.part_holders = holders;
+        PartStart { mark: self.sink.mark(), requests, holders, lambdas: self.lambdas.len(), functions }
+    }
+
+    /// `[BLD-8]` — the function whose check began at `start`, its body `body`, checked (or kept):
+    /// its part of the module's check (`ModuleCheck::parts`). A kept body's check reported nothing
+    /// this build reports (its kept form has what it reported), and its functions are reused.
+    fn part_end(&mut self, start: PartStart, body: Span, functions: &[Function], kept: bool) {
+        let (requests, holders) = self.recording.as_ref().map_or((0, 0), |(kept, _)| (kept.requests.len(), kept.holders.len()));
+        // Outside a function's part, a holder is recorded once in each stretch between parts.
+        self.part_holders = holders;
+        if self.module_skipped || self.body_filter.is_some() {
+            return;
+        }
+        if kept {
+            self.sink.rollback(start.mark);
+            self.kept_defs.extend(functions[start.functions..].iter().map(|function| function.def));
+        }
+        let symbols = functions[start.functions..].iter().chain(&self.lambdas[start.lambdas..]).map(|function| function.symbol.clone()).collect();
+        self.parts.push(FunctionCheck {
+            body,
+            diagnostics: start.mark..self.sink.mark(),
+            requests: start.requests..requests,
+            holders: start.holders..holders,
+            functions: symbols,
+            kept,
+        });
     }
 
     /// A field handed to its `clone` method: borrowed where the receiver
@@ -23000,6 +23328,22 @@ impl<'a> Checker<'a> {
     }
 
     fn check_one_method_inner(
+        &mut self,
+        owner: Ty,
+        decl: &ast::FnDecl,
+        block: &ast::Block,
+        def: DefId,
+        attrs: &[ast::Attribute],
+        span: Span,
+    ) -> Option<Function> {
+        let function = format!("{}{}", self.types.mangled(owner), self.closure_function(decl.name.name.as_str(), def));
+        let outer_closures = self.closure_scope.replace((function, 0));
+        let checked = self.check_one_method_body(owner, decl, block, def, attrs, span);
+        self.closure_scope = outer_closures;
+        checked
+    }
+
+    fn check_one_method_body(
         &mut self,
         owner: Ty,
         decl: &ast::FnDecl,
@@ -28834,6 +29178,9 @@ impl<'a> Checker<'a> {
     /// pass's diagnostics are dropped. Passes repeat while they fix another
     /// local; one still open at the end is `E2060` at its first use.
     fn check_body(&mut self, block: &ast::Block) -> Block {
+        if self.skip_bodies {
+            return Block { stmts: Vec::new(), span: block.span };
+        }
         let outer = std::mem::replace(&mut self.open, OpenState { allowed: true, knowing: true, ..OpenState::default() });
         let mark = self.sink.mark();
         let snapshot = BodySnapshot {
@@ -40282,10 +40629,108 @@ impl<'a> Checker<'a> {
         if key.args.iter().any(|&arg| self.types.is_generic(arg)) {
             self.skipped_instances += 1;
         } else {
+            self.record_request(&key, false);
             self.pending.push((key, instance));
         }
         let _ = (name, span);
         instance
+    }
+
+    /// `[BLD-1]` — an instance the module being checked asks for, kept for a later build.
+    fn record_request(&mut self, key: &Instance, method: bool) {
+        if self.checking_template {
+            return;
+        }
+        let Some((_, complete)) = &self.recording else { return };
+        let complete = *complete;
+        let generic = self.kept_function(key.def);
+        let callable_values: Vec<Option<KeptFunction>> =
+            key.callable_values.iter().map(|value| value.map(|def| self.kept_function(def))).collect();
+        let method = method.then(|| self.method_named(key.def));
+        let found = |function: &KeptFunction| !matches!(function, KeptFunction::At(span) if span.is_dummy());
+        let named = found(&generic) && callable_values.iter().flatten().all(found) && method.as_ref().is_none_or(Option::is_some);
+        if let Some((kept, complete_now)) = &mut self.recording {
+            *complete_now = complete && named;
+            kept.requests.push(KeptRequest { generic, method: method.flatten(), args: key.args.clone(), callable_values });
+        }
+    }
+
+    /// `[BLD-1]` — the function `def` as a kept request names it.
+    fn kept_function(&mut self, def: DefId) -> KeptFunction {
+        let fn_ids = &self.fn_ids;
+        let names = self.function_names.get_or_insert_with(|| {
+            let mut names: HashMap<DefId, Symbol> = HashMap::new();
+            for (&name, &def) in fn_ids {
+                names.entry(def).and_modify(|least| if name.as_str() < least.as_str() { *least = name }).or_insert(name);
+            }
+            names
+        });
+        match names.get(&def) {
+            Some(&name) => KeptFunction::Named(name),
+            None => KeptFunction::At(self.signatures[def.0 as usize].decl),
+        }
+    }
+
+    /// `[BLD-1]` — the method `def` as its type names it.
+    fn method_named(&self, def: DefId) -> Option<KeptMethod> {
+        let found = self.methods.iter().find(|(_, entry)| entry.def == def).map(|((owner, name), _)| (*owner, *name, None, true))
+            .or_else(|| self.associated.iter().find(|(_, entry)| entry.def == def).map(|((owner, name), _)| (*owner, *name, None, false)))
+            .or_else(|| self.interface_methods.iter().find(|(_, entry)| entry.def == def)
+                .map(|((owner, interface, name), _)| (*owner, *name, Some(*interface), true)))
+            .or_else(|| self.interface_associated.iter().find(|(_, entry)| entry.def == def)
+                .map(|((owner, interface, name), _)| (*owner, *name, Some(*interface), false)));
+        found.map(|(owner, name, interface, receiver)| KeptMethod { owner, name, interface, receiver })
+    }
+
+    /// `[BLD-1]` — what a kept module asked of the program, asked again: its instances (each
+    /// generic and function found by where it is declared) and its formatted `dyn` values.
+    fn ask_again(&mut self, kept: &Kept) -> Result<(), String> {
+        // Made once a request names a function by where it is declared.
+        let mut declared: Option<HashMap<Span, DefId>> = None;
+        for request in &kept.requests {
+            if let Some(method) = &request.method {
+                let def = match (method.interface, method.receiver) {
+                    (None, true) => self.methods.get(&(method.owner, method.name)).map(|entry| entry.def),
+                    (None, false) => self.associated.get(&(method.owner, method.name)).map(|entry| entry.def),
+                    (Some(interface), true) => self.interface_methods.get(&(method.owner, interface, method.name)).map(|entry| entry.def),
+                    (Some(interface), false) => {
+                        self.interface_associated.get(&(method.owner, interface, method.name)).map(|entry| entry.def)
+                    }
+                };
+                let def = def.ok_or("a generic method no longer declared")?;
+                self.instantiate_method(def, &request.args, Symbol::intern("kept"), Span::DUMMY);
+            } else {
+                let mut find = |function: &KeptFunction| match function {
+                    KeptFunction::Named(name) => self.fn_ids.get(name).copied().filter(|def| !self.generic_of.contains_key(def)),
+                    KeptFunction::At(span) => declared
+                        .get_or_insert_with(|| {
+                            let mut declared = HashMap::new();
+                            for (index, signature) in self.signatures.iter().enumerate() {
+                                let def = DefId(index as u32);
+                                if !signature.decl.is_dummy() && !self.generic_of.contains_key(&def) {
+                                    declared.entry(signature.decl).or_insert(def);
+                                }
+                            }
+                            declared
+                        })
+                        .get(span)
+                        .copied(),
+                };
+                let def = find(&request.generic).ok_or("a generic no longer declared")?;
+                let values = request
+                    .callable_values
+                    .iter()
+                    .map(|value| value.as_ref().map(|function| find(function).ok_or("a function no longer declared")).transpose())
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.instantiate(def, &request.args, values, Symbol::intern("kept"), Span::DUMMY);
+            }
+        }
+        for &holder in &kept.holders {
+            if !self.dyn_debug_holders.contains(&holder) {
+                self.dyn_debug_holders.push(holder);
+            }
+        }
+        Ok(())
     }
 
     /// Generic methods use the same `(definition, type arguments)` identity as
@@ -40339,6 +40784,7 @@ impl<'a> Checker<'a> {
         if key.args.iter().any(|&arg| self.types.is_generic(arg)) {
             self.skipped_instances += 1;
         } else {
+            self.record_request(&key, true);
             self.pending_generic_methods.push((key, instance));
         }
         let _ = (name, span);
@@ -45962,9 +46408,313 @@ impl<'a> Checker<'a> {
         value
     }
 
+    /// `[BLD-1]` — the types `record` describes, in this run: a declared type by its name, a
+    /// generic's instance made as the program makes it (so it is the one any body asking for it
+    /// gets), a struct made for one body (a closure's environment) by its definition, a range type
+    /// by its name and place. `Err` names the first not found.
+    fn find_again(&mut self, record: &ember_types::codec::TypeRecord, kept_closure: &dyn Fn(Span) -> bool) -> Result<ember_types::codec::Found, String> {
+        let mut finding = Finding {
+            tys: vec![None; record.tys.len()],
+            structs: vec![None; record.structs.len()],
+            enums: vec![None; record.enums.len()],
+            classes: vec![None; record.classes.len()],
+            ranges: vec![None; record.ranges.len()],
+            open: HashSet::new(),
+            absent: HashSet::new(),
+        };
+        let parts = (0..record.tys.len() as u32).map(ember_types::codec::Part::Ty)
+            .chain((0..record.structs.len() as u32).map(ember_types::codec::Part::Struct))
+            .chain((0..record.enums.len() as u32).map(ember_types::codec::Part::Enum))
+            .chain((0..record.classes.len() as u32).map(ember_types::codec::Part::Class))
+            .chain((0..record.ranges.len() as u32).map(ember_types::codec::Part::Range));
+        for part in parts {
+            self.find_part(record, &mut finding, part, kept_closure)?;
+        }
+        Ok(ember_types::codec::Found {
+            tys: finding.tys,
+            structs: finding.structs,
+            enums: finding.enums,
+            classes: finding.classes,
+            ranges: finding.ranges,
+        })
+    }
+
+    fn find_part(
+        &mut self,
+        record: &ember_types::codec::TypeRecord,
+        finding: &mut Finding,
+        part: ember_types::codec::Part,
+        kept_closure: &dyn Fn(Span) -> bool,
+    ) -> Result<(), String> {
+        use ember_types::codec::{Lookup, Part};
+        let known = match part {
+            Part::Ty(n) => finding.tys[n as usize].is_some(),
+            Part::Struct(n) => finding.structs[n as usize].is_some(),
+            Part::Enum(n) => finding.enums[n as usize].is_some(),
+            Part::Class(n) => finding.classes[n as usize].is_some(),
+            Part::Range(n) => finding.ranges[n as usize].is_some(),
+        };
+        if known || finding.absent.contains(&part) {
+            return Ok(());
+        }
+        // A part absent because one it names is (`Reuse::kept_closure`).
+        let absent = |finding: &mut Finding, parts: &[Part]| -> bool {
+            if parts.iter().any(|inner| finding.absent.contains(inner)) {
+                finding.absent.insert(part);
+                finding.open.remove(&part);
+                true
+            } else {
+                false
+            }
+        };
+        if !finding.open.insert(part) {
+            // A type met again while what it names is being found (a closure's environment, whose
+            // call takes a reference to it): found now, when its parts are.
+            if let Part::Ty(n) = part
+                && let Some(kind) = record.tys[n as usize].kind(&*finding)
+            {
+                finding.tys[n as usize] = Some(self.types.intern(kind));
+                return Ok(());
+            }
+            return Err(format!("a type the record describes by itself ({part:?})"));
+        }
+        let nominal = |records: &[ember_types::codec::NominalRecord], n: u32| records[n as usize].clone();
+        match part {
+            Part::Ty(n) => {
+                let kind = &record.tys[n as usize];
+                let inners: Vec<Part> = kind.parts();
+                for &inner in &inners {
+                    self.find_part(record, finding, inner, kept_closure)?;
+                }
+                if absent(finding, &inners) {
+                    return Ok(());
+                }
+                let kind = kind.kind(&*finding).ok_or("a type's part not found")?;
+                finding.tys[n as usize] = Some(self.types.intern(kind));
+            }
+            Part::Struct(n) | Part::Enum(n) | Part::Class(n) => {
+                let entry = match part {
+                    Part::Struct(_) => nominal(&record.structs, n),
+                    Part::Enum(_) => nominal(&record.enums, n),
+                    _ => nominal(&record.classes, n),
+                };
+                let ty = if let Some(made) = &entry.made {
+                    if !kept_closure(made.span()) {
+                        finding.absent.insert(part);
+                        finding.open.remove(&part);
+                        return Ok(());
+                    }
+                    let fields: Vec<Part> = made.field_types().into_iter().map(Part::Ty).collect();
+                    for &field in &fields {
+                        self.find_part(record, finding, field, kept_closure)?;
+                    }
+                    if absent(finding, &fields) {
+                        return Ok(());
+                    }
+                    let def = made.struct_def(entry.name, &*finding).ok_or("a field's type not found")?;
+                    let id = self.types.add_struct(def);
+                    self.closure_env_spans.insert(id, self.types.struct_def(id).span);
+                    // Found before what calling it names, which names it (its environment parameter).
+                    finding.structs[n as usize] = Some(id);
+                    for ty in made.call_types() {
+                        self.find_part(record, finding, Part::Ty(ty), kept_closure)?;
+                    }
+                    let call = made.call(&*finding).ok_or("a closure's parameter type not found")?;
+                    if let Some(call) = call {
+                        let def = DefId(self.signatures.len() as u32);
+                        let mode = |mode: ember_types::FnParamMode| match mode {
+                            ember_types::FnParamMode::Borrow => Mode::Borrow,
+                            ember_types::FnParamMode::Mut => Mode::Mut,
+                            ember_types::FnParamMode::Owned => Mode::Owned,
+                        };
+                        self.signatures.push(Signature {
+                            decl: call.decl,
+                            params: call.params.iter().map(|(name, ty, param_mode, span)| (*name, *ty, mode(*param_mode), *span)).collect(),
+                            ret: call.ret,
+                            abi: None,
+                            is_unsafe: call.is_unsafe,
+                            overflow: call.overflow,
+                            fp: call.fp,
+                            borrows: None,
+                            generics: Vec::new(),
+                        });
+                        // The closure's function, as a kept module's is: its signature, its body the
+                        // kept form's (`Program::reused`).
+                        let params: Vec<Param> = call.params.iter().enumerate()
+                            .map(|(index, (_, _, param_mode, _))| Param { local: LocalId(index as u32), mode: mode(*param_mode) })
+                            .collect();
+                        let locals: Vec<LocalDecl> = call.params.iter()
+                            .map(|(name, ty, _, span)| LocalDecl {
+                                name: Some(*name),
+                                ty: *ty,
+                                span: *span,
+                                for_iterator: false,
+                                loop_borrowed_handle: false,
+                                hoisted_into: None,
+                                simd: None,
+                                declared_reduction: false,
+                            })
+                            .collect();
+                        self.kept_closures.push(Function {
+                            def,
+                            name: Symbol::intern(&call.symbol),
+                            class_init: false,
+                            class_init_default_fields: Vec::new(),
+                            symbol: call.symbol.clone(),
+                            is_unsafe: call.is_unsafe,
+                            abi: None,
+                            export_thread_policy: hir::ExportThreadPolicy::Any,
+                            params,
+                            locals,
+                            ret: call.ret,
+                            body: Block { stmts: Vec::new(), span: call.decl },
+                            span: call.decl,
+                            overflow: call.overflow,
+                            fp: call.fp,
+                            inline: hir::InlineHint::default(),
+                            static_safe: false,
+                            contracts: hir::Contracts::default(),
+                            borrows: None,
+                            sources: Vec::new(),
+                            is_lambda: true,
+                            emit_if_used: false,
+                            closure_environment: Some(id),
+                            closure_captures_by_move: call.owned,
+                            path: None,
+                            class_owner: None,
+                            class_virtual_slot: None,
+                            borrows_used_fields: false,
+                            is_abstract: false,
+                            is_extern_declaration: false,
+                            variadic: false,
+                            ffi_counted: None,
+                        });
+                        self.closure_symbols.insert(def, call.symbol);
+                        self.closure_calls.insert(id, ClosureCall { def, once: call.once, owned: call.owned });
+                    }
+                    self.types.intern(TyKind::Struct(id))
+                } else if let Some((generic, args)) = &entry.origin {
+                    let parts: Vec<Part> = args.iter().map(|arg| Part::Ty(*arg)).collect();
+                    for &arg in &parts {
+                        self.find_part(record, finding, arg, kept_closure)?;
+                    }
+                    if absent(finding, &parts) {
+                        return Ok(());
+                    }
+                    let args: Vec<Ty> = args.iter().map(|arg| finding.ty(*arg).expect("found above")).collect();
+                    self.instance_again(*generic, &args).ok_or_else(|| format!("`{generic}` over {} argument(s) is not made again", args.len()))?
+                } else {
+                    *self.named_types.get(&entry.name).ok_or_else(|| format!("no type `{}`", entry.name))?
+                };
+                // What checking a body marked the definition with, marked again.
+                let marked = match &entry.marked {
+                    Some((generic, args)) => {
+                        for arg in args {
+                            self.find_part(record, finding, Part::Ty(*arg), kept_closure)?;
+                        }
+                        args.iter().map(|arg| finding.ty(*arg)).collect::<Option<Vec<Ty>>>().map(|args| (*generic, args))
+                    }
+                    None => None,
+                };
+                match (part, self.types.kind(ty).clone()) {
+                    (Part::Struct(_), TyKind::Struct(id)) => {
+                        let def = self.types.struct_def_mut(id);
+                        def.has_drop |= entry.has_drop;
+                        if def.origin.is_none() {
+                            def.origin = marked;
+                        }
+                        finding.structs[n as usize] = Some(id);
+                    }
+                    (Part::Enum(_), TyKind::Enum(id)) => {
+                        self.types.enum_def_mut(id).has_drop |= entry.has_drop;
+                        finding.enums[n as usize] = Some(id);
+                    }
+                    (Part::Class(_), TyKind::Class(id)) => {
+                        self.types.class_def_mut(id).has_drop |= entry.has_drop;
+                        finding.classes[n as usize] = Some(id);
+                    }
+                    _ => return Err(format!("`{}` is another kind of type now", entry.name)),
+                }
+            }
+            Part::Range(n) => {
+                let entry = &record.ranges[n as usize];
+                let id = self.types.ranges().find(|(_, def)| def.name == entry.name && def.span == entry.span).map(|(id, _)| id);
+                finding.ranges[n as usize] = Some(id.ok_or_else(|| format!("no range type `{}`", entry.name))?);
+            }
+        }
+        finding.open.remove(&part);
+        Ok(())
+    }
+
+    /// `[BLD-1]` — what calling the closure environment `id` calls, as a kept form records it.
+    fn made_call(&self, id: StructId) -> Option<ember_types::codec::MadeCall> {
+        let call = self.closure_calls.get(&id)?;
+        let signature = &self.signatures[call.def.0 as usize];
+        let mode = |mode: Mode| match mode {
+            Mode::Borrow => ember_types::FnParamMode::Borrow,
+            Mode::Mut => ember_types::FnParamMode::Mut,
+            Mode::Owned => ember_types::FnParamMode::Owned,
+        };
+        Some(ember_types::codec::MadeCall {
+            symbol: self.closure_symbols.get(&call.def)?.clone(),
+            once: call.once,
+            owned: call.owned,
+            params: signature.params.iter().map(|(name, ty, param_mode, span)| (*name, *ty, mode(*param_mode), *span)).collect(),
+            ret: signature.ret,
+            is_unsafe: signature.is_unsafe,
+            overflow: signature.overflow,
+            fp: signature.fp,
+            decl: signature.decl,
+        })
+    }
+
+    /// `[BLD-1]` — `generic`'s instance over `args`, made as a body asking for it makes it.
+    fn instance_again(&mut self, generic: Symbol, args: &[Ty]) -> Option<Ty> {
+        Some(match (generic.as_str(), args) {
+            ("Option", [inner]) => self.option_of(*inner),
+            ("Result", [ok, err]) => self.result_of(*ok, *err),
+            ("Box", [inner]) => self.box_of(*inner),
+            ("Shared", [inner]) => self.counted_of(*inner, false),
+            ("SyncShared", [inner]) => self.counted_of(*inner, true),
+            ("Weak", [inner]) => self.weak_of(*inner, Span::DUMMY),
+            ("Cell", [inner]) => self.cell_of(*inner),
+            ("MaybeUninit", [inner]) => self.maybe_uninit_of(*inner),
+            ("std.mem.UnsafeCell", [inner]) => self.unsafe_cell_of(*inner),
+            ("RefCell", [inner]) => self.refcell_of(*inner),
+            ("Ref", [inner]) => self.ref_guard_of(*inner, false),
+            ("RefMut", [inner]) => self.ref_guard_of(*inner, true),
+            ("SoA", [inner]) => self.soa_of_kind(*inner, Span::DUMMY, false),
+            ("ArenaSoA", [inner]) => self.soa_of_kind(*inner, Span::DUMMY, true),
+            _ => return self.generic_target_instance(generic, args, Span::DUMMY),
+        })
+    }
+
+    /// `[BLD-1]` — the next closure's name after `closure`: `_`, its function's mangled form, and
+    /// `_c` and its number in that function (`closure_4main_c0`). Outside every function, a count of
+    /// the program's (and the check is not kept for a later build).
+    fn closure_tag(&mut self) -> String {
+        match &mut self.closure_scope {
+            Some((function, made)) => {
+                *made += 1;
+                format!("_{function}_c{}", *made - 1)
+            }
+            None => {
+                self.closure_names_unstable = true;
+                self.closure_numbers += 1;
+                format!("{}", self.closure_numbers - 1)
+            }
+        }
+    }
+
+    /// `[BLD-1]` — the mangled form a function's closures are named after: its path's, then its
+    /// instance's hash.
+    fn closure_function(&self, path: &str, def: DefId) -> String {
+        let symbol = ember_branding::instance_symbol(path, self.instance_spellings.get(&def).map(String::as_str));
+        symbol.strip_prefix(ember_branding::mangle_prefix().as_str()).map(str::to_string).unwrap_or(symbol)
+    }
+
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
-        let number = self.closure_numbers;
-        self.closure_numbers += 1;
+        let number = self.closure_tag();
         let skipped_before = self.skipped_instances;
         let wanted = expected.and_then(|ty| match self.types.kind(ty) {
             TyKind::Fn { params, ret, .. } => Some((params.clone(), *ret)),
@@ -46769,7 +47519,7 @@ impl<'a> Checker<'a> {
         body: Block,
         env: Option<(Symbol, Ty, Mode, bool)>,
         span: Span,
-        number: usize,
+        number: String,
         skipped_before: usize,
         reserved: Option<DefId>,
     ) -> DefId {
@@ -53988,6 +54738,9 @@ impl<'a> Checker<'a> {
     /// expression of its parameter's type. Only preceding parameters and
     /// declaration-module names are in scope, never a caller's locals.
     fn check_declared_defaults(&mut self, _def: DefId, decl: &ast::FnDecl, params: &[(Symbol, Ty, Mode, Span)]) {
+        if self.skip_bodies {
+            return;
+        }
         let mut earlier = HashMap::new();
         for param in &decl.params {
             let name = match &param.kind {
@@ -55386,6 +56139,9 @@ impl<'a> Checker<'a> {
     }
 
     fn complete_function_end(&mut self, mut body: Block, name: Span) -> Block {
+        if self.skip_bodies {
+            return body;
+        }
         self.declare_arena_anchors(&mut body);
         let ret = self.ret_ty;
         if ret == self.common.void

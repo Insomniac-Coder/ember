@@ -20,17 +20,17 @@ pub use ember_hir::{FfiAbiParam, FfiCallback, FfiCallbackMode, FfiCounted, FfiOu
 pub use ember_hir::InlineHint;
 pub use ember_hir::BorrowSource;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct BasicBlockId(pub u32);
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct LocalId(pub u32);
 
 /// The slot a function's return value is written into. Rust MIR's convention,
 /// kept because it makes `Return` need no operand.
 pub const RETURN_LOCAL: LocalId = LocalId(0);
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum LocalKind {
     /// The return slot, local 0.
     Return,
@@ -47,7 +47,7 @@ pub enum LocalKind {
 /// identifier has a `-`, so no user local is named so.
 pub const ACCESS_FLAG_NAME: &str = "access-open";
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct LocalDecl {
     pub ty: Ty,
     pub kind: LocalKind,
@@ -59,7 +59,7 @@ pub struct LocalDecl {
 /// One verified forwarding edge from a fresh mutable-reference call argument
 /// to its synthetic `[FN-5]` default-argument slot. `call_block` identifies
 /// the one call that activates the reservation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallArgumentBinding {
     pub source: LocalId,
     pub binding: LocalId,
@@ -68,7 +68,7 @@ pub struct CallArgumentBinding {
 
 pub use ember_hir::ExportThreadPolicy;
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Body {
     pub name: String,
     /// The mangled C symbol (`[MNG-1]`).
@@ -198,11 +198,16 @@ pub struct Body {
     /// `[SIMD-2]`, `[SIMD-5]` — what the loops' attributes ask of the loop
     /// passes, and their verdicts.
     pub loop_notes: LoopNotes,
+    /// `[BLD-1]` — this body is an earlier build's checked form, kept and read back: its checks
+    /// were made then, so the passes that only check a body (and drop elaboration, which it has
+    /// been through) leave it alone; every pass over the program sees it as any other.
+    #[serde(skip)]
+    pub kept: bool,
 }
 
 /// `[SIMD-2]`, `[SIMD-5]` — what a body's loop attributes ask of the loop
 /// passes (`ember_analysis::loop_version`), and what those found.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
 pub struct LoopNotes {
     /// Each `@simd` loop.
     pub simd: Vec<SimdLoop>,
@@ -218,7 +223,7 @@ pub struct LoopNotes {
 /// the source loop's span, whether it is `@simd(assert)`, and the verdict
 /// once the loop pass has looked at it (`None` when no counted loop has
 /// that counter: its trip count is not known before entry).
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct SimdLoop {
     pub local: LocalId,
     pub span: Span,
@@ -229,10 +234,12 @@ pub struct SimdLoop {
 /// `[SIMD-5]` — the first clause of vectorisable form a loop fails, in the
 /// rule's order (`clause` counts from 1), what failed, and for a check that
 /// remains, its reason (`[EFF-11]`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct NotVectorisable {
     pub clause: u8,
     pub what: String,
+    // A verdict is the loop passes', after a module's checked form is kept: none is kept with it.
+    #[serde(skip)]
     pub check_reason: Option<&'static str>,
     /// Where in the loop it failed, when one place did.
     pub at: Option<Span>,
@@ -241,21 +248,21 @@ pub struct NotVectorisable {
 /// A list or string whose `Array.new()`/`String.new()` gives it `capacity`
 /// elements in a buffer of its function's frame (ADR-141): it moves to the
 /// heap only when it outgrows them, and its drop frees only a heap block.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StackBuffer {
     pub local: LocalId,
     pub capacity: u64,
 }
 
 /// One check a proof removed or moved (`[EFF-10]`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct RemovedCheck {
     pub span: Span,
     pub kind: CheckKind,
     pub proof: CheckProof,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CheckKind {
     Bounds,
     Overflow,
@@ -277,7 +284,7 @@ impl CheckKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CheckProof {
     /// `[RNG-4]` — the known ranges show the check cannot fail.
     RangeFacts,
@@ -288,13 +295,13 @@ pub enum CheckProof {
     KnownDisjoint,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ElidedAccess {
     pub span: Span,
     pub reason: AccessElisionReason,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum AccessElisionReason {
     UniqueHandle,
     /// `[EXC-3]`'s whole-program case: nothing held anywhere in the program
@@ -315,7 +322,7 @@ impl AccessElisionReason {
 /// canonical counted-loop body to its checked preheader/postheader interval.
 /// The block identifiers are compiler-internal anchors for code generation;
 /// user-facing inspection renders source locations instead.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct HoistedAccess {
     pub span: Span,
     pub loop_span: Span,
@@ -327,7 +334,7 @@ pub struct HoistedAccess {
     pub proof: HoistedAccessProof,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum HoistedAccessProof {
     StableReceiverDirectCall,
     /// A check every turn makes on a handle the loop never changes, in a
@@ -367,7 +374,7 @@ impl Body {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct BasicBlock {
     pub stmts: Vec<Stmt>,
     pub terminator: Terminator,
@@ -377,7 +384,7 @@ pub struct BasicBlock {
 }
 
 /// A memory location: a local with a chain of projections.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Place {
     pub local: LocalId,
     pub projection: Vec<Projection>,
@@ -475,7 +482,7 @@ pub fn unaligned_field(types: &ember_types::TypeTable, body: &Body, place: &Plac
     packed.filter(|_| types.layout(ty).align > 1)
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Projection {
     Field(usize),
     /// Indexing by a local's value, with the bounds `Assert` already lowered
@@ -494,7 +501,7 @@ pub enum Projection {
 /// One input region named by an inferred multi-region result slot.
 /// Paths are relative to the callable's public parameter types, not MIR
 /// locals, so this is suitable for an interface artifact.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ResultRegionSource {
     View {
         argument: usize,
@@ -506,19 +513,19 @@ pub enum ResultRegionSource {
 
 /// `[LT-22]` — the exact input regions from which one returned borrowed field
 /// derives.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct ResultFieldProvenance {
     pub result_projection: Vec<Projection>,
     pub sources: Vec<ResultRegionSource>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct ResultProvenanceSummary {
     pub fields: Vec<ResultFieldProvenance>,
 }
 
 /// The operations `[LT-35]` permits a callable summary to name.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum RegionAccessKind {
     Read,
     Write,
@@ -529,14 +536,14 @@ pub enum RegionAccessKind {
     Publish,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct ParameterFieldAccess {
     pub argument: usize,
     pub projection: Vec<Projection>,
     pub operations: Vec<RegionAccessKind>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum CallableAccessSummary {
     /// Opaque/unresolved dispatch: every field and operation is possible.
     All,
@@ -548,7 +555,7 @@ pub enum CallableAccessSummary {
 /// Canonical `[MIR-REG-1]` metadata carried by a callable's MIR artifact.
 /// `result` is absent for a callable with no exact multi-region result
 /// relation. The ordinary one-region elision contract remains signature data.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct CallableRegionMetadata {
     pub access: CallableAccessSummary,
     pub result: Option<ResultProvenanceSummary>,
@@ -1076,7 +1083,7 @@ impl StableFingerprint {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum Operand {
     /// Read a place without disturbing it. Only valid for `Copy` types.
     Copy(Place),
@@ -1085,7 +1092,7 @@ pub enum Operand {
     Const(Const),
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 pub enum Const {
     Int {
         value: u128,
@@ -1119,7 +1126,7 @@ pub enum Const {
     OverflowShift { per_word: bool },
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum Rvalue {
     Use(Operand),
     BinaryOp {
@@ -1159,7 +1166,7 @@ pub enum Rvalue {
     },
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AggregateKind {
     Struct(StructId),
     Tuple,
@@ -1176,13 +1183,13 @@ pub enum AggregateKind {
 /// One concrete implementation used by a compiler-generated dynamic-interface
 /// adapter. The erased interface signature stays on the table layout; this
 /// value is the concrete callable identity.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct InterfaceAdapterMethod {
     pub symbol: String,
     pub receiver: ember_hir::Mode,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum CastKind {
     /// `[FN-6]` — select the C entry of a capture-free native function value.
     FnToC,
@@ -1237,7 +1244,7 @@ pub enum CastKind {
 pub use ember_hir::{AtomicOp, BinOp, Builtin, FormatSpec, IntBits, IntOp, MemoryOrder, ParseKind, SimdOp, SoAOp, UnOp};
 
 /// One statement, with the source location it came from.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: Span,
@@ -1249,7 +1256,7 @@ impl Stmt {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum StmtKind {
     Assign {
         place: Place,
@@ -1358,7 +1365,7 @@ impl StmtKind {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum Terminator {
     Goto(BasicBlockId),
     /// A conditional branch on an integer or boolean discriminant.
@@ -1396,7 +1403,7 @@ pub enum Terminator {
 
 /// What a failed [`Terminator::Assert`] panics about. Each maps to one
 /// `ember_panic_*` entry point in the runtime (Part XVIII §9).
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum AssertKind {
     /// `[TYP-8]` — an overflowing `+`, `-`, `*` or `<<` under
     /// `OverflowPolicy::Panic`.
@@ -1442,7 +1449,7 @@ impl AssertKind {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum FuncRef {
     /// A direct call to a body in this compilation unit. `latebound` is a
     /// compile-time callable-boundary fact retained for region analysis and

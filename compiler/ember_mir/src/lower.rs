@@ -29,7 +29,12 @@ pub fn lower(
     common: &CommonTypes,
     map: &SourceMap,
 ) -> Vec<Body> {
-    program.functions.iter().map(|f| lower_function(f, program, types, common, map)).collect()
+    program
+        .functions
+        .iter()
+        .filter(|f| !program.reused.contains(&f.def))
+        .map(|f| lower_function(f, program, types, common, map))
+        .collect()
 }
 
 /// One function of `program`, lowered as `lower` lowers each.
@@ -487,6 +492,7 @@ impl<'a> Builder<'a> {
             stack_buffers: Vec::new(),
             frame_objects: Vec::new(),
             loop_notes,
+            kept: false,
         }
     }
 

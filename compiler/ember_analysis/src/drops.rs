@@ -482,6 +482,7 @@ pub fn check_drop_self_escapes_all(bodies: &[Body], types: &TypeTable, sink: &mu
         .collect();
     bodies
         .iter()
+        .filter(|body| !body.kept)
         .map(|body| check_drop_self_escapes(body, types, &owned_closure_environments, sink))
         .sum()
 }

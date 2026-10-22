@@ -16,13 +16,13 @@ use ember_span::Symbol;
 
 /// A sum of terms, sorted by their atoms, with no zero coefficient; the
 /// constant term is the one with no atoms.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord, Default)]
 pub struct ConstNorm {
     pub terms: Vec<(Vec<ConstAtom>, i128)>,
 }
 
 /// A factor of a term.
-#[derive(Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum ConstAtom {
     /// The declaration's `const` parameter at this index, by its name.
     Param(u32, Symbol),
@@ -31,7 +31,7 @@ pub enum ConstAtom {
 }
 
 /// The operations a normal form keeps whole (`[TYP-41]` rule 2).
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub enum ConstOp {
     FloorDiv,
     Rem,

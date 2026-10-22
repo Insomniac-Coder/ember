@@ -421,6 +421,12 @@ pub fn no_compile_cache_var() -> String {
     format!("{}_NO_COMPILE_CACHE", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// `[BLD-1]` — the environment variable that makes a build check every module, using and keeping
+/// no module's checked form (`target/<profile>/incremental/`): a clean build, to compare with.
+pub fn no_incremental_var() -> String {
+    format!("{}_NO_INCREMENTAL", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// The environment variable that chooses the C compiler when `--cc` does not:
 /// `msvc`, `clang-cl`, `clang`, `gcc` or `auto`. CI's compiler matrix sets it.
 /// `[TST-27]` — set to `1`, the program's own C is compiled with warnings as errors (`/WX`,

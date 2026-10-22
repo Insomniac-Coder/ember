@@ -29,7 +29,9 @@ use ember_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, Term
 /// `[GRM-38]` — one written binding may be bound in several bodies the compiler
 /// makes of it (each clause function of a generator expression binds the names
 /// of the clauses before it): it is read when any of them reads it.
-pub fn check_all(bodies: &[Body], types: &ember_types::TypeTable, sink: &mut Sink) {
+/// `[BLD-1]` — a kept body (`Body::kept`) is not checked again, though what every body reads is;
+/// for each body checked, the range of the sink's diagnostics its check reported.
+pub fn check_all(bodies: &[Body], types: &ember_types::TypeTable, sink: &mut Sink) -> Vec<(usize, std::ops::Range<usize>)> {
     let reads: Vec<HashSet<LocalId>> = bodies.iter().map(|body| reads(body, types)).collect();
     let read_anywhere: HashSet<ember_span::Span> = bodies
         .iter()
@@ -38,9 +40,16 @@ pub fn check_all(bodies: &[Body], types: &ember_types::TypeTable, sink: &mut Sin
         .filter(|span| !span.is_dummy())
         .collect();
     let mut reported = read_anywhere;
-    for (body, read) in bodies.iter().zip(&reads) {
+    let mut ranges = Vec::new();
+    for (index, (body, read)) in bodies.iter().zip(&reads).enumerate() {
+        if body.kept {
+            continue;
+        }
+        let start = sink.mark();
         check(body, read, sink, &mut reported);
+        ranges.push((index, start..sink.mark()));
     }
+    ranges
 }
 
 fn check(body: &Body, read: &HashSet<LocalId>, sink: &mut Sink, reported: &mut HashSet<ember_span::Span>) {

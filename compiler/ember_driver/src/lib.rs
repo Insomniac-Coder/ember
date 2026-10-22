@@ -8,6 +8,7 @@ mod bench;
 mod cimport;
 mod comptime;
 mod foreign;
+mod incremental;
 mod packages;
 mod reload;
 pub mod session;
@@ -20,7 +21,7 @@ use ember_build::interface::{
     CallableGenericCallableBound, CallableGenericParameter, CallableInterfaceContract,
     CallableInterfaceRecord, CallableParameter, CallableParameterMode, CallableSignature,
     InterfaceHash, ModuleInterfaceArtifact, ModuleInterfaceInput, PreparedInterfaceCache,
-    build_artifacts, cache_directory, compiler_identity, prepare_interface_cache,
+    cache_directory, compiler_identity, prepare_interface_cache,
     round_trip_artifacts,
 };
 use ember_build::{Layout, LinkRequest, Profile, Toolchain};
@@ -1028,6 +1029,7 @@ fn cycle_analysis(
         lint_settings.realtime,
         &Exports::new(&entry, &root_dir),
         &Default::default(),
+        None,
     );
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -3241,6 +3243,7 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
                     lints.realtime,
                     &Exports::new(input, &root_dir),
                     &Default::default(),
+                    None,
                 );
                 // What a compile-time evaluation would answer is not this command's.
                 if !checked.comptime.is_empty() {
@@ -3822,12 +3825,16 @@ fn prepare_callable_interface_cache(
     bodies: &mut [ember_mir::Body],
     types: &TypeTable,
     options: &Options,
-) -> Result<PreparedInterfaceCache, String> {
-    ember_analysis::install_callable_regions_all(bodies, types);
+    kept: &std::collections::HashMap<String, ember_analysis::CallRegionContract>,
+    kept_modules: &std::collections::BTreeMap<String, ember_build::interface::KnownInterface>,
+) -> Result<(PreparedInterfaceCache, std::collections::HashMap<String, ember_analysis::CallRegionContract>), String> {
+    let contracts = ember_analysis::install_callable_regions_kept(bodies, types, kept);
 
+    // `[BLD-1]` — a module this build does not check again keeps its artifact; the others' name it
+    // by what its kept record knows of it.
     let (inputs, import_visible_contracts) =
-        module_interface_inputs(modules, declarations, map, bodies, types, options)?;
-    let fresh = build_artifacts(&inputs, &compiler_identity()).map_err(|error| {
+        module_interface_inputs(modules, declarations, map, bodies, types, options, &|loaded| !kept_modules.contains_key(&module_identity(&loaded.path)))?;
+    let fresh = ember_build::interface::build_artifacts_known(&inputs, kept_modules, &compiler_identity()).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot build interface artifact: {error}")
     })?;
     // The fresh record takes the same encode/decode path as a cache hit, so
@@ -3856,7 +3863,7 @@ fn prepare_callable_interface_cache(
         prepared.artifacts(),
         &import_visible_contracts,
     )?;
-    Ok(prepared)
+    Ok((prepared, contracts))
 }
 
 fn module_interface_inputs(
@@ -3866,6 +3873,7 @@ fn module_interface_inputs(
     bodies: &[ember_mir::Body],
     types: &TypeTable,
     options: &Options,
+    checked: &dyn Fn(&ember_typeck::LoadedModule) -> bool,
 ) -> Result<
     (
         Vec<ModuleInterfaceInput>,
@@ -3874,6 +3882,8 @@ fn module_interface_inputs(
     String,
 > {
     use std::collections::{BTreeMap, BTreeSet};
+    let checked_files: BTreeSet<ember_span::FileId> =
+        modules.iter().filter(|loaded| checked(loaded)).map(|loaded| loaded.module.span.file).collect();
 
     let module_names: BTreeMap<ember_span::FileId, String> = modules
         .iter()
@@ -3892,6 +3902,9 @@ fn module_interface_inputs(
     // bodies. A public generic therefore participates in interface identity
     // even when no concrete instantiation is emitted in this compilation.
     for declaration in declarations {
+        if module_names.contains_key(&declaration.span.file) && !checked_files.contains(&declaration.span.file) {
+            continue;
+        }
         if !module_names.contains_key(&declaration.span.file) {
             return Err(format!(
                 "internal compiler error: [BLD-2] declaration `{}` has no source module for its interface artifact",
@@ -3946,6 +3959,9 @@ fn module_interface_inputs(
     let effect_sets = ember_analysis::effect_sets(bodies, types);
     let inline_symbols = ember_codegen_c::inline_header_symbols(bodies, types);
     for (index, body) in bodies.iter().enumerate() {
+        if module_names.contains_key(&body.span.file) && !checked_files.contains(&body.span.file) {
+            continue;
+        }
         let source_declaration = declarations_by_span.get(&span_key(body.span)).copied();
         if source_declaration.is_none() && !import_visible_spans.contains(&span_key(body.span)) {
             // The fresh MIR record remains installed for this compilation's
@@ -4038,9 +4054,12 @@ fn module_interface_inputs(
         .map(str::to_string)
         .collect();
     let package_config = format!("profile={}", options.profile.name());
+    // A module's summaries read the program's class hierarchy and implementations (a virtual call
+    // reaches each override): its key holds those declarations, as its source.
+    let open_world = incremental::hex(&incremental::open_world(modules, map));
     let mut layouts = type_layouts(modules, map);
     let mut inputs = Vec::with_capacity(modules.len());
-    for loaded in modules {
+    for loaded in modules.iter().filter(|loaded| checked(loaded)) {
         let module = module_identity(&loaded.path);
         let mut dependencies = BTreeSet::new();
         for import in &loaded.module.imports {
@@ -4080,6 +4099,8 @@ fn module_interface_inputs(
         if module == "std.ecs" {
             source.push_str(&ember_typeck::component_registry_key(modules));
         }
+        source.push('\0');
+        source.push_str(&open_world);
         inputs.push(ModuleInterfaceInput {
             module,
             source,
@@ -4808,6 +4829,20 @@ fn package_source_root(input: &Path) -> PathBuf {
 }
 
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
+    // `[BLD-1]` — an attempt that finds a kept checked form no longer holds says so, and the next
+    // checks that module (or, for the compile-time evaluator, every module) again; nothing an
+    // attempt that is tried again did is reported.
+    let mut attempts = incremental::Attempts::default();
+    loop {
+        attempts.again = false;
+        let result = compile_once(input, command, options, &mut attempts);
+        if !attempts.again {
+            return result;
+        }
+    }
+}
+
+fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut incremental::Attempts) -> Result<ExitCode, String> {
     let started = std::time::Instant::now();
     if options.timings.is_some() {
         start_timings();
@@ -4894,6 +4929,36 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // through.
     inject_global_allocator(&mut modules, input, &mut map, &mut sink);
 
+    // `[BLD-1]` — the modules whose checked forms an earlier build kept and this one uses.
+    let plain = options.emit.is_none()
+        && !options.emit_header
+        && options.alloc_report.is_none()
+        && options.tcb_report.is_none()
+        && options.foreign_calls.is_none()
+        && options.effect_report.is_none()
+        && options.borrow_report.is_none()
+        && !options.demangle
+        && !options.instantiation_report
+        && !options.engine_report
+        && !options.lint
+        && !options.generics_report
+        && !options.doc_report
+        && !options.interp
+        && !options.require_evidence
+        // `-D warnings` stops a build at the first stage that warned: kept warnings, reported after
+        // the type check, would stop it sooner than a clean build stops.
+        && !options.deny_warnings
+        && options.ffi_evidence.is_none()
+        && reload == ReloadMode::None
+        && lint_settings.max_instantiations.is_none()
+        && !lint_settings.long_term_access_across_dynamic_call;
+    let mut plan = incremental::applies(command, plain).then(|| {
+        let profile_root = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target")).join(options.profile.name());
+        let manifest = nearest_manifest_text(input).ok().flatten();
+        let spelled = options.profile.name().to_string();
+        incremental::Plan::open(&profile_root, input, command, &spelled, manifest.as_deref(), &modules, &map, attempts)
+    });
+
     // Check. `[CT-1]` — and check again with what the compile-time evaluator
     // answered, until nothing is left to evaluate; a pass that asks for
     // values says nothing (its errors are the next pass's too).
@@ -4907,6 +4972,15 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         passes += 1;
         let (mut types, common) = TypeTable::new();
         let mark = sink.mark();
+        let kept_reader = |n: usize, found: &ember_types::codec::Found| plan.as_ref().expect("read only with a plan").kept(n, found);
+        let kept_closure = |span: ember_span::Span| plan.as_ref().is_some_and(|plan| plan.keeps_body_at(span));
+        let reuse = plan.as_ref().map(|plan| ember_typeck::Reuse {
+            modules: plan.whole(),
+            partial: plan.partial(),
+            types: &plan.types,
+            kept: &kept_reader,
+            kept_closure: &kept_closure,
+        });
         // [TYP-8] -- every profile defaults to panic; lexical attributes may
         // override that for arithmetic inside their declaration scope.
         let checked = ember_typeck::check(
@@ -4921,7 +4995,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             lint_settings.realtime,
             &exports,
             reload_additions.as_ref().map_or(&no_conditional, |additions| &additions.if_default),
+            reuse.as_ref(),
         );
+        // `[BLD-1]` — the compile-time evaluator runs function bodies: every module's are checked.
+        if !checked.comptime.is_empty() && plan.as_ref().is_some_and(|plan| !plan.whole().is_empty() || !plan.partial().is_empty()) {
+            attempts.whole = true;
+            attempts.again = true;
+            return Ok(ExitCode::FAILURE);
+        }
         if checked.comptime.is_empty() {
             // `[TCB-1]` — under `--require-evidence` a grade claimed without evidence is an error.
             if options.require_evidence {
@@ -5013,6 +5094,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             sink.emit(report);
         }
     }
+    if let Some(plan) = plan.as_mut() {
+        if !plan.found(&checked, attempts) {
+            return Ok(ExitCode::FAILURE);
+        }
+        // `[BLD-1]` — what checking the kept modules reported, reported as a clean build would,
+        // whatever this build then finds.
+        plan.replay(&mut sink, &map);
+        mark("modules kept", &plan.whole().len().to_string());
+        mark("modules checked", &plan.checked_names());
+        mark("functions checked", &plan.checked_functions(&checked));
+    }
     let program = &checked.program;
     mark("check", "all modules");
     // `[WK-5]`–`[WK-7]` — class-field ownership cycles are a package-visible
@@ -5033,7 +5125,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // as "type-check + borrow-check without codegen", so it cannot stop here.
     // `[IMP-11]` — from here to code generation the bodies change only through
     // `mir.pass`, which in a debug build of the compiler verifies them after each pass.
-    let mut mir = ember_mir::verify::Pipeline::new(ember_mir::lower(program, &types, &common, &map), &types);
+    let mut lowered = ember_mir::lower(program, &types, &common, &map);
+    // `[BLD-1]` — the kept modules' MIR, after the program's: what only checks a body passes it by.
+    let kept_facts = plan.as_mut().map(|plan| plan.inject(&mut lowered)).unwrap_or_default();
+    let mut mir = ember_mir::verify::Pipeline::new(lowered, &types);
     // `[TST-3]` — the package's tests (not the standard library's), in the
     // order the test binary numbers them. The binary's entry calls each, so
     // none is inlined into another caller and removed.
@@ -5068,18 +5163,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     mark("lower", "all modules");
     // Definite initialisation (Part XVIII §4.6) runs on MIR, before any
     // optimisation could remove the read it is looking for.
-    let initialization_facts = ember_analysis::analyze_definite_init_all(mir.bodies());
+    // `[BLD-1]` — the bodies checked here come first; the kept ones after them have been through
+    // these checks and drop elaboration.
+    let fresh = mir.bodies().iter().take_while(|body| !body.kept).count();
+    let initialization_facts = ember_analysis::analyze_definite_init_all(&mir.bodies()[..fresh]);
     // `[IMP-7]` — the fact verifier proves that the canonical initialization
     // fixpoint describes this initial MIR before diagnostics consume it and
     // before drop elaboration transforms the CFG.
-    ember_analysis::verify_initialization_facts_all(mir.bodies(), &initialization_facts);
-    ember_analysis::check_definite_init_all_with_facts(mir.bodies(), &initialization_facts, &mut sink);
+    ember_analysis::verify_initialization_facts_all(&mir.bodies()[..fresh], &initialization_facts);
+    ember_analysis::check_definite_init_all_with_facts(&mir.bodies()[..fresh], &initialization_facts, &mut sink);
     // `[LAY-2]` — a reference to a field of a `@packed` value is `E2170`.
-    ember_analysis::check_packed_references_all(mir.bodies(), &types, &mut sink);
+    ember_analysis::check_packed_references_all(&mir.bodies()[..fresh], &types, &mut sink);
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
-    mir.pass("drop elaboration", &mut types, |bodies, types| ember_analysis::elaborate_drops_all(bodies, types, &mut sink));
+    mir.pass("drop elaboration", &mut types, |bodies, types| ember_analysis::elaborate_drops_all(&mut bodies[..fresh], types, &mut sink));
     // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only
     // by `ember lint`. A lint that fires on a separate command does not close
     // the footgun `[GRM-4]` opens.
@@ -5088,7 +5186,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // artifact, then become the only contracts borrow checking consumes. The
     // cache write itself waits until the complete semantic verification below
     // succeeds, so an erroneous program never overwrites a verified record.
-    let interface_cache = mir.pass("callable region summaries", &mut types, |bodies, types| prepare_callable_interface_cache(
+    let (interface_cache, contracts) = mir.pass("callable region summaries", &mut types, |bodies, types| prepare_callable_interface_cache(
         input,
         &modules,
         &checked.callable_declarations,
@@ -5096,6 +5194,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         bodies,
         types,
         options,
+        &kept_facts.contracts,
+        &kept_facts.interfaces,
     ))?;
     // `[CLS-7a]` — reject a class destructor's own handle entering visible
     // storage before code generation can expose a resurrection path.
@@ -5104,10 +5204,11 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // parameter C passes as a copy.
     ember_analysis::check_c_entry_returns_all(mir.bodies(), &types, &mut sink);
     // `[FFI-36b]` — one foreign object adopted twice through one local (`E5068`).
-    ember_analysis::check_adoptions_all(mir.bodies(), &mut sink);
+    ember_analysis::check_adoptions_all(&mir.bodies()[..fresh], &mut sink);
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
-    ember_analysis::check_all_with_installed_callable_regions(mir.bodies(), &types, &mut sink);
+    let (mut checked_ranges, borrow_facts) =
+        ember_analysis::check_all_with_installed_callable_regions(mir.bodies(), &types, &mut sink, &kept_facts.borrow);
     // `[DIA-8]` — read the loans where the checker read them.
     if let Some(line) = options.borrow_report {
         report(&sink, &map, options);
@@ -5129,14 +5230,30 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if !sink.has_errors() {
         verify_callable_regions_or_panic(mir.bodies(), &types);
     }
-    ember_analysis::check_unused_all(mir.bodies(), &types, &mut sink);
+    checked_ranges.extend(ember_analysis::check_unused_all(mir.bodies(), &types, &mut sink));
     // `[DIA-7]` — a borrow error the classifier could not place is recorded
     // rather than left to be noticed. CI fails when the conformance suite
     // produces any, which is what stops an unexplained rejection shipping.
     write_unclassified_log(&sink, options);
+    // `[BLD-1]` — what checking the kept bodies reported, where a clean build's checks report it.
+    if let Some(plan) = plan.as_mut() {
+        plan.replay_bodies(&mut sink, &map);
+    }
     mark("move, drop, borrow checks", "all modules");
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
+    }
+    // `[BLD-1]` — the checked forms: those the clean modules were kept against must still hold; each
+    // module checked here is kept for the next build; and what the clean ones reported is reported.
+    if let Some(plan) = plan.as_mut() {
+        let checks = incremental::Checks::new(plan, &checked, &modules, mir.bodies(), &checked_ranges, &sink);
+        if !plan.verify(&checks, &contracts, &borrow_facts, attempts) {
+            return Ok(ExitCode::FAILURE);
+        }
+        if !checked.closure_names_unstable {
+            plan.keep(&checks, interface_cache.artifacts(), mir.bodies(), &contracts, &borrow_facts, &sink, &types, &|id| checked.made_structs.get(&id).cloned(), &map)?;
+        }
+        mark("kept checked forms", "all modules");
     }
     // `[CORO-4]` — each generator's body, checked, becomes its frame's state
     // machine; what borrow checking read of the stubs is made again.
@@ -5534,6 +5651,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
         reload_image.as_ref(),
         command == "test" && options.ffi_evidence.is_some(),
+        None,
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.

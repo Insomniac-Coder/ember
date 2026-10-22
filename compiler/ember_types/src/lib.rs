@@ -12,6 +12,7 @@ use std::fmt;
 
 use ember_span::{Span, Symbol};
 
+pub mod codec;
 mod const_norm;
 pub use const_norm::{ConstAtom, ConstError, ConstNorm, ConstOp};
 
@@ -72,7 +73,7 @@ pub struct RangeId(pub u32);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct InferId(pub u32);
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum IntTy {
     I8,
     I16,
@@ -87,7 +88,7 @@ pub enum IntTy {
     Isize,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum UintTy {
     U8,
     U16,
@@ -100,7 +101,7 @@ pub enum UintTy {
     Usize,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum FloatTy {
     F16,
     F32,
@@ -110,7 +111,7 @@ pub enum FloatTy {
 /// `[FN-6a]` — one callable parameter's ordinary Ember passing mode. This is
 /// part of canonical function-type identity and compile-time metadata, never
 /// a runtime field or a separate ownership model.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum FnParamMode {
     Borrow,
     Mut,
@@ -282,7 +283,7 @@ impl Layout {
 
 /// `[MOD-2]`, `[MOD-7]` — how far a field is visible. Kept here rather than
 /// taken from the AST so that `ember_types` does not depend on it.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FieldVis {
     /// The default: readable and writable from the declaring module only.
     Private,
@@ -3032,6 +3033,30 @@ impl TypeTable {
         self.instance_origins.entry(instance).or_insert_with(|| (generic, args.to_vec()));
     }
 
+    /// `[BLD-1]` — the generic the struct `id` is an instance of, and its arguments: what makes the
+    /// same struct again in another run. `None` for a struct that is no instance.
+    pub fn struct_instance(&self, id: StructId) -> Option<(Symbol, Vec<Ty>)> {
+        let def = self.struct_def(id);
+        self.instance_of(def.name, def.origin.as_ref().or(self.written_as.get(&id)))
+    }
+
+    /// [`Self::struct_instance`] of an enum.
+    pub fn enum_instance(&self, id: EnumId) -> Option<(Symbol, Vec<Ty>)> {
+        let def = self.enum_def(id);
+        self.instance_of(def.name, def.origin.as_ref())
+    }
+
+    /// [`Self::struct_instance`] of a class.
+    pub fn class_instance(&self, id: ClassId) -> Option<(Symbol, Vec<Ty>)> {
+        let def = self.class_def(id);
+        self.instance_of(def.name, def.origin.as_ref())
+    }
+
+    fn instance_of(&self, name: Symbol, origin: Option<&(Symbol, Vec<Ty>)>) -> Option<(Symbol, Vec<Ty>)> {
+        let (generic, args) = self.nominal_origin(name, origin);
+        (generic != name || !args.is_empty()).then(|| (generic, args.to_vec()))
+    }
+
     /// The generic a nominal type (or interface) named `name` instantiates and its arguments
     /// (none for one that is no instance), by what the checker recorded (`note_instance`), else
     /// by the type's own origin.
@@ -3384,7 +3409,7 @@ pub fn align_to(offset: u64, align: u64) -> u64 {
 /// Panic is the default in every profile. An explicit function attribute or
 /// module directive selects wrapping or saturation for arithmetic operators;
 /// shift-amount checks and named integer methods have fixed contracts.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum OverflowPolicy {
     /// Overflowing arithmetic operators panic.
     #[default]
@@ -3420,7 +3445,7 @@ impl OverflowPolicy {
 /// with every relaxation `@fastmath` allows. `[CG-C-11]` emits each relaxed
 /// function in a translation unit of its own, compiled with the matching
 /// flags.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub enum FpMode {
     #[default]
     Strict,

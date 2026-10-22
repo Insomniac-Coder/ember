@@ -67,6 +67,11 @@ impl InterfaceHash {
     pub fn of_bytes(bytes: &[u8]) -> Self {
         Self(*blake3::hash(bytes).as_bytes())
     }
+
+    /// A hash as [`Self::bytes`] gave it (a kept record's, `[BLD-1]`).
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
 }
 
 /// The passing mode of one callable parameter. This is deliberately separate
@@ -344,6 +349,24 @@ pub fn build_artifacts(
     inputs: &[ModuleInterfaceInput],
     compiler_version: &str,
 ) -> Result<Vec<ModuleInterfaceArtifact>, InterfaceArtifactError> {
+    build_artifacts_known(inputs, &BTreeMap::new(), compiler_version)
+}
+
+/// `[BLD-1]` — a module this build does not check again, as its kept record knows its artifact:
+/// what it imports, directly or not, and its interface hash.
+#[derive(Clone, Debug)]
+pub struct KnownInterface {
+    pub dependencies: Vec<String>,
+    pub interface_hash: InterfaceHash,
+}
+
+/// [`build_artifacts`] for the modules `inputs` holds, where the modules `known` names (which a
+/// build did not check again) are dependencies as their kept records know them.
+pub fn build_artifacts_known(
+    inputs: &[ModuleInterfaceInput],
+    known: &BTreeMap<String, KnownInterface>,
+    compiler_version: &str,
+) -> Result<Vec<ModuleInterfaceArtifact>, InterfaceArtifactError> {
     let mut inputs_by_module = BTreeMap::new();
     for input in inputs {
         if inputs_by_module
@@ -397,16 +420,17 @@ pub fn build_artifacts(
             &input.module,
             &input.direct_dependencies,
             &inputs_by_module,
+            known,
             &mut reachable,
         )?;
         reachable.remove(&input.module);
         let dependencies = reachable
             .into_iter()
             .map(|module| {
-                let interface_hash = preliminary
-                    .get(&module)
-                    .expect("dependency existence was checked during graph traversal")
-                    .interface_hash;
+                let interface_hash = match preliminary.get(&module) {
+                    Some(artifact) => artifact.interface_hash,
+                    None => known.get(&module).expect("dependency existence was checked during graph traversal").interface_hash,
+                };
                 (module, interface_hash)
             })
             .collect();
@@ -697,6 +721,7 @@ fn collect_transitive_dependencies(
     owner: &str,
     direct_dependencies: &[String],
     inputs: &BTreeMap<&str, &ModuleInterfaceInput>,
+    known: &BTreeMap<String, KnownInterface>,
     out: &mut BTreeSet<String>,
 ) -> Result<(), InterfaceArtifactError> {
     let mut pending: Vec<String> = direct_dependencies.to_vec();
@@ -704,13 +729,16 @@ fn collect_transitive_dependencies(
         if module == owner || !out.insert(module.clone()) {
             continue;
         }
-        let Some(input) = inputs.get(module.as_str()) else {
-            return Err(InterfaceArtifactError::UnknownDependency {
-                owner: owner.to_string(),
-                module,
-            });
-        };
-        pending.extend(input.direct_dependencies.iter().cloned());
+        match (inputs.get(module.as_str()), known.get(&module)) {
+            (Some(input), _) => pending.extend(input.direct_dependencies.iter().cloned()),
+            (None, Some(known)) => pending.extend(known.dependencies.iter().cloned()),
+            (None, None) => {
+                return Err(InterfaceArtifactError::UnknownDependency {
+                    owner: owner.to_string(),
+                    module,
+                });
+            }
+        }
     }
     Ok(())
 }

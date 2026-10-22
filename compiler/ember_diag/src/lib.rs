@@ -21,7 +21,7 @@ pub use codes::Code;
 /// How loud a diagnostic is. Only `Error` and `Warning` reach the top level;
 /// `Note` and `Help` exist as sub-diagnostics, and `Lint` is what `ember lint`
 /// emits (L-codes).
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Severity {
     Error,
     Warning,
@@ -47,7 +47,7 @@ impl Severity {
 }
 
 /// A span with an optional message, rendered as a caret run under the source.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Label {
     pub span: Span,
     pub message: Option<String>,
@@ -66,7 +66,7 @@ impl Label {
 
 /// A machine-applicable edit. `[DIA-1]` asks for one wherever the fix is
 /// unambiguous; `ember fix` (v1.1) and editors consume these.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Suggestion {
     pub message: String,
     /// What replaces each span, applied together; edits at one place apply in this order.
@@ -77,7 +77,7 @@ pub struct Suggestion {
 }
 
 /// The text an edit puts in place of its span.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub enum Replacement {
     Text(String),
     /// The source text of another span (a rewrite that moves an expression).
@@ -93,7 +93,7 @@ impl Replacement {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub code: Option<Code>,
@@ -300,10 +300,20 @@ impl Sink {
         std::mem::take(&mut self.diagnostics)
     }
 
-    /// Human rendering of everything collected, in emission order.
+    /// Everything collected, in the program's order: by file (as the build read them), then by
+    /// place; diagnostics at one place in the order they were emitted. `[BLD-1]` — so a build that
+    /// checks some modules again and reports the rest's kept diagnostics reports what a clean
+    /// build does, in the same order.
+    pub fn ordered(&self) -> Vec<&Diagnostic> {
+        let mut ordered: Vec<&Diagnostic> = self.diagnostics.iter().collect();
+        ordered.sort_by_key(|d| (d.primary.span.file, d.primary.span.start, d.primary.span.end));
+        ordered
+    }
+
+    /// Human rendering of everything collected, in the program's order (`ordered`).
     pub fn render(&self, map: &SourceMap) -> String {
         let mut out = String::new();
-        for d in &self.diagnostics {
+        for d in self.ordered() {
             out.push_str(&render(d, map));
             out.push('\n');
         }
@@ -315,7 +325,7 @@ impl Sink {
     /// stream them while the compiler is still running.
     pub fn render_json(&self, map: &SourceMap) -> String {
         let mut out = String::new();
-        for d in &self.diagnostics {
+        for d in self.ordered() {
             let _ = writeln!(out, "{}", to_json(d, map));
         }
         out
