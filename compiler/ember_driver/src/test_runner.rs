@@ -354,8 +354,9 @@ enum Example {
     /// also runs without reporting it.
     Fixed { code: String, source: String, manifest: Option<String>, files: Vec<(String, String)> },
     /// `[DOC-2]` — a user-guide sample, ```` ```ember ````: built and run, it
-    /// exits with status 0.
-    Run { source: String },
+    /// exits with status 0; followed at once by an ```` ```output ```` block,
+    /// it prints exactly that.
+    Run { source: String, output: Option<String> },
     /// A sample marked ```` ```ember,fragment ```` names items it does not
     /// declare: it must parse (`[TST-7]`'s marking).
     Fragment { source: String },
@@ -444,10 +445,14 @@ fn guide_examples(dir: &Path, docs: &Path, out: &mut Vec<(String, Example)>) -> 
         }
         let text = std::fs::read_to_string(&path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
         let page = path.strip_prefix(docs.parent().unwrap_or(docs)).unwrap_or(&path).to_string_lossy().replace('\\', "/");
-        for (info, body, line) in fences(&text) {
+        let blocks = fences(&text);
+        for (index, (info, body, line)) in blocks.iter().enumerate() {
             let example = match info.as_str() {
-                "ember" => Example::Run { source: body },
-                "ember,fragment" => Example::Fragment { source: body },
+                "ember" => {
+                    let output = blocks.get(index + 1).filter(|(next, ..)| next == "output").map(|(_, printed, _)| printed.clone());
+                    Example::Run { source: body.clone(), output }
+                }
+                "ember,fragment" => Example::Fragment { source: body.clone() },
                 // `ember,ignore` and every other block are not run.
                 _ => continue,
             };
@@ -526,8 +531,8 @@ fn source_bytes(source: &str) -> Vec<u8> {
 }
 
 /// Runs this compiler as `ember <command> <example> [flags]` on one example
-/// written into `work`, beside its manifest if it has one: the status, and
-/// standard output and error together.
+/// written into `work`, beside its manifest if it has one: the status,
+/// standard output and error together, and standard output alone.
 fn ember_on(
     exe: &Path,
     work: &Path,
@@ -535,7 +540,7 @@ fn ember_on(
     manifest: Option<&str>,
     command: &[&str],
     options: &Options,
-) -> Result<(bool, String), String> {
+) -> Result<(bool, String, String), String> {
     std::fs::create_dir_all(work).map_err(|error| format!("cannot create `{}`: {error}", work.display()))?;
     let file = work.join(ember_branding::source_file("example"));
     std::fs::write(&file, source_bytes(source)).map_err(|error| error.to_string())?;
@@ -558,9 +563,9 @@ fn ember_on(
         child.arg("--no-leak-check");
     }
     let output = child.output().map_err(|error| format!("cannot run `{}`: {error}", exe.display()))?;
-    let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
-        .replace("\r\n", "\n");
-    Ok((output.status.success(), text))
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let text = format!("{stdout}{}", String::from_utf8_lossy(&output.stderr)).replace("\r\n", "\n");
+    Ok((output.status.success(), text, stdout))
 }
 
 /// The files a page's examples are compiled beside (`[FFI-6]`'s headers), into `work`.
@@ -598,12 +603,12 @@ fn run_example(
             write_files(work, files)?;
             let tag = format!("[{code}]");
             let manifest = manifest.as_deref();
-            let (checked, output) = ember_on(exe, work, source, manifest, check_command(code), options)?;
+            let (checked, output, _) = ember_on(exe, work, source, manifest, check_command(code), options)?;
             if code.starts_with('E') && *toolchain {
                 if !checked {
                     Attempt::fail("the failing program, an error only a C compiler decides, is rejected without one", &output)
                 } else {
-                    let (built, output) = ember_on(exe, work, source, manifest, &["build"], options)?;
+                    let (built, output, _) = ember_on(exe, work, source, manifest, &["build"], options)?;
                     if !built && output.contains(&tag) {
                         Attempt::pass()
                     } else if built {
@@ -626,7 +631,7 @@ fn run_example(
                 Attempt::pass()
             } else {
                 // A code the debug runtime reports appears when it runs.
-                let (ran, output) = ember_on(exe, work, source, manifest, &["run"], options)?;
+                let (ran, output, _) = ember_on(exe, work, source, manifest, &["run"], options)?;
                 if ran && output.contains(&tag) {
                     runtime_codes.borrow_mut().insert(code.clone());
                     Attempt::pass()
@@ -638,11 +643,11 @@ fn run_example(
         Example::Fixed { code, source, manifest, files } => {
             write_files(work, files)?;
             let manifest = manifest.as_deref();
-            let (checked, output) = ember_on(exe, work, source, manifest, check_command(code), options)?;
+            let (checked, output, _) = ember_on(exe, work, source, manifest, check_command(code), options)?;
             if !checked {
                 Attempt::fail("the fixed program does not compile", &output)
             } else if runtime_codes.borrow().contains(code) {
-                let (ran, output) = ember_on(exe, work, source, manifest, &["run"], options)?;
+                let (ran, output, _) = ember_on(exe, work, source, manifest, &["run"], options)?;
                 if !ran {
                     Attempt::fail("the fixed program fails when it runs", &output)
                 } else if output.contains(&format!("[{code}]")) {
@@ -654,12 +659,18 @@ fn run_example(
                 Attempt::pass()
             }
         }
-        Example::Run { source } => {
-            let (ran, output) = ember_on(exe, work, source, None, &["run"], options)?;
-            if ran { Attempt::pass() } else { Attempt::fail("the sample does not build and run with status 0", &output) }
+        Example::Run { source, output: expected } => {
+            let (ran, output, printed) = ember_on(exe, work, source, None, &["run"], options)?;
+            match expected {
+                _ if !ran => Attempt::fail("the sample does not build and run with status 0", &output),
+                Some(expected) if printed.trim_end() != expected.trim_end() => {
+                    Attempt::fail(format!("the sample printed other than its `output` block, which is:\n{expected}"), &output)
+                }
+                _ => Attempt::pass(),
+            }
         }
         Example::Fragment { source } => {
-            let (parsed, output) = ember_on(exe, work, source, None, &["check", "--syntax-only"], options)?;
+            let (parsed, output, _) = ember_on(exe, work, source, None, &["check", "--syntax-only"], options)?;
             if parsed { Attempt::pass() } else { Attempt::fail("the fragment does not parse", &output) }
         }
     })

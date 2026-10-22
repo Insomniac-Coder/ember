@@ -256,3 +256,33 @@ output has not been seen, so the first CI run may need the expected text adjuste
   for Windows"): `winget install --id Microsoft.WindowsSDK.10.0.22621 --override "/features OptionId.WindowsDesktopDebuggers /quiet"`
 - WSL: `sudo apt install gdb`
 The rule stays `unfinished` until the session has passed on Windows and Linux.
+
+## `[DOC-2]`, `[DOC-4]` — the guide, published with the error pages and the specification (done)
+
+- **`docs/book/`**: a README and twelve chapters for a newcomer — a first program, values and
+  control flow, functions, collections, text, structs/enums/`match`/`Option`, errors, ownership,
+  classes, modules and packages, tests and tools, and **coming from Python** (Appendix E's tables
+  and its side-by-side program, each claim a sample). 57 samples; each ```` ```ember ```` one is a
+  whole program that `ember test --doc` builds and runs, and **an ```` ```output ```` block right after
+  a sample is now checked too** (`test_runner.rs`: `Example::Run { output }`), so the guide cannot
+  say a program prints what it does not.
+- **`tools/doc_bundle.py`** writes `ember-docs-<version>.zip`: an index naming the release, `book/`,
+  every page of `docs/errors/`, and the specification `development-target.json` names. The release
+  workflow's new **`documentation`** job (after `compile-budgets`) builds `ember`, runs every
+  documentation example (`ember test --doc`), makes the archive and attaches it to the release
+  (`gh release create … || gh release upload …`).
+- Tests: `ember_driver/tests/guide.rs` — every sample runs and prints what the guide says (`[DOC-2]`);
+  the archive holds the guide, every error page and the specification, and the release job runs the
+  examples, then makes the archive, then attaches it (`[DOC-4]`).
+
+**For the lead — two error pages fail `ember test --doc` today** (before this branch too, as far as
+I can tell: the doc runner checks and runs a page's program, and these codes come only from
+`ember test --instrument-ffi`): `docs/errors/E5053.md` ("the failing program compiled") and
+`docs/errors/W5054.md` ("ran without reporting W5054"). The release job runs every example, so it
+fails until the runner runs those two pages' programs under `ember test --instrument-ffi` (or the
+pages are marked as such). Not mine to change (FFI evidence, helper AB's area).
+
+**Observation (a possible defect)**: a map comprehension whose key is a `str` value —
+`{name: name.char_count() for _, name in pairs}` with `pairs = [(1, "one")]` — is `E2020`,
+"expected `String`, found `str`": the map's key type is taken as `String` and the `str` is not
+converted. A list comprehension of the same `str`s is fine. The guide uses an `int` key instead.
