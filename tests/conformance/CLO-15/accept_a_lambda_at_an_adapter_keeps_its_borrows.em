@@ -6,8 +6,8 @@
 #$ stdout: 3 7
 #$ stdout: ['a', 'b', 'c', 'd']
 #$ stdout: ['1x', '2y']
-# `[CLO-15]` (ODR-100) — the adapters take their callable over (`[STD-19]`),
-# and a lambda written at the call keeps the captures `[CLO-2]` infers: what it
+# `[CLO-15]` (ODR-100) — an adapter is given a lambda written at the call (`[STD-19]`,
+# ODR-240), and the lambda keeps the captures `[CLO-2]` infers: what it
 # writes lands in the caller's variable, which is the caller's again once the
 # iterator is gone (`[CLO-4]`). An `owned fn` capturing a `String` goes through
 # an adapter, fused in a `for` or called through `count`, and `zip` and `chain`

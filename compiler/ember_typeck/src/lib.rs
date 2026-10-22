@@ -39106,13 +39106,16 @@ impl<'a> Checker<'a> {
     /// pass it again, and the callee may call it with leave to change what it captured, which stays
     /// lent while the callee's value holding it is used (`[BRW-2]`). A lambda written at the call is
     /// given, since nothing else can name it; a `Copy` callable (a function) is copied; a `once fn`
-    /// is given, as its call ends it; and an owned callable parameter written as a callable type
-    /// (`owned f: fn(A) -> R`) takes over what it is given (ODR-189). A callable the caller holds
-    /// only shared (a borrowed parameter) is passed on as before (D-257).
+    /// value or a closure that moves a capture out is given, as its call ends it; and an owned
+    /// callable parameter written as a callable type (`owned f: fn(A) -> R`, `f: once fn(A) -> R`)
+    /// takes over what it is given (ODR-189). A bound `F: once fn(A) -> R` lends a named callable
+    /// that may be called again (`Option.map`'s, ODR-240): the callee's one call goes through the
+    /// reference. A callable the caller holds only shared (a borrowed parameter) is passed on as
+    /// before (D-257).
     fn lend_named_callable(&mut self, value: Expr, param_ty: Ty, mode: Mode, generics: &[GenericParam], span: Span) -> Expr {
         let TyKind::Param { index, .. } = *self.types.kind(param_ty) else { return value };
         let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.clone()) else { return value };
-        if mode != Mode::Owned || bound.owned || bound.once || !is_place(&value.kind) || value.ty == self.common.error || self.types.is_copy(value.ty) {
+        if mode != Mode::Owned || bound.owned || !is_place(&value.kind) || value.ty == self.common.error || self.types.is_copy(value.ty) {
             return value;
         }
         if !self.is_callable_value_type(value.ty)

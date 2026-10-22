@@ -311,8 +311,9 @@ pub class World:
 
     ## `[ECS-4]` — runs `system` over this world's `Query[Q]` with `args`: the storages `Q` names
     ## are borrowed for the run, those it writes (`Mut[T]`) mutably and the others shared, and no
-    ## other; the `Commands` it queued are applied once it returns (`[ECS-5]`).
-    pub fn run[Q: QueryParam, A](self, system: fn(mut Query[Q], A), owned args: A):
+    ## other; the `Commands` it queued are applied once it returns (`[ECS-5]`). A named `system`
+    ## is lent, with leave to change what it captured (`[STD-19]`, ODR-240).
+    pub fn run[Q: QueryParam, A, S: fn(mut Query[Q], A)](self, owned system: S, owned args: A):
         fetched = Q.Ops.fetch(self)
         q = Query[Q](view=Q.Ops.view(ref fetched), cmds=Commands(), world=self)
         system(q, args)

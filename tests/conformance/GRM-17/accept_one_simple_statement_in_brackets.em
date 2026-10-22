@@ -11,8 +11,8 @@
 ## `[GRM-17]`, `[LEX-6a]` — inside brackets a lambda's `:` body is one simple statement: an
 ## augmented assignment, an assignment to an index or a name, `pass` or an expression, ended by
 ## the closing bracket or a `,` (`f(fn(i): total += i, 4)` passes two arguments). It was `E0106`
-## for every assignment (D-821). `for_each` takes its callable over, as an adapter does (and as
-## `feed` here does), so the lambda may write what it captures.
+## for every assignment (D-821). `for_each` is given a lambda written at the call, as an adapter is
+## (ODR-240; `feed` here takes it over), so the lambda may write what it captures.
 
 fn show(x: int):
     println(x)
