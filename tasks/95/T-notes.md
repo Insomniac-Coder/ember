@@ -158,14 +158,16 @@ outlive the `ForeignBox`).
 
 ## Defects found (for the lead to number)
 
-1. **Hand declarations read contract words by position.** `@ffi(param(p, nullable, borrowed,
-   one))` is `E0900` ("this `param(…)` contract is not implemented yet"); only `param(p, borrowed,
-   one, nullable)` is read. `[FFI-10]`/`[FFI-11]` give no order (an overlay's words are "separated
-   by spaces", any order). The importer now writes overlays' words in the checker's order, so
-   imports are fixed; a hand declaration is not. Fix: read each `param(…)`/`result(…)` as a set of
-   words (`ffi_param_contract_arg`, `ffi_result_contract_arg`, `ffi_owned_param_arg`,
-   `ffi_retained_param_arg`, `ffi_owned_result_arg`, `ffi_missing_count_arg`,
-   `ffi_result_missing_count_arg` in ember_typeck). Open.
+1. **Contract words were read by position.** `@ffi(param(p, nullable, borrowed, one))` was `E0900`
+   ("this `param(…)` contract is not implemented yet"); only `param(p, borrowed, one, nullable)`
+   was read, and an overlay's words reached the checker in the order written. `[FFI-10]`/`[FFI-11]`
+   give no order (an overlay's words are "separated by spaces"). Fixed twice over: the importer
+   writes an overlay's words ownership-first (`canonical`), and the checker reads each `param(…)`
+   and `result(…)` in that order whatever the order written (`ffi_ordered`, ember_typeck, applied
+   in `ffi_param_contract_arg`, `ffi_result_contract_arg`, `ffi_owned_param_arg`,
+   `ffi_retained_param_arg`, `ffi_owned_result_arg`, `ffi_out_param_arg`, `ffi_missing_count_arg`,
+   `ffi_result_missing_count_arg`). Test: `FFI-11/accept_contract_words_in_any_order.em`
+   (`E0900` and `E5002` with `main`'s compiler).
 2. **An opaque handle could not be borrowed `one`** (C and C++): fixed (T1, typeck).
 3. **A `noexcept` free C++ function with a `T&` of a type by value and an entry was `E5002`**:
    fixed (T1, `slot_words`).

@@ -55148,6 +55148,8 @@ fn ffi_link_name_attr(attr: &ast::Attribute) -> Option<&str> {
 fn ffi_out_param_arg(arg: &ast::AttrArg) -> Option<Symbol> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || args.len() != 3
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -55540,6 +55542,8 @@ enum FfiResultContract {
 fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 0);
+    let args = &ordered[..];
     let fixed = ffi_fixed_length(&args.get(1)?.value);
     let count = ffi_count_target(&args.get(1)?.value);
     let nul_terminated = ffi_contract_word(&args.get(1)?.value).is_some_and(|word| word.is("nul_terminated"));
@@ -55621,6 +55625,8 @@ fn ffi_result_contract_arg(arg: &ast::AttrArg) -> Option<FfiResultContract> {
 fn ffi_owned_result_arg(arg: &ast::AttrArg) -> Option<(ast::Ident, bool, bool)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 0);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("result")) || args.len() < 2
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -55660,6 +55666,8 @@ fn ffi_owned_result_arg(arg: &ast::AttrArg) -> Option<(ast::Ident, bool, bool)> 
 fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -55683,6 +55691,8 @@ fn ffi_owned_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
 fn ffi_retained_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, bool)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) || !(3..=4).contains(&args.len())
         || args.iter().any(|arg| arg.name.is_some()) {
         return None;
@@ -55739,6 +55749,8 @@ fn ffi_result_contract(attrs: &[ast::Attribute]) -> Option<FfiResultContract> {
 fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContract)> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param")) {
         return None;
     }
@@ -55780,6 +55792,29 @@ fn ffi_param_contract_arg(arg: &ast::AttrArg) -> Option<(Symbol, FfiPointerContr
         _ => return None,
     };
     Some((name, kind))
+}
+
+/// `[FFI-10]`, `[FFI-11]` — a slot's contract words in the order the readers here take them: its
+/// ownership word, then its count word, then the rest as written (after the first `skip` arguments,
+/// a parameter's name). The vocabulary gives its words no order — an overlay writes them in any
+/// (`[GRM-35]`) — so neither does a hand declaration: `param(p, nullable, borrowed, one)` is
+/// `param(p, borrowed, one, nullable)`.
+fn ffi_ordered(args: &[ast::Arg], skip: usize) -> Vec<ast::Arg> {
+    let rank = |arg: &ast::Arg| {
+        let word = match &arg.value.kind {
+            ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
+            _ => ffi_contract_word(&arg.value),
+        };
+        match word.as_ref().map(|word| word.as_str()) {
+            Some("borrowed" | "owned" | "retained" | "returns_owned" | "out" | "inout_count") => 0,
+            Some("one" | "count" | "fixed" | "nul_terminated") => 1,
+            _ => 2,
+        }
+    };
+    let skip = skip.min(args.len());
+    let mut words = args[skip..].to_vec();
+    words.sort_by_key(rank);
+    args[..skip].iter().cloned().chain(words).collect()
 }
 
 fn ffi_contract_word(expr: &ast::Expr) -> Option<Symbol> {
@@ -55896,6 +55931,8 @@ fn ffi_unknown_fact_contracts(attrs: &[ast::Attribute]) -> Vec<(Symbol, Symbol)>
 fn ffi_missing_count_arg(arg: &ast::AttrArg) -> Option<Symbol> {
     let ast::AttrArg::Expr(expr) = arg else { return None };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return None };
+    let ordered = ffi_ordered(args, 1);
+    let args = &ordered[..];
     if !ffi_contract_word(callee).is_some_and(|word| word.is("param"))
         || args.len() < 2 || args.iter().any(|arg| arg.name.is_some())
         || !ffi_contract_word(&args[1].value).is_some_and(|word| word.is("borrowed") || word.is("out")) {
@@ -55951,6 +55988,8 @@ fn ffi_unknown_result_fact_contracts(attrs: &[ast::Attribute]) -> Vec<Symbol> {
 fn ffi_result_missing_count_arg(arg: &ast::AttrArg) -> bool {
     let ast::AttrArg::Expr(expr) = arg else { return false };
     let ast::ExprKind::Call { callee, args } = &expr.kind else { return false };
+    let ordered = ffi_ordered(args, 0);
+    let args = &ordered[..];
     ffi_contract_word(callee).is_some_and(|word| word.is("result"))
         && args.first().is_some_and(|arg| arg.name.is_none()
             && ffi_contract_word(&arg.value).is_some_and(|word| word.is("borrowed")))
