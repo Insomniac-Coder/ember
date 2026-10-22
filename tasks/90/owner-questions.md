@@ -154,3 +154,9 @@ Python) and ODR-163 (rejected: a variable holding a pointer is not left out of a
   imported, used inside `unsafe:`, not refused by `E7002` (owner: "yes").
 - BUILT 2026-10-22 (ADR-253, spec ODR-163 in `0.9.10_Hardened_31`).
 
+## The delegation restored, 2026-10-22
+
+The owner restored the delegation to rule spec ambiguities, on the condition: "do not opt for cheap
+solutions that compromise on quality and use elegant, high performance solutions to the problems"
+(`docs/AUTOPILOT.md` §3).
+

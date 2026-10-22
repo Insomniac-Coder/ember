@@ -97,6 +97,12 @@ The handoff's start-here subsection keeps this list current: tick items off ther
   `docs/OWNER-QUEUE.md` (the question, the options with their costs, the ruling), edit
   `tasks/spec-0.9.9/parts/`, cut the next `Hardened_N` with the handoff's recipe, and re-pin
   `development-target.json`.
+  **The owner withdrew this delegation on 2026-10-21 and restored it on 2026-10-22, on one
+  condition:** "do not opt for cheap solutions that compromise on quality and use elegant, high
+  performance solutions to the problems". A ruling that drops or hides a feature to get past a
+  check, or picks the easier shape over the better one, breaks the condition (ODR-163's first
+  form, which hid C/C++ variables holding a pointer instead of fixing the check, is the example).
+  Record an owner's answer in exactly the owner's scope, never wider.
 - **Build the better implementation, never the easier one.** Price both shapes for the record,
   then build the correct one. Do not hand the owner a choice between an inferior option and
   nothing; if analysis finds the correct design mid-task, build and test it.
