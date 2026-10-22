@@ -225,7 +225,8 @@ fn statement_head(text: &str, levels: &[u32]) -> Option<(usize, usize)> {
         // `=` or an augmented `+=`, not `==`, `!=`, `<=`, `>=` or `=>`.
         let before = &text[..at];
         if ["//", "**", "<<", ">>", "+", "-", "*", "/", "%", "&", "|", "^", ""].iter().any(|op| before.ends_with(&format!(" {op}"))) {
-            return Some((at + 2, text.len()));
+            // A compound statement's head (`with f = …:`) keeps its `:` after the parentheses.
+            return Some((at + 2, text.len() - usize::from(text.ends_with(':'))));
         }
     }
     None
@@ -1114,33 +1115,28 @@ impl Printer<'_> {
                 format!("{}.{index}", self.expr_pure(base))
             }
             ast::ExprKind::Call { callee, args } => {
-                let args: Vec<String> = args.iter().map(|a| self.arg(a)).collect();
-                format!("{}({})", self.expr_pure(callee), args.join(", "))
+                format!("{}({})", self.expr_pure(callee), self.args(args))
             }
-            ast::ExprKind::MethodCall { recv, name, generic_args, args } => {
-                let args: Vec<String> = args.iter().map(|a| self.arg(a)).collect();
-                let generic_args = if generic_args.is_empty() {
-                    String::new()
-                } else {
-                    let rendered: Vec<String> = generic_args
-                        .iter()
-                        .map(|arg| match arg {
-                            ast::GenericArg::Type(ty) => self.type_expr(ty),
-                            ast::GenericArg::Const(expr) => self.expr_pure(expr),
-                            ast::GenericArg::Assoc { name, ty } => {
-                                format!("{} = {}", self.name(*name), self.type_expr(ty))
-                            }
-                        })
-                        .collect();
-                    format!("[{}]", rendered.join(", "))
+            ast::ExprKind::MethodCall { recv, name, generic_args, args } => format!(
+                "{}.{}{}({})",
+                self.expr_pure(recv),
+                self.member_name(*name),
+                self.generic_args(generic_args),
+                self.args(args)
+            ),
+            // Printed from the tree like any other call or a comprehension, not copied from the
+            // source: a line broken inside one, read back, would stay as it was broken.
+            ast::ExprKind::OptChain { base, name, generic_args, args } => {
+                let call = args.as_ref().map(|args| format!("({})", self.args(args))).unwrap_or_default();
+                format!("{}?.{}{}{call}", self.expr_pure(base), self.member_name(*name), self.generic_args(generic_args))
+            }
+            ast::ExprKind::Comprehension { kind, element, clauses } => {
+                let (open, close) = match kind {
+                    ast::ComprehensionKind::Array => ("[", "]"),
+                    ast::ComprehensionKind::Generator => ("(", ")"),
+                    ast::ComprehensionKind::Set | ast::ComprehensionKind::Map => ("{", "}"),
                 };
-                format!(
-                    "{}.{}{}({})",
-                    self.expr_pure(recv),
-                    self.member_name(*name),
-                    generic_args,
-                    args.join(", ")
-                )
+                format!("{open}{}{close}", self.comprehension(*kind, element, clauses))
             }
             ast::ExprKind::IndexOrInstantiate { base, args } => {
                 let rendered: Vec<String> = args
@@ -1263,12 +1259,61 @@ impl Printer<'_> {
                 _ => (body.span, &**body),
             },
         };
-        let (start, value) = body;
-        let header = self.text(Span { end: start.start, ..expr.span }).trim_end();
-        let header = header.strip_suffix(':')?.trim_end();
+        let (_, value) = body;
         let commented = self.comments.iter().any(|comment| comment.span.start >= expr.span.start && comment.span.end <= expr.span.end);
         let value = self.expr_pure(value);
-        (!commented && !value.contains('\n')).then(|| format!("{header} => {value}"))
+        // The header from the tree as well: one the source breaks over lines (a long line the
+        // formatter broke) is written on one line again, to be broken where `wrap` chooses.
+        let owned = if lambda.is_owned { "owned " } else { "" };
+        let params: Vec<String> = lambda.params.iter().map(|param| self.lambda_param(param)).collect();
+        let ret = lambda.ret.as_ref().map(|ret| format!(" -> {}", self.type_expr(ret))).unwrap_or_default();
+        (!commented && !value.contains('\n')).then(|| format!("{owned}fn({}){ret} => {value}", params.join(", ")))
+    }
+
+    /// A call's arguments. A generator expression that is the only one is written without
+    /// parentheses of its own (`[GRM-38]`): `sum(x * x for x in xs)`.
+    fn args(&self, args: &[ast::Arg]) -> String {
+        if let [ast::Arg { name: None, value, .. }] = args
+            && let ast::ExprKind::Comprehension { kind: kind @ ast::ComprehensionKind::Generator, element, clauses } = &value.kind
+        {
+            return self.comprehension(*kind, element, clauses);
+        }
+        args.iter().map(|a| self.arg(a)).collect::<Vec<_>>().join(", ")
+    }
+
+    fn generic_args(&self, generic_args: &[ast::GenericArg]) -> String {
+        if generic_args.is_empty() {
+            return String::new();
+        }
+        let rendered: Vec<String> = generic_args
+            .iter()
+            .map(|arg| match arg {
+                ast::GenericArg::Type(ty) => self.type_expr(ty),
+                ast::GenericArg::Const(expr) => self.expr_pure(expr),
+                ast::GenericArg::Assoc { name, ty } => format!("{} = {}", self.name(*name), self.type_expr(ty)),
+            })
+            .collect();
+        format!("[{}]", rendered.join(", "))
+    }
+
+    /// `[GRM-27]` — a comprehension's element and clauses, without its brackets. A map's element
+    /// is the pair the parser made of `k: v`.
+    fn comprehension(&self, kind: ast::ComprehensionKind, element: &ast::Expr, clauses: &[ast::CompClause]) -> String {
+        let mut text = match (kind, &element.kind) {
+            (ast::ComprehensionKind::Map, ast::ExprKind::Tuple(pair)) if pair.len() == 2 => {
+                format!("{}: {}", self.expr_pure(&pair[0]), self.expr_pure(&pair[1]))
+            }
+            _ => self.expr_pure(element),
+        };
+        for clause in clauses {
+            match clause {
+                ast::CompClause::For { pattern, iter } => {
+                    text.push_str(&format!(" for {} in {}", self.pattern(pattern), self.expr_pure(iter)));
+                }
+                ast::CompClause::If(condition) => text.push_str(&format!(" if {}", self.expr_pure(condition))),
+            }
+        }
+        text
     }
 
     fn arg(&self, arg: &ast::Arg) -> String {
@@ -1314,7 +1359,45 @@ impl Printer<'_> {
                     .collect();
                 format!("{path}[{}]", args.join(", "))
             }
+            // Printed from the tree, as every type whose text a long line may be broken inside.
+            ast::TypeKind::Fn { abi, latebound: false, once, is_unsafe, params, ret } => {
+                let once = if *once { "once " } else { "" };
+                let unsafe_ = if *is_unsafe { "unsafe " } else { "" };
+                let abi = abi.as_ref().map(|abi| format!("extern \"{abi}\" ")).unwrap_or_default();
+                let params: Vec<String> = params
+                    .iter()
+                    .map(|param| {
+                        let mode = match param.mode {
+                            ast::Mode::Borrow => "",
+                            ast::Mode::Mut => "mut ",
+                            ast::Mode::Owned => "owned ",
+                        };
+                        format!("{mode}{}", self.type_expr(&param.ty))
+                    })
+                    .collect();
+                let ret = ret.as_ref().map(|ret| format!(" -> {}", self.type_expr(ret))).unwrap_or_default();
+                format!("{once}{unsafe_}{abi}fn({}){ret}", params.join(", "))
+            }
+            ast::TypeKind::Dyn(bounds) => {
+                format!("dyn {}", bounds.iter().map(|bound| self.type_expr(bound)).collect::<Vec<_>>().join(" + "))
+            }
+            ast::TypeKind::SomeType(bound) => format!("some {}", self.type_expr(bound)),
+            ast::TypeKind::SelfType => "Self".to_string(),
             _ => self.text(ty.span).trim().to_string(),
+        }
+    }
+
+    /// A lambda's parameter: its type only where it was written (`[TYP-23]` infers the rest).
+    fn lambda_param(&self, param: &ast::Param) -> String {
+        let mode = match param.mode {
+            ast::Mode::Borrow => "",
+            ast::Mode::Mut => "mut ",
+            ast::Mode::Owned => "owned ",
+        };
+        match &param.kind {
+            ast::ParamKind::Receiver { .. } => format!("{mode}self"),
+            ast::ParamKind::Named { name, ty } if matches!(ty.kind, ast::TypeKind::Infer) => format!("{mode}{}", self.name(*name)),
+            ast::ParamKind::Named { name, ty } => format!("{mode}{}: {}", self.name(*name), self.type_expr(ty)),
         }
     }
 

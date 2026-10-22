@@ -776,6 +776,125 @@ pub enum ExprKind {
     Error,
 }
 
+/// `[IDE-4]` — every expression of `block`, each before those inside it: what an editor reads to
+/// find what is at a place.
+pub fn visit_block<'a>(block: &'a Block, f: &mut dyn FnMut(&'a Expr)) {
+    for stmt in &block.stmts {
+        visit_stmt(stmt, f);
+    }
+}
+
+pub fn visit_stmt<'a>(stmt: &'a Stmt, f: &mut dyn FnMut(&'a Expr)) {
+    match stmt {
+        Stmt::Let { init, .. } => init.iter().for_each(|init| visit_expr(init, f)),
+        Stmt::Assign { place, value } => {
+            visit_expr(place, f);
+            visit_expr(value, f);
+        }
+        Stmt::Destructure { value, bindings, .. } => {
+            visit_expr(value, f);
+            for binding in bindings {
+                match binding {
+                    DestructureBinding::Let { value, .. } => visit_expr(value, f),
+                    DestructureBinding::Assign { place, value } => {
+                        visit_expr(place, f);
+                        visit_expr(value, f);
+                    }
+                }
+            }
+        }
+        Stmt::Expr(expr) => visit_expr(expr, f),
+        Stmt::Return(value) => value.iter().for_each(|value| visit_expr(value, f)),
+        Stmt::If { cond, then_block, else_block } | Stmt::While { cond, body: then_block, else_block } => {
+            visit_expr(cond, f);
+            visit_block(then_block, f);
+            else_block.iter().for_each(|block| visit_block(block, f));
+        }
+        Stmt::ForRange { start, end, body, else_block, .. } => {
+            visit_expr(start, f);
+            visit_expr(end, f);
+            visit_block(body, f);
+            else_block.iter().for_each(|block| visit_block(block, f));
+        }
+        Stmt::Block(block) | Stmt::Defer(block) => visit_block(block, f),
+        Stmt::Break { .. } | Stmt::Continue { .. } => {}
+    }
+}
+
+pub fn visit_expr<'a>(expr: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
+    f(expr);
+    match &expr.kind {
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Str(_)
+        | ExprKind::CStr(_)
+        | ExprKind::Local(_)
+        | ExprKind::FnValue(_)
+        | ExprKind::Error => {}
+        ExprKind::Field { base, .. } | ExprKind::EnumField { base, .. } => visit_expr(base, f),
+        ExprKind::Call { args, .. }
+        | ExprKind::Builtin { args, .. }
+        | ExprKind::StructLit { fields: args, .. }
+        | ExprKind::TupleLit(args)
+        | ExprKind::ArrayLit(args)
+        | ExprKind::EnumLit { fields: args, .. } => args.iter().for_each(|arg| visit_expr(arg, f)),
+        ExprKind::InterfaceCall { receiver, args, .. } => {
+            visit_expr(receiver, f);
+            args.iter().for_each(|arg| visit_expr(arg, f));
+        }
+        ExprKind::CallIndirect { callee, args, .. } => {
+            visit_expr(callee, f);
+            args.iter().for_each(|arg| visit_expr(arg, f));
+        }
+        ExprKind::InterfaceUpcast { expr: inner, .. }
+        | ExprKind::DynBoxNew { value: inner, .. }
+        | ExprKind::MakeCallable { env: inner, .. }
+        | ExprKind::ArrayRepeat { value: inner, .. }
+        | ExprKind::Ref { place: inner, .. }
+        | ExprKind::Deref(inner)
+        | ExprKind::Unary { operand: inner, .. }
+        | ExprKind::Cast { expr: inner, .. }
+        | ExprKind::Widen { expr: inner, .. }
+        | ExprKind::EraseRange(inner)
+        | ExprKind::OverflowScope { expr: inner, .. } => visit_expr(inner, f),
+        ExprKind::Index { base, index } => {
+            visit_expr(base, f);
+            visit_expr(index, f);
+        }
+        ExprKind::Binary { lhs, rhs, .. } => {
+            visit_expr(lhs, f);
+            visit_expr(rhs, f);
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            visit_expr(scrutinee, f);
+            for arm in arms {
+                arm.guard.iter().for_each(|guard| visit_expr(guard, f));
+                match &arm.body {
+                    MatchArmBody::Block(block) => visit_block(block, f),
+                    MatchArmBody::Expr(body) => visit_expr(body, f),
+                }
+            }
+        }
+        ExprKind::FString { parts, .. } => {
+            for part in parts {
+                match part {
+                    FStringPart::Text(_) => {}
+                    FStringPart::Value(value, _) | FStringPart::Write { value, .. } => visit_expr(value, f),
+                }
+            }
+        }
+        ExprKind::Block { block, value } => {
+            visit_block(block, f);
+            visit_expr(value, f);
+        }
+        ExprKind::ClassNew { default_fields, args, .. } => {
+            default_fields.iter().flatten().for_each(|field| visit_expr(field, f));
+            args.iter().for_each(|arg| visit_expr(arg, f));
+        }
+    }
+}
+
 /// One piece of an f-string: literal text, or a value to format into it.
 #[derive(Clone, Debug)]
 pub enum FStringPart {

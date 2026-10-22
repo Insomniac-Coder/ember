@@ -49,7 +49,9 @@ const INCOMPLETE: &str = "ember-comptime-incomplete";
 
 /// How the evaluator's program is built.
 pub struct Build<'a> {
-    pub toolchain: &'a Toolchain,
+    /// `None` for a build that runs no C compiler (`ember run --interp`): the requests run on the
+    /// evaluator (`ember_interp::comptime`) instead.
+    pub toolchain: Option<&'a Toolchain>,
     pub profile: Profile,
     pub for_msvc: bool,
     pub runtime: &'a Path,
@@ -96,13 +98,16 @@ pub fn evaluate(
             bodies[index] = ember_mir::lower_one(&checked.program.functions[index], &checked.program, types, common, map);
         }
     }
-    ember_mir::prune_unused_implicit(&mut bodies, types, &checked.std_instances);
+    // `[IMP-11]` — verified after each pass, as the program's own build is.
+    let mut mir = ember_mir::verify::Pipeline::new(bodies, types);
+    mir.pass("pruning unused implicit bodies", types, |bodies, types| ember_mir::prune_unused_implicit(bodies, types, &checked.std_instances));
     // What these passes would report, the final pass reports for the program.
     let mut scratch = Sink::new();
-    ember_analysis::elaborate_drops_all(&mut bodies, types, &mut scratch);
-    ember_analysis::coroutines::transform(&mut bodies, types);
-    ember_analysis::install_callable_regions_all(&mut bodies, types);
-    ember_analysis::insert_shared_accesses_all(&mut bodies, types);
+    mir.pass("drop elaboration", types, |bodies, types| ember_analysis::elaborate_drops_all(bodies, types, &mut scratch));
+    mir.pass("the coroutine transform", types, |bodies, types| ember_analysis::coroutines::transform(bodies, types));
+    mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+    mir.pass("inserting shared accesses", types, |bodies, types| ember_analysis::insert_shared_accesses_all(bodies, types));
+    let bodies = mir.into_bodies();
 
     // `[CT-2]` — what a request reaches that compile time cannot run.
     let mut roots = Vec::new();
@@ -151,6 +156,11 @@ pub fn evaluate(
         program = fnv(unit.as_bytes(), program);
     }
     program = fnv(format!("{}:{}:{}", build.limits.steps, build.limits.heap, build.root.display()).as_bytes(), program);
+    // The evaluator's answers are kept apart from the C program's: each is checked against the
+    // other by running both (`[IMP-11]`), which a shared answer would hide.
+    if build.toolchain.is_none() {
+        program = fnv(b"interp", program);
+    }
     let keys: Vec<u64> = (0..roots.len()).map(|index| fnv(index.to_string().as_bytes(), program)).collect();
     let mut misses = Vec::new();
     for (index, (request, _)) in roots.iter().enumerate() {
@@ -164,20 +174,41 @@ pub fn evaluate(
     if misses.is_empty() {
         return Ok(());
     }
-    let exe = link(build, &emitted)?;
+    let exe = match build.toolchain {
+        Some(toolchain) => Some(link(build, toolchain, &emitted)?),
+        None => None,
+    };
+    let program = ember_interp::Program {
+        bodies: &bodies,
+        types,
+        common,
+        map,
+        debug: build.profile == Profile::Debug,
+        backtrace: false,
+        leak_check: false,
+    };
 
     for index in misses {
         let request = roots[index].0;
-        let output = std::process::Command::new(&exe)
-            .arg(index.to_string())
-            .arg(build.limits.steps.to_string())
-            .arg(build.limits.heap.to_string())
-            .arg(&build.root)
-            .output()
-            .map_err(|error| format!("cannot run the compile-time evaluator: {error}"))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let answer = match output.status.code() {
+        let (code, ended, stdout, stderr) = match &exe {
+            Some(exe) => {
+                let output = std::process::Command::new(exe)
+                    .arg(index.to_string())
+                    .arg(build.limits.steps.to_string())
+                    .arg(build.limits.heap.to_string())
+                    .arg(&build.root)
+                    .output()
+                    .map_err(|error| format!("cannot run the compile-time evaluator: {error}"))?;
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                (output.status.code(), output.status.to_string(), stdout, String::from_utf8_lossy(&output.stderr).to_string())
+            }
+            None => {
+                let limits = ember_interp::Limits { steps: build.limits.steps, heap: build.limits.heap };
+                let run = ember_interp::comptime::evaluate(&program, &request.symbol, limits, &build.root);
+                (Some(run.status), format!("status {}", run.status), run.stdout.trim().to_string(), run.stderr)
+            }
+        };
+        let answer = match code {
             Some(0) => {
                 keep(&build.cache_dir, keys[index], &stdout, &stderr);
                 ComptimeAnswer::Value(stdout)
@@ -211,11 +242,12 @@ pub fn evaluate(
                 ComptimeAnswer::Failed
             }
             _ => {
-                reports.push(
-                    Diagnostic::error(codes::E6004, request.span, format!("evaluating {} stopped abnormally", request.what))
-                        .note(format!("the evaluator ended with {}", output.status))
-                        .note("a compile-time evaluation runs the program's own code [CT-7]"),
-                );
+                let mut diagnostic = Diagnostic::error(codes::E6004, request.span, format!("evaluating {} stopped abnormally", request.what))
+                    .note(format!("the evaluator ended with {ended}"));
+                if let Some(line) = stderr.lines().find(|line| line.starts_with("the evaluator stopped")) {
+                    diagnostic = diagnostic.note(line.to_string());
+                }
+                reports.push(diagnostic.note("a compile-time evaluation runs the program's own code [CT-7]"));
                 ComptimeAnswer::Failed
             }
         };
@@ -273,7 +305,7 @@ fn stub_incomplete(program: &mut hir::Program, incomplete: &std::collections::Ha
 }
 
 /// The evaluator's program, compiled and linked.
-fn link(build: &Build<'_>, emitted: &ember_codegen_c::Output) -> Result<PathBuf, String> {
+fn link(build: &Build<'_>, toolchain: &Toolchain, emitted: &ember_codegen_c::Output) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&build.c_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&build.obj_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&build.bin_dir).map_err(|e| e.to_string())?;
@@ -282,7 +314,7 @@ fn link(build: &Build<'_>, emitted: &ember_codegen_c::Output) -> Result<PathBuf,
     let includes = vec![build.runtime.join("include")];
     let runtime_source = build.runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let runtime_input = ember_build::runtime_object_for_executable(
-        build.toolchain,
+        toolchain,
         &runtime_source,
         &includes,
         build.profile,
@@ -291,13 +323,13 @@ fn link(build: &Build<'_>, emitted: &ember_codegen_c::Output) -> Result<PathBuf,
     .map_err(|e| e.to_string())?
     .unwrap_or(runtime_source);
     let mut sources = vec![c_path, runtime_input];
-    let object_ext = if matches!(build.toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+    let object_ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
     for (mode, source) in &emitted.relaxed_units {
         let unit = build.c_dir.join(format!("comptime.{}.c", mode.name()));
         std::fs::write(&unit, source).map_err(|e| e.to_string())?;
         let object = build.obj_dir.join(format!("comptime.{}.{object_ext}", mode.name()));
         ember_build::compile_relaxed_object_for_executable(
-            build.toolchain,
+            toolchain,
             &unit,
             &includes,
             &object,
@@ -309,7 +341,7 @@ fn link(build: &Build<'_>, emitted: &ember_codegen_c::Output) -> Result<PathBuf,
     }
     let exe = build.bin_dir.join(if cfg!(windows) { "comptime.exe" } else { "comptime" });
     ember_build::compile_and_link_executable_with_roots(
-        build.toolchain,
+        toolchain,
         &LinkRequest {
             sources: &sources,
             include_dirs: &includes,

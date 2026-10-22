@@ -5466,6 +5466,7 @@ fn check_file(path: &Path, root: &Path) {
         // `[TST-27]` — the C gate: an accepted program's C compiles with warnings as errors, on each
         // C compiler CI runs the suite with; a C compiler error on one is a compiler defect.
         let run = ember_gated(&arguments, root, expectations.stdin.as_ref().map(|input| input.as_bytes()));
+        assert_the_evaluator_agrees(&relative, profile, &out_dir_arg, root, &expectations, &run);
         for needle in &expectations.stderr {
             assert!(
                 run.stderr.contains(needle.as_str()),
@@ -5520,6 +5521,44 @@ stderr:
             run.stdout, run.stderr
         );
     }
+}
+
+/// `[IMP-11]`, `[CLI-21]` — every program the suite runs runs on the evaluator too (`ember run
+/// --interp`), with the compiled run's standard output, exit status and panic exactly: the
+/// evaluator and the C backend each check the other. The one exception is a program the evaluator
+/// refuses (`E6010`), which makes a foreign call or starts a thread.
+fn assert_the_evaluator_agrees(relative: &str, profile: &str, out_dir: &str, root: &Path, expectations: &Expectations, compiled: &Run) {
+    let mut arguments = vec!["run", "--interp", relative, "--out-dir", out_dir, "--profile", profile];
+    if !expectations.args.is_empty() {
+        arguments.push("--");
+        arguments.extend(expectations.args.iter().map(String::as_str));
+    }
+    let run = ember_gated(&arguments, root, expectations.stdin.as_ref().map(|input| input.as_bytes()));
+    if run.exit != 0 && run.stderr.contains("error[E6010]") && run.stderr.contains("cannot run on the evaluator") {
+        return;
+    }
+    assert_eq!(
+        run.stdout, compiled.stdout,
+        "{relative} [{profile}]: the evaluator's standard output differs from the compiled program's
+evaluator's stderr:
+{}",
+        run.stderr
+    );
+    assert_eq!(
+        run.exit, compiled.exit,
+        "{relative} [{profile}]: the evaluator's exit status differs from the compiled program's
+evaluator's stderr:
+{}
+compiled stderr:
+{}",
+        run.stderr, compiled.stderr
+    );
+    let panic = |stderr: &str| stderr.lines().find(|line| line.starts_with("panic")).map(str::to_string);
+    assert_eq!(
+        panic(&run.stderr),
+        panic(&compiled.stderr),
+        "{relative} [{profile}]: the evaluator's panic differs from the compiled program's"
+    );
 }
 
 fn check_directory(name: &str) -> usize {

@@ -1233,6 +1233,64 @@ mod tests {
     }
 }
 
+/// `[IMP-11]` — a program's MIR between lowering and code generation. The
+/// bodies are changed only by a named pass ([`Pipeline::pass`]), and in the
+/// compiler's own debug builds every body is verified after each one, so a
+/// malformed body is reported with the pass that made it rather than by
+/// whatever reads it next. Reading needs no pass ([`Pipeline::bodies`]).
+pub struct Pipeline {
+    bodies: Vec<Body>,
+}
+
+impl Pipeline {
+    /// The bodies lowering made, verified as the first pass's result.
+    pub fn new(bodies: Vec<Body>, types: &TypeTable) -> Pipeline {
+        let pipeline = Pipeline { bodies };
+        pipeline.verify_after("lowering", types);
+        pipeline
+    }
+
+    pub fn bodies(&self) -> &[Body] {
+        &self.bodies
+    }
+
+    /// Runs the pass `name` over the bodies (it may add types), then, in a
+    /// debug build of the compiler, verifies what it left.
+    pub fn pass<R>(&mut self, name: &str, types: &mut TypeTable, run: impl FnOnce(&mut Vec<Body>, &mut TypeTable) -> R) -> R {
+        let result = run(&mut self.bodies, types);
+        self.verify_after(name, types);
+        result
+    }
+
+    pub fn into_bodies(self) -> Vec<Body> {
+        self.bodies
+    }
+
+    /// The verifier's structural rules, and the typed ones code generation
+    /// relies on (`[LEX-16]` literals decided, views made by a borrow, interface
+    /// upcasts complete), which hold of the MIR between any two passes.
+    fn verify_after(&self, pass: &str, types: &TypeTable) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        let mut violations: Vec<Violation> = self.bodies.iter().flat_map(verify).collect();
+        for body in &self.bodies {
+            violations.extend(verify_concrete_literals(body, types));
+            violations.extend(verify_views(body, types));
+            violations.extend(verify_interface_upcasts(body, types));
+        }
+        assert!(
+            violations.is_empty(),
+            "MIR verification failed after {pass}:\n{}",
+            violations
+                .iter()
+                .map(|v| format!("  {}: {}", v.body, v.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}
+
 /// Verify every body, panicking on the first violation. Called from the driver
 /// in debug builds of the compiler.
 pub fn verify_all(bodies: &[Body]) {
@@ -1946,6 +2004,50 @@ mod view_invariant_tests {
 
     fn body_ty_placeholder() -> Ty {
         TypeTable::new().1.i32
+    }
+
+    /// `[IMP-11]` — in a debug build of the compiler the MIR is verified after
+    /// every pass: a pass that leaves a malformed body is stopped there, named.
+    #[test]
+    fn the_mir_is_verified_after_every_pass_and_a_bad_one_is_named() {
+        let (body, mut types) = env_body(Rvalue::Aggregate {
+            kind: crate::AggregateKind::Struct(ember_types::StructId(0)),
+            operands: vec![Operand::Copy(Place::local(LocalId(1)))],
+        });
+        let mut pipeline = Pipeline::new(vec![body], &types);
+        // A pass that keeps the bodies well formed passes.
+        let made = pipeline.pass("a harmless pass", &mut types, |bodies, _| bodies.len());
+        assert_eq!(made, 1);
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pipeline.pass("jump threading", &mut types, |bodies, _| {
+                bodies[0].blocks[0].terminator = Terminator::Goto(BasicBlockId(7));
+            });
+        }));
+        let message = failed.expect_err("a body jumping to no block passed the pass");
+        let message = message.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(message.contains("after jump threading") && message.contains("bb7"), "{message}");
+        // And a pass leaving a view no borrow made is stopped too.
+        let (body, mut types) = env_body(Rvalue::Aggregate {
+            kind: crate::AggregateKind::Struct(ember_types::StructId(0)),
+            operands: vec![Operand::Copy(Place::local(LocalId(1)))],
+        });
+        let mut pipeline = Pipeline::new(vec![body], &types);
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pipeline.pass("folding casts", &mut types, |bodies, _| {
+                let StmtKind::Assign { rvalue, .. } = &mut bodies[0].blocks[0].stmts[0].kind else { unreachable!() };
+                *rvalue = Rvalue::Cast {
+                    kind: crate::CastKind::Numeric,
+                    operand: Operand::Copy(Place::local(LocalId(1))),
+                    to: body_ty_placeholder(),
+                };
+            });
+        }));
+        let message = failed.expect_err("a view without a borrow passed the pass");
+        let message = message.downcast_ref::<String>().cloned().unwrap_or_default();
+        assert!(message.contains("after folding casts") && message.contains("carries no borrow"), "{message}");
     }
 }
 

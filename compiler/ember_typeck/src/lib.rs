@@ -330,6 +330,7 @@ pub fn check(
         }
     }
     checker.namespaces = vec![HashMap::new(); modules.len()];
+    checker.failed_imports = vec![HashSet::new(); modules.len()];
     checker.public_namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
     checker.module_deterministic = vec![false; modules.len()];
@@ -2590,6 +2591,9 @@ struct Checker<'a> {
     /// Per module: names bound to a whole module by `import a.b.c`, so that
     /// `c.thing` resolves.
     namespaces: Vec<HashMap<Symbol, usize>>,
+    /// `[IDE-3]` — per module: the names its imports of modules not found would bind, each a
+    /// placeholder that resolves to nothing without a diagnostic of its own.
+    failed_imports: Vec<HashSet<Symbol>>,
     /// `[FFI-30b]` — per module: the modules it re-exports (`pub import c "…" as vk`), by name. Only
     /// these are reached through it (`m.vk.f`, `from m import vk`); a module's other imports are its own.
     public_namespaces: Vec<HashMap<Symbol, usize>>,
@@ -3292,6 +3296,7 @@ impl<'a> Checker<'a> {
             deprecated_members: HashMap::new(),
             method_deprecation: HashMap::new(),
             namespaces: vec![HashMap::new()],
+            failed_imports: vec![HashSet::new()],
             public_namespaces: vec![HashMap::new()],
             current_module: 0,
             type_params: HashMap::new(),
@@ -5199,7 +5204,21 @@ impl<'a> Checker<'a> {
                     if key == "std" || key.starts_with("std.") {
                         continue;
                     }
-                    self.error(codes::E1060, import.span, format!("no module named '{key}'"));
+                    // `[IDE-3]` — the build reported it (`E1060`) when it found no file: what the
+                    // import binds is a placeholder, which nothing reports again.
+                    match &import.kind {
+                        ast::ImportKind::Module { path, alias } => {
+                            if let Some(bound) = alias.map(|a| a.name).or_else(|| path.last().map(|s| s.name)) {
+                                self.failed_imports[index].insert(bound);
+                            }
+                        }
+                        ast::ImportKind::Items { items, .. } => {
+                            for item in items {
+                                self.failed_imports[index].insert(item.alias.map(|a| a.name).unwrap_or(item.name.name));
+                            }
+                        }
+                        ast::ImportKind::Foreign { .. } => {}
+                    }
                     continue;
                 };
 
@@ -12077,7 +12096,9 @@ impl<'a> Checker<'a> {
                 Ok(module) => module,
                 Err(index) => {
                     let unresolved = prefix[index];
-                    self.error(codes::E1010, unresolved.span, format!("`{}` is not a module in scope", unresolved.name));
+                    if !self.failed_import(unresolved.name) {
+                        self.error(codes::E1010, unresolved.span, format!("`{}` is not a module in scope", unresolved.name));
+                    }
                     return None;
                 }
             };
@@ -13971,7 +13992,24 @@ impl<'a> Checker<'a> {
         self.substitute_ty(ty, &substitution)
     }
 
+    /// `[IDE-3]` — a name an import of a module not found binds: a placeholder, its import
+    /// already reported (`E1060`).
+    fn failed_import(&self, name: Symbol) -> bool {
+        self.failed_imports.get(self.current_module).is_some_and(|names| names.contains(&name))
+    }
+
+    /// `[IDE-3]` — a name the import that wrote the current module skipped, which it reported
+    /// there (`W5002`, `E5057`): what the module says of it is a placeholder.
+    fn skipped_here(&self, name: Symbol) -> bool {
+        matches!(self.foreign_skipped.get(self.current_module), Some(Some((_, skipped))) if skipped.contains_key(&name))
+    }
+
     fn resolve_type(&mut self, ty: &ast::TypeExpr) -> Ty {
+        // `[IDE-3]` — a hole where a type was written is one the parser gave up on (it reported
+        // why): a placeholder. Desugaring's holes are filled before they reach here.
+        if matches!(ty.kind, ast::TypeKind::Infer) {
+            return self.common.error;
+        }
         // `[CLI-20]` — 0.9.8's boxed closure `Box[dyn fn(A) -> R]` is 0.9.9's owned callable type
         // `fn(A) -> R` (`[FN-6]`); a callable type is not an interface.
         if let ast::TypeKind::Path { segments, args } = &ty.kind
@@ -14247,7 +14285,7 @@ impl<'a> Checker<'a> {
                 if let Some(&ty) = self.named_types.get(&resolved) {
                     return ty;
                 }
-                if self.report_ambiguous_glob(name, segments[0].span) {
+                if self.report_ambiguous_glob(name, segments[0].span) || self.failed_import(name) || self.skipped_here(name) {
                     return self.common.error;
                 }
                 let diagnostic = Diagnostic::error(
@@ -14280,7 +14318,9 @@ impl<'a> Checker<'a> {
             Ok(module) => module,
             Err(index) => {
                 let unresolved = segments[index];
-                self.error(codes::E1010, unresolved.span, format!("`{}` is not a module in scope", unresolved.name));
+                if !self.failed_import(unresolved.name) {
+                    self.error(codes::E1010, unresolved.span, format!("`{}` is not a module in scope", unresolved.name));
+                }
                 return self.common.error;
             }
         };
@@ -14513,7 +14553,7 @@ impl<'a> Checker<'a> {
         } else {
             let is_known_type = self.named_types.contains_key(&resolved_name)
                 || self.interfaces.contains_key(&resolved_name);
-            if !is_known_type && self.report_ambiguous_glob(name, name_span) {
+            if !is_known_type && (self.report_ambiguous_glob(name, name_span) || self.failed_import(name)) {
                 return self.common.error;
             }
             let message = if self.named_types.contains_key(&resolved_name) {
@@ -24871,6 +24911,14 @@ impl<'a> Checker<'a> {
                     self.check_class_init_whole_self_use(init);
                 }
                 let Some(name) = binding_name(pattern) else {
+                    // `[IDE-3]` — a pattern that did not parse was reported: the value is still
+                    // checked, and nothing is bound.
+                    if matches!(pattern.kind, ast::PatternKind::Error) {
+                        if let Some(init) = init {
+                            let _ = self.synth_committed(init);
+                        }
+                        return;
+                    }
                     self.error(codes::E1010, stmt.span, "this pattern is not supported yet");
                     return;
                 };
@@ -35656,6 +35704,9 @@ impl<'a> Checker<'a> {
                     );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
+                if self.failed_import(name) {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 if let Some(diagnostic) = self.python_constant(name, span) {
                     self.sink.emit(diagnostic);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -36770,6 +36821,8 @@ impl<'a> Checker<'a> {
                 Expr { ty: self.common.void, kind: ExprKind::Error, span }
             }
 
+            // `[IDE-3]` — what did not parse is a placeholder, reported where it was parsed.
+            ast::ExprKind::Error => Expr { ty: self.common.error, kind: ExprKind::Error, span },
             _ => {
                 self.error(
                     codes::E1010,
@@ -37083,11 +37136,13 @@ impl<'a> Checker<'a> {
                 Ok(namespace) => Some(namespace),
                 Err(index) => {
                     let unresolved = &segments[index.min(segments.len() - 1)];
-                    self.error(
-                        codes::E1010,
-                        unresolved.span,
-                        format!("`{}` is not a module in scope", unresolved.name),
-                    );
+                    if !self.failed_import(unresolved.name) {
+                        self.error(
+                            codes::E1010,
+                            unresolved.span,
+                            format!("`{}` is not a module in scope", unresolved.name),
+                        );
+                    }
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
             }
@@ -37620,6 +37675,9 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if segments.len() == 1 && self.comptime_names_runtime_local(name, name_span) {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            if segments.len() == 1 && self.failed_import(name) {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             // `[DIA-21]` P3 — `str(x)`, `int(x)`, `float(x)`.
@@ -55294,6 +55352,7 @@ impl<'a> Checker<'a> {
             || ret == self.common.error
             || matches!(self.types.kind(ret), TyKind::Never)
             || self.block_diverges(&body)
+            || self.holds_placeholder(&body)
         {
             return body;
         }
@@ -55332,6 +55391,14 @@ impl<'a> Checker<'a> {
         body
     }
 
+    /// `[IDE-3]` — whether the body holds something that did not check (a placeholder, reported
+    /// where it is): what it stood for may have returned, so the end of the body is not judged.
+    fn holds_placeholder(&self, block: &Block) -> bool {
+        let mut found = false;
+        hir::visit_block(block, &mut |expr| found |= matches!(expr.kind, ExprKind::Error) && expr.ty == self.common.error);
+        found
+    }
+
     /// Whether control cannot reach the end of `block`: some statement in it
     /// always returns, panics or loops forever. Conservative: `false` means
     /// "may reach the end".
@@ -55362,6 +55429,11 @@ impl<'a> Checker<'a> {
         // `[TYP-2]` table — `Never` is the type of an expression that does not
         // complete: `panic(…)`, `unreachable()`, a call returning `Never`.
         if matches!(self.types.kind(expr.ty), TyKind::Never) {
+            return true;
+        }
+        // `[IDE-3]` — an expression that did not check is a placeholder that satisfies everything,
+        // ending the body included: the error it is reported once, not again as a missing `return`.
+        if expr.ty == self.common.error {
             return true;
         }
         match &expr.kind {
@@ -57685,11 +57757,30 @@ fn pattern_if_as_match(pattern: &ast::Pattern, value: &ast::Expr, then_block: &a
         guard: None,
         body: ast::MatchArmBody::Block(body),
     };
+    // `[IDE-3]` — a pattern that always matches was reported while parsing (`E2036`): the `then`
+    // arm alone, and the `else` block on its own after it, so neither is reported again.
+    if pattern_always_matches(pattern) {
+        let placeholder = || ast::Condition::Expr(ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Error, span: pattern.span });
+        let only = stmt(ast::StmtKind::Match { scrutinee: value.clone(), arms: vec![arm(pattern.clone(), then_block.clone())] }, span);
+        let rest = stmt(ast::StmtKind::If(ast::IfStmt { cond: placeholder(), then_block: otherwise, else_block: None }), span);
+        let both = ast::Block { id: ast::NodeId::DUMMY, stmts: vec![only, rest], span };
+        return stmt(ast::StmtKind::If(ast::IfStmt { cond: placeholder(), then_block: both, else_block: None }), span);
+    }
     let wild = ast::Pattern { id: ast::NodeId::DUMMY, kind: ast::PatternKind::Wild, span: pattern.span };
     stmt(
         ast::StmtKind::Match { scrutinee: value.clone(), arms: vec![arm(pattern.clone(), then_block.clone()), arm(wild, otherwise)] },
         span,
     )
+}
+
+/// `[GRM-19]` — a pattern that matches every value, as the parser judges one in a condition.
+fn pattern_always_matches(pattern: &ast::Pattern) -> bool {
+    match &pattern.kind {
+        ast::PatternKind::Wild => true,
+        ast::PatternKind::Bind { sub, .. } => sub.as_deref().is_none_or(pattern_always_matches),
+        ast::PatternKind::Tuple(items) => items.iter().all(pattern_always_matches),
+        _ => false,
+    }
 }
 
 /// D-763 — `while p = e: A else: B` as `while true:` around `match e:` with `p => A` and `_ =>` `B`,

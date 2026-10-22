@@ -398,3 +398,17 @@ fn main():
     assert_eq!(indents, dedents);
     assert!(out.kinds.contains(&TokenKind::Punct(Punct::Arrow)));
 }
+
+/// `[LEX-6]`, `[IMP-11]` — a backslash that ends the file inside a string, found by the fuzzer:
+/// the escape scanner did not move past it, so the string lexed the same backslash forever, a
+/// diagnostic each time, until an allocation failed. Each literal form, once each.
+#[test]
+fn a_backslash_ending_the_file_in_a_string_is_reported_once() {
+    for src in ["x = \"abc\\", "x = f\"abc\\", "x = b\"abc\\", "x = '\\", "x = \"\"\"abc\\"] {
+        let lexed = run(src);
+        let cut = lexed.diagnostics.iter().filter(|message| message.contains("cut off")).count();
+        assert!(cut <= 1 && lexed.diagnostics.len() <= 3, "{src:?}: {:?}", lexed.diagnostics);
+        assert!(lexed.codes.iter().all(|code| code.starts_with("E00") || code.starts_with("E01")), "{src:?}: {:?}", lexed.codes);
+        assert!(!lexed.diagnostics.is_empty(), "{src:?} is not a complete literal");
+    }
+}

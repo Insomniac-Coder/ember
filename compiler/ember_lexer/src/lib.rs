@@ -95,6 +95,8 @@ struct Lexer<'a> {
     indents: Vec<u32>,
     /// `[LEX-6]` — inside brackets, newlines are not logical line ends.
     bracket_depth: u32,
+    /// The brackets open now, innermost last, each with where it opened (`[IDE-3]`).
+    opened: Vec<(Punct, usize)>,
     /// Whether anything on the current logical line would justify a `NEWLINE`.
     line_has_tokens: bool,
     /// Doc comments read from comment-only lines, held back until the next
@@ -116,6 +118,7 @@ impl<'a> Lexer<'a> {
             comments: Vec::new(),
             indents: vec![0],
             bracket_depth: 0,
+            opened: Vec::new(),
             line_has_tokens: false,
             pending_docs: Vec::new(),
             puncts: Punct::by_length_desc(),
@@ -196,6 +199,40 @@ impl<'a> Lexer<'a> {
         let docs = std::mem::take(&mut self.pending_docs);
         self.tokens.extend(docs);
         self.push_structural(TokenKind::Eof, end);
+    }
+
+    /// `[IDE-3]` — whether the line starting at `pos` begins, unindented, with what only a
+    /// declaration begins with (`fn name`, `struct`, `class`, `import`, …), which no bracket
+    /// can hold: the brackets still open before it were never closed.
+    fn declaration_follows(&self) -> bool {
+        let line = self.rest();
+        let word: String = line.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+        let after = line[word.len()..].chars().next();
+        match word.as_str() {
+            "struct" | "class" | "enum" | "interface" | "import" | "pub" | "static" | "extern" | "const" => after == Some(' '),
+            // `fn(…)` is a lambda, which a bracket may hold at any indentation.
+            "fn" => after == Some(' ') && line[3..].chars().next().is_some_and(is_ident_start),
+            _ => false,
+        }
+    }
+
+    /// `E0101` for each bracket still open, innermost first, each closed where the line ends,
+    /// so the code before it parses on its own and the declaration after it is one.
+    fn close_unclosed(&mut self, at: usize) {
+        while let Some((open, start)) = self.opened.pop() {
+            let close = match open {
+                Punct::LParen => Punct::RParen,
+                Punct::LBracket => Punct::RBracket,
+                _ => Punct::RBrace,
+            };
+            let span = Span::new(self.file, start as u32, start as u32 + 1);
+            self.sink.emit(
+                Diagnostic::error(codes::E0101, span, format!("this `{}` is never closed", &self.src[start..start + 1]))
+                    .note("it is closed where its line ends, before the declaration that follows [LEX-6]"),
+            );
+            self.tokens.push(Token { kind: TokenKind::Punct(close), span: Span::new(self.file, at as u32, at as u32) });
+            self.bracket_depth -= 1;
+        }
     }
 
     /// True when `pos` sits at the first byte of a physical line.
@@ -331,6 +368,9 @@ impl<'a> Lexer<'a> {
             Some('\n') => {
                 let at = self.pos;
                 self.pos += 1;
+                if self.bracket_depth > 0 && self.bracket_depth as usize == self.opened.len() && self.declaration_follows() {
+                    self.close_unclosed(at);
+                }
                 if self.bracket_depth == 0 && self.line_has_tokens {
                     self.push_structural(TokenKind::Newline, at);
                     self.line_has_tokens = false;
@@ -964,8 +1004,10 @@ impl<'a> Lexer<'a> {
                 self.pos += text.len();
                 if punct.is_open_bracket() {
                     self.bracket_depth += 1;
+                    self.opened.push((punct, start));
                 } else if punct.is_close_bracket() {
                     self.bracket_depth = self.bracket_depth.saturating_sub(1);
+                    self.opened.pop();
                 }
                 self.push(TokenKind::Punct(punct), start);
                 return;
@@ -1168,10 +1210,12 @@ impl EscapeError {
 /// Scan one escape sequence starting at `*pos` (which is on the backslash),
 /// advancing `*pos` past it.
 fn scan_escape(src: &str, pos: &mut usize, context: EscapeContext) -> Result<u32, EscapeError> {
-    let mut chars = src[*pos..].chars();
-    chars.next(); // the backslash
-    let c = chars.next().ok_or(EscapeError::Truncated)?;
-    *pos += 1 + c.len_utf8();
+    // The backslash is consumed whatever follows, so a caller that goes on after an error moves
+    // on: a backslash ending the text had left `pos` where it was, and a string lexed it again
+    // forever, a diagnostic each time.
+    *pos += 1;
+    let c = src[*pos..].chars().next().ok_or(EscapeError::Truncated)?;
+    *pos += c.len_utf8();
 
     let simple = match c {
         'n' => Some('\n' as u32),
@@ -1243,10 +1287,8 @@ fn decode_escapes(text: &str, context: EscapeContext, span: Span, sink: &mut Sin
                         out.push(ch);
                     }
                 }
-                Err(err) => {
-                    sink.emit(err.into_diagnostic(span));
-                    pos += 1;
-                }
+                // `scan_escape` has consumed what it read.
+                Err(err) => sink.emit(err.into_diagnostic(span)),
             }
         } else {
             pos += c.len_utf8();

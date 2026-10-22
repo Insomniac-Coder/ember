@@ -10,6 +10,7 @@ mod comptime;
 mod foreign;
 mod packages;
 mod reload;
+pub mod session;
 mod test_runner;
 
 use std::path::{Path, PathBuf};
@@ -34,8 +35,9 @@ usage (`[CLI-15]`: every command and flag of the specification's XVII.1; \"not b
 this compiler does not have yet):
     ember new <name> [--lib | --bin | --cdylib]    create a package
     ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest;
-                                                   --hot reloads edited sources at std.hot.checkpoint()
-                                                   (--interp is not built yet)
+                                                   --hot reloads edited sources at std.hot.checkpoint();
+                                                   --interp runs the program on the compile-time
+                                                   evaluator, with no C compiler
     ember build [file.em|package-dir] [--profile <name>] [--target <triple>] [--backend c|llvm]
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
@@ -125,7 +127,8 @@ inspect options:
 /// committed: a host spends only what a program's nesting uses.
 const COMPILER_STACK: usize = 256 << 20;
 
-fn main() -> ExitCode {
+/// The `ember` command (`src/ember.rs` is the program): the arguments after the program's name.
+pub fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Named as the main thread is, which an internal error's message names.
     let compiler = std::thread::Builder::new()
@@ -454,6 +457,9 @@ struct Options {
     explain: bool,
     /// `[HR-33]` — `ember run --hot`: run, watch the sources, rebuild and reload.
     hot: bool,
+    /// `[CLI-21]` — `ember run --interp`: run the checked program on the evaluator, with no C
+    /// compiler.
+    interp: bool,
     /// `[MAN-2]` — `--locked`: a build that would change `ember.lock` fails.
     locked: bool,
     /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
@@ -713,6 +719,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             if options.hot && command != "run" {
                 return Err("`--hot` is only valid with `ember run`".to_string());
             }
+            if options.interp && command != "run" {
+                return Err("`--interp` is only valid with `ember run`".to_string());
+            }
+            if options.interp && options.hot {
+                return Err("`--interp` and `--hot` cannot be combined: a reload replaces compiled code".to_string());
+            }
             if options.emit.as_deref() == Some("header") && command != "build" {
                 return Err("`--emit header` is only valid with `ember build`".to_string());
             }
@@ -737,7 +749,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 PathBuf::from(input)
             };
             // `[HR-33]` — the toolchain's own host: build, run, watch, rebuild, reload.
-            if command == "run" && options.hot && options.profile != Profile::Release {
+            if command == "run" && options.hot && !options.interp && options.profile != Profile::Release {
                 return run_hot(&source, &options);
             }
             compile(&source, command, &options)
@@ -3370,6 +3382,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--reload" => options.reload = true,
             "--explain" => options.explain = true,
             "--hot" => options.hot = true,
+            "--interp" => options.interp = true,
             // `[MAN-2]` — fail rather than change `ember.lock`.
             "--locked" => options.locked = true,
             "-Dwarnings" | "-D" => {
@@ -4828,9 +4841,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if options.syntax_only {
         return Ok(finish(&sink, &map, options));
     }
-    if sink.has_errors() {
-        return Ok(finish(&sink, &map, options));
-    }
+    // `[IDE-3]` — names and types are checked whatever parsing reported: what did not parse is a
+    // placeholder that satisfies everything, so each error is reported once and the rest checked.
 
     // `[MOD-1]` — follow the imports and load every module they reach. The
     // root module is the file named on the command line; its directory is the
@@ -4875,9 +4887,6 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[ALC-3]` (ODR-175) — the global allocator the manifest names, which the runtime allocates
     // through.
     inject_global_allocator(&mut modules, input, &mut map, &mut sink);
-    if sink.has_errors() {
-        return Ok(finish(&sink, &map, options));
-    }
 
     // Check. `[CT-1]` — and check again with what the compile-time evaluator
     // answered, until nothing is left to evaluate; a pass that asks for
@@ -5016,8 +5025,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
 
     // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
     // as "type-check + borrow-check without codegen", so it cannot stop here.
-    let mut bodies = ember_mir::lower(program, &types, &common, &map);
-    let _ = &mut types;
+    // `[IMP-11]` — from here to code generation the bodies change only through
+    // `mir.pass`, which in a debug build of the compiler verifies them after each pass.
+    let mut mir = ember_mir::verify::Pipeline::new(ember_mir::lower(program, &types, &common, &map), &types);
     // `[TST-3]` — the package's tests (not the standard library's), in the
     // order the test binary numbers them. The binary's entry calls each, so
     // none is inlined into another caller and removed.
@@ -5025,44 +5035,45 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .filter(|test| !test.name.as_str().starts_with(&format!("{}.", ember_branding::STD_PACKAGE)))
         .collect();
     if command == "test" {
-        for body in bodies.iter_mut().filter(|body| tests.iter().any(|test| test.symbol == body.symbol)) {
-            body.inline.never = true;
-        }
+        mir.pass("marking the tests not inlined", &mut types, |bodies, _| {
+            for body in bodies.iter_mut().filter(|body| tests.iter().any(|test| test.symbol == body.symbol)) {
+                body.inline.never = true;
+            }
+        });
     }
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
-    ember_mir::prune_unused_implicit(&mut bodies, &types, &checked.std_instances);
+    mir.pass("pruning unused implicit bodies", &mut types, |bodies, types| ember_mir::prune_unused_implicit(bodies, types, &checked.std_instances));
     // Annex B — which functions the image reaches through thunks; `[HR-9a]`, none is inlined.
     let reload_image = (reload != ReloadMode::None).then(|| {
         let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-        reload::plan(reload, &package, &modules, &map, &bodies, reload_additions.as_ref().expect("made with the mode"))
+        reload::plan(reload, &package, &modules, &map, mir.bodies(), reload_additions.as_ref().expect("made with the mode"))
     });
     if let Some(image) = &reload_image {
-        for body in bodies.iter_mut().filter(|body| image.reloadable.contains(&body.symbol)) {
-            body.inline.never = true;
-        }
-        reload::lint_noreload_loops(&bodies, image, &mut sink);
+        mir.pass("marking the reloadable functions not inlined", &mut types, |bodies, _| {
+            for body in bodies.iter_mut().filter(|body| image.reloadable.contains(&body.symbol)) {
+                body.inline.never = true;
+            }
+        });
+        reload::lint_noreload_loops(mir.bodies(), image, &mut sink);
         if let Some(additions) = &reload_additions {
-            reload::check_migrate_from_terminates(&bodies, &modules, additions, &mut sink);
+            reload::check_migrate_from_terminates(mir.bodies(), &modules, additions, &mut sink);
         }
     }
     mark("lower", "all modules");
-    if cfg!(debug_assertions) {
-        ember_mir::verify::verify_all(&bodies);
-    }
     // Definite initialisation (Part XVIII §4.6) runs on MIR, before any
     // optimisation could remove the read it is looking for.
-    let initialization_facts = ember_analysis::analyze_definite_init_all(&bodies);
+    let initialization_facts = ember_analysis::analyze_definite_init_all(mir.bodies());
     // `[IMP-7]` — the fact verifier proves that the canonical initialization
     // fixpoint describes this initial MIR before diagnostics consume it and
     // before drop elaboration transforms the CFG.
-    ember_analysis::verify_initialization_facts_all(&bodies, &initialization_facts);
-    ember_analysis::check_definite_init_all_with_facts(&bodies, &initialization_facts, &mut sink);
+    ember_analysis::verify_initialization_facts_all(mir.bodies(), &initialization_facts);
+    ember_analysis::check_definite_init_all_with_facts(mir.bodies(), &initialization_facts, &mut sink);
     // `[LAY-2]` — a reference to a field of a `@packed` value is `E2170`.
-    ember_analysis::check_packed_references_all(&bodies, &types, &mut sink);
+    ember_analysis::check_packed_references_all(mir.bodies(), &types, &mut sink);
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
-    ember_analysis::elaborate_drops_all(&mut bodies, &types, &mut sink);
+    mir.pass("drop elaboration", &mut types, |bodies, types| ember_analysis::elaborate_drops_all(bodies, types, &mut sink));
     // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only
     // by `ember lint`. A lint that fires on a separate command does not close
     // the footgun `[GRM-4]` opens.
@@ -5071,105 +5082,93 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // artifact, then become the only contracts borrow checking consumes. The
     // cache write itself waits until the complete semantic verification below
     // succeeds, so an erroneous program never overwrites a verified record.
-    let interface_cache = prepare_callable_interface_cache(
+    let interface_cache = mir.pass("callable region summaries", &mut types, |bodies, types| prepare_callable_interface_cache(
         input,
         &modules,
         &checked.callable_declarations,
         &map,
-        &mut bodies,
-        &types,
+        bodies,
+        types,
         options,
-    )?;
+    ))?;
     // `[CLS-7a]` — reject a class destructor's own handle entering visible
     // storage before code generation can expose a resurrection path.
-    ember_analysis::check_drop_self_escapes_all(&bodies, &types, &mut sink);
+    ember_analysis::check_drop_self_escapes_all(mir.bodies(), &types, &mut sink);
     // `[FFI-21a]` — a function C may call returns no pointer into a
     // parameter C passes as a copy.
-    ember_analysis::check_c_entry_returns_all(&bodies, &types, &mut sink);
+    ember_analysis::check_c_entry_returns_all(mir.bodies(), &types, &mut sink);
     // `[FFI-36b]` — one foreign object adopted twice through one local (`E5068`).
-    ember_analysis::check_adoptions_all(&bodies, &mut sink);
+    ember_analysis::check_adoptions_all(mir.bodies(), &mut sink);
     // Part XVIII §4.7 — the NLL borrow checker runs on MIR after drop
     // elaboration, so the drops it sees are the ones that will exist.
-    ember_analysis::check_all_with_installed_callable_regions(&bodies, &types, &mut sink);
+    ember_analysis::check_all_with_installed_callable_regions(mir.bodies(), &types, &mut sink);
     // `[DIA-8]` — read the loans where the checker read them.
     if let Some(line) = options.borrow_report {
         report(&sink, &map, options);
-        print_borrow_report(&map, file, line, &bodies, &types);
+        print_borrow_report(&map, file, line, mir.bodies(), &types);
         return Ok(ExitCode::SUCCESS);
     }
     // `[CORO-6]`, `[CORO-12]`, `[CORO-13]` — what a generator holds across a `yield`.
-    ember_analysis::coroutines::check_all(&bodies, &types, &mut sink);
+    ember_analysis::coroutines::check_all(mir.bodies(), &types, &mut sink);
     // `[EXC-7]` — this advisory lint is opt-in. It consumes the explicit
     // method-duration dynamic-access intervals before later optimization may
     // elide or hoist an unrelated short interval.
     if lint_settings.long_term_access_across_dynamic_call && !sink.has_errors() {
         ember_analysis::lint_long_term_access_across_dynamic_calls_all(
-            &bodies,
+            mir.bodies(),
             &types,
             &mut sink,
         );
     }
     if !sink.has_errors() {
-        verify_callable_regions_or_panic(&bodies, &types);
+        verify_callable_regions_or_panic(mir.bodies(), &types);
     }
-    ember_analysis::check_unused_all(&bodies, &types, &mut sink);
+    ember_analysis::check_unused_all(mir.bodies(), &types, &mut sink);
     // `[DIA-7]` — a borrow error the classifier could not place is recorded
     // rather than left to be noticed. CI fails when the conformance suite
     // produces any, which is what stops an unexplained rejection shipping.
     write_unclassified_log(&sink, options);
-    if cfg!(debug_assertions) {
-        ember_mir::verify::verify_all(&bodies);
-        // D-022's backstop. Every view in the finished MIR must have arrived
-        // from a borrow the analyses can see; a view-producing path that
-        // forgot to take one leaves a shape this recognises. Checked here
-        // rather than at lowering because it must hold of the MIR the borrow
-        // checker actually ran on.
-        ember_mir::verify::verify_views_all(&bodies, &types);
-        ember_mir::verify::verify_interface_upcasts_all(&bodies, &types);
-    }
     mark("move, drop, borrow checks", "all modules");
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
     // `[CORO-4]` — each generator's body, checked, becomes its frame's state
     // machine; what borrow checking read of the stubs is made again.
-    if ember_analysis::coroutines::transform(&mut bodies, &mut types) && cfg!(debug_assertions) {
-        ember_mir::verify::verify_all(&bodies);
-    }
+    mir.pass("the coroutine transform", &mut types, |bodies, types| ember_analysis::coroutines::transform(bodies, types));
     // `[HEAP-5]` — borrow checking has established each mutable loan's exact
     // NLL region. Materialize the matching runtime access interval only after
     // that proof, so dynamic exclusivity follows the loan rather than a scope.
-    ember_analysis::insert_shared_accesses_all(&mut bodies, &types);
+    mir.pass("inserting shared accesses", &mut types, |bodies, types| ember_analysis::insert_shared_accesses_all(bodies, types));
     // `[EXC-3]`/`[EXC-3a]` — remove only the access intervals for which the
     // MIR proof establishes a unique, unescaped class handle. All other
     // intervals remain explicit runtime checks.
-    ember_analysis::elide_static_accesses_all(&mut bodies, &types);
+    mir.pass("eliding static accesses", &mut types, |bodies, types| ember_analysis::elide_static_accesses_all(bodies, types));
     // `[EXC-8]`–`[EXC-14]` — after static-elision proofs have removed their
     // intervals, conservatively turn a canonical stable class loop into one
     // checked preheader/postheader interval. Unknown loops remain per-access.
-    ember_analysis::hoist_loop_accesses_all(&mut bodies, &types);
+    mir.pass("hoisting loop accesses", &mut types, |bodies, types| ember_analysis::hoist_loop_accesses_all(bodies, types));
     // `[EXC-19]` — a `mut self` call to a quiet function is only checked. After
     // hoisting, which keeps a loop's repeated writes as one checked interval.
-    ember_analysis::convert_quiet_calls_all(&mut bodies, &types);
+    mir.pass("converting quiet calls", &mut types, |bodies, types| ember_analysis::convert_quiet_calls_all(bodies, types));
     // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
     // the checks that nothing held anywhere in the program could make fail.
-    ember_analysis::remove_never_firing_checks_all(&mut bodies, &types);
+    mir.pass("removing never-firing checks", &mut types, |bodies, types| ember_analysis::remove_never_firing_checks_all(bodies, types));
     // `[DSJ-5]` — an `assert_disjoint` comparison of views known apart is left out.
-    ember_analysis::elide_known_disjoint_comparisons_all(&mut bodies, &types);
+    mir.pass("eliding known-disjoint comparisons", &mut types, |bodies, types| ember_analysis::elide_known_disjoint_comparisons_all(bodies, types));
     // `[EFF-13]` — what is left of the dynamic aliasing checks is the verdict
     // a `@static_safe` function answers for, before inlining mixes callers'
     // and callees' checks.
-    if ember_analysis::check_static_safe_all(&bodies, &mut sink) > 0 {
+    if ember_analysis::check_static_safe_all(mir.bodies(), &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
     // `[CLO-3]` — a known function passed to a callable parameter gets the
     // callee's own copy, calling it directly; first, so every copy is
     // optimised like any other body.
-    ember_analysis::specialize_callable_arguments_all(&mut bodies);
+    mir.pass("specialising callable arguments", &mut types, |bodies, _| ember_analysis::specialize_callable_arguments_all(bodies));
     // `[EFF-5]`, `[EFF-15]` — the contracts, checked once on the effects left after the
     // profile-independent proofs and before inlining; a known function passed to a callable
     // parameter is called directly by now, so it contributes its own effects (`[EFF-2]`).
-    if ember_analysis::check_effects_all(&bodies, &types, &mut sink) > 0 {
+    if ember_analysis::check_effects_all(mir.bodies(), &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
     // `[STD-6]`, `[BLD-11]` — a package's functions use only the layers it declares: the effects
@@ -5189,39 +5188,39 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         let declared: Vec<String> = declared.iter().map(|layer| format!("\"{layer}\"")).collect();
         Some((left_out, declared.join(", ")))
     };
-    if ember_analysis::effects::check_layers_all(&bodies, &types, &omitted, &mut sink) > 0 {
+    if ember_analysis::effects::check_layers_all(mir.bodies(), &types, &omitted, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
-    let safety_functions = safety_functions_json(&bodies, &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
+    let safety_functions = safety_functions_json(mir.bodies(), &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
     // `[COST-4]` — the costs the checks do not show, read before inlining folds functions together.
-    let safety_costs = safety_costs_json(&bodies, &types, &modules, &map, &checked.contains_uses);
+    let safety_costs = safety_costs_json(mir.bodies(), &types, &modules, &map, &checked.contains_uses);
     // `[DOC-3]` — the view contracts, read where the checks left the bodies, before inlining.
     if options.doc_report {
-        let (standard, _) = standard_parts(&bodies, &modules);
+        let (standard, _) = standard_parts(mir.bodies(), &modules);
         report(&sink, &map, options);
-        print_view_contracts(&bodies, &types, &standard);
+        print_view_contracts(mir.bodies(), &types, &standard);
         return Ok(if sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
     // `[LNT-6]` — `ember lint`'s own lints, on the MIR the checks ran on, before inlining.
     if options.lint {
-        let (standard, _) = standard_parts(&bodies, &modules);
-        ember_analysis::lint_performance_all(&bodies, &types, &common, &standard, &lint_settings.perf, &mut sink);
+        let (standard, _) = standard_parts(mir.bodies(), &modules);
+        ember_analysis::lint_performance_all(mir.bodies(), &types, &common, &standard, &lint_settings.perf, &mut sink);
         lint_foreign_contracts(&modules, &lint_settings.perf, &mut sink);
     }
     // `[THR-5]` — a `Scope` binding stays where its `with` put it.
-    if ember_analysis::check_scope_moves_all(&bodies, &types, &mut sink) > 0 {
+    if ember_analysis::check_scope_moves_all(mir.bodies(), &types, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
     // `[CLI-10]` — the engine report, gathered as the build goes: the allocation sites here,
     // before inlining moves one function's operations into another.
     let mut engine = options.engine_report.then(EngineReport::default);
     if let Some(engine) = engine.as_mut() {
-        let (standard, standard_files) = standard_parts(&bodies, &modules);
+        let (standard, standard_files) = standard_parts(mir.bodies(), &modules);
         // Before inlining folds some of them away: a caller the report leaves out.
-        engine.standard_symbols = bodies.iter().zip(&standard).filter(|(_, standard)| **standard).map(|(body, _)| body.symbol.clone()).collect();
-        for site in ember_analysis::allocation_sites(&bodies, &types, &standard, &|file| standard_files.contains(&file)) {
+        engine.standard_symbols = mir.bodies().iter().zip(&standard).filter(|(_, standard)| **standard).map(|(body, _)| body.symbol.clone()).collect();
+        for site in ember_analysis::allocation_sites(mir.bodies(), &types, &standard, &|file| standard_files.contains(&file)) {
             engine.allocations.push(format!("{} in {}: {}", map.location(site.span), site.function, site.operations.join(", ")));
         }
     }
@@ -5229,19 +5228,19 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // were: before inlining moves one function's operations into another.
     if let Some(request) = &options.alloc_report {
         report(&sink, &map, options);
-        print_alloc_report(input, &bodies, &types, &modules, &map, request)?;
+        print_alloc_report(input, mir.bodies(), &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
     // `[UNS-8]` — the calls each `unsafe` makes, read before inlining moves them.
     if let Some(request) = &options.tcb_report {
         report(&sink, &map, options);
-        print_tcb_report(input, &bodies, &types, &modules, &map, request)?;
+        print_tcb_report(input, mir.bodies(), &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
     // `[CLI-12]`, `[DET-9]` — likewise.
     if let Some(request) = &options.effect_report {
         report(&sink, &map, options);
-        print_effect_report(input, &bodies, &types, &modules, &map, request)?;
+        print_effect_report(input, mir.bodies(), &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
     // `[CG-C-10]` — every function's symbol, before inlining removes any.
@@ -5249,18 +5248,27 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         report(&sink, &map, options);
         let mut stack = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut stack).map_err(|error| format!("cannot read standard input: {error}"))?;
-        print!("{}", demangle(&stack, &bodies));
+        print!("{}", demangle(&stack, mir.bodies()));
         return Ok(ExitCode::SUCCESS);
     }
     // `[CLI-13]` — the call graph the effects were computed on, before inlining folds it.
     if let Some(request) = &options.foreign_calls {
         report(&sink, &map, options);
-        print_foreign_calls(input, &bodies, &types, &modules, &map, request)?;
+        print_foreign_calls(input, mir.bodies(), &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
+    }
+    // `[CLI-21]` — the checked program run on the evaluator: everything after this point only
+    // makes code faster or writes C.
+    if options.interp {
+        if sink.has_errors() {
+            return Ok(finish(&sink, &map, options));
+        }
+        report(&sink, &map, options);
+        return run_interpreted(input, mir.bodies(), &types, &common, &map, options);
     }
     // `ember check` reports what the passes below decide only for an `@simd(assert)` loop
     // (`[SIMD-2]`'s `E4020`): without one, nothing below can say anything, and the check is done.
-    if command == "check" && !bodies.iter().any(|body| body.loop_notes.simd.iter().any(|note| note.assert)) {
+    if command == "check" && !mir.bodies().iter().any(|body| body.loop_notes.simd.iter().any(|note| note.assert)) {
         // An error so far (`ember lint`'s `error` lints among them) fails the check, as below.
         if sink.has_errors() {
             return Ok(finish(&sink, &map, options));
@@ -5275,41 +5283,41 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // themselves, and given a generic `larger` already inlined, clang picks
     // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
     // (ADR-081). MSVC's inliner is weaker, so for it every such function.
-    let inlined = ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+    let inlined = mir.pass("single-call inlining", &mut types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(&options)));
     if let Some(engine) = engine.as_mut() {
         engine.inlined.extend(inlined);
     }
     // D-571 — a call through a value that is a known function calls it, and
     // that function, now called from one place, is inlined there too.
-    if ember_analysis::call_known_callables_all(&mut bodies, &types) > 0 {
-        let inlined = ember_analysis::inline_single_calls_all(&mut bodies, &types, !c_for_msvc(&options));
+    if mir.pass("calling known callables", &mut types, |bodies, types| ember_analysis::call_known_callables_all(bodies, types)) > 0 {
+        let inlined = mir.pass("single-call inlining", &mut types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(&options)));
         if let Some(engine) = engine.as_mut() {
             engine.inlined.extend(inlined);
         }
-        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
     // ADR-107 — MSVC keeps a struct whose address goes to a function in
     // memory, inlined or not: a `for` loop's step through a standard
     // iterator is inlined and the iterator becomes a plain local.
     if c_for_msvc(&options) {
-        ember_analysis::inline_loop_steps_all(&mut bodies, &types);
+        mir.pass("inlining loop steps", &mut types, |bodies, types| ember_analysis::inline_loop_steps_all(bodies, types));
     }
     // Both passes above change bodies after `[MIR-REG-1]`'s summaries were
     // made (a call through a parameter became a direct call; a call became
     // its callee's body): make them again from the MIR as it now is.
-    ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     mark("inlining", "all modules");
     // `[RNG-4]` — on the final checks: remove every check the range facts
     // prove cannot fail, before the loop passes group what is left.
     // A branch they decide goes one way, and what only the other way read
     // is gone: `[MIR-REG-1]`'s summaries are made again from what is left.
-    let (_, folds) = ember_analysis::remove_proven_checks_all(&mut bodies, &types, &common);
+    let (_, folds) = mir.pass("removing checks the range facts prove", &mut types, |bodies, types| ember_analysis::remove_proven_checks_all(bodies, types, &common));
     if folds > 0 {
-        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
     // D-759, `[TXT-4]` — a text slice's bound that is a character boundary by construction (`0`, the
     // text's length, a cursor `next_char` stepped from one) is not checked again.
-    ember_analysis::remove_known_boundary_checks_all(&mut bodies, &types);
+    mir.pass("removing known character-boundary checks", &mut types, |bodies, types| ember_analysis::remove_known_boundary_checks_all(bodies, types));
     mark("checks the range facts remove", "all modules");
     // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
     // all provably in bounds at entry runs a copy without its bounds checks;
@@ -5317,38 +5325,38 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // vectorisable form.
     // A versioned copy writes an element of a `MutSpan` through its index where the checked loop
     // called the runtime, which the summaries count as a write of the view: make them again.
-    if ember_analysis::version_bounds_checked_loops_all(&mut bodies, &types, &common) != (0, 0) {
-        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    if mir.pass("loop versioning", &mut types, |bodies, types| ember_analysis::version_bounds_checked_loops_all(bodies, types, &common)) != (0, 0) {
+        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
     // `[SIMD-2]` — each `@simd` loop's verdict, now that it is final: an
     // `@simd(assert)` loop not in vectorisable form is `E4020`, naming the
     // first clause of `[SIMD-5]` it fails; the report says the same of each.
     mark("loop versioning", "all modules");
-    let simd_report = simd_verdicts(&bodies, &map, &mut sink);
+    let simd_report = simd_verdicts(mir.bodies(), &map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
     // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
     // an unchanged handle, where nothing in the loop can change an access,
     // runs once before it; after versioning, so each copy of a loop is done.
-    ember_analysis::hoist_invariant_checks_all(&mut bodies, &types);
+    mir.pass("hoisting invariant checks", &mut types, |bodies, types| ember_analysis::hoist_invariant_checks_all(bodies, types));
     // `[RC-3]` — on the final MIR: a handle copied from a list element that
     // the list keeps alive for the handle's whole life is not counted.
-    ember_analysis::mark_uncounted_handles_all(&mut bodies, &types);
+    mir.pass("marking uncounted handles", &mut types, |bodies, types| ember_analysis::mark_uncounted_handles_all(bodies, types));
     // `[RC-3]`: a hidden owner transfers only to an owner that survives its
     // original drop. An owned callee is not such a survival guarantee.
-    ember_analysis::transfer_temporary_owners_all(&mut bodies, &types);
+    mir.pass("transferring temporary owners", &mut types, |bodies, types| ember_analysis::transfer_temporary_owners_all(bodies, types));
     // A hidden local that only copies another is read from that one, so no
     // copy stands between the loops of a nest; then the pure work a loop's
     // turn begins with whose inputs the loop cannot change (the view an
     // inner loop iterates) runs once, before the loop.
-    ember_analysis::propagate_copies_all(&mut bodies, &types);
-    ember_analysis::narrow_widened_reads_all(&mut bodies, &types);
-    ember_analysis::hoist_invariant_views_all(&mut bodies, &types);
+    mir.pass("copy propagation", &mut types, |bodies, types| ember_analysis::propagate_copies_all(bodies, types));
+    mir.pass("narrowing widened reads", &mut types, |bodies, types| ember_analysis::narrow_widened_reads_all(bodies, types));
+    mir.pass("hoisting invariant views", &mut types, |bodies, types| ember_analysis::hoist_invariant_views_all(bodies, types));
     // A counted loop that pushes onto a list on every turn asks for the room
     // before it, as a hint that changes nothing but the capacity (never done
     // in a program that asks a list for its `capacity()`).
-    ember_analysis::reserve_pushed_lists_all(&mut bodies, &types);
+    mir.pass("reserving pushed lists", &mut types, |bodies, types| ember_analysis::reserve_pushed_lists_all(bodies, types));
     // For MSVC: a loop nest over separate lists goes into a function of its
     // own whose list parameters are `restrict` (ADR-079); MSVC reorders such
     // a nest only then. For gcc: a loop over two lists or more that writes
@@ -5364,17 +5372,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     };
     if command != "check"
         && let Some(target) = kernel_target
-        && ember_analysis::outline_list_kernels_all(&mut bodies, &mut types, &common, target) > 0
+        && mir.pass("outlining list kernels", &mut types, |bodies, types| ember_analysis::outline_list_kernels_all(bodies, types, &common, target)) > 0
     {
-        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
     // For clang and gcc: a list an innermost loop only pushes onto is kept in
     // a local for the loop and written back after it, so the C compiler keeps
     // its buffer and length in registers: it cannot see that the runtime's
     // buffer is apart from the list's own header (ADR-099). MSVC keeps such a
     // local in memory: the views-alive benchmark ran 8 times slower with it.
-    if command != "check" && !c_for_msvc(&options) && ember_analysis::keep_pushed_lists_in_locals_all(&mut bodies, &types) > 0 {
-        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    if command != "check" && !c_for_msvc(&options) && mir.pass("keeping pushed lists in locals", &mut types, |bodies, types| ember_analysis::keep_pushed_lists_in_locals_all(bodies, types)) > 0 {
+        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
     // Last, for C: a value a counted loop computes from its counter each
     // turn (`k * step + skip`) gets a running value of its own, as
@@ -5383,17 +5391,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // for MSVC keeps the value computed from the counter (the owner allows C
     // written for each compiler, 2026-09-28).
     if command != "check" && options.emit.as_deref() != Some("mir") && !c_for_msvc(&options) {
-        ember_analysis::reduce_induction_values_all(&mut bodies, &types, &common);
+        mir.pass("reducing induction values", &mut types, |bodies, types| ember_analysis::reduce_induction_values_all(bodies, types, &common));
     }
     // ADR-141 — last, for C: a short list or string a function makes, fills
     // and drops itself starts in a buffer of the function's own frame.
     if command != "check" && options.emit.as_deref() != Some("mir") {
-        ember_analysis::give_stack_buffers_all(&mut bodies, &types);
+        mir.pass("giving stack buffers", &mut types, |bodies, types| ember_analysis::give_stack_buffers_all(bodies, types));
     }
     // `[OPT-1]` — last, for C: a class object no handle of which outlives its function is made in
     // the function's frame. Not in a reloadable build, whose objects a reload moves.
     if command != "check" && options.emit.as_deref() != Some("mir") && matches!(reload, ReloadMode::None) {
-        ember_analysis::place_frame_objects_all(&mut bodies, &types);
+        mir.pass("placing frame objects", &mut types, |bodies, types| ember_analysis::place_frame_objects_all(bodies, types));
     }
     mark("loop passes", "all modules");
     if command == "check" {
@@ -5408,7 +5416,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         interface_cache
             .commit()
             .map_err(|error| error.to_string())?;
-        print!("{}", ember_mir::dump(&bodies, &types));
+        print!("{}", ember_mir::dump(mir.bodies(), &types));
         return Ok(finish(&sink, &map, options));
     }
 
@@ -5421,7 +5429,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
             .map(|loaded| loaded.module.span.file)
             .collect();
-        retain_referenced_standard_bodies(&mut bodies, &standard_files, &types);
+        mir.pass("retaining the referenced standard bodies", &mut types, |bodies, types| retain_referenced_standard_bodies(bodies, &standard_files, types));
     }
     let module_name = input
         .file_stem()
@@ -5442,18 +5450,18 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // only frees memory changes nothing observable (`[PHIL-5]`). Debug
     // builds keep every drop, which their leak check counts.
     if program.main.is_some() && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
-        ember_analysis::skip_exit_drops_all(&mut bodies, &types, &ember_branding::entry_symbol());
+        mir.pass("skipping exit drops", &mut types, |bodies, types| ember_analysis::skip_exit_drops_all(bodies, types, &ember_branding::entry_symbol()));
     }
     // Run after all body pruning and mutation. Retain the complete immutable
     // proof batch until the unconditional final verification below.
     let progress_certificates =
-        ember_analysis::version_progress_reductions_all(&mut bodies, &types, &common);
+        mir.pass("versioning progress reductions", &mut types, |bodies, types| ember_analysis::version_progress_reductions_all(bodies, types, &common));
     if !progress_certificates.is_empty() {
-        ember_analysis::install_callable_regions_all(&mut bodies, &types);
+        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
-    verify_callable_regions_or_panic(&bodies, &types);
+    verify_callable_regions_or_panic(mir.bodies(), &types);
     let progress_violations = ember_analysis::verify_progress_reductions_all(
-        &bodies, &types, &common, &progress_certificates,
+        mir.bodies(), &types, &common, &progress_certificates,
     );
     if !progress_violations.is_empty() {
         panic!(
@@ -5468,13 +5476,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // D-498 (ADR-155) — after the progress proof: this only copies a loop and
     // steps an ASCII byte the decoder reads anyway; it removes no check.
     let cold = progress_certificates.checked_fallbacks();
-    if ember_analysis::step_ascii_runs_all(&mut bodies, &mut types, &common, &cold, kernel_target) > 0 {
-        ember_analysis::install_callable_regions_all(&mut bodies, &types);
-        verify_callable_regions_or_panic(&bodies, &types);
+    if mir.pass("stepping ASCII runs", &mut types, |bodies, types| ember_analysis::step_ascii_runs_all(bodies, types, &common, &cold, kernel_target)) > 0 {
+        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+        verify_callable_regions_or_panic(mir.bodies(), &types);
     }
     // `[IMP-7]` / `[VERIFY-3]` — verified MIR is a type-enforced backend
     // boundary. This check is unconditional and follows the final body-pruning
     // transformation, so release builds cannot emit stale or malformed MIR.
+    let bodies = mir.into_bodies();
     let verified_mir =
         ember_mir::verify::for_codegen(&bodies, &types).unwrap_or_else(|violations| {
             panic!(
@@ -5976,6 +5985,63 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     Ok(ExitCode::SUCCESS)
 }
 
+/// `[CLI-21]` — `ember run --interp`: the program run on the evaluator, its console the
+/// process's, its status the one a compiled run ends with (a panic, after the runtime's report,
+/// as `abort` ends a process). What compile time cannot run is `E6010` (`[CT-2]`).
+fn run_interpreted(
+    input: &Path,
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    common: &ember_types::CommonTypes,
+    map: &SourceMap,
+    options: &Options,
+) -> Result<ExitCode, String> {
+    let entry = [ember_branding::generated("main_entry"), ember_branding::entry_symbol()]
+        .into_iter()
+        .find(|symbol| bodies.iter().any(|body| &body.symbol == symbol))
+        .ok_or("this file declares no `main`, so there is nothing to run")?;
+    // The program's name, as a compiled run's `argv[0]` would give it.
+    let stem = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let target = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+    let exe = target.join(options.profile.name()).join("bin").join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+    let mut args = vec![exe.to_string_lossy().into_owned()];
+    args.extend(options.program_args.iter().cloned());
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let stdin = std::io::stdin();
+    let (mut out, mut err, mut input_lines) = (stdout.lock(), stderr.lock(), stdin.lock());
+    let program = ember_interp::Program {
+        bodies,
+        types,
+        common,
+        map,
+        debug: options.profile == Profile::Debug,
+        backtrace: options.profile != Profile::Release,
+        leak_check: options.leak_check,
+    };
+    let io = ember_interp::Io { stdout: &mut out, stderr: &mut err, stdin: &mut input_lines, args };
+    let limits = ember_interp::Limits { steps: u64::MAX, heap: u64::MAX };
+    let outcome = ember_interp::run(&program, io, limits, &entry);
+    drop((out, err, input_lines));
+    match outcome {
+        ember_interp::Outcome::Exited(0) => Ok(ExitCode::SUCCESS),
+        ember_interp::Outcome::Exited(code) => Ok(ExitCode::from(u8::try_from(code).unwrap_or(1))),
+        // `abort`'s status: 3 on Windows; a signal elsewhere, which `ember run` reports as 1.
+        ember_interp::Outcome::Panicked => Ok(ExitCode::from(if cfg!(windows) { 3 } else { 1 })),
+        ember_interp::Outcome::Refused { what, span } => {
+            let mut sink = Sink::new();
+            sink.emit(
+                Diagnostic::error(codes::E6010, span, format!("{what} cannot run on the evaluator"))
+                    .note("`ember run --interp` runs the program as compile time runs it: foreign calls and threads are unavailable [CLI-21], [CT-2]")
+                    .help("build and run it with `ember run`"),
+            );
+            Ok(finish(&sink, map, options))
+        }
+        ember_interp::Outcome::Limit(what) => Err(what),
+        ember_interp::Outcome::Fault(what) => Err(format!("the evaluator stopped: {what}")),
+    }
+}
+
 /// `[HR-33]`, `[HR-31]` — `ember run --hot`: build the program under `debug`, run it, and while
 /// it runs watch the package's sources; after each edit, build the next image and announce it,
 /// which the program applies at its next `std.hot.checkpoint()`. Building happens here, in the
@@ -6146,7 +6212,8 @@ const COMPTIME_PASSES: usize = 8;
 /// with: the build's C compiler and profile, a directory of its own under the
 /// build's, and the manifest's `[comptime]` limits.
 struct ComptimeBuild {
-    toolchain: Toolchain,
+    /// `None` under `--interp`, which runs no C compiler (`[CLI-21]`).
+    toolchain: Option<Toolchain>,
     profile: Profile,
     for_msvc: bool,
     runtime: PathBuf,
@@ -6158,7 +6225,7 @@ struct ComptimeBuild {
 impl ComptimeBuild {
     fn build(&self) -> comptime::Build<'_> {
         comptime::Build {
-            toolchain: &self.toolchain,
+            toolchain: self.toolchain.as_ref(),
             profile: self.profile,
             for_msvc: self.for_msvc,
             runtime: &self.runtime,
@@ -6177,7 +6244,7 @@ fn comptime_build(input: &Path, options: &Options) -> Result<ComptimeBuild, Stri
         .cc
         .clone()
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
-    let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+    let toolchain = if options.interp { None } else { Some(Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?) };
     let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     // One directory per source file, so builds of two programs side by side

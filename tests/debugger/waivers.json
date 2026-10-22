@@ -1,0 +1,3 @@
+{
+  "macos-aarch64": "[TST-5] CI has no macOS runner (.github/workflows/ci.yml runs Windows and Linux): the session's lldb script has not run there"
+}
