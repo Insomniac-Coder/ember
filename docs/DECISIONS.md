@@ -5017,6 +5017,23 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-273 — `debug` is the program as written: Ember's speed rewrites behind `rewrites` (`[PRF-3]`, `[TST-5]`, ODR-259)
+
+2026-10-22 (the owner's answer, ODR-259). `[TST-5]`'s session, run for the first time on a machine
+with cdb, could not stop on `sum += v`: Ember had inlined `total` into `main` and versioned its loop,
+the vectorised copy keeping the total in `_22`. `[PRF-3]` already gave `debug` optimisation 0, which
+only the C compiler obeyed. Now a profile setting `rewrites` (off in `debug`, on in `development`
+and `release`; `[profiles.debug] rewrites = true` turns it on) says whether the passes after the
+evaluator's exit run: inlining, check removal, loop versioning, and every speed pass after them
+(the driver's comment there already said everything after it "only makes code faster"). `[PRF-1]`
+holds: what the rewrites decide that a program is told is the `@simd` verdicts (`E4020`, the
+report), so with them off a program with an `@simd` loop has them decided on a rewritten copy of
+the MIR (`Pipeline::fork`), which is then dropped. The region summaries the rewrites' first pass
+remade are remade once instead. With it, `#line` names each later line of a statement again
+(D-885), so the C's jumps and a loop's set-up and exit stop claiming the Ember lines below. The
+conformance runner reads a test's emitted C (`assert-c`) in its rewriting profiles, the C a build
+ships; a test run in `debug` alone reads `debug`'s. Cost: a `debug` program runs slower.
+
 ## ADR-272 — D-811, the lead's second round: the passes keep pace with a function's size
 
 2026-10-22 (lead, branch `lead-d811`). Range facts (`range_facts.rs`): the solve iterates a weak

@@ -902,9 +902,10 @@ fn inspect_cost_reports_each_row_by_site() {
     )
     .expect("write the program");
     let out_dir = dir.join("out");
-    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    // `[PRF-3]` (ODR-259) — the checks the range facts remove are a rewriting build's.
+    let build = ember(&["build", &source.to_string_lossy(), "--profile", "development", "--out-dir", &out_dir.to_string_lossy()], &root);
     assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
-    let table = out_dir.join("debug").join("inspect").join("costs.safety.json").to_string_lossy().into_owned();
+    let table = out_dir.join("development").join("inspect").join("costs.safety.json").to_string_lossy().into_owned();
     let report = ember(&["inspect", &table, "--cost"], &root);
     assert_eq!(report.exit, 0, "{}", report.stderr);
     let out = &report.stdout;
@@ -969,7 +970,8 @@ fn the_engine_report_summarises_the_build_and_changes_nothing() {
     std::fs::write(&file, "class Counter:\n    count: int\n\n    fn init(mut self):\n        self.count = 0\n\n    fn bump(mut self):\n        self.count += 1\n\nunsafe extern \"C\":\n    @ffi(param(xs, borrowed, count(n)), link_name=\"sum_c\")\n    safe fn sum(xs: Span[i32], n: usize) -> i32\n\npub extern \"C\" fn sum_c(xs: *i32, n: usize) -> i32:\n    total: i32 = 0\n    i: usize = 0\n    while i < n:\n        unsafe:  # SAFETY(ffi): C's contract: `xs` holds `n` elements\n            total += read(xs, i)\n        i += 1\n    return total\n\nfn pick(xs: Array[int], i: int) -> int:\n    return xs[i]\n\n@noinline\nfn twice(x: int) -> int:\n    return x * 2\n\nfn main():\n    xs: Array[int] = [1, 2, 3]\n    ys: Array[i32] = [4, 5, 6]\n    c = Counter()\n    for _x in xs:\n        c.bump()\n    println(pick(xs, 1), twice(c.count), sum(ys.as_span()))\n").expect("the program is writable");
     let file = file.to_string_lossy().into_owned();
     let out = directory.join("out").to_string_lossy().into_owned();
-    let built = ember(&["build", &file, "--report=engine", "--out-dir", &out], &root);
+    // `[PRF-3]` (ODR-259) — the inlining decisions and removed checks are a rewriting build's.
+    let built = ember(&["build", &file, "--report=engine", "--profile", "development", "--out-dir", &out], &root);
     assert_eq!(built.exit, 0, "{}", built.stderr);
     let report = &built.stdout;
     for line in [
@@ -990,13 +992,13 @@ fn the_engine_report_summarises_the_build_and_changes_nothing() {
     }
     assert!(!report.contains("std."), "the report names the standard library's code:\n{report}");
     let c = |report: bool| {
-        let mut args = vec!["build", file.as_str(), "--emit", "c", "--out-dir", out.as_str()];
+        let mut args = vec!["build", file.as_str(), "--emit", "c", "--profile", "development", "--out-dir", out.as_str()];
         if report {
             args.push("--report=engine");
         }
         let emitted = ember(&args, &root);
         assert_eq!(emitted.exit, 0, "{}", emitted.stderr);
-        std::fs::read_to_string(directory.join("out").join("debug").join("c").join("engine.c")).expect("the C was written")
+        std::fs::read_to_string(directory.join("out").join("development").join("c").join("engine.c")).expect("the C was written")
     };
     assert_eq!(c(false), c(true), "`--report=engine` changed the program's C");
 }
@@ -2519,6 +2521,39 @@ fn removed_safety_switches_and_unknown_profile_keys_are_rejected() {
     }
 }
 
+/// `[PRF-3]` (ODR-259) — `debug` makes none of Ember's speed rewrites, so its C is the program as
+/// written: `total`, called from one place, stays a function of its own. `[profiles.debug]
+/// rewrites = true` makes them, as `development` does without asking: `total` is inlined into
+/// `main`. A value other than `true` or `false` is `E9001`.
+#[test]
+fn the_debug_profile_rewrites_only_when_the_manifest_turns_them_on() {
+    let root = workspace_root();
+    let program = "fn total(values: Array[int]) -> int:\n    sum = 0\n    for v in values:\n        sum += v\n    return sum\n\nfn main():\n    numbers = [3, 4, 5]\n    println(total(numbers))\n";
+    let emit = |name: &str, manifest: &str, profile: &str| {
+        let package = temporary_directory(name);
+        let source = package.join(ember_branding::source_file("main"));
+        std::fs::write(package.join(MANIFEST), manifest).expect("manifest is writable");
+        std::fs::write(&source, program).expect("source is writable");
+        let emitted = ember(&["build", &source.to_string_lossy(), "--emit", "c", "--profile", profile], &root);
+        let _ = std::fs::remove_dir_all(&package);
+        emitted
+    };
+    let defined = format!("{}({}* values) {{", ember_branding::item_symbol("total"), ember_branding::runtime("vec"));
+    for (name, manifest, profile, kept) in [
+        ("rewrites-debug", "", "debug", true),
+        ("rewrites-debug-on", "[profiles.debug]\nrewrites = true\n", "debug", false),
+        ("rewrites-debug-off", "[profiles.debug]\nrewrites = false\n", "debug", true),
+        ("rewrites-development", "", "development", false),
+    ] {
+        let emitted = emit(name, manifest, profile);
+        assert_eq!(emitted.exit, 0, "{name}:\n{}", emitted.stderr);
+        assert_eq!(emitted.stdout.contains(&defined), kept, "{name}: `total` {} its own function:\n{}", if kept { "is not" } else { "is still" }, emitted.stdout);
+    }
+    let wrong = emit("rewrites-wrong", "[profiles.debug]\nrewrites = \"yes\"\n", "debug");
+    assert_ne!(wrong.exit, 0, "{}", wrong.stderr);
+    assert!(wrong.stderr.contains("error[E9001]: `\"yes\"` is not a `rewrites` value"), "{}", wrong.stderr);
+}
+
 /// `[MAN-1]`, `[MAN-8]` — an unknown key in any manifest section is `E9001`,
 /// naming the key and the keys that section accepts; an unknown section is
 /// `E9001` naming the sections. D-621: `[comptime]`'s keys are `max_steps`
@@ -2939,9 +2974,10 @@ fn the_safety_table_lists_every_check_by_site() {
     )
     .expect("write the program");
     let out_dir = dir.join("out");
-    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    // `[PRF-3]` (ODR-259) — the checks the range facts remove are a rewriting build's.
+    let build = ember(&["build", &source.to_string_lossy(), "--profile", "development", "--out-dir", &out_dir.to_string_lossy()], &root);
     assert_eq!(build.exit, 0, "build failed:\n{}", build.stderr);
-    let table = out_dir.join("debug").join("inspect").join("sites.safety.json");
+    let table = out_dir.join("development").join("inspect").join("sites.safety.json");
     let json = std::fs::read_to_string(&table).expect("the side table");
     let _ = std::fs::remove_dir_all(&dir);
     // By where it is written: `get` and `total` may be inlined into `main`.
@@ -5244,6 +5280,15 @@ fn profiles(expectations: &Expectations) -> Vec<&str> {
     }
 }
 
+/// `[PRF-3]` (ODR-259) — the profiles whose C a test's `assert-c` lines read: the C a build ships,
+/// made with Ember's speed rewrites, so each of the test's profiles that makes them; a test run
+/// in `debug` alone reads `debug`'s C, which has none.
+fn c_profiles(expectations: &Expectations) -> Vec<&str> {
+    let all = profiles(expectations);
+    let rewriting: Vec<&str> = all.iter().copied().filter(|profile| *profile != "debug").collect();
+    if rewriting.is_empty() { all } else { rewriting }
+}
+
 /// Assert only against rendered help lines. Searching all of stderr would let
 /// a source annotation satisfy itself when the renderer echoes the source,
 /// the same false-positive that [`without_source_echo`] prevents for codes.
@@ -5339,6 +5384,7 @@ fn check_file(path: &Path, root: &Path) {
     // path limit and keep concurrent cases with the same filename apart.
     let out_dir = temporary_directory(&relative);
     let profiles = profiles(&expectations);
+    let c_profiles = c_profiles(&expectations);
 
     // A `compile-fail` test must be rejected, with the diagnostics it names.
     if !expectations.errors.is_empty() || expectations.kind.as_deref() == Some("compile-fail") {
@@ -5369,7 +5415,7 @@ fn check_file(path: &Path, root: &Path) {
 
     // The emitted C, for `assert-c-order`.
     if !expectations.assert_c_order.is_empty() {
-        for profile in &profiles {
+        for profile in &c_profiles {
             let emitted = ember(
                 &["build", &relative, "--emit", "c", "--profile", profile],
                 root,
@@ -5404,7 +5450,7 @@ fn check_file(path: &Path, root: &Path) {
 
     // The emitted C, for `assert-c`.
     if !expectations.assert_c.is_empty() {
-        for profile in &profiles {
+        for profile in &c_profiles {
             let emitted = ember(
                 &["build", &relative, "--emit", "c", "--profile", profile],
                 root,
@@ -5435,7 +5481,7 @@ fn check_file(path: &Path, root: &Path) {
     // than a presence check for rules such as `[ARN-5]`, where construction
     // allocates once and every subsequent operation must reuse that storage.
     if !expectations.assert_c_count.is_empty() {
-        for profile in &profiles {
+        for profile in &c_profiles {
             let emitted = ember(
                 &["build", &relative, "--emit", "c", "--profile", profile],
                 root,
@@ -7316,7 +7362,7 @@ fn string_descriptor_fields_keep_their_source_and_projected_copy_route() {
     // Test-side C shape inspection only. Match both adjacent writes, including
     // identical destination AND source; unrelated field strings cannot pass.
     fn borrowed_pairs(c: &str) -> Vec<(String, String)> {
-        let lines: Vec<_> = c.lines().map(str::trim).collect();
+        let lines: Vec<_> = c.lines().map(str::trim).filter(|line| !line.starts_with("#line")).collect();
         let mut pairs = Vec::new();
         for pair in lines.windows(2) {
             let Some((dest, pointer)) = pair[0].split_once(".ptr = (const unsigned char*)") else {
@@ -7339,7 +7385,7 @@ fn string_descriptor_fields_keep_their_source_and_projected_copy_route() {
         pairs
     }
     fn copy_edges(c: &str) -> Vec<(String, String)> {
-        let lines: Vec<_> = c.lines().map(str::trim).collect();
+        let lines: Vec<_> = c.lines().map(str::trim).filter(|line| !line.starts_with("#line")).collect();
         let mut edges = Vec::new();
         for pair in lines.windows(2) {
             let Some((dest, pointer)) = pair[0].split_once(".ptr = ") else {

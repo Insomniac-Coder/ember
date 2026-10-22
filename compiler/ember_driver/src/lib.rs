@@ -5277,86 +5277,31 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         report(&sink, &map, options);
         return Ok(ExitCode::SUCCESS);
     }
-    // A function called from one place is inlined there, so the analyses
-    // below see what its caller knows. For clang and gcc, only a function
-    // holding a check the caller's facts could remove: they inline the rest
-    // themselves, and given a generic `larger` already inlined, clang picks
-    // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
-    // (ADR-081). MSVC's inliner is weaker, so for it every such function.
-    let inlined = mir.pass("single-call inlining", &mut types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(&options)));
-    if let Some(engine) = engine.as_mut() {
-        engine.inlined.extend(inlined);
-    }
-    // D-571 — a call through a value that is a known function calls it, and
-    // that function, now called from one place, is inlined there too.
-    if mir.pass("calling known callables", &mut types, |bodies, types| ember_analysis::call_known_callables_all(bodies, types)) > 0 {
-        let inlined = mir.pass("single-call inlining", &mut types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(&options)));
+    // `[PRF-3]` — `rewrites` (`[profiles.<name>] rewrites`, else on in every profile but `debug`):
+    // Ember's own speed rewrites, from inlining to the loop passes. Off, the C is the program as
+    // written, which a debugger follows line by line, every local by its name (`[TST-5]`). What
+    // the rewrites decide that a program is told, the `@simd` verdicts, is then decided on a copy
+    // rewritten and dropped: every profile accepts the same programs (`[PRF-1]`).
+    let rewrites = lint_settings.rewrites[options.profile as usize].unwrap_or(options.profile != Profile::Debug);
+    // `[SIMD-2]` — each `@simd` loop's verdict, once its form is final: an
+    // `@simd(assert)` loop not in vectorisable form is `E4020`, naming the
+    // first clause of `[SIMD-5]` it fails; the report says the same of each.
+    let simd_report = if rewrites {
+        let inlined = rewrite_calls_checks_and_loops(&mut mir, &mut types, &common, options);
         if let Some(engine) = engine.as_mut() {
             engine.inlined.extend(inlined);
         }
-        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
-    }
-    // ADR-107 — MSVC keeps a struct whose address goes to a function in
-    // memory, inlined or not: a `for` loop's step through a standard
-    // iterator is inlined and the iterator becomes a plain local.
-    if c_for_msvc(&options) {
-        mir.pass("inlining loop steps", &mut types, |bodies, types| ember_analysis::inline_loop_steps_all(bodies, types));
-    }
-    // Both passes above change bodies after `[MIR-REG-1]`'s summaries were
-    // made (a call through a parameter became a direct call; a call became
-    // its callee's body): make them again from the MIR as it now is.
-    mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
-    mark("inlining", "all modules");
-    // `[RNG-4]` — on the final checks: remove every check the range facts
-    // prove cannot fail, before the loop passes group what is left.
-    // A branch they decide goes one way, and what only the other way read
-    // is gone: `[MIR-REG-1]`'s summaries are made again from what is left.
-    let (_, folds) = mir.pass("removing checks the range facts prove", &mut types, |bodies, types| ember_analysis::remove_proven_checks_all(bodies, types, &common));
-    if folds > 0 {
-        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
-    }
-    // D-759, `[TXT-4]` — a text slice's bound that is a character boundary by construction (`0`, the
-    // text's length, a cursor `next_char` stepped from one) is not checked again.
-    mir.pass("removing known character-boundary checks", &mut types, |bodies, types| ember_analysis::remove_known_boundary_checks_all(bodies, types));
-    mark("checks the range facts remove", "all modules");
-    // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
-    // all provably in bounds at entry runs a copy without its bounds checks;
-    // then `[SIMD-7]` groups the overflow checks of every loop in
-    // vectorisable form.
-    // A versioned copy writes an element of a `MutSpan` through its index where the checked loop
-    // called the runtime, which the summaries count as a write of the view: make them again.
-    if mir.pass("loop versioning", &mut types, |bodies, types| ember_analysis::version_bounds_checked_loops_all(bodies, types, &common)) != (0, 0) {
-        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
-    }
-    // `[SIMD-2]` — each `@simd` loop's verdict, now that it is final: an
-    // `@simd(assert)` loop not in vectorisable form is `E4020`, naming the
-    // first clause of `[SIMD-5]` it fails; the report says the same of each.
-    mark("loop versioning", "all modules");
-    let simd_report = simd_verdicts(mir.bodies(), &map, &mut sink);
+        simd_verdicts(mir.bodies(), &map, &mut sink)
+    } else if mir.bodies().iter().any(|body| !body.loop_notes.simd.is_empty()) {
+        let mut rewritten = mir.fork();
+        rewrite_calls_checks_and_loops(&mut rewritten, &mut types, &common, options);
+        simd_verdicts(rewritten.bodies(), &map, &mut sink)
+    } else {
+        Vec::new()
+    };
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
-    // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
-    // an unchanged handle, where nothing in the loop can change an access,
-    // runs once before it; after versioning, so each copy of a loop is done.
-    mir.pass("hoisting invariant checks", &mut types, |bodies, types| ember_analysis::hoist_invariant_checks_all(bodies, types));
-    // `[RC-3]` — on the final MIR: a handle copied from a list element that
-    // the list keeps alive for the handle's whole life is not counted.
-    mir.pass("marking uncounted handles", &mut types, |bodies, types| ember_analysis::mark_uncounted_handles_all(bodies, types));
-    // `[RC-3]`: a hidden owner transfers only to an owner that survives its
-    // original drop. An owned callee is not such a survival guarantee.
-    mir.pass("transferring temporary owners", &mut types, |bodies, types| ember_analysis::transfer_temporary_owners_all(bodies, types));
-    // A hidden local that only copies another is read from that one, so no
-    // copy stands between the loops of a nest; then the pure work a loop's
-    // turn begins with whose inputs the loop cannot change (the view an
-    // inner loop iterates) runs once, before the loop.
-    mir.pass("copy propagation", &mut types, |bodies, types| ember_analysis::propagate_copies_all(bodies, types));
-    mir.pass("narrowing widened reads", &mut types, |bodies, types| ember_analysis::narrow_widened_reads_all(bodies, types));
-    mir.pass("hoisting invariant views", &mut types, |bodies, types| ember_analysis::hoist_invariant_views_all(bodies, types));
-    // A counted loop that pushes onto a list on every turn asks for the room
-    // before it, as a hint that changes nothing but the capacity (never done
-    // in a program that asks a list for its `capacity()`).
-    mir.pass("reserving pushed lists", &mut types, |bodies, types| ember_analysis::reserve_pushed_lists_all(bodies, types));
     // For MSVC: a loop nest over separate lists goes into a function of its
     // own whose list parameters are `restrict` (ADR-079); MSVC reorders such
     // a nest only then. For gcc: a loop over two lists or more that writes
@@ -5370,38 +5315,61 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     } else {
         Some(ember_analysis::KernelTarget::Clang)
     };
-    if command != "check"
-        && let Some(target) = kernel_target
-        && mir.pass("outlining list kernels", &mut types, |bodies, types| ember_analysis::outline_list_kernels_all(bodies, types, &common, target)) > 0
-    {
-        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
-    }
-    // For clang and gcc: a list an innermost loop only pushes onto is kept in
-    // a local for the loop and written back after it, so the C compiler keeps
-    // its buffer and length in registers: it cannot see that the runtime's
-    // buffer is apart from the list's own header (ADR-099). MSVC keeps such a
-    // local in memory: the views-alive benchmark ran 8 times slower with it.
-    if command != "check" && !c_for_msvc(&options) && mir.pass("keeping pushed lists in locals", &mut types, |bodies, types| ember_analysis::keep_pushed_lists_in_locals_all(bodies, types)) > 0 {
-        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
-    }
-    // Last, for C: a value a counted loop computes from its counter each
-    // turn (`k * step + skip`) gets a running value of its own, as
-    // hand-written C keeps one. clang and gcc vectorise such a loop at C's
-    // speed only then; MSVC's vectoriser takes no second running value, so C
-    // for MSVC keeps the value computed from the counter (the owner allows C
-    // written for each compiler, 2026-09-28).
-    if command != "check" && options.emit.as_deref() != Some("mir") && !c_for_msvc(&options) {
-        mir.pass("reducing induction values", &mut types, |bodies, types| ember_analysis::reduce_induction_values_all(bodies, types, &common));
-    }
-    // ADR-141 — last, for C: a short list or string a function makes, fills
-    // and drops itself starts in a buffer of the function's own frame.
-    if command != "check" && options.emit.as_deref() != Some("mir") {
-        mir.pass("giving stack buffers", &mut types, |bodies, types| ember_analysis::give_stack_buffers_all(bodies, types));
-    }
-    // `[OPT-1]` — last, for C: a class object no handle of which outlives its function is made in
-    // the function's frame. Not in a reloadable build, whose objects a reload moves.
-    if command != "check" && options.emit.as_deref() != Some("mir") && matches!(reload, ReloadMode::None) {
-        mir.pass("placing frame objects", &mut types, |bodies, types| ember_analysis::place_frame_objects_all(bodies, types));
+    if rewrites {
+        // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
+        // an unchanged handle, where nothing in the loop can change an access,
+        // runs once before it; after versioning, so each copy of a loop is done.
+        mir.pass("hoisting invariant checks", &mut types, |bodies, types| ember_analysis::hoist_invariant_checks_all(bodies, types));
+        // `[RC-3]` — on the final MIR: a handle copied from a list element that
+        // the list keeps alive for the handle's whole life is not counted.
+        mir.pass("marking uncounted handles", &mut types, |bodies, types| ember_analysis::mark_uncounted_handles_all(bodies, types));
+        // `[RC-3]`: a hidden owner transfers only to an owner that survives its
+        // original drop. An owned callee is not such a survival guarantee.
+        mir.pass("transferring temporary owners", &mut types, |bodies, types| ember_analysis::transfer_temporary_owners_all(bodies, types));
+        // A hidden local that only copies another is read from that one, so no
+        // copy stands between the loops of a nest; then the pure work a loop's
+        // turn begins with whose inputs the loop cannot change (the view an
+        // inner loop iterates) runs once, before the loop.
+        mir.pass("copy propagation", &mut types, |bodies, types| ember_analysis::propagate_copies_all(bodies, types));
+        mir.pass("narrowing widened reads", &mut types, |bodies, types| ember_analysis::narrow_widened_reads_all(bodies, types));
+        mir.pass("hoisting invariant views", &mut types, |bodies, types| ember_analysis::hoist_invariant_views_all(bodies, types));
+        // A counted loop that pushes onto a list on every turn asks for the room
+        // before it, as a hint that changes nothing but the capacity (never done
+        // in a program that asks a list for its `capacity()`).
+        mir.pass("reserving pushed lists", &mut types, |bodies, types| ember_analysis::reserve_pushed_lists_all(bodies, types));
+        if command != "check"
+            && let Some(target) = kernel_target
+            && mir.pass("outlining list kernels", &mut types, |bodies, types| ember_analysis::outline_list_kernels_all(bodies, types, &common, target)) > 0
+        {
+            mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+        }
+        // For clang and gcc: a list an innermost loop only pushes onto is kept in
+        // a local for the loop and written back after it, so the C compiler keeps
+        // its buffer and length in registers: it cannot see that the runtime's
+        // buffer is apart from the list's own header (ADR-099). MSVC keeps such a
+        // local in memory: the views-alive benchmark ran 8 times slower with it.
+        if command != "check" && !c_for_msvc(&options) && mir.pass("keeping pushed lists in locals", &mut types, |bodies, types| ember_analysis::keep_pushed_lists_in_locals_all(bodies, types)) > 0 {
+            mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+        }
+        // Last, for C: a value a counted loop computes from its counter each
+        // turn (`k * step + skip`) gets a running value of its own, as
+        // hand-written C keeps one. clang and gcc vectorise such a loop at C's
+        // speed only then; MSVC's vectoriser takes no second running value, so C
+        // for MSVC keeps the value computed from the counter (the owner allows C
+        // written for each compiler, 2026-09-28).
+        if command != "check" && options.emit.as_deref() != Some("mir") && !c_for_msvc(&options) {
+            mir.pass("reducing induction values", &mut types, |bodies, types| ember_analysis::reduce_induction_values_all(bodies, types, &common));
+        }
+        // ADR-141 — last, for C: a short list or string a function makes, fills
+        // and drops itself starts in a buffer of the function's own frame.
+        if command != "check" && options.emit.as_deref() != Some("mir") {
+            mir.pass("giving stack buffers", &mut types, |bodies, types| ember_analysis::give_stack_buffers_all(bodies, types));
+        }
+        // `[OPT-1]` — last, for C: a class object no handle of which outlives its function is made in
+        // the function's frame. Not in a reloadable build, whose objects a reload moves.
+        if command != "check" && options.emit.as_deref() != Some("mir") && matches!(reload, ReloadMode::None) {
+            mir.pass("placing frame objects", &mut types, |bodies, types| ember_analysis::place_frame_objects_all(bodies, types));
+        }
     }
     mark("loop passes", "all modules");
     if command == "check" {
@@ -5452,31 +5420,39 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if program.main.is_some() && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
         mir.pass("skipping exit drops", &mut types, |bodies, types| ember_analysis::skip_exit_drops_all(bodies, types, &ember_branding::entry_symbol()));
     }
-    // Run after all body pruning and mutation. Retain the complete immutable
-    // proof batch until the unconditional final verification below.
-    let progress_certificates =
-        mir.pass("versioning progress reductions", &mut types, |bodies, types| ember_analysis::version_progress_reductions_all(bodies, types, &common));
-    if !progress_certificates.is_empty() {
-        mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
-    }
-    verify_callable_regions_or_panic(mir.bodies(), &types);
-    let progress_violations = ember_analysis::verify_progress_reductions_all(
-        mir.bodies(), &types, &common, &progress_certificates,
-    );
-    if !progress_violations.is_empty() {
-        panic!(
-            "progress-reduction verification failed:\n{}",
-            progress_violations
-                .iter()
-                .map(|v| format!("  {}: {}", v.body, v.message))
-                .collect::<Vec<_>>()
-                .join("\n")
+    // `[PRF-3]` — speed rewrites too: without them nothing is versioned, and nothing to verify.
+    if rewrites {
+        // Run after all body pruning and mutation. Retain the complete immutable
+        // proof batch until the unconditional final verification below.
+        let progress_certificates =
+            mir.pass("versioning progress reductions", &mut types, |bodies, types| ember_analysis::version_progress_reductions_all(bodies, types, &common));
+        if !progress_certificates.is_empty() {
+            mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+        }
+        verify_callable_regions_or_panic(mir.bodies(), &types);
+        let progress_violations = ember_analysis::verify_progress_reductions_all(
+            mir.bodies(), &types, &common, &progress_certificates,
         );
-    }
-    // D-498 (ADR-155) — after the progress proof: this only copies a loop and
-    // steps an ASCII byte the decoder reads anyway; it removes no check.
-    let cold = progress_certificates.checked_fallbacks();
-    if mir.pass("stepping ASCII runs", &mut types, |bodies, types| ember_analysis::step_ascii_runs_all(bodies, types, &common, &cold, kernel_target)) > 0 {
+        if !progress_violations.is_empty() {
+            panic!(
+                "progress-reduction verification failed:\n{}",
+                progress_violations
+                    .iter()
+                    .map(|v| format!("  {}: {}", v.body, v.message))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+        }
+        // D-498 (ADR-155) — after the progress proof: this only copies a loop and
+        // steps an ASCII byte the decoder reads anyway; it removes no check.
+        let cold = progress_certificates.checked_fallbacks();
+        if mir.pass("stepping ASCII runs", &mut types, |bodies, types| ember_analysis::step_ascii_runs_all(bodies, types, &common, &cold, kernel_target)) > 0 {
+            mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+            verify_callable_regions_or_panic(mir.bodies(), &types);
+        }
+    } else {
+        // The passes before the rewrites changed bodies after `[MIR-REG-1]`'s summaries were made
+        // (the rewrites' first pass makes them again): make them from the MIR as it now is.
         mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
         verify_callable_regions_or_panic(mir.bodies(), &types);
     }
@@ -5705,7 +5681,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
             None => toolchain.clone(),
         };
-        let foreign = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile)?;
+        let foreign = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, true)?;
         let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
             options.profile, image, &emitted.relaxed_units, &foreign, options.reload, options.explain, started)
         {
@@ -5786,7 +5762,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
         None => toolchain.clone(),
     };
-    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile)?;
+    let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, cdylib)?;
     libraries.extend(foreign_libraries);
     library_relaxed.extend(foreign_objects.iter().cloned());
     // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
@@ -6163,6 +6139,63 @@ fn run_program(exe: &Path, options: &Options) -> Result<ExitCode, String> {
 /// a check that remains, the check's reason (`[EFF-11]`). A loop whose
 /// counter no counted loop has (or a body copied for each instance, which
 /// gives one loop several verdicts: any failing one counts) is said once.
+/// `[PRF-3]` — the speed rewrites whose result the `@simd` verdicts read: calls inlined, the checks
+/// the range facts prove removed, loops versioned. Returns the calls inlined (`[CLI-10]`).
+fn rewrite_calls_checks_and_loops(
+    mir: &mut ember_mir::verify::Pipeline,
+    types: &mut ember_types::TypeTable,
+    common: &ember_types::CommonTypes,
+    options: &Options,
+) -> Vec<(String, String, String)> {
+    // A function called from one place is inlined there, so the analyses
+    // below see what its caller knows. For clang and gcc, only a function
+    // holding a check the caller's facts could remove: they inline the rest
+    // themselves, and given a generic `larger` already inlined, clang picks
+    // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
+    // (ADR-081). MSVC's inliner is weaker, so for it every such function.
+    let mut inlined = mir.pass("single-call inlining", types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(options)));
+    // D-571 — a call through a value that is a known function calls it, and
+    // that function, now called from one place, is inlined there too.
+    if mir.pass("calling known callables", types, |bodies, types| ember_analysis::call_known_callables_all(bodies, types)) > 0 {
+        inlined.extend(mir.pass("single-call inlining", types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(options))));
+        mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+    }
+    // ADR-107 — MSVC keeps a struct whose address goes to a function in
+    // memory, inlined or not: a `for` loop's step through a standard
+    // iterator is inlined and the iterator becomes a plain local.
+    if c_for_msvc(options) {
+        mir.pass("inlining loop steps", types, |bodies, types| ember_analysis::inline_loop_steps_all(bodies, types));
+    }
+    // Both passes above change bodies after `[MIR-REG-1]`'s summaries were
+    // made (a call through a parameter became a direct call; a call became
+    // its callee's body): make them again from the MIR as it now is.
+    mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+    mark("inlining", "all modules");
+    // `[RNG-4]` — on the final checks: remove every check the range facts
+    // prove cannot fail, before the loop passes group what is left.
+    // A branch they decide goes one way, and what only the other way read
+    // is gone: `[MIR-REG-1]`'s summaries are made again from what is left.
+    let (_, folds) = mir.pass("removing checks the range facts prove", types, |bodies, types| ember_analysis::remove_proven_checks_all(bodies, types, common));
+    if folds > 0 {
+        mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+    }
+    // D-759, `[TXT-4]` — a text slice's bound that is a character boundary by construction (`0`, the
+    // text's length, a cursor `next_char` stepped from one) is not checked again.
+    mir.pass("removing known character-boundary checks", types, |bodies, types| ember_analysis::remove_known_boundary_checks_all(bodies, types));
+    mark("checks the range facts remove", "all modules");
+    // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
+    // all provably in bounds at entry runs a copy without its bounds checks;
+    // then `[SIMD-7]` groups the overflow checks of every loop in
+    // vectorisable form.
+    // A versioned copy writes an element of a `MutSpan` through its index where the checked loop
+    // called the runtime, which the summaries count as a write of the view: make them again.
+    if mir.pass("loop versioning", types, |bodies, types| ember_analysis::version_bounds_checked_loops_all(bodies, types, common)) != (0, 0) {
+        mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+    }
+    mark("loop versioning", "all modules");
+    inlined
+}
+
 fn simd_verdicts(bodies: &[ember_mir::Body], map: &SourceMap, sink: &mut Sink) -> Vec<String> {
     let mut loops: std::collections::BTreeMap<(ember_span::FileId, u32), (Span, bool, Result<(), ember_mir::NotVectorisable>)> = std::collections::BTreeMap::new();
     for body in bodies {
@@ -6363,6 +6396,8 @@ struct ManifestLintSettings {
     perf: ember_analysis::PerfLints,
     /// `[BLD-6]`, `[PRF-3]` — `[profiles.<name>] lto` for each built-in profile, by `Profile`.
     lto: [Option<ember_build::Lto>; 3],
+    /// `[PRF-3]` — `[profiles.<name>] rewrites` for each built-in profile, by `Profile`.
+    rewrites: [Option<bool>; 3],
 }
 
 /// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
@@ -6486,6 +6521,19 @@ fn manifest_lint_settings(
                             None => sink.emit(
                                 Diagnostic::error(codes::E9001, location, format!("`{written}` is not an `lto` value"))
                                     .help("`lto` is \"off\", \"thin\" or \"on\" [BLD-6]"),
+                            ),
+                        }
+                    } else if let Some(profile) = section.strip_prefix("profiles.") && key == "rewrites" {
+                        // `[PRF-3]` — `true` or `false`.
+                        match value.trim() {
+                            written @ ("true" | "false") => {
+                                if let Some(profile) = Profile::from_name(profile.trim()) {
+                                    settings.rewrites[profile as usize] = Some(written == "true");
+                                }
+                            }
+                            written => sink.emit(
+                                Diagnostic::error(codes::E9001, location, format!("`{written}` is not a `rewrites` value"))
+                                    .help("`rewrites` is `true` or `false` [PRF-3]"),
                             ),
                         }
                     } else if section == "build" && key == "runtime" && value.trim().trim_matches('"') == "static" {
@@ -6777,8 +6825,8 @@ fn manifest_section_keys(section: &str) -> Option<Option<&'static [&'static str]
         "dependencies" | "lints" => return Some(None),
         // `[PRF-3]` — the profile table's keys.
         _ if section.starts_with("profiles.") => &[
-            "inherits", "opt", "debug_info", "strip", "backtrace", "debug_assert", "leak_report", "lock_order",
-            "sanitizers", "lto",
+            "inherits", "opt", "rewrites", "debug_info", "strip", "backtrace", "debug_assert", "leak_report",
+            "lock_order", "sanitizers", "lto",
         ],
         // `[FFI-50]`.
         _ if section.starts_with("cpp.") => &["compiler", "standard", "defines", "include_paths", "flags", "cmake"],

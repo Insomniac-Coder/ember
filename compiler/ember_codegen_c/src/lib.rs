@@ -9,7 +9,6 @@
 //! stable and nothing is keyed on a pointer, so the build cache and
 //! `diff`-based review both work.
 
-use std::fmt::Write as _;
 
 // `[RT-5]` — the emitted C's runtime calls carry this prefix, written in
 // one place for the whole workspace. `{RT}` in a format string below
@@ -383,6 +382,8 @@ fn emit_with(
         module,
         type_namespace,
         line_directives: true,
+        current_line: None,
+        current_line_used: false,
         order,
         structural,
         usize_ty,
@@ -775,6 +776,12 @@ struct Emitter<'a> {
     module: bool,
     type_namespace: String,
     line_directives: bool,
+    /// `[TST-5]` — the `#line` of the statement being emitted, and whether a line has followed it.
+    /// A `#line` names only the line after it, the next one named one more: each later line of
+    /// the statement, and the jumps after it, is named again, or they would claim the Ember lines
+    /// below (a breakpoint there would stop in them).
+    current_line: Option<String>,
+    current_line_used: bool,
     /// Every type definition to emit, in an order where a type is defined
     /// after everything it contains by value.
     order: Vec<TypeNode>,
@@ -1047,10 +1054,12 @@ enum Definition {
 /// the platform's user label prefix; GCC writes its label into the assembly as it is, so there it
 /// is quoted for the assembler, as Clang quotes on its own); MSVC, which has none, defines `alias`
 /// and makes `exact` its linker alias, which a reference to `exact` resolves to (a shared library
-/// exports it as `exact` through its module-definition file).
+/// exports it as `exact` through its module-definition file). D-898 — GCC's `-flto` symbol table
+/// keeps the quotes (D-789), so the link's `--require-defined={exact}` names no symbol of it and
+/// the export was dropped: it is `used`, which LTO keeps whatever it is named.
 pub(crate) fn exact_symbol_prototype(signature: &str, alias: &str, exact: &str) -> String {
     format!(
-        "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{exact}={alias}\")\n{signature};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{signature} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{signature} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\");\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
+        "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{exact}={alias}\")\n{signature};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{signature} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{signature} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\") __attribute__((used));\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
     )
 }
 
@@ -1165,6 +1174,12 @@ pub const FP_STRICT: [&str; 8] = [
 
 impl Emitter<'_> {
     fn line(&mut self, text: &str) {
+        if let Some(directive) = &self.current_line {
+            if self.current_line_used {
+                self.out.push_str(directive);
+            }
+            self.current_line_used = true;
+        }
         self.out.push_str(text);
         self.out.push('\n');
     }
@@ -5622,7 +5637,11 @@ impl Emitter<'_> {
     /// A range endpoint as a C literal of the representation type.
     fn bound_literal(&self, bound: ember_types::Bound, repr: Ty) -> String {
         match bound {
-            ember_types::Bound::Int(v) => v.to_string(),
+            // D-892 — as any constant of the type (`int_literal`): `i32`'s least value is
+            // `(-2147483647 - 1)`, since C reads `-2147483648` as a minus applied to an unsigned
+            // literal, and a clamp compared against it unsigned.
+            ember_types::Bound::Int(v) if !matches!(self.types.kind(repr), TyKind::Float(_)) => self.int_literal(v as u128, repr),
+            ember_types::Bound::Int(v) => self.bound_literal(ember_types::Bound::Float(v as f64), repr),
             ember_types::Bound::Float(v) => {
                 let suffix =
                     if matches!(self.types.kind(repr), TyKind::Float(FloatTy::F64)) { "" } else { "f" };
@@ -6523,8 +6542,9 @@ impl Emitter<'_> {
         let held = self.types.struct_def(token).fields[0].ty;
         let TyKind::Struct(record) = *self.types.kind(held) else { unreachable!("a `ForeignCallback` is a struct") };
         let fields: Vec<Ty> = self.types.struct_def(record).fields.iter().map(|field| field.ty).collect();
+        // `[HR-20]` — a callback's token has no `on_relocate` record: its `relocation` is `0`.
         Some(format!(
-            "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }} }}",
+            "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }}, 0 }}",
             self.c_type(unregister.token),
             self.c_type(held),
             self.c_type(fields[0]),
@@ -6984,6 +7004,7 @@ impl Emitter<'_> {
         }
 
         self.line("}");
+        self.current_line = None;
         self.line("");
         self.interface_caches.clear();
         self.rl_frame_active = false;
@@ -7076,6 +7097,9 @@ impl Emitter<'_> {
         }
         let (counter, limit) = (counted.counter.0, counted.limit.0);
         let test = if counted.inclusive { "<=" } else { "<" };
+        // `[TST-5]` — the loop's own code after its body (the next turn, the copies out) is the
+        // loop's line, the one its set-up was named by, not its body's last statement's.
+        let header_line = self.current_line.clone();
         if let Some(sum) = integer_reduction::byte_sum(counted, body, self.types, locals, address_taken, |place| self.place_ty(place, body)) {
             // The original unchecked loop is a read-only byte reduction:
             // the same modular integer sum, with full in-bounds vector loads
@@ -7109,6 +7133,7 @@ impl Emitter<'_> {
                 for _ in 0..turns {
                     self.line("    {");
                     self.emit_for_body(counted, body, locals);
+                    self.resume_line(&header_line);
                     self.line("    }");
                     self.line(&format!("    ++_{counter};"));
                 }
@@ -7119,6 +7144,7 @@ impl Emitter<'_> {
             }
             self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
             self.emit_for_body(counted, body, locals);
+            self.resume_line(&header_line);
             self.line("    }");
         }
         if !restricted.is_empty() {
@@ -8013,7 +8039,18 @@ impl Emitter<'_> {
         // Forward slashes: a backslash in a `#line` path is an escape. `[BLD-13]` — relative to
         // the package.
         let path = self.map.artefact_path(span.file);
-        let _ = writeln!(self.out, "#line {line} \"{path}\"");
+        let directive = format!("#line {line} \"{path}\"\n");
+        self.out.push_str(&directive);
+        self.current_line = Some(directive);
+        self.current_line_used = false;
+    }
+
+    /// `[TST-5]` — the lines from here are named by `saved`, a `#line` that was current before.
+    fn resume_line(&mut self, saved: &Option<String>) {
+        if saved.is_some() {
+            self.current_line.clone_from(saved);
+            self.current_line_used = true;
+        }
     }
 
     /// The jump to `next` at the end of block `index`: none when `next`
@@ -9205,7 +9242,11 @@ impl Emitter<'_> {
                         // A `Box` needs nothing, and neither does a retained callback (`[FFI-21]`).
                         let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(_));
                         if boxed {
-                            return "((uint64_t)0)".to_string();
+                            // `on_relocate` is for a class object: a box's value never moves.
+                            return match rendered.get(1) {
+                                Some(on_relocate) => format!("((void)({on_relocate}), (uint64_t)0)"),
+                                None => "((uint64_t)0)".to_string(),
+                            };
                         }
                         let callback = match args.get(1).and_then(|arg| self.operand_type(arg, body)).map(|ty| self.types.kind(ty).clone()) {
                             Some(TyKind::Enum(id)) if self.types.option_niche(id).is_none() => {
@@ -14190,6 +14231,8 @@ mod string_descriptor_view_parts_tests {
             module: false,
             type_namespace: String::new(),
             line_directives: false,
+            current_line: None,
+            current_line_used: false,
             order: Vec::new(),
             structural: BTreeMap::new(),
             virtual_tables: BTreeMap::new(),

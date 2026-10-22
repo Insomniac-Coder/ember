@@ -790,6 +790,8 @@ impl<'a> Lexer<'a> {
             StringFlavour::Bytes | StringFlavour::CStr => EscapeContext::Bytes,
             _ => EscapeContext::Text,
         };
+        // `[DIA-14]` — a literal with a mistake reported is a placeholder: one mistake, one error.
+        let mut failed = false;
 
         loop {
             match self.peek() {
@@ -804,18 +806,17 @@ impl<'a> Lexer<'a> {
                     self.pos += 1;
                     break;
                 }
-                Some('\\') => {
-                    if let Some(value) = self.lex_escape(context) {
-                        match flavour {
-                            StringFlavour::Bytes | StringFlavour::CStr => bytes.push(value as u8),
-                            _ => {
-                                if let Some(c) = char::from_u32(value) {
-                                    text.push(c);
-                                }
+                Some('\\') => match self.lex_escape(context) {
+                    Some(value) => match flavour {
+                        StringFlavour::Bytes | StringFlavour::CStr => bytes.push(value as u8),
+                        _ => {
+                            if let Some(c) = char::from_u32(value) {
+                                text.push(c);
                             }
                         }
-                    }
-                }
+                    },
+                    None => failed = true,
+                },
                 Some('{') if flavour == StringFlavour::FStr => {
                     if self.peek_nth(1) == Some('{') {
                         self.pos += 2;
@@ -844,6 +845,7 @@ impl<'a> Lexer<'a> {
                     let d = Diagnostic::error(codes::E0009, span, "unmatched `}` in an f-string")
                         .help("write `}}` for a literal brace");
                     self.sink.emit(d);
+                    failed = true;
                 }
                 Some(c) => {
                     self.pos += c.len_utf8();
@@ -856,6 +858,7 @@ impl<'a> Lexer<'a> {
                                 let d = Diagnostic::error(codes::E0009, span, "a byte string may hold ASCII only",
                                 );
                                 self.sink.emit(d);
+                                failed = true;
                             }
                         }
                         _ => text.push(c),
@@ -872,6 +875,7 @@ impl<'a> Lexer<'a> {
                     let d = Diagnostic::error(codes::E5064, span, "a C string literal may not contain a NUL byte")
                         .note("the terminating NUL is added by the compiler");
                     self.sink.emit(d);
+                    failed = true;
                 }
                 Lit::CStr(bytes)
             }
@@ -883,7 +887,7 @@ impl<'a> Lexer<'a> {
             }
             _ => Lit::Str(text),
         };
-        self.push(TokenKind::Lit(lit), start);
+        self.push(if failed { TokenKind::Error } else { TokenKind::Lit(lit) }, start);
     }
 
     /// The `{expr:spec}` of an f-string. `pos` is on the `{`.

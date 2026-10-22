@@ -630,7 +630,7 @@ impl Emitter<'_> {
             self.line(line);
         }
         if types.is_empty() {
-            self.line("    { NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, 0, NULL, 0, NULL, NULL, NULL, NULL, NULL },");
+            self.line("    { NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, 0, NULL, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL },");
         }
         self.line("};");
         self.line(&format!("static {RT}rl_identity* const {identities_symbol}[{}] = {{", identities.len().max(1)));
@@ -1300,7 +1300,7 @@ impl Emitter<'_> {
             // `[HR-15]` — an enum with payloads: its tag as its one field, and each variant's payload,
             // which the walk reads for the variant the tag names.
             self.line(&format!(
-                "static const {RT}rl_field {symbol}_tag[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL }} }};"
+                "static const {RT}rl_field {symbol}_tag[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL, NULL, 0, 0 }} }};"
             ));
             self.line(&format!("static const {RT}rl_variant {symbol}_variants[{}] = {{", tables.len()));
             for (variant, name, rows) in &tables {
@@ -1560,7 +1560,7 @@ impl Emitter<'_> {
             let tag_name = table(&format!("tag_{mangled}"));
             if payloads {
                 self.line(&format!(
-                    "static const {RT}rl_field {tag_name}[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL }} }};"
+                    "static const {RT}rl_field {tag_name}[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL, NULL, 0, 0 }} }};"
                 ));
             }
             let mut rows = Vec::new();

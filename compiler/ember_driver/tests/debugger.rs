@@ -88,10 +88,21 @@ fn waiver() -> Option<String> {
 fn session(debugger: Debugger, path: &Path, program: &Path, source: &str) -> String {
     let output = match debugger {
         Debugger::Cdb => {
+            // A line whose code has several ranges (clang-cl starts one at each branch, so a line
+            // with a check has more than one; cl joins them) is "Ambiguous" to cdb, which lists each
+            // as `Matched: module!function+offset`: as a cdb user does, the breakpoint goes on the
+            // first, the line's start.
+            let line = format!("`{source}:{STOP_LINE}`");
+            let probe = Command::new(path).args(["-lines", "-c", &format!(".lines -e; bu {line}; q")]).arg(program).output().expect("the debugger runs");
+            let probe = String::from_utf8_lossy(&probe.stdout).into_owned();
+            let location = match probe.contains("Ambiguous symbol error") {
+                true => probe.lines().find_map(|text| text.strip_prefix("Matched: ")).and_then(|text| text.split_whitespace().next()).map(str::to_string).unwrap_or(line),
+                false => line,
+            };
             // `l+t`: step by source line; `.lines -e`: source lines from the PDB; the breakpoint is
-            // the source file's line, resolved as the program loads (`bu`).
+            // resolved as the program loads (`bu`).
             let script = format!(
-                ".lines -e; l+t; l+s; bu `{source}:{STOP_LINE}`; g; .printf \"MARK%d\\n\", 1; .frame; dv; .printf \"MARK%d\\n\", 2; g; dv sum; .printf \"MARK%d\\n\", 3; p; .frame; .printf \"MARK%d\\n\", 4; q"
+                ".lines -e; l+t; l+s; bu {location}; g; .printf \"MARK%d\\n\", 1; .frame; dv; .printf \"MARK%d\\n\", 2; g; dv sum; .printf \"MARK%d\\n\", 3; p; .frame; .printf \"MARK%d\\n\", 4; q"
             );
             Command::new(path).args(["-lines", "-c", &script]).arg(program).output()
         }

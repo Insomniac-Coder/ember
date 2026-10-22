@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: ALC-1
+#$ profiles: debug, development
 #$ stdout: 200 19900
 #$ stdout: 100 abcdefghijklmnopqrstuvwxyabcdefghijklmnopqrstuvwxyabcdefghijklmnopqrstuvwxyabcdefghijklmnopqrstuvwxy
 #$ stdout: 20 195 5

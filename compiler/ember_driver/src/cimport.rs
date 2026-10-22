@@ -4145,10 +4145,12 @@ impl Writer {
                         return Err(format!("`{}` lent mutably (`&`): a variant crosses by value, by `const&` or by `&&` ([FFI-17a])", cpp_spelling(value)));
                     }
                     let spelled = cpp_spelling(clang_getCanonicalType(value));
+                    // A `const&`'s pointee is spelled `const …` already: g++ refuses `const const`.
+                    let read_only = if constant { spelled.clone() } else { format!("const {spelled}") };
                     let pass = if ty.kind == CXType_RValueReference {
                         format!("std::move(*static_cast<{spelled}*>(const_cast<void*>({name})))")
                     } else {
-                        format!("*static_cast<const {spelled}*>({name})")
+                        format!("*static_cast<{read_only}*>({name})")
                     };
                     let ember = CType {
                         ember: format!("*{}", variant.storage),
@@ -5779,6 +5781,15 @@ pub fn load(
             )
             .collect()
     };
+    // `[FFI-39]` — the classes of a module refused a trampoline above, with an error there.
+    let refused_in = |namespace: &[String]| -> Vec<String> {
+        imported
+            .skipped
+            .iter()
+            .filter(|skipped| skipped.namespace == namespace && trampolines.iter().any(|decl| decl.class == skipped.name))
+            .map(|skipped| skipped.name.clone())
+            .collect()
+    };
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
@@ -5795,6 +5806,7 @@ pub fn load(
         header: shown.clone(),
         identities,
         skipped: skipped_in(&[]),
+        refused: refused_in(&[]),
         layouts: imported.layouts.iter().filter(|layout| layout.namespace.is_empty()).map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
         shim,
         sources: source.into_iter().collect(),
@@ -5846,6 +5858,7 @@ pub fn load(
                 policy_changes: changed_signatures(&imported, &applied, &namespace.join("::"), &foreign.header),
                 variables: variables(&imported, namespace),
                 skipped: skipped_in(namespace),
+                refused: refused_in(namespace),
                 declarations: declarations(&imported, &applied, &namespace.join("::")),
                 ..Default::default()
             };
@@ -5860,7 +5873,8 @@ pub fn load(
 /// `[FFI-29]`, `[BLD-FFI-1]`, `[BLD-FFI-1a]`, `[BLD-FFI-3]` — each `import c`'s shim and C sources,
 /// compiled with that import's flags into objects of their own, and its libraries in order: by
 /// `toolchain`, the `[c]` section's compiler. `[BLD-FFI-4]` — each `import cpp`'s thunks by
-/// `backend`, the compiler of Ember's own C.
+/// `backend`, the compiler of Ember's own C. `shared_library`: they go into one (a reloadable
+/// image, a `cdylib`), which takes only position-independent code.
 pub fn build_objects(
     modules: &[ember_typeck::LoadedModule],
     toolchain: &ember_build::Toolchain,
@@ -5868,6 +5882,7 @@ pub fn build_objects(
     c_dir: &Path,
     obj_dir: &Path,
     profile: ember_build::Profile,
+    shared_library: bool,
 ) -> Result<(Vec<PathBuf>, Vec<String>), String> {
     let ext = if matches!(toolchain, ember_build::Toolchain::Msvc { .. }) { "obj" } else { "o" };
     let mut objects = Vec::new();
@@ -5908,7 +5923,7 @@ pub fn build_objects(
             units.push((source.clone(), obj_dir.join(format!("{stem}.{name}.{ext}"))));
         }
         for (source, object) in units {
-            ember_build::compile_object_with_flags(toolchain, &source, &[], &foreign.flags, &object, profile).map_err(|e| e.to_string())?;
+            ember_build::compile_foreign_object(toolchain, &source, &foreign.flags, &object, profile, shared_library).map_err(|e| e.to_string())?;
             objects.push(object);
         }
         libraries.extend(foreign.link.iter().cloned());

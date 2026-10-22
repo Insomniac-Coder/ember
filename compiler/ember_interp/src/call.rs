@@ -42,6 +42,9 @@ pub struct Dispatch {
 pub(crate) enum After {
     EndObjectWrite(u64),
     FreeSlot(u64),
+    /// `[CLO-6a]` — a `once fn` value's call ends its state: the value at the address is dropped
+    /// when the call only borrowed its state, and the address freed when it is a slot of the call's.
+    EndOnce { value: u64, borrowed: bool, temporary: bool },
 }
 
 /// A callable value: its entry, its descriptor, three words of state.
@@ -198,18 +201,35 @@ impl<'a> Interp<'a, '_> {
                 self.interface_call(values, *slot, *class_handle, *interface, args, Ret::Place(dest.clone(), next))
             }
             FuncRef::Indirect { operand, ty, .. } => {
-                let callee = self.operand(operand, Some(*ty))?;
                 match self.types.kind(*ty) {
-                    TyKind::Fn { abi: None, .. } => {
-                        let fn_place = match operand {
-                            Operand::Copy(place) | Operand::Move(place) => Some(self.place(place)?),
+                    &TyKind::Fn { abi: None, once, .. } => {
+                        let mut fn_place = match operand {
+                            Operand::Copy(place) | Operand::Move(place) => Some(self.place(place)?.addr),
                             Operand::Const(_) => None,
                         };
+                        // `[CLO-6a]` — a `once fn` in a `Box` is called by taking the box: the
+                        // value moves out of it into a slot of the call's, and the box is freed.
+                        let mut temporary = false;
+                        if let Operand::Move(place) = operand
+                            && let TyKind::Struct(id) = *self.types.kind(self.place_ty(self.body_now(), place))
+                            && self.types.compiler_box_inner(id).is_some()
+                        {
+                            let boxed = self.mem.read_u64(fn_place.expect("a place"))?;
+                            let slot = self.mem.alloc(40, 8)?;
+                            self.mem.copy(boxed, slot, 40)?;
+                            self.mem.free(boxed)?;
+                            (fn_place, temporary) = (Some(slot), true);
+                        }
+                        let callee = match temporary {
+                            true => self.mem.read(fn_place.expect("a slot"), 40)?.to_vec(),
+                            false => self.operand(operand, Some(*ty))?,
+                        };
                         let values = self.arguments(func, args, &[])?;
-                        self.call_callable(&callee, fn_place.map(|loc| loc.addr), values, Ret::Place(dest.clone(), next))
+                        let once = once.then_some(fn_place).flatten().map(|value| (value, temporary));
+                        self.call_callable(&callee, fn_place, once, values, Ret::Place(dest.clone(), next))
                     }
                     _ => {
-                        let code = u64_of(&callee);
+                        let code = u64_of(&self.operand(operand, Some(*ty))?);
                         let Some((Region::Code, index)) = memory::decode(code) else {
                             return fault(format!("a call through {code:#x}, which is no function"));
                         };
@@ -367,6 +387,15 @@ impl<'a> Interp<'a, '_> {
                 self.object_access(object, true, false, Span::DUMMY)
             }
             After::FreeSlot(slot) => Ok(self.mem.free(slot)?),
+            After::EndOnce { value, borrowed, temporary } => {
+                if borrowed {
+                    self.drop_callable(value)?;
+                }
+                if temporary {
+                    self.mem.free(value)?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -397,7 +426,9 @@ impl<'a> Interp<'a, '_> {
 
     /// A call through a callable value. `place` is where the value lives, whose state a closure
     /// reads and writes in place.
-    fn call_callable(&mut self, value: &[u8], place: Option<u64>, mut values: Vec<Vec<u8>>, ret: Ret) -> R<()> {
+    /// `once` is a `once fn` value's call: the address of the value, and whether it is a slot of
+    /// the call's.
+    fn call_callable(&mut self, value: &[u8], place: Option<u64>, once: Option<(u64, bool)>, mut values: Vec<Vec<u8>>, ret: Ret) -> R<()> {
         let entry = u64_of(&value[..8]);
         let descriptor = u64_of(&value[8..16]);
         let Some((Region::Code, index)) = memory::decode(entry) else {
@@ -405,7 +436,11 @@ impl<'a> Interp<'a, '_> {
         };
         // A function's value: no state.
         if matches!(memory::decode(descriptor), Some((Region::Code, _))) {
-            return self.enter(index, values, ret);
+            self.enter(index, values, ret)?;
+            if let Some((value, true)) = once {
+                self.frames.last_mut().expect("the frame just entered").after = Some(After::EndOnce { value, borrowed: false, temporary: true });
+            }
+            return Ok(());
         }
         let Some((Region::Descriptor, d)) = memory::decode(descriptor) else {
             return fault("a callable value with no descriptor");
@@ -429,15 +464,22 @@ impl<'a> Interp<'a, '_> {
         };
         let body = &self.bodies[index];
         let env_param = body.locals.get(1).map(|local| local.ty);
-        let env_argument = if env_param.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Ref { .. } | TyKind::Ptr { .. })) {
-            state.to_le_bytes().to_vec()
-        } else {
-            self.mem.read(state, env_size)?.to_vec()
-        };
+        let borrowed = env_param.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Ref { .. } | TyKind::Ptr { .. }));
+        let env_argument = if borrowed { state.to_le_bytes().to_vec() } else { self.mem.read(state, env_size)?.to_vec() };
+        // `[CLO-6a]` — a closure that takes its state whole is given it: only the allocation
+        // holding it is freed.
+        if once.is_some() && !borrowed && env_size > 24 {
+            self.mem.free(state)?;
+        }
         values.insert(0, env_argument);
         self.enter(index, values, ret)?;
-        if let Some(slot) = temporary {
-            self.frames.last_mut().expect("the frame just entered").after = Some(After::FreeSlot(slot));
+        let after = match (temporary, once) {
+            (Some(slot), _) => Some(After::FreeSlot(slot)),
+            (None, Some((value, temporary))) => Some(After::EndOnce { value, borrowed, temporary }),
+            (None, None) => None,
+        };
+        if after.is_some() {
+            self.frames.last_mut().expect("the frame just entered").after = after;
         }
         Ok(())
     }

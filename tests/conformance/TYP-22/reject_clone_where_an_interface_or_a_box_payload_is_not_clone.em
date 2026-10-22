@@ -29,4 +29,4 @@ struct Holder:
 
 fn main():
     plain: Box[dyn Plain] = Box(Unique(1))
-    _copy = plain.clone()  #$ error[E1010]: `Box[dyn Plain]` has no method named `clone`
+    _copy = plain.clone()  #$ error[E2072]: `Box[dyn Plain]` has no method named `clone`

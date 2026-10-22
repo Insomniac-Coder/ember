@@ -1427,24 +1427,40 @@ pub fn compile_object(
     output: &Path,
     profile: Profile,
 ) -> Result<(), BuildError> {
-    compile_object_with_flags(toolchain, source, include_dirs, &[], output, profile)
+    // `[BLD-6]` — for whichever link reads the object.
+    compile_c_object(toolchain, source, include_dirs, &[], output, profile, build_lto(toolchain, profile, Link::Elsewhere), false)
 }
 
-/// [`compile_object`] with flags of the program's own after the build's: `[BLD-FFI-1a]` an
-/// `import c`'s shim and C sources, with the package's `[c] flags` and the import's `-D`/`-I`
-/// (every toolchain takes those two spellings).
-pub fn compile_object_with_flags(
+/// `[BLD-FFI-1a]` — an `import c`'s shim or one of its C sources, with the package's `[c] flags`
+/// and the import's `-D`/`-I` (every toolchain takes those two spellings) after the build's.
+/// D-897 — a unit of its own, outside the program's link-time optimisation: the program declares
+/// the C functions with its own types, whose struct tags are not the header's, which C counts as
+/// other types once LTO joins the two (gcc: `-Wlto-type-mismatch`, "code may be misoptimized").
+/// `shared_library`: the object goes into one (a reloadable image, a `cdylib`).
+pub fn compile_foreign_object(
+    toolchain: &Toolchain,
+    source: &Path,
+    flags: &[String],
+    output: &Path,
+    profile: Profile,
+    shared_library: bool,
+) -> Result<(), BuildError> {
+    compile_c_object(toolchain, source, &[], flags, output, profile, Lto::Off, shared_library)
+}
+
+fn compile_c_object(
     toolchain: &Toolchain,
     source: &Path,
     include_dirs: &[PathBuf],
     flags: &[String],
     output: &Path,
     profile: Profile,
+    lto: Lto,
+    shared_library: bool,
 ) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = compiler_command(toolchain);
-    // `[BLD-6]` — for whichever link reads the object.
-    let lto = lto_compile_flags(toolchain, build_lto(toolchain, profile, Link::Elsewhere), Link::Elsewhere);
+    let lto = lto_compile_flags(toolchain, lto, Link::Elsewhere);
     match toolchain {
         Toolchain::Msvc { .. } => {
             command.args(msvc_flags(profile).into_iter().map(|flag|
@@ -1455,6 +1471,11 @@ pub fn compile_object_with_flags(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(lto).arg("-c").args(flags);
+            // D-893 — for a reloadable image's shared library or a `cdylib`, position-independent:
+            // a shared library cannot be linked with code made for an executable.
+            if shared_library && !cfg!(windows) {
+                command.arg("-fPIC");
+            }
             folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
@@ -1490,8 +1511,10 @@ pub fn compile_cpp_object(
             command
         }
     };
-    // `[BLD-6]` — for whichever link reads the object, as the program's C.
-    let lto = lto_compile_flags(toolchain, build_lto(toolchain, profile, Link::Elsewhere), Link::Elsewhere);
+    // D-897 — a unit of its own, outside the program's link-time optimisation, as an `import c`'s
+    // C is: the thunks write a `std::variant` into bytes the program holds as its own type, which
+    // gcc's LTO, joining the two, took for unrelated objects (FFI-17a read zeros in `development`).
+    let lto = lto_compile_flags(toolchain, Lto::Off, Link::Elsewhere);
     match toolchain {
         Toolchain::Msvc { .. } => {
             // cl's oldest C++ standard switch is C++14.
@@ -2684,7 +2707,7 @@ int main(int argc, char** argv) {
                 use std::os::windows::process::CommandExt;
                 command.creation_flags(0x08000000); // CREATE_NO_WINDOW
             }
-            let output = command.output().expect("the allocator-rounding oracle runs");
+            let output = run_fresh(&mut command).expect("the allocator-rounding oracle runs");
             assert!(output.status.success(), "{mode} failed: {}", String::from_utf8_lossy(&output.stderr));
             assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
             assert!(output.stderr.is_empty(), "{mode}: {}", String::from_utf8_lossy(&output.stderr));
@@ -2972,7 +2995,7 @@ int main(int argc, char** argv) {
             include_dirs: &[runtime.join("include")], output: program.clone(),
             profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the allocation-statistics oracle compiles");
-        let output = Command::new(program).output().expect("the allocation-statistics oracle runs");
+        let output = run_fresh(&mut Command::new(program)).expect("the allocation-statistics oracle runs");
         assert!(output.status.success(), "thread-local statistics failed: {}", String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
         let _ = std::fs::remove_dir_all(&dir);
@@ -3014,7 +3037,7 @@ int main(int argc, char** argv) {
             command.arg("-rtlib=compiler-rt");
         }
         run(command).expect("the test program compiles");
-        let output = Command::new(&program).output().expect("the test program runs");
+        let output = run_fresh(&mut Command::new(&program)).expect("the test program runs");
         let _ = std::fs::remove_dir_all(&dir);
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(output.status.success() && stdout.trim() == "ok", "{stdout}");

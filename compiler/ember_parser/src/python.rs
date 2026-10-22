@@ -7,7 +7,7 @@ use ember_ast::*;
 use ember_diag::habits::Habit;
 use ember_diag::{Diagnostic, Replacement, codes};
 use ember_lexer::{Kw, Punct, Token, TokenKind};
-use ember_span::{Span, Symbol};
+use ember_span::Span;
 
 use crate::Parser;
 
@@ -197,11 +197,11 @@ impl Parser<'_> {
             None => vec![(start, Replacement::Text("return Err(".to_string())), (value.span.shrink_to_end(), Replacement::Text(")".to_string()))],
         };
         self.report(diagnostic.suggest_edits("write `return Err(…)`", edits));
-        let id = self.next_id();
-        let err = Expr { id, kind: ExprKind::Path { segments: vec![Ident { name: Symbol::intern("Err"), span: raise }] }, span: raise };
+        // `[DIA-14]`, `[IDE-3]` — the function is left here, as `raise` leaves it, with a placeholder:
+        // what was raised is Python's (`ValueError`), and nothing more is said of it.
         let span = raise.to(value.span);
-        let call = Expr { id: self.next_id(), kind: ExprKind::Call { callee: Box::new(err), args: vec![Arg { name: None, span: value.span, value }] }, span };
-        StmtKind::Expr(Expr { id: self.next_id(), kind: ExprKind::Jump(Jump::Return(Some(Box::new(call)))), span })
+        let placeholder = Expr { id: self.next_id(), kind: ExprKind::Error, span: value.span };
+        StmtKind::Expr(Expr { id: self.next_id(), kind: ExprKind::Jump(Jump::Return(Some(Box::new(placeholder)))), span })
     }
 
     /// P12 — `try:` with its `except` and `finally` clauses: Ember has no exceptions. Reported

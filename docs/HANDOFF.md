@@ -10862,6 +10862,11 @@ formal 1/9 count or Phase 2's estimate.
 > build in the repository's `target/`, not a scratch folder; changing Defender is the owner's call.
 > Next: D-811's remaining growth (borrow checks, loop versioning), the incremental build (ODR-244,
 > ODR-257), the analysis workflow the owner approved (4 agents at a time).
+> The pre-push check of the merged tree found the helpers' work meeting at the merge (D-883..D-889,
+> fixed) and `[TST-5]`'s first real session failing: the owner's ODR-259 (ADR-273) — **a `debug`
+> build skips Ember's speed rewrites** (`[profiles.debug] rewrites = true` turns them on), so a
+> debugger follows the program as written; the conformance runner reads `assert-c` in a test's
+> rewriting profiles. ODR-259 waits for cut 35 to add the `rewrites` row to `[PRF-3]`'s table.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

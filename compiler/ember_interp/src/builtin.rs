@@ -7,6 +7,7 @@ use ember_mir::{Operand, Place};
 use ember_span::Span;
 use ember_types::{Ty, TyKind};
 
+use crate::memory::{self, Region};
 use crate::scalar::IntKind;
 use crate::{fault, two_words, u64_of, Interp, Loc, Stop, R};
 
@@ -1090,7 +1091,9 @@ impl Interp<'_, '_> {
             let value = self.invoke_symbol(&symbol, vec![argument])?;
             return Ok(self.mem.write(dest, &value)?);
         }
-        if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_)) {
+        if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_))
+            || matches!(*self.types.kind(ty), TyKind::Struct(id) if self.types.compiler_box_inner(id).is_some())
+        {
             return self.clone_parts(dest, source, ty);
         }
         fault(format!("a clone of `{}`", self.types.display(ty)))
@@ -1120,7 +1123,27 @@ impl Interp<'_, '_> {
                 }
                 Ok(())
             }
-            _ => fault("CloneParts of no tuple or enum"),
+            // ODR-237 — a new box holding a clone of the value; a `Box[dyn I]`'s through its
+            // table's concrete type (a class handle's copy is the handle, retained).
+            TyKind::Struct(id) if self.types.compiler_box_inner(id).is_some() => {
+                let inner = self.types.compiler_box_inner(id).expect("a box");
+                let (data, concrete) = if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                    let table = self.mem.read_u64(source + 8)?;
+                    let Some((Region::Table, index)) = memory::decode(table) else { return fault("a dynamic box with no table") };
+                    (self.mem.read_u64(source)?, self.calls.tables[index].concrete)
+                } else {
+                    (self.mem.read_u64(source)?, inner)
+                };
+                if matches!(self.types.kind(concrete), TyKind::Class(_)) {
+                    return self.clone_in_place(dest, source, concrete);
+                }
+                let layout = self.layout(concrete);
+                let block = self.mem.alloc(layout.size.max(1), layout.align)?;
+                self.mem.copy(data, block, layout.size)?;
+                self.mem.write(dest, &block.to_le_bytes())?;
+                self.clone_in_place(block, data, concrete)
+            }
+            _ => fault("CloneParts of no tuple, enum or box"),
         }
     }
 
@@ -1403,6 +1426,10 @@ impl Interp<'_, '_> {
                 "a C++ object"
             }
             Builtin::RetainedPin | Builtin::RetainedAddress => "a pinned object's address",
+            // `[JOB-5]` — the evaluator runs no job (one is refused above), so every call is outside one.
+            Builtin::JobLocalArena { .. } => {
+                return self.panic("`jobs.local_arena()` is called outside a job: the arena is the running job's [JOB-5]", span);
+            }
             _ => return fault(format!("the builtin `{}` is not run by the evaluator yet", which.name())),
         };
         Err(Stop::Refused { what: what.to_string(), span })

@@ -83,6 +83,8 @@ pub struct ForeignImport {
     pub backed: Vec<String>,
     /// `[FFI-20a]` — each declaration not imported, with the construct that defeated it.
     pub skipped: Vec<(String, String)>,
+    /// `[FFI-39]` — the classes of `skipped` the import refused a trampoline, an error it reported.
+    pub refused: Vec<String>,
     /// `[FFI-5]` — Clang's layout of each imported struct: its name, size, alignment, and each
     /// field's offset.
     pub layouts: Vec<(String, u64, u64, Vec<(String, u64)>)>,
@@ -331,6 +333,10 @@ pub fn check(
     }
     checker.namespaces = vec![HashMap::new(); modules.len()];
     checker.failed_imports = vec![HashSet::new(); modules.len()];
+    checker.foreign_refused = modules
+        .iter()
+        .map(|m| m.foreign.iter().flat_map(|foreign| &foreign.refused).map(|name| Symbol::intern(name)).collect())
+        .collect();
     checker.public_namespaces = vec![HashMap::new(); modules.len()];
     checker.module_overflow = vec![default_overflow; modules.len()];
     checker.module_deterministic = vec![false; modules.len()];
@@ -2594,6 +2600,11 @@ struct Checker<'a> {
     /// `[IDE-3]` — per module: the names its imports of modules not found would bind, each a
     /// placeholder that resolves to nothing without a diagnostic of its own.
     failed_imports: Vec<HashSet<Symbol>>,
+    /// `[IDE-3]` — the classes whose written base is a placeholder, reported where it is written.
+    placeholder_bases: HashSet<ClassId>,
+    /// `[FFI-39]` — per module, the classes its import refused a trampoline with an error there:
+    /// placeholders, which no use reports again.
+    foreign_refused: Vec<HashSet<Symbol>>,
     /// `[FFI-30b]` — per module: the modules it re-exports (`pub import c "…" as vk`), by name. Only
     /// these are reached through it (`m.vk.f`, `from m import vk`); a module's other imports are its own.
     public_namespaces: Vec<HashMap<Symbol, usize>>,
@@ -3297,6 +3308,8 @@ impl<'a> Checker<'a> {
             method_deprecation: HashMap::new(),
             namespaces: vec![HashMap::new()],
             failed_imports: vec![HashSet::new()],
+            placeholder_bases: HashSet::new(),
+            foreign_refused: Vec::new(),
             public_namespaces: vec![HashMap::new()],
             current_module: 0,
             type_params: HashMap::new(),
@@ -5330,6 +5343,9 @@ impl<'a> Checker<'a> {
     fn report_skipped_foreign(&mut self, module: usize, name: Symbol, span: Span) -> bool {
         let Some(Some((header, skipped))) = self.foreign_skipped.get(module) else { return false };
         let Some(why) = skipped.get(&name) else { return false };
+        if self.foreign_refused.get(module).is_some_and(|refused| refused.contains(&name)) {
+            return true;
+        }
         // `[FFI-17]`, `[FFI-24]` — a C++ function whose parameter maps to nothing is `E5031`, one
         // whose exception policy is neither derived nor declared `E5061`.
         let (code, why) = match why.split_once("] ") {
@@ -5772,6 +5788,10 @@ impl<'a> Checker<'a> {
                 let Some(&id) = self.class_ids.get(&self.qualified_in_module(module, decl.name.name)) else {
                     continue;
                 };
+                // `[IDE-3]` — what a placeholder base declares is unknown: nothing is checked against it.
+                if self.placeholder_bases.contains(&id) {
+                    continue;
+                }
                 for member in &decl.members {
                     let ast::MemberKind::Fn(method) = &member.kind else { continue };
                     let inherited = self.inherited_class_method_dispatch(modules, id, method.name.name);
@@ -5858,6 +5878,9 @@ impl<'a> Checker<'a> {
                 }
                 let ty = self.resolve_type(&decl.target);
                 let TyKind::Class(id) = *self.types.kind(ty) else { continue };
+                if self.placeholder_bases.contains(&id) {
+                    continue;
+                }
                 for member in &decl.members {
                     let ast::MemberKind::Fn(method) = &member.kind else { continue };
                     if method.dispatch != ast::Dispatch::Override {
@@ -9495,7 +9518,10 @@ impl<'a> Checker<'a> {
                         let resolved = self.resolve_type(base);
                         match self.types.kind(resolved) {
                             TyKind::Class(base_id) => Some(*base_id),
-                            _ if resolved == self.common.error => None,
+                            _ if resolved == self.common.error => {
+                                self.placeholder_bases.insert(id);
+                                None
+                            }
                             _ => {
                                 self.error(
                                     codes::E2020,
@@ -19825,6 +19851,12 @@ impl<'a> Checker<'a> {
             self.begin_body_marks();
             self.scopes = vec![HashMap::new()];
             self.borrowed_params.clear();
+            // A function with no callable parameter: none of the last body's stays, whose local
+            // numbers this body's locals reuse.
+            self.callable_once_locals.clear();
+            self.callable_parameter_locals.clear();
+            self.latebound_callable_parameter_locals.clear();
+            self.callable_value_bindings.clear();
             self.ret_ty = self.signatures[def.0 as usize].ret;
             let outer_static_safe = self.in_static_safe;
             let outer_static_safe_reported = self.static_safe_unsafe_cell_reported;
@@ -34563,7 +34595,9 @@ impl<'a> Checker<'a> {
             let span = expr.span;
             let handle = Expr { ty: found, kind: ExprKind::Field { base: Box::new(expr), index: 0 }, span };
             let upcast = Expr { ty: wanted, kind: ExprKind::Cast { expr: Box::new(handle), to: wanted }, span };
-            return Expr { ty: expected, kind: ExprKind::StructLit { struct_id: token, fields: vec![upcast] }, span };
+            // `[HR-20]` — no `on_relocate` record of its own (`0`): the token it was made from keeps it.
+            let relocation = Expr { ty: self.common.u64, kind: ExprKind::Int(0), span };
+            return Expr { ty: expected, kind: ExprKind::StructLit { struct_id: token, fields: vec![upcast, relocation] }, span };
         }
         // `[FFI-39c]` (ODR-156) — an object of a class with a trampoline passed bare where C++
         // keeps it: nothing would hold the token that keeps it alive.

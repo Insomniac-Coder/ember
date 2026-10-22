@@ -1266,6 +1266,12 @@ impl Pipeline {
         self.bodies
     }
 
+    /// A copy of the bodies as they are now, for passes whose verdicts are read and whose bodies
+    /// are not kept.
+    pub fn fork(&self) -> Pipeline {
+        Pipeline { bodies: self.bodies.clone() }
+    }
+
     /// The verifier's structural rules, and the typed ones code generation
     /// relies on (`[LEX-16]` literals decided, views made by a borrow, interface
     /// upcasts complete), which hold of the MIR between any two passes.

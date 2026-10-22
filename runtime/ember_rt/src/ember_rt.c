@@ -2653,6 +2653,14 @@ static void* raw_alloc(size_t size, size_t align) {
 #endif
 }
 
+/* gcc's LTO follows an object a function made in its frame (`[OPT-1]`, `ember_obj_new_frame`) into
+ * this `free`, which the object's `EMBER_OBJ_FRAME` flag keeps it from, behind calls gcc cannot see
+ * through, and reports `free` of an unallocated object (`-Wfree-nonheap-object`, an error under
+ * the C gate; a diagnostic pragma does not reach LTO). Outside its interprocedural analysis: one
+ * call per free. */
+#if defined(__GNUC__) && !defined(__clang__)
+__attribute__((noipa))
+#endif
 static void raw_free(void* p, size_t align) {
     if (p == NULL) {
         return;

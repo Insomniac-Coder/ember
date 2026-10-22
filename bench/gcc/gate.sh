@@ -8,7 +8,7 @@ DEST=~/ember-gate-tree
 rm -rf "$DEST"
 mkdir -p "$DEST"
 cd "$REPO"
-for f in $(git ls-files -co --exclude-standard Cargo.toml Cargo.lock rust-toolchain.toml compiler std runtime docs tests examples tools tasks/spec-0.9.9/parts cmake bench/programs bench/probes bench/bigpkg); do
+for f in $(git ls-files -co --exclude-standard Cargo.toml Cargo.lock rust-toolchain.toml .github compiler std runtime docs tests examples tools tasks/spec-0.9.9/parts cmake bench/programs bench/probes bench/bigpkg); do
   [ -f "$f" ] || continue
   mkdir -p "$DEST/$(dirname "$f")"
   cp "$f" "$DEST/$f"

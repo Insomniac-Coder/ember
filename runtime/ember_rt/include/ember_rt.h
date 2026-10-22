@@ -156,8 +156,11 @@ static EMBER_INLINE uint64_t ember_sum_bytes(const void* raw, size_t len, bool s
  * proves: every written view is disjoint from the others the loop reads
  * (`[SIMD-3]`) and accessed at one offset from the counter. MSVC gets none:
  * its `loop(ivdep)` made a checked loop 1.17x C's, against 1.00x without
- * (ODR-190, measured on bench b13_checked). */
+ * (ODR-190, measured on bench b13_checked). Clang's is a request, as `@simd` is (`[SIMD-2]`):
+ * one it does not meet is no mistake in the C, so `-Wpass-failed` is no warning here (with LTO
+ * the compile step reports it before the link has vectorised anything). */
 #if defined(__clang__)
+#pragma clang diagnostic ignored "-Wpass-failed"
 #define EMBER_VECTORISE _Pragma("clang loop vectorize(enable)")
 #elif defined(__GNUC__)
 #define EMBER_VECTORISE _Pragma("GCC ivdep")

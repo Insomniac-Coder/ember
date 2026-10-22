@@ -40,10 +40,11 @@ unsafe impl GlobalAlloc for Counting {
 static COUNTING: Counting = Counting;
 
 /// Two versions of one file, as an editor's buffer goes back and forth between them: the second
-/// has an error the first has not (an unresolvable name), and they use the same identifiers.
+/// has an error the first has not (an unresolvable name, outside `total`'s initializer, whose
+/// type an error operand would make unknown [DIA-14]), and they use the same identifiers.
 const EDITS: [&str; 2] = [
     "struct Point:\n    x: f64\n    y: f64\n\nfn length(p: Point) -> f64:\n    total = p.x * p.x + p.y * p.y\n    return total\n\nfn main():\n    println(length(Point(3.0, 4.0)))\n",
-    "struct Point:\n    x: f64\n    y: f64\n\nfn length(p: Point) -> f64:\n    total = p.x * p.x + p.y * total\n    return total\n\nfn main():\n    println(length(Point(3.0, 4.0)))\n",
+    "struct Point:\n    x: f64\n    y: f64\n\nfn length(p: Point) -> f64:\n    total = p.x * p.x + p.y * p.y\n    return total\n\nfn main():\n    println(length(Point(3.0, 4.0)) + total)\n",
 ];
 
 fn round(session: &mut Session, path: &std::path::Path, n: usize) {
