@@ -1688,6 +1688,11 @@ fn compiler_command(toolchain: &Toolchain) -> Command {
             if cfg!(target_arch = "x86_64") && is_clang_cl(cl) {
                 command.arg("-mcx16");
             }
+            // `[FFI-8]` — a C header's `_Atomic` (`<stdatomic.h>`) compiles with cl only with C11
+            // atomics switched on (Visual Studio 17.5 on); clang-cl has them always.
+            if !is_clang_cl(cl) {
+                command.arg("/experimental:c11atomics");
+            }
             command
         }
         Toolchain::Clang(path) | Toolchain::Gcc(path) => Command::new(path),

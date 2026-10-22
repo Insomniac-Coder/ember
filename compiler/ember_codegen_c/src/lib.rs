@@ -9033,6 +9033,15 @@ impl Emitter<'_> {
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
                     Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
+                    // `[UNS-5]` — through a pointer to a volatile object: each access is made.
+                    Builtin::VolatileRead => {
+                        let TyKind::Ptr { inner, .. } = *self.types.kind(*arg_ty) else { unreachable!("a volatile read is through a pointer") };
+                        return format!("(*(volatile {}*)({}))", self.c_type(inner), rendered[0]);
+                    }
+                    Builtin::VolatileWrite => {
+                        let TyKind::Ptr { inner, .. } = *self.types.kind(*arg_ty) else { unreachable!("a volatile write is through a pointer") };
+                        return format!("(*(volatile {}*)({}) = {})", self.c_type(inner), rendered[0], rendered[1]);
+                    }
                     // `[FFI-8]` — a C union with one field set, the rest of its storage zero.
                     Builtin::UnionLit { union, field } => {
                         let ty = self.types.find(&TyKind::Struct(*union)).expect("a union literal's type is interned");

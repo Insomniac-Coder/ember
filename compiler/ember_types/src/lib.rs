@@ -251,10 +251,13 @@ pub struct LayoutAttrs {
     /// `[FFI-8]` — `@layout(c, union)`: a C union, every field at offset zero, the size the
     /// largest field's rounded to the alignment; a field is read only in `unsafe`.
     pub union: bool,
+    /// `[FFI-8]` — `@layout(c, flexible)`: a C struct whose flexible array member follows its
+    /// fields: unsized, used only behind a pointer or reference (`E5017`).
+    pub flexible: bool,
 }
 
 impl LayoutAttrs {
-    pub const NONE: LayoutAttrs = LayoutAttrs { packed: false, align: 1, union: false };
+    pub const NONE: LayoutAttrs = LayoutAttrs { packed: false, align: 1, union: false, flexible: false };
 
     pub fn is_none(self) -> bool {
         self == LayoutAttrs::NONE
@@ -878,6 +881,8 @@ impl TypeTable {
                 params.iter().any(|param| self.has_unsized_by_value_in(param.ty, seen))
                     || self.has_unsized_by_value_in(*ret, seen)
             }
+            // `[FFI-8]` — a struct a flexible array member ends.
+            TyKind::Struct(_) if self.layout_attrs(ty).flexible => true,
             TyKind::Struct(id) => {
                 seen.insert(ty)
                     && self
@@ -1511,7 +1516,7 @@ impl TypeTable {
         let (offset, size, align) = if def.is_unit_only() {
             (tag.size, 0, tag.align)
         } else {
-            let variant = LayoutAttrs { packed: attrs.packed, align: 1, union: false };
+            let variant = LayoutAttrs { packed: attrs.packed, align: 1, union: false, flexible: false };
             let mut payload_size = 0u64;
             let mut payload_align = 1u64;
             for variant_def in &def.variants {
@@ -2167,6 +2172,11 @@ impl TypeTable {
         out
     }
 
+    /// `[FFI-8]` — whether a struct is ended by a flexible array member (`@layout(c, flexible)`).
+    pub fn is_flexible(&self, ty: Ty) -> bool {
+        matches!(self.kind(ty), TyKind::Struct(_)) && self.layout_attrs(ty).flexible
+    }
+
     /// `[FFI-8]` — whether a struct is a C union (`@layout(c, union)`).
     pub fn is_union(&self, ty: Ty) -> bool {
         matches!(self.kind(ty), TyKind::Struct(_)) && self.layout_attrs(ty).union
@@ -2198,7 +2208,7 @@ impl TypeTable {
             (None, Some(ty)) => self.layout(ty).field_offsets.get(1).copied().unwrap_or(0),
             _ => 0,
         };
-        let attrs = LayoutAttrs { packed: ty.is_some_and(|ty| self.layout_attrs(ty).packed), align: 1, union: false };
+        let attrs = LayoutAttrs { packed: ty.is_some_and(|ty| self.layout_attrs(ty).packed), align: 1, union: false, flexible: false };
         def.variants
             .iter()
             .map(|variant| {

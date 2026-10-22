@@ -1399,6 +1399,9 @@ struct Writer {
     /// `[FFI-8]` — the generated `<Parent>_anon<N>` types of anonymous members: C has no name for
     /// them, so the shim checks their bytes through the parent.
     anonymous: HashSet<String>,
+    /// `[FFI-8]` — the records written without `@derive(Copy)`: one holding an `Atomic[T]`
+    /// (`_Atomic`), or a record that holds one of these.
+    move_only: HashSet<String>,
     /// `[FFI-17]` — the header is C++: its functions are reached through thunks.
     cpp: bool,
     /// `[FFI-32]` — each C++ class, by USR, that is standard-layout and trivially copyable; and, by
@@ -1650,6 +1653,28 @@ impl Writer {
                 }
                 CXType_Half | CXType_Float16 => Err("`_Float16` (Ember's `f16` crosses as a 16-bit integer)".to_string()),
                 CXType_Elaborated => self.ty(clang_Type_getNamedType(ty), behind_pointer),
+                // `[FFI-8]` — `_Atomic T` is `std.sync.Atomic[T]` when C lays it out as `T` (an
+                // integer, a `bool` or a pointer, `[THR-14]`); otherwise `E5016`.
+                CXType_Atomic => {
+                    if !clang_Type_getValueType::is_loaded() {
+                        return Err("`_Atomic` (this libclang is older than 11, which reads its value type)".to_string());
+                    }
+                    let value = clang_Type_getValueType(ty);
+                    let canonical = clang_getCanonicalType(value).kind;
+                    let atomic_kind = matches!(canonical, CXType_Bool | CXType_Char_S | CXType_SChar | CXType_Char_U | CXType_UChar
+                        | CXType_Short | CXType_UShort | CXType_Int | CXType_UInt | CXType_Long | CXType_ULong
+                        | CXType_LongLong | CXType_ULongLong | CXType_Pointer);
+                    if !atomic_kind {
+                        return Err(format!("[E5016] `{}`: `Atomic[T]` holds an integer, a `bool` or a pointer ([THR-14])", type_spelling(ty)));
+                    }
+                    if clang_Type_getSizeOf(ty) != clang_Type_getSizeOf(value) || clang_Type_getAlignOf(ty) != clang_Type_getAlignOf(value) {
+                        return Err(format!(
+                            "[E5016] `{}` is laid out as {} bytes aligned to {}, and `Atomic[T]` as `T`: {} bytes aligned to {}",
+                            type_spelling(ty), clang_Type_getSizeOf(ty), clang_Type_getAlignOf(ty), clang_Type_getSizeOf(value), clang_Type_getAlignOf(value)
+                        ));
+                    }
+                    Ok(format!("Atomic[{}]", self.ty(value, behind_pointer)?))
+                }
                 CXType_Typedef => {
                     let name = text(clang_getTypedefName(ty));
                     if let Some(fixed) = standard_typedef(&name) {
@@ -1715,6 +1740,11 @@ impl Writer {
                     }
                     let inner = self.ty(pointee, true)?;
                     let constant = clang_isConstQualifiedType(pointee) != 0;
+                    // `[FFI-8]` — `volatile T*` is `Volatile[*mut T]`: its reads and writes are
+                    // volatile (`[UNS-5]`).
+                    if clang_isVolatileQualifiedType(pointee) != 0 {
+                        return Ok(format!("Volatile[*{}{inner}]", if constant { "" } else { "mut " }));
+                    }
                     Ok(format!("*{}{inner}", if constant { "" } else { "mut " }))
                 }
                 CXType_ConstantArray => {
@@ -1788,6 +1818,8 @@ impl Writer {
                 };
             }
             match written.kind {
+                // A `volatile T*` is a `Volatile[*mut T]`, which no contract word makes a reference.
+                CXType_Pointer if clang_isVolatileQualifiedType(clang_getPointeeType(written)) != 0 => None,
                 CXType_Pointer if clang_getCanonicalType(clang_getPointeeType(written)).kind != CXType_FunctionProto => {
                     Some(clang_getPointeeType(written))
                 }
@@ -2004,6 +2036,10 @@ impl Writer {
             let mut bits = Vec::new();
             let mut anonymous = 0;
             let mut members_seen = HashSet::new();
+            // `[FFI-8]` — a field that is never copied (`Atomic[T]`, `[THR-14]`) makes the record so.
+            let mut move_only = false;
+            // `[FFI-8]` — a flexible array member: its name, its element type and its offset.
+            let mut flexible: Option<(String, String, u64)> = None;
             // A class template's specialization shows its fields only through its type.
             let specialized = self.cpp && clang_Cursor_isNull(clang_getSpecializedCursorTemplate(definition)) == 0;
             let members = if specialized { record_fields(ty) } else { children(definition) };
@@ -2053,6 +2089,19 @@ impl Writer {
                             continue;
                         }
                         let field_ty = clang_getCursorType(child);
+                        // `[FFI-8]` — a flexible array member ends the struct: its elements follow
+                        // it, reached by `tail(n)`; the struct is unsized.
+                        if kind(child) == CXCursor_FieldDecl && clang_getCanonicalType(field_ty).kind == CXType_IncompleteArray {
+                            let element = clang_getArrayElementType(clang_getCanonicalType(field_ty));
+                            match self.ty(element, false) {
+                                Ok(mapped) => flexible = Some((ident(&field), mapped, (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8)),
+                                Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("its flexible array member `{field}`: {reason}"))),
+                            }
+                            continue;
+                        }
+                        if flexible.is_some() {
+                            return self.opaque(cursor, &key, &named, Some("a member after a flexible array member".to_string()));
+                        }
                         let member = if kind(child) == CXCursor_FieldDecl { clang_getTypeDeclaration(field_ty) } else { child };
                         // `[FFI-8]` — an anonymous member is a field `_anon<N>` of a generated type
                         // `<Parent>_anon<N>`, whose fields read through it (`p.x` is `p._anon0.x`).
@@ -2083,11 +2132,12 @@ impl Writer {
                         } else {
                             match self.ty(field_ty, false) {
                                 Ok(mapped) => (field, mapped),
-                                Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("field `{field}`: {reason}"))),
+                                Err(reason) => return self.opaque(cursor, &key, &named, Some(tagged(None, &format!("field `{field}`"), &reason))),
                             }
                         };
                         let field_align = clang_Type_getAlignOf(field_ty).max(1) as u64;
                         natural = natural.max(field_align);
+                        move_only |= mapped.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|word| word == "Atomic" || self.move_only.contains(word));
                         let line = format!("    {visibility}{}: {mapped}\n", ident(&field));
                         layout.push((ident(&field), offset));
                         fields.push(line.clone());
@@ -2112,6 +2162,20 @@ impl Writer {
                     Err(why) => return self.opaque(cursor, &key, &named, Some(why)),
                 }
             }
+            // `[FFI-8]` — the elements a flexible array member holds, as a view the caller vouches for.
+            if let Some((field, element, offset)) = &flexible {
+                if union {
+                    return self.opaque(cursor, &key, &named, Some("a union with a flexible array member".to_string()));
+                }
+                if accessors.is_empty() {
+                    accessors = format!("\nextend {name}:\n");
+                }
+                let _ = write!(
+                    accessors,
+                    "    ## `[FFI-8]` — the first `n` elements of the flexible array member `{field}`, which follow the struct.\n    @safety(\"the allocation holding this struct holds at least `n` elements of `{field}` after it\")\n    {visibility}unsafe fn tail(self, n: usize) -> Span[{element}]:  # SAFETY: the caller keeps the obligation\n        address = ref_to_ptr(ref self) as usize + {offset}\n        return {}_cpp_span(ref self, address as *{element}, n)\n",
+                    ember_branding::SYMBOL_PREFIX
+                );
+            }
             if fields.is_empty() {
                 // A C++ class with no data is an opaque one: its members are what it has.
                 let why = (!self.cpp).then(|| "a struct with no fields (a GNU C extension)".to_string());
@@ -2125,7 +2189,17 @@ impl Writer {
                 return self.opaque_unclaimed(cursor, &key, &named);
             }
             packed |= align == 1 && natural > 1;
-            let mut attributes = String::from(if union { "@layout(c, union)\n@derive(Copy)\n" } else { "@layout(c)\n@derive(Copy)\n" });
+            if move_only {
+                self.move_only.insert(name.clone());
+            }
+            let mut attributes = String::from(match (union, flexible.is_some(), move_only) {
+                (true, _, false) => "@layout(c, union)\n@derive(Copy)\n",
+                (true, _, true) => "@layout(c, union)\n",
+                // Unsized: never copied, never by value.
+                (false, true, _) => "@layout(c, flexible)\n",
+                (false, false, false) => "@layout(c)\n@derive(Copy)\n",
+                (false, false, true) => "@layout(c)\n",
+            });
             if packed {
                 attributes.push_str("@packed\n");
             }
@@ -2378,11 +2452,11 @@ impl Writer {
                 let argument = clang_Cursor_getArgument(cursor, index);
                 let written = spelling(argument);
                 let param = if written.is_empty() { format!("_{index}") } else { ident(&written) };
-                let c_type = self.c_type(clang_getCursorType(argument), true).map_err(|reason| format!("parameter `{param}`: {reason}"))?;
+                let c_type = self.c_type(clang_getCursorType(argument), true).map_err(|reason| tagged(None, &format!("parameter `{param}`"), &reason))?;
                 params.push((param, c_type));
             }
             let result = clang_getResultType(ty);
-            let result = if result.kind == CXType_Void { None } else { Some(self.c_type(result, false).map_err(|reason| format!("its result: {reason}"))?) };
+            let result = if result.kind == CXType_Void { None } else { Some(self.c_type(result, false).map_err(|reason| tagged(None, "its result", &reason))?) };
             // `[FFI-29a]` — a function with internal linkage is reached through the shim's wrapper, as
             // is a C++ header's `extern "C"` inline one, whose symbol only a C++ file that uses it has.
             let inline_cpp = self.cpp && clang_Cursor_isFunctionInlined(cursor) != 0;
@@ -4977,8 +5051,9 @@ pub fn load(
         );
     }
     for opaque in &imported.opaque {
+        let reason = opaque.reason.split_once("] ").filter(|(tag, _)| tag.starts_with("[E")).map_or(opaque.reason.as_str(), |(_, rest)| rest);
         sink.emit(
-            Diagnostic::warning(codes::W5002, span, format!("`{}` is imported from `{shown}` only as an opaque type, usable behind a pointer: {}", opaque.name, opaque.reason))
+            Diagnostic::warning(codes::W5002, span, format!("`{}` is imported from `{shown}` only as an opaque type, usable behind a pointer: {reason}", opaque.name))
                 .note(format!("declared at {} [FFI-20a]", opaque.at))
                 .help("to reach its fields, wrap them in C functions the header declares"),
         );
@@ -6293,6 +6368,13 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     // `[FFI-21]` — a `retained` callback's call returns a `Retained[ForeignCallback]`.
     if body.contains("callback(retained") {
         used.push("ForeignCallback");
+    }
+    // `[FFI-8]` — `volatile T*`, and `_Atomic T`.
+    if words.contains("Volatile") {
+        let _ = writeln!(imports, "from std.mem import Volatile");
+    }
+    if words.contains("Atomic") {
+        let _ = writeln!(imports, "from std.sync import Atomic");
     }
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));

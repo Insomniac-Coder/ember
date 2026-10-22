@@ -1630,12 +1630,17 @@ enum FusedCount {
 
 /// `@fp(contract)`, the one form `[TYP-9b]` gives `@fp`.
 /// Whether the attribute's one argument is the bare name `word`.
-/// `[FFI-8]` — `@layout(c, union)`: a C union.
-fn layout_is_union(attr: &ast::Attribute) -> bool {
+/// `[FFI-8]` — `@layout(c, union)` (a C union) or `@layout(c, flexible)` (a struct a flexible
+/// array member ends): the second word.
+fn layout_names(attr: &ast::Attribute) -> Option<&'static str> {
     let word = |arg: &ast::AttrArg, wanted: &str| matches!(arg, ast::AttrArg::Expr(ast::Expr {
         kind: ast::ExprKind::Path { segments }, ..
     }) if segments.len() == 1 && segments[0].name.is(wanted));
-    matches!(attr.args.as_slice(), [c, union] if word(c, "c") && word(union, "union"))
+    match attr.args.as_slice() {
+        [c, kind] if word(c, "c") && word(kind, "union") => Some("union"),
+        [c, kind] if word(c, "c") && word(kind, "flexible") => Some("flexible"),
+        _ => None,
+    }
 }
 
 fn attribute_names(attr: &ast::Attribute, word: &str) -> bool {
@@ -3795,12 +3800,34 @@ impl<'a> Checker<'a> {
                 format!("`{shown}` is incomplete and cannot cross the C boundary by value"));
             return self.common.error;
         }
+        // `[FFI-8]` — a struct a flexible array member ends has no size of its own.
+        if let Some(flexible) = self.flexible_in(ty) {
+            let shown = self.types.display(flexible);
+            self.sink.emit(
+                Diagnostic::error(codes::E5017, span, format!("`{shown}` ends with a flexible array member, so it is used by value nowhere, not in {context}"))
+                    .help(format!("hold it behind a reference or a pointer (`ref {shown}`, `*{shown}`), and reach its elements with `tail(n)`"))
+                    .note("its elements follow its fields in an allocation C sized for them [FFI-8]"),
+            );
+            return self.common.error;
+        }
         self.error(
             codes::E2020,
             span,
             format!("an unsized interface value cannot be used by value in {context}"),
         );
         self.common.error
+    }
+
+    /// `[FFI-8]` — the struct a flexible array member ends that `ty` holds by value, if any.
+    fn flexible_in(&self, ty: Ty) -> Option<Ty> {
+        match self.types.kind(ty) {
+            TyKind::Struct(_) if self.types.is_flexible(ty) => Some(ty),
+            TyKind::Struct(id) => self.types.struct_def(*id).fields.iter().find_map(|field| self.flexible_in(field.ty)),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => self.flexible_in(*elem),
+            TyKind::Tuple(items) => items.iter().find_map(|&item| self.flexible_in(item)),
+            TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| &variant.fields).find_map(|field| self.flexible_in(field.ty)),
+            _ => None,
+        }
     }
 
     /// As above, with `static_region` true where the value being stored is
@@ -5176,6 +5203,8 @@ impl<'a> Checker<'a> {
             Some(("[E5056", rest)) => (codes::E5056, rest),
             Some(("[E5057", rest)) => (codes::E5057, rest),
             Some(("[E5059", rest)) => (codes::E5059, rest),
+            Some(("[E5016", rest)) => (codes::E5016, rest),
+            Some(("[E5018", rest)) => (codes::E5018, rest),
             _ => (codes::E1010, why.as_str()),
         };
         let note = if code == codes::E5061 {
@@ -5273,6 +5302,13 @@ impl<'a> Checker<'a> {
                     }
                     if has_attribute(&item.attrs, "must_drop") {
                         self.types.declare_must_drop(name);
+                    }
+                    // `[FFI-8]` — whether it is a C union or ends with a flexible array member is
+                    // known before any signature names it (another module's may come first); its
+                    // `@align(N)` is evaluated with its fields.
+                    let layout_word = |word: &str| item.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("layout") && layout_names(attr) == Some(word));
+                    if layout_word("union") || layout_word("flexible") {
+                        self.types.declare_layout(name, LayoutAttrs { packed: has_attribute(&item.attrs, "packed"), align: 1, union: layout_word("union"), flexible: layout_word("flexible") });
                     }
                     let id = self.types.add_struct(StructDef {
                         name,
@@ -9830,9 +9866,10 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-        // `[FFI-8]` — a C union.
-        let union = attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("layout") && layout_is_union(attr));
-        self.types.declare_layout(name, LayoutAttrs { packed, align, union });
+        // `[FFI-8]` — a C union, or a struct a flexible array member ends.
+        let layout_word = |word: &str| attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("layout") && layout_names(attr) == Some(word));
+        let (union, flexible) = (layout_word("union"), layout_word("flexible"));
+        self.types.declare_layout(name, LayoutAttrs { packed, align, union, flexible });
     }
 
     /// `[RFL-1]` — what `reflect[T]()` lists as written on a type, its fields and its variants.
@@ -15629,6 +15666,27 @@ impl<'a> Checker<'a> {
         if resolved.is("std.ffi.adopt") {
             return Some(self.synth_foreign_adopt(args, explicit, span));
         }
+        // `[UNS-5]` — `std.mem`'s volatile accesses, which `Volatile[*T]` makes.
+        if resolved.is("std.mem.volatile_read") || resolved.is("std.mem.volatile_write") {
+            let write = resolved.is("std.mem.volatile_write");
+            let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            if args.len() != 1 + usize::from(write) || args.iter().any(|arg| arg.name.is_some()) {
+                return Some(error);
+            }
+            let pointer = self.synth_committed(&args[0].value);
+            let TyKind::Ptr { inner, mutable } = *self.types.kind(pointer.ty) else { return Some(error) };
+            if !self.unsafe_context() {
+                self.error(codes::E3100, span, "a volatile access through a raw pointer requires an `unsafe` block");
+            }
+            if !write {
+                return Some(Expr { ty: inner, kind: ExprKind::Builtin { which: Builtin::VolatileRead, args: vec![pointer] }, span });
+            }
+            if !mutable {
+                self.error(codes::E2020, span, "a volatile write needs a `*mut` pointer");
+            }
+            let value = self.check_expr(&args[1].value, inner);
+            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::VolatileWrite, args: vec![pointer, value] }, span });
+        }
         // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`.
         if resolved.is("std.ffi.retained_pin") && args.len() == 1 {
             let value = self.synth_committed(&args[0].value);
@@ -16343,7 +16401,10 @@ impl<'a> Checker<'a> {
     /// `unsafe`.
     fn synth_cpp_span(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
         let cpp_span = format!("{}_cpp_span", ember_branding::SYMBOL_PREFIX);
-        if !(name.is(&cpp_span) || name.is(&format!("{cpp_span}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
+        // A module `import cpp` wrote, or `import c` (`[FFI-8]`: a flexible array member's `tail`).
+        let foreign = self.foreign_cpp.get(self.current_module).copied().unwrap_or(false)
+            || self.foreign_skipped.get(self.current_module).is_some_and(Option::is_some);
+        if !(name.is(&cpp_span) || name.is(&format!("{cpp_span}_mut"))) || !foreign {
             return None;
         }
         let mutable = name.as_str().ends_with("_mut");
@@ -40313,8 +40374,8 @@ impl<'a> Checker<'a> {
             }
             // `[LAY-2]` — `@layout` names `c` and `@packed` nothing; `@repr` is an enum's discriminant
             // type, not a struct's (the attribute table's, ODR-139).
-            if name == "layout" && !attribute_names(attr, "c") && !layout_is_union(attr) {
-                self.error(codes::E0104, attr.span, "`@layout` takes `c`, or `c, union` for a C union: `@layout(c)`");
+            if name == "layout" && !attribute_names(attr, "c") && layout_names(attr).is_none() {
+                self.error(codes::E0104, attr.span, "`@layout` takes `c`, `c, union` for a C union, or `c, flexible` for a struct a flexible array member ends: `@layout(c)`");
                 continue;
             }
             if name == "packed" && !attr.args.is_empty() {

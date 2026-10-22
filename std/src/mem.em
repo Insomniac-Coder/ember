@@ -7,6 +7,45 @@
 pub struct UnsafeCell[T]:
     value: T
 
+## `[UNS-5]`, `[FFI-8]` — a pointer whose reads and writes are volatile: each one happens, in the
+## order written, never merged, moved or removed (a device register, memory another agent
+## changes). C's `volatile T*` is a `Volatile[*mut T]` (`Volatile[*T]` for `const volatile T*`); to C
+## it is the pointer.
+@derive(Copy)
+pub struct Volatile[P]:
+    pointer: P
+
+    pub fn new(pointer: P) -> Volatile[P]:
+        return Volatile(pointer)
+
+    ## The pointer itself.
+    pub fn as_ptr(self) -> P:
+        return self.pointer
+
+extend[T] Volatile[*mut T]:
+    ## A volatile read of the `T` the pointer points to.
+    @safety("the pointer is valid for a read of a `T`")
+    pub unsafe fn read_volatile(self) -> T:  # SAFETY: the caller keeps the obligation
+        return volatile_read(self.pointer)
+
+    ## A volatile write of `value` where the pointer points.
+    @safety("the pointer is valid for a write of a `T`")
+    pub unsafe fn write_volatile(self, value: T):  # SAFETY: the caller keeps the obligation
+        volatile_write(self.pointer, value)
+
+extend[T] Volatile[*T]:
+    ## A volatile read of the `T` the pointer points to.
+    @safety("the pointer is valid for a read of a `T`")
+    pub unsafe fn read_volatile(self) -> T:  # SAFETY: the caller keeps the obligation
+        return volatile_read(self.pointer)
+
+## `[UNS-5]` — compiler-known: the volatile read and write a `Volatile` makes.
+fn volatile_read[T](pointer: *T) -> T:
+    pass
+
+fn volatile_write[T](pointer: *mut T, value: T):
+    pass
+
 ## `[DRP-1]` — the public, safe spelling for ending a value's life early.
 ## Taking the value through an `owned` parameter transfers it into this frame;
 ## ordinary scope-end destruction then runs its destructor exactly once.

@@ -1577,6 +1577,12 @@ pub enum Builtin {
     /// `[FFI-39]` — in a module `import cpp` wrote: a class object's address
     /// (the argument, a handle), which a trampoline keeps without a count.
     CppObjectAddress,
+    /// `[UNS-5]`, `[FFI-8]` — a volatile read of the `T` a raw pointer (the
+    /// argument) points to: it happens, in order, as written.
+    VolatileRead,
+    /// `[UNS-5]`, `[FFI-8]` — a volatile write of a `T` (the second argument)
+    /// through a raw pointer (the first).
+    VolatileWrite,
     /// `[FFI-8]` — a C union's value with one field set (the argument), the
     /// rest of its storage zero: `Number(i = 5)`.
     UnionLit { union: StructId, field: usize },
@@ -2162,6 +2168,8 @@ impl Builtin {
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppOverrides { .. } => "cpp_overrides",
             Builtin::UnionLit { .. } => "union_literal",
+            Builtin::VolatileRead => "volatile_read",
+            Builtin::VolatileWrite => "volatile_write",
             Builtin::CppObjectHandle { .. } => "cpp_object_handle",
             Builtin::CppObjectGive => "cpp_object_give",
             Builtin::CppSpan { .. } => "cpp_span",

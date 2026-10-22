@@ -1421,6 +1421,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::ForeignAdopt => (ALLOC | Effects::SYNC, "recording a foreign object Ember owns"),
         B::ForeignRelease => (Effects::SYNC | Effects::PANIC, "a foreign object's end"),
         B::ForeignThread | B::ForeignDestructor { .. } | B::RetainedAddress | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
+        // `[UNS-5]` — through a raw pointer, which is `unsafe`.
+        B::VolatileRead | B::VolatileWrite => (Effects::UNSAFE, "a volatile access through a raw pointer"),
         // `[FFI-39]`, `[FFI-17d]` — a count of a class object, and the check that a foreign
         // `delete` ends the only one.
         B::CppObjectHandle { .. } | B::CppObjectGive => (Effects::SYNC | Effects::PANIC, "a count of an object C++ holds"),

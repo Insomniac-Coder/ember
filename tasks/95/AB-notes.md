@@ -249,3 +249,33 @@ are known. The importer's modules are kept where they were; the order dependence
 
 `FFI-20a`'s header gave a union, an enum bit-field and `long double` as what cannot be represented:
 now a union with bit-fields and a function with no prototype (its tests are updated).
+
+**Built next** (AB6 continued):
+
+- *Flexible array members.* A struct a flexible array member ends is `@layout(c, flexible)` (no
+  `Copy`; spelling as in spec question 4): unsized, so it is used by value nowhere (`E5017`, the
+  spec's "cannot be used by value": a parameter, a result, a local, a field, an element); held
+  behind a reference or a pointer, its elements reached by the generated
+  `unsafe fn tail(self, n) -> Span[T]` (the elements follow the struct at the member's offset,
+  `@safety` "the allocation holds at least `n` elements"). A member after it, or one in a union,
+  stays opaque. Tests: `FFI-8/accept_a_flexible_array_member_is_reached_by_tail.em` (`packets.c`,
+  an overlay giving the C allocator `returns_owned`/`destroy`),
+  `reject_a_flexible_struct_is_never_by_value.em`.
+- *`volatile`.* `std.mem.Volatile[P]` (`Copy`, `new`, `as_ptr`; `read_volatile`/`write_volatile`
+  on `Volatile[*mut T]`, `read_volatile` on `Volatile[*T]`, all `unsafe`), each access a
+  compiler-known `std.mem.volatile_read`/`volatile_write` emitted as C's
+  `*(volatile T*)p`. To C it is the pointer (one field, as `ObjectPtr` is): C's `volatile T*` is
+  `Volatile[*mut T]`, `const volatile T*` `Volatile[*T]`, as a parameter, a result or a field.
+  Assumption to confirm: a one-pointer struct is passed as the pointer by every ABI Ember targets
+  (it is for System V, Win64 and AAPCS64; `ObjectPtr` already relies on it). Test:
+  `FFI-8/accept_volatile_pointers_are_volatile.em` (`registers.h`).
+- *`_Atomic T`* is `std.sync.Atomic[T]` when `T` is one `Atomic` holds (`[THR-14]`: an integer,
+  `bool` or a pointer) and Clang's size and alignment of `_Atomic T` are `T`'s; else what uses it
+  is skipped with `E5016` (reported where it is named; libclang 11's `clang_Type_getValueType`,
+  so `clang-sys`'s feature is now `clang_11_0`). A record holding an `Atomic` is written without
+  `@derive(Copy)`. **Build change:** cl compiles `<stdatomic.h>`/`_Atomic` only with
+  `/experimental:c11atomics` (Visual Studio 17.5 on), so `compiler_command` passes it to cl
+  (not clang-cl, which has C11 atomics and warns on the switch); an older cl warns D9002 and
+  ignores it. A skip reason's code tag now leads the "parameter `p`:"/"its result:"/"field `f`:"
+  context (`tagged`), and the W5002 text drops it. Tests: `FFI-8/accept_atomic_is_std_sync_atomic.em`
+  (`atomics.h`), `reject_an_atomic_ember_cannot_hold.em` (`atomic_levels.h`).
