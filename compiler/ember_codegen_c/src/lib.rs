@@ -395,6 +395,7 @@ fn emit_with(
         class_interface_tables: BTreeMap::new(),
         class_interface_call_interfaces: BTreeSet::new(),
         clone_identities: BTreeSet::new(),
+        eq_identities: BTreeSet::new(),
         interface_caches: BTreeMap::new(),
         folded_tests: BTreeMap::new(),
         fall_into: None,
@@ -814,6 +815,9 @@ struct Emitter<'a> {
     /// `[TYP-22]` (ODR-237) — the interface identities whose tables copy their value (an
     /// interface requires `Clone`): a `clone` entry follows `access`.
     clone_identities: BTreeSet<String>,
+    /// IX.1 (ODR-241) — the interface identities whose tables compare two values (an interface
+    /// requires `Eq`): an `eq` entry follows `access` (and `clone`).
+    eq_identities: BTreeSet<String>,
     /// Per-body hidden caches for repeated interface calls through an
     /// unchanged class-interface parameter.
     interface_caches: BTreeMap<InterfaceCacheKey, String>,
@@ -2501,6 +2505,21 @@ impl Emitter<'_> {
                 let symbol = eq_fn_symbol(emitted);
                 let c_ty = self.c_type(ty);
                 let body = match self.types.kind(ty).clone() {
+                    // IX.1 (ODR-241) — two boxes compare what they hold; two `Box[dyn I]` of one
+                    // kind (one table) through the table's `eq`, of two kinds never.
+                    TyKind::Struct(id) if self.box_inner_id(id).is_some() => {
+                        let inner = self.box_inner_id(id).expect("a box");
+                        match self.types.kind(inner) {
+                            TyKind::Dyn { interfaces } => {
+                                let header = if self.types.dyn_clones(interfaces) { "dyn_clone_eq_header" } else { "dyn_eq_header" };
+                                let header = ember_branding::generated(header);
+                                format!(
+                                    "if (a->vtable != b->vtable) return 0; return ((const struct {header}*)a->vtable)->eq(a->data, b->data);"
+                                )
+                            }
+                            _ => format!("return {};", self.eq_expr("(**a)", "(**b)", inner)),
+                        }
+                    }
                     TyKind::Struct(id) if self.types.layout_attrs(ty).packed => {
                         let fields = self.types.struct_def(id).fields.clone();
                         let parts: Vec<String> = fields
@@ -3715,6 +3734,9 @@ impl Emitter<'_> {
         if self.types.dyn_clones(interfaces) {
             self.clone_identities.insert(dyn_table_identity(self.types, interfaces));
         }
+        if self.types.dyn_eqs(interfaces) {
+            self.eq_identities.insert(dyn_table_identity(self.types, interfaces));
+        }
     }
 
     fn register_interface_layout(
@@ -3967,6 +3989,21 @@ impl Emitter<'_> {
             self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
             self.line("    void* (*clone)(const void*);");
             self.line("};");
+            // IX.1 (ODR-241) — the prefixes of a table that compares its values, which a
+            // `Box[dyn I]`'s `==` reads.
+            for (name, clones) in [("dyn_eq_header", false), ("dyn_clone_eq_header", true)] {
+                let header = ember_branding::generated(name);
+                self.line(&format!("struct {header} {{"));
+                self.line("    void (*drop)(void*);");
+                self.line("    size_t size;");
+                self.line("    size_t align;");
+                self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
+                if clones {
+                    self.line("    void* (*clone)(const void*);");
+                }
+                self.line("    bool (*eq)(const void*, const void*);");
+                self.line("};");
+            }
         }
         let class_handle_interfaces = self
             .class_interface_tables
@@ -4002,6 +4039,9 @@ impl Emitter<'_> {
             self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
             if self.clone_identities.contains(&interface) {
                 self.line("    void* (*clone)(const void*);");
+            }
+            if self.eq_identities.contains(&interface) {
+                self.line("    bool (*eq)(const void*, const void*);");
             }
             for (slot, method) in methods.into_iter().enumerate() {
                 let Some(method) = method else {
@@ -4258,6 +4298,28 @@ impl Emitter<'_> {
                 self.line("}");
                 name
             });
+            // IX.1 (ODR-241) — the `eq` entry: two values of this type compared as it writes `==`
+            // (std's `dyn_eq` instance); the caller has found both are of this type.
+            let eq = self.eq_identities.contains(&adapter.interface).then(|| {
+                let Some(symbol) = self.types.dyn_eq_symbol(adapter.concrete).map(str::to_string) else {
+                    return "NULL".to_string();
+                };
+                let name = format!("{table}_eq");
+                let concrete_c = self.c_type(adapter.concrete);
+                let argument = |at: &str| {
+                    if class_handle {
+                        format!("(({concrete_c}){at})")
+                    } else if self.types.passed_by_address(adapter.concrete) {
+                        format!("(({concrete_c}*){at})")
+                    } else {
+                        format!("(*({concrete_c} const*){at})")
+                    }
+                };
+                self.line(&format!("static bool {name}(const void* _0, const void* _1) {{"));
+                self.line(&format!("    return {symbol}({}, {});", argument("_0"), argument("_1")));
+                self.line("}");
+                name
+            });
             self.line(&format!("static const struct {table_type} {table} = {{"));
             self.line(&format!("    {drop},"));
             self.line(&format!("    {size},"));
@@ -4265,6 +4327,9 @@ impl Emitter<'_> {
             self.line(&format!("    {access},"));
             if let Some(clone) = clone {
                 self.line(&format!("    {clone},"));
+            }
+            if let Some(eq) = eq {
+                self.line(&format!("    {eq},"));
             }
             for (slot, implementation) in adapter.implementations.iter().enumerate() {
                 let value = if implementation.is_some() {
@@ -9147,8 +9212,11 @@ impl Emitter<'_> {
                         .collect::<Vec<_>>()
                         .join(", ");
                     // `[CLO-6a]` — a `once fn` value's call ends its state (`_once`); one in a `Box`
-                    // is taken out of the box, which is freed, first.
-                    if *once
+                    // is taken out of the box, which is freed, first. D-880: so does a call that
+                    // consumes its callee (moves it in: an owned callable value given to a `once
+                    // fn` parameter, `[CLO-6]`), whatever its type says, as nothing else ends it.
+                    let once = *once || matches!(callee_operand, Operand::Move(_));
+                    if once
                         && let Some(boxed) = self.operand_type(callee_operand, body)
                         && matches!(*self.types.kind(boxed), TyKind::Struct(id) if self.box_inner_id(id).is_some())
                     {
@@ -9159,7 +9227,7 @@ impl Emitter<'_> {
                             .join(", ");
                         return format!("{helper}({arguments})");
                     }
-                    let entry = if *once { format!("({callee}).d->once") } else { format!("({callee}).native") };
+                    let entry = if once { format!("({callee}).d->once") } else { format!("({callee}).native") };
                     return format!("(({} (*)({parameters}))({entry}))({arguments})",
                         self.c_type(*ret));
                 }
@@ -10427,6 +10495,13 @@ impl Emitter<'_> {
                     }
                     Builtin::SizeOf => {
                         return c_size(&self.c_type(*arg_ty));
+                    }
+                    // `[ECS-4]` — a constant of the instance.
+                    Builtin::TypeIsSend => {
+                        return if self.types.is_send(*arg_ty) { "true" } else { "false" }.to_string();
+                    }
+                    Builtin::TypeIsSync => {
+                        return if self.types.is_sync(*arg_ty) { "true" } else { "false" }.to_string();
                     }
                     // `[RNG-3a]` — total: no failure mode, no `Panic`, no
                     // `RuntimeCheck(k)`. "On the C backend it lowers to two
@@ -14243,6 +14318,7 @@ mod string_descriptor_view_parts_tests {
             class_interface_tables: BTreeMap::new(),
             class_interface_call_interfaces: BTreeSet::new(),
             clone_identities: BTreeSet::new(),
+        eq_identities: BTreeSet::new(),
             interface_caches: BTreeMap::new(),
             folded_tests: BTreeMap::new(),
             fall_into: None,

@@ -584,6 +584,13 @@ pub struct TypeTable {
     /// `[TYP-22]` (ODR-237) — the interfaces that require `Clone`, of the `dyn` tables formed: each
     /// such table holds an entry copying its value into a new box.
     dyn_clone: HashSet<Symbol>,
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — each interface's supertraits, so a `dyn I` is `Send` when
+    /// `I` requires `Send` and `Sync` when it requires `Sync`, itself or through a parent.
+    interface_parents: HashMap<Symbol, Vec<Symbol>>,
+    /// `[TYP-36]` (ODR-241) — for each type a `dyn` table of an interface requiring `Eq` is made
+    /// for, the symbol of the function comparing two of its values (std's `dyn_eq` instance), which
+    /// the table's `eq` entry calls.
+    dyn_eq_symbols: HashMap<Ty, String>,
 }
 
 /// `[BLD-FFI-5a]` (ODR-162) — a `@sync` class whose objects an export hands to C and C++: the class,
@@ -746,6 +753,8 @@ impl TypeTable {
             layout_attrs: HashMap::new(),
             must_drop_declared: HashSet::new(),
             dyn_clone: HashSet::new(),
+            interface_parents: HashMap::new(),
+            dyn_eq_symbols: HashMap::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
             coroutine_frames: HashMap::new(),
@@ -1666,20 +1675,38 @@ impl TypeTable {
     }
 
     pub fn is_send(&self, ty: Ty) -> bool {
-        self.thread_properties(ty, &mut HashSet::new()).0
+        self.thread_properties(ty, &mut HashSet::new(), &|_| None).0
     }
 
     pub fn is_sync(&self, ty: Ty) -> bool {
-        self.thread_properties(ty, &mut HashSet::new()).1
+        self.thread_properties(ty, &mut HashSet::new(), &|_| None).1
     }
 
-    fn thread_properties(&self, ty: Ty, visiting: &mut HashSet<Ty>) -> (bool, bool) {
+    /// `[THR-8]`, `[THR-9]` — whether `ty` is `Send` and `Sync`, a type parameter (or an
+    /// associated type) being what `params` says its bounds make it (`T: Send`), and `(false,
+    /// false)` where it says nothing.
+    pub fn thread_properties_with(&self, ty: Ty, params: &dyn Fn(Ty) -> Option<(bool, bool)>) -> (bool, bool) {
+        self.thread_properties(ty, &mut HashSet::new(), params)
+    }
+
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — whether one of `interfaces` requires `Send` and `Sync`.
+    pub fn interfaces_thread_properties(&self, interfaces: &[Symbol]) -> (bool, bool) {
+        (self.interfaces_require(interfaces, "std.core.Send"), self.interfaces_require(interfaces, "std.core.Sync"))
+    }
+
+    fn thread_properties(&self, ty: Ty, visiting: &mut HashSet<Ty>, params: &dyn Fn(Ty) -> Option<(bool, bool)>) -> (bool, bool) {
         if !visiting.insert(ty) {
             // Recursive value storage is impossible without indirection. A
             // recursive @sync handle is safe once its declaration is checked.
             return (true, true);
         }
-        let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting);
+        if matches!(self.kind(ty), TyKind::Param { .. } | TyKind::Assoc { .. })
+            && let Some(facts) = params(ty)
+        {
+            visiting.remove(&ty);
+            return facts;
+        }
+        let both = |child, visiting: &mut HashSet<Ty>| self.thread_properties(child, visiting, params);
         let result = match self.kind(ty) {
             // `[TYP-41]` — a number, sent and shared as one is.
             TyKind::Const(_) => (true, true),
@@ -1700,7 +1727,14 @@ impl TypeTable {
                 let (send, sync) = both(*inner, visiting);
                 if *mutable { (send, false) } else { (sync, sync) }
             }
-            TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Dyn { .. } | TyKind::Opaque(_)
+            // ODR-255 — a `dyn I` holds a value of some type implementing `I`: `Send` when `I`
+            // requires `Send` (every implementation is then `Send`, `E2040` otherwise), `Sync`
+            // when it requires `Sync`.
+            TyKind::Dyn { interfaces } => (
+                self.interfaces_require(interfaces, "std.core.Send"),
+                self.interfaces_require(interfaces, "std.core.Sync"),
+            ),
+            TyKind::Ptr { .. } | TyKind::ClassInterface(_) | TyKind::Opaque(_)
             | TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Infer(_)
             | TyKind::IntLit | TyKind::FloatLit => (false, false),
             TyKind::Struct(id) => {
@@ -2091,6 +2125,46 @@ impl TypeTable {
     /// requires `Clone`.
     pub fn dyn_clones(&self, interfaces: &[Symbol]) -> bool {
         interfaces.iter().any(|interface| self.dyn_clone.contains(interface))
+    }
+
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — record `interface`'s supertraits.
+    pub fn declare_interface_parents(&mut self, interface: Symbol, parents: Vec<Symbol>) {
+        self.interface_parents.insert(interface, parents);
+    }
+
+    /// `[THR-8]`, `[THR-9]` (ODR-255) — whether one of `interfaces` is `marker` (`Send`, `Sync`)
+    /// or requires it, through any supertrait.
+    pub fn interfaces_require(&self, interfaces: &[Symbol], marker: &str) -> bool {
+        let mut pending: Vec<Symbol> = interfaces.to_vec();
+        let mut seen = HashSet::new();
+        while let Some(next) = pending.pop() {
+            if next.is(marker) {
+                return true;
+            }
+            if seen.insert(next)
+                && let Some(parents) = self.interface_parents.get(&next)
+            {
+                pending.extend(parents.iter().copied());
+            }
+        }
+        false
+    }
+
+    /// `[TYP-36]` (ODR-241) — whether the `dyn` table of `interfaces` compares two values: one of
+    /// them requires `Eq`.
+    pub fn dyn_eqs(&self, interfaces: &[Symbol]) -> bool {
+        self.interfaces_require(interfaces, "std.core.Eq")
+    }
+
+    /// `[TYP-36]` (ODR-241) — record the function comparing two values of `concrete` for its tables.
+    pub fn declare_dyn_eq_symbol(&mut self, concrete: Ty, symbol: String) {
+        self.dyn_eq_symbols.insert(concrete, symbol);
+    }
+
+    /// `[TYP-36]` (ODR-241) — the function comparing two values of `concrete`, for a table of an
+    /// interface requiring `Eq`.
+    pub fn dyn_eq_symbol(&self, concrete: Ty) -> Option<&str> {
+        self.dyn_eq_symbols.get(&concrete).map(String::as_str)
     }
 
     /// `[THR-6]` — record a struct's or class's `@must_drop`.
@@ -3072,9 +3146,11 @@ impl TypeTable {
             TyKind::ClassInterface(interface) => self.nominal_path(*interface, None),
             TyKind::Opaque(name) => (item_path(name.as_str()).into_owned(), None),
             TyKind::Range(id) => (item_path(self.range_def(*id).name.as_str()).into_owned(), None),
+            // ODR-215 — a built-in type's path is under `std.core`, so a program's own `struct str`
+            // (`[MOD-5]`) never shares a symbol with it.
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str
-            | TyKind::CStr | TyKind::Void => (self.spelling(ty), None),
-            TyKind::Never => ("Never".to_string(), None),
+            | TyKind::CStr | TyKind::Void => (core(&self.spelling(ty)), None),
+            TyKind::Never => (core("Never"), None),
             TyKind::Vec { text: true, .. } => (core("String"), None),
             TyKind::Vec { elem, .. } => (core("Array"), Some(self.arguments_spelling(&[*elem]))),
             TyKind::Span { elem, mutable } => {
@@ -3325,8 +3401,11 @@ pub const COMPILER_GENERICS: [&str; 20] = [
 /// compiler-made generic's bare name (`Option`) is the prelude's `std.core.Option`, and a root
 /// module's type named like one (`root.Box`, D-305) is the root module's `Box`.
 pub fn item_path(name: &str) -> std::borrow::Cow<'_, str> {
+    // D-305, D-860 — the root module's own `Box`, `int`, `float` or `str`, which the checker keys
+    // `root.<name>`: its path is the name, the root package having no component of its own; the
+    // built-in's is under `std.core` (ODR-215), so the two never share a symbol.
     if let Some(own) = name.strip_prefix("root.")
-        && COMPILER_GENERICS.contains(&own)
+        && (COMPILER_GENERICS.contains(&own) || matches!(own, "int" | "float" | "str"))
     {
         return std::borrow::Cow::Borrowed(own);
     }
@@ -3784,6 +3863,56 @@ mod tests {
             open: false,
         });
         assert_eq!(table.enum_unused_discriminant(unsigned_id), None);
+    }
+
+    /// `[MNG-6]` — the canonical spelling of a generic instance's arguments, which `[MNG-1]` hashes:
+    /// a scalar by its keyword, `String`, `Array`, the spans and the compiler's generics under
+    /// `std.core`, tuples, fixed arrays, references and function types as written, a type parameter
+    /// as `$`, its name and its slot.
+    #[test]
+    fn the_canonical_spelling_of_instance_arguments() {
+        let (mut table, _) = TypeTable::new();
+        let i64_ty = table.intern(TyKind::Int(IntTy::I64));
+        let u8_ty = table.intern(TyKind::Uint(UintTy::U8));
+        let str_ty = table.intern(TyKind::Str);
+        let string = table.intern(TyKind::Vec { elem: u8_ty, text: true });
+        let array = table.intern(TyKind::Vec { elem: i64_ty, text: false });
+        let span = table.intern(TyKind::Span { elem: i64_ty, mutable: true });
+        let pair = table.intern(TyKind::Tuple(vec![i64_ty, str_ty]));
+        let bytes = table.intern(TyKind::Array { elem: u8_ty, len: 4 });
+        let bytes_ref = table.intern(TyKind::Ref { mutable: true, inner: bytes });
+        let param = table.intern(TyKind::Param { index: 0, name: Symbol::intern("T") });
+        let function = table.intern(TyKind::Fn {
+            once: false,
+            abi: None,
+            latebound: false,
+            stateless: false,
+            is_unsafe: false,
+            params: vec![FnParam { ty: i64_ty, mode: FnParamMode::Borrow }],
+            ret: i64_ty,
+        });
+        let option = table.add_enum(EnumDef {
+            name: Symbol::intern("Option_i64"),
+            variants: Vec::new(),
+            span: Span::DUMMY,
+            origin: Some((Symbol::intern("Option"), vec![i64_ty])),
+            repr: u8_ty,
+            repr_is_explicit: false,
+            derives_copy: false,
+            has_drop: false,
+            open: false,
+        });
+        let option = table.intern(TyKind::Enum(option));
+        assert_eq!(
+            table.arguments_spelling(&[i64_ty, string, array, span, option]),
+            "[i64, std.core.String, std.core.Array[i64], std.core.MutSpan[i64], std.core.Option[i64]]"
+        );
+        assert_eq!(table.arguments_spelling(&[pair, bytes_ref, param, function]), "[(i64, str), ref mut [u8; 4], $T0, fn(i64) -> i64]");
+        // `[MNG-1]` (ODR-215) — a built-in type's own path is under `std.core`, a scalar's keyword
+        // staying its spelling as an argument.
+        assert_eq!(table.method_symbol(i64_ty, None, "of", None), "em_3std4core3i642of");
+        assert_eq!(table.method_symbol(str_ty, None, "chars", None), "em_3std4core3str5chars");
+        assert_eq!(item_path("root.str"), "str");
     }
 
     #[test]

@@ -5017,6 +5017,22 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-275 — Helper AD merged: the owner's answers on callables, threads and `Box ==`, names in C, generic local functions
+
+2026-10-23 (helper AD, branch `worktree-agent-adbe030e8d426272c`, merged by the lead). ODR-240 (the
+owner's): std's `Option`/`Result` methods, `Once.call_once` and `World.run` lend a named callable
+rather than take it, std's documentation no longer says ODR-210's ownership. ODR-218, ODR-255:
+`dyn I` and a type parameter are `Send`/`Sync` when their bounds require it; `run_parallel` really
+runs its systems at once on pool jobs (std.ecs reworked), a system or component not `Send` is
+`E7004`, a component two systems read not `Sync` `E7005` (ODR-265). ODR-241 (the owner's): `Box ==`,
+`Box[dyn I]` through an `eq` table entry. ODR-254: `try_col`/`try_row`/`try_get` twins. ODR-215,
+ODR-213: built-in types' C symbols under `std.core`, an escape-like `_` escaped (conformance
+behaviour unchanged; four C assertions re-recorded). `[GRM-28]`: generic local functions, an instance
+per set of type arguments sharing the declaration's captures. D-876, D-877, D-878, D-880 and D-902
+fixed. Open, with rulings for the owner's review: a written callable type's `+ Send` (ODR-264), a
+parallel system's commands (ODR-266), D-881 (ODR-267), local generators (ODR-268); D-899..D-901 found.
+The merge's one conflict was `docs/phase-status.json` (each side removed what it met).
+
 ## ADR-274 — Spec cut 35: the owner's answers of 2026-10-22/23 and the helpers' smaller questions (ODR-239..ODR-259)
 
 2026-10-23 (lead). `Ember_v0.9.10_Hardened_35` writes the owner's ODR-240 (std borrows a named

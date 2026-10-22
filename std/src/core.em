@@ -176,7 +176,7 @@ fn result_context[T, M: Display](owned r: Result[T, AnyError], msg: M) -> Result
 
 ## `[ERR-10]` — `r.with_context(f)`: as `context`, with the message `f`
 ## makes, called only on failure.
-fn result_with_context[T, M: Display](owned r: Result[T, AnyError], f: once fn() -> M) -> Result[T, AnyError]:
+fn result_with_context[T, M: Display, Call: once fn() -> M](owned r: Result[T, AnyError], owned f: Call) -> Result[T, AnyError]:
     match owned r:
         Ok(v):
             return Ok(v)
@@ -196,7 +196,7 @@ fn option_context[T, M: Display](owned o: Option[T], msg: M) -> Result[T, AnyErr
 
 ## `[ERR-4]` — `o.with_context(f)`: as `context`, with the message `f`
 ## makes, called only for `None`.
-fn option_with_context[T, M: Display](owned o: Option[T], f: once fn() -> M) -> Result[T, AnyError]:
+fn option_with_context[T, M: Display, Call: once fn() -> M](owned o: Option[T], owned f: Call) -> Result[T, AnyError]:
     match owned o:
         Some(v):
             return Ok(v)
@@ -748,11 +748,13 @@ pub interface Iterator:
     fn chain[J: Iterator[Item = Item]](owned self, owned other: J) -> Chain[Self, J]:
         return Chain(self, other, false)
 
-    ## What `f` makes of each item. The adapter holds `f` itself, not a
-    ## pointer to it, so nothing is allocated and each call is direct
-    ## (`[CLO-14]`). It takes `f` over: a lambda written at the call keeps
-    ## the captures `[CLO-2]` infers (`[CLO-15]`), and the iterator lives no
-    ## longer than they do (`[CLO-4]`). The other adapters do the same.
+    ## What `f` makes of each item. The adapter holds `f`, so nothing is
+    ## allocated and each call is direct (`[CLO-14]`). A named callable is
+    ## lent to it (`ref mut`), the caller keeping it, and the iterator lives no
+    ## longer than that loan; a lambda written at the call is given to it and
+    ## keeps the captures `[CLO-2]` infers (`[CLO-15]`), so the iterator may be
+    ## kept or returned as long as they live (`[CLO-4]`, `[STD-19]`, ODR-240).
+    ## The other adapters do the same.
     fn map[R, F: fn(Item) -> R](owned self, owned f: F) -> Map[Self, R, F]:
         return Map(self, f)
 
@@ -835,9 +837,10 @@ pub interface Iterator:
             left = left.less(one)
         return left
 
-    ## `f(... f(f(init, a), b) ..., z)` over the items `a` to `z`. The consumers take their
-    ## callable over, as the adapters and `for_each` do (`[STD-19]`, ODR-210), so it is called from
-    ## a place of the consumer's own and may write what it captures (`[CLO-2]`).
+    ## `f(... f(f(init, a), b) ..., z)` over the items `a` to `z`. The consumers, as the adapters,
+    ## borrow a named callable with leave to change what it captured (`ref mut`), and are given a
+    ## lambda written at the call (`[STD-19]`, ODR-240), so it may write what it captures
+    ## (`[CLO-2]`) and the caller reads that once the callable's last use is past.
     fn fold[B, F: fn(B, Item) -> B](owned self, init: B, owned f: F) -> B:
         acc = init
         for x in self:
@@ -876,8 +879,8 @@ pub interface Iterator:
             at = at.plus(one)
         return None
 
-    ## `f` on each item, in order. Taken over as an adapter's callable is (`[STD-19]`), so it is
-    ## called from a place of `for_each`'s own and may write what it captures (`[CLO-2]`):
+    ## `f` on each item, in order. Lent or given as an adapter's callable is (`[STD-19]`,
+    ## ODR-240), so it may write what it captures (`[CLO-2]`):
     ## `xs.iter().for_each(fn(x): total += x)`.
     fn for_each[F: fn(Item)](owned self, owned f: F):
         for x in self:
@@ -2076,23 +2079,24 @@ extend[T: Integer] RangeFromIter[T] implements Iterator:
 ## checked, inferred and borrow-checked like any other. Each consumes the
 ## receiver and calls `f` at most once, before it returns, so `f` is a `once fn`: a closure may give
 ## away what it captured. A payload passed to `f` is moved in (`owned`), except `filter`'s, which it
-## must give back.
+## must give back. A named callable that may be called again is lent, the caller keeping it
+## (`[STD-19]`, ODR-240); a lambda written at the call, or one that gives a capture away, is given.
 
-fn option_map[T, U](owned o: Option[T], f: once fn(owned T) -> U) -> Option[U]:
+fn option_map[T, U, Call: once fn(owned T) -> U](owned o: Option[T], owned f: Call) -> Option[U]:
     match owned o:
         Some(v):
             return Some(f(v))
         None:
             return None
 
-fn option_and_then[T, U](owned o: Option[T], f: once fn(owned T) -> Option[U]) -> Option[U]:
+fn option_and_then[T, U, Call: once fn(owned T) -> Option[U]](owned o: Option[T], owned f: Call) -> Option[U]:
     match owned o:
         Some(v):
             return f(v)
         None:
             return None
 
-fn option_filter[T](owned o: Option[T], f: once fn(T) -> bool) -> Option[T]:
+fn option_filter[T, Call: once fn(T) -> bool](owned o: Option[T], owned f: Call) -> Option[T]:
     match owned o:
         Some(v):
             if f(v):
@@ -2101,61 +2105,67 @@ fn option_filter[T](owned o: Option[T], f: once fn(T) -> bool) -> Option[T]:
         None:
             return None
 
-fn option_or_else[T](owned o: Option[T], f: once fn() -> Option[T]) -> Option[T]:
+fn option_or_else[T, Call: once fn() -> Option[T]](owned o: Option[T], owned f: Call) -> Option[T]:
     match owned o:
         Some(v):
             return Some(v)
         None:
             return f()
 
-fn option_unwrap_or_else[T](owned o: Option[T], f: once fn() -> T) -> T:
+fn option_unwrap_or_else[T, Call: once fn() -> T](owned o: Option[T], owned f: Call) -> T:
     match owned o:
         Some(v):
             return v
         None:
             return f()
 
-fn option_ok_or_else[T, E](owned o: Option[T], f: once fn() -> E) -> Result[T, E]:
+fn option_ok_or_else[T, E, Call: once fn() -> E](owned o: Option[T], owned f: Call) -> Result[T, E]:
     match owned o:
         Some(v):
             return Ok(v)
         None:
             return Err(f())
 
-fn result_map[T, E, U](owned r: Result[T, E], f: once fn(owned T) -> U) -> Result[U, E]:
+fn result_map[T, E, U, Call: once fn(owned T) -> U](owned r: Result[T, E], owned f: Call) -> Result[U, E]:
     match owned r:
         Ok(v):
             return Ok(f(v))
         Err(e):
             return Err(e)
 
-fn result_map_err[T, E, F](owned r: Result[T, E], f: once fn(owned E) -> F) -> Result[T, F]:
+fn result_map_err[T, E, F, Call: once fn(owned E) -> F](owned r: Result[T, E], owned f: Call) -> Result[T, F]:
     match owned r:
         Ok(v):
             return Ok(v)
         Err(e):
             return Err(f(e))
 
-fn result_and_then[T, E, U](owned r: Result[T, E], f: once fn(owned T) -> Result[U, E]) -> Result[U, E]:
+fn result_and_then[T, E, U, Call: once fn(owned T) -> Result[U, E]](owned r: Result[T, E], owned f: Call) -> Result[U, E]:
     match owned r:
         Ok(v):
             return f(v)
         Err(e):
             return Err(e)
 
-fn result_or_else[T, E, F](owned r: Result[T, E], f: once fn(owned E) -> Result[T, F]) -> Result[T, F]:
+fn result_or_else[T, E, F, Call: once fn(owned E) -> Result[T, F]](owned r: Result[T, E], owned f: Call) -> Result[T, F]:
     match owned r:
         Ok(v):
             return Ok(v)
         Err(e):
             return f(e)
 
-fn result_unwrap_or_else[T, E](owned r: Result[T, E], f: once fn(owned E) -> T) -> T:
+fn result_unwrap_or_else[T, E, Call: once fn(owned E) -> T](owned r: Result[T, E], owned f: Call) -> T:
     match owned r:
         Ok(v):
             return v
         Err(e):
             return f(e)
+
+## IX.1 (ODR-241) — the compiler's: what the table of a `dyn I` whose interface requires `Eq` calls
+## to compare two values of the type it was made for, after it has found both are of that type:
+## `a == b` as the type writes it.
+fn dyn_eq[T: Eq](a: T, b: T) -> bool:
+    return a == b
 
 ## `[TYP-36]` — the table's `Default` column: zero, `0.0`, `false`, `'\0'`,
 ## empty text, an empty `Array` and `None`.

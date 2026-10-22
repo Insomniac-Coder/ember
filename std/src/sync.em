@@ -83,7 +83,7 @@ pub struct RwLockWriteGuard[T]:
 pub struct Once:
     state: Atomic[u32] = Atomic(0)
 
-    pub fn call_once(self, f: once fn()):
+    pub fn call_once[Call: once fn()](self, owned f: Call):
         if self.state.load(MemoryOrder.Acquire) == ONCE_DONE:
             return
         if self.state.compare_exchange(ONCE_NEW, ONCE_RUNNING, MemoryOrder.Acquire).is_ok():

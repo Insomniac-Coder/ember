@@ -448,16 +448,26 @@ pub struct CppShared[T]:
     pub fn as_ptr(self) -> *mut u8:
         return self.object
 
-    ## The object it shares; an empty one panics.
+    ## The object it shares; an empty one panics (`try_get` gives an `Option`).
     pub fn get(self) -> ref T:
         pointee = self.pointee
         address = null[*mut T]()
         unsafe:  # SAFETY(ffi): the pointer's own thunk
             address = pointee(self.object)
         if address.is_null():
-            panic("`CppShared.get`: the `std::shared_ptr` is empty")
+            panic("`CppShared.get`: the `std::shared_ptr` is empty; use .try_get() for an Option")
         # The object the pointer shares, which the reference borrows the pointer for.
         return cpp_pointee(ref self, address)
+
+    ## The object it shares, or `None` for an empty one (`get`'s twin, `[ERR-13]`).
+    pub fn try_get(self) -> Option[ref T]:
+        pointee = self.pointee
+        address = null[*mut T]()
+        unsafe:  # SAFETY(ffi): the pointer's own thunk
+            address = pointee(self.object)
+        if address.is_null():
+            return None
+        return Some(cpp_pointee(ref self, address))
 
     fn drop(mut self):
         destroy = self.destroy

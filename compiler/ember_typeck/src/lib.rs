@@ -470,6 +470,15 @@ pub fn check(
         checker.current_module = index;
         checker.collect_methods(&loaded.module);
     }
+    // A default body gives the implementing type a method it did not write. These have to exist
+    // before any body is checked, or a call to one would not resolve. D-878 — once every module's
+    // implementations are collected: given module by module, an implementation in a module after
+    // its interface's had none (`std.ffi`'s `CppError` had no `Error.source`), so what checked
+    // depended on the order of the module list.
+    for (index, loaded) in modules.iter().enumerate() {
+        checker.current_module = index;
+        checker.register_defaults(&loaded.module);
+    }
     // An instance a signature made before the implementations were collected
     // may have missed an extension whose bound they meet (`Map[String, V]`'s
     // `K: Hash` needs `String`'s); it is offered each one again. One whose
@@ -557,6 +566,14 @@ pub fn check(
     }
     functions.extend(checker.take_some_forwarder_bodies());
     checker.publish_debug_writers(&functions);
+    // IX.1 (ODR-241) — the comparing function of each type a `dyn` table of an interface requiring
+    // `Eq` holds, by its symbol, for the backends.
+    for (concrete, def) in std::mem::take(&mut checker.dyn_eq_instances) {
+        if let Some(function) = functions.iter().find(|function| function.def == def) {
+            let symbol = function.symbol.clone();
+            checker.types.declare_dyn_eq_symbol(concrete, symbol);
+        }
+    }
     checker.reflect_classes();
     checker.check_declared_layouts();
     // `[CLO-1]` — the functions capture-free closures lowered to. They have no
@@ -1255,6 +1272,35 @@ struct WrittenAttributes {
     own: Vec<ast::Attribute>,
     fields: HashMap<Symbol, Vec<ast::Attribute>>,
     variants: HashMap<Symbol, Vec<ast::Attribute>>,
+}
+
+/// `[GRM-28]` — a generic local function: its body checked once with its type parameters opaque,
+/// its environment made where it is declared, and a function of that environment made for each
+/// set of type arguments a call infers (`check_generic_local_fn`, `generic_local_instance`).
+#[derive(Clone)]
+struct GenericLocalFn {
+    name: Symbol,
+    lambda: ast::Lambda,
+    /// The slot of its first type parameter: the enclosing function's own come before it.
+    base: usize,
+    /// The type parameters' bindings where it is declared (the enclosing function's).
+    type_params: HashMap<Symbol, Ty>,
+    /// What a closure there reaches, and what it captured, in its environment's field order.
+    outer: HashMap<Symbol, Ty>,
+    owned_loop_borrowed_handles: HashSet<Symbol>,
+    captured: Vec<(Symbol, Ty)>,
+    env: StructId,
+    env_ty: Ty,
+    env_mode: Mode,
+    /// The signature a call is checked against: the environment, then its parameters, over the
+    /// enclosing function's type parameters and its own.
+    generic: DefId,
+    /// Its body did not check with its type parameters opaque: a call makes no instance.
+    failed: bool,
+    in_unsafe: bool,
+    /// The instances whose bodies are made.
+    built: HashSet<DefId>,
+    span: Span,
 }
 
 #[derive(Clone)]
@@ -2441,6 +2487,13 @@ struct Checker<'a> {
     /// `[GRM-28]` — the local functions whose bodies are being checked,
     /// innermost last.
     local_fn_self: Vec<LocalFnSelf>,
+    /// `[GRM-28]` — the generic local functions, and each one's environment struct.
+    generic_local_fns: Vec<GenericLocalFn>,
+    generic_local_by_env: HashMap<StructId, usize>,
+    /// `[GRM-28]` — the generic local function a call is reading the environment of, and the
+    /// call's span, which its read of the name has: that read is the call's, every other one a
+    /// value use.
+    generic_local_callee: Option<(StructId, Span)>,
     /// `[RFL-1]` — each type's written attributes, by its qualified name.
     written_attributes: HashMap<Symbol, WrittenAttributes>,
     /// `[RFL-3]` — the structs declared `@attribute`, by their qualified names.
@@ -2791,6 +2844,9 @@ struct Checker<'a> {
     /// `[COST-1]` — the inherent extension methods a built-in instance took
     /// when a method was first looked up on it: emitted only if called.
     emit_if_used_methods: HashSet<DefId>,
+    /// IX.1 (ODR-241) — each type a `dyn` table of an interface requiring `Eq` is made for, with its
+    /// instance of std's `dyn_eq`.
+    dyn_eq_instances: Vec<(Ty, DefId)>,
     /// The bodies of those methods, checked only once one is called: an
     /// instance takes every matching extension at its first method call, and
     /// a body need not hold for an instance that never calls it.
@@ -3337,6 +3393,9 @@ impl<'a> Checker<'a> {
             incomplete: HashSet::new(),
             closure_numbers: 0,
             local_fn_self: Vec::new(),
+            generic_local_fns: Vec::new(),
+            generic_local_by_env: HashMap::new(),
+            generic_local_callee: None,
             written_attributes: HashMap::new(),
             attribute_structs: HashSet::new(),
             pending_user_attributes: Vec::new(),
@@ -3394,6 +3453,7 @@ impl<'a> Checker<'a> {
             const_bound_depth: 0,
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
+            dyn_eq_instances: Vec::new(),
             deferred_methods: HashMap::new(),
             std_instances: HashSet::new(),
             instantiations: Vec::new(),
@@ -5693,8 +5753,8 @@ impl<'a> Checker<'a> {
         if !def.is_sync { return; }
         let name = def.name.as_str().rsplit('.').next().unwrap_or(def.name.as_str()).to_string();
         let offenders = def.fields.iter().filter_map(|field| {
-            let send = self.types.is_send(field.ty);
-            let sync = self.types.is_sync(field.ty);
+            let send = self.is_send(field.ty);
+            let sync = self.is_sync(field.ty);
             (!send || !sync).then_some((field.name, field.ty, field.ty_span, send, sync))
         }).collect::<Vec<_>>();
         for (field, ty, span, send, sync) in offenders {
@@ -5714,7 +5774,7 @@ impl<'a> Checker<'a> {
         let span = self.types.class_def(id).span;
         let class_ty = self.types.intern(TyKind::Class(id));
         for arg in self.types.phantoms(class_ty).to_vec() {
-            let property = match (self.types.is_send(arg), self.types.is_sync(arg)) {
+            let property = match (self.is_send(arg), self.is_sync(arg)) {
                 (true, true) => continue,
                 (false, false) => "Send or Sync",
                 (false, true) => "Send",
@@ -9625,7 +9685,7 @@ impl<'a> Checker<'a> {
                     // one, and a foreign one read safely (`@ffi(immutable)`). A foreign static read
                     // only in `unsafe` (Part XVI's table) is the programmer's to share (the owner's
                     // ruling of 2026-10-21, ODR-163).
-                    if !self.types.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
+                    if !self.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
                         let shown = self.types.display(ty);
                         self.error(codes::E7002, decl.ty.span,
                             format!("{}static type `{shown}` is not Sync",
@@ -10509,10 +10569,6 @@ impl<'a> Checker<'a> {
                 _ => {}
             }
         }
-        // A default body gives the implementing type a method it did not
-        // write. These have to exist before any body is checked, or a call to
-        // one would not resolve.
-        self.register_defaults(module);
     }
 
     /// Every implementation has every method the interface requires, and every
@@ -12074,7 +12130,7 @@ impl<'a> Checker<'a> {
         // Resolved for the same reason the bounds and the implementation
         // record are: `interface Ord: Eq` in one module and
         // `implements Eq` in another name the same interface.
-        let supertraits = decl
+        let supertraits: Vec<Symbol> = decl
             .supertraits
             .iter()
             .filter_map(interface_name)
@@ -12084,6 +12140,7 @@ impl<'a> Checker<'a> {
         self.assoc_scope = saved_assoc;
         self.type_params = saved_type_params;
         let _ = &assoc;
+        self.types.declare_interface_parents(name, supertraits.clone());
         self.interfaces.insert(
             name,
             InterfaceDef {
@@ -12349,7 +12406,7 @@ impl<'a> Checker<'a> {
             .collect();
         let saved_type_params = std::mem::replace(&mut self.type_params, interface_bindings);
         let saved_module = std::mem::replace(&mut self.current_module, definition.declaring_module);
-        let supertraits = definition
+        let supertraits: Vec<Symbol> = definition
             .supertrait_exprs
             .iter()
             .filter_map(|supertrait| self.resolve_interface_use(supertrait))
@@ -12369,6 +12426,7 @@ impl<'a> Checker<'a> {
                 (self.substitute_bound(bound, args), associated, self.substitute_ty(value, args))
             }).collect())
         }).collect();
+        self.types.declare_interface_parents(instance, supertraits.clone());
         self.interfaces.insert(
             instance,
             InterfaceDef {
@@ -12446,8 +12504,9 @@ impl<'a> Checker<'a> {
             }
         }
         for parent in &def.supertraits {
-            // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a method.
-            if parent.is("std.core.Clone") {
+            // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a method;
+            // ODR-241, a required `Eq` its `eq` entry.
+            if parent.is("std.core.Clone") || parent.is("std.core.Eq") {
                 continue;
             }
             if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting) {
@@ -12600,8 +12659,9 @@ impl<'a> Checker<'a> {
         methods: &mut Vec<(Symbol, DefId, Mode)>,
         visiting: &mut HashSet<Symbol>,
     ) {
-        // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a slot.
-        if !visiting.insert(interface) || interface.is("std.core.Clone") {
+        // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a slot; ODR-241, a
+        // required `Eq` its `eq` entry.
+        if !visiting.insert(interface) || interface.is("std.core.Clone") || interface.is("std.core.Eq") {
             return;
         }
         let Some(def) = self.interfaces.get(&interface) else { return };
@@ -12691,6 +12751,17 @@ impl<'a> Checker<'a> {
             }
         }
 
+        // IX.1 (ODR-241) — a table of an interface requiring `Eq` compares two values of this
+        // type: std's `dyn_eq[T]`, `a == b` as the type writes it, made once per type.
+        if self.types.dyn_eqs(interfaces)
+            && !self.types.is_generic(concrete)
+            && !self.dyn_eq_instances.iter().any(|(ty, _)| *ty == concrete)
+            && let Some(def) = self.fn_ids.get(&Symbol::intern("std.core.dyn_eq")).copied()
+        {
+            let span = self.signatures[def.0 as usize].decl;
+            let instance = self.instantiate(def, &[concrete], Vec::new(), Symbol::intern("dyn_eq"), span);
+            self.dyn_eq_instances.push((concrete, instance));
+        }
         let mut methods = Vec::new();
         let mut visiting = HashSet::new();
         for interface in interfaces {
@@ -15367,6 +15438,15 @@ impl<'a> Checker<'a> {
             }
             // `@no_derive(Eq)` opts out of the implicit one.
             TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_eq.contains(&ty) => false,
+            // IX.1 (ODR-241) — a `Box[T]` compares what it holds, when `T` has `Eq`; a
+            // `Box[dyn I]` when `I` requires `Eq`.
+            TyKind::Struct(_) if self.box_inner(ty).is_some() => {
+                let inner = self.box_inner(ty).expect("a box");
+                match self.types.kind(inner) {
+                    TyKind::Dyn { interfaces } => self.types.dyn_eqs(interfaces),
+                    _ => !seen.insert(ty) || self.has_implicit_eq_in(inner, seen),
+                }
+            }
             TyKind::Tuple(items) => items.iter().all(|&item| self.has_implicit_eq_in(item, seen)),
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => {
                 self.has_implicit_eq_in(*elem, seen)
@@ -16185,6 +16265,10 @@ impl<'a> Checker<'a> {
             (Builtin::SizeOf, 0, false)
         } else if name.is("align_of") || resolved.is("std.mem.align_of") {
             (Builtin::AlignOf, 0, false)
+        } else if resolved.is("std.ecs.type_is_send") {
+            (Builtin::TypeIsSend, 0, false)
+        } else if resolved.is("std.ecs.type_is_sync") {
+            (Builtin::TypeIsSync, 0, false)
         } else {
             return None;
         };
@@ -16213,7 +16297,7 @@ impl<'a> Checker<'a> {
         // `read`, and `write` take it from the pointer they are given.
         let mut checked: Vec<Expr> = Vec::new();
         let elem = match which {
-            Builtin::MemAlloc | Builtin::SizeOf | Builtin::AlignOf => match explicit.first() {
+            Builtin::MemAlloc | Builtin::SizeOf | Builtin::AlignOf | Builtin::TypeIsSend | Builtin::TypeIsSync => match explicit.first() {
                 Some(&ty) => ty,
                 None => {
                     self.error(
@@ -16243,7 +16327,7 @@ impl<'a> Checker<'a> {
             }
         };
 
-        if self.types.has_unsized_by_value(elem) {
+        if !matches!(which, Builtin::TypeIsSend | Builtin::TypeIsSync) && self.types.has_unsized_by_value(elem) {
             let shown = self.types.display(elem);
             self.error(codes::E5015, span,
                 format!("`{shown}` is incomplete and has no size or alignment"));
@@ -16258,6 +16342,7 @@ impl<'a> Checker<'a> {
             Builtin::MemFree => (vec![usize_ty], void),
             Builtin::PtrRead => (vec![usize_ty], elem),
             Builtin::PtrWrite => (vec![usize_ty, elem], void),
+            Builtin::TypeIsSend | Builtin::TypeIsSync => (Vec::new(), self.common.bool_),
             _ => (Vec::new(), usize_ty),
         };
         for (arg, &param_ty) in args.iter().skip(checked.len()).zip(rest.iter()) {
@@ -16267,7 +16352,7 @@ impl<'a> Checker<'a> {
         // Layout queries have no arguments, so the element type has to travel
         // somewhere; a zero-sized placeholder of that type carries it through
         // generic substitution.
-        if matches!(which, Builtin::SizeOf | Builtin::AlignOf) {
+        if matches!(which, Builtin::SizeOf | Builtin::AlignOf | Builtin::TypeIsSend | Builtin::TypeIsSync) {
             checked.push(Expr { ty: elem, kind: ExprKind::Error, span });
         }
         Some(Expr { ty: ret, kind: ExprKind::Builtin { which, args: checked }, span })
@@ -21464,7 +21549,7 @@ impl<'a> Checker<'a> {
             match retained.iter().find(|(slot, _)| *slot == name) {
                 Some(&(_, bound)) => match token {
                     Some(held) if mode == Mode::Borrow => {
-                        if !bound && !self.types.is_send(held) {
+                        if !bound && !self.is_send(held) {
                             let shown = self.types.display(held);
                             self.sink.emit(
                                 Diagnostic::error(codes::E7004, span, format!("`{name}` hands foreign code a `{shown}` to keep, and a `{shown}` is not `Send`"))
@@ -35658,7 +35743,15 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { segments } if segments.len() == 1 => {
                 let name = segments[0].name;
                 if let Some(local) = self.lookup(name) {
-                    return self.read_local_expecting(local, span, expected);
+                    let value = self.read_local_expecting(local, span, expected);
+                    return self.generic_local_value(value, name);
+                }
+                // `[CLO-2]` — inside a closure, a local of the enclosing function is a capture, and
+                // shadows an item of its name there as it does in the function.
+                if self.is_capture_candidate(name)
+                    && let Some(captured) = self.resolve_capture(name, span)
+                {
+                    return self.generic_local_value(captured, name);
                 }
                 if let Some(value) = self.const_param_value(name, span) {
                     return value;
@@ -35725,7 +35818,7 @@ impl<'a> Checker<'a> {
                 // declares is a capture. Saying "cannot find it" would be
                 // false and would send the reader looking for a typo.
                 if let Some(captured) = self.resolve_capture(name, span) {
-                    return captured;
+                    return self.generic_local_value(captured, name);
                 }
                 if self.report_ambiguous_glob(name, span) {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -37032,10 +37125,12 @@ impl<'a> Checker<'a> {
         // parses as a call on an index.
         let (callee, explicit): (&ast::Expr, Vec<Ty>) = match &callee.kind {
             // A local shadows every item of its name, so `fs[1](x)` with a
-            // local `fs` indexes it and calls the element.
+            // local `fs` indexes it and calls the element; a generic local
+            // function's name takes its type arguments (`[GRM-28]`).
             ast::ExprKind::IndexOrInstantiate { base, args }
                 if matches!(&base.kind, ast::ExprKind::Path { segments }
-                    if !(segments.len() == 1 && self.lookup(segments[0].name).is_some())) =>
+                    if !(segments.len() == 1 && self.lookup(segments[0].name).is_some())
+                        || segments.len() == 1 && self.generic_local_named(segments[0].name).is_some()) =>
             {
                 let tys = self.explicit_type_arguments(args);
                 (base.as_ref(), tys)
@@ -37050,6 +37145,13 @@ impl<'a> Checker<'a> {
             && let Some(own) = self.local_fn_self.iter().rev().find(|own| own.name == name.name).cloned()
         {
             return self.synth_local_fn_self_call(own, args, span);
+        }
+        // `[GRM-28]` — a generic local function, in its block or captured by a closure there.
+        if let ast::ExprKind::Path { segments } = &callee.kind
+            && let [name] = segments.as_slice()
+            && let Some(index) = self.generic_local_named(name.name)
+        {
+            return self.synth_generic_local_call(index, args, explicit, span);
         }
         // D-692, `[FN-6]` — a `static` holding a function value (`static HOOK: extern "C" fn(i32) ->
         // i32 = f`) is called through that value, as a local of function type is: `HOOK(7)`. A local
@@ -38020,6 +38122,87 @@ impl<'a> Checker<'a> {
         expected: Option<Ty>,
         span: Span,
     ) -> Expr {
+        let call = self.synth_generic_call_checked(def, name, args, explicit, expected, span);
+        if self.fn_ids.get(&Symbol::intern("std.ecs.system")) == Some(&def) {
+            self.check_ecs_system_sendable(&call, args);
+        }
+        call
+    }
+
+    /// `[ECS-4]` (ODR-218) — `std.ecs.system(body, name)` makes a system `run_parallel` runs on
+    /// another thread: what `body` captures, and every component its query reads or writes, must
+    /// be `Send` (`E7004`, naming it). A function captures nothing.
+    fn check_ecs_system_sendable(&mut self, call: &Expr, args: &[ast::Arg]) {
+        let ExprKind::Call { args: checked, .. } = &call.kind else { return };
+        let Some(body) = checked.first() else { return };
+        let span = args.first().map_or(call.span, |arg| arg.value.span);
+        let name = match args.get(1).map(|arg| &arg.value.kind) {
+            Some(ast::ExprKind::Lit(ast::Literal::Str(text))) => format!("the system `{text}`"),
+            _ => "the system".to_string(),
+        };
+        let note = "`run_parallel` runs each system on another thread [ECS-4]";
+        // A named callable lent to `system` (ODR-240) is checked as what it refers to.
+        let body_ty = match *self.types.kind(body.ty) {
+            TyKind::Ref { inner, .. } => inner,
+            _ => body.ty,
+        };
+        let signature = self.callable_signature_of_value(body_ty);
+        if let TyKind::Struct(id) = *self.types.kind(body_ty)
+            && self.closure_calls.contains_key(&id)
+        {
+            let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
+            for (capture, ty) in captures {
+                if !self.is_send(ty) {
+                    let shown = self.types.display(ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E7004, span, format!("{name} captures `{capture}`, a `{shown}`, which is not Send"))
+                            .note(note),
+                    );
+                }
+            }
+        } else if !self.is_send(body_ty) {
+            let shown = self.types.display(body_ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E7004, span, format!("{name} is a `{shown}` value, which may hold anything, so it is not Send"))
+                    .help("pass the function, or the lambda itself, so what it captures can be checked")
+                    .note(note),
+            );
+        }
+        // The query: the callable's first parameter, `Query[Q]`.
+        let Some(TyKind::Fn { params, .. }) = signature.map(|signature| self.types.kind(signature).clone()) else { return };
+        let Some(query) = params.first().map(|param| param.ty) else { return };
+        let TyKind::Struct(id) = *self.types.kind(query) else { return };
+        let Some((origin, query_args)) = self.types.struct_def(id).origin.clone() else { return };
+        if !origin.is("std.ecs.Query") {
+            return;
+        }
+        let Some(&param) = query_args.first() else { return };
+        let mut components = self.ecs_access_set(param, "Reads");
+        for written in self.ecs_access_set(param, "Writes") {
+            if !components.contains(&written) {
+                components.push(written);
+            }
+        }
+        for component in components {
+            if !self.is_send(component) {
+                let shown = self.types.display(component);
+                self.sink.emit(
+                    Diagnostic::error(codes::E7004, span, format!("{name}'s query uses `{shown}`, which is not Send"))
+                        .note("a component `run_parallel` uses moves to another thread with its system (ODR-218) [ECS-4]"),
+                );
+            }
+        }
+    }
+
+    fn synth_generic_call_checked(
+        &mut self,
+        def: DefId,
+        name: Symbol,
+        args: &[ast::Arg],
+        explicit: Vec<Ty>,
+        expected: Option<Ty>,
+        span: Span,
+    ) -> Expr {
         self.check_direct_call_safety(def, span);
         let generics = self.signatures[def.0 as usize].generics.clone();
         let declared = self.signatures[def.0 as usize].params.clone();
@@ -38928,9 +39111,10 @@ impl<'a> Checker<'a> {
     /// may call itself. Its function is reserved before the body is checked,
     /// which is what a call to itself names.
     fn check_local_fn(&mut self, decl: &ast::FnDecl, span: Span, out: &mut Vec<Stmt>) {
-        let unbuilt = if !decl.generics.is_empty() {
-            Some("a generic local function")
-        } else if decl.is_gen {
+        if !decl.generics.is_empty() && !decl.is_gen && decl.abi.is_none() {
+            return self.check_generic_local_fn(decl, span, out);
+        }
+        let unbuilt = if decl.is_gen {
             Some("a local generator")
         } else if decl.abi.is_some() {
             Some("a local function with a foreign ABI")
@@ -39002,6 +39186,313 @@ impl<'a> Checker<'a> {
         // the value is a known function (ADR-169).
         let local = self.declare(Some(decl.name.name), value.ty, decl.name.span);
         out.push(Stmt::Let { local, init: Some(value) });
+    }
+
+    /// `[GRM-28]` — a generic local function (`fn ident[T](x: T) -> T:` in a block) is a named closure
+    /// generic over its type parameters. Its body is checked once with them opaque, as a generic
+    /// function's is (`[TYP-17]`: only what their bounds provide), and reports there; its
+    /// environment is made here, as any closure's, capturing what the body uses (`[CLO-2]`), and is
+    /// the value its name holds; each call infers the type arguments, as a generic function's does,
+    /// and calls the function of that environment made for them (`generic_local_instance`). A call
+    /// from a closure inside the block captures the name, so its environment, as any capture.
+    fn check_generic_local_fn(&mut self, decl: &ast::FnDecl, span: Span, out: &mut Vec<Stmt>) {
+        let Some(body) = &decl.body else { return };
+        if decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. })) {
+            self.error(codes::E2020, decl.name.span, "a local function has no receiver");
+            return;
+        }
+        // Its type parameters, opaque, after the enclosing function's own.
+        let type_params = self.type_params.clone();
+        let base = self.current_generics.len();
+        let declared = self.declare_generics_from(&decl.generics, base);
+        self.current_generics.extend(declared);
+        let mut param_tys = Vec::new();
+        for param in &decl.params {
+            if let ast::ParamKind::Named { ty, .. } = &param.kind {
+                param_tys.push(FnParam { ty: self.resolve_type(ty), mode: fn_param_mode(param.mode) });
+            }
+        }
+        let ret = decl.ret.as_ref().map_or(self.common.void, |ty| self.resolve_type(ty));
+        let named: Vec<(Symbol, Ty, Mode, Span)> = decl
+            .params
+            .iter()
+            .zip(&param_tys)
+            .map(|(param, fn_param)| {
+                let name = match &param.kind {
+                    ast::ParamKind::Named { name, .. } => name.name,
+                    ast::ParamKind::Receiver { .. } => Symbol::intern("self"),
+                };
+                (name, fn_param.ty, hir_mode(fn_param.mode), param.span)
+            })
+            .collect();
+        let def = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature { decl: decl.name.span,
+            params: named.clone(),
+            ret,
+            abi: None,
+            is_unsafe: decl.is_unsafe,
+            overflow: self.active_overflow,
+            fp: self.active_fp,
+            borrows: None,
+            generics: Vec::new(),
+        });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: param_tys, ret });
+        let lambda = ast::Lambda {
+            is_owned: false,
+            params: decl.params.clone(),
+            ret: decl.ret.clone(),
+            body: ast::LambdaBody::Block(body.clone()),
+        };
+        // What a closure here reaches, as `synth_lambda_fresh` finds it.
+        let mut outer: HashMap<Symbol, Ty> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.iter())
+            .map(|(name, local)| (*name, self.locals[local.0 as usize].ty))
+            .collect();
+        if let Some(watch) = &self.captures {
+            for (name, ty) in &watch.outer {
+                outer.entry(*name).or_insert(*ty);
+            }
+        }
+        let owned_loop_borrowed_handles: HashSet<Symbol> = outer
+            .keys()
+            .filter(|name| self.lookup(**name).is_some_and(|local| self.locals[local.0 as usize].loop_borrowed_handle))
+            .copied()
+            .collect();
+        // The body, checked once with the type parameters opaque: the one check that reports.
+        let errors = self.sink.error_count();
+        self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None, probing: true });
+        let in_unsafe = self.in_unsafe || decl.is_unsafe;
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, in_unsafe);
+        let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
+        self.in_unsafe = outer_unsafe;
+        self.local_fn_self.pop();
+        let failed = self.sink.error_count() != errors || value.ty == self.common.error;
+        let generics = self.current_generics.clone();
+        self.current_generics.truncate(base);
+        self.type_params = type_params.clone();
+        // Its environment: the closure's, or, capturing nothing, an empty one.
+        let (env, value, env_mode) = match &value.kind {
+            ExprKind::StructLit { struct_id, .. } => {
+                let mode = self.signatures[def.0 as usize].params.first().map_or(Mode::Borrow, |param| param.2);
+                (*struct_id, value, mode)
+            }
+            _ => {
+                let id = self.types.add_struct(StructDef {
+                    name: Symbol::intern(&format!("{}_local{}_env", decl.name.name, self.generic_local_fns.len())),
+                    fields: Vec::new(),
+                    span,
+                    derives_copy: true,
+                    has_drop: false,
+                    drops_fields: true,
+                    origin: None,
+                    declaring_module: self.current_module,
+                });
+                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false });
+                let ty = self.types.intern(TyKind::Struct(id));
+                (id, Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: Vec::new() }, span }, Mode::Borrow)
+            }
+        };
+        let env_ty = value.ty;
+        let captured: Vec<(Symbol, Ty)> = self
+            .types
+            .struct_def(env)
+            .fields
+            .iter()
+            .map(|field| match *self.types.kind(field.ty) {
+                TyKind::Ref { inner, .. } => (field.name, inner),
+                _ => (field.name, field.ty),
+            })
+            .collect();
+        // The signature each call is checked against, and instantiates.
+        let generic = DefId(self.signatures.len() as u32);
+        let mut params = vec![(Symbol::intern("env"), env_ty, env_mode, span)];
+        params.extend(named);
+        self.signatures.push(Signature { decl: decl.name.span,
+            params,
+            ret,
+            abi: None,
+            is_unsafe: decl.is_unsafe,
+            overflow: self.active_overflow,
+            fp: self.active_fp,
+            borrows: None,
+            generics,
+        });
+        self.generic_local_by_env.insert(env, self.generic_local_fns.len());
+        self.generic_local_fns.push(GenericLocalFn {
+            name: decl.name.name,
+            lambda,
+            base,
+            type_params,
+            outer,
+            owned_loop_borrowed_handles,
+            captured,
+            env,
+            env_ty,
+            env_mode,
+            generic,
+            failed,
+            in_unsafe,
+            built: HashSet::new(),
+            span,
+        });
+        let local = self.declare(Some(decl.name.name), env_ty, decl.name.span);
+        out.push(Stmt::Let { local, init: Some(value) });
+    }
+
+    /// `[GRM-28]` — a call of a generic local function: checked against its generic signature, its
+    /// environment (the value its name holds, read where the call is) first, so the type arguments
+    /// are inferred and checked as a generic function's are; the instance's body is then made, once
+    /// for each set of type arguments.
+    fn synth_generic_local_call(&mut self, index: usize, args: &[ast::Arg], written: Vec<Ty>, span: Span) -> Expr {
+        let entry = self.generic_local_fns[index].clone();
+        if entry.failed {
+            for arg in args {
+                let _ = self.synth(&arg.value);
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let name = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: entry.name, span }] },
+            span,
+        };
+        let mut call_args = vec![ast::Arg { name: None, value: name, span }];
+        call_args.extend(args.iter().cloned());
+        // The enclosing function's own type parameters are what they are here: themselves where its
+        // body is checked opaquely, its instance's arguments where an instance's is.
+        // Its own are written (`ident[int](5)`) or inferred.
+        let mut explicit: Vec<Ty> = (0..entry.base)
+            .map(|slot| {
+                let name = self.current_generics[slot].name;
+                match entry.type_params.get(&name) {
+                    Some(&ty) => ty,
+                    None => self.types.intern(TyKind::Param { index: slot as u32, name }),
+                }
+            })
+            .collect();
+        explicit.extend(written);
+        let callee = self.generic_local_callee.replace((entry.env, span));
+        let call = self.synth_generic_call(entry.generic, entry.name, &call_args, explicit, None, span);
+        self.generic_local_callee = callee;
+        if let ExprKind::Call { callee, .. } = &call.kind
+            && !self.generic_local_fns[index].built.contains(callee)
+            && let Some(key) = self.instances.iter().find(|(_, instance)| **instance == *callee).map(|(key, _)| key.clone())
+            && key.def == entry.generic
+            && !key.args.iter().any(|&arg| self.types.is_generic(arg))
+        {
+            let callee = *callee;
+            self.generic_local_fns[index].built.insert(callee);
+            self.generic_local_instance(&entry, callee, &key.args);
+        }
+        call
+    }
+
+    /// `[GRM-28]` — the generic local function a name is, where it is read: a local of the block, or
+    /// a capture of a closure in it.
+    fn generic_local_named(&self, name: Symbol) -> Option<usize> {
+        let ty = match self.lookup(name) {
+            Some(local) => self.locals[local.0 as usize].ty,
+            None => *self.captures.as_ref()?.outer.get(&name)?,
+        };
+        match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.generic_local_by_env.get(&id).copied(),
+            _ => None,
+        }
+    }
+
+    /// `[GRM-28]` — a generic local function's name read as a value: its call's own read, or, as a
+    /// generic function's name is (`[TYP-16]`), no one function and `E2060`.
+    fn generic_local_value(&mut self, value: Expr, name: Symbol) -> Expr {
+        let TyKind::Struct(id) = *self.types.kind(value.ty) else { return value };
+        if !self.generic_local_by_env.contains_key(&id) {
+            return value;
+        }
+        if self.generic_local_callee == Some((id, value.span)) {
+            return value;
+        }
+        self.sink.emit(
+            Diagnostic::error(codes::E2060, value.span, format!("`{name}` is generic, so it is not one function"))
+                .help(format!("call it, `{name}(x)` or `{name}[int](x)`, or wrap a call in a lambda, `fn(x: int) => {name}(x)`"))
+                .note("a generic is a recipe; each instantiation is its own function [TYP-16], [GRM-28]"),
+        );
+        Expr { ty: self.common.error, kind: ExprKind::Error, span: value.span }
+    }
+
+    /// `[GRM-28]` — the body of a generic local function's instance: a function of its environment,
+    /// checked with its type parameters the instance's arguments, capturing as the closure made
+    /// where it is declared does (the environment's fields). A diagnostic only these arguments
+    /// give says which they are, as a generic function's instance does.
+    fn generic_local_instance(&mut self, entry: &GenericLocalFn, def: DefId, args: &[Ty]) {
+        let generics = self.signatures[entry.generic.0 as usize].generics.clone();
+        let saved_type_params = std::mem::replace(&mut self.type_params, entry.type_params.clone());
+        for (param, &ty) in generics.iter().zip(args).skip(entry.base) {
+            self.type_params.insert(param.name, ty);
+        }
+        let declared = self.signatures[entry.generic.0 as usize].params.clone();
+        let params: Vec<(Symbol, Ty, Mode, Span)> =
+            declared.iter().skip(1).map(|&(name, ty, mode, at)| (name, self.substitute_ty(ty, args), mode, at)).collect();
+        let ret = self.substitute_ty(self.signatures[entry.generic.0 as usize].ret, args);
+        // While the body is checked, a call of itself names its parameters alone, as a local
+        // function's reserved signature does (`synth_local_fn_self_call`); `push_closure` puts the
+        // environment first after.
+        self.signatures[def.0 as usize].params = params.clone();
+        self.signatures[def.0 as usize].ret = ret;
+        let number = self.closure_numbers;
+        self.closure_numbers += 1;
+        let skipped_before = self.skipped_instances;
+        let watch = CaptureWatch {
+            outer: entry.outer.clone(),
+            owned_loop_borrowed_handles: entry.owned_loop_borrowed_handles.clone(),
+            found: entry.captured.clone(),
+            env: Some((LocalId(0), entry.env)),
+            captures_by_move: false,
+        };
+        self.local_fn_self.push(LocalFnSelf { name: entry.name, def, depth: self.lambda_depth + 1, env: Some(entry.env_mode), probing: false });
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, entry.in_unsafe);
+        let earlier = self.sink.take();
+        let (body, _, locals, _) = self.check_lambda_body(
+            &entry.lambda,
+            &params,
+            Some(ret),
+            watch,
+            Some((Symbol::intern("env"), entry.env_ty, entry.env_mode, entry.span)),
+        );
+        let own = self.sink.take();
+        for diagnostic in earlier {
+            self.sink.emit(diagnostic);
+        }
+        let used_with = generics
+            .iter()
+            .zip(args)
+            .skip(entry.base)
+            .map(|(param, &ty)| format!("`{}` = `{}`", param.name, self.types.display(ty)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        for diagnostic in own {
+            self.sink.emit(diagnostic.note(format!("in `{}` used with {used_with}", entry.name)));
+        }
+        self.in_unsafe = outer_unsafe;
+        self.local_fn_self.pop();
+        self.type_params = saved_type_params;
+        self.push_closure(
+            &params,
+            ret,
+            locals,
+            body,
+            Some((Symbol::intern("env"), entry.env_ty, entry.env_mode, false)),
+            entry.span,
+            number,
+            skipped_before,
+            Some(def),
+        );
+        // The environment is the declaration's, which every instance takes: none of them is its
+        // closure (each environment has one, `[LT-42]`'s narrowing of a capture by its closure's
+        // access), so each is a function of it, and the capture is the whole place.
+        if let Some(function) = self.lambdas.last_mut().filter(|function| function.def == def) {
+            function.closure_environment = None;
+        }
     }
 
     /// `[GRM-28]`, `[UNS-1]` — a call to an `unsafe` local function that captures (one that does not
@@ -39089,6 +39580,24 @@ impl<'a> Checker<'a> {
         if callable { self.read_through(value) } else { value }
     }
 
+    /// `[THR-8]`, `[THR-9]` — whether `ty` is `Send` (`.0`) and `Sync` (`.1`) here: a type
+    /// parameter is what its bounds require (`T: Send`, a bound interface requiring `Sync`).
+    fn thread_facts(&self, ty: Ty) -> (bool, bool) {
+        self.types.thread_properties_with(ty, &|param| {
+            let TyKind::Param { index, .. } = *self.types.kind(param) else { return None };
+            let generic = self.current_generics.get(index as usize)?;
+            Some(self.types.interfaces_thread_properties(&generic.bounds))
+        })
+    }
+
+    fn is_send(&self, ty: Ty) -> bool {
+        self.thread_facts(ty).0
+    }
+
+    fn is_sync(&self, ty: Ty) -> bool {
+        self.thread_facts(ty).1
+    }
+
     /// Whether `ty` is a callable value's: a function value, a closure, or a parameter bounded by a
     /// callable type.
     fn is_callable_value_type(&mut self, ty: Ty) -> bool {
@@ -39106,13 +39615,16 @@ impl<'a> Checker<'a> {
     /// pass it again, and the callee may call it with leave to change what it captured, which stays
     /// lent while the callee's value holding it is used (`[BRW-2]`). A lambda written at the call is
     /// given, since nothing else can name it; a `Copy` callable (a function) is copied; a `once fn`
-    /// is given, as its call ends it; and an owned callable parameter written as a callable type
-    /// (`owned f: fn(A) -> R`) takes over what it is given (ODR-189). A callable the caller holds
-    /// only shared (a borrowed parameter) is passed on as before (D-257).
+    /// value or a closure that moves a capture out is given, as its call ends it; and an owned
+    /// callable parameter written as a callable type (`owned f: fn(A) -> R`, `f: once fn(A) -> R`)
+    /// takes over what it is given (ODR-189). A bound `F: once fn(A) -> R` lends a named callable
+    /// that may be called again (`Option.map`'s, ODR-240): the callee's one call goes through the
+    /// reference. A callable the caller holds only shared (a borrowed parameter) is passed on as
+    /// before (D-257).
     fn lend_named_callable(&mut self, value: Expr, param_ty: Ty, mode: Mode, generics: &[GenericParam], span: Span) -> Expr {
         let TyKind::Param { index, .. } = *self.types.kind(param_ty) else { return value };
         let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.clone()) else { return value };
-        if mode != Mode::Owned || bound.owned || bound.once || !is_place(&value.kind) || value.ty == self.common.error || self.types.is_copy(value.ty) {
+        if mode != Mode::Owned || bound.owned || !is_place(&value.kind) || value.ty == self.common.error || self.types.is_copy(value.ty) {
             return value;
         }
         if !self.is_callable_value_type(value.ty)
@@ -40082,8 +40594,8 @@ impl<'a> Checker<'a> {
         // hand (`unsafe extend`), never a recorded implementation alone.
         match interface.as_str() {
             "std.core.Copy" => return self.types.is_copy(ty),
-            "std.core.Send" => return self.types.is_send(ty),
-            "std.core.Sync" => return self.types.is_sync(ty),
+            "std.core.Send" => return self.is_send(ty),
+            "std.core.Sync" => return self.is_sync(ty),
             "std.core.Sized" => return !matches!(self.types.kind(ty), TyKind::Dyn { .. } | TyKind::Opaque(_)),
             _ => {}
         }
@@ -43136,7 +43648,24 @@ impl<'a> Checker<'a> {
                     .find(|component| reads.contains(component) || writes.contains(component))
                     .map(|&component| (*first, component))
                     .or_else(|| writes.iter().find(|component| first_reads.contains(component)).map(|&component| (*name, component)));
-                let Some((writer, component)) = conflict else { continue };
+                let Some((writer, component)) = conflict else {
+                    // ODR-255 — two systems that read one component at once read it from two
+                    // threads: it must be `Sync`.
+                    if let Some(&shared) = reads.iter().find(|component| first_reads.contains(component) && !self.is_sync(**component)) {
+                        let shown = self.types.display(shared);
+                        self.sink.emit(
+                            Diagnostic::error(
+                                codes::E7005,
+                                *span,
+                                format!("systems `{first}` and `{name}` cannot run at once: both read `{shown}`, which is not Sync"),
+                            )
+                            .secondary(*first_span, format!("`{first}` is here"))
+                            .help("run them one after the other (`world.run_parallel` once for each)")
+                            .note("two systems of one parallel run read a component they share from two threads (ODR-255) [ECS-4]"),
+                        );
+                    }
+                    continue;
+                };
                 let shown = self.types.display(component);
                 self.sink.emit(
                     Diagnostic::error(
@@ -46449,7 +46978,23 @@ impl<'a> Checker<'a> {
                     // D-596 — with no result type expected, a literal body takes its default type
                     // (`i64`, `f64`), as any expression does: kept untyped, the lambda was a
                     // `fn() -> an integer`, which converted to no `fn` type and whose C was `int32_t`.
-                    None => self.synth_committed(expr),
+                    // D-876 — and a body that reads a value through a reference, which only a copy
+                    // could give by value, gives the reference: `fn(w: ref String) => w` is a
+                    // `fn(ref String) -> ref String`, as it is with the result type written. Read
+                    // through, the `String` was moved out of the borrowed parameter (`E3013`).
+                    None => {
+                        let value = self.synth_committed(expr);
+                        match value.kind {
+                            ExprKind::Deref(reference)
+                                if matches!(self.types.kind(reference.ty), TyKind::Ref { .. })
+                                    && !self.types.is_copy(value.ty)
+                                    && value.ty != self.common.error =>
+                            {
+                                *reference
+                            }
+                            kind => Expr { kind, ..value },
+                        }
+                    }
                     _ => self.synth(expr),
                 };
                 let ty = value.ty;
@@ -49360,7 +49905,7 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         let mut refused = self.scoped_task_refused(f.ty, closure, args[0].span, &THREAD_WORDS);
-        if !self.types.is_send(ret) {
+        if !self.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(
                 Diagnostic::error(codes::E7004, args[0].span, format!("the task returns a `{ret_shown}`, which is not Send"))
@@ -49999,20 +50544,20 @@ impl<'a> Checker<'a> {
             let (code, message) = match *self.types.kind(ty) {
                 TyKind::Ref { mutable: true, inner } => {
                     let spans = matches!(self.types.kind(inner), TyKind::Span { mutable: true, .. }) || self.soa_inner(inner).is_some();
-                    if spans || self.types.is_send(inner) && matches!(self.types.kind(inner), TyKind::Span { .. }) {
+                    if spans || self.is_send(inner) && matches!(self.types.kind(inner), TyKind::Span { .. }) {
                         continue;
                     }
                     let shown = self.types.display(inner);
                     (codes::E7010, format!("the parallel loop writes `{capture}`, a `{shown}`, which its chunks share"))
                 }
                 // A span only read here: its chunks read its elements at once.
-                TyKind::Ref { mutable: false, inner } if let TyKind::Span { elem, .. } = *self.types.kind(inner) && self.types.is_sync(elem) => continue,
-                TyKind::Ref { mutable: false, inner } if !self.types.is_sync(inner) => {
+                TyKind::Ref { mutable: false, inner } if let TyKind::Span { elem, .. } = *self.types.kind(inner) && self.is_sync(elem) => continue,
+                TyKind::Ref { mutable: false, inner } if !self.is_sync(inner) => {
                     let shown = self.types.display(inner);
                     (codes::E7005, format!("the parallel loop's chunks borrow `{capture}`, a `{shown}`, which is not Sync"))
                 }
                 TyKind::Ref { .. } => continue,
-                _ if !self.types.is_send(ty) => {
+                _ if !self.is_send(ty) => {
                     let shown = self.types.display(ty);
                     (codes::E7004, format!("the parallel loop's chunks capture `{capture}`, a `{shown}`, which is not Send"))
                 }
@@ -50120,7 +50665,7 @@ impl<'a> Checker<'a> {
                             .note(words.outlive_note),
                     );
                     refused = true;
-                } else if !self.types.is_send(ty) {
+                } else if !self.is_send(ty) {
                     let mut diagnostic =
                         Diagnostic::error(codes::E7004, arg_span, format!("{} captures `{capture}`, a `{ty_shown}`, which is not Send", words.who))
                             .note(words.moves_note);
@@ -50167,7 +50712,7 @@ impl<'a> Checker<'a> {
                             .note("a callback contracted `once` or `retained` outlives the call [FFI-21]"),
                     );
                     refused = true;
-                } else if send && !self.types.is_send(capture_ty) {
+                } else if send && !self.is_send(capture_ty) {
                     let mut diagnostic = Diagnostic::error(codes::E7004, arg_span,
                         format!("the callback `{}` captures `{capture}`, a `{shown}`, which is not Send", callback.param))
                         .help(format!("if C calls it on one thread, say so in its contract: `param({}, callback(…), threads(main))` or `threads(creator)`", callback.param))
@@ -50413,9 +50958,9 @@ impl<'a> Checker<'a> {
             let captures: Vec<(Symbol, Ty)> = self.types.struct_def(id).fields.iter().map(|field| (field.name, field.ty)).collect();
             for (capture, ty) in captures {
                 let (code, what, ok) = match *self.types.kind(ty) {
-                    TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.types.is_sync(inner)),
-                    TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.types.is_send(inner)),
-                    _ => (codes::E7004, (ty, "captures", "Send"), self.types.is_send(ty)),
+                    TyKind::Ref { mutable: false, inner } => (codes::E7005, (inner, "borrows", "Sync"), self.is_sync(inner)),
+                    TyKind::Ref { mutable: true, inner } => (codes::E7004, (inner, "borrows mutably", "Send"), self.is_send(inner)),
+                    _ => (codes::E7004, (ty, "captures", "Send"), self.is_send(ty)),
                 };
                 if !ok {
                     let (ty, verb, marker) = what;
@@ -50451,7 +50996,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let name = self.types.class_display_name(id);
-        match def.fields.iter().find(|f| !(self.types.is_send(f.ty) && self.types.is_sync(f.ty))) {
+        match def.fields.iter().find(|f| !(self.is_send(f.ty) && self.is_sync(f.ty))) {
             None => Some(format!("declare it `@sync class {name}`: its fields are all `Send` and `Sync` [THR-1]")),
             Some(field) => Some(format!(
                 "`@sync` would not help: `{name}.{}` is a `{}`, which is not `Send` and `Sync` [THR-1]",
@@ -50495,7 +51040,7 @@ impl<'a> Checker<'a> {
             return error;
         }
         let mut refused = self.owned_task_refused(&f, args[0].span, &THREAD_WORDS);
-        if !self.types.is_send(ret) {
+        if !self.is_send(ret) {
             let ret_shown = self.types.display(ret);
             self.sink.emit(
                 Diagnostic::error(codes::E7004, args[0].span, format!("the thread's function returns a `{ret_shown}`, which is not Send"))
@@ -51301,6 +51846,11 @@ impl<'a> Checker<'a> {
         }
         match self.types.kind(ty) {
             TyKind::Struct(_) | TyKind::Enum(_) if self.methods.contains_key(&(ty, Symbol::intern("eq"))) => true,
+            // ODR-241 — what a `Box` holds; a `Box[dyn I]` compares through its table.
+            TyKind::Struct(_) if self.box_inner(ty).is_some() => {
+                let inner = self.box_inner(ty).expect("a box");
+                !matches!(self.types.kind(inner), TyKind::Dyn { .. }) && self.needs_written_eq(inner, seen)
+            }
             TyKind::Tuple(items) => items.clone().iter().any(|&item| self.needs_written_eq(item, seen)),
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                 self.needs_written_eq(*elem, seen)
@@ -51355,6 +51905,11 @@ impl<'a> Checker<'a> {
             })
         };
         let value = match self.types.kind(ty).clone() {
+            // ODR-241 — two boxes compare what they hold.
+            TyKind::Struct(_) if self.box_inner(ty).is_some() => {
+                let (a, b) = (self.read_box_through(left.read(span)), self.read_box_through(right.read(span)));
+                self.synth_eq_of(a, b, span)
+            }
             TyKind::Tuple(items) => {
                 let parts = items
                     .into_iter()
@@ -55984,11 +56539,16 @@ impl<'a> Checker<'a> {
         // `add`, not fail to find one on a reference.
         lhs = self.read_through(lhs);
         rhs = self.read_through(rhs);
-        // `[TYP-14]` — and through a `Box`, as a field access does.
-        while self.box_inner(lhs.ty).is_some() {
+        // `[TYP-14]` — and through a `Box`, as a field access does. IX.1 (ODR-241) — but two
+        // `Box[dyn I]` compare as boxes, through their tables: the values they hold are of kinds
+        // the operator cannot see.
+        let dyn_boxes = matches!(hir_op, BinOp::Eq | BinOp::Ne)
+            && lhs.ty == rhs.ty
+            && self.box_inner(lhs.ty).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }));
+        while !dyn_boxes && self.box_inner(lhs.ty).is_some() {
             lhs = self.read_box_through(lhs);
         }
-        while self.box_inner(rhs.ty).is_some() {
+        while !dyn_boxes && self.box_inner(rhs.ty).is_some() {
             rhs = self.read_box_through(rhs);
         }
         // `[SIMD-8]` — a lane-wise operator on two `std.simd` vectors or masks.

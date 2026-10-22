@@ -129,7 +129,7 @@ pub(crate) fn operation_effects(bodies: &[Body], types: &TypeTable) -> Operation
     let graph = Graph::new(bodies, types);
     let index: HashMap<&str, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
-    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new() };
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), plain_targets: plain_function_values(bodies, &index) };
     let known = |sites: &[Site]| {
         sites.iter().fold(Effects::NONE, |all, site| match site.origin {
             Origin::Operation(_) if site.effects == Effects::ALL => all,
@@ -280,7 +280,7 @@ pub fn allocation_sites(
 ) -> Vec<AllocationSite> {
     let index: HashMap<&str, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
-    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new() };
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), plain_targets: plain_function_values(bodies, &index) };
     // What each standard function allocates by itself: through its own operations and the
     // standard functions it calls, never through the program's functions it is given.
     let known: Vec<Vec<Site>> = bodies
@@ -752,6 +752,7 @@ impl<'a> Graph<'a> {
             index: &index,
             ancestors: class_ancestors(types),
             drops: HashMap::new(),
+            plain_targets: plain_function_values(bodies, &index),
         };
         let sites: Vec<Vec<Site>> = bodies.iter().map(|body| builder.sites(body)).collect();
         let effects = fixed_point(&sites);
@@ -890,6 +891,47 @@ struct SiteBuilder<'a> {
     ancestors: HashMap<ClassId, Vec<ClassId>>,
     /// What dropping a value of each type runs: its own effects and the `drop` bodies it calls.
     drops: HashMap<Ty, (Effects, Vec<usize>)>,
+    /// D-877 — every function the program uses as a value, by its parameter count and result type:
+    /// what a call through a `plain fn` value (a function, a lambda capturing nothing) may run.
+    plain_targets: HashMap<(usize, Ty), Vec<usize>>,
+}
+
+/// D-877 — the bodies the program uses as values (`Const::Fn`, a function or a lambda capturing
+/// nothing named as a value), by their parameter count and result type. A call through a `plain
+/// fn` value of that shape runs one of them, so its effects are theirs: an adapter holding a lambda
+/// that captures nothing (`Filter[I, plain fn(…)]`) runs what the program's lambdas of that shape
+/// do, not every effect.
+fn plain_function_values(bodies: &[Body], index: &HashMap<&str, usize>) -> HashMap<(usize, Ty), Vec<usize>> {
+    let mut found: HashMap<(usize, Ty), Vec<usize>> = HashMap::new();
+    let mut note = |operand: &Operand| {
+        if let Operand::Const(ember_mir::Const::Fn(symbol)) = operand
+            && let Some(&target) = index.get(symbol.as_str())
+        {
+            let body = &bodies[target];
+            let entry = found.entry((body.arg_count, body.return_ty())).or_default();
+            if !entry.contains(&target) {
+                entry.push(target);
+            }
+        }
+    };
+    for body in bodies {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                if let StmtKind::Assign { rvalue, .. } = &stmt.kind {
+                    for operand in rvalue_operands(rvalue) {
+                        note(operand);
+                    }
+                }
+            }
+            if let Terminator::Call { func, args, .. } = &block.terminator {
+                args.iter().for_each(&mut note);
+                if let FuncRef::Indirect { operand, .. } = func {
+                    note(operand);
+                }
+            }
+        }
+    }
+    found
 }
 
 impl SiteBuilder<'_> {
@@ -1083,6 +1125,16 @@ impl SiteBuilder<'_> {
                 span,
                 origin: Origin::Operation("a call through a `dyn` value, whose effects nothing declares"),
             }),
+            // D-877 — a `plain fn` value is one of the functions the program uses as values of its
+            // shape: the call runs what they run.
+            FuncRef::Indirect { ty, .. }
+                if let TyKind::Fn { abi: None, stateless: true, params, ret, .. } = self.types.kind(*ty)
+                    && let Some(targets) = self.plain_targets.get(&(params.len(), *ret)) =>
+            {
+                for &target in targets {
+                    sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(target) });
+                }
+            }
             FuncRef::Indirect { .. } => sites.push(Site {
                 effects: Effects::ALL,
                 span,
@@ -1106,6 +1158,15 @@ impl SiteBuilder<'_> {
                         }
                     }
                     Builtin::MemDrop { elem } => self.drop_sites(*elem, span, sites),
+                    // IX.1 (ODR-241) — two `Box[dyn I]` compare through their table's `eq`, which
+                    // runs the `==` of a type nothing here names.
+                    Builtin::ValueCompare { .. } if holds_dyn_box(self.types, *arg_ty, &mut std::collections::HashSet::new()) => {
+                        sites.push(Site {
+                            effects: Effects::ALL,
+                            span,
+                            origin: Origin::Operation("a comparison through a `dyn` value's table, whose effects nothing declares"),
+                        });
+                    }
                     // ADR-186 — formatting a value runs the written `Debug`
                     // of each part of it that has one.
                     Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint => {
@@ -1310,6 +1371,25 @@ fn lends_fixed_text(body: &Body, operand: &Operand) -> bool {
     })
 }
 
+/// IX.1 (ODR-241) — whether comparing a `ty` may compare two `Box[dyn I]`, through their table.
+fn holds_dyn_box(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+    if !seen.insert(ty) {
+        return false;
+    }
+    match types.kind(ty) {
+        TyKind::Struct(id) => match types.compiler_box_inner(*id) {
+            Some(inner) => matches!(types.kind(inner), TyKind::Dyn { .. }) || holds_dyn_box(types, inner, seen),
+            None => types.struct_def(*id).fields.iter().any(|field| holds_dyn_box(types, field.ty, seen)),
+        },
+        TyKind::Enum(id) => types.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| holds_dyn_box(types, field.ty, seen))),
+        TyKind::Tuple(items) => items.iter().any(|&item| holds_dyn_box(types, item, seen)),
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
+            holds_dyn_box(types, *elem, seen)
+        }
+        _ => false,
+    }
+}
+
 fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
     const ALLOC: Effects = Effects(Effects::ALLOC.0 | Effects::PANIC.0);
     use Builtin as B;
@@ -1454,7 +1534,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         | B::ArraySort | B::ArrayReverse | B::ArrayClear | B::ArrayPop { .. } | B::ArrayCapacity
         | B::ArrayTruncate | B::ValueCompare { .. } | B::ClassSuperInit { .. } | B::WeakNew { .. }
         | B::WeakEmpty { .. } | B::StrIsCharBoundary | B::StrAsBytes | B::ArrayLen | B::StringLen
-        | B::StringAsStr | B::PtrIsNull | B::SizeOf | B::AlignOf | B::MemReplace { .. } | B::MemTake { .. }
+        | B::StringAsStr | B::PtrIsNull | B::SizeOf | B::AlignOf | B::TypeIsSend | B::TypeIsSync | B::MemReplace { .. } | B::MemTake { .. }
         | B::MemSwap { .. } | B::MemForget { .. } | B::MemDrop { .. } | B::SpanLen | B::SpanGet
         | B::SpanFrom { .. } | B::SpanReborrow | B::SpanSharedReborrow | B::SpanIterNext { .. }
         | B::SpanIterNextBack { .. } | B::SpanIterLen | B::SpanChunksNext { .. } | B::SpanWindowsNext { .. }

@@ -1,10 +1,10 @@
 #$ test: run-pass
 #$ rules: MOD-5
 #$ stdout: 3
-#$ assert-c: !contains("em_2i88floordiv(")
-#$ assert-c: !contains("em_4u1283rem(")
-#$ assert-c: !contains("em_4i1287default(")
-#$ assert-c: contains("em_3i328floordiv(")
+#$ assert-c: !contains("em_3std4core2i88floordiv(")
+#$ assert-c: !contains("em_3std4core4u1283rem(")
+#$ assert-c: !contains("em_3std4core4i1287default(")
+#$ assert-c: contains("em_3std4core3i328floordiv(")
 # `[MOD-5]` — the standard library is available to every program, and only
 # what a program reaches is emitted. That holds for `std`'s extensions of the
 # built-in types too, whose bodies are named after the type (`i8.floordiv`,
