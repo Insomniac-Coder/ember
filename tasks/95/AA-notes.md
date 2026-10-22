@@ -40,6 +40,14 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   declare `@borrows(self)` (ODR-211), so an item does not keep the predicate's captures borrowed.
   `reduce` and `fold` do not: their result may be the callable's. `STD-19/accept_the_consumers_take_their_callable_over.em`
   (three profiles): each consumer with a lambda that counts its calls.
+* **ODR-207 `[STD-26]`** — `sorted` of an iterator that lends references (`m.keys()`) copies or
+  clones the items (`items_array`, as a collection's elements are), so `sorted(m.keys())` is an
+  `Array[K]` whose items index the map; with `key=`/`reverse=` too.
+  `STD-26/accept_sorted_of_an_iterator_of_references_copies_or_clones.em` (three profiles).
+  **First week**: 05's `E2040` (N9, `sorted(self.items.keys())`) is gone; its marks re-recorded
+  (codes `E1010 E2020`, the `R1:N9` step dropped) after replaying rounds 2–4 with this compiler,
+  and `helped/05_inventory.em` keeps the idiom as written (`sorted(self.items.keys())`). The rate
+  did not move (0 of 30, 3 of 30), so the README has no new line.
 
 ## Not done
 

@@ -31029,7 +31029,8 @@ impl<'a> Checker<'a> {
     }
 
     /// The items a `for` loop over `value` takes, in a new `Array`: a collection's or a view's
-    /// elements copied (or cloned) out of it, an iterator's as it gives them.
+    /// elements copied (or cloned) out of it, an iterator's as it gives them, references copied or
+    /// cloned (ODR-207).
     fn items_array(&mut self, value: Expr, span: Span) -> Option<Expr> {
         // A collection's or a view's iterator lends its elements: they are copied out, or cloned.
         let lent = match *self.types.kind(value.ty) {
@@ -31043,7 +31044,16 @@ impl<'a> Checker<'a> {
         let method = |name: &str| ast::Ident { name: Symbol::intern(name), span };
         let iterator = match lent {
             Some(owned) => self.synth_method_on(iterator, span, method(owned), &[], &[], None, span),
-            None => iterator,
+            // ODR-207 — an iterator that lends references (`m.keys()`) has them copied out, or
+            // cloned, as a collection's elements are: an `Array` holds no view it does not own
+            // (`[TYP-15]`), so `sorted(m.keys())` is an `Array[K]`, as `sorted(m)` is.
+            None => match self.referenced_item(iterator.ty) {
+                Some(inner) => {
+                    let owned = if self.types.is_copy(inner) { "copied" } else { "cloned" };
+                    self.synth_method_on(iterator, span, method(owned), &[], &[], None, span)
+                }
+                None => iterator,
+            },
         };
         if iterator.ty == self.common.error {
             return None;

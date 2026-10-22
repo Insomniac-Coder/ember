@@ -20,9 +20,9 @@
     "helps": ["R1:none:E0100", "R2:B3"]
   },
   "05_inventory.em": {
-    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020", "E2040"], "after_helps": "rejected",
-    "shapes": ["none:E2020", "N1", "N9"],
-    "helps": ["R1:none:E2020", "R1:N1", "R1:N9", "R2:O2", "R3:X1"]
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N1"],
+    "helps": ["R1:none:E2020", "R1:N1", "R2:O2", "R3:X1"]
   },
   "06_path_finder.em": {
     "mark": "rejected", "shape": "N9", "codes": ["E1010", "E2020", "E2040"], "after_helps": "rejected",

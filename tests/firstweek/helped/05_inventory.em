@@ -36,7 +36,7 @@ class Inventory:
 
     fn report(self):
         println("stock:")
-        for name in sorted(self.items):
+        for name in sorted(self.items.keys()):
             item = ref self.items[name]
             println(f"  {name:<8} {item.quantity:>4} x {item.price:.2f}")
 
