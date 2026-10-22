@@ -68,6 +68,10 @@ pub struct EnumId(pub u32);
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct RangeId(pub u32);
 
+/// Index of a `typedef` made a nominal type by `@ffi(newtype)` (`[FFI-8]`) in the type table.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct NewtypeId(pub u32);
+
 /// An inference variable, resolved by `ember_typeck`'s union-find.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct InferId(pub u32);
@@ -184,6 +188,10 @@ pub enum TyKind {
     /// `Roughness` and `Metallic` the same type, and telling them apart is the
     /// entire point.
     Range(RangeId),
+    /// `[FFI-8]` (ODR-249) — a C `typedef` made a nominal type by `@ffi(newtype)`: its
+    /// representation is the typedef's, it crosses to C as the typedef does, and `as` converts it to
+    /// and from that representation. Distinct by id, as `Range` is.
+    Newtype(NewtypeId),
     Tuple(Vec<Ty>),
     Ref { mutable: bool, inner: Ty },
     Ptr { mutable: bool, inner: Ty },
@@ -502,6 +510,16 @@ impl RangeDef {
     }
 }
 
+/// `[FFI-8]` (ODR-249) — `@ffi(newtype) type T = R`: a nominal type with `R`'s representation
+/// (a C `typedef`'s target, so plain data), passed to C as the typedef is and converted to and from
+/// `R` with `as` only.
+#[derive(Clone, Debug)]
+pub struct NewtypeDef {
+    pub name: Symbol,
+    pub repr: Ty,
+    pub span: Span,
+}
+
 /// ODR-111 — a `Send` or `Sync` a program wrote by hand (`unsafe extend W[T] implements Send`): the
 /// type, by its generic's name or its own, with what each of its arguments must be for it to hold.
 #[derive(Clone, Debug)]
@@ -527,6 +545,7 @@ pub struct TypeTable {
     classes: Vec<ClassDef>,
     enums: Vec<EnumDef>,
     ranges: Vec<RangeDef>,
+    newtypes: Vec<NewtypeDef>,
     /// D-232 — how a compiler-built generic struct (`Cell_i32`) is written
     /// (`Cell[i32]`). Kept apart from `origin`, which also decides how a
     /// type resolves.
@@ -737,6 +756,7 @@ impl TypeTable {
             classes: Vec::new(),
             enums: Vec::new(),
             ranges: Vec::new(),
+            newtypes: Vec::new(),
             written_as: HashMap::new(),
             shown_as: HashMap::new(),
             some_prints: HashMap::new(),
@@ -1389,6 +1409,25 @@ impl TypeTable {
         self.ranges.iter().enumerate().map(|(i, d)| (RangeId(i as u32), d))
     }
 
+    pub fn add_newtype(&mut self, def: NewtypeDef) -> NewtypeId {
+        let id = NewtypeId(self.newtypes.len() as u32);
+        self.newtypes.push(def);
+        id
+    }
+
+    pub fn newtype_def(&self, id: NewtypeId) -> &NewtypeDef {
+        &self.newtypes[id.0 as usize]
+    }
+
+    /// `[FFI-8]` — the representation a type has in C: a newtype's typedef's (`R` of
+    /// `@ffi(newtype) type T = R`), or the type itself.
+    pub fn newtype_repr(&self, ty: Ty) -> Ty {
+        match self.kind(ty) {
+            TyKind::Newtype(id) => self.newtype_def(*id).repr,
+            _ => ty,
+        }
+    }
+
     /// `[RNG-8]`/`[TYP-5]` — the representation a range type erases to, or the
     /// type itself where it is not one. Written once so that every coercion
     /// site, every operator and the backend all erase the same way.
@@ -1520,6 +1559,7 @@ impl TypeTable {
             // `[RNG-8]` — a range type erases to its representation, so
             // it is laid out as one and crosses an FFI boundary as one.
             TyKind::Range(id) => self.layout(self.range_def(*id).repr),
+            TyKind::Newtype(id) => self.layout(self.newtype_def(*id).repr),
             // A pointer and two lengths, whatever the element type.
             TyKind::Vec { .. } => Layout {
                 size: self.pointer_size * 3,
@@ -1691,6 +1731,7 @@ impl TypeTable {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
             | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::Str
             | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::Error => (true, true),
+            TyKind::Newtype(id) => both(self.newtype_def(*id).repr, visiting),
             TyKind::Class(id) => {
                 let safe = self.class_def(*id).is_sync;
                 (safe, safe)
@@ -2022,6 +2063,8 @@ impl TypeTable {
             // a scalar, so it is `Copy` and a copy is one of the five ways a
             // range-typed value may arise.
             TyKind::Range(_) => true,
+            // `[FFI-8]` — a C typedef's target is plain data: copied as its representation is.
+            TyKind::Newtype(id) => self.copy_with(self.newtype_def(*id).repr, params),
             // An `Array` owns its buffer, so copying it would share one
             // allocation between two owners.
             TyKind::Vec { .. } => false,
@@ -2448,6 +2491,7 @@ impl TypeTable {
             // A class handle is non-null; zero bytes cannot manufacture a
             // valid live object handle.
             TyKind::Class(_) | TyKind::ClassInterface(_) => false,
+            TyKind::Newtype(id) => self.is_builtin_zeroable(self.newtype_def(*id).repr),
             TyKind::Range(id) => {
                 let def = self.range_def(*id);
                 match (def.lo, def.hi) {
@@ -2616,6 +2660,8 @@ impl TypeTable {
             TyKind::Struct(id) => {
                 self.struct_def(*id).fields.iter().all(|f| self.is_ffi_safe(f.ty))
             }
+            // `[FFI-8]` — passed to C as its typedef is.
+            TyKind::Newtype(id) => self.is_ffi_safe(self.newtype_def(*id).repr),
             // Class handles are owning runtime values, not `@layout(c)`
             // value types. Opaque foreign handles have a separate boundary.
             TyKind::Class(_) | TyKind::ClassInterface(_) => false,
@@ -2833,6 +2879,7 @@ impl TypeTable {
                 self.render_named(def.name, None, user)
             }
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
+            TyKind::Newtype(id) => self.render_named(self.newtype_def(*id).name, None, user),
             // D-306 — an instance name holds the slot too: `Option[U]` over
             // a function's first parameter and over a method's second are two
             // types, and named alike they were one.
@@ -2948,6 +2995,7 @@ impl TypeTable {
             TyKind::ClassInterface(interface) => interface.to_string(),
             TyKind::Enum(id) => self.enum_def(*id).name.to_string(),
             TyKind::Range(id) => self.range_def(*id).name.to_string(),
+            TyKind::Newtype(id) => self.newtype_def(*id).name.to_string(),
             TyKind::Tuple(items) => {
                 let mut out = String::from("(");
                 for (index, item) in items.iter().enumerate() {
@@ -3072,6 +3120,7 @@ impl TypeTable {
             TyKind::ClassInterface(interface) => self.nominal_path(*interface, None),
             TyKind::Opaque(name) => (item_path(name.as_str()).into_owned(), None),
             TyKind::Range(id) => (item_path(self.range_def(*id).name.as_str()).into_owned(), None),
+            TyKind::Newtype(id) => (item_path(self.newtype_def(*id).name.as_str()).into_owned(), None),
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str
             | TyKind::CStr | TyKind::Void => (self.spelling(ty), None),
             TyKind::Never => ("Never".to_string(), None),
@@ -3224,6 +3273,7 @@ impl TypeTable {
             TyKind::ClassInterface(interface) => nominal(self, *interface, None, out),
             TyKind::Opaque(name) => out.push_str(&item_path(name.as_str())),
             TyKind::Range(id) => out.push_str(&item_path(self.range_def(*id).name.as_str())),
+            TyKind::Newtype(id) => out.push_str(&item_path(self.newtype_def(*id).name.as_str())),
             TyKind::Vec { text: true, .. } => core("String", out),
             TyKind::Vec { elem, .. } => {
                 core("Array", out);

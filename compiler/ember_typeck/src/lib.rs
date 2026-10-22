@@ -38,7 +38,7 @@ use ember_hir::{
 use ember_span::{FileId, Span, Symbol};
 use ember_types::{FpMode, 
     Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
-    OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
+    OverflowPolicy, NewtypeDef, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
     FnParam, FnParamMode, int_max, ConstError, ConstNorm, ConstOp, LayoutAttrs,
 };
 
@@ -433,6 +433,16 @@ pub fn check(
     // count_t = c_int` in a module `import c` wrote), and the module list is in no dependency
     // order, so every module's aliases are resolved together, to a fixpoint.
     let mut aliases: Vec<Vec<&ast::TypeAlias>> = modules.iter().map(|loaded| pending_type_aliases(&loaded.module)).collect();
+    // `[FFI-8]` (ODR-249) — the aliases `@ffi(newtype)` makes nominal.
+    checker.newtype_aliases = modules
+        .iter()
+        .flat_map(|loaded| &loaded.module.items)
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::TypeAlias(decl) if item.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")
+                && matches!(attr.args.as_slice(), [ast::AttrArg::Expr(expr)] if ffi_contract_word(expr).is_some_and(|word| word.is("newtype")))) => Some(decl.name.span),
+            _ => None,
+        })
+        .collect();
     loop {
         let mut progress = false;
         for (index, pending) in aliases.iter_mut().enumerate().rev() {
@@ -3127,6 +3137,8 @@ struct Checker<'a> {
     /// function of a module the importer wrote that passes its parameter on to one (the C++
     /// wrapper), so what the callable captures is checked where it is written.
     nullable_callbacks: HashMap<DefId, Vec<(usize, ForeignCallbackDecl)>>,
+    /// `[FFI-8]` (ODR-249) — the type aliases written `@ffi(newtype)`, by their name's span.
+    newtype_aliases: HashSet<Span>,
     /// The function whose body is being checked and its parameters' locals.
     callback_body: Option<(DefId, Vec<LocalId>)>,
     /// What each call gave a parameter that is an `Option` of a callable value: the callee, the
@@ -3521,6 +3533,7 @@ impl<'a> Checker<'a> {
             foreign_outs: HashMap::new(),
             foreign_callbacks: HashMap::new(),
             nullable_callbacks: HashMap::new(),
+            newtype_aliases: HashSet::new(),
             callback_body: None,
             callable_value_args: Vec::new(),
             union_store: None,
@@ -4122,6 +4135,8 @@ impl<'a> Checker<'a> {
                 // transparent, exactly as `[LEX-15a]` specifies.
                 let ty = match &decl.range {
                     Some(clause) => self.declare_range_type(decl, repr, clause),
+                    // `[FFI-8]` (ODR-249) — `@ffi(newtype)` makes it nominal.
+                    None if self.newtype_aliases.contains(&decl.name.span) => self.declare_newtype(decl, name, repr),
                     None => repr,
                 };
                 self.named_types.insert(name, ty);
@@ -4204,6 +4219,63 @@ impl<'a> Checker<'a> {
             self.named_types.insert(name, ty);
             self.foreign_type_contracts.insert(name, foreign_type_contract(&item.attrs, self.current_module));
         }
+    }
+
+    /// `[FFI-8]` (ODR-249) — `@ffi(newtype) type T = R`: a nominal type with `R`'s representation,
+    /// passed to C as the typedef is. `R` is a C type (`E5015` otherwise): a typedef's target is
+    /// plain data, so `T` is `Copy`.
+    fn declare_newtype(&mut self, decl: &ast::TypeAlias, name: Symbol, repr: Ty) -> Ty {
+        let c_type = self.types.is_ffi_safe(repr) && self.types.is_copy(repr)
+            && !matches!(self.types.kind(repr), TyKind::Void | TyKind::Never | TyKind::VaList | TyKind::Newtype(_));
+        if !c_type {
+            if repr != self.common.error {
+                let shown = self.types.display(repr);
+                self.sink.emit(
+                    Diagnostic::error(codes::E5015, decl.name.span, format!("`{shown}` is no C typedef's target, so `{}` cannot be a newtype of it", decl.name.name))
+                        .help("`@ffi(newtype)` makes a C `typedef` nominal: its value is a C scalar, pointer or `@layout(c)` struct")
+                        .note("a newtype is passed to C as its typedef is [FFI-8]"),
+                );
+            }
+            return repr;
+        }
+        let id = self.types.add_newtype(NewtypeDef { name, repr, span: decl.name.span });
+        self.types.intern(TyKind::Newtype(id))
+    }
+
+    /// `[FFI-8]` (ODR-249) — `x as T` and `t as R` between a newtype `T` and its typedef's
+    /// representation `R`: the same bits, read as the other type (no conversion is emitted). Any
+    /// other cast to or from a newtype is `E2020`, naming the two steps through `R`. `Err` gives the
+    /// operand back when neither side is a newtype.
+    fn newtype_cast(&mut self, inner: Expr, to: Ty, span: Span) -> Result<Expr, Expr> {
+        let newtype = |this: &Self, ty: Ty| match *this.types.kind(ty) {
+            TyKind::Newtype(id) => Some(this.types.newtype_def(id).repr),
+            _ => None,
+        };
+        let (from_repr, to_repr) = (newtype(self, inner.ty), newtype(self, to));
+        if from_repr.is_none() && to_repr.is_none() {
+            return Err(inner);
+        }
+        if inner.ty == to {
+            return Ok(inner);
+        }
+        if to_repr == Some(inner.ty) || from_repr == Some(to) {
+            return Ok(Expr { ty: to, kind: ExprKind::EraseRange(Box::new(inner)), span });
+        }
+        if inner.ty != self.common.error && to != self.common.error {
+            let (from, shown) = (self.types.display(inner.ty), self.types.display(to));
+            let through = to_repr.or(from_repr).map(|repr| self.types.display(repr)).unwrap_or_default();
+            let help = match (from_repr, to_repr) {
+                (None, Some(_)) => format!("convert to `{through}` first: `(x as {through}) as {shown}`"),
+                (Some(_), None) => format!("convert to `{through}` first: `(x as {through}) as {shown}`"),
+                _ => format!("convert through `{through}`"),
+            };
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("`{from}` cannot be cast to `{shown}` with `as`"))
+                    .help(help)
+                    .note("a newtype converts with `as` to and from its typedef's representation only [FFI-8]"),
+            );
+        }
+        Ok(Expr { ty: self.common.error, kind: ExprKind::Error, span })
     }
 
     /// `[RNG-1]` — build the nominal range type an `in` clause declares.
@@ -21648,6 +21720,8 @@ impl<'a> Checker<'a> {
     /// then the result, a pointer, an integer or a float of its size, or a type by value.
     fn c_call_shape(&self, function: &Function) -> String {
         let shape = |ty: Ty| -> String {
+            // `[FFI-8]` (ODR-249) — a newtype is its typedef's representation to C.
+            let ty = self.types.newtype_repr(ty);
             let pointer = |ty: Ty| match self.types.kind(ty) {
                 TyKind::Ptr { .. } | TyKind::Ref { .. } | TyKind::Fn { .. } | TyKind::CStr => true,
                 TyKind::Enum(id) => self.types.option_niche(*id).is_some_and(|niche| {
@@ -36722,7 +36796,20 @@ impl<'a> Checker<'a> {
 
             ast::ExprKind::Cast { expr: inner, ty } => {
                 let to = self.resolve_type(ty);
-                let inner = self.synth_committed(inner);
+                // `[FFI-8]` (ODR-249) — a newtype is made from its typedef's representation with
+                // `as`, which a literal takes as its type.
+                let inner = match *self.types.kind(to) {
+                    TyKind::Newtype(id) if self.types.is_numeric(self.types.newtype_def(id).repr) && matches!(
+                        unparenthesized(inner).kind, ast::ExprKind::Lit(_) | ast::ExprKind::Unary { .. }) => {
+                        let repr = self.types.newtype_def(id).repr;
+                        self.check_expr(inner, repr)
+                    }
+                    _ => self.synth_committed(inner),
+                };
+                let inner = match self.newtype_cast(inner, to, span) {
+                    Ok(cast) => return cast,
+                    Err(inner) => inner,
+                };
                 // `[ENM-3]` — a unit-only enum casts to an integer, because it
                 // is only its discriminant. The reverse needs `from_repr`,
                 // since not every integer names a variant.
@@ -41164,6 +41251,24 @@ impl<'a> Checker<'a> {
         for attr in &item.attrs {
             if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
                 && attr.path.len() == 1 && attr.path[0].name.is("export") {
+                continue;
+            }
+            // `[FFI-8]` (ODR-249) — `@ffi(newtype)` on a typedef's alias.
+            if let ast::ItemKind::TypeAlias(alias) = &item.kind
+                && attr.path.len() == 1 && attr.path[0].name.is("ffi") {
+                let newtype = matches!(attr.args.as_slice(), [ast::AttrArg::Expr(expr)] if ffi_contract_word(expr).is_some_and(|word| word.is("newtype")));
+                if !newtype {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, attr.span, "`@ffi` on a type alias takes `newtype` alone")
+                            .note("`@ffi(newtype) type T = R` makes a C typedef a nominal type [FFI-8]"),
+                    );
+                } else if alias.range.is_some() || !alias.generics.is_empty() || alias.value.is_none() {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, attr.span, "`@ffi(newtype)` makes a plain alias of a C type nominal")
+                            .help("write `@ffi(newtype) type T = R`, with no type parameters and no `in` clause")
+                            .note("a newtype has its typedef's representation [FFI-8]"),
+                    );
+                }
                 continue;
             }
             // `[MONO-7]` — built on a generic function; on a type, a method or anything else the

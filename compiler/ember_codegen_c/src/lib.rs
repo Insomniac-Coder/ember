@@ -4882,6 +4882,7 @@ impl Emitter<'_> {
             | TyKind::Span { .. }
             | TyKind::Opaque(_)
             | TyKind::Range(_)
+            | TyKind::Newtype(_)
             | TyKind::Ref { .. }
             | TyKind::Ptr { .. }
             | TyKind::Fn { .. }
@@ -11695,6 +11696,9 @@ impl Emitter<'_> {
             // It emits no C type of its own, so `Roughness` and `f32` are the
             // same bits and `[RNG-8]`'s FFI representation falls out.
             TyKind::Range(id) => self.c_type(self.types.range_def(*id).repr),
+            // `[FFI-8]` (ODR-249) — a newtype is its typedef's representation in C, so it is passed
+            // and returned as the typedef is.
+            TyKind::Newtype(id) => self.c_type(self.types.newtype_def(*id).repr),
             // `[TYP-22]` — an interface reference is already a fat pointer;
             // do not add a second C indirection around its `{data*, vtable*}`
             // representation. Dispatch/vtable materialisation is a later
@@ -12214,6 +12218,7 @@ impl Emitter<'_> {
                 }
             }
             TyKind::Range(id) => self.constant_initializer(self.types.range_def(*id).repr, tokens, symbol, parts)?,
+            TyKind::Newtype(id) => self.constant_initializer(self.types.newtype_def(*id).repr, tokens, symbol, parts)?,
             TyKind::Str => {
                 let bytes = bytes_of(token(tokens)?.strip_prefix('s')?)?;
                 format!("{{ (const unsigned char*){}, {}u }}", c_bytes_literal(&bytes), bytes.len())
@@ -12419,6 +12424,7 @@ impl Emitter<'_> {
                 "{{ {RT}str s = ({access}); printf(\" s%lu:\", (unsigned long)s.len); for (size_t k = 0; k < s.len; ++k) {{ printf(\"%02x\", (unsigned)s.ptr[k]); }} }}"
             )),
             TyKind::Range(id) => self.comptime_dump(self.types.range_def(*id).repr, access, out, counter),
+            TyKind::Newtype(id) => self.comptime_dump(self.types.newtype_def(*id).repr, access, out, counter),
             // `[CT-5]` — a `String`'s bytes; an `Array`'s length, then its elements.
             TyKind::Vec { text: true, .. } => out.push(format!(
                 "{{ {RT}vec s = ({access}); printf(\" s%lu:\", (unsigned long)s.len); for (size_t k = 0; k < s.len; ++k) {{ printf(\"%02x\", (unsigned)((const unsigned char*)s.ptr)[k]); }} }}"

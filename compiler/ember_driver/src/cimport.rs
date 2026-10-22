@@ -6540,6 +6540,22 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 }
                 let _ = take(applied, sink, layer, entry.is_override, "type", name);
             }
+            // `[FFI-8]` (ODR-249) — `@ffi(newtype) type Name`: the header's `typedef` made a nominal
+            // type, its alias written with the attribute.
+            ast::OverlayItemKind::Type(name) if arguments().iter().any(|written| written.trim() == "newtype") => {
+                let alias = format!("type {} = ", ident(name.name.as_str()));
+                if !imported.items.iter().any(|item| item.name == name.name.as_str() && item.kind == Kind::Type && item.text.starts_with(&alias)) {
+                    mismatch(sink, name.span, format!("`{header}` declares no `typedef` `{}` that `@ffi(newtype)` could make nominal", name.name));
+                    continue;
+                }
+                if let Some(other) = arguments().iter().find(|written| written.trim() != "newtype") {
+                    mismatch(sink, name.span, format!("`@ffi({other})` is no argument of a newtype entry: it takes `newtype` alone"));
+                    continue;
+                }
+                if take(applied, sink, layer, entry.is_override, "type", name) {
+                    applied.attributes.insert(name.name.to_string(), attributes());
+                }
+            }
             ast::OverlayItemKind::Type(name) | ast::OverlayItemKind::Enum(name) => {
                 let kind = if matches!(entry.kind, ast::OverlayItemKind::Type(_)) { Kind::Opaque } else { Kind::Type };
                 let found = imported.items.iter().any(|item| item.name == name.name.as_str() && item.kind == kind && (kind == Kind::Opaque || item.text.starts_with("@repr")));
