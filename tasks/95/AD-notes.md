@@ -248,6 +248,18 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   is given is the path ODR-240's adapters already take. A design of its own (an ADR), so left for
   the owner.
 
+## Verification (at the last commit)
+
+* The whole conformance tree (every `tests/conformance/*`, `tests/run-pass`, `compile-pass`,
+  `compile-fail`, `run-fail`): failing 0.
+* `ember_driver`'s `ui`, `milestones` (the conformance suite with its C assertions included),
+  `firstweek`, `reload`: all pass; the unit tests of `ember_typeck`, `ember_analysis`,
+  `ember_codegen_c`, `ember_interp`, `ember_mir`, `ember_hir`, `ember_types`, `ember_branding`,
+  `ember_driver`: all pass.
+* The C gate (warnings as errors): each piece's tests under MSVC and clang-cl; gcc in WSL:
+  `milestones` `the_conformance_suite_runs` and `run_pass_programs_pass` on a copy of this branch,
+  pass.
+
 ## Not done
 
 * A local generator (`[GRM-28]`, above): `E0900`; three designs, (a) recommended.
