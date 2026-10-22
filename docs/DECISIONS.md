@@ -5017,6 +5017,72 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-272 — D-811, the lead's second round: the passes keep pace with a function's size
+
+2026-10-22 (lead, branch `lead-d811`). Range facts (`range_facts.rs`): the solve iterates a weak
+topological order made from the natural loops (`LoopNest`, Bourdoncle's recursive strategy: each
+loop turned until its header's state stops changing before what follows it), then the old rounds
+confirm nothing changes, one as a rule; `bigpkg`'s `main` visits blocks 20,000 times, not 225,000.
+`accumulator_bounds` found each counted loop's entry by stepping every block; it walks back from the
+header through branch-only blocks (10 s to 4 ms there). Check removal and branch folds share one
+run of the facts. Inlining a function called once stops where the caller would pass 4,000
+statements and twice its own size. Every scan for counted loops makes the predecessors once
+(`counted_loop` is gone; `counted_loop_in` takes them). Drop elaboration finds a move path by
+walking down its local's tree. The borrow checker's loans carry the loans in scope at each point
+(`Loans`), `check_point` takes that scope, and the call-activation check copies only it. `bigpkg`
+builds clean in 31 s (was over 15 minutes, 11.5 GB); one function of 3,200 lines builds in 9.2 s
+(was 21.8 s). Release C equal before and after for the conformance and run-pass programs but a
+reviewed label order. D-811 stays open: the borrow checks and loop versioning still grow about 3.5x
+when that function doubles.
+
+## ADR-271 — Helper AC merged: the evaluator, the editor session, the guide (`[CLI-21]`, `[IMP-11]`, `[IDE-4]`, `[DOC-2]`, `[DOC-4]`)
+
+2026-10-22 (helper AC, `tasks/95/AC-notes.md`). `compiler/ember_interp` runs a program's checked MIR
+(`ember run --interp`, `[CLI-21]`) with the target's layouts, the runtime's panics, backtraces and
+leak reports; foreign calls and threads are `E6010`. Every run-pass and run-fail program also runs on
+it and must print the same (`annotations.py`, `milestones.rs`): 1,864 agree, 172 are rightly refused.
+`[IMP-11]`: MIR verified after every pass in debug builds; seeded fuzzing of the lexer, parser, type
+checker and borrow checker. `[FFI-5a]`: the layout tests under every host C compiler.
+`ember_driver` is a library (`src/lib.rs`, the binary `src/ember.rs`), whose `session::Session`
+serves an editor (`[IDE-4]`); checking runs past parse and load errors with placeholders, each error
+reported once (`[IDE-3]`, in part). The guide (`docs/book/`, 12 chapters, "Coming from Python"),
+its samples checked with their output (`[DOC-2]`), and `tools/doc_bundle.py` in the release workflow
+(`[DOC-4]`). Fixed D-874, D-875; open D-881, D-882. At the merge the evaluator gained `CharClass`
+(the class runs generated for it by `tools/unicode_case.py`, beside the runtime's) and the `Global`
+and `System` allocators, on its own heap. Rulings: ODR-256..258; the owner's ODR-243 (compile-time
+values by the evaluator) and ODR-244 (one C file per module in `debug`) answer AC's questions 1 and 3.
+
+## ADR-270 — Helper AB merged: C and C++ interop (`[FFI-1]`, `[FFI-8]`, `[FFI-11]`, `[FFI-17a]`, `[FFI-21]`, `[FFI-39]`, `[FFI-42]`, `[FFI-48]`)
+
+2026-10-22 (helper AB, `tasks/95/AB-notes.md`). Contracts through overlays as well as hand
+declarations: `inout_count`, callbacks with user data (`borrowed`, `once`, `retained`), `threads`,
+`destroys(f)`, `unsafe`, effects from `const`/`pure`, a function's thread rule (`[FFI-1]`,
+`[FFI-11]`, `[FFI-21]`, `[FFI-33b]`). `[FFI-8]`: C unions (`@layout(c, union)`), enum bit-fields,
+`long double` (`c_longdouble`), flexible array members (`@layout(c, flexible)`, `tail(n)`),
+`volatile T*` (`std.mem.Volatile`), `_Atomic T` (`Atomic[T]`), `va_list` (`std.ffi.VaList`) and
+variadic calls (`@ffi(variadic)`). `[FFI-17a]`: fixed-extent spans, `std::variant`, `std::function`,
+a stateless `unique_ptr` deleter (ODR-198..200). `[FFI-42]`: operators of template instances.
+`[FFI-48]`: the unsupported constructs diagnosed. `[BLD-FFI-5a]` (ODR-162): `@sync` classes exported,
+with retain, release and one function per method. The owner's ODR-221 (deriving from a C++ class
+with no overlay entry, `E5056` retired), ODR-220 (`inspect --cost` lists catching calls) and ODR-219
+built. Fixed D-870..D-873; open D-878..D-880. At the merge, a retained or `once` callback is taken
+over (ODR-240 lends only what a call uses while it runs), and `Retained.pin` keeps AA's `on_relocate`
+form. Rulings: ODR-245..253; AB's question 9 left open.
+
+## ADR-269 — Helper AA merged: language rules (`[VER-3]`, `[ALC-2]`, `[ALC-3]`, `[HR-20]`, `[GRM-17]`, `[GRM-27]`, `[GRM-38]`, `[LT-1a]`, `[STD-19]`, `[STD-26]`, `[TYP-22]`, `[TYP-36]`)
+
+2026-10-22 (helper AA, `tasks/95/AA-notes.md`). The owner's answers built: ODR-236 (a comprehension
+takes `owned xs`; a borrowed item kept whole is `E3013`, whose help gives both fixes), ODR-237
+(`Box[T]` is `Clone` when `T` is; an interface requiring `Clone` is usable as `dyn` through a copy
+entry in the method table) and ODR-240 (std's callable-taking functions borrow a named callable:
+`lend_named_callable` passes it as `ref mut`, a lambda written at the call by value). Delegated
+rulings built: ODR-174 (`W2192`), 175 (`unsafe interface Allocator`, `Global`, `[build]
+global_allocator`), 194 (`on_relocate`), 207, 209, 211, 239 (`std.mem.System`). Also `[JOB-5]`'s
+`jobs.local_arena()`, `[GRM-38]` generators with later `for` clauses (`Nested`), `[CLO-6a]` owned
+`once fn` values, `[STD-14]` (128 allocating functions documented), D-850, D-852, D-854, D-856, D-860.
+Fixed D-866..D-869; open D-876, D-877. Not built: ODR-218 (`run_parallel` on threads: a class object
+belongs to the thread that made it; answered for the rest by ODR-255). Rulings: ODR-254, ODR-255.
+
 ## ADR-268 — Cut as 0.9.10_Hardened_34: the rulings ODR-169..ODR-237
 
 2026-10-22. The rulings waiting in `tasks/95/odr-pending.md` are written into the spec (§H.39,

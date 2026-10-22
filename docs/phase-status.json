@@ -46,6 +46,8 @@
     "THR-8": "not built: an owned callable value `Send` when everything it captures is `Send` (ODR-218)",
     "CLO-10": "not built: an owned callable value `Send` when everything it captures is `Send` (ODR-218; it is not `Send` today)",
     "TOOL-1": "not built: the release workflow (`.github/workflows/release.yml`) publishing each host's archive and the one-line installer on the Ember repository's GitHub Releases, the macOS archive built and tested on GitHub's macOS machines (ODR-222, ODR-224)",
-    "TOOL-2": "not built: Ember's archive carrying LLVM's Clang and LLD, selected with `c_compiler = \"bundled\"`, which compile the generated C and the C and C++ glue (ODR-223; the LLVM backend's plan comes from the owner)"
+    "TOOL-2": "not built: Ember's archive carrying LLVM's Clang and LLD, selected with `c_compiler = \"bundled\"`, which compile the generated C and the C and C++ glue (ODR-223; the LLVM backend's plan comes from the owner)",
+    "BLD-2": "built: each module's interface hash with the facts the rule names (signatures, layouts, effect sets, inline bodies, borrow summaries; `ember_build::interface`); not built: a module's front-end result kept and reused, so a one-function edit re-checks every module (`bench/bigpkg`: a rebuild after it takes about 80% of a clean build), ODR-244, ODR-257",
+    "BUD-2": "the gate measures B1-B9 (`tools/compile_budgets.py`); B1, B3, B4 and B5 are over their limits, a one-function edit re-checking every module (`[BLD-2]`); the owner's ODR-242 replaces the millisecond limits at the next cut"
   }
 }

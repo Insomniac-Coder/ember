@@ -10848,6 +10848,20 @@ formal 1/9 count or Phase 2's estimate.
 > **D-808 open** (an overlay's pointer contracts do not reach a C++ wrapper: the raw declaration must
 > become a contracted `safe fn`, `failed` and `this` included). ODR-165..167 delegated; cut as
 > `0.9.10_Hardened_32`.
+> **2026-10-22, later (ADR-255..272).** `[STD-18]` (cut 33); helpers Q..Y merged (ADR-256..267);
+> **cut 34** (ADR-268) wrote ODR-169..237; the owner reviewed every lead ruling of the day
+> (ODR-175, 207, 209, 211, 213, 215, 239 confirmed; ODR-210 replaced by the owner's ODR-240: std's
+> callable-taking functions borrow a named callable) and answered ODR-241 (`Box ==`), ODR-242 (no
+> fixed time limits: the compiler as fast as it can be and memory safe), ODR-244 (`debug` one C file
+> per module, `release` one unit); ODR-243 (`const` values by the evaluator) follows the spec.
+> Helpers AA (language), AB (C/C++) and AC (the evaluator `ember_interp`, the editor session, the
+> guide) merged (ADR-269..271): **`ember_driver/src/main.rs` is now `lib.rs`**, the binary
+> `src/ember.rs`. D-811's second round (ADR-272): `bigpkg` builds clean in 31 s. Rulings ODR-245..258
+> on the helpers' smaller questions wait in `tasks/95/odr-pending.md` for cut 35. **Windows Defender
+> flags fresh `ember.exe` builds under `%TEMP%` as `Trojan:Win32/Bearfoos.A!ml`** (a false positive):
+> build in the repository's `target/`, not a scratch folder; changing Defender is the owner's call.
+> Next: D-811's remaining growth (borrow checks, loop versioning), the incremental build (ODR-244,
+> ODR-257), the analysis workflow the owner approved (4 agents at a time).
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and
