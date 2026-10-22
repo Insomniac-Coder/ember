@@ -23,7 +23,7 @@ struct Recipe:
         factor = servings as float / self.servings as float
         result = Recipe(title=self.title.clone(), servings=servings)
         for ing in self.ingredients:
-            result.ingredients.push(Ingredient(name=ing.name.clone(), amount=ing.amount * factor, unit=ing.unit.clone()))
+            result.ingredients.push(Ingredient(name=ing.name.clone(), amount=ing.amount * factor, unit=ing.unit))
         return result
 
 fn tidy(amount: float, unit: Unit) -> (float, Unit):
@@ -52,17 +52,10 @@ fn format_amount(amount: float, unit: Unit) -> String:
         Tablespoon => f"{a:.1f} tbsp"
         Piece => f"{a.ceil():.0f}"
 
-@derive(Error)
-enum RecipeError:
-    @error("expected 'name; amount; unit'")
-    Format
-    @error("unknown unit '{name}'")
-    UnknownUnit(name: String)
-
 fn parse_ingredient(line: str) -> Result[Ingredient]:
     parts = line.split(";").collect[Array[str]]()
     if parts.len() != 3:
-        return Err(AnyError.from(RecipeError.Format))
+        return Err(AnyError.msg(f"expected 'name; amount; unit'"))
     name = parts[0].trim()
     amount = parts[1].trim().parse[float]()?
     other = parts[2].trim()
@@ -75,10 +68,8 @@ fn parse_ingredient(line: str) -> Result[Ingredient]:
         unit = Unit.Teaspoon
     elif other == "tbsp":
         unit = Unit.Tablespoon
-    elif other == "pc":
-        unit = Unit.Piece
-    else:
-        return Err(AnyError.from(RecipeError.UnknownUnit(name=other.to_string())))
+    elif other != "pc":
+        return Err(AnyError.msg(f"unknown unit '{other}'"))
     return Ok(Ingredient(name=name.to_string(), amount=amount, unit=unit))
 
 const PANCAKES: str = """flour; 250; g

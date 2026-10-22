@@ -12,9 +12,9 @@ The summer was long, the key was small, and the river did not care.
 fn clean_word(word: str) -> String:
     result: String = ""
     for c in word.to_lower():
-        if 'a' <= c <= 'z' or c == '\'':
+        if c.is_alphabetic() or c == '\'':
             result.push(c)
-    return result
+    return result.to_string()
 
 fn count_words(text: str) -> Map[String, int]:
     counts: Map[String, int] = {}

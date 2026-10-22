@@ -62,7 +62,7 @@ class Game:
 
     fn take(self, item: str):
         room = ref mut self.rooms[self.current]
-        if room.items.iter().any(fn(e) => e == item):
+        if item.to_string() in room.items:
             room.items.retain(fn(i) => i != item)
             self.inventory.push(item.to_string())
             println(f"Taken: {item}")

@@ -13,7 +13,8 @@ const MAZE: str = """
 ##########
 """
 
-@derive(Copy, Hash)
+@derive(Copy)
+@derive(Hash)
 struct Pos:
     row: int
     col: int

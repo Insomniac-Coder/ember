@@ -29,8 +29,7 @@ class Library:
         if book.isbn in self.books:
             self.books[book.isbn].copies += book.copies
         else:
-            key = book.isbn.clone()
-            self.books[key] = book
+            self.books[book.isbn.clone()] = book
 
     fn search(self, text: str) -> Array[Book]:
         needle = text.to_lower()
