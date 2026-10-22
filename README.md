@@ -45,7 +45,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 4 | Effects, compile time, reflection, derives | 100% |
 | 5 | C interoperability | 84% |
 | 6 | Concurrency and data-oriented design | 91% |
-| 7 | C++ interoperability and the interpreter | 95% |
+| 7 | C++ interoperability and the interpreter | 97% |
 | 7a | Iteration, determinism, cost control | 90% |
 | 8 | Hardening and 1.0 | 79% |
 | 9 | The LLVM backend (ODR-223) | 0% |
