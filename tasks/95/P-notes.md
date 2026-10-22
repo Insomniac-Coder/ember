@@ -69,6 +69,18 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   (Annex D) does not exist; the phase table places the GPU host model after 1.0. Recommendation
   (spec question 5): count `[HR-24]` with Annex D (post-1.0), and with it `[HR-41]`'s GPU row.
 
+* **HR-9** — tooling and the structural half built; `unfinished` entry added for the
+  measurement. `a_thunk_is_one_load_and_one_indirect_jump` checks every thunk in `debug` and
+  `development` is one load of its target and one call through it. `bench/reload_overhead.py`
+  builds each of the 50 performance programs plain and reloadable (`development`), checks the
+  outputs agree, times them interleaved on the performance cores (mains only) and reports the
+  suite's overhead (geometric mean) with its configuration, exiting 1 above 3 %. All 50 build in
+  both forms (`--build-only`, run here); the timed run is the lead's or the owner's (helpers run
+  no program outside the harness). Expectation to check: with every function behind a thunk and
+  none inlined (`[HR-9a]`), programs whose hot loops call small functions may exceed 3 % unless
+  those functions are `@noreload` (`[HR-10]`'s advice) — if the run shows it, that is a question
+  for the owner, not a figure to tune.
+
 ## Compiler changes
 
 * HR-23: `cimport.rs` (`import_cached` returns a hash over every file the header included),

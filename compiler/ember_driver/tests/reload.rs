@@ -1062,6 +1062,42 @@ fn a_foreign_failure_in_migrate_from_is_foreign() {
     assert!(checked.stderr.contains("error[E0104]") && checked.stderr.contains("`@allow_reload_terminate` applies to a type's `migrate_from`"), "{}", checked.stderr);
 }
 
+/// `[HR-9]` — a call through a thunk costs one load and one indirect jump: each reloadable
+/// function's thunk is one statement, a load of its target from the call table and a call through
+/// it with the thunk's own arguments (a tail call, which an optimising C compiler makes a jump), in
+/// both reloadable profiles; nothing else runs in it (the frame record, `[HR-3b]`, is the body's).
+/// The overhead on the performance suite is measured by `bench/reload_overhead.py`.
+#[test]
+fn a_thunk_is_one_load_and_one_indirect_jump() {
+    let root = workspace_root();
+    let source = "fn twice(x: int) -> int:\n    return x * 2\n\nfn show(x: int):\n    println(x)\n\nfn main():\n    show(twice(21))\n";
+    for profile in ["debug", "development"] {
+        let (package, file) = package(&format!("reload-thunk-{profile}"), RELOAD_ALL, source);
+        let out = package.join("target");
+        let built = ember(&["build", &file.to_string_lossy(), "--profile", profile, "--out-dir", &out.to_string_lossy()], &root);
+        assert_eq!(built.exit, 0, "{profile}: {}", built.stderr);
+        let c = std::fs::read_to_string(out.join(profile).join("c").join("main.c")).expect("the generated C");
+        drop(package);
+        let mut thunks = 0;
+        let lines: Vec<&str> = c.lines().collect();
+        for (at, line) in lines.iter().enumerate() {
+            if !line.starts_with("/* [HR-6] the thunk of `") {
+                continue;
+            }
+            thunks += 1;
+            // The signature, one statement, the closing brace.
+            let (body, end) = (lines[at + 2].trim(), lines[at + 3]);
+            assert_eq!(end, "}", "{profile}: the thunk at line {} is more than one statement:\n{}", at + 1, lines[at..at + 6].join("\n"));
+            let call = body.strip_prefix("return ").unwrap_or(body);
+            assert!(call.starts_with("((") && call.contains(&format!("{}rl_targets[", ember_branding::mangle_prefix())) && call.ends_with(");"),
+                "{profile}: the thunk is not one load and one call through it: {body}");
+            let loads = call.matches("rl_targets[").count();
+            assert_eq!(loads, 1, "{profile}: {body}");
+        }
+        assert!(thunks >= 3, "{profile}: {thunks} thunks in:\n{c}");
+    }
+}
+
 /// `[HR-41]` — the failure matrix, row by row, each where it is detected and with its outcome:
 /// source that does not compile is caught before any poll (the build fails, nothing is announced,
 /// the old image runs on); a schema change with no defined outcome is refused in plan; a
