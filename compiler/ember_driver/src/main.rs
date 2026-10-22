@@ -5370,7 +5370,12 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     } else {
         module_name.clone()
     };
-    let exe = layout.bin.join(exe_name);
+    let exe = layout.bin.join(&exe_name);
+    // `[CG-C-9]` — the debugger visualisers beside the program: a `.natvis` (which the MSVC link
+    // also puts in the program database), GDB's auto-loaded `<program>-gdb.py`, and an LLDB script.
+    std::fs::write(layout.bin.join(format!("{module_name}.natvis")), &emitted.visualisers.natvis).map_err(|e| e.to_string())?;
+    std::fs::write(layout.bin.join(format!("{exe_name}-gdb.py")), &emitted.visualisers.gdb).map_err(|e| e.to_string())?;
+    std::fs::write(layout.bin.join(format!("{module_name}.lldb.py")), &emitted.visualisers.lldb).map_err(|e| e.to_string())?;
 
     // `--cc`, else the variable `cc_var()` names (CI's compiler matrix, D-251).
     // `[BLD-FFI-2]` — between the two, the compiler of the CMake build whose target's flags it takes.

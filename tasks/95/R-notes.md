@@ -173,3 +173,38 @@ Rules: DIA-15, CG-C-9, PHIL-1, CG-C-7, VER-3, CG-C-6, CG-C-10, DIA-5, LT-39, SEL
   compiler mangles `em_` + the dotted path with `_` (`em_geometry_Grid_at`), which is not injective
   (no test names MNG-1). `ember demangle` therefore maps symbols through the program (it takes the
   program's file) rather than decoding them.
+
+## CG-C-9 — done for what the C can carry; one ceiling for the owner (built)
+- Test: `milestones.rs` `build_writes_debugger_visualisers_beside_the_program` (the three files
+  beside a debug build; the natvis's entries for an enum, a struct with an `Array` and a `String`
+  field, a class object without its header, `str`, `Option`; the GDB and LLDB scripts' type
+  description and registration). Checked by hand: the `.natvis` parses as XML; both Python scripts
+  compile; the MSVC and the clang (lld-link) builds put the `.natvis` into the program's PDB
+  (`llvm-pdbutil dump -streams`: `/src/files/…/vis.natvis`). Not run in a debugger (the brief's
+  rule; and this laptop's lldb lacks its Python, gdb is absent).
+- What was missing: no visualisers at all.
+- Compiler:
+  - `compiler/ember_codegen_c/src/visualisers.rs` (new) — one description of every type the C
+    defines (`describe`: structs by Ember name and fields, class objects without `_header`, tuples,
+    payload enums by `tag` and variant payloads — `Option`/`Result` included —, unit enums by their
+    discriminants; `Box`/`Shared`/`Weak`/`Cell`/SIMD wrappers and niche `Option`s are their payload's,
+    shown as C shows them) rendered three ways: a `.natvis` (variant display strings, typed
+    `ArrayItems` for `Array`/`Span` fields, `String`/`str` as text, unit-enum fields by variant), and
+    GDB and LLDB Python scripts sharing a `TYPES` table (printers / summaries and synthetic children;
+    a class handle shows its object; a unit enum its variant where DWARF keeps its typedef).
+  - `compiler/ember_codegen_c/src/lib.rs` — `Output::visualisers`; and `cell_inner_id` no longer
+    indexes a struct with no fields (`then_some` evaluated `fields[0]` eagerly: the describer hit it).
+  - `compiler/ember_driver/src/main.rs` — writes `<name>.natvis`, `<program>-gdb.py` (GDB's
+    auto-load name) and `<name>.lldb.py` beside the program before it is linked.
+  - `compiler/ember_build/src/lib.rs` — `natvis_beside`: outside `release` the Windows link adds
+    `/NATVIS:` (MSVC, clang-cl's lld-link, clang's `-Wl,`), after the program cache's key, and the
+    key takes the `.natvis`'s content (a program cached without one is not served for it).
+- Ceiling (owner question): one C struct serves every `Array[T]` and `String` (`ember_vec`) and
+  every view (`ember_span`), so a collection is shown by its elements only where its Ember type is
+  known: a field of a struct, a class or a variant. One held directly in a local shows its length.
+  A typedef per instance would carry the type for GDB and LLDB (DWARF keeps typedefs) but not for
+  Visual Studio (CodeView records a local's underlying type: checked with `llvm-readobj --codeview`).
+  Options: (a) a C struct per collection instance (`struct em_Array_i64 { ember_vec v; }`, passed
+  to the runtime as `&x.v`) — every value shown typed everywhere, a large backend change; (b) a
+  typedef per instance — typed locals in GDB/LLDB only, small; (c) leave as is. Recommendation: (a)
+  when the backend is next reworked; (b) is cheap but helps only Linux/macOS debuggers.

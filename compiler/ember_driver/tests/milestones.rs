@@ -1045,6 +1045,60 @@ fn explain_prints_the_page_built_into_the_compiler() {
     assert!(value["page"].as_str().is_some_and(|text| text.contains("## Why")), "{}", json.stdout);
 }
 
+/// `[CG-C-9]` — the build writes debugger visualisers beside the program, which show its values as
+/// Ember values: a `.natvis` (Visual Studio, WinDbg; the Windows link also puts it in the program
+/// database), GDB's auto-loaded `<program>-gdb.py` and an LLDB script. An enum (`Option`, `Result`)
+/// as its variant and payload, a struct and a class object by their fields (the object header left
+/// out), a `str` and a `String` as text, and an `Array` field as its elements, of their type.
+#[test]
+fn build_writes_debugger_visualisers_beside_the_program() {
+    let root = workspace_root();
+    let dir = temporary_directory("visualisers");
+    let source = dir.join(format!("shapes.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "enum Shape:\n    Circle(r: f64)\n    Empty\n\nstruct Bag:\n    items: Array[int]\n    label: String\n    shape: Shape\n\n\
+         class Node:\n    value: int\n\nfn first(b: Bag) -> Option[int]:\n    if b.items.len() > 0:\n        return Some(b.items[0])\n    return None\n\n\
+         fn main():\n    b = Bag([1, 2], \"hi\", Shape.Circle(1.0))\n    n = Node(3)\n    t: str = \"text\"\n    println(first(b), n.value, t, b.label)\n",
+    )
+    .expect("write the program");
+    let out = dir.join("out");
+    let built = ember(&["build", &source.to_string_lossy(), "--profile", "debug", "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    let bin = out.join("debug").join("bin");
+    let program = if cfg!(windows) { "shapes.exe" } else { "shapes" };
+    let read = |name: &str| std::fs::read_to_string(bin.join(name)).unwrap_or_else(|error| panic!("{name} beside the program: {error}"));
+    let natvis = read("shapes.natvis");
+    let shape = ember_branding::mangled("Shape");
+    let bag = ember_branding::mangled("Bag");
+    let node = ember_branding::object_struct("Node");
+    let runtime = ember_branding::RUNTIME_PREFIX;
+    for wanted in [
+        "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\">".to_string(),
+        format!("<Type Name=\"{shape}\">"),
+        "<DisplayString Condition=\"tag == 0\">Circle(r: {payload.Circle.r})</DisplayString>".to_string(),
+        "<DisplayString Condition=\"tag == 1\">Empty</DisplayString>".to_string(),
+        format!("<Type Name=\"{bag}\">"),
+        "<DisplayString>Bag {{ items: [{items.len}], label: {(char*)label.ptr,[label.len]s8}, shape: {shape} }}</DisplayString>".to_string(),
+        "<ValuePointer>(int64_t*)items.ptr</ValuePointer>".to_string(),
+        format!("<Type Name=\"{node}\">"),
+        "<DisplayString>Node {{ value: {value} }}</DisplayString>".to_string(),
+        format!("<Type Name=\"{runtime}str\">"),
+        "<StringView>(char*)ptr,[len]s8</StringView>".to_string(),
+        "<DisplayString Condition=\"tag == 1\">Some({payload.Some._0})</DisplayString>".to_string(),
+    ] {
+        assert!(natvis.contains(&wanted), "the .natvis lacks {wanted}:\n{natvis}");
+    }
+    assert!(!natvis.contains("_header"), "an object's header is shown:\n{natvis}");
+    let described = format!("\"{shape}\": {{\"kind\": \"enum\", \"name\": \"Shape\", \"variants\": {{0: (\"Circle\", [(\"r\", \"payload.Circle.r\", (\"value\",))]), 1: (\"Empty\", [])}}}}");
+    let items = "(\"items\", \"items\", (\"elements\", \"int64_t\"))";
+    for (name, script) in [(format!("{program}-gdb.py"), read(&format!("{program}-gdb.py"))), ("shapes.lldb.py".to_string(), read("shapes.lldb.py"))] {
+        assert!(script.contains(&described) && script.contains(items), "{name} does not describe the program's types:\n{script}");
+    }
+    assert!(read(&format!("{program}-gdb.py")).contains("pretty_printers"), "the GDB script registers no printer");
+    assert!(read("shapes.lldb.py").contains("def __lldb_init_module(debugger, internal_dict):"), "the LLDB script cannot be imported");
+}
+
 /// `[CG-C-10]` — `ember demangle <file>` copies a C stack (a debugger's, a crash dump's) from
 /// standard input with each C symbol of the program's functions written as its Ember path, a
 /// method's with its type's (`geometry.Grid.at`); a whole identifier only, everything else as it is.
@@ -1052,10 +1106,18 @@ fn explain_prints_the_page_built_into_the_compiler() {
 fn demangle_writes_a_c_stack_in_ember_paths() {
     let root = workspace_root();
     let source = format!("tests/conformance/CG-C-10/accept_frames_are_named_by_path_and_calls_by_place.{SOURCE_EXT}");
-    let stack = "program!em_geometry_Grid_at+0x1a\nem_geometry_probe (g=0x0) at program.c:12\nem_outer em_outer_2 em_main\n";
+    let symbol = ember_branding::mangled;
+    let stack = format!(
+        "program!{}+0x1a\n{} (g=0x0) at program.c:12\n{} {} {}\n",
+        symbol("geometry.Grid.at"),
+        symbol("geometry.probe"),
+        symbol("outer"),
+        symbol("outer_2"),
+        symbol("main")
+    );
     let shown = ember_with_input(&["demangle", &source], &root, stack.as_bytes());
     assert_eq!(shown.exit, 0, "{}", shown.stderr);
-    assert_eq!(shown.stdout, "program!geometry.Grid.at+0x1a\ngeometry.probe (g=0x0) at program.c:12\nouter em_outer_2 main\n");
+    assert_eq!(shown.stdout, format!("program!geometry.Grid.at+0x1a\ngeometry.probe (g=0x0) at program.c:12\nouter {} main\n", symbol("outer_2")));
 }
 
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each

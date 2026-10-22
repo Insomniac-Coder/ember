@@ -29,6 +29,9 @@ mod frames;
 mod header;
 mod integer_reduction;
 mod reload;
+mod visualisers;
+
+pub use visualisers::Visualisers;
 
 pub use reload::{ReloadImage, manifest_symbol};
 
@@ -55,6 +58,8 @@ pub struct Output {
     /// foreign function (its name) and each call site the program makes to one (the function's
     /// index and the place).
     pub ffi_instrument: Option<FfiInstrumentOutput>,
+    /// `[CG-C-9]` — the program's debugger visualisers, which the build writes beside it.
+    pub visualisers: Visualisers,
 }
 
 /// `[FFI-37]`, `[FFI-37b]` — what an instrumented test binary counts.
@@ -567,6 +572,7 @@ fn emit_with(
     write(&mut emitter);
     check_split_views(&emitter.split_views, &emitter.out);
     let header_source = header::render(&emitter, bodies, package_name);
+    let visualisers = visualisers::render(&emitter);
     let mut direct_calls = emitter.direct_calls.take();
     let mut relaxed_units = Vec::new();
     for mode in modes {
@@ -621,6 +627,7 @@ fn emit_with(
         header_source,
         safety_json: safety_json(bodies, map),
         ffi_instrument,
+        visualisers,
     }
 }
 
@@ -4843,7 +4850,8 @@ impl Emitter<'_> {
         (def.declaring_module == usize::MAX
             && def.name.as_str().starts_with("Cell_")
             && def.fields.len() == 1)
-            .then_some(def.fields[0].ty)
+            // Lazily: `then_some` would index a struct with no fields.
+            .then(|| def.fields[0].ty)
     }
 
     fn shared_type_info_symbol(&self, id: StructId) -> String {
