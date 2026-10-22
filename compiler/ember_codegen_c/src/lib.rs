@@ -1701,8 +1701,9 @@ impl Emitter<'_> {
             TyKind::Vec { text: true, .. } => format!(
                 "{RT}str_cmp({RT}vec_as_str((const {RT}vec*)a), {RT}vec_as_str((const {RT}vec*)b)) < 0"
             ),
-            // An `Array` is not `Ord` (`[TYP-36]`): the checker sorts no list
-            // of them, and its bytes are not text (D-465).
+            // An `Array` is ordered by std's `cmp_elements` (`[TYP-36]`): the
+            // checker never gives this sort a list of them, and its bytes are
+            // not text (D-465).
             TyKind::Vec { text: false, .. } => unreachable!("an `Array` has no order to sort by"),
             _ => {
                 let c = self.c_type(ty);

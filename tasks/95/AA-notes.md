@@ -11,6 +11,12 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   profiles): an assignment, a `return` body, a call body, and one in a loop writing one capture
   while reading another (the defect below).
 
+* **D-854 `[TYP-36]`** — `Array[T]` and `[T; N]` are `Ord` lexicographically when `T` is (the
+  first elements that differ decide; a prefix is the smaller): `<`, `cmp`, `sort`, `sorted`,
+  `min`/`max` and a `T: Ord` bound take them. `cmp` goes to std's `cmp_elements` over two views,
+  as `==` goes to `eq_elements`. `TYP-36/accept_arrays_order_lexicographically.em` (three
+  profiles; floats by totalOrder inside), `TYP-36/reject_an_array_whose_element_is_not_ord.em`.
+
 ## Not done
 
 ## Compiler changes
@@ -19,6 +25,9 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   its newline.
 * `ember_typeck` (assignment): on a closure's capture-discovery pass a captured assignment target
   is a placeholder, not a place; the right side is still read for the captures it names.
+
+* `ember_typeck`: `implements` (`Ord` of `Array`/`[T; N]` by the element), `provides_cmp`,
+  `synth_cmp_of` (sequences to `cmp_elements`). std: `extend[T: Ord] Span[T]: cmp_elements`.
 
 ## Defects found
 

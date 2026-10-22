@@ -2315,6 +2315,20 @@ extend[T: Eq] Span[T]:
                 return false
         return true
 
+## `[TYP-36]` — the lexicographic order through `T: Ord`: the first elements that differ decide,
+## and a sequence that is the start of the other is the smaller. The checker routes `cmp`, `<`,
+## `sort` and `sorted` of an `Array` or a `[T; N]` here.
+extend[T: Ord] Span[T]:
+    fn cmp_elements(self, other: Span[T]) -> Ordering:
+        n = self.len()
+        if other.len() < n:
+            n = other.len()
+        for i in range(n):
+            order = self[i].cmp(other[i])
+            if order != Ordering.Equal:
+                return order
+        return self.len().cmp(other.len())
+
 extend[T: Eq] Array[T]:
     ## Drops each element equal to the one kept before it, so a sorted array
     ## keeps one of each value.

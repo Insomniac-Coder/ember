@@ -25118,6 +25118,16 @@ impl<'a> Checker<'a> {
             }
             return Expr { ty: ordering, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(decided) }, span };
         }
+        // `[TYP-36]` (D-854) — a sequence is ordered as its elements are, lexicographically: std's
+        // `cmp_elements` over views of both, as `==` goes to `eq_elements`.
+        if let TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } = *self.types.kind(ty)
+            && !self.methods.contains_key(&(ty, Symbol::intern("cmp")))
+        {
+            let view = self.types.intern(TyKind::Span { elem, mutable: false });
+            let (lhs, rhs) = (self.coerce(lhs, view), self.coerce(rhs, view));
+            self.extend_instance_at_use(view);
+            return self.call_operator("cmp_elements", lhs, rhs, span);
+        }
         if !self.sortable(ty) {
             if self.methods.contains_key(&(ty, Symbol::intern("cmp"))) {
                 return self.call_operator("cmp", lhs, rhs, span);
@@ -30974,11 +30984,14 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether `cmp` on `ty` is the compiler's (`synth_cmp_of`): the numbers and text, a tuple
-    /// whose elements are all `Ord` (`[TYP-36]`: lexicographic), or a shared reference to one.
+    /// whose elements are all `Ord` or a sequence whose element is (`[TYP-36]`: lexicographic),
+    /// or a shared reference to one.
     fn provides_cmp(&self, ty: Ty) -> bool {
         match *self.types.kind(ty) {
             TyKind::Ref { mutable: false, inner } => self.provides_cmp(inner),
-            TyKind::Tuple(_) => self.implements(ty, Symbol::intern("std.core.Ord")),
+            TyKind::Tuple(_) | TyKind::Vec { text: false, .. } | TyKind::Array { .. } | TyKind::ArrayN { .. } => {
+                self.implements(ty, Symbol::intern("std.core.Ord"))
+            }
             _ => self.sortable(ty),
         }
     }
@@ -38577,10 +38590,17 @@ impl<'a> Checker<'a> {
         // totalOrder) and text, and `Clone` and `Eq` on every type it can
         // clone or compare, a struct's implicit ones included. D-246.
         let provided = match interface.as_str() {
-            // `[TYP-36]` — a tuple is `Ord` lexicographically when every element is.
+            // `[TYP-36]` — a tuple is `Ord` lexicographically when every element is, and an
+            // `Array[T]` or a `[T; N]` when its element is (D-854).
             "std.core.Ord" => {
                 self.sortable(ty)
-                    || matches!(self.types.kind(ty), TyKind::Tuple(items) if items.iter().all(|&item| self.implements(item, interface)))
+                    || match *self.types.kind(ty) {
+                        TyKind::Tuple(ref items) => items.iter().all(|&item| self.implements(item, interface)),
+                        TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
+                            self.implements(elem, interface)
+                        }
+                        _ => false,
+                    }
             }
             "std.core.Clone" => self.is_cloneable(ty),
             "std.core.Eq" => self.has_implicit_eq(ty),
