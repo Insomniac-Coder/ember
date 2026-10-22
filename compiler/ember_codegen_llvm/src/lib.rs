@@ -22,6 +22,7 @@ mod debug;
 mod dispatch;
 mod ffi;
 mod fmt;
+mod fold;
 mod func;
 mod glue;
 mod leaks;

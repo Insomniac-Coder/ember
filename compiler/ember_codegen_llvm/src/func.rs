@@ -29,6 +29,7 @@ pub(crate) enum Val {
 
 /// A place's address, its type, the variant a `Downcast` chose, and the alignment the address
 /// is known to have.
+#[derive(Clone)]
 pub(crate) struct PlaceRef {
     pub ptr: String,
     pub ty: Ty,
@@ -57,6 +58,14 @@ pub(crate) struct FnCx<'m, 'a> {
     scope: Option<(usize, u32)>,
     /// Each line and column's `DILocation` in it.
     locations: HashMap<(u32, u32), usize>,
+    /// `[GRM-39]` — the literals written straight into the next literal's field (`fold`).
+    folded: HashMap<LocalId, Rvalue>,
+}
+
+/// A literal's operand: its value, or a folded literal's temporary (`[GRM-39]`).
+enum Field {
+    Val(Val),
+    Folded(LocalId),
 }
 
 /// The ABI signature of a function returning `ret` and taking `params`.
@@ -212,7 +221,8 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     if body.variadic {
         return unsupported("a variadic function definition");
     }
-    if body.abi.as_deref().is_some_and(|abi| abi != "C") {
+    // `[FFI-9]` — on x86-64, `"system"` and `"fastcall"` are the platform's C convention.
+    if body.abi.as_deref().is_some_and(|abi| !matches!(abi, "C" | "system" | "fastcall")) {
         return unsupported(format!("the calling convention `{}`", body.abi.as_deref().unwrap_or_default()));
     }
     define_body(m, body, |cx| {
@@ -231,6 +241,7 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
     let optimized = m.profile != Profile::Debug;
     let link = crate::link_symbol(&body.symbol);
     let (subprogram, line) = m.debug.subprogram(m.map, &link, body.span, optimized);
+    let folded = crate::fold::foldable(m.ty.table, body);
     let mut cx = FnCx {
         m,
         body: Some(body),
@@ -244,6 +255,7 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
         span: ember_span::Span::DUMMY,
         scope: Some((subprogram, line)),
         locations: HashMap::new(),
+        folded,
     };
     cx.frame()?;
     build(&mut cx)?;
@@ -419,6 +431,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             span: ember_span::Span::DUMMY,
             scope: None,
             locations: HashMap::new(),
+            folded: HashMap::new(),
         }
     }
 
@@ -658,7 +671,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
             }
         }
         for (index, decl) in body.locals.iter().enumerate() {
-            if self.addr[index].is_some() || (index >= 1 && index <= body.arg_count) {
+            // A folded literal's temporary has no slot: it is written in its reader's field.
+            if self.addr[index].is_some() || (index >= 1 && index <= body.arg_count) || self.folded.contains_key(&LocalId(index as u32)) {
                 continue;
             }
             match self.m.ty.repr(decl.ty) {
@@ -961,6 +975,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
         self.span = span;
         match kind {
             StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => Ok(()),
+            // `[GRM-39]` — a folded literal is written where the next literal reads it.
+            StmtKind::Assign { place, .. } if place.projection.is_empty() && self.folded.contains_key(&place.local) => Ok(()),
             StmtKind::Assign { place, rvalue } => self.assign(place, rvalue, span),
             StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => self.checked(dest, overflow, *op, lhs, rhs),
             StmtKind::Drop { place, flag, .. } => self.drop_stmt(place, *flag),
@@ -1253,11 +1269,25 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     fn aggregate(&mut self, place: &Place, ty: Ty, kind: &AggregateKind, operands: &[Operand]) -> Result<()> {
-        // Read every operand before the first field is written: one may read the place.
+        let values = self.aggregate_values(Some(place), operands)?;
+        let at = self.place(place)?;
+        self.write_aggregate(&at, ty, kind, operands, values)
+    }
+
+    /// A literal's operands, every one read before the first field is written (one may read the
+    /// place); a folded literal's temporary (`[GRM-39]`) is written in its field's place instead.
+    fn aggregate_values(&mut self, place: Option<&Place>, operands: &[Operand]) -> Result<Vec<Field>> {
         let mut values = Vec::with_capacity(operands.len());
         for operand in operands {
+            if let Operand::Copy(read) | Operand::Move(read) = operand
+                && read.projection.is_empty()
+                && self.folded.contains_key(&read.local)
+            {
+                values.push(Field::Folded(read.local));
+                continue;
+            }
             let mut value = self.operand(operand)?;
-            if let (Val::Mem(ptr, align), Operand::Copy(from) | Operand::Move(from)) = (&value, operand)
+            if let (Val::Mem(ptr, align), Operand::Copy(from) | Operand::Move(from), Some(place)) = (&value, operand, place)
                 && may_overlap(place, from)
             {
                 let ty = self.place_ty(from);
@@ -1267,9 +1297,15 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.copy(&slot, align, &ptr, align, size, false);
                 value = Val::Mem(slot, align);
             }
-            values.push(value);
+            values.push(Field::Val(value));
         }
-        let at = self.place(place)?;
+        Ok(values)
+    }
+
+    /// A literal of `ty` written at `at`, a field at a time.
+    fn write_aggregate(&mut self, at: &PlaceRef, ty: Ty, kind: &AggregateKind, operands: &[Operand], values: Vec<Field>) -> Result<()> {
+        let at = at.clone();
+        let mut values = values;
         let table = self.m.ty.table;
         let fields: Vec<(u64, Ty)> = match (kind, table.kind(ty).clone()) {
             (AggregateKind::Struct(id), _) => {
@@ -1294,7 +1330,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let def = table.enum_def(*id);
                 if let Some(niche) = table.option_niche(*id) {
                     if *variant == niche.some {
-                        let value = values.pop().expect("`Some` has its payload");
+                        let Some(Field::Val(value)) = values.pop() else { return unsupported("a niche `Some` of a folded literal") };
                         let size = self.m.ty.size_align(niche.payload).0;
                         self.store(&value, &at.ptr, at.align, size, false);
                     } else {
@@ -1318,8 +1354,23 @@ impl<'m, 'a> FnCx<'m, 'a> {
         };
         for ((offset, field_ty), value) in fields.into_iter().zip(values) {
             let field = self.field(&at, offset, field_ty);
-            let size = self.m.ty.size_align(field_ty).0;
-            self.store(&value, &field.ptr, field.align, size, false);
+            match value {
+                Field::Val(value) => {
+                    let size = self.m.ty.size_align(field_ty).0;
+                    self.store(&value, &field.ptr, field.align, size, false);
+                }
+                // `[GRM-39]` — the folded literal, with the retains its own statement made.
+                Field::Folded(local) => {
+                    let inner = self.folded.get(&local).cloned().expect("a folded literal");
+                    let Rvalue::Aggregate { kind, operands } = &inner else { unreachable!("a folded literal is an aggregate") };
+                    let inner_ty = self.mir().local(local).ty;
+                    if !self.mir().uncounted_handles.contains(&local) {
+                        self.retain_rvalue(&inner, inner_ty)?;
+                    }
+                    let values = self.aggregate_values(None, operands)?;
+                    self.write_aggregate(&field, inner_ty, kind, operands, values)?;
+                }
+            }
         }
         Ok(())
     }
@@ -1409,8 +1460,16 @@ impl<'m, 'a> FnCx<'m, 'a> {
             }
             TyKind::Range(id) => {
                 let repr = table.range_def(id).repr;
+                // `[RNG-7]` — a float range's value is never NaN: a quiet NaN is `None`.
                 if self.m.ty.is_float(repr) {
-                    return unsupported("a float range's niche");
+                    let (ty, bits) = match self.m.ty.repr(repr) {
+                        Repr::Scalar(Sc::F32) => ("i32", "2143289344"),
+                        Repr::Scalar(Sc::F64) => ("i64", "9221120237041090560"),
+                        _ => ("i16", "32256"),
+                    };
+                    let width = ty[1..].parse::<u64>().unwrap_or(16) / 8;
+                    self.emit(format!("store {ty} {bits}, ptr {ptr}, align {}", at.align.min(width)));
+                    return Ok(());
                 }
                 let bits = table.range_unused_integer(id).expect("an integer range niche has an unused value");
                 let Repr::Scalar(sc) = self.m.ty.repr(repr) else { unreachable!("a range is a scalar") };
@@ -1466,8 +1525,16 @@ impl<'m, 'a> FnCx<'m, 'a> {
             }
             TyKind::Range(id) => {
                 let repr = table.range_def(id).repr;
+                // `[RNG-7]` — NaN is `None`.
+                if self.m.ty.is_f16(repr) {
+                    let bits = self.load(Sc::I(16), &ptr, align.min(2));
+                    let magnitude = self.value(format!("and i16 {bits}, 32767"));
+                    return Ok(self.value(format!("icmp ugt i16 {magnitude}, 31744")));
+                }
                 if self.m.ty.is_float(repr) {
-                    return unsupported("a float range's niche");
+                    let Repr::Scalar(sc) = self.m.ty.repr(repr) else { unreachable!("a range is a scalar") };
+                    let value = self.load(sc, &ptr, align.min(sc.bits().div_ceil(8) as u64));
+                    return Ok(self.value(format!("fcmp uno {} {value}, {value}", sc.ir())));
                 }
                 let bits = table.range_unused_integer(id).expect("an integer range niche has an unused value");
                 let Repr::Scalar(sc) = self.m.ty.repr(repr) else { unreachable!("a range is a scalar") };
@@ -2725,6 +2792,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         span: ember_span::Span::DUMMY,
         scope: Some((subprogram, line)),
         locations: HashMap::new(),
+        folded: HashMap::new(),
     };
     // `ember_rt_config_default()`: its size, and nothing else set.
     let cfg = cx.alloca(48, 8);
