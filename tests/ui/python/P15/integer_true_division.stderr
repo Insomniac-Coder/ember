@@ -1,0 +1,11 @@
+error[E2240]: `/` on two integers
+ --> tests/ui/python/P15/integer_true_division.em:4:13
+  |
+4 |     println(total / people)
+  |             ^^^^^^^^^^^^^^
+  |
+  = help: or convert both operands, `a as float / b as float`, for a float result
+  = help: write `a // b` for floor division
+  = note: `/` is true division in Ember, as in Python 3 [TYP-28]
+
+error: could not compile due to 1 error(s)

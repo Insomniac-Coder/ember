@@ -34,4 +34,4 @@ extend Words implements Src:
 
 fn main():
     words = Words(w = "a".to_string())
-    v = words.wrap()   #$ error[E1010]: `Words` has no method named `wrap`
+    v = words.wrap()   #$ error[E2072]: `Words` has no method named `wrap`

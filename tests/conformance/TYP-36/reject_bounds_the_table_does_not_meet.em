@@ -16,4 +16,4 @@ fn copy_of[T: Copy](x: T) -> T:
 
 println(show(Point(1)))   #$ error[E2040]: `Point` does not implement `Display`, which `T` requires
 println(copy_of(String.from("s")))   #$ error[E2040]: `String` does not implement `Copy`, which `T` requires
-println([Point(1)].join(", "))   #$ error[E1010]: `Array[Point]` has no method named `join`
+println([Point(1)].join(", "))   #$ error[E2072]: `Array[Point]` has no method named `join`

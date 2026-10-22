@@ -77,6 +77,52 @@ fn is_wide_split_space(code: u32) -> bool:
     return (code == 0x85 or code == 0xA0 or code == 0x1680 or (code >= 0x2000 and code <= 0x200A)
         or code == 0x2028 or code == 0x2029 or code == 0x202F or code == 0x205F or code == 0x3000)
 
+## `[TXT-10]` (ODR-183) — a character's class, as Python's `isalpha`, `isdigit`, `isalnum` and
+## `isspace` of one character give it (Unicode; no locale), and the same restricted to ASCII. An
+## ASCII character is decided here; the tables past it are the runtime's (`tools/unicode_case.py`).
+extend char:
+    ## A letter: Unicode's categories Lu, Ll, Lt, Lm and Lo (Python's `isalpha`).
+    pub fn is_alphabetic(self) -> bool:
+        code = self as u32
+        if code < 0x80:
+            return (code | 0x20) >= 0x61 and (code | 0x20) <= 0x7A
+        return char_class(self, 0)
+
+    ## A digit of any script, superscripts included (Python's `isdigit`): `'7'`, `'٣'`, `'²'`.
+    pub fn is_digit(self) -> bool:
+        code = self as u32
+        if code < 0x80:
+            return code >= 0x30 and code <= 0x39
+        return char_class(self, 1)
+
+    ## A letter or a number of any kind (Python's `isalnum`): alphabetic, or numeric (`'½'`).
+    pub fn is_alphanumeric(self) -> bool:
+        code = self as u32
+        if code < 0x80:
+            return (code >= 0x30 and code <= 0x39) or ((code | 0x20) >= 0x61 and (code | 0x20) <= 0x7A)
+        return char_class(self, 0) or char_class(self, 2)
+
+    ## White space, as `split_whitespace` splits at (Python's `isspace`).
+    pub fn is_whitespace(self) -> bool:
+        return is_split_space(self)
+
+    pub fn is_ascii_alphabetic(self) -> bool:
+        return (self as u32) < 0x80 and self.is_alphabetic()
+
+    pub fn is_ascii_digit(self) -> bool:
+        return (self as u32) < 0x80 and self.is_digit()
+
+    pub fn is_ascii_alphanumeric(self) -> bool:
+        return (self as u32) < 0x80 and self.is_alphanumeric()
+
+    pub fn is_ascii_whitespace(self) -> bool:
+        return (self as u32) < 0x80 and is_split_space(self)
+
+## The runtime's own (`ember_hir::RuntimeFn`): whether `c`, past ASCII, is alphabetic (`which` 0),
+## a digit (1) or numeric (2). This staging body never runs.
+fn char_class(c: char, which: int) -> bool:
+    return false
+
 @derive(Copy)
 pub struct Chars:
     text: str

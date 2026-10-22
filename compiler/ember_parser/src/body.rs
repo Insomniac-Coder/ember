@@ -157,6 +157,15 @@ impl Parser<'_> {
             }
         }
 
+        // `[DIA-21]` — Python's `def`, `let`/`var`, `raise`, `try`, `global`.
+        self.python_def();
+        self.python_declaration_word();
+        if let Some(kind) = self.python_statement() {
+            if self.at_newline() {
+                self.bump();
+            }
+            return Some(Stmt { id, attrs, kind, span: start.to(self.prev_span()) });
+        }
         let kind = match self.peek() {
             TokenKind::Keyword(Kw::If) => StmtKind::If(self.parse_if()),
             TokenKind::Keyword(Kw::While) => self.parse_while(None),
@@ -178,6 +187,14 @@ impl Parser<'_> {
                         p
                     });
                     let value = self.parse_expr();
+                    // `[DIA-21]` P11 — Python's `with open(p) as f:`.
+                    let (pattern, value) = match pattern {
+                        None => match self.python_with(&value) {
+                            Some((pattern, value)) => (Some(pattern), value),
+                            None => (None, value),
+                        },
+                        bound => (bound, value),
+                    };
                     items.push(WithItem {
                         pattern,
                         value,
@@ -422,7 +439,9 @@ impl Parser<'_> {
                 let mut diagnostic = Diagnostic::error(codes::E2036, span, "this pattern always matches");
                 if let PatternKind::Bind { name, sub: None, .. } = &pattern.kind {
                     let comparison = format!("{} == {value_text}", name.name);
+                    // `[DIA-21]` P16 — Python's `if x = 5:` typo.
                     diagnostic = diagnostic
+                        .habit(ember_diag::habits::Habit::P16)
                         .suggest(format!("did you mean `{comparison}`?"), span, comparison)
                         .note(format!("to declare `{}`, write `{} = {value_text}` on the line before", name.name, name.name));
                 } else {
@@ -520,6 +539,7 @@ impl Parser<'_> {
 
         let mut arms = Vec::new();
         let mut expression_form: Option<bool> = None;
+        let (mut cases, mut arrows, mut statement_arm) = (Vec::new(), Vec::new(), None);
         if self.at_newline() {
             self.bump();
             if self.eat_indent() {
@@ -527,6 +547,10 @@ impl Parser<'_> {
                     self.eat_newlines();
                     if self.at_dedent() || self.at_eof() {
                         break;
+                    }
+                    // `[DIA-21]` P17 — Python's `case p:`.
+                    if let Some(case) = self.python_case() {
+                        cases.push(case);
                     }
                     let start = self.span();
                     let id = self.next_id();
@@ -551,10 +575,24 @@ impl Parser<'_> {
                     }
 
                     let body = if is_expression_arm {
+                        let arrow = self.span();
+                        arrows.push(arrow);
                         self.bump();
-                        let expr = self.parse_expr();
-                        self.expect_newline();
-                        MatchArmBody::Expr(expr)
+                        // `[DIA-21]` P28 — a statement after `=>`: read as the statement arm it means.
+                        let (resume, mark) = (self.pos, self.sink.mark());
+                        let expr = (!self.at_kw(Kw::Pass)).then(|| self.parse_expr());
+                        if expr.is_none() || self.at_punct(Punct::Eq) || self.augmented_assign_op().is_some() {
+                            self.sink.rollback(mark);
+                            self.pos = resume;
+                            statement_arm.get_or_insert(arrow);
+                            let block_start = self.span();
+                            let stmts: Vec<Stmt> = self.parse_simple_statement().into_iter().collect();
+                            self.expect_newline();
+                            MatchArmBody::Block(Block { id: self.next_id(), stmts, span: block_start.to(self.prev_span()) })
+                        } else {
+                            self.expect_newline();
+                            MatchArmBody::Expr(expr.expect("parsed"))
+                        }
                     } else {
                         self.expect_punct(Punct::Colon);
                         MatchArmBody::Block(self.parse_block())
@@ -562,6 +600,17 @@ impl Parser<'_> {
                     arms.push(MatchArm { id, pattern, guard, body, span: start.to(self.prev_span()) });
                 }
                 self.eat_dedent();
+            }
+        }
+        self.report_python_cases(cases);
+        if let Some(first) = statement_arm {
+            self.report_python_statement_arms(first, arrows);
+            for arm in &mut arms {
+                if let MatchArmBody::Expr(expr) = &arm.body {
+                    let (span, expr) = (expr.span, expr.clone());
+                    let stmt = Stmt { id: self.next_id(), attrs: Vec::new(), kind: StmtKind::Expr(expr), span };
+                    arm.body = MatchArmBody::Block(Block { id: self.next_id(), stmts: vec![stmt], span });
+                }
             }
         }
         (scrutinee, arms)
@@ -985,6 +1034,8 @@ impl Parser<'_> {
     }
 
     fn parse_atom(&mut self, allow_block_lambda: bool) -> Expr {
+        // `[DIA-21]` P13 — `lambda x: e`.
+        self.python_lambda();
         let start = self.span();
         let id = self.next_id();
 
@@ -1335,6 +1386,7 @@ impl Parser<'_> {
                         let hi = self.starts_expression().then(|| Box::new(self.parse_expr()));
                         self.report(
                             Diagnostic::error(codes::E0100, colon, "a slice is written `xs[a..b]` in Ember")
+                                .habit(ember_diag::habits::Habit::P7)
                                 .primary_label("Python's `:`")
                                 .suggest("write `..`", colon, ".."),
                         );

@@ -1,0 +1,10 @@
+error[E2020]: `==` cannot be applied to `char` and `str`
+ --> tests/ui/python/P27/char_against_a_string.em:3:12
+  |
+3 |         if c == "S":
+  |            ^^^^^^^^
+  |
+  = help: compare with the character `'S'`
+  = note: a `char` is one character and a `str` text; Python has only the second [TXT-10]
+
+error: could not compile due to 1 error(s)

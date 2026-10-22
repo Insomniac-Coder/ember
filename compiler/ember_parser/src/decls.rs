@@ -965,6 +965,7 @@ impl Parser<'_> {
         let name = if method { self.expect_member_name() } else { self.expect_fn_name() };
         let generics = self.parse_generic_params();
 
+        let lparen = self.span();
         self.expect_punct(Punct::LParen);
         let mut params = Vec::new();
         while !self.at_punct(Punct::RParen) && !self.at_eof() {
@@ -983,7 +984,13 @@ impl Parser<'_> {
         if is_unsafe && self.at_punct(Punct::Colon) && !self.in_extern_block {
             self.unsafe_sites.push(unsafe_site);
         }
+        let body_start = self.pos;
         let body = if self.eat_punct(Punct::Colon) { Some(self.parse_block()) } else { None };
+        // `[DIA-21]` P14 — a method whose body uses `self` it does not take.
+        if method && body.is_some() {
+            let body_end = self.pos;
+            self.python_missing_self(lparen, &mut params, body_start..body_end);
+        }
         if body.is_none() {
             if self.tokens[signature_start..=self.pos.min(self.tokens.len() - 1)]
                 .iter()
@@ -998,6 +1005,8 @@ impl Parser<'_> {
     }
 
     fn parse_param(&mut self) -> Param {
+        // `[DIA-21]` P19 — `*args`, `**kwargs`.
+        self.python_star_param();
         let start = self.span();
         let id = self.next_id();
         let mode = if self.eat_kw(Kw::Mut) {
@@ -1363,6 +1372,8 @@ impl Parser<'_> {
         doc: Option<String>,
         attrs: Vec<Attribute>,
     ) -> Option<Member> {
+        // `[DIA-21]` P2 — `def m(self):` in a type's body is a method.
+        self.python_def();
         let start = self.span();
         let (vis, read_only_outside) = self.parse_visibility();
         let id = self.next_id();

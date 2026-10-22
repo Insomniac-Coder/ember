@@ -1,0 +1,10 @@
+error[E2020]: `max` of one collection is its iterator's `max()`
+ --> tests/ui/python/P5/max_of_a_list.em:2:12
+  |
+2 |     return max(scores)
+  |            ^^^^^^^^^^^ Python's `max` of a collection
+  |
+  = help: write `xs.iter().max().unwrap()`
+  = note: the prelude's `max(a, b)` takes two values [STD-26]; `max()` of an iterator is `None` when it is empty
+
+error: could not compile due to 1 error(s)

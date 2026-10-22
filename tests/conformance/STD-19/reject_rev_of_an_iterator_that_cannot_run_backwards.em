@@ -5,5 +5,5 @@
 # range with no end has no last item, so its iterator has none.
 
 fn main():
-    for i in (0..).iter().rev():    #$ error[E1010]: `RangeFromIter[i64]` has no method named `rev`
+    for i in (0..).iter().rev():    #$ error[E2072]: `RangeFromIter[i64]` has no method named `rev`
         println(i)

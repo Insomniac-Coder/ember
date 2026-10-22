@@ -21,11 +21,6 @@ struct Sale:
     fn revenue(self) -> float:
         return self.units as float * self.price
 
-@derive(Error)
-enum CsvError:
-    @error("expected 4 fields, got {count}")
-    FieldCount(count: int)
-
 struct RegionTotals:
     units: int = 0
     revenue: float = 0.0
@@ -34,10 +29,10 @@ struct RegionTotals:
 fn parse_line(line: str) -> Result[Sale]:
     fields = line.split(",").collect[Array[str]]()
     if fields.len() != 4:
-        return Err(AnyError.from(CsvError.FieldCount(count=fields.len())))
+        return Err(AnyError.msg(f"expected 4 fields, got {fields.len()}"))
     units = fields[2].trim().parse[int]()?
     price = fields[3].trim().parse[float]()?
-    return Ok(Sale(region=fields[0].trim().to_string(), product=fields[1].trim().to_string(), units=units, price=price))
+    return Ok(Sale(region=(fields[0].trim()).to_string(), product=(fields[1].trim()).to_string(), units=units, price=price))
 
 fn main():
     sales: Array[Sale] = []

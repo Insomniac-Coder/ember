@@ -1,0 +1,9 @@
+error[E0100]: `def` is Python's; Ember declares a function with `fn`
+ --> tests/ui/python/P2/def_declares_a_function.em:1:1
+  |
+1 | def greet(name: str):
+  | ^^^
+  |
+  = help: write `fn`
+
+error: could not compile due to 1 error(s)

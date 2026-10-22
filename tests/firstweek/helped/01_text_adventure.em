@@ -62,7 +62,7 @@ class Game:
 
     fn take(self, item: str):
         room = ref mut self.rooms[self.current]
-        if room.items.iter().any(fn(e) => e == item):
+        if item.to_string() in room.items:
             room.items.retain(fn(i) => i != item)
             self.inventory.push(item.to_string())
             println(f"Taken: {item}")
@@ -70,12 +70,15 @@ class Game:
             println(f"There is no {item} here.")
 
 fn parse_direction(word: str) -> Option[Direction]:
-    return match word:
-        "north" | "n" => Some(Direction.North)
-        "south" | "s" => Some(Direction.South)
-        "east" | "e" => Some(Direction.East)
-        "west" | "w" => Some(Direction.West)
-        _ => None
+    if word == "north" or word == "n":
+        return Some(Direction.North)
+    if word == "south" or word == "s":
+        return Some(Direction.South)
+    if word == "east" or word == "e":
+        return Some(Direction.East)
+    if word == "west" or word == "w":
+        return Some(Direction.West)
+    return None
 
 fn run_command(game: Game, line: str):
     words = line.trim().to_lower().split(" ").map(fn(w) => w.to_string()).collect[Array[String]]()

@@ -1,0 +1,10 @@
+error[E0100]: a `=>` arm is an expression, and this is a statement
+ --> tests/ui/python/P28/assignment_in_an_arrow_arm.em:9:19
+  |
+9 |         Joined(_) => count += 1
+  |                   ^^
+  |
+  = help: write every arm `pattern:`
+  = note: a `match` whose arms do something is written with `pattern:` arms, a statement on the line or a block below [GRM-10]
+
+error: could not compile due to 1 error(s)

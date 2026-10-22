@@ -12,4 +12,4 @@ struct Guard:
 
 fn main():
     g = Guard(id=1)
-    h = g.clone()    #$ error[E1010]: `Guard` has no method named `clone`
+    h = g.clone()    #$ error[E2072]: `Guard` has no method named `clone`

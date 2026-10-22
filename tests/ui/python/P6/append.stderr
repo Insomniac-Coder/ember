@@ -1,0 +1,10 @@
+error[E2072]: `Array[String]` has no method named `append`
+ --> tests/ui/python/P6/append.em:3:11
+  |
+3 |     names.append("ada")
+  |           ^^^^^^
+  |
+  = help: Ember's name for it is `push`
+  = note: a Python method Ember spells otherwise has one name, Ember's (Appendix E) [STD-13]
+
+error: could not compile due to 1 error(s)

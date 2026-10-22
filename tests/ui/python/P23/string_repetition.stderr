@@ -1,0 +1,9 @@
+error[E2020]: `*` cannot be applied to `str` and `i64`
+ --> tests/ui/python/P23/string_repetition.em:3:14
+  |
+3 |     indent = "  " * depth
+  |              ^^^^^^^^^^^^ Python's string repetition
+  |
+  = help: repeat the text with `s.repeat(n)` [TXT-10]
+
+error: could not compile due to 1 error(s)

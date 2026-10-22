@@ -21,6 +21,7 @@ mod derives;
 mod serial;
 mod comptime;
 mod coroutines;
+mod habits;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -466,6 +467,7 @@ pub fn check(
     // `K: Hash` needs `String`'s); it is offered each one again. One whose
     // hidden arguments those implementations answer is filled in then.
     checker.implementations_known = true;
+    checker.report_early_interface_types();
     checker.extend_early_instances();
     checker.complete_early_instances();
     checker.class_methods_recorded = true;
@@ -1785,29 +1787,6 @@ struct GenericClass {
 }
 
 /// `[GRM-34]` — the built-in generic types an `extend[...]` may name.
-/// `[STD-13]` — a Python method name Ember spells otherwise (Appendix E): `E2072`, whose help names
-/// Ember's method. There is no second name.
-fn python_method_name(shown: &str, name: ast::Ident) -> Option<Diagnostic> {
-    let ember = match name.name.as_str() {
-        "append" => "push",
-        "index" => "index_of",
-        "strip" => "trim",
-        "lstrip" => "trim_start",
-        "rstrip" => "trim_end",
-        "splitlines" => "lines",
-        "startswith" => "starts_with",
-        "endswith" => "ends_with",
-        "upper" => "to_upper",
-        "lower" => "to_lower",
-        _ => return None,
-    };
-    Some(
-        Diagnostic::error(codes::E2072, name.span, format!("no method `{}` on `{shown}`", name.name))
-            .help(format!("Ember's name for it is `{ember}`"))
-            .note("a Python method Ember spells otherwise has one name, Ember's (Appendix E) [STD-13]"),
-    )
-}
-
 const BUILTIN_GENERICS: [&str; 6] = ["Array", "Span", "MutSpan", "Option", "Result", "SoA"];
 
 /// V.7 — a `const` that is not a bare literal: a constant expression
@@ -2753,6 +2732,13 @@ struct Checker<'a> {
     /// from a generic tuple extension over its elements' implementations) is named, and filled
     /// in once they can (`complete_early_instances`).
     implementations_known: bool,
+    /// `[DIA-21]` P22 — each interface named as a type before the implementations were known,
+    /// with where; and the interfaces reported as implemented by values only, whose uses then say
+    /// nothing more (`[DIA-14]`).
+    early_interface_types: Vec<(Symbol, Span)>,
+    values_only_interfaces: HashSet<Symbol>,
+    /// `[DIA-21]` P25 — the locals holding an iterator that a list operation was answered for.
+    iterators_answered: HashSet<LocalId>,
     /// Whether every interface is collected (`collect_interfaces`): before then, a hidden
     /// parameter's bounds may still be unknown (`close_projection_bounds`).
     interfaces_collected: bool,
@@ -3298,6 +3284,9 @@ impl<'a> Checker<'a> {
             struct_hidden: HashMap::new(),
             concrete_instances: HashMap::new(),
             implementations_known: false,
+            early_interface_types: Vec::new(),
+            values_only_interfaces: HashSet::new(),
+            iterators_answered: HashSet::new(),
             interfaces_collected: false,
             early_instances: Vec::new(),
             ecs_systems: HashMap::new(),
@@ -12474,6 +12463,15 @@ impl<'a> Checker<'a> {
     /// latter is unsized and needs a fat pointer, while this form is a counted
     /// class owner whose vtable is found through TypeInfo under `[DSP-3]`.
     fn class_interface_type(&mut self, interface: Symbol, span: Span) -> Ty {
+        // `[DIA-21]` P22 (ODR-182) — an interface whose implementations are values, not classes;
+        // asked once they are known.
+        if !self.implementations_known {
+            self.early_interface_types.push((interface, span));
+        } else if let Some(diagnostic) = self.interface_of_values(interface, span) {
+            self.values_only_interfaces.insert(interface);
+            self.sink.emit(diagnostic);
+            return self.common.error;
+        }
         if let Some(reason) = self.dyn_incompatibility(interface) {
             self.sink.emit(
                 Diagnostic::error(
@@ -14168,6 +14166,13 @@ impl<'a> Checker<'a> {
             let diagnostic = Diagnostic::error(codes::E1010, span, message);
             let diagnostic = if is_known_type {
                 diagnostic
+            } else if name.is("Generator") && args.len() == 1 {
+                // `[CORO-3]` (D-822) — `Generator[T]` names a `gen fn`'s own frame, in its return
+                // type: elsewhere the type that iterates `T`s is any iterator's.
+                let item = self.types.display(args[0].0);
+                diagnostic
+                    .help(format!("take any iterator of `{item}`: a type parameter `[I: Iterator[Item = {item}]]`, and `owned g: I`"))
+                    .note("`Generator[T]` names a `gen fn`'s own frame, and only in that function's return type [CORO-3]")
             } else {
                 self.add_name_suggestions(diagnostic, name, name_span)
             };
@@ -16902,11 +16907,13 @@ impl<'a> Checker<'a> {
                 let shown = self.types.display(arg);
                 let interface = self.interface_shown(bound);
                 let owner = name.as_str().rsplit('.').next().unwrap_or_default().to_string();
-                self.error(
+                let diagnostic = Diagnostic::error(
                     codes::E2040,
                     span,
                     format!("`{shown}` does not implement `{interface}`, which `{owner}`'s `{}` requires", param.name),
                 );
+                let diagnostic = self.bound_help(diagnostic, arg, bound);
+                self.sink.emit(diagnostic);
                 met = false;
             }
         }
@@ -16927,6 +16934,10 @@ impl<'a> Checker<'a> {
             let substituted = self.substitute_bound(bound, substitution);
             if self.implements_or_blanket(ty, substituted) {
                 continue;
+            }
+            // `[DIA-14]` — a type holding an error was reported where the error was.
+            if self.mentions_error(ty) {
+                return Vec::new();
             }
             missed.push(substituted);
             let mut pending = vec![bound];
@@ -24148,7 +24159,18 @@ impl<'a> Checker<'a> {
                         if !self.is_text(text.ty) {
                             if text.ty != self.common.error {
                                 let shown = self.types.display(text.ty);
-                                self.error(codes::E2020, value.span, format!("`+=` appends text to a `String`, found `{shown}`"));
+                                let mut diagnostic = Diagnostic::error(codes::E2020, value.span, format!("`+=` appends text to a `String`, found `{shown}`"));
+                                // `[DIA-21]` P27 — Python adds a one-character string; a `char` is pushed.
+                                if matches!(self.types.kind(text.ty), TyKind::Char) && target.span.end <= value.span.start {
+                                    diagnostic = diagnostic.habit(ember_diag::habits::Habit::P27).suggest_edits(
+                                        "push the character: `s.push(c)` [TXT-11]",
+                                        vec![
+                                            (Span::new(value.span.file, target.span.end, value.span.start), ember_diag::Replacement::Text(".push(".to_string())),
+                                            (value.span.shrink_to_end(), ember_diag::Replacement::Text(")".to_string())),
+                                        ],
+                                    );
+                                }
+                                self.sink.emit(diagnostic);
                             }
                             return;
                         }
@@ -24171,6 +24193,12 @@ impl<'a> Checker<'a> {
                     let code = if matches!(self.types.kind(place_ty), TyKind::Param { .. }) { codes::E2040 } else { codes::E2020 };
                     let mut diagnostic =
                         Diagnostic::error(code, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                    // `[DIA-21]` P26 — text built with `+=` in a `str`.
+                    if *bin == ast::BinOp::Add && place_ty == self.common.str_ {
+                        diagnostic = self.growing_a_str(&place, diagnostic);
+                        self.sink.emit(diagnostic);
+                        return;
+                    }
                     if let Some((method, assign)) = compound_methods(*bin)
                         && let (Some(interface), Some(assign)) = (operator_interface(method), operator_interface(assign))
                     {
@@ -26680,12 +26708,15 @@ impl<'a> Checker<'a> {
                 hir::Pattern { ty: expected, kind: hir::PatternKind::Int(value), span }
             }
             None => {
-                let shown = self.types.display(expected);
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("this literal cannot match a value of type `{shown}`"),
-                );
+                // `[DIA-14]` — a scrutinee already in error says nothing more.
+                if !self.mentions_error(expected) {
+                    let shown = self.types.display(expected);
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("this literal cannot match a value of type `{shown}`"),
+                    );
+                }
                 hir::Pattern { ty: self.common.error, kind: hir::PatternKind::Wild, span }
             }
         }
@@ -31755,6 +31786,15 @@ impl<'a> Checker<'a> {
             _ => (1, 2),
         };
         let named_ok = args.iter().all(|a| a.name.is_none_or(|n| name == "sum" && n.name.is("start")));
+        // `[DIA-21]` P5 — `min(xs)`, `max(xs)` of one collection.
+        if matches!(name, "min" | "max")
+            && named_ok
+            && let [only] = positional.as_slice()
+            && let Some(diagnostic) = self.min_max_of_one(name, only, span)
+        {
+            self.sink.emit(diagnostic);
+            return Some(error);
+        }
         if !named_ok || positional.len() < fewest || positional.len() > most {
             let wanted = if fewest == most { format!("{fewest}") } else { format!("{fewest} or {most}") };
             self.error(
@@ -31775,11 +31815,14 @@ impl<'a> Checker<'a> {
                 }
                 match *self.types.kind(value.ty) {
                     _ if self.is_text(value.ty) => {
-                        self.sink.emit(
-                            Diagnostic::error(codes::E2073, positional[0].span, "`len` of a string")
-                                .note("Python counts characters; Ember's `s.len()` counts bytes [STD-26]")
-                                .help("`s.char_count()` for Python's count, or `s.len()` for the bytes"),
-                        );
+                        // `[DIA-21]` P4 — Python's count first, then the bytes.
+                        let mut diagnostic = Diagnostic::error(codes::E2073, positional[0].span, "`len` of a string")
+                            .habit(ember_diag::habits::Habit::P4)
+                            .note("Python counts characters; Ember's `s.len()` counts bytes [STD-26]");
+                        for (method, why) in [("char_count", "for Python's count of characters"), ("len", "for the bytes")] {
+                            diagnostic = diagnostic.suggest_edits(format!("`s.{method}()` {why}"), habits::receiver_edits(span, positional[0], &format!(".{method}()")));
+                        }
+                        self.sink.emit(diagnostic);
                         error
                     }
                     TyKind::Vec { .. } => {
@@ -32965,24 +33008,23 @@ impl<'a> Checker<'a> {
     /// `[CTL-0]` — the fix-it for a non-`bool` condition, chosen by type. The
     /// rule names four shapes; anything else gets the bare error, because a
     /// wrong suggestion costs more than none.
-    fn truthiness_fix(&self, ty: Ty) -> Option<String> {
+    /// `[CTL-0]` — the test a value that is not a `bool` stands for in Python: the help, and what
+    /// goes before and after the value to write it.
+    fn truthiness_fix(&self, ty: Ty) -> Option<(String, &'static str, &'static str)> {
+        let fix = |help: &str, before, after| Some((help.to_string(), before, after));
         match self.types.kind(ty) {
             TyKind::Vec { .. } | TyKind::Str | TyKind::Array { .. } | TyKind::ArrayN { .. } => {
-                Some("a container is not a condition: write `not xs.is_empty()`".to_string())
+                fix("a container is not a condition: write `not xs.is_empty()`", "not ", ".is_empty()")
             }
-            TyKind::Int(_) | TyKind::Uint(_) => {
-                Some("a number is not a condition: write `x != 0`".to_string())
-            }
-            TyKind::Ptr { .. } => {
-                Some("a pointer is not a condition: write `not p.is_null()`".to_string())
-            }
+            TyKind::Int(_) | TyKind::Uint(_) => fix("a number is not a condition: write `x != 0`", "", " != 0"),
+            TyKind::Ptr { .. } => fix("a pointer is not a condition: write `not p.is_null()`", "not ", ".is_null()"),
             TyKind::Enum(id) => {
                 let name = self.types.enum_def(*id).name;
                 let name = name.as_str();
                 if name.starts_with("Option") || name.ends_with(".Option") {
-                    Some("write `x.is_some()`".to_string())
+                    fix("write `x is not None`", "", " is not None")
                 } else if name.starts_with("Result") || name.ends_with(".Result") {
-                    Some("write `x.is_ok()`".to_string())
+                    fix("write `x.is_ok()`", "", ".is_ok()")
                 } else {
                     None
                 }
@@ -33011,8 +33053,16 @@ impl<'a> Checker<'a> {
                         "condition must be `bool`",
                     )
                     .primary_label(format!("this is `{shown}`"));
-                    if let Some(fix) = fix {
-                        diag = diag.help(fix);
+                    // `[DIA-21]` P8 — Python's truthiness: the test it means, as a fix-it.
+                    if let Some((fix, before, after)) = fix {
+                        let (open, close) = if habits::binds_as_operand(expr) { ("", "") } else { ("(", ")") };
+                        diag = diag.habit(ember_diag::habits::Habit::P8).suggest_edits(
+                            fix,
+                            vec![
+                                (expr.span.shrink_to_start(), ember_diag::Replacement::Text(format!("{before}{open}"))),
+                                (expr.span.shrink_to_end(), ember_diag::Replacement::Text(format!("{close}{after}"))),
+                            ],
+                        );
                     }
                     self.sink.emit(diag);
                     return Expr { ty: bool_ty, kind: ExprKind::Error, span: expr.span };
@@ -33181,13 +33231,17 @@ impl<'a> Checker<'a> {
             return false;
         }
         let mut diagnostic = Diagnostic::error(codes::E2240, span, "`/` on two integers")
-            .note("`/` is true division in Ember, as in Python 3 [TYP-28]")
-            .help("write `a // b` for floor division")
-            .help("or convert both operands, `a as float / b as float`, for a float result");
+            .habit(ember_diag::habits::Habit::P15)
+            .note("`/` is true division in Ember, as in Python 3 [TYP-28]");
         let (left, right) = operands;
         if left.file == right.file && left.end <= right.start {
-            diagnostic = diagnostic.migrate("integer `/` to `//`", Span::new(left.file, left.end, right.start), replacement);
+            // `[DIA-21]` P15 — the fix-it, and `[CLI-20]`'s migration, are the same edit.
+            let between = Span::new(left.file, left.end, right.start);
+            diagnostic = diagnostic.suggest("write `a // b` for floor division", between, replacement).migrate("integer `/` to `//`", between, replacement);
+        } else {
+            diagnostic = diagnostic.help("write `a // b` for floor division");
         }
+        diagnostic = diagnostic.help("or convert both operands, `a as float / b as float`, for a float result");
         self.sink.emit(diagnostic);
         true
     }
@@ -33698,9 +33752,17 @@ impl<'a> Checker<'a> {
                 .help("use a `c\"…\"` literal, or handle `.to_cstring()` and pass the owned value's `.as_cstr()`"));
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
+        let span = expr.span;
+        // `[DIA-14]` — a type holding an error was reported where the error was; and an interface
+        // named as a type that its implementations cannot be (P22) was reported at the name.
+        if self.mentions_error(expr.ty)
+            || self.mentions_error(expected)
+            || matches!(*self.types.kind(expected), TyKind::ClassInterface(interface) if self.values_only_interfaces.contains(&interface))
+        {
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         let found = self.types.display(expr.ty);
         let wanted = self.types.display(expected);
-        let span = expr.span;
         // D-555 — each lambda has a type of its own (`[CLO-1]`): a place that
         // holds one cannot hold another, and the fix is an owned callable value.
         if self.types.is_closure_environment(expr.ty)
@@ -33749,6 +33811,20 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic);
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
+        // D-822 (D1) — a callable parameter's type is its own generic one (`[CLO-3]`), whose
+        // compiler-made name the program never wrote: the parameter is named instead.
+        if let ExprKind::Local(local) = expr.kind
+            && self.callable_parameter_locals.contains(&local)
+            && let Some(name) = self.locals[local.0 as usize].name
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found the callable parameter `{name}`"))
+                    .primary_label("a callable parameter: each call's argument has a type of its own")
+                    .help(format!("make an owned callable value of it: `owned fn(…) => {name}(…)`"))
+                    .note("a `fn` parameter takes any callable, so its type is the argument's; a place of type `fn(A) -> R` holds an owned callable value [CLO-3]"),
+            );
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         let mut diagnostic =
             Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`"))
                 .primary_label(format!("this is `{found}`"));
@@ -33779,7 +33855,8 @@ impl<'a> Checker<'a> {
                 .note("calling an `unsafe fn` needs `unsafe`, and a call through a safe callable type would not [FN-6]")
                 .help("declare the place `unsafe fn(…)`, and call it inside `unsafe:`");
         }
-        let mut diagnostic = self.literal_local_help(diagnostic, &expr, expected);
+        let diagnostic = self.literal_local_help(diagnostic, &expr, expected);
+        let mut diagnostic = if diagnostic.helps.is_empty() { self.mismatch_habit(&expr, expected, diagnostic) } else { diagnostic };
         // `[DIA-22]` — a mismatch an argument causes points at the parameter it is given to.
         if let Some((argument, param, declared)) = self.argument_of
             && argument == span
@@ -34349,6 +34426,15 @@ impl<'a> Checker<'a> {
                 // `None` carries nothing, so only the expected type can say
                 // which `Option` it is.
                 if name.is("None") {
+                    // `[DIA-21]` P1 — Python's "no value" where the place is not an `Option`.
+                    if let Some(wanted) = expected
+                        && wanted != self.common.error
+                        && !self.is_option(wanted)
+                        && !matches!(self.types.kind(wanted), TyKind::Param { .. } | TyKind::Infer(_))
+                    {
+                        self.sink.emit(self.none_without_option(wanted, span));
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     return match expected.filter(|e| self.is_option(*e)) {
                         Some(ty) => {
                             let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!() };
@@ -34359,10 +34445,10 @@ impl<'a> Checker<'a> {
                             }
                         }
                         None => {
-                            self.error(
-                                codes::E2060,
-                                span,
-                                "cannot tell which `Option` this `None` is; annotate the type",
+                            self.sink.emit(
+                                Diagnostic::error(codes::E2060, span, "cannot tell which `Option` this `None` is; annotate the type")
+                                    .habit(ember_diag::habits::Habit::P1)
+                                    .help("`None` is a value of an `Option` only: declare the place `Option[T]` for the `T` it holds"),
                             );
                             Expr { ty: self.common.error, kind: ExprKind::Error, span }
                         }
@@ -34393,6 +34479,10 @@ impl<'a> Checker<'a> {
                             .note("a module reaches its items, its child modules and the modules it re-exports (`pub import c`); \
                                    its other imports are its own [MOD-2], [FFI-30b]"),
                     );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                if let Some(diagnostic) = self.python_constant(name, span) {
+                    self.sink.emit(diagnostic);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let mut diagnostic = Diagnostic::error(
@@ -34721,10 +34811,10 @@ impl<'a> Checker<'a> {
                     }
                     if base.ty != self.common.error {
                         let shown = self.types.display(base.ty);
-                        self.sink.emit(
-                            Diagnostic::error(codes::E2020, span, format!("cannot index `{shown}`"))
-                                .note("a type is indexed by implementing `Index` [TYP-21]"),
-                        );
+                        let diagnostic = Diagnostic::error(codes::E2020, span, format!("cannot index `{shown}`"))
+                            .note("a type is indexed by implementing `Index` [TYP-21]");
+                        let diagnostic = self.index_habit(&base, args, span, diagnostic);
+                        self.sink.emit_all(diagnostic);
                     }
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
@@ -36321,6 +36411,10 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if segments.len() == 1 && self.comptime_names_runtime_local(name, name_span) {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            // `[DIA-21]` P3 — `str(x)`, `int(x)`, `float(x)`.
+            if segments.len() == 1 && self.python_conversion(name, args, name_span, span) {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let mut diagnostic = Diagnostic::error(
@@ -40706,6 +40800,15 @@ impl<'a> Checker<'a> {
             }
             if let TyKind::Ref { mutable: false, .. } = *self.types.kind(current.ty) {
                 let shown = self.types.display(current.ty);
+                // D-823 (B4) — `r = v` on a `ref` local is Python's rebinding of a name, and a
+                // reference is never re-pointed (ADR-010): `ref mut` would write `v` into what `r`
+                // refers to. The value it means is a copy or an index.
+                let rebinding = matches!(&place.kind, ExprKind::Deref(inner) if matches!(inner.kind, ExprKind::Local(_)));
+                let help = if rebinding {
+                    "a reference is not pointed elsewhere: this writes through it, into what it refers to; to keep another value, keep a copy of it (`.clone()`), or its index"
+                } else {
+                    "take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference"
+                };
                 self.sink.emit(
                     Diagnostic::error(
                         codes::E3021,
@@ -40713,10 +40816,7 @@ impl<'a> Checker<'a> {
                         "cannot write through a shared reference",
                     )
                     .primary_label(format!("this is `{shown}`, which only reads"))
-                    .help(concat!(
-                        "take the borrow as `ref mut` if the callee must write, ",
-                        "or assign to the place itself rather than through the reference"
-                    ))
+                    .help(help)
                     .note(concat!(
                         "while a shared borrow is live the owner may read and copy ",
                         "but not write [BRW-1]"
@@ -40837,9 +40937,16 @@ impl<'a> Checker<'a> {
             _ => decl.ty,
         };
         let shown = self.types.display(ty);
+        // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
+        // value it means is a new local's, and the caller's stays as it was.
+        let rebinding = matches!(place.kind, ExprKind::Local(_)) && !self.callable_parameter_locals.contains(&local);
         let structural_help = if self.callable_parameter_locals.contains(&local) {
             format!(
                 "declare this callable parameter `mut {name}: fn(...) -> ...` so it receives a mutable closure place"
+            )
+        } else if rebinding {
+            format!(
+                "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `mut`"
             )
         } else {
             format!(
@@ -40854,8 +40961,11 @@ impl<'a> Checker<'a> {
         .primary_label("this write needs mutable access")
         .secondary(declaration, format!("`{name}` is borrowed here"))
         .help(structural_help);
+        if rebinding {
+            diagnostic = diagnostic.note(format!("Python rebinds a parameter's name; an Ember parameter is the caller's `{shown}`, borrowed [FN-1]"));
+        }
 
-        if offer_interior_mutability {
+        if offer_interior_mutability && !rebinding {
             diagnostic = if self.types.is_copy(ty) {
                 diagnostic.help(
                     "if the value is genuinely shared, use `Cell[T]` for the `Copy` payload or \
@@ -42129,6 +42239,11 @@ impl<'a> Checker<'a> {
             }
             receiver = self.read_through(receiver);
         }
+        // `[DIA-21]` P6 — a Python call shape Ember spells with another method.
+        if let Some(answer) = self.python_call_shape(&receiver, name, args) {
+            self.sink.emit_all(answer);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[FFI-23]` (ODR-132) — `token.ptr()`: the address foreign code keeps, typed by what the
         // token holds.
         if name.name.is("ptr") && args.is_empty() && generic_args.is_empty()
@@ -42778,7 +42893,7 @@ impl<'a> Checker<'a> {
         // `[JOB-2]`, `[JOB-3]` — `s.submit(f)` and `s.submit_after(deps, f)`.
         if self.is_job_scope(receiver.ty) {
             if !matches!(name.name.as_str(), "submit" | "submit_after") {
-                self.error(codes::E1010, name.span, format!("`std.jobs.JobScope` has no method named `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("`std.jobs.JobScope` has no method named `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_job_scope_submit(receiver, name.name.is("submit_after"), args, &explicit, span);
@@ -42786,14 +42901,14 @@ impl<'a> Checker<'a> {
         // `[THR-11]` — `scope.spawn(f)`; `h.join()` on a scoped handle.
         if self.is_scope(receiver.ty) {
             if !name.name.is("spawn") {
-                self.error(codes::E1010, name.span, format!("`std.thread.Scope` has no method named `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("`std.thread.Scope` has no method named `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_scope_spawn(receiver, args, &explicit, span);
         }
         if let Some(result) = self.lock_inner(receiver.ty, "std.thread.ScopedJoinHandle") {
             if !name.name.is("join") || !explicit.is_empty() || !args.is_empty() {
-                self.error(codes::E1010, name.span, format!("a scoped thread's handle has `join()` only, not `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("a scoped thread's handle has `join()` only, not `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::ScopedJoin, args: vec![receiver] }, span };
@@ -42802,7 +42917,7 @@ impl<'a> Checker<'a> {
         if let Some(result) = self.lock_inner(receiver.ty, "std.thread.JoinHandle") {
             if !name.name.is("join") {
                 let shown = self.types.display(receiver.ty);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if !explicit.is_empty() || !args.is_empty() {
@@ -43395,19 +43510,9 @@ impl<'a> Checker<'a> {
                 return call;
             }
             let shown = self.types.display(receiver.ty);
-            if let Some(diagnostic) = python_method_name(&shown, name) {
-                self.sink.emit(diagnostic);
+            let Some(mut diagnostic) = self.no_method(&receiver, name, args, span) else {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let mut diagnostic = Diagnostic::error(
-                codes::E1010,
-                name.span,
-                format!("`{shown}` has no method named `{}`", name.name),
-            );
-            for candidate in self.method_name_suggestions(receiver.ty, name.name, name.span) {
-                diagnostic = diagnostic.suggest(format!("did you mean `{candidate}`?"), name.span, candidate);
-            }
-            diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
+            };
             // ODR-091 — `rev` is an iterator's only where it can run backwards.
             if name.name.is("rev") && self.lookup_method(receiver.ty, Symbol::intern("next")).is_some() {
                 diagnostic = diagnostic.note(
@@ -43424,7 +43529,10 @@ impl<'a> Checker<'a> {
                     diagnostic.note("a struct or enum is `Clone` when every field is, unless it writes `@no_derive(Clone)` [STR-5]")
                 };
             }
-            self.sink.emit(diagnostic);
+            // `[DIA-14]` — a receiver whose type holds an error was reported where the error was.
+            if !self.mentions_error(receiver.ty) {
+                self.sink.emit(diagnostic);
+            }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         // D-432 — a call found ambiguous (`E2070`) has nothing to be checked
@@ -45887,7 +45995,7 @@ impl<'a> Checker<'a> {
             "assume_init" => 0,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!(
                         "`MaybeUninit[{}]` has no method named `{}`",
@@ -45959,7 +46067,7 @@ impl<'a> Checker<'a> {
         let method = name.name.as_str();
         if !matches!(method, "get" | "into_inner") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`UnsafeCell[{}]` has no method named `{}`",
@@ -46031,7 +46139,7 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if !name.name.is("upgrade") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`Weak[{}]` has no method named `{}`", self.types.display(class), name.name),
             );
@@ -46190,7 +46298,7 @@ impl<'a> Checker<'a> {
             _ => {
                 let kind = if sync { "SyncShared" } else { "Shared" };
                 let mut diagnostic = Diagnostic::error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!("`{kind}[{}]` has no method named `{}`", self.types.display(inner), name.name),
                 );
@@ -46292,7 +46400,7 @@ impl<'a> Checker<'a> {
             "set" | "replace" | "update" => 1,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!("`Cell[{shown}]` has no method named `{}`", name.name),
                 );
@@ -46477,7 +46585,7 @@ impl<'a> Checker<'a> {
         let method = name.name.as_str();
         if !matches!(method, "borrow" | "borrow_mut" | "try_borrow" | "try_borrow_mut") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`RefCell[{shown}]` has no method named `{}`", name.name),
             );
@@ -47312,7 +47420,7 @@ impl<'a> Checker<'a> {
         // `swap` and `truncate` are std's own, for `retain` and `sort_by_key`.
         if matches!(method, "swap" | "truncate" | "move_slot" | "drop_at" | "set_len") && !self.is_std_module(self.current_module) {
             let shown = self.types.display(soa);
-            self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+            self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
             return error;
         }
         // `[SOA-4]` — an `ArenaSoA` never grows: no `reserve`; it tells its `capacity`.
@@ -47328,7 +47436,7 @@ impl<'a> Checker<'a> {
         let wanted = match wanted {
             usize::MAX => {
                 let shown = self.types.display(soa);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
                 return error;
             }
             wanted => wanted,
@@ -48686,7 +48794,7 @@ impl<'a> Checker<'a> {
             "fetch_xor" if bitwise => (Form::Plain(Op::FetchXor), 1),
             _ => {
                 let shown = self.types.display(receiver.ty);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
                 return error;
             }
         };
@@ -48868,7 +48976,7 @@ impl<'a> Checker<'a> {
             "try_write" => (true, true),
             _ => {
                 let shown = self.types.display(receiver.ty);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
                 return error;
             }
         };
@@ -48899,7 +49007,7 @@ impl<'a> Checker<'a> {
         let method = name.name.as_str();
         if !matches!(method, "lock" | "try_lock") {
             let shown = self.types.display(receiver.ty);
-            self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+            self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
             return error;
         }
         if !args.is_empty() {
@@ -49330,6 +49438,7 @@ impl<'a> Checker<'a> {
                 .help(format!("`m[k] = v` makes the key from `k` when it is new, which needs `{shown}` to be `Clone`; `m.insert(k, v)` takes the key itself"))
                 .note("looking a key up needs only `AsKey`; making one needs `ToKey` [STD-12]");
         }
+        let diagnostic = self.bound_help(diagnostic, ty, bound);
         self.sink.emit(diagnostic);
     }
 
@@ -49887,7 +49996,7 @@ impl<'a> Checker<'a> {
             "insert" => 2,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!(
                         "`{}` has no method named `{}`",
@@ -50059,7 +50168,7 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if !name.name.is("next") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`{}` has no method named `{}`",
@@ -50104,7 +50213,7 @@ impl<'a> Checker<'a> {
             && (name.name.is("next_back") || name.name.is("len"));
         if !name.name.is("next") && !back {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`{}` has no method named `{}`",
@@ -50275,7 +50384,7 @@ impl<'a> Checker<'a> {
             "insert" => 2,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!(
                         "`{}` has no method named `{}`",
@@ -50434,7 +50543,7 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if !name.name.is("next") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`{}` has no method named `{}`",
@@ -50677,7 +50786,7 @@ impl<'a> Checker<'a> {
 
         if !matches!(method, "alloc" | "alloc_nodrop") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`Arena` has no method named `{}`", name.name),
             );
@@ -50791,7 +50900,7 @@ impl<'a> Checker<'a> {
         }
         if !matches!(method, "alloc" | "alloc_nodrop") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`FixedArena` has no method named `{}`", name.name),
             );
@@ -50919,7 +51028,7 @@ impl<'a> Checker<'a> {
         }
         if !matches!(method, "alloc" | "alloc_nodrop") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`ScopedArena` has no method named `{}`", name.name),
             );
@@ -51484,7 +51593,7 @@ impl<'a> Checker<'a> {
         if name.name.is("split_at_mut") && !is_string {
             let shown = self.types.display(receiver.ty);
             self.sink.emit(
-                Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no method named `split_at_mut`"))
+                Diagnostic::error(codes::E2072, name.span, format!("`{shown}` has no method named `split_at_mut`"))
                     .help("split the array's mutable view: `.as_mut_span().split_at(k)` gives two `MutSpan`s")
                     .note("`split_at` of a `MutSpan` is the mutable split; there is no separate `split_at_mut` [SPN-5]"),
             );
@@ -51600,15 +51709,10 @@ impl<'a> Checker<'a> {
             if let Some(call) = self.iterable_form(receiver.ty, name, args, span) {
                 return call;
             }
-            let shown = self.types.display(receiver.ty);
-            if let Some(diagnostic) = python_method_name(&shown, name) {
-                self.sink.emit(diagnostic);
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            let diagnostic = self.no_method(&receiver, name, args, span);
+            if !self.mentions_error(receiver.ty) {
+                self.sink.emit_all(diagnostic);
             }
-            let diagnostic =
-                Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no method named `{}`", name.name));
-            let diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
-            self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
@@ -53896,6 +54000,11 @@ impl<'a> Checker<'a> {
         } else {
             (self.synth(lhs_ast), self.synth(rhs_ast))
         };
+        // `[DIA-14]` — an operand whose type is already an error was reported; the operation is
+        // that error too, and nothing more is said about it.
+        if lhs.ty == self.common.error || rhs.ty == self.common.error || self.mentions_error(lhs.ty) || self.mentions_error(rhs.ty) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[TXT-11]` — `a + b` with a `String` on the left consumes it and
         // returns it extended; `str + str` is `E2040`, whose help is an
         // f-string.
@@ -54240,6 +54349,11 @@ impl<'a> Checker<'a> {
             }
         }
         if lhs.ty != rhs.ty && !shift_by_another_integer && lhs.ty != self.common.error && rhs.ty != self.common.error {
+            // `[DIA-21]` P20, P23, P27 — `"%d" % n`, `s * n`, `c == "x"`.
+            if let Some(diagnostic) = self.operator_habit(op, (lhs_ast, rhs_ast), &lhs, &rhs, span) {
+                self.sink.emit(diagnostic);
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let left = self.types.display(lhs.ty);
             let right = self.types.display(rhs.ty);
             let mut diagnostic = Diagnostic::error(
@@ -54346,6 +54460,18 @@ impl<'a> Checker<'a> {
                 }
                 let shown = self.types.display(operand_ty);
                 let interface = if equality { "Eq" } else { "Ord" };
+                // `[DIA-21]` P10 — `x == None` asks whether `x` holds nothing: `x is None` (`[EXP-9]`).
+                let names_none = |e: &ast::Expr| matches!(&e.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("None"));
+                if equality && self.is_option(operand_ty) && (names_none(lhs_ast) || names_none(rhs_ast)) && lhs_ast.span.end <= rhs_ast.span.start {
+                    let is = if op == ast::BinOp::Eq { " is " } else { " is not " };
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2040, span, format!("`{shown}` does not implement `Eq`, which `{}` needs", op.as_str()))
+                            .habit(ember_diag::habits::Habit::P10)
+                            .note("`x is None` tests an `Option` for nothing, whatever it holds [EXP-9]")
+                            .suggest(format!("write `x{is}None`"), Span::new(span.file, lhs_ast.span.end, rhs_ast.span.start), is),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 self.sink.emit(
                     Diagnostic::error(
                         codes::E2040,

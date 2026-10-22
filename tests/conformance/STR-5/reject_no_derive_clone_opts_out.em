@@ -8,4 +8,4 @@ struct Secret:
 
 fn main():
     s = Secret(key="k")
-    t = s.clone()    #$ error[E1010]: `Secret` has no method named `clone`
+    t = s.clone()    #$ error[E2072]: `Secret` has no method named `clone`

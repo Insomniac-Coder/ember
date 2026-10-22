@@ -59,7 +59,7 @@ fn main():
     println(f"fibonacci up to 1000: {fibs}")
     even_sum = sum(f for f in fibonacci(4_000_000) if f % 2 == 0)
     println(f"sum of the even fibonacci numbers up to four million: {even_sum}")
-    println(fizzbuzz(20).collect[Array[String]]().join(", "))
+    println(fizzbuzz(20).join(", "))
 
     for p in primes():
         if p > 100:

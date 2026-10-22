@@ -1,0 +1,10 @@
+error[E2036]: this pattern always matches
+ --> tests/ui/python/P16/assignment_as_a_condition.em:3:8
+  |
+3 |     if x = 5:
+  |        ^^^^^
+  |
+  = help: did you mean `x == 5`?
+  = note: to declare `x`, write `x = 5` on the line before
+
+error: could not compile due to 1 error(s)

@@ -1,0 +1,10 @@
+error[E2072]: `std.string.Split` has no method named `len`
+ --> tests/ui/python/P25/len_of_a_split.em:4:19
+  |
+4 |     println(parts.len())
+  |                   ^^^
+  |
+  = help: collect the items into a list: `.collect[Array[str]]()`
+  = note: an iterator gives its items one at a time; a list of them is collected once [STD-19]
+
+error: could not compile due to 1 error(s)

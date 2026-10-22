@@ -5017,6 +5017,22 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-267 — Helper V merged: the first week's diagnostics (`[DIA-21]`, `[DIA-2]`, `[TST-9]`)
+
+2026-10-22 (helper V, `tasks/95/V-notes.md`). `[DIA-21]`: every row a catalogued shape, P1..P30
+(`ember_diag::habits`; P21..P30 the rulings ODR-180..187 and S's A-items), each diagnostic carrying
+its habit (`--json`'s `"shape"`), a machine-applicable fix-it where the table gives one (P18, P19,
+P22, P29 and `try`/`except` give text help only), the parser's habits rewriting the tokens so
+nothing cascades; `True` suggests `true`. B1..B6 fixed (D-823), D1..D10 (D-822). std: `AnyError.msg`
+(ODR-180), `char`'s Unicode and ASCII classes from generated tables (ODR-183, `tools/unicode_case.py`).
+`tests/ui/python/`: 36 cases, each fix-it applied byte for byte equal to its `.fixed.em`, which
+compiles. New code `E0009` (malformed literal, `[LEX-26]`, ODR-228) and the lexer's `E5064` for a NUL
+in a C-string literal. Merged with helpers W's and X's work, the first-week corpus compiles 23 of 30
+after the catalogue's helps (0 as written): the 7 left still need a workaround (`marks.json`).
+Open: D-864, D-865 (the owner's question), and D-841 met again. Ruled under the delegation:
+ODR-225..235. The registry test and `tools/rule_index.py` wait on `E0009`'s and `E1032`'s rows and
+`[LEX-26]` in the next cut.
+
 ## ADR-266 — Helper Y merged: the rest of `[MNG-1]` (ODR-201, ODR-202)
 
 2026-10-22 (helper Y, `tasks/95/Y-notes.md`). ODR-202: a component with a character beyond ASCII is

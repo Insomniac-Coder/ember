@@ -61,7 +61,8 @@ fn main():
         book.record(name, score)
 
     println(f"== {book.course} ==")
-    for rank, s in book.ranking().iter().enumerate():
+    ranked = book.ranking()
+    for rank, s in ranked.iter().enumerate():
         avg = s.average()
         println(f"{rank + 1}. {s.name:<5} avg {avg:6.2f}  best {s.best():>3}  grade {letter(avg)}")
     println(f"class average: {book.class_average():.1f}")

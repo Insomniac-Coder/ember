@@ -1,0 +1,10 @@
+error[E0100]: `with … as name` is Python's; Ember binds first, `with name = …:`
+ --> tests/ui/python/P11/with_open_as.em:2:10
+  |
+2 |     with open(path) as f:
+  |          ^^^^^^^^^^^^^^^
+  |
+  = help: write `with f = …:`
+  = note: what a `with` binds is closed or released when its block ends [THR-5]
+
+error: could not compile due to 1 error(s)

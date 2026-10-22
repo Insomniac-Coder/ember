@@ -1,0 +1,10 @@
+error[E2020]: `std.collections.Map[String, i64, std.collections.DefaultHasher]`'s `get` does not take these arguments
+ --> tests/ui/python/P6/dict_get_with_a_default.em:3:20
+  |
+3 |     println(counts.get("b", 0))
+  |                    ^^^ Python's `get`
+  |
+  = help: write `get_or`
+  = note: Python's `d.get(k, default)` is `m.get_or(k, default)`; `m.get(k)` gives an `Option` (Appendix E) [STD-13]
+
+error: could not compile due to 1 error(s)

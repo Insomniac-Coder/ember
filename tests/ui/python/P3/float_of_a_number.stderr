@@ -1,0 +1,9 @@
+error[E1010]: cannot find `float` in this scope
+ --> tests/ui/python/P3/float_of_a_number.em:3:12
+  |
+3 |     half = float(n) / 2.0
+  |            ^^^^^ a Python conversion
+  |
+  = help: a number is converted with `as`: `as float`
+
+error: could not compile due to 1 error(s)

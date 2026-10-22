@@ -1,0 +1,9 @@
+error[E2035]: condition must be `bool`
+ --> tests/ui/python/P8/truthiness_of_a_list.em:3:8
+  |
+3 |     if queue:
+  |        ^^^^^ this is `Array[i64]`
+  |
+  = help: a container is not a condition: write `not xs.is_empty()`
+
+error: could not compile due to 1 error(s)

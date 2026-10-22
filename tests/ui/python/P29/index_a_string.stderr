@@ -1,0 +1,11 @@
+error[E2020]: cannot index `str`
+ --> tests/ui/python/P29/index_a_string.em:3:13
+  |
+3 |     println(word[1])
+  |             ^^^^^^^
+  |
+  = help: for the characters, iterate `s.chars()`, or collect them once, `cs = s.chars().collect[Array[char]]()`, and index `cs[i]`; for the bytes, `s.as_bytes()[i]`
+  = note: a type is indexed by implementing `Index` [TYP-21]
+  = note: there is no index by character position, which would be O(n); `s[a..b]` slices by byte offset [TXT-4]
+
+error: could not compile due to 1 error(s)

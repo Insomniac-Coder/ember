@@ -12,6 +12,7 @@ use ember_span::{FileId, Span, Symbol};
 
 mod decls;
 mod body;
+mod python;
 
 /// `[VER-8]` (0.9.9) — before 1.0 there is exactly one language, the current
 /// one. A source file does not select a version; a `#! language` directive is
@@ -56,6 +57,10 @@ pub(crate) struct Parser<'a> {
     damaged_signatures: Vec<Span>,
     /// `[UNS-8]` — see `Module::unsafe_sites`.
     unsafe_sites: Vec<Span>,
+    /// `[DIA-21]` P11 — whether the module imports `std.fs`, and where an import line goes: after
+    /// the last import (`true`) or before the first statement or item (`false`).
+    fs_imported: bool,
+    import_at: Option<(Span, bool)>,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -78,6 +83,8 @@ impl<'a> Parser<'a> {
             in_extern_block: false,
             damaged_signatures: Vec::new(),
             unsafe_sites: Vec::new(),
+            fs_imported: false,
+            import_at: None,
         }
     }
 
@@ -529,9 +536,22 @@ impl<'a> Parser<'a> {
             }
             if self.at_kw(Kw::Import) || self.at_contextual("from") {
                 if let Some(import) = self.parse_import() {
+                    // `[DIA-21]` P11 — where an import line goes, and whether `std.fs` is in.
+                    self.import_at = Some((import.span, true));
+                    let names = |path: &[Ident], last: &str| path.len() == 2 && path[0].name.is("std") && path[1].name.is(last);
+                    self.fs_imported |= match &import.kind {
+                        ember_ast::ImportKind::Module { path, alias: None } => names(path, "fs"),
+                        ember_ast::ImportKind::Items { path, items, .. } => {
+                            path.len() == 1 && path[0].name.is("std") && items.iter().any(|item| item.name.name.is("fs") && item.alias.is_none())
+                        }
+                        _ => false,
+                    };
                     imports.push(import);
                 }
                 continue;
+            }
+            if self.import_at.is_none() {
+                self.import_at = Some((self.span().shrink_to_start(), false));
             }
             // `[FFI-30b]` — `pub import c "…"`: only a foreign import may be re-exported.
             if self.at_kw(Kw::Pub)
@@ -548,6 +568,8 @@ impl<'a> Parser<'a> {
                 }
                 continue;
             }
+            // `[DIA-21]` P2 — `def f():` at file scope is a function.
+            self.python_def();
             if !self.at_item_start() {
                 let before = self.pos;
                 match self.parse_statement() {

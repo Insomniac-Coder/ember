@@ -21,7 +21,7 @@ struct Outer[T]:
     i: Inner[T, bool]
 
     fn get(owned self) -> T:
-        return self.i.make() #$ error[E1010]: `Inner[T, bool]` has no method named `make`
+        return self.i.make() #$ error[E2072]: `Inner[T, bool]` has no method named `make`
 
 fn main():
     o = Outer(Inner[i64, bool](5, true))

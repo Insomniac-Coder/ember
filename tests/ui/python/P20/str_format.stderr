@@ -1,0 +1,10 @@
+error[E2072]: `str` has no method named `format`
+ --> tests/ui/python/P20/str_format.em:3:24
+  |
+3 |     println("{} items".format(n))
+  |                        ^^^^^^
+  |
+  = help: write an f-string
+  = note: Ember formats with f-strings, which name each value where it goes [LEX-19]
+
+error: could not compile due to 1 error(s)

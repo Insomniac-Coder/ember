@@ -1,0 +1,9 @@
+error[E1010]: cannot find `int` in this scope
+ --> tests/ui/python/P3/int_of_text.em:3:9
+  |
+3 |     n = int(text)
+  |         ^^^ a Python conversion
+  |
+  = help: text is parsed: `parse[int]()` gives a `Result`, and `unwrap` stops the program on text that is not a number, as Python raises
+
+error: could not compile due to 1 error(s)

@@ -17,8 +17,8 @@ fn workspace_root() -> PathBuf {
 }
 
 /// §XVII.6's shapes and the codes their first error may carry (§XVII.6.1's rows; the code each
-/// §XVII.6.2 shape is reported with, N3 also under `E1010`, which an unknown method gets today). An
-/// empty list: the row names no code. `DIA-21` is the Python-habit table of `[DIA-21]`.
+/// §XVII.6.2 shape is reported with). An empty list: the row names no code. `[DIA-21]`'s Python
+/// habits, `P1`…, are `ember_diag::habits`' own, each with its codes (ODR-179).
 const SHAPES: &[(&str, &[&str])] = &[
     ("O1", &["E3040"]), ("O2", &["E3010", "E3011", "E3012", "E3013"]), ("O3", &["E3041"]),
     ("O4", &["E3042"]), ("O5", &["E3030"]), ("O6", &["E3050"]), ("O7", &["E3070"]),
@@ -31,38 +31,42 @@ const SHAPES: &[(&str, &[&str])] = &[
     ("N1", &["E1010"]), ("N2", &["E1010", "E1061"]), ("N3", &["E2072", "E1010"]), ("N4", &["E2020"]),
     ("N5", &["E2010"]), ("N6", &["E2020"]), ("N7", &[]), ("N8", &[]), ("N9", &["E2040"]),
     ("N10", &["E2050"]), ("N11", &["E2070"]), ("N12", &["E0002", "E0003", "E0004"]), ("N13", &["E2072"]),
-    ("DIA-21", &[]),
 ];
 
-/// Whether `shape` may be the shape of a first error with `code`: a catalogued shape whose row
-/// allows the code, or `none:<code>` / `gap:<code>` naming it.
-fn shape_fits(shape: &str, code: &str) -> bool {
+/// Whether `shape` may be the shape of a first error with `code` and, for a Python habit, the shape
+/// `--json` gave it: a catalogued shape whose row allows the code, a habit the diagnostic answers
+/// under one of its codes, or `none:<code>` / `gap:<code>` naming it.
+fn shape_fits(shape: &str, (code, answered): &(String, Option<String>)) -> bool {
     if let Some(named) = shape.strip_prefix("none:").or_else(|| shape.strip_prefix("gap:")) {
         return named == code;
     }
-    SHAPES.iter().any(|(name, codes)| *name == shape && (codes.is_empty() || codes.contains(&code)))
+    if let Some(habit) = ember_diag::habits::Habit::from_id(shape) {
+        return answered.as_deref() == Some(shape) && habit.codes().iter().any(|c| c.to_string() == *code);
+    }
+    SHAPES.iter().any(|(name, codes)| *name == shape && (codes.is_empty() || codes.contains(&code.as_str())))
 }
 
-/// The error codes `ember check --json` reports for `file`, in its order.
-fn error_codes(root: &Path, file: &Path) -> Vec<String> {
+/// The errors `ember check --json` reports for `file`, in its order: each one's code, and the
+/// Python habit it answers, if any.
+fn error_codes(root: &Path, file: &Path) -> Vec<(String, Option<String>)> {
     let output = ember_build::output_started(Command::new(EMBER).arg("check").arg("--json").arg(file).current_dir(root))
         .expect("ember starts");
     let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    let codes: Vec<String> = text
+    let codes: Vec<(String, Option<String>)> = text
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
         .filter(|d| d["severity"] == "error")
-        .map(|d| d["code"].as_str().unwrap_or("none").to_string())
+        .map(|d| (d["code"].as_str().unwrap_or("none").to_string(), d["shape"].as_str().map(str::to_string)))
         .collect();
     assert_eq!(output.status.success(), codes.is_empty(), "{}: exit status and errors disagree:\n{text}", file.display());
     codes
 }
 
 /// `ember check` on every file, on as many threads as the machine has.
-fn check_all(root: &Path, files: &[PathBuf]) -> Vec<Vec<String>> {
+fn check_all(root: &Path, files: &[PathBuf]) -> Vec<Vec<(String, Option<String>)>> {
     let next = AtomicUsize::new(0);
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(files.len().max(1));
-    let mut results: Vec<(usize, Vec<String>)> = std::thread::scope(|scope| {
+    let mut results: Vec<(usize, Vec<(String, Option<String>)>)> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads)
             .map(|_| scope.spawn(|| {
                 let mut done = Vec::new();
@@ -147,14 +151,14 @@ fn the_first_week_corpus_keeps_its_marks() {
             Some("accepted") => failures.push(format!("{name}: marked accepted, now rejected with {codes:?}")),
             Some("rejected") => {
                 let recorded: BTreeSet<&str> = mark["codes"].as_array().map(|c| c.iter().filter_map(|c| c.as_str()).collect()).unwrap_or_default();
-                let got: BTreeSet<&str> = codes.iter().map(String::as_str).collect();
+                let got: BTreeSet<&str> = codes.iter().map(|(code, _)| code.as_str()).collect();
                 let shape = mark["shape"].as_str().unwrap_or("");
                 if codes.is_empty() {
                     failures.push(format!("{name}: marked rejected ({shape}), now accepted"));
                 } else if got != recorded {
                     failures.push(format!("{name}: marked rejected with {recorded:?}, now {got:?}"));
                 } else if !shape_fits(shape, &codes[0]) {
-                    failures.push(format!("{name}: shape `{shape}` does not fit the first error, {}", codes[0]));
+                    failures.push(format!("{name}: shape `{shape}` does not fit the first error, {:?}", codes[0]));
                 }
             }
             other => failures.push(format!("{name}: mark {other:?} is neither accepted nor rejected")),
