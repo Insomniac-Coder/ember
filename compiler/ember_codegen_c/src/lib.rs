@@ -9343,6 +9343,14 @@ impl Emitter<'_> {
                         let source = self.span_value_expression(&rendered[0], *arg_ty);
                         return format!("{RT}utf8_valid({source})");
                     }
+                    // `[STD-18]` — `format_to`'s text over its buffer, and its end.
+                    Builtin::FmtSinkOpen => {
+                        let source = self.span_value_expression(&rendered[0], *arg_ty);
+                        return format!("{RT}fmt_sink_open((void*){source}.ptr, {source}.len)");
+                    }
+                    Builtin::FmtSinkClose => {
+                        return format!("{RT}fmt_sink_close({})", rendered[0]);
+                    }
                     Builtin::SpanToStr => {
                         let source = self.span_value_expression(&rendered[0], *arg_ty);
                         return format!("(({RT}str){{ (const unsigned char*){source}.ptr, {source}.len }})");

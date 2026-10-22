@@ -446,6 +446,7 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-165 | delegated: an inline namespace adds nothing to a C++ name in an import | `[FFI-41]`, `[FFI-17b]` |
 | ODR-166 | delegated: a C++ function returning an opaque class by value gives a `ForeignBox[T]` | `[FFI-32]`, Annex C's import table |
 | ODR-167 | delegated: `[CXX-1]`'s corpus is nlohmann/json until the owner approves more downloads | `[CXX-1]` |
+| ODR-168 | delegated: `format`'s spec is a string literal, checked where it is written | `[STD-18]`, `[LEX-19]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1194,3 +1195,15 @@ Generated: every rule whose text differs from 0.9.10_Hardened_31.
 |---|---|
 | `[FFI-32]` | changed |
 | `[FFI-41]` | changed |
+
+## H.38 Changes in 0.9.10_Hardened_33 (from 0.9.10_Hardened_32)
+
+**0.9.10_Hardened_33** records rulings made under the restored delegation, for the owner's review:
+
+* For `[STD-18]`: `format`'s spec is a string literal, checked against the value's type where it is written (`E2250`), as an f-string's is (ODR-168, delegated).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_32.
+
+| Rule | 0.9.10_Hardened_32 → 0.9.10_Hardened_33 |
+|---|---|
+| `[STD-18]` | changed |

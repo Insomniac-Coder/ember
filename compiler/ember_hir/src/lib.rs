@@ -1581,6 +1581,14 @@ pub enum Builtin {
     ProcessArgs,
     /// `[LEX-19]` — append a value to an f-string's buffer as its spec says.
     FormatWith(FormatSpec),
+    /// `[STD-18]` — `format_to`'s text: a `String` over the bytes of the `MutSpan[u8]` argument,
+    /// which never grows (a write that would not fit is refused and remembered), registered with
+    /// the runtime until `FmtSinkClose`.
+    FmtSinkOpen,
+    /// `[STD-18]` — the end of `FmtSinkOpen`'s text, read through a `ref` (the text is then
+    /// forgotten: its bytes are the caller's): how many bytes were written, or `usize.MAX` when a
+    /// write did not fit.
+    FmtSinkClose,
     /// `[STD-8b]` — `needle in text`, for a `str` needle and a `char` one.
     StrContains,
     StrContainsChar,
@@ -2128,6 +2136,7 @@ impl Builtin {
             Builtin::StringLen => "len",
             Builtin::StringAsStr => "as_str",
             Builtin::Format => "format",
+            Builtin::FmtSinkOpen | Builtin::FmtSinkClose => "format_to",
             Builtin::MemAlloc => "alloc",
             Builtin::MemFree => "free",
             Builtin::PtrRead => "read",

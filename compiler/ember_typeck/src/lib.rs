@@ -31048,9 +31048,12 @@ impl<'a> Checker<'a> {
         if !matches!(
             name,
             "len" | "min" | "max" | "abs" | "clamp" | "sum" | "any" | "all" | "sorted" | "input" | "range"
-                | "enumerate" | "zip" | "reversed"
+                | "enumerate" | "zip" | "reversed" | "format"
         ) {
             return None;
+        }
+        if name == "format" {
+            return Some(self.synth_format(args, span));
         }
         if matches!(name, "enumerate" | "zip" | "reversed") {
             return Some(self.synth_lazy_builtin(name, args, span));
@@ -52697,11 +52700,59 @@ impl<'a> Checker<'a> {
         })
     }
 
+    /// `[STD-18]`, `[MOD-5]` — `format(value, spec="")`: the value's text as the spec asks, which is
+    /// `f"{value:spec}"` exactly, built and checked as that f-string is. The spec is written where the
+    /// value is formatted, a string literal, so it is checked against the value's type there
+    /// (`E2250`), as an f-string's is (ODR-168); `""` is the value's plain text, as in Python.
+    fn synth_format(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let (mut value, mut spec) = (None, None);
+        for arg in args {
+            match arg.name {
+                None if value.is_none() => value = Some(&arg.value),
+                None if spec.is_none() => spec = Some(&arg.value),
+                Some(name) if name.name.is("spec") && spec.is_none() => spec = Some(&arg.value),
+                Some(name) => {
+                    self.error(codes::E2020, name.span, format!("`format` has no parameter `{}`", name.name));
+                    return error;
+                }
+                None => {
+                    self.error(codes::E2020, arg.span, format!("`format` takes a value and a spec, found {} arguments", args.len()));
+                    return error;
+                }
+            }
+        }
+        let Some(value) = value else {
+            self.error(codes::E2020, span, "`format` takes the value to format");
+            return error;
+        };
+        let format_spec = match spec.map(|spec| &spec.kind) {
+            None => None,
+            Some(ast::ExprKind::Lit(ast::Literal::Str(text))) => (!text.is_empty()).then(|| text.clone()),
+            Some(_) => {
+                let at = spec.expect("a spec was given").span;
+                self.sink.emit(
+                    Diagnostic::error(codes::E2250, at, "`format`'s spec is not a string literal, so it cannot be checked against the value's type")
+                        .note("a spec is checked where it is written, as an f-string's is [STD-18], [LEX-19]")
+                        .help("write the spec as a literal: `format(x, \".2f\")`"),
+                );
+                let _ = self.synth_committed(value);
+                return error;
+            }
+        };
+        let text = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::FString(vec![ast::FStringPart::Expr { expr: Box::new(value.clone()), format_spec, echo: None, conversion: None }]),
+            span,
+        };
+        self.synth_committed(&text)
+    }
+
     /// `[STD-9]` (0.9.9) — `print(a, b, …, sep=" ", end="")` and `println(…,
     /// end="\n")`: the arguments' text separated by `sep`, then `end`. The
     /// call becomes one `print` builtin whose arguments are the pieces in
     /// order; MIR evaluates every argument first and then prints each piece.
-    fn synth_print_pieces(&mut self, builtin: Builtin, args: &[ast::Arg], span: Span) -> Expr {
+    pub(crate) fn synth_print_pieces(&mut self, builtin: Builtin, args: &[ast::Arg], span: Span) -> Expr {
         let str_ty = self.common.str_;
         let text = |text: &str| Expr { ty: str_ty, kind: ExprKind::Str(text.to_string()), span };
         let mut sep = text(" ");

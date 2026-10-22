@@ -977,6 +977,18 @@ impl SiteBuilder<'_> {
                 }
                 let first = sites.len();
                 self.call_sites(func, span, sites);
+                // `[STD-18]` — an append to `format_to`'s text, which never grows: no allocation, and
+                // no failure (a write that does not fit is refused, and `format_to` says so). A
+                // written `Debug` it runs keeps its own effects.
+                if let FuncRef::Builtin { which: Builtin::Format | Builtin::FormatWith(_) | Builtin::StringPush, .. } = func
+                    && args.first().is_some_and(|target| lends_fixed_text(body, target))
+                {
+                    for site in &mut sites[first..] {
+                        if matches!(site.origin, Origin::Operation(_)) {
+                            site.effects = Effects(site.effects.0 & !(Effects::ALLOC.0 | Effects::PANIC.0));
+                        }
+                    }
+                }
                 // `[EFF-7]` — a call written `@assume_noalloc(call)` is taken to carry no `Alloc`.
                 if body.assume_noalloc.contains(&span) {
                     for site in &mut sites[first..] {
@@ -1267,6 +1279,25 @@ fn call_span(block: &ember_mir::BasicBlock) -> Span {
 
 /// `[EFF-1]`'s table, for each operation the compiler provides. An allocation also carries
 /// `Panic(Explicit)`: allocation failure panics.
+/// `[STD-18]` — whether `operand` lends the text of a `format_to`: a `ref mut` to the local that
+/// `FmtSinkOpen` made, whose appends never grow it.
+fn lends_fixed_text(body: &Body, operand: &Operand) -> bool {
+    let (Operand::Copy(target) | Operand::Move(target)) = operand else { return false };
+    if !target.projection.is_empty() {
+        return false;
+    }
+    let made = |local: ember_mir::LocalId| {
+        body.blocks.iter().any(|block| {
+            matches!(&block.terminator, Terminator::Call { func: FuncRef::Builtin { which: Builtin::FmtSinkOpen, .. }, dest, .. }
+                if dest.local == local && dest.projection.is_empty())
+        })
+    };
+    body.blocks.iter().flat_map(|block| &block.stmts).any(|stmt| {
+        matches!(&stmt.kind, StmtKind::Assign { place, rvalue: Rvalue::Ref { place: lent, .. } }
+            if place.local == target.local && place.projection.is_empty() && lent.projection.is_empty() && made(lent.local))
+    })
+}
+
 fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
     const ALLOC: Effects = Effects(Effects::ALLOC.0 | Effects::PANIC.0);
     use Builtin as B;
@@ -1401,6 +1432,8 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         | B::RangeCount | B::StrCharCount | B::StrStartsWith | B::StrEndsWith | B::StrFind { .. }
         | B::StrSplitOnce { .. } | B::StrCount | B::StrTrimStart | B::StrTrimEnd | B::StrSliceOk
         | B::Utf8Valid | B::SpanToStr | B::CStrToSpan | B::CStringAsCStr | B::ParseStatus { .. }
+        // `[STD-18]` — `format_to`'s text over its buffer: nothing allocated, nothing to fail.
+        | B::FmtSinkOpen | B::FmtSinkClose
         | B::ParseValue { .. } | B::StrCharNext | B::StrCharNextWide | B::StrContains | B::StrContainsChar
         | B::ArraySort | B::ArrayReverse | B::ArrayClear | B::ArrayPop { .. } | B::ArrayCapacity
         | B::ArrayTruncate | B::ValueCompare { .. } | B::ClassSuperInit { .. } | B::WeakNew { .. }

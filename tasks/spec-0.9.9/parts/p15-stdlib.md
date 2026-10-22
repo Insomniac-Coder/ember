@@ -82,7 +82,8 @@ anything this Part leaves open.
   fatal, as Python does when the exception is not caught: end of input or a closed stream panics, and
   the message names the `Result` forms in `std.io` (`stdin().read_line()`).
 * `[STD-18]` *(new in 0.9.9)* `format(value, spec="") -> String` formats one value with a format spec
-  (`[LEX-19]`), like Python's `format`. `format_to(buf: MutSpan[u8], …) -> Result[str, FmtError]` formats
+  (`[LEX-19]`), like Python's `format`; the spec is a string literal, checked against the value's type
+  where it is written, as an f-string's is (`E2250`, ODR-168). `format_to(buf: MutSpan[u8], …) -> Result[str, FmtError]` formats
   into a caller's buffer; its own machinery never allocates, so the call allocates only if a value's
   `Display` does (`[EFF-1]`). An f-string lowers to a `StringBuilder` sized from its
   literal parts.

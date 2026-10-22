@@ -489,6 +489,19 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-168 — `format`'s spec known only at run time — **CLOSED**
+
+    ID:        ODR-168
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_33
+    Category:  LANGUAGE
+    Location:  Ember_v0.9.10_Hardened_32.md [STD-18], [LEX-19]
+
+**The question.** `[STD-18]` gives `format(value, spec="")`, "like Python's `format`", whose spec may be any string at run time. Everywhere else Ember checks a spec against the value's type where it is written (`E2250`, `[LEX-19]`); a run-time spec could only fail at run time.
+
+**Ruling.** The spec is a string literal, checked where it is written; a run-time one is `E2250`, whose help is to write it as a literal. ADR-255.
+
+---
+
 ## ODR-167 — `[CXX-1]`'s "corpus of real headers" — **CLOSED**
 
     ID:        ODR-167

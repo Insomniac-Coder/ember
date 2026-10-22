@@ -3674,9 +3674,17 @@ static void vec_capacity_overflow(void) {
 
 /* The buffer is allocated at `align`: EMBER_VEC_ALIGN for every list but one whose elements are
  * aligned beyond it, whose `_aligned` operations pass their own ([HEAP-9], [LAY-2]). */
+static bool fmt_sink_refuses(const ember_vec* v);
+
 static void vec_reserve_at(ember_vec* v, size_t elem_size, size_t want, size_t align) {
     if (want <= v->cap) {
         return;
+    }
+    /* `[STD-18]` — `format_to`'s text is the caller's buffer and never grows; every append to it is
+     * refused before it gets here. One that is not would free memory that is not the runtime's. */
+    if (fmt_sink_refuses(v)) {
+        static const char message[] = "format_to: its buffer was asked to grow (an append that does not ask first)";
+        ember_panic(message, sizeof message - 1, ember_loc_at("<format_to>", 0, 0));
     }
     size_t limit = vec_max_elems(elem_size);
     if (want > limit) {
@@ -3853,8 +3861,48 @@ ember_vec ember_vec_grown(ember_vec v, size_t elem_size) {
     return v;
 }
 
+/* `[STD-18]` — the texts `format_to` is writing on this thread, innermost last: each one's bytes
+ * (never moved: the text never grows) and whether an append was refused. */
+#define FMT_SINKS 64
+static EMBER_RT_THREAD_LOCAL struct { const void* base; bool refused; } fmt_sinks[FMT_SINKS];
+static EMBER_RT_THREAD_LOCAL size_t fmt_sink_depth;
+
+/* Whether `v` is the text of a `format_to`, which may not grow: then the append is refused and
+ * remembered. Asked only where an append would grow a text. */
+static bool fmt_sink_refuses(const ember_vec* v) {
+    for (size_t i = fmt_sink_depth; i > 0; --i) {
+        if (fmt_sinks[i - 1].base == v->ptr) {
+            fmt_sinks[i - 1].refused = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+ember_vec ember_fmt_sink_open(void* ptr, size_t len) {
+    if (fmt_sink_depth == FMT_SINKS) {
+        static const char message[] = "format_to: more than 64 calls inside one another (a `Display` that calls `format_to` without end?)";
+        ember_panic(message, sizeof message - 1, ember_loc_at("<format_to>", 0, 0));
+    }
+    /* An empty buffer may have no address; its text still needs one of its own, which no other
+     * text has, for `fmt_sink_refuses` to know it: the registry's slot. */
+    void* base = len == 0 ? (void*)&fmt_sinks[fmt_sink_depth] : ptr;
+    fmt_sinks[fmt_sink_depth].base = base;
+    fmt_sinks[fmt_sink_depth].refused = false;
+    fmt_sink_depth += 1;
+    return (ember_vec){ base, 0, len };
+}
+
+size_t ember_fmt_sink_close(const ember_vec* sink) {
+    fmt_sink_depth -= 1;
+    return fmt_sinks[fmt_sink_depth].refused ? SIZE_MAX : sink->len;
+}
+
 void ember_vec_extend(ember_vec* v, const void* bytes, size_t count) {
     if (count == 0) {
+        return;
+    }
+    if (count > v->cap - v->len && fmt_sink_refuses(v)) {
         return;
     }
     ember_vec_reserve_more(v, 1, count);

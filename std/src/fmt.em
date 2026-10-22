@@ -27,6 +27,16 @@ extend Formatter:
         self.out.push_str(s)
         return Ok(())
 
+## `[STD-18]` — `format_to(buf, a, b, …, sep=" ", end="")`: the arguments'
+## text, as `print` writes it, written into `buf`, and a view of what was
+## written; `Err(FmtError.Failed)` when it does not fit, `buf`'s bytes then
+## unspecified. Its own machinery never allocates: the call allocates only
+## if a value's written `Display` does (`[EFF-1]`). Compiler-known, with any
+## number of arguments after `buf` (`[TYP-26]`, ODR-060). `format(value,
+## spec)`, the prelude's, is `f"{value:spec}"` (`[MOD-5]`).
+pub fn format_to(buf: MutSpan[u8]) -> Result[str, FmtError]:
+    unreachable()  # a call is the compiler's: this body never runs
+
 ## `[LEX-19]`, `[STD-9]` — how the compiler writes a value whose type has a
 ## written `Display` into text it is building (an f-string's, or `print`'s
 ## argument): the value's `fmt`, given a `Formatter` over that text. Nothing

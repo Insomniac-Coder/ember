@@ -227,6 +227,9 @@ impl<'a> Checker<'a> {
         if resolved.as_str() == "std.fmt.append_debug" {
             return Some(self.synth_append_debug(args, span));
         }
+        if resolved.as_str() == "std.fmt.format_to" {
+            return Some(self.synth_format_to(args, span));
+        }
         let helper = match resolved.as_str() {
             "std.core.type_identity" => "type_identity",
             "std.core.dyn_payload" => "dyn_payload",
@@ -264,6 +267,120 @@ impl<'a> Checker<'a> {
         let boxed = Expr { ty: borrowed, kind: ExprKind::Ref { place: Box::new(boxed), mutable: false }, span };
         let to = self.types.intern(TyKind::Ref { mutable: false, inner: *ty });
         Some(Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(boxed), to }, span })
+    }
+
+    /// `[STD-18]` — `std.fmt.format_to(buf, a, b, …, sep=" ", end="")`, compiler-known: the
+    /// arguments' text, as `print` writes it (`[STD-9]`), written into `buf`; `Ok` of a view of what
+    /// was written, or `Err(FmtError.Failed)` when it does not fit. The text is a `String` over
+    /// `buf` that never grows (`FmtSinkOpen`): each piece is appended to it as an f-string's is (a
+    /// written `Display` as its text, as `print` writes one), and `FmtSinkClose` forgets it and gives
+    /// its length. The buffer is evaluated first, then every argument where it is written, before
+    /// any is appended (`[EXP-1]`).
+    fn synth_format_to(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let Some(first) = args.first().filter(|arg| arg.name.is_none()) else {
+            self.error(codes::E2020, span, "`format_to` takes the buffer to write into first");
+            return error;
+        };
+        let (u8_ty, str_ty, usize_ty, bool_ty, void, string_ty) =
+            (self.common.u8, self.common.str_, self.common.usize, self.common.bool_, self.common.void, self.common.string);
+        let buf_ty = self.types.intern(TyKind::Span { elem: u8_ty, mutable: true });
+        let view_ty = self.types.intern(TyKind::Span { elem: u8_ty, mutable: false });
+        let buf = self.check_expr(&first.value, buf_ty);
+        // A span variable is lent for the call, as a call's `MutSpan` argument is, not moved.
+        let buf = if is_place(&buf.kind) && buf.ty == buf_ty {
+            let at = buf.span;
+            Expr { ty: buf_ty, kind: ExprKind::Builtin { which: Builtin::SpanReborrow, args: vec![buf] }, span: at }
+        } else {
+            buf
+        };
+        let Some(error_ty) = self.named_types.get(&Symbol::intern("std.fmt.FmtError")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.fmt.FmtError`");
+            return error;
+        };
+        let TyKind::Enum(error_id) = *self.types.kind(error_ty) else { return error };
+        let result_ty = self.result_of(str_ty, error_ty);
+        let TyKind::Enum(result_id) = *self.types.kind(result_ty) else { return error };
+        let variant = |types: &ember_types::TypeTable, id, name: &str| types.enum_def(id).variants.iter().position(|variant| variant.name.is(name));
+        let (Some(ok), Some(err), Some(failed)) =
+            (variant(&self.types, result_id, "Ok"), variant(&self.types, result_id, "Err"), variant(&self.types, error_id, "Failed"))
+        else {
+            return error;
+        };
+        let local = |id, ty| Expr { ty, kind: ExprKind::Local(id), span };
+        let b = self.declare(None, buf_ty, span);
+        let mut stmts = vec![Stmt::Let { local: b, init: Some(buf) }];
+        // The pieces exactly as `print` takes them (`sep`, `end` and all).
+        let printed = self.synth_print_pieces(Builtin::FmtSinkOpen, &args[1..], span);
+        let pieces = match printed.kind {
+            ExprKind::Builtin { args, .. } => args,
+            ExprKind::Block { block, value } => {
+                stmts.extend(block.stmts);
+                match value.kind {
+                    ExprKind::Builtin { args, .. } => args,
+                    _ => return error,
+                }
+            }
+            _ => return error,
+        };
+        let mut reads = Vec::new();
+        for piece in pieces {
+            if matches!(&piece.kind, ExprKind::Str(text) if text.is_empty()) {
+                continue;
+            }
+            let read = self.declare(None, piece.ty, piece.span);
+            reads.push((read, piece.ty, piece.span));
+            stmts.push(Stmt::Let { local: read, init: Some(piece) });
+        }
+        let sink = self.declare(None, string_ty, span);
+        let reborrow = Expr { ty: buf_ty, kind: ExprKind::Builtin { which: Builtin::SpanReborrow, args: vec![local(b, buf_ty)] }, span };
+        let open = Expr { ty: string_ty, kind: ExprKind::Builtin { which: Builtin::FmtSinkOpen, args: vec![reborrow] }, span };
+        stmts.push(Stmt::Let { local: sink, init: Some(open) });
+        let sink_ref = self.types.intern(TyKind::Ref { mutable: true, inner: string_ty });
+        for (read, ty, at) in reads {
+            // A place `print` takes borrowed is appended as what it reaches.
+            let value = match *self.types.kind(ty) {
+                TyKind::Ref { inner, .. } => Expr { ty: inner, kind: ExprKind::Deref(Box::new(local(read, ty))), span: at },
+                _ => local(read, ty),
+            };
+            let target = Expr { ty: sink_ref, kind: ExprKind::Ref { place: Box::new(local(sink, string_ty)), mutable: true }, span: at };
+            stmts.push(Stmt::Expr(Expr { ty: void, kind: ExprKind::Builtin { which: Builtin::Format, args: vec![target, value] }, span: at }));
+        }
+        let written = self.declare(None, usize_ty, span);
+        let sink_read = self.types.intern(TyKind::Ref { mutable: false, inner: string_ty });
+        let lent = Expr { ty: sink_read, kind: ExprKind::Ref { place: Box::new(local(sink, string_ty)), mutable: false }, span };
+        let close = Expr { ty: usize_ty, kind: ExprKind::Builtin { which: Builtin::FmtSinkClose, args: vec![lent] }, span };
+        stmts.push(Stmt::Let { local: written, init: Some(close) });
+        // Its bytes are the caller's: the text is forgotten, never dropped.
+        let forget = Builtin::MemForget { elem: string_ty };
+        stmts.push(Stmt::Expr(Expr { ty: void, kind: ExprKind::Builtin { which: forget, args: vec![local(sink, string_ty)] }, span }));
+        let fit = Expr {
+            ty: bool_ty,
+            kind: ExprKind::Binary {
+                op: BinOp::Ne,
+                lhs: Box::new(local(written, usize_ty)),
+                rhs: Box::new(Expr { ty: usize_ty, kind: ExprKind::Int(u128::from(u64::MAX)), span }),
+            },
+            span,
+        };
+        let shared = Expr { ty: view_ty, kind: ExprKind::Builtin { which: Builtin::SpanSharedReborrow, args: vec![local(b, buf_ty)] }, span };
+        let start = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
+        let sliced = Expr {
+            ty: view_ty,
+            kind: ExprKind::Builtin { which: Builtin::Slice { text: false, nonempty: false }, args: vec![shared, start, local(written, usize_ty)] },
+            span,
+        };
+        let text = Expr { ty: str_ty, kind: ExprKind::Builtin { which: Builtin::SpanToStr, args: vec![sliced] }, span };
+        let done = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: ok, fields: vec![text] }, span };
+        let reason = Expr { ty: error_ty, kind: ExprKind::EnumLit { enum_id: error_id, variant: failed, fields: vec![] }, span };
+        let refused = Expr { ty: result_ty, kind: ExprKind::EnumLit { enum_id: result_id, variant: err, fields: vec![reason] }, span };
+        let arm = |kind, body| hir::MatchArm { pattern: hir::Pattern { ty: bool_ty, kind, span }, guard: None, body: hir::MatchArmBody::Expr(body), span };
+        let value = Expr {
+            ty: result_ty,
+            kind: ExprKind::Match { scrutinee: Box::new(fit), arms: vec![arm(hir::PatternKind::Int(1), done), arm(hir::PatternKind::Wild, refused)] },
+            span,
+        };
+        Expr { ty: result_ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
     }
 
     /// `[STR-5]` (ADR-191) — `std.fmt.append_debug(value, out)`, compiler-known: `value`'s `Debug`

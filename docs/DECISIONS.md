@@ -5017,6 +5017,29 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-255 — `[STD-18]`: `format` and `format_to`
+
+2026-10-22. `format(value, spec="")`, a prelude name `[MOD-5]` listed and nothing declared (D-810),
+is `f"{value:spec}"`: the checker builds that f-string and checks it, so a spec that does not apply
+is `E2250` where it is written, and a written `Display` formats through its `fmt`. Its spec is a
+string literal (ODR-168, delegated): the language checks a spec against the value's type where it is
+written, and a spec known only at run time could not be.
+
+`format_to(buf, a, b, …, sep=" ", end="")` (`std.fmt`, compiler-known, `[TYP-26]`'s variadic call)
+takes `print`'s arguments (`synth_print_pieces`, so `sep`, `end` and a written `Display`'s text are
+`print`'s) and writes them into the caller's buffer: a `String` over `buf` that never grows
+(`FmtSinkOpen`), each piece appended by `Format` as an f-string's is, then `FmtSinkClose` gives the
+length written (or `usize.MAX`) and the text is forgotten (`mem.forget`'s builtin: its bytes are the
+caller's). The result is `Ok` of `buf[..n]` as `str` (`SpanSharedReborrow`, `Slice`, `SpanToStr`, so
+the borrow analysis knows it borrows `buf`), or `Err(FmtError.Failed)`. The runtime refuses an append
+to such a text that would not fit and remembers it, at the one place text grows past its room
+(`ember_vec_extend`; the inline append now takes it there when it would grow), so nothing is written
+past the buffer and nothing allocated; the registry is a per-thread stack of 64, so a `Display` may
+call `format_to` inside another. Buffer growth panics if it ever meets such a text, so a writer that
+did not ask first cannot free the caller's memory. The effect analysis gives an append to that text
+no `Alloc` (`lends_fixed_text`), so `format_to` may be called in `@noalloc` code; the call allocates
+only if a value's written `Display` does (`[EFF-1]`), whose text `print`'s pieces build.
+
 ## ADR-254 — `[CXX-1]`: the C++ corpus, and what importing a real library found
 
 2026-10-22. `[CXX-1]` asks for a corpus of real headers and a third-party header-only library, each

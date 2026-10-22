@@ -2215,6 +2215,15 @@ void ember_vec_insert_aligned(ember_vec* v, size_t elem_size, size_t align, size
 /* Append `count` bytes. Used for `String`, whose element size is one. */
 void ember_vec_extend(ember_vec* v, const void* bytes, size_t count);
 
+/* `[STD-18]` — `format_to`'s text: a `String` over the caller's `len` bytes at `ptr`, which never
+ * grows. Every append that would not fit is refused (`ember_vec_extend`, the one way text is
+ * appended past a buffer's room) and remembered, so the formatting allocates nothing of its own.
+ * `close` ends it and gives how many bytes were written, or `SIZE_MAX` when an append did not
+ * fit; the text is then forgotten (its bytes are the caller's). One may be opened inside another
+ * (a `Display` that calls `format_to`). */
+ember_vec ember_fmt_sink_open(void* ptr, size_t len);
+size_t ember_fmt_sink_close(const ember_vec* sink);
+
 /* A `String`'s bytes as a borrowed `str`. */
 ember_str ember_vec_as_str(const ember_vec* v);
 
@@ -3229,7 +3238,11 @@ EMBER_INLINED void ember_vec_reserve_more_aligned(ember_vec* v, size_t elem_size
 #if defined(_MSC_VER) && !defined(__clang__)
 EMBER_INLINED void ember_vec_extend_inline(ember_vec* v, const void* bytes, size_t count) {
     if (count == 0) return;
-    ember_vec_reserve_more_inline(v, 1, count);
+    /* Past the room: the library's append, which grows the text or refuses `format_to`'s. */
+    if (count > v->cap - v->len) {
+        ember_vec_extend(v, bytes, count);
+        return;
+    }
     memcpy((unsigned char*)v->ptr + v->len, bytes, count);
     v->len += count;
 }
