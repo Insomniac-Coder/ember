@@ -61,3 +61,22 @@ Rules: DIA-15, CG-C-9, PHIL-1, CG-C-7, VER-3, CG-C-6, CG-C-10, DIA-5, LT-39, SEL
   `mut` and one only read are both frame values, no `ember_alloc`; a `@sync` object handed away
   and one kept local both release atomically, no plain release; checked on the emitted C).
 - No compiler change: storage, lifetime and synchronisation already follow the declared type only.
+
+## CG-C-6 — done (built)
+- Tests: `tests/conformance/CG-C-6/accept_a_loop_in_vectorisable_form_gets_the_pragma.em` (an
+  `@simd(assert)` loop: the pragma directly before its grouped `for`, once, release and debug),
+  `accept_a_loop_not_in_vectorisable_form_gets_no_pragma.em` (an indirect index and an early
+  `return`: none). Passed under MSVC and clang locally (no gcc on this laptop).
+- Compiler: the pragma was not emitted anywhere.
+  - `runtime/ember_rt/include/ember_rt.h` — `EMBER_VECTORISE`: clang `loop vectorize(enable)`, GCC
+    `ivdep`, MSVC `loop(ivdep)` (their only loop-vectorisation pragmas; the assertion they make, no
+    dependency through memory between iterations, is what `[SIMD-5]`'s disjointness and one-offset
+    clauses prove), empty elsewhere.
+  - `compiler/ember_analysis/src/loop_version.rs` — `loops_in_vectorisable_form`: the `[SIMD-5]`
+    check (`vectorisable`) run on the final body for given loop headers; in form = every clause met
+    and no check left (a grouped copy). Read from the body the backend writes, so copies and
+    renumbering by earlier passes cannot misplace it.
+  - `compiler/ember_codegen_c/src/lib.rs` — `emit_body` asks it for the counted loops it writes as
+    `for`; `emit_for_loop` writes `EMBER_VECTORISE` before the `for` (and before the unrolled one).
+- Speed: the owner's laptop bench should be run before pushing (GCC/MSVC now get `ivdep` on these
+  loops; clang a vectorise hint).

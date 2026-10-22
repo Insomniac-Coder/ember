@@ -6389,6 +6389,8 @@ impl Emitter<'_> {
             let ty = body.locals[counted.counter.0 as usize].ty;
             self.types.is_integral(ty) && self.wide_int(ty).is_none()
         });
+        // `[CG-C-6]` — the loops in vectorisable form, which get the vectorisation pragma.
+        let vectorised = ember_analysis::loops_in_vectorisable_form(body, self.types, for_loops.keys().copied());
         let mut hidden_tests: BTreeSet<usize> = for_loops.values().map(|l| l.test.0 as usize).collect();
         self.folded_tests = folded_tests(body, &for_loops, self.types);
         hidden_tests.extend(self.folded_tests.keys().copied());
@@ -6566,7 +6568,7 @@ impl Emitter<'_> {
                 }
             }
             if let Some(counted) = for_loops.get(&index) {
-                self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice), &address_taken);
+                self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice), &address_taken, vectorised.contains(&index));
                 continue;
             }
             self.emit_block_stmts(&block.stmts, body);
@@ -6605,7 +6607,7 @@ impl Emitter<'_> {
     /// whose counter steps by one in its header; clang takes any loop. The
     /// body's blocks follow one another with no jump, their checks and calls
     /// inline.
-    fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize], address_taken: &BTreeSet<LocalId>) {
+    fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize], address_taken: &BTreeSet<LocalId>, vectorise: bool) {
         // A function-wide scalar the loop sets (a running total) is copied
         // into a block-local of the same name for the loop and back after
         // it: MSVC does not unroll a loop setting a function-wide variable.
@@ -6688,6 +6690,9 @@ impl Emitter<'_> {
                 // the counter has not passed the limit, their difference as
                 // `uint64_t` is exact for every integer type the header takes.
                 let more = if counted.inclusive { ">=" } else { ">" };
+                if vectorise {
+                    self.line("    EMBER_VECTORISE");
+                }
                 self.line(&format!(
                     "    for (; _{counter} {test} _{limit} && (uint64_t)_{limit} - (uint64_t)_{counter} {more} {}u; ) {{",
                     turns - 1
@@ -6699,6 +6704,9 @@ impl Emitter<'_> {
                     self.line(&format!("    ++_{counter};"));
                 }
                 self.line("    }");
+            }
+            if vectorise {
+                self.line("    EMBER_VECTORISE");
             }
             self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
             self.emit_for_body(counted, body, locals);

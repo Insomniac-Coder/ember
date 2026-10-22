@@ -140,6 +140,22 @@ static EMBER_INLINE uint64_t ember_sum_bytes(const void* raw, size_t len, bool s
 #define EMBER_HOT
 #endif
 
+/* `[CG-C-6]` — the host compiler's vectorisation pragma, written before each
+ * loop Ember proved in vectorisable form (`[SIMD-5]`). Clang's asks for
+ * vectorisation; GCC's and MSVC's (their only loop vectorisation pragmas)
+ * state that iterations carry no dependency through memory, which
+ * vectorisable form proves: every written view is disjoint from the others
+ * the loop reads (`[SIMD-3]`) and accessed at one offset from the counter. */
+#if defined(__clang__)
+#define EMBER_VECTORISE _Pragma("clang loop vectorize(enable)")
+#elif defined(__GNUC__)
+#define EMBER_VECTORISE _Pragma("GCC ivdep")
+#elif defined(_MSC_VER)
+#define EMBER_VECTORISE __pragma(loop(ivdep))
+#else
+#define EMBER_VECTORISE
+#endif
+
 /* [SIMD-7] A group of iterations with several overflow checks ORs each
  * check's overflow word (its top bit set on overflow), shifted down by
  * EMBER_OVERFLOW_SHIFT, into the group's flag, and tests the flag shifted
