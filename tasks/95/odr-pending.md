@@ -1,0 +1,52 @@
+# Rulings made under the delegation, waiting for the next spec cut (Hardened_34)
+
+- ODR-169 [BLD-6] `thin` where the toolchain does only off and on (cl, gcc): `on` (it optimises more; LTO changes no meaning). Helper Q's question 1. As built (ADR-256).
+- ODR-170 [BLD-6] "the build record": `target/<profile>/inspect/<name>.build.json`, its `lto` keys asked/used/why; to be named in XVII.3. Q2.
+- ODR-171 [BLD-6] objects another link reads (a static library): cl none (a `/GL` object holds no code and binds the archive to that compiler), gcc fat, Clang none. Q3.
+- ODR-172 [BUD-3b] the spread is IQR/median, and a gate applies to a figure whose spread is below 15 %, for both gates. Q4.
+- ODR-173 [BUD-1], [BUD-2] the Vulkan-sized header is generated in Vulkan's shape (20,000 lines, not counted in the package's lines); B6's "cold cache" is a new empty global build cache; B7 and B9 turn the program cache off. Q5.
+- ODR-174 [VER-3] `W2192` "use of a deprecated item", defined by VER-3, at each use outside the item's module, naming `since` and `note`. R.
+- ODR-175 [ALC-2] `pub unsafe interface Allocator`: `allocate(self, layout: Layout) -> *mut u8` (null on failure), `deallocate(self, p: *mut u8, layout: Layout)`, `reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8`; `Layout { size, align }`; `Global` the runtime's; [TYP-43] amended: "any interface but a marker or an `unsafe interface`". R.
+- ODR-176 [LT-39] the ended region a run-time selection needs is a loan conflict, `E3021` (shape B1), not `E3065`. R.
+- ODR-177 [CLS-1], [OBJ-4] "except as [OPT-1] permits"; [OPT-1]: an embedding host's allocator count is not behaviour. R.
+- ODR-178 [CG-C-9] Visual Studio shows a lone local collection's length only; a C struct per collection instance, with the backend's next rework; CG-C-9 unfinished until then. R.
+- ODR-179 [DIA-21], [TST-9] each DIA-21 row is a catalogued shape with an id (P1..P19 and the new rows) and a code, which marks and `tests/ui/` pairs name. S Q1.
+- ODR-180 [ERR-*] an `AnyError` function fails with a message through `AnyError.msg(text)` (std), and a catalogued help names it. S Q2.
+- ODR-181 [TYP-36] `ref T` implements `Eq`, `Ord`, `Hash`, `Display`, `Debug` as `T` does (so `sorted(m.keys())`). S Q3.
+- ODR-182 [PHIL-12] a bare interface name in a type position is an error whose catalogued help names `dyn Shape`, `Box[dyn Shape]` or `[T: Shape]`. S Q4.
+- ODR-183 [TXT-10] `char` has `is_digit`, `is_alphabetic`, `is_alphanumeric`, `is_whitespace` (Unicode), and `is_ascii_*`, with Appendix E rows. S Q5.
+- ODR-184 [DIA-21] `float(x)`/`int(x)`: the help follows the argument's type: text gives `parse`, a number gives `as`. S Q6.
+- ODR-185 [PHIL-14] sequence repetition (`s * n`, `[x] * n`) is refused with a catalogued help (`s.repeat(n)`, `[x for _ in 0..n]`). S Q7.
+- ODR-186 [DIA-21] single-quoted strings: a row whose fix-it is the double-quoted string. S Q8.
+- ODR-187 [DIA-21] a list operation (`len`, `[i]`) on an iterator (`split()`) has the help `.collect[Array[…]]()`. S Q9.
+- ODR-188 [TST-10] the published rate counts the catalogue's helps (as the spec mandates them); the gap to the printed ones is tracked as a defect. S Q10.
+- ODR-189 [CLO-3] a consumed (`owned`) callable parameter is an owned callable value in its function and may be stored. S Q11.
+- ODR-190 [CG-C-6] MSVC has no pragma that asks for vectorisation (`loop(ivdep)` only asserts no dependency) and gets none: measured, it made bench b13_checked 1.17x C, 1.00x without. clang `loop vectorize(enable)`, GCC `ivdep` unchanged. Lead (verification bench, 2026-10-22).
+- ODR-191 [HR-23] a changed C++ header is any change to it or a file it includes (content hash; a comment-only edit refuses too): the host compiled its inline bodies. As built. P Q1.
+- ODR-192 [HR-23] extended to `import c` headers, for the same host-rebuild reason. P Q2.
+- ODR-193 [HR-14] the FFI row reads "layout or fields changed on a type used across FFI by value" (a field added is refused through [HR-21]'s signature). P Q3.
+- ODR-194 [HR-20] `Retained.pin(handle, on_relocate: Option[extern "C" fn(ObjectPtr[C], ObjectPtr[C])])` (0.8.5's spelling, `ObjectPtr` per [FFI-23]/ODR-132); the runtime calls each callback with the old and the new address right after commit publishes and before reclaim, so commit stays pointer stores ([HR-2]) and a callback cannot undo a reload that has succeeded. P Q4.
+- ODR-195 [HR-24], [HR-41]'s GPU row move to the post-1.0 families with Annex D (`std.gpu`). P Q5.
+- ODR-196 [LT-1a], [CTL-1] `@borrows` may name a view field of the receiver, `self.f` (a field whose type is a reference or view): the result borrows what `f` borrows, and the call's loan on the receiver ends with the call. The body is checked as for any `@borrows` (`E3062` when the result borrows anything else; a result read through a `mut ref` field also borrows `self`, so it cannot name the field alone: no two mutable items from one iterator). The standard library's iterators that read through a shared `owner` declare it on `next`, so `for k in m:` and `m.keys()` yield references that borrow the map, as [CTL-1] says, and a key may be kept across turns and after the loop. Lead (D-819, S's G5).
+- ODR-197 [FFI-11] `borrowed one exclusive` is written `p: ref mut T` as well as `mut p: T` (the table's two spellings; an opaque type has only the first). T Q1, as built.
+- ODR-198 [FFI-17a] `std::variant<…>` crosses as a generated enum when every alternative maps and the overlay names each: `@ffi(variant=["A", "B"])` on a `type` entry naming the header's alias of the variant. T Q2.
+- ODR-199 [FFI-17a] `@ffi(std_function)` makes a `std::function<R(A…)>` an Ember `owned fn(A…) -> R` value (called as any other, its target owned by the value). T Q3.
+- ODR-200 [FFI-17a] a fixed-extent `std::span<T, N>` crosses as `ref [T; N]` / `ref mut [T; N]` (`const T` the first). T Q4.
+- ODR-201 [MOD-*], [MNG-1] a module and an item of one name in one scope is an error (new code, its own page), so every item has one path and `[MNG-1]`'s premise holds; a user type named as a built-in type (`struct i32`) likewise. U Q1. NOT BUILT.
+- ODR-202 [MNG-3] a transliterated component is marked in its length prefix (`u` before the length: `u10caf_u00E9_`), so `café` and the ASCII name `caf_u00E9_` mangle apart and the scheme is injective. U Q2. NOT BUILT.
+- ODR-203 [MNG-4] the per-type symbols are `em_obj_`, `em_vt_`, `em_ti_` followed by the type's mangled form without its own `em_` (`em_obj_6Animal`). U Q3, as built.
+- ODR-204 [MNG-1], [MOD-1] a root package's items have no package component (`em_4main`), as the spec's example; the text says so. U Q4, as built.
+- ODR-205 [MNG-1], [MONO-1] "the canonical spelling of its arguments" is defined in the spec as built (tasks/95/U-notes.md): every compiler spells alike, which link-time deduplication across packages needs. U Q5.
+- ODR-206 [MNG-1] as built: an interface-qualified method's path, a built-in type's methods under its keyword (`em_3i32…`), a structural owner as `std.core.<kind>`, a `[CLO-3]` callable copy as an instance of its callee. U Q6.
+- ODR-207 [STD-*], [TYP-15] `sorted` over an iterator of references gives `Array[T]` of clones (`T: Clone`), as `sorted(m)` does: an `Array` cannot hold non-static views (`E3063`). W Q1.
+- ODR-208 [CLO-*] a lambda given to a `mut` callable parameter is `E3027` (shape B10), as any other value there. W Q3, as built.
+- ODR-209 [GRM-17] a same-line `:` lambda body ends at the statement's newline (`h = fn(x): total += x` parses). W Q4. NOT BUILT.
+- ODR-210 [STD-19] the standard library's consumers that take a callable (`any`, `all`, `find`, …) take it over (`owned`), as `for_each` and the adapters do. W Q5. NOT BUILT.
+- OPEN, for the owner (not ruled): [CLO-15] how a user's function marks a consumed callable parameter whose captured state must carry only the static region (a callback registry), so a lambda written at the call captures by move: (a) inferred from the body storing the parameter where it outlives the call (W's recommendation; but a `pub` function's body would then change what callers may pass, which `[BRW-10]` avoids for methods), or (b) a mark in the signature (a new word). Under ODR-100 (the owner's). W Q2.
+- ODR-211 [LT-1a] `@borrows(self.f)` may name a field whose type is a type parameter, with a result type that may be a view (`Option[I.Item]`); checked in each instance, as ODR-048 does for sources: where the instance's field and result are views, the result borrows what the field borrows; where they are not, nothing is borrowed. So the iterator adapters declare it. X Q1. NOT BUILT.
+- ODR-212 [LT-1a] `@borrows(self.f)` holds for a receiver in any mode (`self`, `mut self`, `owned self`, a copied receiver). X Q2, as built.
+- ODR-213 [MNG-3] transliteration is injective inside a component as well: an ASCII `_` that begins what would read as an escape (`_u` and four or more hex digits and `_`) is itself written as the escape `_u005F_`; the same spelling makes C member names, so two fields never share one. Y Q1. NOT BUILT.
+- ODR-214 [DIA-12] `E1032` is name shape N14, "an item has the path of a module or the name of a built-in type", whose help is to rename the item or the module's file. Y Q2.
+- ODR-215 [MNG-1] a built-in type's path is spelled under `std.core` in a symbol (`std.core.str`), so a program's own `struct str`, `Never` or `cstr` never shares one with it. Y Q3. NOT BUILT.
+- ODR-216 [MOD-1] `E1032` compares the modules of the build (those some module imports), not every file of the source tree; the spec says so. Y Q5, as built.
+- ODR-217 [MOD-1] ODR-201's "a module and an item of one name in one scope" covers an `import` binding (`import paths.grid` beside `fn grid()`): the import binds `grid` in that scope. Y Q6, as built.

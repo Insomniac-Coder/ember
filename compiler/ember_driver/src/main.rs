@@ -4157,11 +4157,11 @@ fn callable_signature(body: &ember_mir::Body, types: &TypeTable) -> Result<Calla
             body.symbol
         )
     })?;
-    let borrows = body.borrows.as_ref().map(|positions| {
-        let mut positions = positions.clone();
-        positions.sort_unstable();
-        positions.dedup();
-        positions
+    let borrows = body.borrows.as_ref().map(|sources| {
+        let mut sources = sources.clone();
+        sources.sort_unstable();
+        sources.dedup();
+        sources
     });
     Ok(CallableSignature {
         parameters,
@@ -4267,11 +4267,11 @@ fn declaration_signature(
             Ok(CallableGenericParameter { bounds, callable })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    let borrows = declaration.borrows.as_ref().map(|positions| {
-        let mut positions = positions.clone();
-        positions.sort_unstable();
-        positions.dedup();
-        positions
+    let borrows = declaration.borrows.as_ref().map(|sources| {
+        let mut sources = sources.clone();
+        sources.sort_unstable();
+        sources.dedup();
+        sources
     });
     Ok(CallableSignature {
         parameters,

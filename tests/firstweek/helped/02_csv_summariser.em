@@ -70,11 +70,11 @@ fn main():
         println(f"{region:<8} {t.units:>6} {t.revenue:>10.2f} {avg:>8.2f}")
     println(f"{"total":<8} {"":>6} {grand_total:>10.2f}")
 
-    best: String = ""
+    best = ""
     best_units = 0
     for product, units in product_units.items():
         if units > best_units:
-            best = product.clone()
+            best = product
             best_units = units
     println(f"best seller: {best} ({best_units} units)")
     println(f"{sales.len()} rows used, {bad_lines} skipped")

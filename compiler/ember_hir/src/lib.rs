@@ -72,6 +72,23 @@ pub enum Mode {
     Owned,
 }
 
+/// `[LT-1a]` — one source `@borrows(…)` names: a parameter, by position, or (ODR-196) a view
+/// field of the receiver, `self.f`, by the field's index in the receiver's type. The result of a
+/// call borrows what that field borrows, and the call's loan on the receiver ends with the call.
+/// Ordered by parameter, a whole parameter before its fields; a list names a parameter whole or
+/// by fields, never both.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct BorrowSource {
+    pub parameter: usize,
+    pub field: Option<usize>,
+}
+
+impl BorrowSource {
+    pub fn whole(parameter: usize) -> BorrowSource {
+        BorrowSource { parameter, field: None }
+    }
+}
+
 #[derive(Debug)]
 pub struct LocalDecl {
     /// `None` for a compiler-introduced temporary.
@@ -374,13 +391,14 @@ pub struct Function {
     pub static_safe: bool,
     /// `[EFF-5]` — the contract attributes written on it (`@noalloc`, …).
     pub contracts: Contracts,
-    /// `[LT-1a]` — the parameter *positions* `@borrows(…)` names, when the
-    /// attribute is written. `None` means elision decides (`[LT-1]`).
+    /// `[LT-1a]` — what `@borrows(…)` names, by parameter *position* (and a
+    /// receiver's field by index), when the attribute is written. `None`
+    /// means elision decides (`[LT-1]`).
     ///
     /// Positions rather than names because that is what survives to MIR, where
     /// a parameter is a local and the borrow checker has to answer "which
     /// parameter did this reference come from".
-    pub borrows: Option<Vec<usize>>,
+    pub borrows: Option<Vec<BorrowSource>>,
     /// `[LT-1]` (ODR-024) — the source parameters' positions, from the
     /// declared signature (for an instantiation, the generic one).
     pub sources: Vec<usize>,
@@ -852,6 +870,9 @@ pub enum PatternKind {
     Bind { local: LocalId, sub: Option<Box<Pattern>>, by_ref: Option<bool> },
     /// An integer, `bool` or `char` literal, already narrowed to `ty`.
     Int(i128),
+    /// III.6 — a string literal against text (`str` or `String`): equal when the
+    /// lengths are and then the bytes.
+    Str(String),
     /// One enum variant, with a sub-pattern per payload field in order.
     Variant { enum_id: EnumId, variant: usize, fields: Vec<Pattern> },
     /// A tuple, struct or fixed array: one sub-pattern per element, in order.
@@ -2526,6 +2547,7 @@ fn dump_pattern(
             }
         }
         PatternKind::Int(value) => value.to_string(),
+        PatternKind::Str(text) => format!("{text:?}"),
         PatternKind::Variant { enum_id, variant, fields } => {
             let def = types.enum_def(*enum_id);
             let name = format!("{}.{}", def.name, def.variants[*variant].name);

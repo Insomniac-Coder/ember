@@ -2585,7 +2585,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
         FuncRef::Builtin {
             which: Builtin::SpanIterNext { .. } | Builtin::SpanChunksNext { .. } | Builtin::SpanWindowsNext { .. },
             ..
-        } => Elision::Named { arguments: vec![0], through: vec![0] },
+        } => Elision::Named { arguments: vec![0], through: vec![(0, Vec::new())] },
         // `[SPN-2]` — `get` and `get_unchecked` return a reference into the
         // view, so the view stays borrowed too.
         // A `str` built by `as_str()` points into its `String` the same way
@@ -2948,15 +2948,64 @@ fn elision_of(body: &Body, types: &TypeTable) -> Elision {
     if !types.is_view(body.return_ty()) {
         return Elision::Nothing;
     }
-    let arguments = if let Some(named) = &body.borrows {
-        named.clone()
+    // `[LT-1a]` (ODR-196) — `@borrows(self.f)` ties the result to what the
+    // receiver's field `f` borrows, not to the receiver.
+    let mut through: Vec<(usize, Vec<Projection>)> = body
+        .borrows
+        .iter()
+        .flatten()
+        .filter_map(|source| Some((source.parameter, vec![Projection::Field(source.field?)])))
+        .collect();
+    let arguments = if body.borrows.is_some() {
+        named_parameters(body)
     } else if receiver_is_a_view(body, types) {
         vec![0]
     } else {
         source_parameters(body, types)
     };
-    let through = arguments.iter().copied().filter(|&index| tied_through(body, types, index)).collect();
+    for &index in &arguments {
+        if !through.iter().any(|(tied, _)| *tied == index) && tied_through(body, types, index) {
+            through.push((index, Vec::new()));
+        }
+    }
     Elision::Named { arguments, through }
+}
+
+/// `[LT-1a]` — the parameters `@borrows` names, whole or by a field.
+fn named_parameters(body: &Body) -> Vec<usize> {
+    let mut parameters: Vec<usize> = body.borrows.iter().flatten().map(|source| source.parameter).collect();
+    parameters.sort_unstable();
+    parameters.dedup();
+    parameters
+}
+
+/// `[LT-1a]` (ODR-196) — each parameter `@borrows` names by its view fields
+/// only (`self.f`), with their names and the paths of the slots holding them:
+/// within the value it refers to when it is passed by reference.
+fn narrowed_parameters(body: &Body, types: &TypeTable) -> Vec<(LocalId, Vec<String>, Vec<Vec<Projection>>)> {
+    let mut narrowed: Vec<(LocalId, Vec<String>, Vec<Vec<Projection>>)> = Vec::new();
+    for source in body.borrows.iter().flatten() {
+        let Some(field) = source.field else { continue };
+        let local = LocalId(source.parameter as u32 + 1);
+        let (by_reference, ty) = match *types.kind(body.local(local).ty) {
+            TyKind::Ref { inner, .. } => (true, inner),
+            _ => (false, body.local(local).ty),
+        };
+        let name = match types.kind(ty) {
+            TyKind::Struct(id) => types.struct_def(*id).fields.get(field).map_or_else(|| format!("{field}"), |field| field.name.to_string()),
+            _ => format!("{field}"),
+        };
+        let mut path = if by_reference { vec![Projection::Deref] } else { Vec::new() };
+        path.push(Projection::Field(field));
+        match narrowed.iter_mut().find(|(named, ..)| *named == local) {
+            Some((_, names, paths)) => {
+                names.push(name);
+                paths.push(path);
+            }
+            None => narrowed.push((local, vec![name], vec![path])),
+        }
+    }
+    narrowed
 }
 
 /// `[LT-1]` — a `mut` parameter of a `Copy` view type is passed by reference
@@ -2996,8 +3045,8 @@ fn receiver_is_a_view(body: &Body, types: &TypeTable) -> bool {
 /// `[LT-1]` and `[LT-1a]`, the body half: the parameters a returned view is
 /// allowed to point into, as locals.
 fn allowed_origins(body: &Body, types: &TypeTable) -> Vec<LocalId> {
-    if let Some(named) = &body.borrows {
-        return named.iter().map(|i| LocalId(*i as u32 + 1)).collect();
+    if body.borrows.is_some() {
+        return named_parameters(body).into_iter().map(|i| LocalId(i as u32 + 1)).collect();
     }
     if receiver_is_a_view(body, types) {
         return vec![LocalId(1)];
@@ -3035,6 +3084,21 @@ fn return_region_offenders(
             _ => None,
         })
         .collect();
+    // `[LT-1a]` (ODR-196) — under `@borrows(self.f)` the result may borrow
+    // what `f` borrows and nothing else of `self`: a slot of `self` outside
+    // `f` reaching it is a borrow of `self` itself (its own storage, or a view
+    // read through a `mut ref` field, which the reborrow continues through).
+    let result_slots = regions.local_regions(ember_mir::RETURN_LOCAL);
+    for (local, _, paths) in narrowed_parameters(body, types) {
+        let escapes = regions
+            .local_regions(local)
+            .iter()
+            .filter(|slot| !paths.iter().any(|path| slot.projection.starts_with(path)))
+            .any(|slot| result_slots.iter().any(|result| regions.reaches_slot(slot.region, result.region)));
+        if escapes {
+            offenders.push(local);
+        }
+    }
     offenders.sort();
     offenders.dedup();
     offenders
@@ -3090,8 +3154,31 @@ fn check_return_regions(
     };
 
     let offenders = return_region_offenders(body, types, regions, own_slot);
+    let narrowed = narrowed_parameters(body, types);
+    // The `return` whose value points into `local`: under `@borrows(self.f)`
+    // one carrying a slot of it outside its fields, else one carrying it.
+    let returned_at = |local: LocalId| -> Span {
+        let fields = narrowed.iter().find(|(named, ..)| *named == local).map(|(_, _, paths)| paths);
+        body.blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| matches!(block.terminator, Terminator::Return))
+            .find(|(index, block)| {
+                let Some((roots, origins)) = regions.result_at(Point { block: *index, index: block.stmts.len() }) else {
+                    return false;
+                };
+                match fields {
+                    Some(paths) => regions.local_regions(local).iter().any(|slot| {
+                        roots.contains(&slot.region) && !paths.iter().any(|path| slot.projection.starts_with(path))
+                    }),
+                    None => origins.contains(&Origin::Param(local)),
+                }
+            })
+            .map_or(span, |(_, block)| block.terminator_span)
+    };
 
     for local in offenders {
+        let span = returned_at(local);
         let decl = body.local(local);
         let name = decl.name.clone().unwrap_or_else(|| format!("_{}", local.0));
         let allowed_names: Vec<String> = allowed
@@ -3101,7 +3188,18 @@ fn check_return_regions(
                 None => format!("`_{}`", l.0),
             })
             .collect();
-        let (message, help) = if body.borrows.is_some() {
+        let fields = narrowed.iter().find(|(named, ..)| *named == local).map(|(_, names, _)| {
+            names.iter().map(|field| format!("`{name}.{field}`")).collect::<Vec<_>>().join(" and ")
+        });
+        let (message, help) = if let Some(fields) = fields {
+            (
+                format!("the returned view points into `{name}`, and `@borrows` names only what {fields} borrows"),
+                format!(
+                    "return a view of what {fields} borrows, or name `{name}` in `@borrows`; a view read through a \
+                     `ref mut` field borrows `{name}` as well"
+                ),
+            )
+        } else if body.borrows.is_some() {
             (
                 format!("the returned view points into `{name}`, which `@borrows` does not name"),
                 match allowed_names.len() {
@@ -3741,7 +3839,7 @@ fn is_named_arena_origin(body: &Body, local: LocalId, types: &TypeTable) -> bool
     }
     body.borrows
         .as_ref()
-        .is_some_and(|named| named.contains(&((local.0 - 1) as usize)))
+        .is_some_and(|named| named.contains(&ember_mir::BorrowSource::whole((local.0 - 1) as usize)))
 }
 
 fn is_growing_arena_ty(types: &TypeTable, ty: Ty) -> bool {
@@ -4594,7 +4692,7 @@ fn check_point(
             // both fragile and user-spellable.
             let iteration_borrow =
                 matches!(access, Access::Write | Access::Borrow { mutable: true })
-                    && loan_held_by_for_iterator(body, regions, loan);
+                    && loan_held_by_for_iterator(body, regions, loan, point);
             // `[BRW-4]` — when the conflicting access is a method call's
             // receiver autoref, disjoint-field access is defeated by the call:
             // shape B8, which `[DIA-7a]` keys to `E3025` (D-040). A free
@@ -4756,14 +4854,17 @@ fn call_argument_place<'a>(body: &Body, place: &'a Place) -> Cow<'a, Place> {
 }
 
 /// `[CTL-2]`, shape B2 — whether a loan is retained by the compiler-created
-/// iterator for a source `for` loop. Region propagation, rather than a direct
-/// local equality check, is required because `values.as_span().iter()` carries
-/// the owner's loan through both view constructors before reaching `__it`.
-fn loan_held_by_for_iterator(body: &Body, regions: &Regions, loan: &Loan) -> bool {
+/// iterator for a source `for` loop at `point`: the loop is still to ask it
+/// for an item. Region propagation, rather than a direct local equality check,
+/// is required because `values.as_span().iter()` carries the owner's loan
+/// through both view constructors before reaching `__it`. After the loop, a
+/// loan an item kept alive (`best = k`) is an ordinary one (`[BRW-1]`).
+fn loan_held_by_for_iterator(body: &Body, regions: &Regions, loan: &Loan, point: Point) -> bool {
     regions
         .holders(loan.capability.validity_interval.0)
         .iter()
-        .any(|holder| body.for_iterators.contains(holder))
+        .filter(|holder| body.for_iterators.contains(holder))
+        .any(|iterator| regions.local_regions(*iterator).iter().any(|slot| regions.contains(slot.region, point)))
 }
 
 /// `[DIA-3]` — which reference keeps this loan alive at a conflict, and where

@@ -119,7 +119,7 @@ pub struct CallableDeclaration {
     pub symbol: String,
     pub parameters: Vec<CallableDeclarationParameter>,
     pub result: Ty,
-    pub borrows: Option<Vec<usize>>,
+    pub borrows: Option<Vec<hir::BorrowSource>>,
     pub generics: Vec<CallableDeclarationGeneric>,
     pub is_unsafe: bool,
     pub abi: Option<String>,
@@ -358,6 +358,7 @@ pub fn check(
         checker.current_module = index;
         checker.declare_names(&loaded.module);
     }
+    checker.check_item_paths(modules);
     checker.bind_prelude(modules);
     checker.bind_imports(modules);
     // `[RFL-1]`, `[RFL-3]` — every type's written attributes, and the `@attribute` structs, before
@@ -1260,10 +1261,11 @@ struct Signature {
     overflow: OverflowPolicy,
     /// `[TYP-9]` — `@fastmath` or `@fp(contract)` at the declaration.
     fp: FpMode,
-    /// `[LT-1a]` — the parameter positions `@borrows(…)` names, when it is
+    /// `[LT-1a]` — the parameter positions `@borrows(…)` names (a receiver's
+    /// view field by index, ODR-196), when it is
     /// written. Part of the public contract (`[VER-2]`), so it travels with
     /// the signature rather than being re-read from the attributes later.
-    borrows: Option<Vec<usize>>,
+    borrows: Option<Vec<hir::BorrowSource>>,
     /// `[TYP-16]` — the generic parameters this function declares, with the
     /// interfaces bounding each (`[TYP-17]`). Empty for an ordinary function.
     generics: Vec<GenericParam>,
@@ -1361,6 +1363,14 @@ fn changed_declarations(module: &ast::Module, changes: &[(String, String)]) -> V
 const COMPILER_KNOWN_TYPES: [&str; 16] = [
     "Option", "Result", "Box", "Shared", "Weak", "Cell", "RefCell", "MaybeUninit", "Ref", "RefMut", "Span",
     "MutSpan", "Array", "SoA", "SoARef", "SoAMut",
+];
+
+/// `[TYP-1]`'s scalar table (IV.2), ODR-201 — the built-in types' names, which a type the program
+/// declares may not take (`E1032`). The prelude's aliases (`int`, `float`, `Never`) and `str` are
+/// names a declaration may shadow (`[MOD-5]`); `void` is a keyword.
+const BUILT_IN_TYPES: [&str; 19] = [
+    "i8", "i16", "i32", "i64", "i128", "i256", "u8", "u16", "u32", "u64", "u128", "u256", "isize", "usize", "f16", "f32",
+    "f64", "bool", "char",
 ];
 
 /// A root-module item's qualified name. The root module's names are not
@@ -1978,7 +1988,7 @@ struct GenericMethod {
     /// indices follow the owning generic type's parameters while this recipe
     /// is stored, then are rebased to zero when the owner is instantiated.
     generics: Vec<GenericParam>,
-    borrows: Option<Vec<usize>>,
+    borrows: Option<Vec<hir::BorrowSource>>,
     overflow: OverflowPolicy,
     fp: FpMode,
     /// Module, item and member index of the declaration.
@@ -2630,6 +2640,9 @@ struct Checker<'a> {
     /// `[MNG-1]` — each instance symbol made, with the instance it was made for: another instance
     /// with it is `E9040`.
     instance_symbols: InstanceSymbols,
+    /// ODR-201 — the paths `E1032` found two items or an item and a module at: instances under one
+    /// meeting are its cascade (`[DIA-14]`), not `E9040`s.
+    path_conflicts: HashSet<String>,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
     /// Enums declared with type parameters, by qualified name.
@@ -3026,6 +3039,10 @@ struct Checker<'a> {
     /// D-278 — the generic type whose methods are being collected, with its
     /// own parameters: `W[T]` inside `W`'s methods is their `Self`.
     collecting_generic: Option<(Symbol, Vec<Ty>)>,
+    /// `[LT-1a]` (ODR-196) — the generic struct whose methods (or
+    /// extension's) are being collected, with its fields by name and type, for
+    /// `@borrows(self.f)` while the receiver is `Self`.
+    recipe_fields: Option<(Symbol, Vec<(Symbol, Ty)>)>,
     /// D-279 — every generic struct not collected yet, by name, with its
     /// module and item index: one named by an earlier declaration's field or
     /// method is collected on demand.
@@ -3243,6 +3260,7 @@ impl<'a> Checker<'a> {
             generic_of: HashMap::new(),
             instance_spellings: HashMap::new(),
             instance_symbols: InstanceSymbols::default(),
+            path_conflicts: HashSet::new(),
             generic_structs: HashMap::new(),
             generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
@@ -3368,6 +3386,7 @@ impl<'a> Checker<'a> {
             open_interface_origin: HashMap::new(),
             pending_bound_interfaces: Vec::new(),
             collecting_generic: None,
+            recipe_fields: None,
             pending_generic_structs: HashMap::new(),
             pending_generic_classes: HashMap::new(),
             generic_forward: HashMap::new(),
@@ -3454,7 +3473,7 @@ impl<'a> Checker<'a> {
     /// typo in it is worth catching loudly.
     /// `[LT-1b]` — the opt-in `L3014`: rule 3 ties the result to more than one
     /// source parameter, which `@borrows` can narrow.
-    fn lint_rule_3(&mut self, params: &[(Symbol, Ty, Mode, Span)], ret: Ty, borrows: &Option<Vec<usize>>, span: Span) {
+    fn lint_rule_3(&mut self, params: &[(Symbol, Ty, Mode, Span)], ret: Ty, borrows: &Option<Vec<hir::BorrowSource>>, span: Span) {
         if !self.lint_return_intersection || borrows.is_some() || !self.types.is_view(ret) {
             return;
         }
@@ -3479,7 +3498,7 @@ impl<'a> Checker<'a> {
         attrs: &[ast::Attribute],
         params: &[(Symbol, Ty, Mode, Span)],
         ret: Ty,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<Vec<hir::BorrowSource>> {
         let Some(attr) = attrs
             .iter()
             .find(|a| a.path.len() == 1 && a.path[0].name.is("borrows"))
@@ -3524,7 +3543,7 @@ impl<'a> Checker<'a> {
             .map(|(name, _, _, _)| name.to_string())
             .collect();
 
-        let mut named_positions = Vec::new();
+        let mut named_sources = Vec::new();
         for arg in &attr.args {
             let (named, arg_span) = match arg {
                 ast::AttrArg::Expr(expr) => match &expr.kind {
@@ -3533,6 +3552,14 @@ impl<'a> Checker<'a> {
                     }
                     // `[LT-1a]` — "`self` names the receiver" (D-282).
                     ast::ExprKind::SelfExpr => (Symbol::intern("self"), expr.span),
+                    // `[LT-1a]` (ODR-196) — `self.f`: what the receiver's view
+                    // field borrows, not the receiver.
+                    ast::ExprKind::Field { base, name } if matches!(base.kind, ast::ExprKind::SelfExpr) => {
+                        if let Some(field) = self.receiver_view_field(params, name.name, expr.span) {
+                            named_sources.push(hir::BorrowSource { parameter: 0, field: Some(field) });
+                        }
+                        continue;
+                    }
                     _ => {
                         self.sink.emit(
                             Diagnostic::error(
@@ -3560,7 +3587,7 @@ impl<'a> Checker<'a> {
                 }
             };
             if let Some(position) = params.iter().position(|(name, _, _, _)| *name == named) {
-                named_positions.push(position);
+                named_sources.push(hir::BorrowSource::whole(position));
             }
             match params.iter().find(|(name, _, _, _)| *name == named) {
                 None => {
@@ -3617,7 +3644,78 @@ impl<'a> Checker<'a> {
                 Some(_) => {}
             }
         }
-        Some(named_positions)
+        // One canonical list: by parameter, and a parameter named whole
+        // already holds everything its fields borrow.
+        named_sources.sort();
+        named_sources.dedup();
+        let whole: Vec<usize> = named_sources.iter().filter(|source| source.field.is_none()).map(|source| source.parameter).collect();
+        named_sources.retain(|source| source.field.is_none() || !whole.contains(&source.parameter));
+        Some(named_sources)
+    }
+
+    /// `[LT-1a]` (ODR-196) — `@borrows(self.f)`: the index of `f`, a view
+    /// field of the receiver's type (a field whose type is a reference or
+    /// view); `E2031` when there is no receiver, or `f` is not one.
+    fn receiver_view_field(&mut self, params: &[(Symbol, Ty, Mode, Span)], field: Symbol, span: Span) -> Option<usize> {
+        let Some(&(_, receiver, _, _)) = params.first().filter(|(name, ..)| name.is("self")) else {
+            self.sink.emit(
+                Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but this function has no receiver"))
+                    .primary_label("`self.f` names a field of the receiver")
+                    .help("name a parameter the result borrows (LT-1a)"),
+            );
+            return None;
+        };
+        let shown = match &self.recipe_fields {
+            Some((recipe, _)) if receiver == self.common.self_ty => format!("`{}`", recipe.as_str().rsplit('.').next().unwrap_or(recipe.as_str())),
+            _ if receiver == self.common.self_ty => "the receiver's type".to_string(),
+            _ => format!("`{}`", self.types.display(receiver)),
+        };
+        let Some(fields) = self.receiver_fields(receiver) else {
+            self.sink.emit(
+                Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but {shown} is not a struct"))
+                    .primary_label("`self.f` names a view field of a struct receiver")
+                    .help("name `self`, or another parameter the result borrows (LT-1a)"),
+            );
+            return None;
+        };
+        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.is_view(*ty)).map(|(name, _)| format!("`self.{name}`")).collect();
+        let help = if views.is_empty() {
+            format!("{shown} has no view field: name `self` instead (LT-1a)")
+        } else {
+            format!("the view fields of {shown} are {}", views.join(", "))
+        };
+        match fields.iter().position(|(name, _)| *name == field) {
+            Some(index) if self.types.is_view(fields[index].1) => Some(index),
+            Some(index) => {
+                let ty = self.types.display(fields[index].1);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, which is not a view field"))
+                        .primary_label(format!("`{field}` is `{ty}`, which borrows nothing"))
+                        .help(help),
+                );
+                None
+            }
+            None => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but {shown} has no field `{field}`"))
+                        .help(help),
+                );
+                None
+            }
+        }
+    }
+
+    /// The fields of a method's receiver type, by name and type: a struct's,
+    /// or, while a generic type's methods are collected and the receiver is
+    /// still `Self`, its recipe's (`recipe_fields`).
+    fn receiver_fields(&self, receiver: Ty) -> Option<Vec<(Symbol, Ty)>> {
+        if receiver == self.common.self_ty {
+            return self.recipe_fields.as_ref().map(|(_, fields)| fields.clone());
+        }
+        match self.types.kind(receiver) {
+            TyKind::Struct(id) => Some(self.types.struct_def(*id).fields.iter().map(|field| (field.name, field.ty)).collect()),
+            _ => None,
+        }
     }
 
     /// `[TYP-15]` with `[LT-3]` — "a view-typed value MUST NOT be stored in a
@@ -4607,7 +4705,7 @@ impl<'a> Checker<'a> {
         symbol: String,
         parameters: Vec<CallableDeclarationParameter>,
         result: Ty,
-        borrows: Option<Vec<usize>>,
+        borrows: Option<Vec<hir::BorrowSource>>,
         generics: &[GenericParam],
         is_unsafe: bool,
         abi: Option<String>,
@@ -4742,6 +4840,78 @@ impl<'a> Checker<'a> {
             self.item_visibility.insert(qualified, item.vis.kind);
             if let ast::ItemKind::Const(decl) = &item.kind {
                 self.const_values.insert(qualified, (decl.value.clone(), index));
+            }
+        }
+    }
+
+    /// ODR-201, `[MOD-1]`, `[MNG-1]` — every item has one path. An item named like a module of the
+    /// build in its scope (module `a`'s `b` beside module `a.b`, the root module's `grid` beside
+    /// module `grid`) would give its members the module's items' paths; one named like a module its
+    /// module imports (`import paths.grid` beside `struct grid`) leaves `grid.at` meaning either;
+    /// and a type the program declares under a built-in type's name (`struct i32`) would have the
+    /// built-in's path. Each is `E1032`. A declaration `import c` wrote keeps its header's name.
+    fn check_item_paths(&mut self, modules: &[LoadedModule]) {
+        let by_path: HashMap<&str, usize> =
+            self.prefixes.iter().enumerate().map(|(index, prefix)| (prefix.as_str(), index)).collect();
+        // Each module by the scope it is in and its name there (`inner.cells` is `inner`'s `cells`).
+        let children: HashMap<(&str, &str), usize> = self
+            .prefixes
+            .iter()
+            .enumerate()
+            .filter(|(_, prefix)| !prefix.is_empty())
+            .map(|(index, prefix)| (prefix.rsplit_once('.').unwrap_or(("", prefix.as_str())), index))
+            .collect();
+        let path_of = |prefix: &str, name: Symbol| if prefix.is_empty() { name.to_string() } else { format!("{prefix}.{name}") };
+        for (index, loaded) in modules.iter().enumerate() {
+            let prefix = self.prefixes[index].as_str();
+            // The names this module's `import a.b [as c]` bind to modules, as `bind_imports` binds them.
+            let mut imported: HashMap<Symbol, (Span, String)> = HashMap::new();
+            for import in &loaded.module.imports {
+                let ast::ImportKind::Module { path, alias } = &import.kind else { continue };
+                let key = path.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".");
+                let target = by_path.get(key.as_str()).or_else(|| by_path.get(format!("std.{key}").as_str()));
+                if let (Some(&target), Some(bound)) = (target, alias.as_ref().or(path.last())) {
+                    imported.insert(bound.name, (import.span, self.prefixes[target].clone()));
+                }
+            }
+            for item in &loaded.module.items {
+                let Some(name) = item_ident(item) else { continue };
+                if let Some(&module) = children.get(&(prefix, name.name.as_str())) {
+                    let path = path_of(prefix, name.name);
+                    let file = modules[module].module.span.file;
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1032, name.span, format!("item `{path}` has the path of module `{path}`"))
+                            .primary_label("an item named like a module in the same scope")
+                            .secondary(Span::new(file, 0, 0), format!("module `{path}` is this file"))
+                            .help("rename the item, or the module's file")
+                            .note(format!(
+                                "every item has one path [MOD-1] [MNG-1], and the item's members and the module's items would both be `{path}.<name>`"
+                            )),
+                    );
+                    self.path_conflicts.insert(path);
+                } else if let Some((import, module)) = imported.get(&name.name) {
+                    let bound = name.name;
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1032, name.span, format!("item `{bound}` has the name of module `{module}`, which this module imports"))
+                            .primary_label("an item named like an imported module")
+                            .secondary(*import, format!("this binds `{bound}` to module `{module}`"))
+                            .help("rename the item, or import the module under another name with `as`")
+                            .note(format!("a module and an item of one name in one scope [MOD-1]: `{bound}.<name>` would mean either")),
+                    );
+                }
+                let is_type = matches!(
+                    item.kind,
+                    ast::ItemKind::Struct(_) | ast::ItemKind::Class(_) | ast::ItemKind::Enum(_) | ast::ItemKind::Interface(_) | ast::ItemKind::TypeAlias(_)
+                );
+                if is_type && loaded.foreign.is_none() && BUILT_IN_TYPES.contains(&name.name.as_str()) {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E1032, name.span, format!("type `{}` has the name of a built-in type", name.name))
+                            .primary_label(format!("`{}` is a built-in type", name.name))
+                            .help("rename the type")
+                            .note("a built-in type's name means the built-in wherever a type is written, and its path is the built-in's [MNG-1]"),
+                    );
+                    self.path_conflicts.insert(path_of(prefix, name.name));
+                }
             }
         }
     }
@@ -5742,11 +5912,13 @@ impl<'a> Checker<'a> {
         let saved_module = std::mem::replace(&mut self.current_module, module);
         let saved_params = std::mem::take(&mut self.type_params);
         let saved_collecting = self.collecting_generic.take();
+        let saved_fields = self.recipe_fields.take();
         let saved_self = self.self_ty.take();
         self.collect_generic_class(item_index, &item);
         self.current_module = saved_module;
         self.type_params = saved_params;
         self.collecting_generic = saved_collecting;
+        self.recipe_fields = saved_fields;
         self.self_ty = saved_self;
     }
 
@@ -5755,11 +5927,13 @@ impl<'a> Checker<'a> {
         let saved_module = std::mem::replace(&mut self.current_module, module);
         let saved_params = std::mem::take(&mut self.type_params);
         let saved_collecting = self.collecting_generic.take();
+        let saved_fields = self.recipe_fields.take();
         let saved_self = self.self_ty.take();
         self.collect_generic_struct(item_index, &item);
         self.current_module = saved_module;
         self.type_params = saved_params;
         self.collecting_generic = saved_collecting;
+        self.recipe_fields = saved_fields;
         self.self_ty = saved_self;
     }
 
@@ -5855,9 +6029,10 @@ impl<'a> Checker<'a> {
                     }
                     _ => None,
                 })
-                .collect();
+                .collect::<Vec<FieldDef>>();
             let own: Vec<Ty> = params.iter().filter_map(|param| self.type_params.get(param).copied()).collect();
             self.collecting_generic = Some((name, own));
+            self.recipe_fields = Some((name, fields.iter().map(|field| (field.name, field.ty)).collect()));
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
@@ -5893,6 +6068,7 @@ impl<'a> Checker<'a> {
                 });
             }
             self.collecting_generic = None;
+            self.recipe_fields = None;
             self.type_params.clear();
             self.projection_params = saved_projections;
             if has_derive(&item.attrs, "Hash") {
@@ -6724,6 +6900,7 @@ impl<'a> Checker<'a> {
                 self.declare_target_projections(name, &target_args, &mut params, decl.target.span);
                 self.declare_count_ops(decl, &mut params);
             }
+            self.recipe_fields = self.generic_structs.get(&name).map(|recipe| (name, recipe.fields.iter().map(|field| (field.name, field.ty)).collect()));
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
@@ -6753,6 +6930,7 @@ impl<'a> Checker<'a> {
                     span: member.span,
                 });
             }
+            self.recipe_fields = None;
             let mut assoc = Vec::new();
             for member in &decl.members {
                 if let ast::MemberKind::TypeAlias(alias) = &member.kind
@@ -9439,7 +9617,7 @@ impl<'a> Checker<'a> {
                                 | FfiResultContract::NullableSharedCountFrom { source: name, .. }
                                 | FfiResultContract::ExclusiveCountFrom { source: name, .. }
                                 | FfiResultContract::NullableExclusiveCountFrom { source: name, .. }) =>
-                                params.iter().position(|(param, _, _, _)| *param == name).map(|index| vec![index]),
+                                params.iter().position(|(param, _, _, _)| *param == name).map(|index| vec![hir::BorrowSource::whole(index)]),
                             None => None,
                         };
                         from.or(explicit_borrows)
@@ -22775,12 +22953,22 @@ impl<'a> Checker<'a> {
         let symbol = ember_branding::instance_symbol(path, arguments.as_deref());
         if let Some(arguments) = &arguments {
             let from = format!("{path}{arguments}");
-            if let Some((first, first_from, first_span)) = self.instance_symbols.note(&symbol, made, &from, span) {
+            if let Some((first, first_from, first_span)) = self.instance_symbols.note(&symbol, made, &from, span)
+                && !(first_from == from && self.under_path_conflict(path))
+            {
                 let (first_shown, shown) = (self.instance_shown(first, &first_from), self.instance_shown(made, &from));
                 self.sink.emit(instance_collision(&symbol, &first_shown, first_span, &shown, span, first_from == from));
             }
         }
         symbol
+    }
+
+    /// Whether `path` is one `E1032` reported, or an item's under it: two instances of it with one
+    /// list of arguments are that error's cascade.
+    fn under_path_conflict(&self, path: &str) -> bool {
+        self.path_conflicts.iter().any(|conflict| {
+            path.strip_prefix(conflict.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
     }
 
     /// How an instance is written in `E9040`: a function's by its path and arguments, a method's
@@ -24836,21 +25024,17 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[TYP-37]` — `a.cmp(b) -> Ordering` for the numbers and text, in the
-    /// order `sort` and `min` use: `Less` when `a < b`, `Greater` when
-    /// `b < a`, else `Equal`. A `String` is compared as its `str`, so it is
-    /// borrowed, not moved.
+    /// `[TYP-37]`, `[TYP-36]` — `a.cmp(b) -> Ordering` where the compiler provides the order: the
+    /// numbers and text (`Less` when `a < b`, `Greater` when `b < a`, else `Equal`, as `sort` and
+    /// `min` use), a tuple lexicographically, and a shared reference as what it refers to
+    /// (ODR-181). A `String` is compared as its `str`, so it is borrowed, not moved.
     fn synth_total_cmp(&mut self, receiver: Expr, args: &[ast::Arg], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if args.len() != 1 || args[0].name.is_some() {
             self.error(codes::E2020, span, format!("`cmp` takes 1 argument, found {}", args.len()));
             return error;
         }
-        let Some(ordering) = self.named_types.get(&Symbol::intern("std.core.Ordering")).copied() else {
-            self.error(codes::E1010, span, "cannot find `std.core.Ordering`");
-            return error;
-        };
-        let TyKind::Enum(ordering_id) = *self.types.kind(ordering) else { return error };
+        // Text against `str`, so a literal argument is not made a `String`.
         let receiver = if self.is_text(receiver.ty) {
             let str_ty = self.common.str_;
             self.coerce(receiver, str_ty)
@@ -24859,17 +25043,97 @@ impl<'a> Checker<'a> {
         };
         let ty = receiver.ty;
         let other = self.check_expr(&args[0].value, ty);
+        if other.ty == self.common.error {
+            return error;
+        }
+        self.synth_cmp_of(receiver, other, span)
+    }
+
+    /// `lhs.cmp(rhs)` for two values of one type that is `Ord` (`[TYP-36]`): through a shared
+    /// reference to its referent, by `TotalLess` for the numbers and text, by a written or derived
+    /// `cmp`, and a tuple element by element, the first that differs deciding (each side evaluated
+    /// once, as `synth_eq_of` does for `==`).
+    fn synth_cmp_of(&mut self, lhs: Expr, rhs: Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let Some(ordering) = self.named_types.get(&Symbol::intern("std.core.Ordering")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.core.Ordering`");
+            return error;
+        };
+        let TyKind::Enum(ordering_id) = *self.types.kind(ordering) else { return error };
+        if let TyKind::Ref { mutable: false, .. } = *self.types.kind(lhs.ty) {
+            let (lhs, rhs) = (self.read_through(lhs), self.read_through(rhs));
+            return self.synth_cmp_of(lhs, rhs, span);
+        }
+        let variant = |variant| Expr {
+            ty: ordering,
+            kind: ExprKind::EnumLit { enum_id: ordering_id, variant, fields: vec![] },
+            span,
+        };
+        let ty = lhs.ty;
+        if let TyKind::Tuple(items) = self.types.kind(ty).clone()
+            && !self.methods.contains_key(&(ty, Symbol::intern("cmp")))
+        {
+            let (mut stmts, left) = self.hold(lhs, span);
+            let (right_stmts, right) = self.hold(rhs, span);
+            stmts.extend(right_stmts);
+            // From the last element out: `Equal` when every element is, else the first that is not.
+            let mut decided = variant(1);
+            for (index, item) in items.into_iter().enumerate().rev() {
+                let field = |side: &Held| Expr { ty: item, kind: ExprKind::Field { base: Box::new(side.read(span)), index }, span };
+                let order = self.synth_cmp_of(field(&left), field(&right), span);
+                let local = self.declare(None, ordering, span);
+                let read = Expr { ty: ordering, kind: ExprKind::Local(local), span };
+                let arm = |kind, body| hir::MatchArm {
+                    pattern: hir::Pattern { ty: ordering, kind, span },
+                    guard: None,
+                    body: hir::MatchArmBody::Expr(body),
+                    span,
+                };
+                let chosen = Expr {
+                    ty: ordering,
+                    kind: ExprKind::Match {
+                        scrutinee: Box::new(read.clone()),
+                        arms: vec![
+                            arm(hir::PatternKind::Variant { enum_id: ordering_id, variant: 1, fields: Vec::new() }, decided),
+                            arm(hir::PatternKind::Wild, read),
+                        ],
+                    },
+                    span,
+                };
+                decided = Expr {
+                    ty: ordering,
+                    kind: ExprKind::Block {
+                        block: Block { stmts: vec![Stmt::Let { local, init: Some(order) }], span },
+                        value: Box::new(chosen),
+                    },
+                    span,
+                };
+            }
+            return Expr { ty: ordering, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(decided) }, span };
+        }
+        if !self.sortable(ty) {
+            if self.methods.contains_key(&(ty, Symbol::intern("cmp"))) {
+                return self.call_operator("cmp", lhs, rhs, span);
+            }
+            if ty != self.common.error {
+                let shown = self.types.display(ty);
+                self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `cmp` needs"));
+            }
+            return error;
+        }
+        let (lhs, rhs) = if self.is_text(ty) {
+            let str_ty = self.common.str_;
+            (self.coerce(lhs, str_ty), self.coerce(rhs, str_ty))
+        } else {
+            (lhs, rhs)
+        };
+        let ty = lhs.ty;
         let (a, b) = (self.declare(None, ty, span), self.declare(None, ty, span));
         let bool_ty = self.common.bool_;
         let local = |id| Expr { ty, kind: ExprKind::Local(id), span };
         let less = |x, y| Expr {
             ty: bool_ty,
             kind: ExprKind::Builtin { which: Builtin::TotalLess, args: vec![local(x), local(y)] },
-            span,
-        };
-        let variant = |variant| Expr {
-            ty: ordering,
-            kind: ExprKind::EnumLit { enum_id: ordering_id, variant, fields: vec![] },
             span,
         };
         let arm = |kind, body: Expr| hir::MatchArm {
@@ -24892,7 +25156,7 @@ impl<'a> Checker<'a> {
             ty: ordering,
             kind: ExprKind::Block {
                 block: Block {
-                    stmts: vec![Stmt::Let { local: a, init: Some(receiver) }, Stmt::Let { local: b, init: Some(other) }],
+                    stmts: vec![Stmt::Let { local: a, init: Some(lhs) }, Stmt::Let { local: b, init: Some(rhs) }],
                     span,
                 },
                 value: Box::new(chosen),
@@ -26353,9 +26617,13 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Int(v) => (false, Some(ast::Literal::Int { value: *v, suffix: None })),
             ExprKind::Bool(v) => (false, Some(ast::Literal::Bool(*v))),
+            ExprKind::Str(text) => (false, Some(ast::Literal::Str(text.clone()))),
             _ => (false, None),
         };
-        let typed_alike = value.ty == expected || self.types.is_untyped_literal(value.ty);
+        // A text constant matches either text type, as its literal would.
+        let typed_alike = value.ty == expected
+            || self.types.is_untyped_literal(value.ty)
+            || (self.is_text(value.ty) && self.is_text(expected));
         match magnitude {
             Some(lit) if typed_alike => self.check_literal_pattern(&ast::PatternLit { negative, lit }, expected, span),
             _ => {
@@ -26364,7 +26632,7 @@ impl<'a> Checker<'a> {
                 self.sink.emit(
                     Diagnostic::error(codes::E2020, span, format!("the constant `{}` cannot match a value of type `{wanted}`", name.name))
                         .primary_label(format!("a constant of type `{shown}`"))
-                        .note("a constant in a pattern matches as the integer, `bool` or `char` literal it stands for, of the matched type"),
+                        .note("a constant in a pattern matches as the integer, `bool`, `char` or string literal it stands for, of the matched type"),
                 );
                 error
             }
@@ -26377,6 +26645,11 @@ impl<'a> Checker<'a> {
         expected: Ty,
         span: Span,
     ) -> hir::Pattern {
+        // `[DIA-14]` — a scrutinee that did not check was reported; its
+        // patterns add nothing (it gave "cannot match `<error>`" per arm).
+        if expected == self.common.error {
+            return hir::Pattern { ty: expected, kind: hir::PatternKind::Wild, span };
+        }
         let value = match &pattern.lit {
             ast::Literal::Int { value, .. } if self.types.is_integral(expected) => {
                 let limit = if pattern.negative {
@@ -26395,6 +26668,11 @@ impl<'a> Checker<'a> {
             }
             ast::Literal::Bool(v) if !pattern.negative && expected == self.common.bool_ => Some(i128::from(*v)),
             ast::Literal::Char(c) if !pattern.negative && expected == self.common.char_ => Some(*c as i128),
+            // III.6 — a string literal matches text by its bytes; a `match` on
+            // text is exhaustive only through a wildcard.
+            ast::Literal::Str(text) if !pattern.negative && self.is_text(expected) => {
+                return hir::Pattern { ty: expected, kind: hir::PatternKind::Str(text.clone()), span };
+            }
             _ => None,
         };
         match value {
@@ -30199,11 +30477,9 @@ impl<'a> Checker<'a> {
                 self.scan(receiver, elem, value, name.name.is("contains"), span).unwrap_or(error)
             }
             _ => {
-                // A reference into the array, so the array must be a place.
-                if !is_place(&receiver.kind) {
-                    self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
-                    return error;
-                }
+                // A reference into the array. A temporary array is borrowed
+                // where it is made and lives to the end of its statement
+                // (`[EXP-4]`); the borrow checker rejects a use past that.
                 let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                 let view = self.view_of(receiver, span_ty, false, Builtin::SpanFrom { mutable: false });
                 let index = match name.name.as_str() {
@@ -30688,6 +30964,16 @@ impl<'a> Checker<'a> {
     /// Whether `sort` can order values of `ty` (`[TYP-37]`): scalars and text.
     fn sortable(&self, ty: Ty) -> bool {
         self.totally_ordered(ty) || self.is_text(ty)
+    }
+
+    /// Whether `cmp` on `ty` is the compiler's (`synth_cmp_of`): the numbers and text, a tuple
+    /// whose elements are all `Ord` (`[TYP-36]`: lexicographic), or a shared reference to one.
+    fn provides_cmp(&self, ty: Ty) -> bool {
+        match *self.types.kind(ty) {
+            TyKind::Ref { mutable: false, inner } => self.provides_cmp(inner),
+            TyKind::Tuple(_) => self.implements(ty, Symbol::intern("std.core.Ord")),
+            _ => self.sortable(ty),
+        }
     }
 
     /// `b if b < a else a` in `Ord`'s order (`[TYP-37]`), each evaluated
@@ -33140,6 +33426,23 @@ impl<'a> Checker<'a> {
             TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, params: wanted, ret: wanted_ret },
         ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && found_late == wanted_late && found_unsafe == wanted_unsafe && found == wanted && found_ret == wanted_ret
+        {
+            return Expr { ty: expected, ..expr };
+        }
+        // `[CLO-3]` (ODR-189) — a consumed callable parameter (`owned f: fn(A) -> R`) is an owned
+        // callable value in its function: it may be stored where one of its signature is wanted.
+        // This is the generic body's check, with the parameter opaque; each instance converts its
+        // concrete argument as the rules below do (a function or capture-free lambda by its bits,
+        // an `owned fn` by `MakeCallable`, a lambda that borrows or moves a capture out refused).
+        if let Some((signature, true)) = self.callable_bound_of(expr.ty)
+            && let TyKind::Fn { params: found, ret: found_ret, latebound: found_late, is_unsafe: found_unsafe, .. } =
+                self.types.kind(signature).clone()
+            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe } =
+                self.types.kind(expected).clone()
+            && found == wanted
+            && found_ret == wanted_ret
+            && found_late == latebound
+            && found_unsafe == is_unsafe
         {
             return Expr { ty: expected, ..expr };
         }
@@ -36669,7 +36972,7 @@ impl<'a> Checker<'a> {
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
+                    let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
@@ -37031,7 +37334,7 @@ impl<'a> Checker<'a> {
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
+                    let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
@@ -38234,6 +38537,15 @@ impl<'a> Checker<'a> {
                 );
             return implied || self.generic_bounds(index, name).contains(&interface);
         }
+        // ODR-181 — `ref T` implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does.
+        if let TyKind::Ref { mutable: false, inner } = *self.types.kind(ty)
+            && matches!(
+                interface.as_str(),
+                "std.core.Eq" | "std.core.Ord" | "std.collections.Hash" | "std.core.Display" | "std.core.Debug" | "Display" | "Debug"
+            )
+        {
+            return self.implements(inner, interface);
+        }
         // Part IV §8, ODR-111 — a marker is what the type holds says, and what the program wrote by
         // hand (`unsafe extend`), never a recorded implementation alone.
         match interface.as_str() {
@@ -38258,7 +38570,11 @@ impl<'a> Checker<'a> {
         // totalOrder) and text, and `Clone` and `Eq` on every type it can
         // clone or compare, a struct's implicit ones included. D-246.
         let provided = match interface.as_str() {
-            "std.core.Ord" => self.sortable(ty),
+            // `[TYP-36]` — a tuple is `Ord` lexicographically when every element is.
+            "std.core.Ord" => {
+                self.sortable(ty)
+                    || matches!(self.types.kind(ty), TyKind::Tuple(items) if items.iter().all(|&item| self.implements(item, interface)))
+            }
             "std.core.Clone" => self.is_cloneable(ty),
             "std.core.Eq" => self.has_implicit_eq(ty),
             "std.collections.Hash" => self.hashes(ty, &mut HashSet::new()),
@@ -40263,7 +40579,7 @@ impl<'a> Checker<'a> {
     /// entry holding `k`, and its callers keep `k`'s source borrowed for it;
     /// `get(q) -> Option[ref V]` does not name `q`'s type and borrows only
     /// `self`.
-    fn declared_borrows(&self, def: DefId) -> Option<Vec<usize>> {
+    fn declared_borrows(&self, def: DefId) -> Option<Vec<hir::BorrowSource>> {
         let signature = &self.signatures[def.0 as usize];
         if signature.borrows.is_some() {
             return signature.borrows.clone();
@@ -40291,7 +40607,7 @@ impl<'a> Checker<'a> {
         if joined.is_empty() {
             return None;
         }
-        Some(std::iter::once(0).chain(joined).collect())
+        Some(std::iter::once(0).chain(joined).map(hir::BorrowSource::whole).collect())
     }
 
     /// A borrowed parameter's local: `ref T` where `def` passes it by address
@@ -42253,11 +42569,11 @@ impl<'a> Checker<'a> {
         {
             return self.synth_int_method(receiver, name, args, span);
         }
-        // `[TYP-37]` — `a.cmp(b)` on the numbers and text, in `Ord`'s order,
-        // which generic code bounded by `Ord` uses.
+        // `[TYP-37]`, `[TYP-36]` — `a.cmp(b)` where the compiler gives the order (the numbers
+        // and text, tuples, shared references to them), which generic code bounded by `Ord` uses.
         if name.name.is("cmp")
             && explicit.is_empty()
-            && self.sortable(receiver.ty)
+            && self.provides_cmp(receiver.ty)
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
             return self.synth_total_cmp(receiver, args, span);
@@ -45300,7 +45616,7 @@ impl<'a> Checker<'a> {
         let beyond: Vec<Symbol> = match &signature.borrows {
             Some(named) if self.types.is_view(ret) => {
                 let sources = self.sources_of(&signature.params);
-                named.iter().filter(|index| !sources.contains(index)).map(|index| signature.params[*index].0).collect()
+                named.iter().filter(|source| !sources.contains(&source.parameter)).map(|source| signature.params[source.parameter].0).collect()
             }
             _ => Vec::new(),
         };
@@ -45481,6 +45797,9 @@ impl<'a> Checker<'a> {
         which: hir::Builtin,
     ) -> Expr {
         let span = container.span;
+        // `[TYP-21]` — a mutable view of `m[k]` reaches the element through
+        // `IndexMut`, as a `mut` receiver does (`m[k].iter_mut()`).
+        let container = if mutable { self.index_place_for_write(container) } else { container };
         if mutable {
             self.reject_readonly_write(&container, span);
             let through_shared_ref = self.reject_write_through_shared_ref(&container, span);
@@ -51034,15 +51353,11 @@ impl<'a> Checker<'a> {
                     span,
                 }
             }
-        } else if self.viewed_place(&receiver) {
-            receiver
         } else {
-            self.error(
-                codes::E2140,
-                span,
-                "this operation needs a mutable span variable or a view of a mutable place",
-            );
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            // A view of a place, or a view that is itself a temporary
+            // (`make().iter_mut()`, `[EXP-4]`): no caller holds it, so the
+            // iterator takes it as it is.
+            receiver
         };
         let view = self.types.intern(TyKind::Span { elem, mutable });
         Expr {
@@ -51188,10 +51503,9 @@ impl<'a> Checker<'a> {
         if let Some((mutable, method)) = through_view
             && !is_string
         {
-            if !is_place(&receiver.kind) {
-                self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
+            // `[EXP-4]` — a temporary array is viewed where it is made: it
+            // lives to the end of its statement, or of the loop whose
+            // iterable made it (`for x in make().iter()`).
             let view_ty = self.types.intern(TyKind::Span { elem, mutable });
             let view = self.view_of(receiver, view_ty, mutable, Builtin::SpanFrom { mutable });
             return self.synth_span_method(view, recv_span, elem, mutable, method, args, span);
@@ -51544,6 +51858,17 @@ impl<'a> Checker<'a> {
     /// where the parameter is passed by address (`[BRW-8]`).
     fn pass_argument(&mut self, value: Expr, param_ty: Ty, mode: Mode) -> Expr {
         let by_address = self.types.passed_by_address(param_ty);
+        self.pass_argument_by(value, param_ty, mode, by_address)
+    }
+
+    /// A lambda argument a generic call checked while inferring, passed in its parameter's mode.
+    /// `[FN-2a]`, shape B10 — a lambda written at the call is a value, not the mutable place a
+    /// `mut` parameter borrows, as `check_argument_by` reports for any other value; passing it on
+    /// gave the callee a value where it reads a pointer.
+    fn pass_checked_lambda(&mut self, value: Expr, span: Span, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        if mode == Mode::Mut && value.ty != self.common.error {
+            self.emit_mut_argument_place_error(span);
+        }
         self.pass_argument_by(value, param_ty, mode, by_address)
     }
 
@@ -54539,15 +54864,20 @@ fn has_static_region(expr: &ast::Expr) -> bool {
 
 /// The name an item declares, if it declares one.
 fn item_name(item: &ast::Item) -> Option<Symbol> {
+    item_ident(item).map(|ident| ident.name)
+}
+
+/// The name a named item declares, with its place.
+fn item_ident(item: &ast::Item) -> Option<&ast::Ident> {
     Some(match &item.kind {
-        ast::ItemKind::Fn(d) => d.name.name,
-        ast::ItemKind::Struct(d) => d.name.name,
-        ast::ItemKind::Enum(d) => d.name.name,
-        ast::ItemKind::Interface(d) => d.name.name,
-        ast::ItemKind::Const(d) => d.name.name,
-        ast::ItemKind::Static(d) => d.name.name,
-        ast::ItemKind::Class(d) => d.name.name,
-        ast::ItemKind::TypeAlias(d) => d.name.name,
+        ast::ItemKind::Fn(d) => &d.name,
+        ast::ItemKind::Struct(d) => &d.name,
+        ast::ItemKind::Enum(d) => &d.name,
+        ast::ItemKind::Interface(d) => &d.name,
+        ast::ItemKind::Const(d) => &d.name,
+        ast::ItemKind::Static(d) => &d.name,
+        ast::ItemKind::Class(d) => &d.name,
+        ast::ItemKind::TypeAlias(d) => &d.name,
         ast::ItemKind::Extend(_)
         | ast::ItemKind::ExternBlock(_)
         | ast::ItemKind::ExternClass(_)
@@ -54681,8 +55011,9 @@ mod instance_symbol_tests {
 }
 
 /// `[MNG-1]` — `E9040`: two generic instances, written `first` and `second`, whose symbols are one.
-/// The instance hash of different arguments meeting is one way; two items of one path (a module
-/// and a type of one name, each with a generic `at`) another (`one_path`).
+/// The instance hash of different arguments meeting is one way; two items of one path another
+/// (`one_path`), though a module and a type of one name, the way a program could write one, are
+/// `E1032` (ODR-201) and their instances its cascade.
 fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str, span: Span, one_path: bool) -> Diagnostic {
     let diagnostic = Diagnostic::error(
         codes::E9040,
@@ -54696,9 +55027,7 @@ fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str,
         ember_branding::INSTANCE_HASH_DIGITS
     ));
     if one_path {
-        diagnostic
-            .note("both have one path and one list of arguments: a module and a type of one name in one module make their items' paths one")
-            .help("rename the module or the type")
+        diagnostic.note("both have one path and one list of arguments").help("rename one of the two items")
     } else {
         diagnostic.help("rename one of the types their arguments name, which changes the hash")
     }
@@ -54879,7 +55208,7 @@ fn binds_mut_ref(pattern: &hir::Pattern) -> bool {
         hir::PatternKind::Variant { fields, .. } | hir::PatternKind::Fields(fields) | hir::PatternKind::Or(fields) => {
             fields.iter().any(binds_mut_ref)
         }
-        hir::PatternKind::Wild | hir::PatternKind::Int(_) | hir::PatternKind::Error => false,
+        hir::PatternKind::Wild | hir::PatternKind::Int(_) | hir::PatternKind::Str(_) | hir::PatternKind::Error => false,
     }
 }
 
@@ -57368,7 +57697,7 @@ fn binds_by_mut_ref(pattern: &Pattern) -> bool {
     match &pattern.kind {
         PatternKind::Bind { by_ref, sub, .. } => *by_ref == Some(true) || sub.as_deref().is_some_and(binds_by_mut_ref),
         PatternKind::Variant { fields, .. } | PatternKind::Fields(fields) | PatternKind::Or(fields) => fields.iter().any(binds_by_mut_ref),
-        PatternKind::Wild | PatternKind::Int(_) | PatternKind::Error => false,
+        PatternKind::Wild | PatternKind::Int(_) | PatternKind::Str(_) | PatternKind::Error => false,
     }
 }
 

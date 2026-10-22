@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use ember_mir::{CallableRegionMetadata, CallableRegionMetadataCodecError};
+use ember_mir::{BorrowSource, CallableRegionMetadata, CallableRegionMetadataCodecError};
 
 const MAGIC: &[u8; 4] = b"EMIF";
 // Schema v4 makes callable declarations authoritative even when a generic has
@@ -42,7 +42,12 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 12 keys callables by `[MNG-1]`'s injective symbols (`em_3lib3m_x1f`, an instance's
 // ending in its arguments' hash): a schema 11 record names them `em_lib_m_x_f`, which is another
 // symbol, or two callables' one.
-const SCHEMA_VERSION: u32 = 12;
+// Schema 13 records what `@borrows` names as a parameter and, for `self.f` (`[LT-1a]`, ODR-196),
+// the receiver's field: a schema 12 record has positions only, so `@borrows(self.f)` and
+// `@borrows(self)`, which lend a caller different things, would be one contract.
+// Schema 14 marks a transliterated component in its length (`[MNG-3]`, ODR-202: `café` is
+// `u10caf_u00E9_`): a schema 13 record names `café` as the ASCII name `caf_u00E9_` is now named.
+const SCHEMA_VERSION: u32 = 14;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -110,9 +115,10 @@ pub struct CallableSignature {
     pub parameters: Vec<CallableParameter>,
     pub result: String,
     pub generics: Vec<CallableGenericParameter>,
-    /// Zero-based result provenance positions. `None` uses ordinary elision;
+    /// Result provenance: zero-based parameter positions, each whole or (for
+    /// `@borrows(self.f)`) by one field. `None` uses ordinary elision;
     /// `Some([])` denotes a foreign C result contracted as `from(static)`.
-    pub borrows: Option<Vec<usize>>,
+    pub borrows: Option<Vec<BorrowSource>>,
     pub is_unsafe: bool,
     /// `None` denotes Ember's ordinary ABI.
     pub abi: Option<String>,
@@ -160,15 +166,19 @@ impl CallableSignature {
             if borrows.is_empty() && self.abi.is_none() {
                 return Err("`@borrows` must name at least one parameter");
             }
-            let mut previous = None;
-            for &position in borrows {
-                if position >= self.parameters.len() {
+            let mut previous: Option<BorrowSource> = None;
+            for &source in borrows {
+                if source.parameter >= self.parameters.len() {
                     return Err("`@borrows` position exceeds parameter count");
                 }
-                if previous.is_some_and(|last| last >= position) {
+                if previous.is_some_and(|last| last >= source) {
                     return Err("`@borrows` positions are not strictly ascending");
                 }
-                previous = Some(position);
+                // A parameter named whole holds what its fields borrow.
+                if previous.is_some_and(|last| last.parameter == source.parameter && last.field.is_none()) {
+                    return Err("`@borrows` names a parameter both whole and by a field");
+                }
+                previous = Some(source);
             }
         }
         Ok(())
@@ -826,11 +836,18 @@ fn push_callable_signature(out: &mut Vec<u8>, signature: &CallableSignature) {
         None => out.push(0),
     }
     match &signature.borrows {
-        Some(positions) => {
+        Some(sources) => {
             out.push(1);
-            push_count(out, positions.len());
-            for position in positions {
-                push_count(out, *position);
+            push_count(out, sources.len());
+            for source in sources {
+                push_count(out, source.parameter);
+                match source.field {
+                    Some(field) => {
+                        out.push(1);
+                        push_count(out, field);
+                    }
+                    None => out.push(0),
+                }
             }
         }
         None => out.push(0),
@@ -952,11 +969,17 @@ fn read_callable_signature(
         0 => None,
         1 => {
             let count = reader.count()?;
-            let mut positions = Vec::with_capacity(count);
+            let mut sources = Vec::with_capacity(count);
             for _ in 0..count {
-                positions.push(reader.count()?);
+                let parameter = reader.count()?;
+                let field = match reader.u8()? {
+                    0 => None,
+                    1 => Some(reader.count()?),
+                    _ => return Err(InterfaceArtifactError::NonCanonical),
+                };
+                sources.push(BorrowSource { parameter, field });
             }
-            Some(positions)
+            Some(sources)
         }
         _ => return Err(InterfaceArtifactError::NonCanonical),
     };
@@ -1233,7 +1256,7 @@ mod tests {
                     is_unsafe: false,
                 }),
             }],
-            borrows: Some(vec![0]),
+            borrows: Some(vec![BorrowSource::whole(0)]),
             is_unsafe: false,
             abi: None,
             overflow: "panic".to_string(),
@@ -1526,6 +1549,27 @@ mod tests {
             build_artifacts(&[invalid], "test"),
             Err(InterfaceArtifactError::InvalidCallableContract { reason, .. })
                 if reason == "`@borrows` must name at least one parameter"
+        ));
+    }
+
+    /// `[LT-1a]` (ODR-196) — `@borrows(self.f)` is its own contract: it round-trips, and it is
+    /// not `@borrows(self)`, so changing one into the other changes an importer's key.
+    #[test]
+    fn a_borrowed_field_round_trips_and_is_not_its_receiver() {
+        let mut field = input("dep", "dep", &[], 0);
+        field.callables[0].contract.signature.borrows = Some(vec![BorrowSource { parameter: 0, field: Some(1) }]);
+        let artifacts = build_artifacts(&[input("root", "root", &["dep"], 0), field], "test").unwrap();
+        assert_eq!(round_trip_artifacts(&artifacts).unwrap(), artifacts);
+        let whole = build_artifacts(&[input("root", "root", &["dep"], 0), input("dep", "dep", &[], 0)], "test").unwrap();
+        let key = |artifacts: &[ModuleInterfaceArtifact]| artifacts.iter().find(|artifact| artifact.module == "root").unwrap().cache_key;
+        assert_ne!(key(&artifacts), key(&whole));
+
+        let mut both = input("root", "root", &[], 0);
+        both.callables[0].contract.signature.borrows = Some(vec![BorrowSource::whole(0), BorrowSource { parameter: 0, field: Some(1) }]);
+        assert!(matches!(
+            build_artifacts(&[both], "test"),
+            Err(InterfaceArtifactError::InvalidCallableContract { reason, .. })
+                if reason == "`@borrows` names a parameter both whole and by a field"
         ));
     }
 

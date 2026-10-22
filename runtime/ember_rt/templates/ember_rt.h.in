@@ -2254,6 +2254,13 @@ ember_str ember_vec_as_str(const ember_vec* v);
  * `a` sorts before, equal to or after `b`; a prefix sorts first. */
 int ember_str_cmp(ember_str a, ember_str b);
 
+/* Text equality: the lengths, then the bytes. Inline, so against a literal
+ * (`==`, a string pattern) the C compiler sees `s.len == 5 && memcmp(s.ptr,
+ * "north", 5) == 0`, what C would write. */
+static inline bool ember_str_eq(ember_str a, ember_str b) {
+    return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, a.len) == 0);
+}
+
 /* `[LEX-19]`: an f-string hole's format spec, Python's mini-language
  * `[[fill]align][sign][#][0][width][,|_][.precision][type]`, parsed by the
  * compiler. A letter field is 0 when the spec leaves it out; `precision` is -1

@@ -20,6 +20,8 @@ enum Ctor {
     Variant(usize),
     /// An integer, `bool` or `char` value, already narrowed.
     Int(i128),
+    /// A string literal; text has too many values to enumerate.
+    Str(String),
     /// A type with exactly one constructor: a tuple, a struct or an array.
     Single,
 }
@@ -42,6 +44,7 @@ fn lower(pattern: &Pattern) -> Pat {
         PatternKind::Bind { sub: None, .. } => Pat::Wild,
         PatternKind::Bind { sub: Some(sub), .. } => lower(sub),
         PatternKind::Int(value) => Pat::Ctor { ctor: Ctor::Int(*value), fields: Vec::new() },
+        PatternKind::Str(text) => Pat::Ctor { ctor: Ctor::Str(text.clone()), fields: Vec::new() },
         PatternKind::Variant { variant, fields, .. } => Pat::Ctor {
             ctor: Ctor::Variant(*variant),
             fields: fields.iter().map(lower).collect(),
@@ -190,6 +193,7 @@ fn render(types: &TypeTable, ty: Ty, ctor: &Ctor, fields: &[String]) -> String {
                 value.to_string()
             }
         }
+        Ctor::Str(text) => format!("{text:?}"),
         Ctor::Variant(index) => {
             let TyKind::Enum(id) = types.kind(ty) else { return "_".to_string() };
             let def = types.enum_def(*id);
@@ -210,7 +214,7 @@ fn render(types: &TypeTable, ty: Ty, ctor: &Ctor, fields: &[String]) -> String {
 /// The sub-patterns a constructor exposes, by type. Its length is the arity.
 fn ctor_fields(types: &TypeTable, ty: Ty, ctor: &Ctor) -> Vec<Ty> {
     match ctor {
-        Ctor::Int(_) => Vec::new(),
+        Ctor::Int(_) | Ctor::Str(_) => Vec::new(),
         Ctor::Variant(index) => match types.kind(ty) {
             TyKind::Enum(id) => types.enum_def(*id).variants[*index]
                 .fields

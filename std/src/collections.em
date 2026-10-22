@@ -907,6 +907,7 @@ pub struct MapKeys[K: Eq + Hash, V, H: Hasher + Default]:
     owner: ref Map[K, V, H]
     at: int
 
+    @borrows(self.owner)
     pub fn next(mut self) -> Option[ref K]:
         while self.at < self.owner.entries.len():
             i = self.at
@@ -923,6 +924,7 @@ pub struct MapValues[K: Eq + Hash, V, H: Hasher + Default]:
     owner: ref Map[K, V, H]
     at: int
 
+    @borrows(self.owner)
     pub fn next(mut self) -> Option[ref V]:
         while self.at < self.owner.entries.len():
             i = self.at
@@ -955,6 +957,7 @@ pub struct MapItems[K: Eq + Hash, V, H: Hasher + Default]:
     owner: ref Map[K, V, H]
     at: int
 
+    @borrows(self.owner)
     pub fn next(mut self) -> Option[(ref K, ref V)]:
         while self.at < self.owner.entries.len():
             i = self.at
@@ -1068,6 +1071,7 @@ pub struct SetIter[T: Eq + Hash, H: Hasher + Default]:
     owner: ref Map[T, bool, H]
     at: int
 
+    @borrows(self.owner)
     pub fn next(mut self) -> Option[ref T]:
         while self.at < self.owner.entries.len():
             i = self.at
@@ -1530,6 +1534,7 @@ pub struct FixedArrayIter[T, const N: int]:
     owner: ref FixedArray[T, N]
     at: int
 
+    @borrows(self.owner)
     pub fn next(mut self) -> Option[ref T]:
         i = self.at
         self.at += 1

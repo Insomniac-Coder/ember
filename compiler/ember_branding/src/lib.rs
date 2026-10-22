@@ -84,12 +84,16 @@ fn prefix() -> &'static str {
 pub const INSTANCE_HASH_DIGITS: usize = 16;
 
 /// `[MNG-1]` — the letter between an instance's path and its hash: `em_3maxG…`. A component
-/// begins with a digit, so the letter ends the path.
+/// begins with a digit or [`TRANSLITERATED_MARK`] and one, so the letter ends the path.
 pub const INSTANCE_MARK: char = 'G';
+
+/// `[MNG-3]` (ODR-202) — the letter before the length of a component that was transliterated:
+/// `café` is `u10caf_u00E9_`, the ASCII name `caf_u00E9_` is `10caf_u00E9_`, so the two never meet.
+pub const TRANSLITERATED_MARK: char = 'u';
 
 /// `[MNG-1]` — an Ember path (`lib.m_x.f`) as a symbol writes it after `em_`: each component as its
 /// length in decimal and then its text (`3lib3m_x1f`), a character beyond ASCII transliterated
-/// first (`[MNG-3]`). The compiler spells a path with `.` between its components, which no
+/// first and the length marked so (`[MNG-3]`, `u10caf_u00E9_`). The compiler spells a path with `.` between its components, which no
 /// identifier holds, so `.` is exactly where one component ends; the length prefixes then make the
 /// symbol name each component exactly too, where `_` between them did not (`m_x.f` and `m.x_f`).
 pub fn mangled_path(path: &str) -> String {
@@ -106,12 +110,32 @@ pub fn push_mangled_path(out: &mut String, path: &str) {
 }
 
 /// One path component: its length, then its text, transliterated (`[MNG-3]`) before the length
-/// is taken.
+/// is taken; a transliterated one has [`TRANSLITERATED_MARK`] before its length (ODR-202).
 fn push_component(out: &mut String, text: &str) {
     use std::fmt::Write;
     debug_assert!(!text.is_empty(), "an empty path component");
-    let text = transliterated(text);
-    let _ = write!(out, "{}{text}", text.len());
+    let written = transliterated(text);
+    if !text.is_ascii() {
+        out.push(TRANSLITERATED_MARK);
+    }
+    let _ = write!(out, "{}{written}", written.len());
+}
+
+/// Whether a component begins `rest`: a length (a digit other than `0`), marked or not.
+fn starts_component(rest: &str) -> bool {
+    rest.strip_prefix(TRANSLITERATED_MARK).unwrap_or(rest).starts_with(|c: char| matches!(c, '1'..='9'))
+}
+
+/// The component that begins `rest` ([`starts_component`]): whether it was transliterated, its text
+/// as written, and what follows it; `None` when its length runs past the end.
+fn split_component(rest: &str) -> Option<(bool, &str, &str)> {
+    let body = rest.strip_prefix(TRANSLITERATED_MARK);
+    let marked = body.is_some();
+    let body = body.unwrap_or(rest);
+    let digits = body.find(|c: char| !c.is_ascii_digit()).unwrap_or(body.len());
+    let length: usize = body[..digits].parse().ok()?;
+    let text = body.get(digits..digits.checked_add(length)?)?;
+    Some((marked, text, &body[digits + length..]))
 }
 
 /// `[MNG-1]` — the end of a generic instance's symbol: `G` and the first 16 hex digits of the
@@ -166,10 +190,8 @@ pub fn reinstance(symbol: &str, arguments: &str) -> String {
 fn item_parts(symbol: &str) -> Option<(&str, Option<&str>)> {
     let mut rest = symbol.strip_prefix(prefix())?;
     let mut components = 0;
-    while rest.starts_with(|c: char| c.is_ascii_digit()) && !rest.starts_with('0') {
-        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-        let length: usize = rest[..digits].parse().ok()?;
-        rest = rest.get(digits + length..)?;
+    while starts_component(rest) {
+        (_, _, rest) = split_component(rest)?;
         components += 1;
     }
     let path = &symbol[..symbol.len() - rest.len()];
@@ -188,13 +210,17 @@ pub fn symbol(mangled: &str) -> String {
 }
 
 /// A name the compiler makes for itself, not for an item: `em_` and `tag`, which begins with a
-/// letter (`em_closure3`, `em_drop_glue_2`), so it is never an item's (whose path begins with a
-/// digit). A name keyed by types or items writes their mangled forms after the tag, each after
-/// `_` (`em_vt_dyn_7Observe_4Bump`): a mangled form begins with a digit and its components'
-/// lengths say where it ends, so a `_` followed by a digit starts the next one, and one followed by
-/// a letter starts a tag of the name's own (`_slot0`).
+/// letter and is not the start of a component (`em_closure3`, `em_drop_glue_2`), so it is never an
+/// item's (whose path begins with a digit, or `u` and one). A name keyed by types or items writes
+/// their mangled forms after the tag, each after `_` (`em_vt_dyn_7Observe_4Bump`): a mangled form
+/// begins with a component and its components' lengths say where it ends, so a `_` followed by a
+/// component starts the next one, and one followed by any other letter starts a tag of the name's
+/// own (`_slot0`).
 pub fn generated(tag: &str) -> String {
-    debug_assert!(tag.starts_with(|c: char| c.is_ascii_alphabetic()), "a generated name's tag begins with a letter: `{tag}`");
+    debug_assert!(
+        tag.starts_with(|c: char| c.is_ascii_alphabetic()) && !starts_component(tag),
+        "a generated name's tag begins with a letter and no component: `{tag}`"
+    );
     format!("{}{tag}", prefix())
 }
 
@@ -238,16 +264,16 @@ impl Demangled<'_> {
     }
 }
 
-/// [`Demangled`] — the length prefixes say exactly where each component ends.
+/// [`Demangled`] — the length prefixes say exactly where each component ends, and the mark before a
+/// length whether its text is transliterated (`u10caf_u00E9_` is `café`, `10caf_u00E9_` the ASCII
+/// name `caf_u00E9_`).
 pub fn demangle(symbol: &str) -> Option<Demangled<'_>> {
     let mut rest = symbol.strip_prefix(prefix())?;
     let mut components = Vec::new();
-    while rest.starts_with(|c: char| c.is_ascii_digit()) && !rest.starts_with('0') {
-        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-        let length: usize = rest[..digits].parse().ok()?;
-        let text = rest.get(digits..digits + length)?;
-        components.push(untransliterated(text));
-        rest = &rest[digits + length..];
+    while starts_component(rest) {
+        let (marked, text, after) = split_component(rest)?;
+        components.push(if marked { untransliterated(text)? } else { text.to_string() });
+        rest = after;
     }
     if components.is_empty() {
         return None;
@@ -269,20 +295,21 @@ pub fn demangle(symbol: &str) -> Option<Demangled<'_>> {
 pub fn symbol_path_starts_with(symbol: &str, components: &[&str]) -> bool {
     let Some(mut rest) = symbol.strip_prefix(prefix()) else { return false };
     for expected in components {
-        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
-        if digits == 0 || rest.starts_with('0') || rest[..digits].parse() != Ok(expected.len()) {
+        if !starts_component(rest) {
             return false;
         }
-        if rest.get(digits..digits + expected.len()) != Some(*expected) {
-            return false;
+        match split_component(rest) {
+            Some((false, text, after)) if text == *expected => rest = after,
+            _ => return false,
         }
-        rest = &rest[digits + expected.len()..];
     }
-    rest.starts_with(|c: char| c.is_ascii_digit())
+    starts_component(rest)
 }
 
-/// `_uXXXX_` written back as the character it stands for.
-fn untransliterated(text: &str) -> String {
+/// A transliterated component's text written back: each `_uXXXX_` as the character it stands for.
+/// `None` unless it is exactly what [`transliterated`] writes for a name beyond ASCII (ODR-202's mark
+/// is on no other component).
+fn untransliterated(text: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find("_u") {
@@ -305,7 +332,7 @@ fn untransliterated(text: &str) -> String {
         }
     }
     out.push_str(rest);
-    out
+    (!out.is_ascii() && transliterated(&out) == text).then_some(out)
 }
 
 /// `[MNG-2]` — the C name of a function whose `@export` symbol is not a C identifier
@@ -488,11 +515,26 @@ mod tests {
         assert_eq!(item_symbol("geometry.probe_cells"), "em_8geometry11probe_cells");
     }
 
-    /// `[MNG-3]` — a character beyond ASCII is transliterated before the length is taken.
+    /// `[MNG-3]` — a character beyond ASCII is transliterated before the length is taken, and the
+    /// length is marked so (ODR-202): `café` and the ASCII name `caf_u00E9_` are two symbols.
     #[test]
     fn a_name_beyond_ascii_is_transliterated_before_its_length() {
-        assert_eq!(item_symbol("café"), "em_10caf_u00E9_");
-        assert_eq!(demangle("em_10caf_u00E9_").map(|d| d.path()), Some("café".to_string()));
+        assert_eq!(item_symbol("café"), "em_u10caf_u00E9_");
+        assert_eq!(item_symbol("caf_u00E9_"), "em_10caf_u00E9_");
+        assert_eq!(item_symbol("größe.maß.f"), "em_u17gr_u00F6__u00DF_eu9ma_u00DF_1f");
+        assert_eq!(demangle("em_u10caf_u00E9_").map(|d| d.path()), Some("café".to_string()));
+        assert_eq!(demangle("em_10caf_u00E9_").map(|d| d.path()), Some("caf_u00E9_".to_string()));
+        // A mark on what the compiler never marks is no item's: an ASCII text, a lower-case code
+        // point, an escape of an ASCII character.
+        for near in ["em_u3abc", "em_u10caf_u00e9_", "em_u10caf_u0041_"] {
+            assert_eq!(demangle(near), None, "{near}");
+        }
+        // A marked component is a component: an instance after it, and std's prefix test.
+        let instance = instance_symbol("geometry.größe", Some("[i64]"));
+        assert_eq!(demangle(&instance).map(|d| (d.path(), d.instance.is_some())), Some(("geometry.größe".to_string(), true)));
+        assert_eq!(reinstance(&item_symbol("größe"), "[0]"), instance_symbol("größe", Some("[0]")));
+        assert!(symbol_path_starts_with(&item_symbol("std.größe"), &["std"]));
+        assert!(!symbol_path_starts_with(&item_symbol("größe.f"), &["gr_u00F6__u00DF_e"]));
     }
 
     /// `[MNG-1]` — an instance's hash: `G` and 16 hex digits of BLAKE3 of its arguments' spelling.
@@ -509,7 +551,7 @@ mod tests {
     /// hash and what follows.
     #[test]
     fn demangling_round_trips() {
-        for path in ["lib.m_x.f", "lib.m.x_f", "geometry.Grid.at", "a.b2.c10", "std.core.Option.unwrap", "größe.maß"] {
+        for path in ["lib.m_x.f", "lib.m.x_f", "geometry.Grid.at", "a.b2.c10", "std.core.Option.unwrap", "größe.maß", "caf_u00E9_.café", "u1.u2x"] {
             let symbol = item_symbol(path);
             let read = demangle(&symbol).expect("an item symbol");
             assert_eq!(read.path(), path);

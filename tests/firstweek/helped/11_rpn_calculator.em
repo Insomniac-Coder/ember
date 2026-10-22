@@ -19,19 +19,13 @@ class Calculator:
         a = self.pop(op)?
         if op == "/" and b == 0.0:
             return Err(CalcError.DivisionByZero)
-        result = 0.0
-        if op == "+":
-            result = a + b
-        elif op == "-":
-            result = a - b
-        elif op == "*":
-            result = a * b
-        elif op == "/":
-            result = a / b
-        elif op == "^":
-            result = a ** b
-        else:
-            return Err(CalcError.UnknownToken(op.to_string()))
+        result = match op:
+            "+" => a + b
+            "-" => a - b
+            "*" => a * b
+            "/" => a / b
+            "^" => a ** b
+            _ => return Err(CalcError.UnknownToken(op.to_string()))
         self.stack.push(result)
         return Ok(())
 
