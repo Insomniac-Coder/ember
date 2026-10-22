@@ -387,6 +387,7 @@ fn emit_with(
         interface_adapters: BTreeMap::new(),
         class_interface_tables: BTreeMap::new(),
         class_interface_call_interfaces: BTreeSet::new(),
+        clone_identities: BTreeSet::new(),
         interface_caches: BTreeMap::new(),
         folded_tests: BTreeMap::new(),
         fall_into: None,
@@ -786,6 +787,9 @@ struct Emitter<'a> {
     /// Interfaces read through a one-word class handle. A marker is needed
     /// even when the concrete adapter table came from another module.
     class_interface_call_interfaces: BTreeSet<String>,
+    /// `[TYP-22]` (ODR-237) — the interface identities whose tables copy their value (an
+    /// interface requires `Clone`): a `clone` entry follows `access`.
+    clone_identities: BTreeSet<String>,
     /// Per-body hidden caches for repeated interface calls through an
     /// unchanged class-interface parameter.
     interface_caches: BTreeMap<InterfaceCacheKey, String>,
@@ -1576,6 +1580,14 @@ impl Emitter<'_> {
                             for field in &variant.fields { self.request_clone_dependency(field.ty); }
                         }
                     }
+                    // ODR-237 — a `Box[T]` clones its `T`; a `Box[dyn I]` through its table.
+                    TyKind::Struct(id) => {
+                        if let Some(inner) = self.box_inner_id(*id)
+                            && !matches!(self.types.kind(inner), TyKind::Dyn { .. })
+                        {
+                            self.request_clone_dependency(inner);
+                        }
+                    }
                     _ => unreachable!("only structural types request a clone-parts helper"),
                 }
             }
@@ -1587,6 +1599,7 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             TyKind::Vec { elem, .. } => { self.array_helper(ArrayHelper::Clone, *elem); }
             TyKind::Tuple(_) | TyKind::Enum(_) => { self.clone_parts_helper(ty); }
+            TyKind::Struct(id) if self.box_inner_id(*id).is_some() => { self.clone_parts_helper(ty); }
             _ => {}
         }
     }
@@ -1607,7 +1620,9 @@ impl Emitter<'_> {
             // (`-Wincompatible-pointer-types-discards-qualifiers`, `[CG-C-1]`).
             let argument = if *by_address { format!("({}*)&({source})", self.c_type(ty)) } else { source.to_string() };
             out.push(format!("{dest} = {symbol}({argument});"));
-        } else if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_)) {
+        } else if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_))
+            || matches!(self.types.kind(ty), TyKind::Struct(id) if self.box_inner_id(*id).is_some())
+        {
             let helper = self.clone_parts_helper(ty);
             out.push(format!("{helper}(&({source}), &({dest}));"));
         } else {
@@ -1661,7 +1676,27 @@ impl Emitter<'_> {
                         self.line("    default: EMBER_UNREACHABLE();");
                         self.line("    }");
                     }
-                    _ => unreachable!("CloneParts is requested only for tuples and payload enums"),
+                    // ODR-237 — a new box holding a clone of the value; a `Box[dyn I]`'s through
+                    // the copy entry of its table.
+                    TyKind::Struct(id) if self.box_inner_id(id).is_some() => {
+                        let inner = self.box_inner_id(id).expect("a box");
+                        if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                            let header = ember_branding::generated("dyn_clone_header");
+                            self.line(&format!("    dst->data = ((const struct {header}*)src->vtable)->clone(src->data);"));
+                            self.line("    dst->vtable = src->vtable;");
+                        } else {
+                            let inner_c = self.c_type(inner);
+                            self.line(&format!(
+                                "    *dst = ({inner_c}*){RT}alloc({}, {});",
+                                c_size(&inner_c),
+                                c_align(&inner_c)
+                            ));
+                            let mut lines = Vec::new();
+                            self.clone_part_lines("(**dst)", "(**src)", inner, &mut lines);
+                            for line in lines { self.line(&format!("    {line}")); }
+                        }
+                    }
+                    _ => unreachable!("CloneParts is requested only for tuples, payload enums and boxes"),
                 }
                 self.line("}");
                 self.line("");
@@ -3634,8 +3669,16 @@ impl Emitter<'_> {
                         ret: slot.ret,
                     }))
                     .collect();
+                self.note_dyn_clone(interfaces);
                 self.register_interface_layout(dyn_table_identity(self.types, interfaces), layout);
             }
+        }
+    }
+
+    /// `[TYP-22]` (ODR-237) — a table for `interfaces` copies its value when one requires `Clone`.
+    fn note_dyn_clone(&mut self, interfaces: &[Symbol]) {
+        if self.types.dyn_clones(interfaces) {
+            self.clone_identities.insert(dyn_table_identity(self.types, interfaces));
         }
     }
 
@@ -3681,6 +3724,7 @@ impl Emitter<'_> {
                                 },
                             ..
                         } => {
+                            self.note_dyn_clone(interfaces);
                             self.register_interface_adapter(
                                 *concrete,
                                 dyn_table_identity(self.types, interfaces),
@@ -3717,6 +3761,7 @@ impl Emitter<'_> {
                             ..
                         } => {
                             let identity = dyn_table_identity(self.types, &[*interface]);
+                            self.note_dyn_clone(&[*interface]);
                             self.register_interface_adapter(
                                 *concrete,
                                 identity.clone(),
@@ -3760,6 +3805,7 @@ impl Emitter<'_> {
                     ..
                 } = &block.terminator
                 {
+                    self.note_dyn_clone(interfaces);
                     self.register_interface_adapter(
                         *concrete,
                         dyn_table_identity(self.types, interfaces),
@@ -3876,6 +3922,16 @@ impl Emitter<'_> {
             self.line("    size_t align;");
             self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
             self.line("};");
+            // `[TYP-22]` (ODR-237) — the prefix of a table that copies its value, which a
+            // `Box[dyn I]`'s clone reads.
+            let header = ember_branding::generated("dyn_clone_header");
+            self.line(&format!("struct {header} {{"));
+            self.line("    void (*drop)(void*);");
+            self.line("    size_t size;");
+            self.line("    size_t align;");
+            self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
+            self.line("    void* (*clone)(const void*);");
+            self.line("};");
         }
         let class_handle_interfaces = self
             .class_interface_tables
@@ -3909,6 +3965,9 @@ impl Emitter<'_> {
             // `[EXC-18]` — a class concrete's whole-object access, for a view a
             // `dyn` call returns; NULL for any other concrete (F4).
             self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
+            if self.clone_identities.contains(&interface) {
+                self.line("    void* (*clone)(const void*);");
+            }
             for (slot, method) in methods.into_iter().enumerate() {
                 let Some(method) = method else {
                     self.line(&format!("    void (*slot{slot})(void*);"));
@@ -4135,11 +4194,43 @@ impl Emitter<'_> {
             } else {
                 "NULL".to_string()
             };
+            // `[TYP-22]` (ODR-237) — the copy entry: a clone of the value in a new block (a class
+            // handle's copy is the handle, retained).
+            let clone = self.clone_identities.contains(&adapter.interface).then(|| {
+                let name = format!("{table}_clone");
+                let concrete_c = self.c_type(adapter.concrete);
+                let mut lines = Vec::new();
+                self.line(&format!("static void* {name}(const void* _0) {{"));
+                if class_handle {
+                    self.line(&format!("    {concrete_c} copy;"));
+                    self.clone_part_lines("copy", &format!("(({concrete_c})_0)"), adapter.concrete, &mut lines);
+                    for line in lines {
+                        self.line(&format!("    {line}"));
+                    }
+                    self.line("    return (void*)copy;");
+                } else {
+                    self.line(&format!(
+                        "    {concrete_c}* copy = ({concrete_c}*){RT}alloc({}, {});",
+                        c_size(&concrete_c),
+                        c_align(&concrete_c)
+                    ));
+                    self.clone_part_lines("(*copy)", &format!("(*({concrete_c} const*)_0)"), adapter.concrete, &mut lines);
+                    for line in lines {
+                        self.line(&format!("    {line}"));
+                    }
+                    self.line("    return copy;");
+                }
+                self.line("}");
+                name
+            });
             self.line(&format!("static const struct {table_type} {table} = {{"));
             self.line(&format!("    {drop},"));
             self.line(&format!("    {size},"));
             self.line(&format!("    {align},"));
             self.line(&format!("    {access},"));
+            if let Some(clone) = clone {
+                self.line(&format!("    {clone},"));
+            }
             for (slot, implementation) in adapter.implementations.iter().enumerate() {
                 let value = if implementation.is_some() {
                     format!("{table}_slot{slot}")
@@ -13817,6 +13908,7 @@ mod string_descriptor_view_parts_tests {
             interface_adapters: BTreeMap::new(),
             class_interface_tables: BTreeMap::new(),
             class_interface_call_interfaces: BTreeSet::new(),
+            clone_identities: BTreeSet::new(),
             interface_caches: BTreeMap::new(),
             folded_tests: BTreeMap::new(),
             fall_into: None,

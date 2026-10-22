@@ -2803,6 +2803,9 @@ struct Checker<'a> {
     /// pointer. This table supplies the ownership-aware constructor,
     /// auto-deref and drop semantics without making raw access public.
     boxes: HashMap<StructId, Ty>,
+    /// `[STR-5]` (ODR-237) — the types whose derived `Clone` is being settled, taken as `Clone`
+    /// while their fields are checked, so a recursive one (`Node(Box[Tree])`) derives it.
+    assumed_cloneable: HashSet<Ty>,
     /// `[HEAP-3]`–`[HEAP-6]` — every compiler-known `Shared[T]` and its
     /// payload. The public handle is Copy, but copy/drop use the same strong
     /// control-block operations as class handles rather than bitwise pointer
@@ -3342,6 +3345,7 @@ impl<'a> Checker<'a> {
             deferred_override_checks: Vec::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
+            assumed_cloneable: HashSet::new(),
             shareds: HashMap::new(),
             sync_shareds: HashSet::new(),
             with_scope_item: None,
@@ -12223,6 +12227,23 @@ impl<'a> Checker<'a> {
         Some(instance)
     }
 
+    /// `[TYP-22]` (ODR-237) — whether `interface` requires `Clone`, itself or through a supertrait.
+    fn requires_clone(&self, interface: Symbol) -> bool {
+        let mut pending = vec![interface];
+        let mut seen = HashSet::new();
+        while let Some(next) = pending.pop() {
+            if next.is("std.core.Clone") {
+                return true;
+            }
+            if seen.insert(next)
+                && let Some(def) = self.interfaces.get(&next)
+            {
+                pending.extend(def.supertraits.iter().copied());
+            }
+        }
+        false
+    }
+
     /// Return the precise `[TYP-22]` reason a declared interface cannot be
     /// used as a `dyn` bound. Keeping this check at type formation means the
     /// diagnostic names the offending interface member instead of allowing an
@@ -12265,6 +12286,10 @@ impl<'a> Checker<'a> {
             }
         }
         for parent in &def.supertraits {
+            // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a method.
+            if parent.is("std.core.Clone") {
+                continue;
+            }
             if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting) {
                 return Some(format!("supertrait `{parent}` is not `dyn`-compatible: {reason}"));
             }
@@ -12415,7 +12440,8 @@ impl<'a> Checker<'a> {
         methods: &mut Vec<(Symbol, DefId, Mode)>,
         visiting: &mut HashSet<Symbol>,
     ) {
-        if !visiting.insert(interface) {
+        // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a slot.
+        if !visiting.insert(interface) || interface.is("std.core.Clone") {
             return;
         }
         let Some(def) = self.interfaces.get(&interface) else { return };
@@ -12434,6 +12460,11 @@ impl<'a> Checker<'a> {
     /// their ordinal but deliberately expose no callable erased signature:
     /// D-156 rejects them before a dynamic call is formed.
     fn dyn_vtable_layout(&mut self, interfaces: &[Symbol]) -> Vec<Option<hir::InterfaceSlot>> {
+        for interface in interfaces {
+            if self.requires_clone(*interface) {
+                self.types.declare_dyn_clone(*interface);
+            }
+        }
         let mut methods = Vec::new();
         let mut visiting = HashSet::new();
         for interface in interfaces {
@@ -13055,22 +13086,44 @@ impl<'a> Checker<'a> {
         pending.retain(|(ty, _, explicit)| {
             *explicit || (!self.methods.contains_key(&(*ty, clone)) && !self.has_own_drop(*ty))
         });
-        while let Some(index) = pending.iter().position(|(ty, _, _)| {
-            match self.types.kind(*ty) {
-                TyKind::Struct(id) => {
-                    self.types.struct_def(*id).fields.iter().all(|field| self.is_cloneable(field.ty))
+        // ODR-237 — the types that derive it are the largest set each of whose fields is `Clone`
+        // with the set taken as `Clone`: a recursive type (`Node(Box[Tree])`) derives it, its
+        // clone a function that calls itself.
+        let fields_clone = |checker: &Self, ty: Ty| match checker.types.kind(ty) {
+            TyKind::Struct(id) => checker.types.struct_def(*id).fields.iter().all(|field| checker.is_cloneable(field.ty)),
+            TyKind::Enum(id) => checker
+                .types
+                .enum_def(*id)
+                .variants
+                .iter()
+                .all(|variant| variant.fields.iter().all(|field| checker.is_cloneable(field.ty))),
+            // `[OWN-8]` — class handles clone like ordinary handle copies.
+            // Their fields stay in the same object, so a shallow clone has
+            // no field-wise Clone requirements.
+            TyKind::Class(_) => true,
+            _ => false,
+        };
+        self.assumed_cloneable = pending.iter().map(|(ty, _, _)| *ty).collect();
+        let mut settled = Vec::new();
+        loop {
+            let before = settled.len();
+            let mut index = 0;
+            while index < pending.len() {
+                if fields_clone(self, pending[index].0) {
+                    index += 1;
+                } else {
+                    let refused = pending.swap_remove(index);
+                    self.assumed_cloneable.remove(&refused.0);
+                    settled.push(refused);
                 }
-                TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().all(|variant| {
-                    variant.fields.iter().all(|field| self.is_cloneable(field.ty))
-                }),
-                // `[OWN-8]` — class handles clone like ordinary handle copies.
-                // Their fields stay in the same object, so a shallow clone has
-                // no field-wise Clone requirements.
-                TyKind::Class(_) => true,
-                _ => false,
             }
-        }) {
-            let (ty, span, explicit) = pending.swap_remove(index);
+            if settled.len() == before {
+                break;
+            }
+        }
+        self.assumed_cloneable.clear();
+        let derived = std::mem::replace(&mut pending, settled);
+        for (ty, span, explicit) in derived {
             let signature = Signature { decl: span,
                 params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
                 ret: ty,
@@ -21450,7 +21503,13 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
-            contracts: self.std_contracts(self.contracts_of(attrs), span, !decl.generics.is_empty()),
+            // A parameter of a written `fn` type is a callable bound: its effects are the argument's,
+            // as a type parameter's are (`[EFF-2]`).
+            contracts: self.std_contracts(
+                self.contracts_of(attrs),
+                span,
+                !decl.generics.is_empty() || takes_callable(decl),
+            ),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -21582,6 +21641,12 @@ impl<'a> Checker<'a> {
     fn is_cloneable(&self, ty: Ty) -> bool {
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
+            || self.assumed_cloneable.contains(&ty)
+            // IX.1 (ODR-237) — `Box[T]` when `T` is; `Box[dyn I]` when `I` requires `Clone`.
+            || self.box_inner(ty).is_some_and(|inner| match self.types.kind(inner) {
+                TyKind::Dyn { interfaces } => interfaces.iter().any(|interface| self.requires_clone(*interface)),
+                _ => self.is_cloneable(inner),
+            })
             || matches!(*self.types.kind(ty), TyKind::Vec { elem, .. } if self.is_cloneable(elem))
             || (self.clones_by_parts(ty)
                 && match self.types.kind(ty) {
@@ -21597,11 +21662,13 @@ impl<'a> Checker<'a> {
     }
 
     /// `[STR-5]` — the types the compiler makes rather than declares, whose
-    /// `Clone` it builds part by part at the clone (D-303): tuples and the
-    /// `Option`s and `Result`s.
+    /// `Clone` it builds part by part at the clone (D-303): tuples, the
+    /// `Option`s and `Result`s, and (ODR-237) a `Box`, a new box holding a
+    /// clone of the value.
     fn clones_by_parts(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
             TyKind::Tuple(_) => true,
+            TyKind::Struct(id) if self.boxes.contains_key(id) => true,
             TyKind::Enum(id) => {
                 let name = self.types.enum_def(*id).name;
                 name.as_str().starts_with("Option_") || name.as_str().starts_with("Result_")
@@ -22395,7 +22462,12 @@ impl<'a> Checker<'a> {
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
             contracts: {
-                let generic = !decl.generics.is_empty() || self.is_generic_instance(owner) || self.types.is_generic(owner);
+                // A parameter of a written `fn` type is a callable bound, whose effects are the
+                // argument's (`[EFF-2]`).
+                let generic = !decl.generics.is_empty()
+                    || takes_callable(decl)
+                    || self.is_generic_instance(owner)
+                    || self.types.is_generic(owner);
                 self.std_contracts(self.contracts_of(attrs), span, generic)
             },
             borrows: self.declared_borrows(def),
@@ -42699,6 +42771,16 @@ impl<'a> Checker<'a> {
         let dyn_box = self
             .box_inner(receiver.ty)
             .is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }));
+        // IX.1 (ODR-237) — a `Box`'s own `clone`, a new box holding a clone of the value, comes
+        // before the value's, which auto-deref would find.
+        if self.box_inner(receiver.ty).is_some()
+            && name.name.is("clone")
+            && explicit.is_empty()
+            && args.is_empty()
+            && self.is_cloneable(receiver.ty)
+        {
+            return self.clone_value(receiver);
+        }
         if self.box_inner(receiver.ty).is_some() && !dyn_box {
             if name.name.is("get") {
                 if !explicit.is_empty() {
@@ -42894,8 +42976,10 @@ impl<'a> Checker<'a> {
             && args.is_empty()
             && self.clones_by_parts(referent)
             && self.is_cloneable(referent)
-            && self.lookup_method(referent, name.name).is_none()
+            && (self.box_inner(referent).is_some() || self.lookup_method(referent, name.name).is_none())
         {
+            // IX.1 (ODR-237) — a `Box`'s own `clone`, a new box, comes before its value's, which
+            // auto-deref would find.
             let receiver = self.read_through(receiver);
             return self.clone_value(receiver);
         }
@@ -56417,6 +56501,14 @@ fn is_compiler_known_struct(name: &str) -> bool {
         .iter()
         .any(|prefix| name.starts_with(prefix))
         || matches!(name, "Arena" | "FixedArena" | "ScopedArena")
+}
+
+/// `[EFF-2]` — whether `decl` has a parameter of a written `fn` type: a callable bound, whose
+/// effects are the argument's, as a type parameter's are.
+fn takes_callable(decl: &ast::FnDecl) -> bool {
+    decl.params.iter().any(|param| {
+        matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Fn { abi: None, .. }))
+    })
 }
 
 /// `[STR-5]` — what `Clone` a declaration asks for: `Some(true)` when it

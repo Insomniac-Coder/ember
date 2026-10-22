@@ -566,6 +566,9 @@ pub struct TypeTable {
     /// `FromIterator_char`), with the generic it instantiates and its arguments: what its symbol is
     /// made from, never its name.
     instance_origins: HashMap<Symbol, (Symbol, Vec<Ty>)>,
+    /// `[TYP-22]` (ODR-237) — the interfaces that require `Clone`, of the `dyn` tables formed: each
+    /// such table holds an entry copying its value into a new box.
+    dyn_clone: HashSet<Symbol>,
 }
 
 /// `[FFI-26]` — an `@export_table("Name", protocol=N)`: the struct exported as a constant table of
@@ -710,6 +713,7 @@ impl TypeTable {
             soa_flattened: HashSet::new(),
             layout_attrs: HashMap::new(),
             must_drop_declared: HashSet::new(),
+            dyn_clone: HashSet::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
             coroutine_frames: HashMap::new(),
@@ -2024,6 +2028,17 @@ impl TypeTable {
             self.structs[id.0 as usize].fields[index].ty = settled;
         }
         self.structs[id.0 as usize].drops_fields = false;
+    }
+
+    /// `[TYP-22]` (ODR-237) — record that `interface` requires `Clone`, for its `dyn` tables.
+    pub fn declare_dyn_clone(&mut self, interface: Symbol) {
+        self.dyn_clone.insert(interface);
+    }
+
+    /// `[TYP-22]` (ODR-237) — whether the `dyn` table of `interfaces` copies its value: one of them
+    /// requires `Clone`.
+    pub fn dyn_clones(&self, interfaces: &[Symbol]) -> bool {
+        interfaces.iter().any(|interface| self.dyn_clone.contains(interface))
     }
 
     /// `[THR-6]` — record a struct's or class's `@must_drop`.
