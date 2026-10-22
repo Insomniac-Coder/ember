@@ -495,6 +495,20 @@ impl Regions {
         self.carried_slots[from].contains(&to)
     }
 
+    /// What the result holds at the `return` at `point`, over all its slots:
+    /// the regions it carries and where they came from. `None` when the point
+    /// was never reached.
+    pub fn result_at(&self, point: Point) -> Option<(HashSet<RegionVid>, HashSet<Origin>)> {
+        let state = self.values_at.get(&point)?;
+        let mut roots = HashSet::new();
+        let mut origins = HashSet::new();
+        for slot in &self.local_regions[ember_mir::RETURN_LOCAL.0 as usize] {
+            roots.extend(state[slot.region].roots.iter().copied());
+            origins.extend(state[slot.region].origins.iter().copied());
+        }
+        Some((roots, origins))
+    }
+
     pub fn has_imprecise_provenance(&self, region: RegionVid) -> bool {
         self.imprecise_provenance[region]
     }
@@ -1023,7 +1037,7 @@ impl Regions {
             CallResultContract::Legacy(tied) => {
                 for (index, argument) in args.iter().enumerate() {
                     if tied.ties(index) {
-                        fact.merge(&self.tied_fact(body, types, state, argument, tied.through(index)));
+                        fact.merge(&self.tied_fact(body, types, state, argument, &tied.through(index)));
                         arena(&mut fact, argument);
                     }
                 }
@@ -1514,7 +1528,7 @@ impl Regions {
                     if !tied.ties(index) {
                         continue;
                     }
-                    let source = self.tied_fact(body, types, state, argument, tied.through(index));
+                    let source = self.tied_fact(body, types, state, argument, &tied.through(index));
                     if source.roots.is_empty()
                         && source.origins.is_empty()
                         && let Operand::Copy(place) | Operand::Move(place) = argument
@@ -1634,16 +1648,25 @@ impl Regions {
     }
 
     /// What a result tied to `operand` carries: the operand's fact, or, when
-    /// tied through a reference (`Elision::through`), the fact of the view it
-    /// refers to (D-470). An operand that is not a reference keeps its own.
-    fn tied_fact(&self, body: &Body, types: &TypeTable, state: &ValueState, operand: &Operand, through: bool) -> ValueFact {
-        if through
-            && let Operand::Copy(place) | Operand::Move(place) = operand
-            && matches!(types.kind(place_type(body, types, place)), TyKind::Ref { .. })
-        {
-            return self.fact_for_operand_at(state, operand, &[Projection::Deref]);
+    /// tied through views (`Elision::through`), the facts of the views at
+    /// those paths, behind the operand when it is a reference (D-470,
+    /// ODR-196). The reference's own loan is not among them.
+    fn tied_fact(&self, body: &Body, types: &TypeTable, state: &ValueState, operand: &Operand, through: &[&[Projection]]) -> ValueFact {
+        let (Operand::Copy(place) | Operand::Move(place)) = operand else { return ValueFact::default() };
+        if through.is_empty() {
+            return self.fact_for_place(state, place);
         }
-        self.fact_for_operand(state, operand)
+        let by_reference = matches!(types.kind(place_type(body, types, place)), TyKind::Ref { .. });
+        let mut fact = ValueFact::default();
+        for path in through {
+            let mut at = place.clone();
+            if by_reference {
+                at.projection.push(Projection::Deref);
+            }
+            at.projection.extend_from_slice(path);
+            fact.merge(&self.fact_for_place(state, &at));
+        }
+        fact
     }
 
     fn fact_for_operand(&self, state: &ValueState, operand: &Operand) -> ValueFact {
@@ -2761,11 +2784,15 @@ pub enum Elision {
     /// chose over Rust's elision failure.
     Everything,
     /// `[LT-1a]` — `@borrows` named these parameter positions, and the caller
-    /// may keep using the rest. Those in `through` are reached through a
-    /// reference to a view (a `mut` parameter of a `Copy` view type, passed by
-    /// reference for its mode only): a source of the first kind, so the result
-    /// borrows what that view borrows, not the place (D-470).
-    Named { arguments: Vec<usize>, through: Vec<usize> },
+    /// may keep using the rest. A position in `through` is tied by the views
+    /// at its paths, not by the argument itself: each path is within the value
+    /// the argument refers to (or, an argument not passed by reference, within
+    /// the argument), and the result borrows what the view there borrows. A
+    /// `mut` parameter of a `Copy` view type, passed by reference for its mode
+    /// only, is a source of the first kind: the empty path, the view itself,
+    /// not the place (D-470). `@borrows(self.f)` is the receiver's field `f`
+    /// (ODR-196): the call's loan on the receiver ends with the call.
+    Named { arguments: Vec<usize>, through: Vec<(usize, Vec<Projection>)> },
 }
 
 impl Elision {
@@ -2782,9 +2809,14 @@ impl Elision {
         }
     }
 
-    /// Whether a result tied to `argument` borrows what the view behind it
-    /// borrows rather than the place it refers to.
-    pub(crate) fn through(&self, argument: usize) -> bool {
-        matches!(self, Elision::Named { through, .. } if through.contains(&argument))
+    /// The paths of the views a result tied to `argument` borrows from, in
+    /// place of the argument itself; empty when it borrows the argument.
+    pub(crate) fn through(&self, argument: usize) -> Vec<&[Projection]> {
+        match self {
+            Elision::Named { through, .. } => {
+                through.iter().filter(|(index, _)| *index == argument).map(|(_, path)| path.as_slice()).collect()
+            }
+            _ => Vec::new(),
+        }
     }
 }

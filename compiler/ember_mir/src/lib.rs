@@ -18,6 +18,7 @@ pub use lower::{lower, lower_one};
 pub use ember_hir::Mode as ParameterMode;
 pub use ember_hir::{FfiAbiParam, FfiOutputs};
 pub use ember_hir::InlineHint;
+pub use ember_hir::BorrowSource;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct BasicBlockId(pub u32);
@@ -99,9 +100,10 @@ pub struct Body {
     /// therefore insufficient for a public callable signature.
     pub param_modes: Vec<ParameterMode>,
     pub span: Span,
-    /// `[LT-1a]` — the parameter positions `@borrows(…)` names. `None` means
-    /// `[LT-1]`'s elision decides which parameters the return may point into.
-    pub borrows: Option<Vec<usize>>,
+    /// `[LT-1a]` — what `@borrows(…)` names: parameter positions, and a
+    /// receiver's view fields (ODR-196). `None` means `[LT-1]`'s elision
+    /// decides which parameters the return may point into.
+    pub borrows: Option<Vec<BorrowSource>>,
     /// `[LT-1]` (ODR-024) — the source parameters' positions, fixed by the
     /// declared signature: rules 2 and 3 count these.
     pub sources: Vec<usize>,
