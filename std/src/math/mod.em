@@ -1180,21 +1180,33 @@ pub struct Mat2:
         c = angle.cos()
         return Mat2(Vec2(c, s), Vec2(-s, c))
 
-    ## Column `i`, 0 or 1; another `i` panics.
+    ## Column `i`, or `None` for an `i` other than 0 and 1 (`col`'s twin, `[ERR-13]`).
+    pub fn try_col(self, i: int) -> Option[Vec2]:
+        if i < 0 or i > 1:
+            return None
+        return Some(self.col(i))
+
+    ## Column `i`, 0 or 1; another `i` panics (`try_col` gives an `Option`).
     pub fn col(self, i: int) -> Vec2:
         if i == 0:
             return self.x_axis
         if i == 1:
             return self.y_axis
-        panic("a Mat2 has columns 0 and 1 only")
+        panic("a Mat2 has columns 0 and 1 only; use .try_col(i) for an Option")
 
-    ## Row `i`, 0 or 1; another `i` panics.
+    ## Row `i`, or `None` for an `i` other than 0 and 1 (`row`'s twin, `[ERR-13]`).
+    pub fn try_row(self, i: int) -> Option[Vec2]:
+        if i < 0 or i > 1:
+            return None
+        return Some(self.row(i))
+
+    ## Row `i`, 0 or 1; another `i` panics (`try_row` gives an `Option`).
     pub fn row(self, i: int) -> Vec2:
         if i == 0:
             return Vec2(self.x_axis.x, self.y_axis.x)
         if i == 1:
             return Vec2(self.x_axis.y, self.y_axis.y)
-        panic("a Mat2 has rows 0 and 1 only")
+        panic("a Mat2 has rows 0 and 1 only; use .try_row(i) for an Option")
 
     pub fn transpose(self) -> Mat2:
         return Mat2(self.row(0), self.row(1))
@@ -1300,7 +1312,13 @@ pub struct Mat3:
             Vec3(xz + wy, yz - wx, 1.0 - (xx + yy)),
         )
 
-    ## Column `i`, 0 to 2; another `i` panics.
+    ## Column `i`, or `None` for an `i` outside 0 to 2 (`col`'s twin, `[ERR-13]`).
+    pub fn try_col(self, i: int) -> Option[Vec3]:
+        if i < 0 or i > 2:
+            return None
+        return Some(self.col(i))
+
+    ## Column `i`, 0 to 2; another `i` panics (`try_col` gives an `Option`).
     pub fn col(self, i: int) -> Vec3:
         if i == 0:
             return self.x_axis
@@ -1308,9 +1326,15 @@ pub struct Mat3:
             return self.y_axis
         if i == 2:
             return self.z_axis
-        panic("a Mat3 has columns 0 to 2 only")
+        panic("a Mat3 has columns 0 to 2 only; use .try_col(i) for an Option")
 
-    ## Row `i`, 0 to 2; another `i` panics.
+    ## Row `i`, or `None` for an `i` outside 0 to 2 (`row`'s twin, `[ERR-13]`).
+    pub fn try_row(self, i: int) -> Option[Vec3]:
+        if i < 0 or i > 2:
+            return None
+        return Some(self.row(i))
+
+    ## Row `i`, 0 to 2; another `i` panics (`try_row` gives an `Option`).
     pub fn row(self, i: int) -> Vec3:
         if i == 0:
             return Vec3(self.x_axis.x, self.y_axis.x, self.z_axis.x)
@@ -1318,7 +1342,7 @@ pub struct Mat3:
             return Vec3(self.x_axis.y, self.y_axis.y, self.z_axis.y)
         if i == 2:
             return Vec3(self.x_axis.z, self.y_axis.z, self.z_axis.z)
-        panic("a Mat3 has rows 0 to 2 only")
+        panic("a Mat3 has rows 0 to 2 only; use .try_row(i) for an Option")
 
     pub fn transpose(self) -> Mat3:
         return Mat3(self.row(0), self.row(1), self.row(2))
@@ -1474,7 +1498,13 @@ pub struct Mat4:
             Vec4(-(left + right) * rw, -(top + bottom) * rh, r * near, 1.0),
         )
 
-    ## Column `i`, 0 to 3; another `i` panics.
+    ## Column `i`, or `None` for an `i` outside 0 to 3 (`col`'s twin, `[ERR-13]`).
+    pub fn try_col(self, i: int) -> Option[Vec4]:
+        if i < 0 or i > 3:
+            return None
+        return Some(self.col(i))
+
+    ## Column `i`, 0 to 3; another `i` panics (`try_col` gives an `Option`).
     pub fn col(self, i: int) -> Vec4:
         if i == 0:
             return self.x_axis
@@ -1484,9 +1514,15 @@ pub struct Mat4:
             return self.z_axis
         if i == 3:
             return self.w_axis
-        panic("a Mat4 has columns 0 to 3 only")
+        panic("a Mat4 has columns 0 to 3 only; use .try_col(i) for an Option")
 
-    ## Row `i`, 0 to 3; another `i` panics.
+    ## Row `i`, or `None` for an `i` outside 0 to 3 (`row`'s twin, `[ERR-13]`).
+    pub fn try_row(self, i: int) -> Option[Vec4]:
+        if i < 0 or i > 3:
+            return None
+        return Some(self.row(i))
+
+    ## Row `i`, 0 to 3; another `i` panics (`try_row` gives an `Option`).
     pub fn row(self, i: int) -> Vec4:
         if i == 0:
             return Vec4(self.x_axis.x, self.y_axis.x, self.z_axis.x, self.w_axis.x)
@@ -1496,7 +1532,7 @@ pub struct Mat4:
             return Vec4(self.x_axis.z, self.y_axis.z, self.z_axis.z, self.w_axis.z)
         if i == 3:
             return Vec4(self.x_axis.w, self.y_axis.w, self.z_axis.w, self.w_axis.w)
-        panic("a Mat4 has rows 0 to 3 only")
+        panic("a Mat4 has rows 0 to 3 only; use .try_row(i) for an Option")
 
     pub fn transpose(self) -> Mat4:
         return Mat4(self.row(0), self.row(1), self.row(2), self.row(3))

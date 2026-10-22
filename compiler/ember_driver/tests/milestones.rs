@@ -4943,20 +4943,18 @@ fn std_panics_name_their_twins_and_allocations_are_documented() {
         ("core", "step_by", "must be positive", "ODR-089: a step of zero or less"),
         ("core", "nth", "cannot be negative", "ODR-089: a negative index panics when the consumer is called"),
         ("ecs", "run_parallel", "cannot run at once", "[ECS-4]: a conflict panics before any system starts"),
+        // ODR-254: the twin `[STD-14]` asks for is an accessor's (`[ERR-13]`); a constructor's or a
+        // mutation's caller's bug panics with none.
+        ("core", "stepped", "step must not be zero", "ODR-254: a constructor's argument"),
+        ("collections", "insert", "non-negative integers", "ODR-254: a mutation's argument"),
+        ("ecs", "new", "an entity's index", "ODR-254: a constructor's argument"),
+        ("ecs", "add", "added to a live entity", "ODR-254: a mutation's argument"),
+        ("mod", "normalize", "zero quaternion", "ODR-254: a normalisation's argument"),
+        ("mod", "normalize", "plane with no normal", "ODR-254: a normalisation's argument"),
+        ("string", "split", "separator is empty", "ODR-254: a splitting's argument"),
     ];
-    // Open: a caller's bug with no non-panicking twin in std yet (the owner names them).
-    const OPEN: &[(&str, &str, &str)] = &[
-        ("core", "stepped", "step must not be zero"),
-        ("collections", "insert", "non-negative integers"),
-        ("ecs", "new", "an entity's index"),
-        ("ecs", "add", "added to a live entity"),
-        ("ffi", "get", "is empty"),
-        ("mod", "col", "has columns"),
-        ("mod", "row", "has rows"),
-        ("mod", "normalize", "zero quaternion"),
-        ("mod", "normalize", "plane with no normal"),
-        ("string", "split", "separator is empty"),
-    ];
+    // Open: a caller's bug with no non-panicking twin in std yet. None since ODR-254.
+    const OPEN: &[(&str, &str, &str)] = &[];
     let declared: String = sources.iter().map(|path| std::fs::read_to_string(path).expect("a std file reads")).collect();
     let mut used = vec![0usize; SETTLED.len() + OPEN.len()];
     let mut wrong = Vec::new();
