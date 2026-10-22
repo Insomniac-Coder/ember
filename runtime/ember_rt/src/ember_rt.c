@@ -81,6 +81,7 @@ static void rl_tx_note_alloc(void* p, size_t size, size_t align);
 static void rl_tx_note_free(void* p);
 static void rl_tx_check_budget(size_t size);
 static void rl_panic_guard(const char* msg, size_t len);
+static bool rl_tx_active(void);
 #endif
 #if defined(EMBER_RELOAD_INSTANCES)
 static void rl_tx_note_object(struct ember_obj_header* object);
@@ -2719,9 +2720,15 @@ static bool on_stack(const void* p) {
 
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
     bool frame = p != NULL && on_stack(p);
+    bool tracked = false;
+#if defined(EMBER_RELOAD)
+    /* [HR-37] Prepare's transaction arena holds every block by its address: one that grows
+     * allocates, copies and frees, so the arena follows it (and counts it against its budget). */
+    tracked = rl_tx_active();
+#endif
     /* The default allocator's plain blocks grow in place when they can; the
      * counts move as the allocate-copy-free below would move them. */
-    if (p != NULL && !frame && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+    if (p != NULL && !frame && !tracked && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
         void* grown = realloc(p, new_size == 0 ? 1 : new_size);
         if (grown == NULL) {
             ember_loc loc = { "<allocator>", 0, 0 };
@@ -3756,7 +3763,11 @@ void ember_vec_reserve_aligned(ember_vec* v, size_t elem_size, size_t align, siz
  * default allocator's plain blocks still grow in place when they can. */
 static void* try_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
     bool frame = p != NULL && on_stack(p);
-    if (p != NULL && !frame && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+    bool tracked = false;
+#if defined(EMBER_RELOAD)
+    tracked = rl_tx_active(); /* [HR-37], as `ember_realloc` */
+#endif
+    if (p != NULL && !frame && !tracked && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
         void* grown = realloc(p, new_size == 0 ? 1 : new_size);
         if (grown == NULL) {
             return NULL;
@@ -10315,6 +10326,8 @@ static struct {
     rl_table statics;
     rl_table types;
     rl_table identities;
+    /* The manifest of the image applied last: the C++ headers the process was built with ([HR-23]). */
+    const ember_rl_manifest* running;
     ember_reload_timings timings;
 } g_rl;
 
@@ -10613,6 +10626,10 @@ static bool rl_tx_grow(void** items, size_t* cap, size_t each) {
     return true;
 }
 
+static bool rl_tx_active(void) {
+    return g_rl_tx.active;
+}
+
 static void rl_tx_note_alloc(void* p, size_t size, size_t align) {
     if (!g_rl_tx.active || p == NULL) {
         return;
@@ -10748,42 +10765,178 @@ static const ember_rl_type* rl_new_schema(const ember_rl_manifest* next, const c
     return NULL;
 }
 
+/* A list of fields that migrate by name: a type's, or [HR-14] a variant's payload, whose rows are
+ * applied to it as to a type's fields. */
+typedef struct rl_fields {
+    const ember_rl_field* at;
+    uint32_t count;
+} rl_fields;
+
+static rl_fields rl_type_fields(const ember_rl_type* type) {
+    rl_fields fields = { type->fields, type->field_count };
+    return fields;
+}
+
+static rl_fields rl_variant_fields(const ember_rl_variant* variant) {
+    rl_fields fields = { variant->fields, variant->field_count };
+    return fields;
+}
+
 /* The old field a new one takes its value from: by name, or by the name `@renamed_from` gives. */
-static const ember_rl_field* rl_source_field(const ember_rl_type* old, const ember_rl_field* field) {
+static const ember_rl_field* rl_source_in(rl_fields old, const ember_rl_field* field) {
     const char* wanted = field->renamed_from != NULL ? field->renamed_from : field->name;
-    for (uint32_t index = 0; index < old->field_count; ++index) {
-        if (strcmp(old->fields[index].name, wanted) == 0) {
-            return &old->fields[index];
+    for (uint32_t index = 0; index < old.count; ++index) {
+        if (strcmp(old.at[index].name, wanted) == 0) {
+            return &old.at[index];
         }
     }
     if (field->renamed_from != NULL) {
-        for (uint32_t index = 0; index < old->field_count; ++index) {
-            if (strcmp(old->fields[index].name, field->name) == 0) {
-                return &old->fields[index];
+        for (uint32_t index = 0; index < old.count; ++index) {
+            if (strcmp(old.at[index].name, field->name) == 0) {
+                return &old.at[index];
             }
         }
     }
     return NULL;
 }
 
+static const ember_rl_field* rl_source_field(const ember_rl_type* old, const ember_rl_field* field) {
+    return rl_source_in(rl_type_fields(old), field);
+}
+
+/* [HR-11a] The variant of `to` an old variant becomes: the one of its name, or the one
+ * `@renamed_from` says was it; NULL when it was removed. */
+static const ember_rl_variant* rl_variant_named(const ember_rl_type* to, const ember_rl_variant* was) {
+    for (uint32_t index = 0; to != NULL && was != NULL && index < to->variant_count; ++index) {
+        const ember_rl_variant* now = &to->variants[index];
+        if (strcmp(now->name, was->name) == 0 || (now->renamed_from != NULL && strcmp(now->renamed_from, was->name) == 0)) {
+            return now;
+        }
+    }
+    return NULL;
+}
+
+/* The variant a value of `type` with payloads holds, by the tag that is its one field. */
+static const ember_rl_variant* rl_held_variant(const ember_rl_type* type, const unsigned char* value);
+
+/* [HR-14] Where variant `variant`'s payload fields start in `type`'s numbering of every payload
+ * field, variant by variant, which its `init_field` and `drop_field` take. */
+static uint32_t rl_payload_base(const ember_rl_type* type, const ember_rl_variant* variant) {
+    uint32_t base = 0;
+    for (uint32_t index = 0; index < type->variant_count && &type->variants[index] != variant; ++index) {
+        base += type->variants[index].field_count;
+    }
+    return base;
+}
+
+/* What kind of number a field holds: its signed, unsigned or float flag, or 0 for none. */
+static uint32_t rl_number_class(const ember_rl_field* field) {
+    return field->flags & (EMBER_RL_FIELD_SIGNED | EMBER_RL_FIELD_UNSIGNED | EMBER_RL_FIELD_FLOAT);
+}
+
 /* [HR-14] `[TYP-5]`'s lossless widenings: a wider integer of the same signedness or a wider signed
- * one for an unsigned, and `f32` to `f64`. */
+ * one for an unsigned, from at most 64 bits to at most 128, and `f32` to `f64`. */
 static bool rl_widens(const ember_rl_field* from, const ember_rl_field* to) {
     if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
-        return (to->flags & EMBER_RL_FIELD_FLOAT) != 0 && to->size > from->size;
+        return (to->flags & EMBER_RL_FIELD_FLOAT) != 0 && from->size == 4 && to->size == 8;
+    }
+    if (from->size > 8 || to->size > 16 || to->size <= from->size) {
+        return false;
     }
     if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
-        return (to->flags & EMBER_RL_FIELD_SIGNED) != 0 && to->size > from->size;
+        return (to->flags & EMBER_RL_FIELD_SIGNED) != 0;
     }
     if ((from->flags & EMBER_RL_FIELD_UNSIGNED) != 0) {
-        return ((to->flags & EMBER_RL_FIELD_UNSIGNED) != 0 || (to->flags & EMBER_RL_FIELD_SIGNED) != 0) && to->size > from->size
-            && to->size <= 8;
+        return (to->flags & EMBER_RL_FIELD_UNSIGNED) != 0 || (to->flags & EMBER_RL_FIELD_SIGNED) != 0;
     }
     return false;
 }
 
-/* What a new field does with its source, as plan decides it. */
-enum { RL_CARRY = 1, RL_WIDEN, RL_NESTED, RL_VARIANT, RL_DEFAULT, RL_ZERO };
+/* [HR-14] A number reaches a range type, or a range type's value its representation (`[RNG-2]`),
+ * when it is the same number or widens losslessly to it. */
+static bool rl_number_converts(const ember_rl_field* from, const ember_rl_field* to) {
+    uint32_t kind = rl_number_class(from);
+    return kind != 0 && ((kind == rl_number_class(to) && from->size == to->size) || rl_widens(from, to));
+}
+
+/* What a new field does with its source, as plan decides it. `RL_NUMBER` converts a number into a
+ * range type, which plan tests each value of, or out of one; `RL_PAYLOAD` migrates an enum with
+ * payloads by variant name, its payload's fields by the rows a type's take; `RL_ELEMENTS` migrates
+ * an `Array`'s or a fixed array's elements through it, each as its element row says, and
+ * `RL_COLUMNS` an `SoA[T]`'s, element by element as `T`'s schema says ([HR-13]). */
+enum { RL_CARRY = 1, RL_WIDEN, RL_NESTED, RL_VARIANT, RL_DEFAULT, RL_ZERO, RL_NUMBER, RL_PAYLOAD, RL_ELEMENTS, RL_COLUMNS };
+
+/* [HR-13] An `SoA`'s struct, as its description lists it: its columns (every row but the last two,
+ * `len` and `cap`), and one of its counts by name. */
+static uint32_t rl_soa_columns(const ember_rl_type* soa) {
+    return soa->field_count >= 2 ? soa->field_count - 2 : 0;
+}
+
+static size_t rl_soa_count(const ember_rl_type* soa, const unsigned char* value, const char* which) {
+    for (uint32_t index = 0; index < soa->field_count; ++index) {
+        if (strcmp(soa->fields[index].name, which) == 0) {
+            size_t count;
+            memcpy(&count, value + soa->fields[index].offset, sizeof count);
+            return count;
+        }
+    }
+    return 0;
+}
+
+static void rl_soa_set_count(const ember_rl_type* soa, unsigned char* value, const char* which, size_t count) {
+    for (uint32_t index = 0; index < soa->field_count; ++index) {
+        if (strcmp(soa->fields[index].name, which) == 0) {
+            memcpy(value + soa->fields[index].offset, &count, sizeof count);
+        }
+    }
+}
+
+/* Element `index` of the `SoA` at `value`, gathered into `element`: each column's value where it
+ * sits in a whole element; and the reverse. */
+static void rl_soa_gather(const ember_rl_type* soa, const unsigned char* value, size_t index, unsigned char* element) {
+    for (uint32_t k = 0; k < rl_soa_columns(soa); ++k) {
+        const ember_rl_field* column = &soa->fields[k];
+        const unsigned char* at;
+        memcpy(&at, value + column->offset, sizeof at);
+        if (at != NULL) {
+            memcpy(element + column->within, at + index * column->size, column->size);
+        }
+    }
+}
+
+static void rl_soa_scatter(const ember_rl_type* soa, unsigned char* value, size_t index, const unsigned char* element) {
+    for (uint32_t k = 0; k < rl_soa_columns(soa); ++k) {
+        const ember_rl_field* column = &soa->fields[k];
+        unsigned char* at;
+        memcpy(&at, value + column->offset, sizeof at);
+        if (at != NULL) {
+            memcpy(at + index * column->size, element + column->within, column->size);
+        }
+    }
+}
+
+/* How a report names where a value is held: `field `x``, or an element of a container, whose row
+ * has no name. */
+static const char* rl_held_where(const ember_rl_field* holder, char* buffer, size_t size) {
+    if (holder->name[0] == '\0') {
+        return "an element of a container";
+    }
+    snprintf(buffer, size, "field `%s`", holder->name);
+    return buffer;
+}
+
+/* [HR-13] A container's elements: where they start and how many there are. */
+static void rl_elements_of(const ember_rl_field* field, const unsigned char* value, const unsigned char** first, size_t* count) {
+    if (field->kind == EMBER_RL_KIND_FIXED) {
+        *first = value;
+        *count = field->inner->size == 0 ? 0 : field->size / field->inner->size;
+        return;
+    }
+    ember_vec vec;
+    memcpy(&vec, value, sizeof vec);
+    *first = (const unsigned char*)vec.ptr;
+    *count = vec.ptr == NULL ? 0 : vec.len;
+}
 
 static int rl_field_route(const ember_rl_field* to, const ember_rl_field* from) {
     if (from == NULL) {
@@ -10798,11 +10951,30 @@ static int rl_field_route(const ember_rl_field* to, const ember_rl_field* from) 
     if (rl_handle_bits(from, to)) {
         return RL_CARRY;
     }
+    /* [HR-13] An `SoA` of the same element type, whose schema changed. */
+    if (to->kind == EMBER_RL_KIND_SOA && from->kind == EMBER_RL_KIND_SOA && to->layout != NULL && from->layout != NULL
+        && to->element_type != NULL && from->element_type != NULL && strcmp(to->element_type, from->element_type) == 0) {
+        return RL_COLUMNS;
+    }
+    /* [HR-13] The same kind of container, whose elements migrate; a fixed array keeps its length. */
+    if (to->kind == from->kind && (to->kind == EMBER_RL_KIND_ARRAY || to->kind == EMBER_RL_KIND_FIXED) && to->inner != NULL
+        && from->inner != NULL && to->inner->size != 0 && from->inner->size != 0
+        && (to->kind == EMBER_RL_KIND_ARRAY || to->size / to->inner->size == from->size / from->inner->size)
+        && rl_field_route(to->inner, from->inner) != 0) {
+        return RL_ELEMENTS;
+    }
+    if ((to->in_range != NULL || from->in_range != NULL) && rl_number_converts(from, to)) {
+        return RL_NUMBER;
+    }
     if (rl_widens(from, to)) {
         return RL_WIDEN;
     }
     if (to->kind == EMBER_RL_KIND_STRUCT && from->kind == EMBER_RL_KIND_STRUCT && strcmp(to->type_name, from->type_name) == 0) {
         return RL_NESTED;
+    }
+    if (to->kind == EMBER_RL_KIND_PAYLOAD && from->kind == EMBER_RL_KIND_PAYLOAD && to->layout == NULL && from->layout == NULL
+        && strcmp(to->type_name, from->type_name) == 0) {
+        return RL_PAYLOAD;
     }
     if (to->kind == EMBER_RL_KIND_ENUM && from->kind == EMBER_RL_KIND_ENUM && strcmp(to->type_name, from->type_name) == 0) {
         return RL_VARIANT;
@@ -10840,6 +11012,38 @@ static void rl_write_integer(void* at, uint32_t size, uint64_t bits) {
     }
 }
 
+/* Writes the number `from` holds at `src` as `to`'s at `dst`: the same bits, or widened. A
+ * 128-bit integer is the bytes a little-endian `__int128` has: its high half is the sign. */
+static void rl_convert_number(const ember_rl_field* from, const ember_rl_field* to, unsigned char* dst, const unsigned char* src) {
+    if (rl_number_class(from) == rl_number_class(to) && from->size == to->size) {
+        memcpy(dst, src, to->size);
+        return;
+    }
+    if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
+        float narrow;
+        memcpy(&narrow, src, sizeof narrow);
+        double wide = narrow;
+        memcpy(dst, &wide, sizeof wide);
+        return;
+    }
+    uint64_t bits;
+    bool negative = false;
+    if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
+        int64_t value = rl_read_signed(src, from->size);
+        bits = (uint64_t)value;
+        negative = value < 0;
+    } else {
+        bits = rl_read_unsigned(src, from->size);
+    }
+    if (to->size == 16) {
+        uint64_t high = negative ? UINT64_MAX : 0;
+        memcpy(dst, &bits, sizeof bits);
+        memcpy(dst + 8, &high, sizeof high);
+    } else {
+        rl_write_integer(dst, to->size, bits);
+    }
+}
+
 /* [HR-11a] A unit enum's value by variant name: the old discriminant's variant, then the new
  * variant of that name or the one `@renamed_from` says was it. NULL when the value's variant was
  * removed. */
@@ -10850,27 +11054,32 @@ static const ember_rl_variant* rl_variant_for(const ember_rl_type* old, const em
             was = &old->variants[index];
         }
     }
-    if (was == NULL) {
+    return rl_variant_named(new_type, was);
+}
+
+static const ember_rl_variant* rl_held_variant(const ember_rl_type* type, const unsigned char* value) {
+    if (type == NULL || type->field_count == 0) {
         return NULL;
     }
-    for (uint32_t index = 0; index < new_type->variant_count; ++index) {
-        const ember_rl_variant* now = &new_type->variants[index];
-        if (strcmp(now->name, was->name) == 0 || (now->renamed_from != NULL && strcmp(now->renamed_from, was->name) == 0)) {
-            return now;
+    uint64_t tag = rl_read_unsigned(value + type->fields[0].offset, type->fields[0].size);
+    for (uint32_t index = 0; index < type->variant_count; ++index) {
+        if (type->variants[index].discriminant == tag) {
+            return &type->variants[index];
         }
     }
     return NULL;
 }
 
-/* [HR-14] The first unit-enum value inside `value` (of type `old`, becoming `to`, its struct fields
- * searched depth-first) whose variant was removed: the variant's name, and in `holder` the new
- * field that holds it; NULL when there is none. */
-static const char* rl_removed_variant(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
-                                      const unsigned char* value, const ember_rl_field** holder, int depth) {
-    for (uint32_t index = 0; old != NULL && to != NULL && depth <= 32 && index < to->field_count; ++index) {
-        const ember_rl_field* field = &to->fields[index];
-        const ember_rl_field* from = rl_source_field(old, field);
+/* [HR-14] The first enum value inside `value` (whose fields `old` become `to`; struct fields and
+ * payloads searched depth-first) whose variant was removed: the variant's name, and in `holder`
+ * the new field that holds it; NULL when there is none. */
+static const char* rl_removed_variant_in(const ember_rl_manifest* next, rl_fields old, rl_fields to, const unsigned char* value,
+                                         const ember_rl_field** holder, int depth) {
+    for (uint32_t index = 0; depth <= 32 && index < to.count; ++index) {
+        const ember_rl_field* field = &to.at[index];
+        const ember_rl_field* from = rl_source_in(old, field);
         int route = rl_field_route(field, from);
+        const char* found = NULL;
         if (route == RL_VARIANT) {
             const ember_rl_type* was = rl_old_schema(from->type_name);
             const ember_rl_type* now = rl_new_schema(next, field->type_name);
@@ -10887,14 +11096,212 @@ static const char* rl_removed_variant(const ember_rl_manifest* next, const ember
             return "?";
         }
         if (route == RL_NESTED) {
-            const char* found = rl_removed_variant(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name),
-                                                   value + from->offset, holder, depth + 1);
-            if (found != NULL) {
-                return found;
+            const ember_rl_type* was = rl_old_schema(from->type_name);
+            const ember_rl_type* now = rl_new_schema(next, field->type_name);
+            if (was != NULL && now != NULL) {
+                found = rl_removed_variant_in(next, rl_type_fields(was), rl_type_fields(now), value + from->offset, holder, depth + 1);
             }
+        } else if (route == RL_PAYLOAD) {
+            const ember_rl_variant* held = rl_held_variant(rl_old_schema(from->type_name), value + from->offset);
+            const ember_rl_variant* now = rl_variant_named(rl_new_schema(next, field->type_name), held);
+            if (held != NULL && now == NULL) {
+                *holder = field;
+                return held->name;
+            }
+            if (held != NULL) {
+                found = rl_removed_variant_in(next, rl_variant_fields(held), rl_variant_fields(now), value + from->offset, holder, depth + 1);
+            }
+        } else if (route == RL_ELEMENTS) {
+            rl_fields was = { from->inner, 1 };
+            rl_fields becomes = { field->inner, 1 };
+            const unsigned char* first;
+            size_t count;
+            rl_elements_of(from, value + from->offset, &first, &count);
+            for (size_t k = 0; k < count && found == NULL; ++k) {
+                found = rl_removed_variant_in(next, was, becomes, first + k * from->inner->size, holder, depth + 1);
+            }
+        } else if (route == RL_COLUMNS) {
+            const ember_rl_type* was = rl_old_schema(from->element_type);
+            const ember_rl_type* now = rl_new_schema(next, field->element_type);
+            size_t count = rl_soa_count(from->layout, value + from->offset, "len");
+            unsigned char* element = was != NULL && now != NULL && count > 0 ? (unsigned char*)calloc(1, was->size) : NULL;
+            if (was != NULL && now != NULL && count > 0 && element == NULL) {
+                /* Not checked is not passed: out of memory refuses. */
+                *holder = field;
+                return "(unchecked: out of memory)";
+            }
+            for (size_t k = 0; element != NULL && k < count && found == NULL; ++k) {
+                rl_soa_gather(from->layout, value + from->offset, k, element);
+                found = rl_removed_variant_in(next, rl_type_fields(was), rl_type_fields(now), element, holder, depth + 1);
+            }
+            free(element);
+        }
+        if (found != NULL) {
+            return found;
         }
     }
     return NULL;
+}
+
+static const char* rl_removed_variant(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                                      const unsigned char* value, const ember_rl_field** holder, int depth) {
+    return old == NULL || to == NULL ? NULL : rl_removed_variant_in(next, rl_type_fields(old), rl_type_fields(to), value, holder, depth);
+}
+
+/* [HR-14] The first field inside `value` (whose fields `old` become `to`; struct fields and payloads
+ * searched depth-first) that becomes a range type whose test its value fails, as `T.checked`
+ * would; NULL when every one passes. */
+static const ember_rl_field* rl_out_of_range_in(const ember_rl_manifest* next, rl_fields old, rl_fields to, const unsigned char* value, int depth) {
+    for (uint32_t index = 0; depth <= 32 && index < to.count; ++index) {
+        const ember_rl_field* field = &to.at[index];
+        const ember_rl_field* from = rl_source_in(old, field);
+        int route = rl_field_route(field, from);
+        const ember_rl_field* found = NULL;
+        if (route == RL_NUMBER && field->in_range != NULL) {
+            unsigned char converted[16];
+            rl_convert_number(from, field, converted, value + from->offset);
+            if (!field->in_range(converted)) {
+                return field;
+            }
+        } else if (route == RL_NESTED) {
+            const ember_rl_type* was = rl_old_schema(from->type_name);
+            const ember_rl_type* now = rl_new_schema(next, field->type_name);
+            if (was != NULL && now != NULL) {
+                found = rl_out_of_range_in(next, rl_type_fields(was), rl_type_fields(now), value + from->offset, depth + 1);
+            }
+        } else if (route == RL_PAYLOAD) {
+            const ember_rl_variant* held = rl_held_variant(rl_old_schema(from->type_name), value + from->offset);
+            const ember_rl_variant* now = rl_variant_named(rl_new_schema(next, field->type_name), held);
+            if (held != NULL && now != NULL) {
+                found = rl_out_of_range_in(next, rl_variant_fields(held), rl_variant_fields(now), value + from->offset, depth + 1);
+            }
+        } else if (route == RL_ELEMENTS) {
+            rl_fields was = { from->inner, 1 };
+            rl_fields becomes = { field->inner, 1 };
+            const unsigned char* first;
+            size_t count;
+            rl_elements_of(from, value + from->offset, &first, &count);
+            for (size_t k = 0; k < count && found == NULL; ++k) {
+                found = rl_out_of_range_in(next, was, becomes, first + k * from->inner->size, depth + 1);
+            }
+        } else if (route == RL_COLUMNS) {
+            const ember_rl_type* was = rl_old_schema(from->element_type);
+            const ember_rl_type* now = rl_new_schema(next, field->element_type);
+            size_t count = rl_soa_count(from->layout, value + from->offset, "len");
+            unsigned char* element = was != NULL && now != NULL && count > 0 ? (unsigned char*)calloc(1, was->size) : NULL;
+            if (was != NULL && now != NULL && count > 0 && element == NULL) {
+                return field; /* not checked is not passed: out of memory refuses */
+            }
+            for (size_t k = 0; element != NULL && k < count && found == NULL; ++k) {
+                rl_soa_gather(from->layout, value + from->offset, k, element);
+                found = rl_out_of_range_in(next, rl_type_fields(was), rl_type_fields(now), element, depth + 1);
+            }
+            free(element);
+        }
+        if (found != NULL) {
+            return found;
+        }
+    }
+    return NULL;
+}
+
+static const ember_rl_field* rl_out_of_range(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                                             const unsigned char* value, int depth) {
+    return old == NULL || to == NULL ? NULL : rl_out_of_range_in(next, rl_type_fields(old), rl_type_fields(to), value, depth);
+}
+
+static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, char* report, size_t cap, int depth);
+
+/* [HR-14] Whether the fields `old` (of `owner`, a type or `Enum.Variant`) can become `to`, field by
+ * name, with the report of why not. Recurses into struct fields and payloads depth-first. */
+static bool rl_plan_fields(const ember_rl_manifest* next, rl_fields old, rl_fields to, const char* owner, bool payload,
+                           char* report, size_t cap, int depth);
+
+/* [HR-14] An enum with payloads migrates by variant name, each payload by the field rows: whether
+ * every variant that stays can. A removed variant is refused only while a value holds it, which
+ * plan counts over the live values. */
+static bool rl_plan_payload(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, char* report, size_t cap, int depth) {
+    bool fine = true;
+    if (depth > 32) {
+        rl_report(report, cap, "refused: `%s` nests too deep to migrate [HR-14]\n", to->name);
+        return false;
+    }
+    if ((to->layout & EMBER_RL_LAYOUT_FOREIGN) != 0 || (old->layout & EMBER_RL_LAYOUT_FOREIGN) != 0) {
+        rl_report(report, cap, "refused: a value of `%s` may be reachable only through a raw pointer or foreign memory, which a reload cannot follow, and its schema changed [HR-13b]\n", to->name);
+        return false;
+    }
+    for (uint32_t index = 0; index < old->variant_count; ++index) {
+        const ember_rl_variant* was = &old->variants[index];
+        const ember_rl_variant* now = rl_variant_named(to, was);
+        if (now == NULL) {
+            continue;
+        }
+        char owner[256];
+        snprintf(owner, sizeof owner, "%s.%s", to->name, now->name);
+        if (!rl_plan_fields(next, rl_variant_fields(was), rl_variant_fields(now), owner, true, report, cap, depth + 1)) {
+            fine = false;
+        }
+    }
+    return fine;
+}
+
+static bool rl_plan_fields(const ember_rl_manifest* next, rl_fields old, rl_fields to, const char* owner, bool payload,
+                           char* report, size_t cap, int depth) {
+    bool fine = true;
+    for (uint32_t index = 0; index < to.count; ++index) {
+        const ember_rl_field* field = &to.at[index];
+        const ember_rl_field* from = rl_source_in(old, field);
+        int route = rl_field_route(field, from);
+        if (route == 0 && from == NULL && payload) {
+            rl_report(report, cap, "refused: field `%s` added to `%s`, whose type `%s` is not `Default` [HR-14]\n", field->name, owner, field->type_name);
+            fine = false;
+        } else if (route == 0 && from == NULL) {
+            rl_report(report, cap, "refused: field `%s` added to `%s` with no default; give it one (`%s: %s = ...`) [HR-14]\n",
+                      field->name, owner, field->name, field->type_name);
+            fine = false;
+        } else if (route == 0 && payload) {
+            rl_report(report, cap, "refused: field `%s` of `%s` changed type from `%s` to `%s`, which no row of the migration table converts [HR-14]\n",
+                      field->name, owner, from->type_name, field->type_name);
+            fine = false;
+        } else if (route == 0) {
+            rl_report(report, cap, "refused: field `%s` of `%s` changed type from `%s` to `%s`; `%s` can declare `migrate_from` [HR-14]\n",
+                      field->name, owner, from->type_name, field->type_name, owner);
+            fine = false;
+        } else if (route == RL_NESTED || route == RL_PAYLOAD) {
+            const ember_rl_type* old_inner = rl_old_schema(from->type_name);
+            const ember_rl_type* new_inner = rl_new_schema(next, field->type_name);
+            if (old_inner == NULL || new_inner == NULL) {
+                rl_report(report, cap, "refused: field `%s` of `%s` holds a `%s` with no schema [HR-14]\n", field->name, owner, field->type_name);
+                fine = false;
+            } else if (route == RL_NESTED ? !rl_plan_type(next, old_inner, new_inner, report, cap, depth + 1)
+                                          : !rl_plan_payload(next, old_inner, new_inner, report, cap, depth + 1)) {
+                fine = false;
+            }
+        } else if (route == RL_COLUMNS) {
+            /* [HR-13] An `SoA`'s elements migrate by their type's schema. */
+            const ember_rl_type* old_element = rl_old_schema(from->element_type);
+            const ember_rl_type* new_element = rl_new_schema(next, field->element_type);
+            if (old_element == NULL || new_element == NULL) {
+                rl_report(report, cap, "refused: field `%s` of `%s` holds `%s`s with no schema [HR-13]\n", field->name, owner, field->element_type);
+                fine = false;
+            } else if (!rl_plan_type(next, old_element, new_element, report, cap, depth + 1)) {
+                fine = false;
+            }
+        } else if (route == RL_ELEMENTS) {
+            /* [HR-13] The elements migrate through their container, as a field of their type would. */
+            rl_fields was = { from->inner, 1 };
+            rl_fields becomes = { field->inner, 1 };
+            char elements[256];
+            snprintf(elements, sizeof elements, "the elements of `%s.%s`", owner, field->name);
+            if (depth > 32 || !rl_plan_fields(next, was, becomes, elements, payload, report, cap, depth + 1)) {
+                fine = false;
+            }
+        } else if (field->kind == EMBER_RL_KIND_ARRAY && from->kind == EMBER_RL_KIND_ARRAY && route != RL_CARRY) {
+            rl_report(report, cap, "refused: the elements of `%s.%s` would need migrating through their container [HR-13]\n", owner, field->name);
+            fine = false;
+        }
+    }
+    return fine;
 }
 
 /* The decision for one type's change: whether plan can migrate its values, with the report of why
@@ -10918,7 +11325,7 @@ static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old
         return false;
     }
     if ((to->layout & EMBER_RL_LAYOUT_CONTAINED) != 0 || (old->layout & EMBER_RL_LAYOUT_CONTAINED) != 0) {
-        rl_report(report, cap, "refused: values of `%s` sit in containers (an `Array`, an `Option`, a payload), whose elements a reload cannot migrate yet [HR-13]\n", to->name);
+        rl_report(report, cap, "refused: values of `%s` may sit where a reload cannot reach them (in a tuple, a closure's captured state, an interface value or a type with no schema), and its schema changed [HR-13]\n", to->name);
         return false;
     }
     if (to->migrate != NULL) {
@@ -10945,68 +11352,108 @@ static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old
         }
         return fine;
     }
-    for (uint32_t index = 0; index < to->field_count; ++index) {
-        const ember_rl_field* field = &to->fields[index];
-        const ember_rl_field* from = rl_source_field(old, field);
-        int route = rl_field_route(field, from);
-        if (route == 0 && from == NULL) {
-            rl_report(report, cap, "refused: field `%s` added to `%s` with no default; give it one (`%s: %s = ...`) [HR-14]\n",
-                      field->name, to->name, field->name, field->type_name);
-            fine = false;
-        } else if (route == 0 && field->kind == EMBER_RL_KIND_PAYLOAD && from->kind == EMBER_RL_KIND_PAYLOAD
-                   && strcmp(field->type_name, from->type_name) == 0) {
-            rl_report(report, cap, "refused: the payloads of `%s` (field `%s` of `%s`) changed, which a reload cannot migrate yet [HR-14]\n",
-                      field->type_name, field->name, to->name);
-            fine = false;
-        } else if (route == 0) {
-            rl_report(report, cap, "refused: field `%s` of `%s` changed type from `%s` to `%s`; `%s` can declare `migrate_from` [HR-14]\n",
-                      field->name, to->name, from->type_name, field->type_name, to->name);
-            fine = false;
-        } else if (route == RL_NESTED) {
-            const ember_rl_type* old_inner = rl_old_schema(from->type_name);
-            const ember_rl_type* new_inner = rl_new_schema(next, field->type_name);
-            if (old_inner == NULL || new_inner == NULL) {
-                rl_report(report, cap, "refused: field `%s` of `%s` holds a `%s` with no schema [HR-14]\n", field->name, to->name, field->type_name);
-                fine = false;
-            } else if (!rl_plan_type(next, old_inner, new_inner, report, cap, depth + 1)) {
-                fine = false;
-            }
-        } else if (field->kind == EMBER_RL_KIND_ARRAY && from->kind == EMBER_RL_KIND_ARRAY && route != RL_CARRY) {
-            rl_report(report, cap, "refused: the elements of `%s.%s` would need migrating through their container [HR-13]\n", to->name, field->name);
-            fine = false;
-        }
-    }
-    return fine;
+    return rl_plan_fields(next, rl_type_fields(old), rl_type_fields(to), to->name, false, report, cap, depth);
 }
 
-/* Build the new value of a type at `to_value` from the old one at `from_value`, field by name.
- * Fields are moved bit by bit: the old value gives up what it owned, but for removed fields, which
- * reclaim drops. */
+static void rl_migrate_payload(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                               unsigned char* to_value, const unsigned char* from_value);
 static void rl_migrate_value(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
-                             unsigned char* to_value, const unsigned char* from_value) {
-    for (uint32_t index = 0; index < to->field_count; ++index) {
-        const ember_rl_field* field = &to->fields[index];
-        const ember_rl_field* from = rl_source_field(old, field);
+                             unsigned char* to_value, const unsigned char* from_value);
+
+/* Build the new value of the fields `old` become `to` at `to_value` from the old one at
+ * `from_value`, field by name. `owner` is the type whose `init_field` writes a default, the
+ * fields being its own from `base` in its numbering. Fields are moved bit by bit: the old value
+ * gives up what it owned, but for removed fields, which reclaim drops. */
+static void rl_migrate_fields(const ember_rl_manifest* next, rl_fields old, rl_fields to, const ember_rl_type* owner, uint32_t base,
+                              unsigned char* to_value, const unsigned char* from_value) {
+    for (uint32_t index = 0; index < to.count; ++index) {
+        const ember_rl_field* field = &to.at[index];
+        const ember_rl_field* from = rl_source_in(old, field);
         unsigned char* there = to_value + field->offset;
         switch (rl_field_route(field, from)) {
         case RL_CARRY:
             memcpy(there, from_value + from->offset, field->size);
             break;
         case RL_WIDEN:
-            if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
-                float narrow;
-                memcpy(&narrow, from_value + from->offset, sizeof narrow);
-                double wide = narrow;
-                memcpy(there, &wide, sizeof wide);
-            } else if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
-                rl_write_integer(there, field->size, (uint64_t)rl_read_signed(from_value + from->offset, from->size));
-            } else {
-                rl_write_integer(there, field->size, rl_read_unsigned(from_value + from->offset, from->size));
-            }
+        case RL_NUMBER:
+            /* A range type's values were tested in plan ([HR-14]). */
+            rl_convert_number(from, field, there, from_value + from->offset);
             break;
         case RL_NESTED:
             rl_migrate_value(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name), there, from_value + from->offset);
             break;
+        case RL_PAYLOAD:
+            rl_migrate_payload(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name), there, from_value + from->offset);
+            break;
+        case RL_COLUMNS: {
+            /* [HR-13] An `SoA`'s elements: each gathered from the old columns into a whole old
+             * element, migrated by its type's schema, and scattered into a block of the new
+             * columns, laid out by the new image (and held by the transaction arena until commit). */
+            const ember_rl_type* soa_from = from->layout;
+            const ember_rl_type* soa_to = field->layout;
+            const ember_rl_type* was = rl_old_schema(from->element_type);
+            const ember_rl_type* now = rl_new_schema(next, field->element_type);
+            const unsigned char* old_soa = from_value + from->offset;
+            size_t count = rl_soa_count(soa_from, old_soa, "len");
+            memset(there, 0, field->size);
+            if (count > 0 && was != NULL && now != NULL) {
+                uint32_t columns = rl_soa_columns(soa_to);
+                /* The column starts, then a whole old element and a whole new one, each on a
+                 * 64-byte boundary, which every element's alignment divides; the arena's own
+                 * memory, freed here (or with the arena should prepare fail). */
+                size_t starts = (sizeof(size_t) * (columns + 1) + 63) / 64 * 64;
+                size_t old_room = ((size_t)was->size + 63) / 64 * 64;
+                size_t scratch_size = starts + old_room + now->size;
+                rl_tx_check_budget(scratch_size);
+                unsigned char* scratch = (unsigned char*)rl_tx_alloc(scratch_size, 64);
+                size_t* at = (size_t*)(void*)scratch;
+                unsigned char* old_element = scratch + starts;
+                unsigned char* new_element = old_element + old_room;
+                size_t size = soa_to->columns(count, at);
+                if (columns > 0) {
+                    rl_tx_check_budget(size);
+                    unsigned char* block = (unsigned char*)rl_tx_alloc(size, 64);
+                    for (uint32_t k = 0; k < columns; ++k) {
+                        unsigned char* column = block + at[k];
+                        memcpy(there + soa_to->fields[k].offset, &column, sizeof column);
+                    }
+                }
+                for (size_t k = 0; k < count; ++k) {
+                    memset(old_element, 0, was->size);
+                    memset(new_element, 0, now->size);
+                    rl_soa_gather(soa_from, old_soa, k, old_element);
+                    rl_migrate_value(next, was, now, new_element, old_element);
+                    rl_soa_scatter(soa_to, there, k, new_element);
+                }
+                ember_free(scratch, scratch_size, 64);
+                rl_soa_set_count(soa_to, there, "len", count);
+                rl_soa_set_count(soa_to, there, "cap", columns > 0 ? count : 0);
+            }
+            break;
+        }
+        case RL_ELEMENTS: {
+            /* [HR-13] Each element as its row says: a fixed array's in place, an `Array`'s into a
+             * buffer of their new size, which the transaction arena holds until commit. */
+            rl_fields was = { from->inner, 1 };
+            rl_fields becomes = { field->inner, 1 };
+            const unsigned char* first;
+            size_t count;
+            rl_elements_of(from, from_value + from->offset, &first, &count);
+            unsigned char* into = there;
+            if (field->kind == EMBER_RL_KIND_ARRAY) {
+                ember_vec made = { NULL, count, count };
+                if (count > 0) {
+                    rl_tx_check_budget(count * field->inner->size);
+                    made.ptr = rl_tx_alloc(count * field->inner->size, field->inner->align);
+                }
+                memcpy(there, &made, sizeof made);
+                into = (unsigned char*)made.ptr;
+            }
+            for (size_t k = 0; k < count; ++k) {
+                rl_migrate_fields(next, was, becomes, NULL, 0, into + k * field->inner->size, first + k * from->inner->size);
+            }
+            break;
+        }
         case RL_VARIANT: {
             const ember_rl_variant* now = rl_variant_for(rl_old_schema(from->type_name), rl_new_schema(next, field->type_name),
                                                          rl_read_unsigned(from_value + from->offset, from->size));
@@ -11014,7 +11461,9 @@ static void rl_migrate_value(const ember_rl_manifest* next, const ember_rl_type*
             break;
         }
         case RL_DEFAULT:
-            to->init_field(to_value, index);
+            if (owner != NULL && owner->init_field != NULL) {
+                owner->init_field(to_value, base + index);
+            }
             break;
         default:
             memset(there, 0, field->size);
@@ -11023,24 +11472,108 @@ static void rl_migrate_value(const ember_rl_manifest* next, const ember_rl_type*
     }
 }
 
-/* Reclaim's half of a field-wise migration: the old value's fields no new field took. */
-static void rl_drop_removed(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, unsigned char* from_value) {
-    for (uint32_t index = 0; index < old->field_count; ++index) {
-        const ember_rl_field* field = &old->fields[index];
+static void rl_migrate_value(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                             unsigned char* to_value, const unsigned char* from_value) {
+    rl_migrate_fields(next, rl_type_fields(old), rl_type_fields(to), to, 0, to_value, from_value);
+}
+
+/* [HR-14] An enum value with payloads: the variant of the old one's name, its tag rewritten, and
+ * its payload's fields by the rows a type's take (a variant removed while held was refused). */
+static void rl_migrate_payload(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                               unsigned char* to_value, const unsigned char* from_value) {
+    const ember_rl_variant* held = rl_held_variant(old, from_value);
+    const ember_rl_variant* now = rl_variant_named(to, held);
+    if (held == NULL || now == NULL || to->field_count == 0) {
+        return;
+    }
+    rl_write_integer(to_value + to->fields[0].offset, to->fields[0].size, now->discriminant);
+    rl_migrate_fields(next, rl_variant_fields(held), rl_variant_fields(now), to, rl_payload_base(to, now), to_value, from_value);
+}
+
+static void rl_drop_payload(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, unsigned char* from_value);
+
+/* Reclaim's half of a field-wise migration: the fields `old` (of `old_owner`, its own from `base`
+ * in its numbering) that no field of `to` took, dropped by the old image's code. */
+static void rl_drop_fields(const ember_rl_manifest* next, rl_fields old, rl_fields to, const ember_rl_type* old_owner, uint32_t base,
+                           unsigned char* from_value) {
+    for (uint32_t index = 0; index < old.count; ++index) {
+        const ember_rl_field* field = &old.at[index];
         const ember_rl_field* taker = NULL;
-        for (uint32_t at = 0; at < to->field_count && taker == NULL; ++at) {
-            if (rl_source_field(old, &to->fields[at]) == field) {
-                taker = &to->fields[at];
+        for (uint32_t at = 0; at < to.count && taker == NULL; ++at) {
+            if (rl_source_in(old, &to.at[at]) == field) {
+                taker = &to.at[at];
             }
         }
+        int route = taker != NULL ? rl_field_route(taker, field) : 0;
+        const ember_rl_type* was = route == RL_NESTED || route == RL_PAYLOAD ? rl_old_schema(field->type_name) : NULL;
+        const ember_rl_type* now = was != NULL ? rl_new_schema(next, taker->type_name) : NULL;
         if (taker == NULL) {
-            if (old->drop_field != NULL) {
-                old->drop_field(from_value, index);
+            if (old_owner != NULL && old_owner->drop_field != NULL) {
+                old_owner->drop_field(from_value, base + index);
             }
-        } else if (rl_field_route(taker, field) == RL_NESTED) {
-            rl_drop_removed(next, rl_old_schema(field->type_name), rl_new_schema(next, taker->type_name), from_value + field->offset);
+        } else if (route == RL_COLUMNS) {
+            /* [HR-13] What each old element's new self did not take, gathered whole from the old
+             * columns, then the old block, laid out by the old image. */
+            const ember_rl_type* soa = field->layout;
+            const unsigned char* old_soa = from_value + field->offset;
+            const ember_rl_type* old_element = rl_old_schema(field->element_type);
+            const ember_rl_type* new_element = rl_new_schema(next, taker->element_type);
+            size_t count = rl_soa_count(soa, old_soa, "len");
+            size_t capacity = rl_soa_count(soa, old_soa, "cap");
+            uint32_t columns = rl_soa_columns(soa);
+            if (old_element != NULL && new_element != NULL && count > 0) {
+                unsigned char* element = (unsigned char*)ember_alloc(old_element->size == 0 ? 1 : old_element->size, 64);
+                for (size_t k = 0; k < count; ++k) {
+                    memset(element, 0, old_element->size);
+                    rl_soa_gather(soa, old_soa, k, element);
+                    rl_drop_fields(next, rl_type_fields(old_element), rl_type_fields(new_element), old_element, 0, element);
+                }
+                ember_free(element, old_element->size == 0 ? 1 : old_element->size, 64);
+            }
+            if (columns > 0 && capacity > 0 && soa->columns != NULL) {
+                size_t* at = (size_t*)ember_alloc(sizeof(size_t) * (columns + 1), 64);
+                size_t size = soa->columns(capacity, at);
+                unsigned char* block;
+                memcpy(&block, old_soa + soa->fields[0].offset, sizeof block);
+                block -= at[0];
+                ember_free(block, size ? size : 1, 64);
+                ember_free(at, sizeof(size_t) * (columns + 1), 64);
+            }
+        } else if (route == RL_ELEMENTS) {
+            /* [HR-13] What each old element's new self did not take, then an `Array`'s old buffer. */
+            rl_fields elements = { field->inner, 1 };
+            rl_fields becomes = { taker->inner, 1 };
+            const unsigned char* first;
+            size_t count;
+            rl_elements_of(field, from_value + field->offset, &first, &count);
+            for (size_t k = 0; k < count; ++k) {
+                rl_drop_fields(next, elements, becomes, NULL, 0, (unsigned char*)first + k * field->inner->size);
+            }
+            if (field->kind == EMBER_RL_KIND_ARRAY) {
+                ember_vec vec;
+                memcpy(&vec, from_value + field->offset, sizeof vec);
+                vec_free_at(&vec, field->inner->size, field->inner->align);
+            }
+        } else if (was == NULL || now == NULL) {
+            continue;
+        } else if (route == RL_NESTED) {
+            rl_drop_fields(next, rl_type_fields(was), rl_type_fields(now), was, 0, from_value + field->offset);
+        } else {
+            rl_drop_payload(next, was, now, from_value + field->offset);
         }
     }
+}
+
+static void rl_drop_payload(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, unsigned char* from_value) {
+    const ember_rl_variant* held = rl_held_variant(old, from_value);
+    const ember_rl_variant* now = rl_variant_named(to, held);
+    if (held != NULL && now != NULL) {
+        rl_drop_fields(next, rl_variant_fields(held), rl_variant_fields(now), old, rl_payload_base(old, held), from_value);
+    }
+}
+
+static void rl_drop_removed(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to, unsigned char* from_value) {
+    rl_drop_fields(next, rl_type_fields(old), rl_type_fields(to), old, 0, from_value);
 }
 
 /* -- the references the runtime can follow ([HR-15]) -------------------------- */
@@ -11226,6 +11759,35 @@ static bool rl_walk_value(const ember_rl_field* shape, unsigned char* at, int mo
         }
         for (size_t index = 0; index < vec->len; ++index) {
             if (!rl_walk_value(&element, (unsigned char*)vec->ptr + index * shape->element_size, mode, old_image, next, depth + 1)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    case EMBER_RL_KIND_SOA: {
+        /* [HR-13] Each column's values, as its row says. */
+        const ember_rl_type* soa = shape->layout;
+        size_t count = soa == NULL ? 0 : rl_soa_count(soa, at, "len");
+        for (uint32_t k = 0; soa != NULL && k < rl_soa_columns(soa) && depth <= 32; ++k) {
+            const ember_rl_field* column = &soa->fields[k];
+            unsigned char* values;
+            memcpy(&values, at + column->offset, sizeof values);
+            if (values == NULL || column->kind == EMBER_RL_KIND_PLAIN || column->kind == EMBER_RL_KIND_OPAQUE) {
+                continue;
+            }
+            for (size_t index = 0; index < count; ++index) {
+                if (!rl_walk_value(column, values + index * column->size, mode, old_image, next, depth + 1)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+    case EMBER_RL_KIND_FIXED: {
+        /* [HR-13] Its elements in place, each as its row says. */
+        size_t count = shape->inner == NULL || shape->inner->size == 0 ? 0 : shape->size / shape->inner->size;
+        for (size_t index = 0; index < count && depth <= 32; ++index) {
+            if (!rl_walk_value(shape->inner, at + index * shape->inner->size, mode, old_image, next, depth + 1)) {
                 return false;
             }
         }
@@ -11422,9 +11984,68 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
         }
     }
     for (size_t k = 0; k < named_count; ++k) {
-        rl_report(report, cap, "refused: variant `%s.%s` was removed while %zu value%s of it live (field `%s` of `%s`) [HR-14]\n",
+        char where[300];
+        rl_report(report, cap, "refused: variant `%s.%s` was removed while %zu value%s of it live (%s of `%s`) [HR-14]\n",
                   named[k].field->type_name, named[k].variant, named[k].count, named[k].count == 1 ? "" : "s",
-                  named[k].field->name, named[k].to->name);
+                  rl_held_where(named[k].field, where, sizeof where), named[k].to->name);
+    }
+    /* [HR-14] A field changed to a range type migrates only when every value passes the type's
+     * `checked`; otherwise the reload is refused, naming the field, the type and how many fail. */
+    named_count = 0;
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        const ember_rl_field* failing = move->to->migrate != NULL ? NULL
+            : rl_out_of_range(next, move->from, move->to, (const unsigned char*)move->old, 0);
+        if (failing == NULL) {
+            continue;
+        }
+        fine = false;
+        size_t k = 0;
+        while (k < named_count && !(named[k].to == move->to && named[k].field == failing)) {
+            k += 1;
+        }
+        if (k == named_count && named_count < sizeof named / sizeof named[0]) {
+            named[named_count].to = move->to;
+            named[named_count].field = failing;
+            named[named_count].variant = NULL;
+            named[named_count++].count = 0;
+        }
+        if (k < named_count) {
+            named[k].count += 1;
+        }
+    }
+    for (size_t k = 0; k < named_count; ++k) {
+        char where[300];
+        rl_report(report, cap, "refused: %s of `%s` became the range type `%s`, and %zu value%s of it fail%s `%s.checked` [HR-14]\n",
+                  rl_held_where(named[k].field, where, sizeof where), named[k].to->name, named[k].field->type_name, named[k].count,
+                  named[k].count == 1 ? "" : "s", named[k].count == 1 ? "s" : "", named[k].field->type_name);
+    }
+    if (!fine) {
+        return false;
+    }
+    /* [HR-20] An object pinned by a `Retained` token, whose address foreign code may keep, is never
+     * moved: one whose new self does not fit its allocation (or that `migrate_from` builds anew)
+     * is refused, naming its class and how many such instances there are. */
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        if (move->in_place || (move->old->flags & EMBER_OBJ_PINNED) == 0) {
+            continue;
+        }
+        size_t pinned = 0;
+        bool first = true;
+        for (size_t other = 0; other < g_rl_moves.count; ++other) {
+            const rl_move* same = &g_rl_moves.moves[other];
+            if (same->to == move->to && !same->in_place && (same->old->flags & EMBER_OBJ_PINNED) != 0) {
+                first = first && other >= index;
+                pinned += 1;
+            }
+        }
+        if (first) {
+            rl_report(report, cap, "refused: %zu instance%s of `%s` must move (%s), but a `Retained` token foreign code holds pins %s: its address may not change [HR-20]\n",
+                      pinned, pinned == 1 ? "" : "s", move->to->name,
+                      move->to->migrate != NULL ? "`migrate_from` builds a new one" : "the new size does not fit", pinned == 1 ? "it" : "them");
+        }
+        fine = false;
     }
     if (!fine) {
         return false;
@@ -11650,6 +12271,12 @@ static bool rl_static_migrates(const ember_rl_manifest* next, const rl_static* k
     if (handle) {
         return true;
     }
+    /* A static the compiler folds into the code has no storage: each image holds its own
+     * constant, the same value while the initialiser is unchanged ([HR-17a] refuses an edited
+     * one), and the new type's checks ran on it when it was compiled (`[RNG-3]`'s `E2211`). */
+    if (from == NULL && to == NULL) {
+        return true;
+    }
 #if defined(EMBER_RELOAD_INSTANCES)
     if (from != NULL && to != NULL && from->kind == EMBER_RL_KIND_STRUCT && to->kind == EMBER_RL_KIND_STRUCT
         && strcmp(from->type_name, to->type_name) == 0 && !checkpoint) {
@@ -11662,12 +12289,66 @@ static bool rl_static_migrates(const ember_rl_manifest* next, const rl_static* k
             const ember_rl_field* holder = NULL;
             const char* variant = kept->state == 2 ? rl_removed_variant(next, old, now, (const unsigned char*)kept->data, &holder, 0) : NULL;
             if (variant != NULL) {
-                rl_report(report, cap, "refused: variant `%s.%s` was removed while static `%s` holds it (field `%s`) [HR-14]\n",
-                          holder->type_name, variant, edited->name, holder->name);
+                char where[300];
+                rl_report(report, cap, "refused: variant `%s.%s` was removed while static `%s` holds it (%s) [HR-14]\n",
+                          holder->type_name, variant, edited->name, rl_held_where(holder, where, sizeof where));
+                return false;
+            }
+            const ember_rl_field* failing = kept->state == 2 ? rl_out_of_range(next, old, now, (const unsigned char*)kept->data, 0) : NULL;
+            if (failing != NULL) {
+                rl_report(report, cap, "refused: field `%s` of static `%s` became the range type `%s`, and its value fails `%s.checked` [HR-14]\n",
+                          failing->name, edited->name, failing->type_name, failing->type_name);
                 return false;
             }
             return true;
         }
+    }
+    /* [HR-14] An enum with payloads: by variant name, the payload by the field rows. */
+    if (from != NULL && to != NULL && rl_field_route(to, from) == RL_PAYLOAD && !checkpoint) {
+        const ember_rl_type* old = rl_old_schema(from->type_name);
+        const ember_rl_type* now = rl_new_schema(next, to->type_name);
+        if (old != NULL && now != NULL) {
+            if (!rl_plan_payload(next, old, now, report, cap, 0)) {
+                return false;
+            }
+            const ember_rl_variant* held = kept->state == 2 ? rl_held_variant(old, (const unsigned char*)kept->data) : NULL;
+            const ember_rl_variant* named = rl_variant_named(now, held);
+            if (held != NULL && named == NULL) {
+                rl_report(report, cap, "refused: variant `%s.%s` was removed while static `%s` holds it [HR-14]\n", old->name, held->name, edited->name);
+                return false;
+            }
+            const ember_rl_field* failing = held != NULL
+                ? rl_out_of_range_in(next, rl_variant_fields(held), rl_variant_fields(named), (const unsigned char*)kept->data, 0) : NULL;
+            if (failing != NULL) {
+                rl_report(report, cap, "refused: field `%s` of static `%s` became the range type `%s`, and its value fails `%s.checked` [HR-14]\n",
+                          failing->name, edited->name, failing->type_name, failing->type_name);
+                return false;
+            }
+            const ember_rl_field* holder = NULL;
+            const char* variant = held != NULL
+                ? rl_removed_variant_in(next, rl_variant_fields(held), rl_variant_fields(named), (const unsigned char*)kept->data, &holder, 0) : NULL;
+            if (variant != NULL) {
+                char where[300];
+                rl_report(report, cap, "refused: variant `%s.%s` was removed while static `%s` holds it (%s) [HR-14]\n",
+                          holder->type_name, variant, edited->name, rl_held_where(holder, where, sizeof where));
+                return false;
+            }
+            return true;
+        }
+    }
+    /* [HR-14] A number becoming a range type, or a range type's value its representation, is
+     * converted; into a range type, only a value its `checked` passes. */
+    if (from != NULL && to != NULL && rl_field_route(to, from) == RL_NUMBER && !checkpoint) {
+        if (kept->state == 2 && to->in_range != NULL) {
+            unsigned char converted[16];
+            rl_convert_number(from, to, converted, (const unsigned char*)kept->data);
+            if (!to->in_range(converted)) {
+                rl_report(report, cap, "refused: static `%s` became the range type `%s`, and its value fails `%s.checked` [HR-14]\n",
+                          edited->name, to->type_name, to->type_name);
+                return false;
+            }
+        }
+        return true;
     }
     /* [HR-11a] A unit enum's value keeps its variant, by name; a removed one cannot. */
     if (from != NULL && to != NULL && from->kind == EMBER_RL_KIND_ENUM && to->kind == EMBER_RL_KIND_ENUM
@@ -11707,6 +12388,31 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
         return true;
     }
     bool bodies_only = next->mode == 3u;
+    /* [HR-23] A C++ header the running image imports that changed (it, or a file it includes) is
+     * refused, naming it: the host was compiled against the old one and must be rebuilt. An
+     * overlay is Ember code, so an edit of it is not a header change. */
+    const ember_rl_manifest* running = g_rl.running;
+    for (uint32_t at = 0; running != NULL && at < next->header_count; ++at) {
+        for (uint32_t was = 0; was < running->header_count; ++was) {
+            if (strcmp(running->headers[was].name, next->headers[at].name) == 0
+                && strcmp(running->headers[was].hash, next->headers[at].hash) != 0) {
+                rl_report(report, cap, "refused: C++ header `%s` changed; the host must be rebuilt against it [HR-23]\n", next->headers[at].name);
+                refused = true;
+            }
+        }
+    }
+    /* [HR-14] A type that crosses a foreign boundary by value keeps its layout attributes: the
+     * foreign side was compiled for the old ones, whether or not a value of it lives. */
+    for (uint32_t at = 0; at < next->type_count; ++at) {
+        const ember_rl_type* to = &next->types[at];
+        const rl_type* kept = (const rl_type*)rl_table_get(&g_rl.types, to->name);
+        const ember_rl_type* old = kept != NULL ? kept->schema : NULL;
+        if (old != NULL && ((old->layout | to->layout) & EMBER_RL_LAYOUT_ABI) != 0 && old->attributes != to->attributes) {
+            rl_report(report, cap, "refused: the layout attributes of `%s` changed, and it crosses a foreign boundary by value, compiled for the old ones; the host must be rebuilt [HR-14]\n",
+                      to->name);
+            refused = true;
+        }
+    }
     /* A reloadable function the edit removed keeps its thunk, now a stub; refused when data may
      * hold the thunk ([HR-7]). */
     for (size_t index = 0; index < g_rl.slots.cap; ++index) {
@@ -11919,8 +12625,27 @@ static bool rl_prepare_statics(const ember_rl_manifest* next, rl_pending* pendin
     for (; at < next->static_count; ++at) {
         const ember_rl_static* edited = &next->statics[at];
         rl_static* kept = (rl_static*)rl_table_get(&g_rl.statics, edited->name);
-        if (kept == NULL || kept->type_schema == edited->type_schema || kept->state != 2 || edited->shape == NULL
-            || (edited->shape->kind != EMBER_RL_KIND_STRUCT && edited->shape->kind != EMBER_RL_KIND_ENUM) || kept->shape == NULL) {
+        if (kept == NULL || kept->type_schema == edited->type_schema || kept->state != 2 || edited->shape == NULL || kept->shape == NULL) {
+            continue;
+        }
+        /* [HR-14] A number into a range type or out of one: converted, its value tested in plan. */
+        if (rl_field_route(edited->shape, kept->shape) == RL_NUMBER) {
+            void* data = rl_aligned_zero(edited->size, edited->align);
+            if (data == NULL) {
+                g_rl_guard = NULL;
+                rl_report(report, cap, "refused: Allocation: out of memory migrating static `%s` [HR-36]\n", kept->name);
+                return false;
+            }
+            rl_convert_number(kept->shape, edited->shape, (unsigned char*)data, (const unsigned char*)kept->data);
+            pending->migrated[pending->migrated_count] = kept;
+            pending->migrated_data[pending->migrated_count] = data;
+            pending->migrated_from[pending->migrated_count] = NULL;
+            pending->migrated_shape[pending->migrated_count++] = edited->shape;
+            next->static_data[at] = data;
+            continue;
+        }
+        if (edited->shape->kind != EMBER_RL_KIND_STRUCT && edited->shape->kind != EMBER_RL_KIND_ENUM
+            && rl_field_route(edited->shape, kept->shape) != RL_PAYLOAD) {
             continue;
         }
         const ember_rl_type* old = rl_old_schema(kept->shape->type_name);
@@ -11939,6 +12664,8 @@ static bool rl_prepare_statics(const ember_rl_manifest* next, rl_pending* pendin
         if (edited->shape->kind == EMBER_RL_KIND_ENUM) {
             const ember_rl_variant* now_variant = rl_variant_for(old, now, rl_read_unsigned(kept->data, kept->shape->size));
             rl_write_integer(data, edited->shape->size, now_variant != NULL ? now_variant->discriminant : 0);
+        } else if (edited->shape->kind == EMBER_RL_KIND_PAYLOAD) {
+            rl_migrate_payload(next, old, now, (unsigned char*)data, (const unsigned char*)kept->data);
         } else {
             rl_migrate_value(next, old, now, (unsigned char*)data, (const unsigned char*)kept->data);
         }
@@ -12237,12 +12964,19 @@ static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t comp
 #if defined(EMBER_RELOAD_INSTANCES)
     timings->instances_migrated = rl_reclaim_instances(next);
     for (size_t index = 0; index < pending.migrated_count; ++index) {
-        rl_drop_removed(next, pending.migrated_from[index], rl_new_schema(next, pending.migrated_shape[index]->type_name),
-                        (unsigned char*)pending.migrated_data[index]);
+        const ember_rl_type* now = rl_new_schema(next, pending.migrated_shape[index]->type_name);
+        if (pending.migrated_from[index] == NULL || now == NULL) {
+            /* a number, converted whole */
+        } else if (pending.migrated_shape[index]->kind == EMBER_RL_KIND_PAYLOAD) {
+            rl_drop_payload(next, pending.migrated_from[index], now, (unsigned char*)pending.migrated_data[index]);
+        } else {
+            rl_drop_removed(next, pending.migrated_from[index], now, (unsigned char*)pending.migrated_data[index]);
+        }
         free(pending.migrated_data[index]);
     }
 #endif
     /* The new image's schemas are the running ones from here: the next reload compares with them. */
+    g_rl.running = next;
     for (uint32_t index = 0; index < next->type_count; ++index) {
         rl_type* type = (rl_type*)rl_table_get(&g_rl.types, next->types[index].name);
         type->schema = &next->types[index];

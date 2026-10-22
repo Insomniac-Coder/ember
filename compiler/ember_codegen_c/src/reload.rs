@@ -33,6 +33,9 @@ pub struct ReloadImage {
     /// `[HR-16]` — each type that declares `migrate_from`, with the name of the adapter the driver
     /// wrote, and the name of the struct its old schema became.
     pub migrations: BTreeMap<String, (String, String)>,
+    /// `[HR-23]` — each C++ header the package imports, by name, with the content hash of it and
+    /// every file it includes.
+    pub headers: BTreeMap<String, String>,
 }
 
 /// What a field holds, for the runtime's migration and reference walk ([HR-14], [HR-15]).
@@ -47,6 +50,11 @@ struct FieldShape {
     element_type: String,
     layout: String,
     inner: String,
+    /// `[HR-14]` — for a range type, the function telling whether a value of its representation
+    /// is in its range (`T.checked`'s test).
+    range: String,
+    /// `[HR-13]` — for a container's element row, the alignment its buffer is allocated with.
+    align: String,
 }
 
 impl FieldShape {
@@ -60,14 +68,74 @@ impl FieldShape {
             element_type: String::new(),
             layout: "NULL".to_string(),
             inner: "NULL".to_string(),
+            range: "NULL".to_string(),
+            align: "0".to_string(),
         }
     }
 
     /// The row's members after `flags`: what it holds, its elements', and its own tables.
     fn tail(&self) -> String {
         let element_type = if self.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&self.element_type) };
-        format!("{}, {}, {}, {element_type}, {}, {}", self.kind, self.element_kind, self.element_size, self.layout, self.inner)
+        format!(
+            "{}, {}, {}, {element_type}, {}, {}, {}, {}",
+            self.kind, self.element_kind, self.element_size, self.layout, self.inner, self.range, self.align
+        )
     }
+}
+
+/// `[HR-14]` — the symbol of range type `id`'s test (`emit_range_tests`).
+fn range_test_symbol(id: ember_types::RangeId) -> String {
+    table(&format!("in_range_{}", id.0))
+}
+
+/// `[HR-14]` — the C body of a range type's test over its representation at `value`: `T.checked`'s
+/// decision (`[RNG-3]`), NaN in no range (`[RNG-6]`). `None` for a representation it has no test
+/// for (`f16`), whose change the reload refuses.
+fn range_test_body(kind: &TyKind, def: &ember_types::RangeDef) -> Option<String> {
+    use ember_types::Bound;
+    let upper = if def.inclusive { "<=" } else { "<" };
+    let signed = |v: i128| if v == i128::from(i64::MIN) { "INT64_MIN".to_string() } else { format!("INT64_C({v})") };
+    // A 128-bit value as its two halves, compared high first: the bytes a little-endian `__int128`
+    // has, which is how the runtime lays one out.
+    let wide = |high: &str, lo: i128, hi: i128| {
+        let half = |v: i128| (format!("({high})INT64_C({})", (v >> 64) as i64), format!("UINT64_C({})", v as u64));
+        let ((lo_h, lo_l), (hi_h, hi_l)) = (half(lo), half(hi));
+        let below = if def.inclusive { "<=" } else { "<" };
+        format!(
+            "uint64_t l; {high} h; memcpy(&l, value, 8); memcpy(&h, (const unsigned char*)value + 8, 8);\n    \
+             return (h > {lo_h} || (h == {lo_h} && l >= {lo_l})) && (h < {hi_h} || (h == {hi_h} && l {below} {hi_l}));"
+        )
+    };
+    Some(match (kind, def.lo, def.hi) {
+        (TyKind::Int(IntTy::I128), Bound::Int(lo), Bound::Int(hi)) => wide("int64_t", lo, hi),
+        (TyKind::Uint(UintTy::U128), Bound::Int(lo), Bound::Int(hi)) => wide("uint64_t", lo, hi),
+        (TyKind::Int(IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64), Bound::Int(lo), Bound::Int(hi)) => {
+            let width = match kind {
+                TyKind::Int(IntTy::I8) => 8,
+                TyKind::Int(IntTy::I16) => 16,
+                TyKind::Int(IntTy::I32) => 32,
+                _ => 64,
+            };
+            format!("int{width}_t n; memcpy(&n, value, sizeof n);\n    int64_t v = n;\n    return v >= {} && v {upper} {};", signed(lo), signed(hi))
+        }
+        (TyKind::Uint(UintTy::U8 | UintTy::U16 | UintTy::U32 | UintTy::U64), Bound::Int(lo), Bound::Int(hi)) => {
+            let width = match kind {
+                TyKind::Uint(UintTy::U8) => 8,
+                TyKind::Uint(UintTy::U16) => 16,
+                TyKind::Uint(UintTy::U32) => 32,
+                _ => 64,
+            };
+            // A lower end of zero is no test: an unsigned value is never below it.
+            let low = if lo <= 0 { String::new() } else { format!("v >= UINT64_C({lo}) && ") };
+            format!("uint{width}_t n; memcpy(&n, value, sizeof n);\n    uint64_t v = n;\n    return {low}v {upper} UINT64_C({hi});")
+        }
+        (TyKind::Float(FloatTy::F32 | FloatTy::F64), Bound::Float(lo), Bound::Float(hi)) => {
+            let float = |v: f64| if v.is_infinite() { (if v < 0.0 { "-HUGE_VAL" } else { "HUGE_VAL" }).to_string() } else { format!("{v:e}") };
+            let c = if matches!(kind, TyKind::Float(FloatTy::F32)) { "float" } else { "double" };
+            format!("{c} n; memcpy(&n, value, sizeof n);\n    double v = n;\n    return v >= {} && v {upper} {};", float(lo), float(hi))
+        }
+        _ => return None,
+    })
 }
 
 /// The suffix of a reloadable body's own symbol; the function's symbol is its thunk's.
@@ -330,6 +398,22 @@ impl Emitter<'_> {
                 let inner = *inner;
                 fnv(&["pointer", &self.types.display(ty), &self.type_schema(inner, seen).to_string()])
             }
+            // `[HR-13]` — an `Array`'s or a fixed array's elements are in its schema: a container of
+            // a type that changed holds values to migrate. A class element is a handle (above).
+            TyKind::Vec { elem, text: false } => {
+                let elem = *elem;
+                fnv(&["array", &self.type_schema(elem, seen).to_string()])
+            }
+            TyKind::Array { elem, len } => {
+                let (elem, len) = (*elem, *len);
+                fnv(&["fixed", &format!("{len:?}"), &self.type_schema(elem, seen).to_string()])
+            }
+            // `[HR-14]` — a range type's range is in its schema: a value of the old one may lie
+            // outside the new one.
+            TyKind::Range(id) => {
+                let def = self.types.range_def(*id);
+                fnv(&["range", &def.name.to_string(), &self.types.display(def.repr), &format!("{:?}", def.lo), &format!("{:?}", def.hi), if def.inclusive { "..=" } else { ".." }])
+            }
             _ => fnv(&[&self.types.display(ty)]),
         };
         seen.pop();
@@ -371,6 +455,24 @@ impl Emitter<'_> {
         let params = self.c_params(body);
         let mut parts = vec![ret];
         parts.extend(params.into_iter().map(|(ty, _)| ty));
+        // `[HR-21]` — a C-ABI function's values cross by their layout: an aggregate whose layout
+        // changed changes what the foreign side must pass, which only a rebuilt host does.
+        if body.abi.is_some() {
+            // A class crosses as its handle, whose own layout is not the foreign side's; a parameter
+            // borrowed by default crosses by value.
+            let crossing = |ty: Ty| {
+                let ty = match self.types.kind(ty) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => ty,
+                };
+                match self.types.kind(ty) {
+                    TyKind::Class(id) => fnv(&["handle", &self.types.class_def(*id).name.to_string()]).to_string(),
+                    _ => self.type_schema(ty, &mut Vec::new()).to_string(),
+                }
+            };
+            parts.push(crossing(body.return_ty()));
+            parts.extend((1..=body.arg_count).filter_map(|index| body.locals.get(index)).map(|local| crossing(local.ty)));
+        }
         fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
     }
 
@@ -382,6 +484,13 @@ impl Emitter<'_> {
         let Some(reload) = self.reload.clone() else { return };
         if self.unit.is_some() {
             return;
+        }
+        // `[HR-14]` — each range type's test, which a field's row names.
+        let ranges: Vec<(ember_types::RangeId, ember_types::RangeDef)> = self.types.ranges().map(|(id, def)| (id, def.clone())).collect();
+        for (id, def) in ranges {
+            if let Some(body) = range_test_body(self.types.kind(def.repr), &def) {
+                self.line(&format!("static inline int {}(const void* value) {{\n    {body}\n}}", range_test_symbol(id)));
+            }
         }
         let address_taken = address_taken_symbols(bodies);
         let mut fns = Vec::new();
@@ -477,13 +586,19 @@ impl Emitter<'_> {
             if stored.iter().any(|(known, _, _)| known == name) {
                 continue;
             }
+            // `[HR-17a]` — a folded static's code holds its value and nothing else: a value that
+            // changed with its initialiser's text unchanged (a function it calls was edited) is a
+            // changed initialiser too, refused unless the static is `@reinit_on_reload`.
+            let value = self.types.folded_statics().iter().find(|(known, _)| known.as_str() == name).map(|(_, value)| value.as_str());
+            let initialiser = &value.map_or(*initialiser, |value| fnv(&[&initialiser.to_string(), value]));
             statics.push(format!(
                 "    {{ {}, 0, 1, UINT64_C(0x{declared:016x}), UINT64_C(0x{initialiser:016x}), {}, NULL, NULL, NULL }},",
                 c_string_literal(name),
                 if *reinit { "EMBER_RL_STATIC_REINIT" } else { "0" },
             ));
         }
-        let (types, mut identities) = self.emit_type_schemas(&reload);
+        let abi = self.abi_types(bodies, &reload);
+        let (types, mut identities) = self.emit_type_schemas(&reload, &abi, bodies);
         identities.extend(self.reload_interface_ids.borrow().iter().map(|id| format!("&{id}")));
 
         let fns_symbol = table("fns");
@@ -518,6 +633,15 @@ impl Emitter<'_> {
         self.line(&format!("static {RT}rl_identity* const {identities_symbol}[{}] = {{", identities.len().max(1)));
         self.line(&format!("    {}", if identities.is_empty() { "NULL".to_string() } else { identities.join(", ") }));
         self.line("};");
+        let headers_symbol = table("headers");
+        self.line(&format!("static const {RT}rl_header {headers_symbol}[{}] = {{", reload.headers.len().max(1)));
+        for (name, hash) in &reload.headers {
+            self.line(&format!("    {{ {}, {} }},", c_string_literal(name), c_string_literal(hash)));
+        }
+        if reload.headers.is_empty() {
+            self.line("    { NULL, NULL },");
+        }
+        self.line("};");
         let layout = if reload.instances { "obj_header_v40" } else { "obj_header_v24" };
         let entry = if has_entry { table("entry") } else { "NULL".to_string() };
         self.line(&format!("EMBER_RL_MANIFEST const {RT}rl_manifest {} = {{", manifest_symbol()));
@@ -529,7 +653,8 @@ impl Emitter<'_> {
         self.line(&format!("    {}u, {statics_symbol}, {}, {},", statics.len(), table("static_data"), table("static_state")));
         self.line(&format!("    {}u, {types_symbol},", types.len()));
         self.line(&format!("    {}u, {identities_symbol},", identities.len()));
-        self.line(&format!("    {entry}"));
+        self.line(&format!("    {entry},"));
+        self.line(&format!("    {}u, {headers_symbol}", reload.headers.len()));
         self.line("};");
         self.line("");
     }
@@ -566,35 +691,87 @@ impl Emitter<'_> {
     }
 
     /// `[HR-13]` — the package structs a value of which sits inside something that is not a
-    /// package type's field: an `Array`, an `Option`, a tuple, a payload, a standard type. A reload
-    /// cannot yet migrate such values, so a change to one is refused.
+    /// package type's field: an `Array`, a tuple, a payload without a schema, a standard type. A
+    /// reload cannot yet migrate such values, so a change to one is refused. Only a holder whose
+    /// values can outlive a call counts: one held by another type, a closure's captured state or a
+    /// static's value; a tuple a function makes and takes apart (`(self, default)` in a `match`) is
+    /// gone before any poll.
     fn contained_structs(&self, reload: &ReloadImage) -> BTreeSet<String> {
+        // A struct's or an enum's: an enum's values a reload cannot reach keep their old
+        // discriminants as surely as a struct's keep their old layout.
         let schema_struct = |ty: Ty| -> Option<String> {
             match self.types.kind(ty) {
                 TyKind::Struct(id) if self.has_schema(ty, reload) => Some(self.types.struct_def(*id).name.to_string()),
+                TyKind::Enum(id) if self.has_schema(ty, reload) => Some(self.types.enum_def(*id).name.to_string()),
                 _ => None,
             }
         };
-        let mut out = BTreeSet::new();
-        for (ty, kind) in self.types.all() {
-            let inside: Vec<Ty> = match kind {
-                TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } => vec![*elem],
+        let mut held: BTreeSet<Ty> = self.closure_values.values().map(|(_, env)| *env).collect();
+        held.extend(self.reload_static_names().into_iter().map(|(_, ty, _)| ty));
+        for (_, kind) in self.types.all() {
+            match kind {
+                TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } => {
+                    held.insert(*elem);
+                }
+                TyKind::Tuple(items) => held.extend(items.iter().copied()),
+                TyKind::Struct(id) => held.extend(self.types.struct_def(*id).fields.iter().map(|field| field.ty)),
+                TyKind::Enum(id) => held.extend(self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty))),
+                TyKind::Class(id) => held.extend(self.types.class_def(*id).fields.iter().map(|field| field.ty)),
+                _ => {}
+            }
+        }
+        // What a value of `ty` holds by value: an `SoA[T]`'s columns are its `T`s.
+        let members = |ty: Ty| -> Vec<Ty> {
+            match self.types.kind(ty) {
+                TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } => vec![*elem],
                 TyKind::Tuple(items) => items.clone(),
-                TyKind::Enum(id) => {
-                    self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect()
-                }
-                // A struct with a schema migrates its fields depth-first; any other holds them
-                // where a reload cannot reach.
-                TyKind::Struct(id) => {
-                    if self.has_schema(ty, reload) {
-                        Vec::new()
-                    } else {
-                        self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect()
-                    }
-                }
+                TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect(),
+                TyKind::Struct(id) => match &self.types.struct_def(*id).origin {
+                    Some((origin, args)) if matches!(origin.as_str(), "SoA" | "ArenaSoA") && args.len() == 1 => args.clone(),
+                    _ => self.types.struct_def(*id).fields.iter().map(|field| field.ty).collect(),
+                },
+                TyKind::Class(id) => self.types.class_def(*id).fields.iter().map(|field| field.ty).collect(),
                 _ => Vec::new(),
+            }
+        };
+        // Where a reload cannot reach: inside a tuple, or a struct, an enum or a class with no
+        // schema. A struct, an enum with a schema and an `Array` or a fixed array migrate what
+        // they hold (`[HR-14]`, `[HR-13]`), unless they sit where a reload cannot reach themselves.
+        // A value made an interface value (`Box[dyn I]`) is behind its interface's methods, which a
+        // reload repoints to code built for the new layout; the runtime cannot tell its type there.
+        let mut unreached: Vec<Ty> = self
+            .interface_adapters
+            .values()
+            .map(|adapter| adapter.concrete)
+            .filter(|concrete| !matches!(self.types.kind(*concrete), TyKind::Class(_)))
+            .collect();
+        for (ty, kind) in self.types.all() {
+            // An instance of a class lives on the heap, held or not.
+            if !held.contains(&ty) && !matches!(kind, TyKind::Class(_)) {
+                continue;
+            }
+            let migrates = match kind {
+                TyKind::Tuple(_) => false,
+                TyKind::Class(id) => self.class_has_schema(*id, reload),
+                TyKind::Struct(_) => self.has_schema(ty, reload) || self.soa_element(ty, reload).is_some(),
+                TyKind::Enum(_) => self.has_schema(ty, reload),
+                _ => true,
             };
-            out.extend(inside.into_iter().filter_map(schema_struct));
+            if !migrates {
+                unreached.extend(members(ty));
+            }
+        }
+        let mut seen = BTreeSet::new();
+        let mut out = BTreeSet::new();
+        while let Some(ty) = unreached.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            out.extend(schema_struct(ty));
+            // A class is a handle: its own fields migrate with its instances.
+            if !matches!(self.types.kind(ty), TyKind::Class(_)) {
+                unreached.extend(members(ty));
+            }
         }
         out
     }
@@ -609,8 +786,14 @@ impl Emitter<'_> {
             TyKind::Class(id) => reload.files.contains(&self.types.class_def(*id).span.file),
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                // An `SoA[T]` holds its `T`s in columns, behind its fields' pointers.
+                let soa = match &def.origin {
+                    Some((origin, args)) if origin.as_str() == "SoA" => args.clone(),
+                    _ => Vec::new(),
+                };
                 reload.files.contains(&def.span.file)
                     || def.fields.iter().map(|field| field.ty).collect::<Vec<_>>().into_iter().any(|field| self.mentions_package(field, reload, seen))
+                    || soa.into_iter().any(|element| self.mentions_package(element, reload, seen))
             }
             TyKind::Enum(id) => {
                 let def = self.types.enum_def(*id);
@@ -628,10 +811,35 @@ impl Emitter<'_> {
 
     /// `[HR-13b]` — the package types a raw pointer can reach: a value behind one may sit in
     /// foreign memory, which no reload can find, so a change to its schema is refused.
-    fn pointed_structs(&self, reload: &ReloadImage) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
+    fn pointed_structs(&self, reload: &ReloadImage, bodies: &[Body]) -> BTreeSet<String> {
+        // `[HR-13]` — a pointer type that only an `SoA`'s own struct holds is its column, whose
+        // values migrate through it: every other mention counts, in a type or a body's local.
+        // A reference to a pointer is a place's (a column projected while it is read), not a
+        // value's: the pointer it names is counted where it is held.
+        let mut mentioned: BTreeSet<Ty> = bodies.iter().flat_map(|body| body.locals.iter().map(|local| local.ty)).collect();
         for (_, kind) in self.types.all() {
+            match kind {
+                TyKind::Struct(id) if matches!(&self.types.struct_def(*id).origin, Some((origin, _)) if origin.as_str() == "SoA") => {}
+                TyKind::Struct(id) => mentioned.extend(self.types.struct_def(*id).fields.iter().map(|field| field.ty)),
+                TyKind::Class(id) => mentioned.extend(self.types.class_def(*id).fields.iter().map(|field| field.ty)),
+                TyKind::Enum(id) => mentioned.extend(self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty))),
+                TyKind::Tuple(items) => mentioned.extend(items.iter().copied()),
+                TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } | TyKind::Ptr { inner: elem, .. } => {
+                    mentioned.insert(*elem);
+                }
+                TyKind::Fn { params, ret, .. } => {
+                    mentioned.extend(params.iter().map(|param| param.ty));
+                    mentioned.insert(*ret);
+                }
+                _ => {}
+            }
+        }
+        let mut out = BTreeSet::new();
+        for (ty, kind) in self.types.all() {
             let TyKind::Ptr { inner, .. } = kind else { continue };
+            if !mentioned.contains(&ty) {
+                continue;
+            }
             match self.types.kind(*inner) {
                 TyKind::Struct(id) if self.has_schema(*inner, reload) => {
                     out.insert(self.types.struct_def(*id).name.to_string());
@@ -653,7 +861,10 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
+                // An `SoA`'s struct is its columns' pointers: its elements migrate by their own
+                // schema (`soa_element`), never by its fields.
                 !is_compiler_struct(&def.name.to_string())
+                    && !matches!(&def.origin, Some((origin, _)) if matches!(origin.as_str(), "SoA" | "ArenaSoA"))
                     && self.structural_type_emitted(ty)
                     && (reload.files.contains(&def.span.file) || self.mentions_package(ty, reload, &mut Vec::new()))
             }
@@ -704,6 +915,20 @@ impl Emitter<'_> {
             TyKind::Uint(_) => shape.flags.extend(["EMBER_RL_FIELD_UNSIGNED", "EMBER_RL_FIELD_ZERO"]),
             TyKind::Float(_) => shape.flags.extend(["EMBER_RL_FIELD_FLOAT", "EMBER_RL_FIELD_ZERO"]),
             TyKind::Bool => shape.flags.push("EMBER_RL_FIELD_ZERO"),
+            // `[HR-14]` — a range type is its representation's number with a test of its range,
+            // and never `Default` (`[RNG-8]`).
+            TyKind::Range(id) => {
+                let def = self.types.range_def(*id);
+                let repr = self.types.kind(def.repr);
+                if range_test_body(repr, def).is_some() {
+                    shape.flags.push(match repr {
+                        TyKind::Uint(_) => "EMBER_RL_FIELD_UNSIGNED",
+                        TyKind::Float(_) => "EMBER_RL_FIELD_FLOAT",
+                        _ => "EMBER_RL_FIELD_SIGNED",
+                    });
+                    shape.range = range_test_symbol(*id);
+                }
+            }
             TyKind::Class(_) => shape.kind = "EMBER_RL_KIND_HANDLE",
             TyKind::Vec { text: true, .. } => shape.flags.push("EMBER_RL_FIELD_ZERO"),
             TyKind::Vec { elem, text: false } => {
@@ -715,6 +940,14 @@ impl Emitter<'_> {
                 if let Some(own) = self.described_shape(elem, reload) {
                     shape.element_kind = own.kind;
                     shape.inner = self.reload_shape_table(elem, reload);
+                } else if self.element_migrates(elem, reload) {
+                    // `[HR-13]` — the elements migrate through their container, by the element's
+                    // schema, which the element's row names.
+                    let (_, name) = element(self, elem);
+                    let (inner, kind) = self.reload_element_table(elem, reload);
+                    shape.element_kind = kind;
+                    shape.element_type = name;
+                    shape.inner = inner;
                 } else if nested {
                     // An `Array` of `Array`s: each element described by this image's own table.
                     shape.inner = self.reload_shape_table(elem, reload);
@@ -732,7 +965,9 @@ impl Emitter<'_> {
                     shape.kind = if self.types.enum_is_bare(*id) { "EMBER_RL_KIND_ENUM" } else { "EMBER_RL_KIND_PAYLOAD" };
                     shape.type_name = self.types.enum_def(*id).name.to_string();
                 } else if self.holds_objects(ty, &mut Vec::new()) {
-                    shape.kind = "EMBER_RL_KIND_OPAQUE";
+                    // `[HR-15]` — no schema, but this image describes what it holds, so the
+                    // references in it are followed (a standard type's, a `Map`'s slots).
+                    shape = self.contained_shape(ty, reload);
                 }
             }
             TyKind::Struct(id) => {
@@ -740,12 +975,30 @@ impl Emitter<'_> {
                     shape.kind = "EMBER_RL_KIND_WEAK";
                 } else if self.shared_inner_id(*id).is_some() {
                     shape.kind = "EMBER_RL_KIND_HANDLE";
+                } else if let Some(element) = self.soa_element(ty, reload) {
+                    // `[HR-13]` — an `SoA[T]`'s elements migrate through it, column by column.
+                    shape.kind = "EMBER_RL_KIND_SOA";
+                    shape.element_type = self.types.struct_def(element).name.to_string();
+                    shape.layout = self.reload_soa_table(ty, element, reload);
                 } else if self.has_schema(ty, reload) {
                     shape.kind = "EMBER_RL_KIND_STRUCT";
                     shape.type_name = self.types.struct_def(*id).name.to_string();
                 } else if self.holds_objects(ty, &mut Vec::new()) {
-                    shape.kind = "EMBER_RL_KIND_OPAQUE";
+                    // `[HR-15]` — described by this image, so the references in it are followed.
+                    shape = self.contained_shape(ty, reload);
                 }
+            }
+            // `[HR-13]` — a fixed array whose elements migrate holds them in place, each by the
+            // element's row; any other is plain bytes, or opaque when it holds objects.
+            TyKind::Array { elem, .. } if self.element_migrates(*elem, reload) && self.described_shape(*elem, reload).is_none() => {
+                let elem = *elem;
+                shape.kind = "EMBER_RL_KIND_FIXED";
+                shape.element_size = format!("(uint32_t)sizeof({})", self.c_type(elem));
+                let (_, name) = element(self, elem);
+                let (inner, kind) = self.reload_element_table(elem, reload);
+                shape.element_kind = kind;
+                shape.element_type = name;
+                shape.inner = inner;
             }
             _ if self.holds_objects(ty, &mut Vec::new()) => shape.kind = "EMBER_RL_KIND_OPAQUE",
             _ => {}
@@ -837,6 +1090,128 @@ impl Emitter<'_> {
         shape
     }
 
+    /// `[HR-11]`, `[HR-13a]` — whether a class has a schema in this image: one the package declares,
+    /// or a standard-library class holding the package's types (an ECS storage of a component),
+    /// whose schema the instantiating package emits so its instances migrate and are followed; or
+    /// `[HR-15]` one holding references (an ECS `World`'s storages), so a reload follows them.
+    fn class_has_schema(&self, id: ClassId, reload: &ReloadImage) -> bool {
+        let def = self.types.class_def(id);
+        reload.files.contains(&def.span.file)
+            || (0..self.types.class_field_count(id)).filter_map(|index| self.types.class_field_at(id, index)).any(|field| {
+                self.mentions_package(field.ty, reload, &mut Vec::new())
+                    || self.soa_element(field.ty, reload).is_some()
+                    || self.holds_objects(field.ty, &mut Vec::new())
+            })
+    }
+
+    /// `[HR-13]` — whether a container's elements of type `ty` migrate through it: a struct or an
+    /// enum with a schema, or a container of such.
+    fn element_migrates(&self, ty: Ty, reload: &ReloadImage) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Struct(id) => self.structural_type_emitted(ty) && self.box_inner_id(*id).is_none() && self.has_schema(ty, reload),
+            TyKind::Enum(_) => self.has_schema(ty, reload),
+            TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } => self.element_migrates(*elem, reload),
+            _ => false,
+        }
+    }
+
+    /// `[HR-13]` — the address of the row describing one element of type `ty` as a field at offset
+    /// 0 is (`field_shape`), with the alignment its container's buffer has; emitted once. With it,
+    /// the row's kind.
+    fn reload_element_table(&mut self, ty: Ty, reload: &ReloadImage) -> (String, &'static str) {
+        if let Some(known) = self.reload_elements.get(&ty) {
+            return known.clone();
+        }
+        let mut shape = self.field_shape(ty, reload);
+        let c_type = self.c_type(ty);
+        shape.align = format!("(uint32_t)EMBER_VEC_ALIGN_OF({c_type})");
+        let symbol = table(&format!("element_{}", self.reload_elements.len()));
+        let flags = if shape.flags.is_empty() { "0".to_string() } else { shape.flags.join(" | ") };
+        self.line(&format!(
+            "static const {RT}rl_field {symbol} = {{ \"\", NULL, {}, UINT64_C(0x{:016x}), 0, (uint32_t)sizeof({c_type}), {flags}, {} }};",
+            c_string_literal(&shape.type_name),
+            self.type_schema(ty, &mut Vec::new()),
+            shape.tail(),
+        ));
+        let known = (format!("&{symbol}"), shape.kind);
+        self.reload_elements.insert(ty, known.clone());
+        known
+    }
+
+    /// `[HR-13]` — an `SoA[T]` whose element `T` has a schema: `T`'s struct, which its columns
+    /// split.
+    fn soa_element(&self, ty: Ty, reload: &ReloadImage) -> Option<StructId> {
+        let TyKind::Struct(id) = self.types.kind(ty) else { return None };
+        let (origin, args) = self.types.struct_def(*id).origin.as_ref()?;
+        if origin.as_str() != "SoA" || args.len() != 1 || !self.has_schema(args[0], reload) {
+            return None;
+        }
+        match self.types.kind(args[0]) {
+            TyKind::Struct(element) => Some(*element),
+            _ => None,
+        }
+    }
+
+    /// `[HR-13]` — the address of the description of an `SoA[T]`'s own struct, emitted once: each
+    /// column's pointer (where it lives in the struct, the size and alignment of its values, and
+    /// where its value sits in a whole `T`, `within`), then `len` and `cap`; and the function
+    /// laying out its one block (`<SoA>_layout`), which a reload rebuilding the block calls.
+    fn reload_soa_table(&mut self, ty: Ty, element: StructId, reload: &ReloadImage) -> String {
+        if let Some(symbol) = self.reload_shapes.get(&(ty, true)) {
+            return symbol.clone();
+        }
+        let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("an `SoA` is a struct") };
+        let soa_c = self.c_type(ty);
+        let element_ty = self.types.find(&TyKind::Struct(element)).expect("an `SoA`'s element is interned");
+        let element_c = self.c_type(element_ty);
+        let mut rows = Vec::new();
+        for column in self.types.soa_columns(element) {
+            let mut structure = element;
+            let mut path = Vec::new();
+            for &index in &column.path {
+                let field = &self.types.struct_def(structure).fields[index];
+                path.push(member(field.name));
+                if let TyKind::Struct(inner) = *self.types.kind(field.ty) {
+                    structure = inner;
+                }
+            }
+            let mut shape = self.field_shape(column.ty, reload);
+            let column_c = self.c_type(column.ty);
+            shape.align = format!("(uint32_t)_Alignof({column_c})");
+            let flags = if shape.flags.is_empty() { "0".to_string() } else { shape.flags.join(" | ") };
+            let pointer = member(Symbol::intern(&format!("col_{}", column.name)));
+            rows.push(format!(
+                "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({soa_c}, {pointer}), (uint32_t)sizeof({column_c}), {flags}, {}, (uint32_t)offsetof({element_c}, {}) }},",
+                c_string_literal(&format!("col_{}", column.name)),
+                c_string_literal(&shape.type_name),
+                self.type_schema(column.ty, &mut Vec::new()),
+                shape.tail(),
+                path.join("."),
+            ));
+        }
+        for count in ["len", "cap"] {
+            rows.push(format!(
+                "    {{ \"{count}\", NULL, \"usize\", 0, (uint32_t)offsetof({soa_c}, {count}), (uint32_t)sizeof(size_t), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL, NULL, 0, 0 }},"
+            ));
+        }
+        let symbol = table(&format!("soa_{}", self.reload_shapes.len()));
+        self.line(&format!("static const {RT}rl_field {symbol}_fields[{}] = {{", rows.len()));
+        for row in &rows {
+            self.line(row);
+        }
+        self.line("};");
+        let layout = format!("{}_layout", self.c_named(&self.types.struct_def(id).name.to_string()));
+        self.line(&format!(
+            "static const {RT}rl_type {symbol} = {{ {}, EMBER_RL_TYPE_STRUCT, NULL, 0, (uint32_t)sizeof({soa_c}), (uint32_t)_Alignof({soa_c}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}u, {symbol}_fields, 0, NULL, NULL, NULL, NULL, NULL, 0, {layout} }};",
+            c_string_literal(&self.types.display(ty)),
+            self.type_schema(ty, &mut Vec::new()),
+            rows.len(),
+        ));
+        let address = format!("&{symbol}");
+        self.reload_shapes.insert((ty, true), address.clone());
+        address
+    }
+
     /// The address of a table describing one value of `ty` (`contained_shape`), emitted once.
     fn reload_shape_table(&mut self, ty: Ty, reload: &ReloadImage) -> String {
         if let Some(symbol) = self.reload_shapes.get(&(ty, false)) {
@@ -882,8 +1257,8 @@ impl Emitter<'_> {
         }
         self.reload_shapes_open.insert(ty);
         let c_type = self.c_type(ty);
-        let symbol = table(&format!("layout_{}", self.reload_shapes.len()));
         let mut tables = Vec::new();
+        let mut described = Vec::new();
         for (index, (variant, members)) in groups.into_iter().enumerate() {
             let mut rows = Vec::new();
             for (name, member, item) in members {
@@ -899,6 +1274,12 @@ impl Emitter<'_> {
                     shape.tail(),
                 ));
             }
+            described.push((variant, index, rows));
+        }
+        // Named once what it holds is described: a table emitted for a member (a type met inside
+        // this one) takes a name of its own first.
+        let symbol = table(&format!("layout_{}", self.reload_shapes.len()));
+        for (variant, index, rows) in described {
             tables.push((variant, format!("{symbol}_fields_{index}"), rows));
         }
         self.reload_shapes_open.remove(&ty);
@@ -953,11 +1334,65 @@ impl Emitter<'_> {
     /// name, type, schema hash, offset, size, what it holds), a unit enum's variants; and, for a
     /// type with declared field defaults, the function that writes one into a new instance
     /// (`[HR-14]`). The entries for the manifest's type table, and every identity.
-    fn emit_type_schemas(&mut self, reload: &ReloadImage) -> (Vec<String>, Vec<String>) {
+    /// `[HR-14]` — the package types that cross a foreign boundary by value: a parameter or the
+    /// result of a function with a C ABI (an export, a foreign declaration, a C function pointer's
+    /// type), and what such a value holds by value. The foreign side was compiled for their layout
+    /// attributes, so a change to those is refused.
+    fn abi_types(&self, bodies: &[Body], reload: &ReloadImage) -> BTreeSet<String> {
+        let mut roots: Vec<Ty> = Vec::new();
+        for body in bodies.iter().filter(|body| body.abi.is_some() || body.is_extern_declaration) {
+            roots.push(body.return_ty());
+            roots.extend((1..=body.arg_count).filter_map(|index| body.locals.get(index).map(|local| local.ty)));
+        }
+        for (_, kind) in self.types.all() {
+            if let TyKind::Fn { abi: Some(_), params, ret, .. } = kind {
+                roots.extend(params.iter().map(|param| param.ty));
+                roots.push(*ret);
+            }
+        }
+        let mut out = BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        while let Some(ty) = roots.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            match self.types.kind(ty) {
+                TyKind::Struct(id) if self.has_schema(ty, reload) => {
+                    out.insert(self.types.struct_def(*id).name.to_string());
+                    roots.extend(self.types.struct_def(*id).fields.iter().map(|field| field.ty));
+                }
+                TyKind::Enum(id) if self.has_schema(ty, reload) => {
+                    out.insert(self.types.enum_def(*id).name.to_string());
+                    roots.extend(self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)));
+                }
+                TyKind::Array { elem, .. } => roots.push(*elem),
+                TyKind::Tuple(items) => roots.extend(items.iter().copied()),
+                // A parameter borrowed by default crosses by value, and one the foreign side reads
+                // through a pointer relies on the layout as much.
+                TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => roots.push(*inner),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// `[HR-14]`, `[LAY-2]` — a type's layout attributes alone, hashed: 0 for none.
+    fn attributes_hash(&self, ty: Ty) -> u64 {
+        let repr = match self.types.kind(ty) {
+            TyKind::Enum(id) => self.types.display(self.types.enum_def(*id).repr),
+            _ => String::new(),
+        };
+        match self.layout_schema(ty) {
+            None if repr.is_empty() => 0,
+            layout => fnv(&[&repr, layout.as_deref().unwrap_or("")]),
+        }
+    }
+
+    fn emit_type_schemas(&mut self, reload: &ReloadImage, abi: &BTreeSet<String>, bodies: &[Body]) -> (Vec<String>, Vec<String>) {
         let mut types = Vec::new();
         let mut identities = Vec::new();
         let contained = self.contained_structs(reload);
-        let foreign = self.pointed_structs(reload);
+        let foreign = self.pointed_structs(reload, bodies);
         // A field's row and, when it has a declared default, its default's case.
         let mut layouts: Vec<(String, String, Vec<(String, Ty)>, String)> = Vec::new();
         let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
@@ -965,7 +1400,7 @@ impl Emitter<'_> {
             let def = self.types.class_def(id);
             let name = def.name.to_string();
             identities.push(format!("&{}", class_identity_symbol(&name)));
-            if !reload.files.contains(&def.span.file) {
+            if !self.class_has_schema(id, reload) {
                 continue;
             }
             let fields: Vec<(String, Ty)> = (0..self.types.class_field_count(id))
@@ -993,15 +1428,14 @@ impl Emitter<'_> {
                 let c_field = member(field);
                 let shape = self.field_shape(*ty, reload);
                 let mut flags = shape.flags.clone();
-                if let Some(function) = reload.defaults.get(&(name.clone(), field.clone())) {
+                // A declared default's function, or `[HR-14]` a `Default` type's, which the checker
+                // built only where the type is `Default`.
+                if let Some(symbol) = reload.defaults.get(&(name.clone(), field.clone())).and_then(|function| self.reload_function_symbol(function)) {
                     flags.push("EMBER_RL_FIELD_DEFAULT");
-                    let symbol = self.reload_function_symbol(function);
-                    if let Some(symbol) = symbol {
-                        let member_type = self.c_member_type(*ty);
-                        cases.push(format!(
-                            "    case {index}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {c_field})) = {symbol}(); break;"
-                        ));
-                    }
+                    let member_type = self.c_member_type(*ty);
+                    cases.push(format!(
+                        "    case {index}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {c_field})) = {symbol}(); break;"
+                    ));
                 }
                 let renamed = reload.renamed.get(&(name.clone(), field.clone())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let flags = if flags.is_empty() { "0".to_string() } else { flags.join(" | ") };
@@ -1070,11 +1504,15 @@ impl Emitter<'_> {
                 self.line("}");
                 drop_name
             };
-            let layout = match (kind == "struct" && contained.contains(&name), foreign.contains(&name)) {
+            let mut layout = match (kind == "struct" && contained.contains(&name), foreign.contains(&name)) {
                 (_, true) => "EMBER_RL_LAYOUT_FOREIGN",
                 (true, false) => "EMBER_RL_LAYOUT_CONTAINED",
                 (false, false) => "0",
-            };
+            }
+            .to_string();
+            if abi.contains(&name) {
+                layout = if layout == "0" { "EMBER_RL_LAYOUT_ABI".to_string() } else { format!("{layout} | EMBER_RL_LAYOUT_ABI") };
+            }
             let ty = if kind == "class" {
                 self.types.classes().find(|(_, def)| def.name.to_string() == name).and_then(|(id, _)| self.types.find(&TyKind::Class(id)))
             } else {
@@ -1095,9 +1533,10 @@ impl Emitter<'_> {
                 ));
             } else {
                 types.push(format!(
-                    "    {{ {}, EMBER_RL_TYPE_STRUCT, NULL, {layout}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), 0, NULL, NULL, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field} }},",
+                    "    {{ {}, EMBER_RL_TYPE_STRUCT, NULL, {layout}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), 0, NULL, NULL, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field}, UINT64_C(0x{:016x}) }},",
                     c_string_literal(&name),
                     rows.len(),
+                    ty.map_or(0, |ty| self.attributes_hash(ty)),
                 ));
             }
         }
@@ -1119,6 +1558,12 @@ impl Emitter<'_> {
                 ));
             }
             let mut rows = Vec::new();
+            // `[HR-14]` — a payload's fields migrate by the rows a type's take: each one's default
+            // (its type's `Default`, `init_field`) and its drop (`drop_field`) are numbered over
+            // every variant's payload fields in turn.
+            let mut cases = Vec::new();
+            let mut drops = Vec::new();
+            let mut numbered = 0u32;
             for variant in &def.variants {
                 let renamed = reload.renamed.get(&(name.clone(), variant.name.to_string())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let payload: Vec<String> = variant.fields.iter().map(|field| self.type_schema(field.ty, &mut Vec::new()).to_string()).collect();
@@ -1127,8 +1572,27 @@ impl Emitter<'_> {
                 for field in &held {
                     let shape = self.field_shape(field.ty, reload);
                     let member = format!("payload.{}.{}", member(variant.name), member(field.name));
+                    let mut flags = shape.flags.clone();
+                    let key = (name.clone(), format!("{}.{}", variant.name, field.name));
+                    if let Some(symbol) = reload.defaults.get(&key).and_then(|function| self.reload_function_symbol(function)) {
+                        flags.push("EMBER_RL_FIELD_DEFAULT");
+                        let member_type = self.c_member_type(field.ty);
+                        cases.push(format!("    case {numbered}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {member})) = {symbol}(); break;"));
+                    }
+                    if self.types.needs_drop(field.ty) {
+                        let access = format!("(*({}*)((unsigned char*)object + offsetof({c_type}, {member})))", self.c_member_type(field.ty));
+                        let mut lines = Vec::new();
+                        match self.drop_glue_call(&access, field.ty) {
+                            Some(call) => lines.push(call),
+                            None => self.drop_lines(&access, field.ty, &mut lines),
+                        }
+                        drops.push((numbered, lines));
+                    }
+                    numbered += 1;
+                    let flags = if flags.is_empty() { "0".to_string() } else { flags.join(" | ") };
+                    let renamed = reload.renamed.get(&key).map_or("NULL".to_string(), |old| c_string_literal(old));
                     fields.push(format!(
-                        "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), 0, {} }},",
+                        "    {{ {}, {renamed}, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), {flags}, {} }},",
                         c_string_literal(&field.name.to_string()),
                         c_string_literal(&shape.type_name),
                         self.type_schema(field.ty, &mut Vec::new()),
@@ -1160,10 +1624,43 @@ impl Emitter<'_> {
                 }
                 self.line("};");
             }
+            let init = if cases.is_empty() {
+                "NULL".to_string()
+            } else {
+                let init_name = table(&format!("init_{}", c_name(&name)));
+                self.line(&format!("static void {init_name}(void* object, uint32_t index) {{\n    switch (index) {{"));
+                for case in &cases {
+                    self.line(case);
+                }
+                self.line("    default: break;\n    }\n}");
+                init_name
+            };
+            let drop_field = if drops.is_empty() {
+                "NULL".to_string()
+            } else {
+                let drop_name = table(&format!("drop_{}", c_name(&name)));
+                self.line(&format!("static void {drop_name}(void* object, uint32_t index) {{\n    switch (index) {{"));
+                for (index, lines) in drops {
+                    self.line(&format!("    case {index}u: {{"));
+                    for line in lines {
+                        self.line(&format!("        {line}"));
+                    }
+                    self.line("        break;\n    }");
+                }
+                self.line("    default: break;\n    }\n}");
+                drop_name
+            };
+            let mut layout = if self.types.enum_is_bare(id) { "EMBER_RL_LAYOUT_UNIT" } else { "0" }.to_string();
+            for (flag, holds) in [("EMBER_RL_LAYOUT_ABI", abi.contains(&name)), ("EMBER_RL_LAYOUT_CONTAINED", contained.contains(&name))] {
+                if holds {
+                    layout = if layout == "0" { flag.to_string() } else { format!("{layout} | {flag}") };
+                }
+            }
+            let attributes = self.attributes_hash(ty);
             types.push(format!(
-                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, NULL, NULL, NULL, NULL }},",
+                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, {init}, NULL, NULL, {drop_field}, UINT64_C(0x{attributes:016x}) }},",
                 c_string_literal(&name),
-                if self.types.enum_is_bare(id) { "EMBER_RL_LAYOUT_UNIT" } else { "0" },
+                layout,
                 self.type_schema(ty, &mut Vec::new()),
                 if payloads { format!("1u, {tag_name}") } else { "0, NULL".to_string() },
                 rows.len(),

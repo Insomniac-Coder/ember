@@ -106,6 +106,8 @@ pub struct ForeignImport {
     /// `[DIA-5]` — each declaration of the header, by a name the module binds it to: its text as
     /// the header writes it, and `file:line`. An import's overlay modules carry their import's.
     pub declarations: Vec<(String, String, String)>,
+    /// `[HR-23]` — for `import cpp`: the content hash of the header and every file it includes.
+    pub header_hash: Option<String>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -244,6 +246,7 @@ pub fn check(
     comptime_answers: &ComptimeAnswers,
     realtime: Option<hir::Effects>,
     exports: &dyn ExportIndex,
+    reload_if_default: &HashSet<Span>,
 ) -> CheckOutput {
     // `[FFI-16]` — a status enum's error type, `struct N(code: E)` implementing `Error`.
     let status_errors = errors::desugar_status_errors(modules);
@@ -282,6 +285,7 @@ pub fn check(
     checker.lint_return_intersection = lint_return_intersection;
     checker.comptime_answers = comptime_answers.clone();
     checker.derive_requests = derive_requests;
+    checker.reload_if_default = reload_if_default.clone();
     checker.realtime_contracts = realtime.unwrap_or(hir::Effects::REALTIME_DEFAULT);
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.exports = Some(exports);
@@ -3000,6 +3004,10 @@ struct Checker<'a> {
     derive_requests: Vec<derives::DeriveRequest>,
     /// `[DRV-1]` — the blocks written for derives a field fell short of, by span: not checked.
     refused_derives: HashSet<Span>,
+    /// `[HR-14]` — the functions a reloadable build wrote to give an added field its type's
+    /// `Default.default()`, by span: one whose return type is not `Default` is not checked or built,
+    /// and the reload refuses the field instead.
+    reload_if_default: HashSet<Span>,
     /// D-261 — an interface instance whose arguments name type parameters
     /// (`AsKey[K]` in a bound), by generic interface and arguments, and back:
     /// a use substitutes the arguments and instantiates again.
@@ -3346,6 +3354,7 @@ impl<'a> Checker<'a> {
             derive_requests: Vec::new(),
             realtime_contracts: hir::Effects::REALTIME_DEFAULT,
             refused_derives: HashSet::new(),
+            reload_if_default: HashSet::new(),
             open_interfaces: HashMap::new(),
             open_interface_origin: HashMap::new(),
             pending_bound_interfaces: Vec::new(),
@@ -6922,6 +6931,10 @@ impl<'a> Checker<'a> {
                 self.self_ty = self_ty;
                 let scalar = entry.folded.as_ref().is_some_and(|folded| folded.is_scalar());
                 if entry.ok && scalar && self.sink.error_count() == errors {
+                    if let Some(folded) = &entry.folded {
+                        let text = folded.to_text(self.types);
+                        self.types.add_folded_static(item.name, text);
+                    }
                     self.expr_consts.insert(item.name, ConstState::Done(entry));
                     progress = true;
                 } else if entry.ok
@@ -18954,6 +18967,11 @@ impl<'a> Checker<'a> {
             }
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+            if self.reload_if_default.contains(&item.span)
+                && !self.implements(self.signatures[def.0 as usize].ret, Symbol::intern("std.core.Default"))
+            {
+                continue;
+            }
             // `[TYP-32]` — a function returning `some I` is checked on its own, before the rest.
             if self.body_filter.map_or(self.fn_some.contains_key(&def), |only| only != def) {
                 continue;
@@ -38660,7 +38678,24 @@ impl<'a> Checker<'a> {
         ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Call { callee: Box::new(callee), args }, span }
     }
 
+    /// `[HR-43]` — `@allow_reload_terminate` states that a migration may end the process, so it is
+    /// written on a type's `migrate_from` and nowhere else.
+    fn check_reload_terminate(&mut self, attrs: &[ast::Attribute], name: Option<Symbol>) {
+        if name.is_some_and(|name| name.is("migrate_from")) {
+            return;
+        }
+        for attr in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("allow_reload_terminate")) {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, "`@allow_reload_terminate` applies to a type's `migrate_from`")
+                    .note("it states that this migration may end the process rather than refuse the reload [HR-43]"),
+            );
+        }
+    }
+
     fn check_item_attributes_of(&mut self, item: &ast::Item, in_extern: bool) {
+        if let ast::ItemKind::Fn(_) = &item.kind {
+            self.check_reload_terminate(&item.attrs, None);
+        }
         if let ast::ItemKind::Overlay(overlay) = &item.kind {
             self.check_attribute_list(&item.attrs, "overlay");
             self.check_overlay(overlay);
@@ -39013,6 +39048,9 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Enum(decl) => {
                 for variant in &decl.variants {
                     self.check_attribute_list(&variant.attrs, "variant");
+                    for field in &variant.fields {
+                        self.check_attribute_list(&field.attrs, "payload field");
+                    }
                 }
                 &decl.members
             }
@@ -39029,6 +39067,7 @@ impl<'a> Checker<'a> {
         };
         for member in members {
             if let ast::MemberKind::Fn(decl) = &member.kind {
+                self.check_reload_terminate(&member.attrs, Some(decl.name.name));
                 self.check_safety_attribute(&member.attrs, decl.is_unsafe,
                     member.vis.kind != ast::VisKind::Private, member.span);
                 // `[TYP-9]` — a float mode governs the body it is written on.
@@ -39240,7 +39279,7 @@ impl<'a> Checker<'a> {
                 not_an_attribute(self, "the attributes are listed in Part V's table [ATT-1]");
                 continue;
             };
-            let applies_here = applies.contains(&"item") && !matches!(site, "field" | "variant")
+            let applies_here = applies.contains(&"item") && !matches!(site, "field" | "variant" | "payload field")
                 || applies.contains(&site);
             if !applies_here {
                 self.sink.emit(
@@ -55287,10 +55326,11 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["reloadable", "noreload"], &["item", "module"], true),
     // `[HR-17a]` — the static's edited initialiser runs again at a reload.
     (&["reinit_on_reload"], &["static"], true),
-    // `[HR-14]` — a field's or a variant's old name, whose value a reload carries over.
-    (&["renamed_from"], &["field", "variant"], true),
-    // `[HR-43]` — admitting a call that may end the process: C++ calls are not built.
-    (&["allow_reload_terminate"], &["fn"], false),
+    // `[HR-14]` — a field's, a variant's or a payload field's old name, whose value a reload
+    // carries over.
+    (&["renamed_from"], &["field", "variant", "payload field"], true),
+    // `[HR-43]` — a `migrate_from` admitting a call that may end the process (`check_reload_terminate`).
+    (&["allow_reload_terminate"], &["fn"], true),
     (&["prelude"], &["module"], false),
 ];
 

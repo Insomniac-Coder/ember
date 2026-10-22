@@ -4448,11 +4448,11 @@ pub fn load(
     let trampolines = if cpp { trampoline_decls(&overlay_text) } else { Vec::new() };
     let config = Config { trampolines: &trampolines, ..config };
     let mut cached = false;
-    let mut imported = match import_cached(&config, &overlay_text, &mut cached) {
-        Ok((imported, _)) => {
+    let (mut imported, header_hash) = match import_cached(&config, &overlay_text, &mut cached) {
+        Ok((imported, _, header_hash)) => {
             let stage = if cached { format!("import c, from its .{}", ember_branding::BINDING_EXT) } else { "import c, parsed".to_string() };
             crate::mark(&stage, &header);
-            imported
+            (imported, header_hash)
         }
         Err(message) => {
             sink.emit(
@@ -4715,6 +4715,7 @@ pub fn load(
         policy_changes: changed_signatures(&imported, &applied, "", &shown),
         variables: variables(&imported, &[]),
         declarations: declarations(&imported, &applied, ""),
+        header_hash: cpp.then_some(header_hash),
     };
     // `[FFI-41]` — each C++ namespace a module under the import's.
     let children = imported
@@ -6918,7 +6919,14 @@ fn file_hash(path: &str) -> Option<String> {
 /// written and where from, the overlay's hash and the declarations other imports of the build wrote;
 /// the record holds every file the header included with its hash, each read again here. Otherwise
 /// the header is parsed and the record written.
-fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(Imported, PathBuf), String> {
+/// Returned with the record's path and the hash of the files the header included, each with its
+/// content's hash (`[HR-23]`).
+fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(Imported, PathBuf, String), String> {
+    let included = |files: &[(String, String)]| {
+        let mut lines: Vec<String> = files.iter().map(|(file, hash)| format!("{file}={hash}")).collect();
+        lines.sort();
+        ember_build::content_hash(lines.join("\n").as_bytes())
+    };
     load_libclang()?;
     let overlay_hash = if overlay.is_empty() { String::new() } else { ember_build::content_hash(overlay.as_bytes()) };
     let library = clang_sys::get_library().map(|library| library.path().display().to_string()).unwrap_or_default();
@@ -6951,7 +6959,7 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
     let previous = match std::fs::read(&path).ok().and_then(|bytes| read_embind(&bytes)) {
         Some((files, imported)) if files.iter().all(|(file, hash)| file_hash(file).as_deref() == Some(hash.as_str())) => {
             *cached = true;
-            return Ok((imported, path));
+            return Ok((imported, path, included(&files)));
         }
         // `[FFI-24d]` — the binding the header's last parse made, to compare with.
         previous => previous.map(|(_, imported)| imported),
@@ -6970,7 +6978,7 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
             let _ = std::fs::remove_file(&partial);
         }
     }
-    Ok((imported, path))
+    Ok((imported, path, included(&files)))
 }
 
 /// `[FFI-24d]` — for the module of `namespace`, each function whose Ember signature a `noexcept`

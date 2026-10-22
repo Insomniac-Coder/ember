@@ -55,7 +55,13 @@ pub fn plan(
     let mut decided: BTreeMap<(ember_span::FileId, u32), (bool, u64)> = BTreeMap::new();
     let mut statics = BTreeMap::new();
     let mut files = BTreeSet::new();
+    let mut headers = BTreeMap::new();
     for loaded in modules {
+        if let Some(foreign) = &loaded.foreign
+            && let Some(hash) = &foreign.header_hash
+        {
+            headers.insert(foreign.header.clone(), hash.clone());
+        }
         if loaded.path.first().is_some_and(|first| first == ember_branding::STD_PACKAGE) {
             continue;
         }
@@ -141,6 +147,7 @@ pub fn plan(
         defaults: additions.defaults.clone(),
         renamed: additions.renamed.clone(),
         migrations: additions.migrations.clone(),
+        headers,
     }
 }
 
@@ -382,6 +389,22 @@ pub struct Additions {
     /// This build's schema, by type: each field's name and written type, which the next build's
     /// `Old<Name>` structs are made from.
     pub schema: serde_json::Map<String, serde_json::Value>,
+    /// `[HR-14]` — the functions written to give a field declared without a default its type's
+    /// `Default.default()`, by span: the checker builds one only where the type is `Default`.
+    pub if_default: std::collections::HashSet<Span>,
+    /// `[HR-39]`, `[HR-43]` — each `migrate_from`, by its declaration's span, with its type's name
+    /// and, when it is `@allow_reload_terminate`, the attribute's span.
+    pub migrate_fns: Vec<(Span, String, Option<Span>)>,
+}
+
+/// A written type whose `Default` is all zero bytes, which the runtime writes itself
+/// (`EMBER_RL_FIELD_ZERO`): a number, `bool`, `String` or an `Array`.
+fn zero_default(ty: &ember_ast::TypeExpr) -> bool {
+    const ZERO: [&str; 19] = [
+        "int", "uint", "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize", "f32", "f64", "bool",
+        "String", "Array",
+    ];
+    matches!(&ty.kind, ember_ast::TypeKind::Path { segments, .. } if segments.len() == 1 && ZERO.contains(&segments[0].name.as_str()))
 }
 
 /// A name the injected source gives a type's helper: its module-local name, made of the type's.
@@ -450,6 +473,73 @@ fn check_migrate_from_panics(map: &SourceMap, span: Span, sink: &mut Sink) {
     }
 }
 
+/// `[HR-39]` — a `migrate_from` that can reach a C++ function called `noexcept` (derived from its
+/// declaration, called directly, or asserted by an overlay, `[FFI-24]`, `[FFI-24b]`), directly or
+/// through the program's own functions it calls, could end the process with a throw instead of
+/// refusing the reload: `E2225`, naming the function and the path to it, unless the `migrate_from`
+/// is `@allow_reload_terminate` (`[HR-43]`). A C++ function that catches returns its throw as a
+/// `CppError`, which `?` makes `ReloadError.Foreign`.
+pub fn check_migrate_from_terminates(
+    bodies: &[ember_mir::Body],
+    modules: &[ember_typeck::LoadedModule],
+    additions: &Additions,
+    sink: &mut Sink,
+) {
+    let cpp_files: BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some()))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    if cpp_files.is_empty() {
+        return;
+    }
+    let standard: BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.path.first().is_some_and(|first| first == ember_branding::STD_PACKAGE))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
+    for (span, type_name, allowed) in &additions.migrate_fns {
+        if allowed.is_some() {
+            continue;
+        }
+        let Some(root) = bodies.iter().find(|body| body.span.file == span.file && body.span.start == span.start) else { continue };
+        // Each body reached, with the call in `migrate_from` it was reached through and the
+        // functions between.
+        let mut queue: std::collections::VecDeque<(&ember_mir::Body, Option<Span>, Vec<String>)> = std::collections::VecDeque::from([(root, None, Vec::new())]);
+        let mut seen: BTreeSet<&str> = BTreeSet::from([root.symbol.as_str()]);
+        let mut reported: BTreeSet<&str> = BTreeSet::new();
+        while let Some((body, through, path)) = queue.pop_front() {
+            for block in &body.blocks {
+                let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } = &block.terminator else { continue };
+                let Some(callee) = by_symbol.get(symbol.as_str()).copied() else { continue };
+                let site = through.unwrap_or(block.terminator_span);
+                if let Some(mode) = crate::cpp_call_mode(callee, &by_symbol, &cpp_files) {
+                    if mode.starts_with("noexcept") && reported.insert(callee.symbol.as_str()) {
+                        let via = if path.is_empty() { String::new() } else { format!(" through `{}`", path.join("` → `")) };
+                        sink.emit(
+                            ember_diag::Diagnostic::error(
+                                ember_diag::codes::E2225,
+                                site,
+                                format!("`{type_name}.migrate_from` may not call `{}`{via}, a C++ function called {mode}: a throw from it ends the process", callee.name),
+                            )
+                            .help("call a function that catches (its throw comes back as a `CppError`, which `?` makes `ReloadError.Foreign`), or mark `migrate_from` `@allow_reload_terminate` to state that this migration may end the process rather than refuse [HR-43]")
+                            .note("a reload that cannot migrate a value is refused with a report; it never aborts [HR-35], [HR-39]"),
+                        );
+                    }
+                    continue;
+                }
+                if standard.contains(&callee.span.file) || cpp_files.contains(&callee.span.file) || !seen.insert(callee.symbol.as_str()) {
+                    continue;
+                }
+                let mut next = path.clone();
+                next.push(callee.name.clone());
+                queue.push_back((callee, Some(site), next));
+            }
+        }
+    }
+}
+
 /// Annex B — before a reloadable program is checked, the driver writes into each of the package's
 /// modules what its reload needs: for each field with a declared default, a function computing it
 /// (`[HR-14]`'s "initialised to that default"); for each type declaring `migrate_from`, the struct
@@ -469,6 +559,7 @@ pub fn inject(
         }
         let prefix = if loaded.path.is_empty() { String::new() } else { format!("{}.", loaded.path.join(".")) };
         let mut source = String::new();
+        let mut if_default: BTreeMap<String, ember_ast::TypeExpr> = BTreeMap::new();
         let snippet = |span: Span| map.get(span.file).and_then(|file| file.text.get(span.start as usize..span.end as usize)).unwrap_or("").to_string();
         for item in loaded.module.items.iter_mut() {
             let (ident, members, generic) = match &mut item.kind {
@@ -479,6 +570,21 @@ pub fn inject(
                     for variant in &decl.variants {
                         if let Some(old) = string_argument(&variant.attrs, "renamed_from") {
                             additions.renamed.insert((name.clone(), variant.name.name.to_string()), old);
+                        }
+                        // `[HR-14]` — a payload field renamed, or added with its type `Default`, as a
+                        // type's field.
+                        for (index, field) in variant.fields.iter().enumerate() {
+                            let field_name = field.name.map_or_else(|| format!("_{index}"), |name| name.name.to_string());
+                            if let Some(old) = string_argument(&field.attrs, "renamed_from") {
+                                additions.renamed.insert((name.clone(), format!("{}.{field_name}", variant.name.name)), old);
+                            }
+                            if !decl.generics.is_empty() || zero_default(&field.ty) {
+                                continue;
+                            }
+                            let function = helper("__reload_default", &format!("{}_{}", decl.name.name, variant.name.name), &field_name);
+                            source.push_str(&format!("fn {function}() -> {}:\n    return 0\n\n", snippet(field.ty.span)));
+                            if_default.insert(function.clone(), field.ty.clone());
+                            additions.defaults.insert((name.clone(), format!("{}.{field_name}", variant.name.name)), function);
                         }
                     }
                     continue;
@@ -502,6 +608,13 @@ pub fn inject(
                     let function = helper("__reload_default", ident.as_str(), &field_name);
                     source.push_str(&format!("fn {function}() -> {ty}:\n    return {}\n\n", snippet(default.span)));
                     additions.defaults.insert((name.clone(), field_name), function);
+                } else if !zero_default(&field.ty) {
+                    // `[HR-14]` — added, its type `Default`: `std.core.default_of[T]()`, written
+                    // below as the derives write it; the checker drops it where `T` is not `Default`.
+                    let function = helper("__reload_default", ident.as_str(), &field_name);
+                    source.push_str(&format!("fn {function}() -> {ty}:\n    return 0\n\n"));
+                    if_default.insert(function.clone(), field.ty.clone());
+                    additions.defaults.insert((name.clone(), field_name), function);
                 }
             }
             additions.schema.insert(name.clone(), serde_json::Value::Array(fields.clone()));
@@ -509,6 +622,8 @@ pub fn inject(
                 continue;
             };
             check_migrate_from_panics(map, member.span, sink);
+            let terminate = member.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("allow_reload_terminate")).map(|attr| attr.span);
+            additions.migrate_fns.push((member.span, name.clone(), terminate));
             let ember_ast::MemberKind::Fn(decl) = &mut member.kind else { continue };
             // `Old<Name>` under a helper's name, which no source spells: it is visible only as
             // `migrate_from`'s `OldSelf`, and a type of the package named `Old<Name>` is its own.
@@ -560,7 +675,23 @@ pub fn inject(
         let file = map.add(PathBuf::from(format!("<reload helpers of {shown}>")), source.clone());
         additions.files.insert(file);
         let lexed = ember_lexer::lex(file, &source, sink);
-        let parsed = ember_parser::parse(file, &source, lexed.tokens, sink);
+        let mut parsed = ember_parser::parse(file, &source, lexed.tokens, sink);
+        for item in &mut parsed.items {
+            let ember_ast::ItemKind::Fn(decl) = &mut item.kind else { continue };
+            let Some(ty) = if_default.get(decl.name.name.as_str()) else { continue };
+            let Some(ember_ast::Stmt { kind: ember_ast::StmtKind::Expr(returned), .. }) = decl.body.as_mut().and_then(|body| body.stmts.first_mut()) else {
+                continue;
+            };
+            let ember_ast::ExprKind::Jump(ember_ast::Jump::Return(Some(value))) = &mut returned.kind else { continue };
+            let span = value.span;
+            let expr = |kind| ember_ast::Expr { id: ember_ast::NodeId::DUMMY, kind, span };
+            let callee = expr(ember_ast::ExprKind::IndexOrInstantiate {
+                base: Box::new(expr(ember_ast::ExprKind::Path { segments: vec![ember_ast::Ident { name: Symbol::intern("std.core.default_of"), span }] })),
+                args: vec![ember_ast::TypeOrExpr::Type(ty.clone())],
+            });
+            **value = expr(ember_ast::ExprKind::Call { callee: Box::new(callee), args: Vec::new() });
+            additions.if_default.insert(item.span);
+        }
         loaded.module.items.extend(parsed.items);
     }
     additions

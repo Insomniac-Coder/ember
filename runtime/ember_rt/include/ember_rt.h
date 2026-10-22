@@ -3030,12 +3030,20 @@ struct ember_rl_field;
 #define EMBER_RL_KIND_TUPLE UINT32_C(9)         /* a tuple, or a struct described with it: `layout` */
 #define EMBER_RL_KIND_BOX UINT32_C(10)          /* a `Box`: a pointer to one value `inner` describes, null for `None` */
 #define EMBER_RL_KIND_CALLABLE UINT32_C(11)     /* an owned callable value: its descriptor's `captures` */
+#define EMBER_RL_KIND_FIXED UINT32_C(12)        /* a fixed array: its elements in place, each as `inner` says ([HR-13]) */
+#define EMBER_RL_KIND_SOA UINT32_C(13)          /* an `SoA[T]`: `T` is `element_type`, `layout` its struct's columns ([HR-13]) */
 
 /* [HR-11] A field of a schema: its name, the name `@renamed_from` gives its old self, its type, its
  * type's schema hash, its offset and size, and what it holds. [HR-15] A value no schema names (a
  * tuple, what a `Box` points at, a closure's captured state) is described by the image that made
  * it: `layout` is a `TUPLE`'s own field list, and `inner` an `ARRAY`'s element or a `BOX`'s pointee,
- * so a reload reads it as it was made, whatever the next image calls its types. */
+ * so a reload reads it as it was made, whatever the next image calls its types. [HR-14] A field of a
+ * range type has `in_range`, which tells whether a value of its representation is in its range
+ * (`T.checked`'s test); its flags are its representation's. [HR-13] An `ARRAY`'s or a `FIXED`
+ * array's `inner`, when its elements migrate through it, describes one element by its schema, as a
+ * field at offset 0, with `align` the alignment of the buffer that holds them. An `SoA`'s column is
+ * a row of its struct's description: `offset` is where the column's pointer lives, `size` and
+ * `align` its values', and `within` where its value sits in a whole element. */
 typedef struct ember_rl_field {
     const char* name;
     const char* renamed_from;
@@ -3050,6 +3058,9 @@ typedef struct ember_rl_field {
     const char* element_type;
     const struct ember_rl_type* layout;
     const struct ember_rl_field* inner;
+    int (*in_range)(const void* value);
+    uint32_t align;
+    uint32_t within;
 } ember_rl_field;
 
 /* [HR-11] A variant of an enum's schema: its name, `@renamed_from`'s, its discriminant, its
@@ -3091,8 +3102,15 @@ typedef struct ember_rl_type {
     int (*migrate)(void* out, const void* old, char* report, size_t report_size);
     /* The struct `Old<Name>` the `migrate_from` reads, by name in this image. */
     const char* old_type;
-    /* Drops field `index` of the value at `object` ([HR-2a]'s reclaim). */
+    /* Drops field `index` of the value at `object` ([HR-2a]'s reclaim). For an enum with payloads,
+     * this and `init_field` number every variant's payload fields in turn ([HR-14]). */
     void (*drop_field)(void* object, uint32_t index);
+    /* The hash of its layout attributes alone (`@packed`, `@align`, an enum's representation), 0
+     * for none ([HR-14], [LAY-2]). */
+    uint64_t attributes;
+    /* For an `SoA`'s struct: the image's layout of its one block for `cap` elements, each column's
+     * start in `at`, returning the block's size ([HR-13]). */
+    size_t (*columns)(size_t cap, size_t* at);
 } ember_rl_type;
 
 /* [HR-3b] (A1, ODR-133) What a checkpoint's frames still use. A function of a reloadable image with
@@ -3125,16 +3143,23 @@ typedef struct ember_rl_frame {
 ember_rl_frame** ember_reload_frames(void);
 
 /* EMBER_RL_LAYOUT_* — a type's layout facts. */
-#define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it sits in a container somewhere ([HR-13]) */
+#define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it may sit where a reload cannot reach it: a tuple, captures, an interface value ([HR-13]) */
 #define EMBER_RL_LAYOUT_UNIT UINT32_C(2)      /* an enum with no payload */
 #define EMBER_RL_LAYOUT_FOREIGN UINT32_C(4)   /* a raw pointer can reach a value of it ([HR-13b]) */
+#define EMBER_RL_LAYOUT_ABI UINT32_C(8)       /* crosses a foreign boundary by value: its layout attributes are the C side's ([HR-14]) */
 
 /* [HR-8] The reload manifest: in a section of the image named `.emrl` (PE) or `ember_reload`
  * (ELF). `targets`, `addresses`, `static_data` and `static_state` are this image's tables, which
  * the runtime fills: a thunk loads its target from `targets`; code that takes a reloadable
  * function's address reads it from `addresses`, so it is the permanent thunk's ([HR-6]); a static's
  * storage and state are the runtime's ([HR-4a]). `layout` names the runtime function whose
- * presence says both agree on the object header ([HR-12a]). */
+ * presence says both agree on the object header ([HR-12a]). `headers` lists each C++ header the image
+ * imports, with the content hash of it and every file it includes ([HR-23]). */
+typedef struct ember_rl_header {
+    const char* name;
+    const char* hash;
+} ember_rl_header;
+
 typedef struct ember_rl_manifest {
     uint64_t magic;
     uint32_t protocol;
@@ -3158,6 +3183,8 @@ typedef struct ember_rl_manifest {
     uint32_t identity_count;
     ember_rl_identity* const* identities;
     int (*entry)(int argc, char** argv);
+    uint32_t header_count;
+    const ember_rl_header* headers;
 } ember_rl_manifest;
 
 /* Where an image's manifest goes: its own section, which the linker keeps. */

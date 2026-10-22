@@ -880,9 +880,12 @@ impl Printer<'_> {
                 let fields: Vec<String> = variant
                     .fields
                     .iter()
-                    .map(|f| match f.name {
-                        Some(name) => format!("{}: {}", self.name(name), self.type_expr(&f.ty)),
-                        None => self.type_expr(&f.ty),
+                    .map(|f| {
+                        let attrs: String = f.attrs.iter().map(|attr| format!("{} ", self.attribute(attr))).collect();
+                        match f.name {
+                            Some(name) => format!("{attrs}{}: {}", self.name(name), self.type_expr(&f.ty)),
+                            None => format!("{attrs}{}", self.type_expr(&f.ty)),
+                        }
                     })
                     .collect();
                 text.push_str(&format!("({})", fields.join(", ")));

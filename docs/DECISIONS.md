@@ -5017,6 +5017,27 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-260 — Helper P merged: Annex B (hot reload)
+
+2026-10-22 (helper P, `tasks/95/P-notes.md`). Built and tested: `[HR-23]` (a reload built after a
+changed C++ header, or a file it includes, is refused in plan, naming it; the old image runs on),
+`[HR-14]` (every row of its table, enum payloads among them; a type crossing a C-ABI signature by
+value), `[HR-13]` (value data migrates through its containers: `Array`s, fixed arrays, `SoA`
+columns, ECS storage, standard-library classes holding the package's types), `[HR-22]` (a foreign
+object Ember owns is carried across), `[HR-39]`, `[HR-43]` (`migrate_from` and foreign failures:
+`Foreign(...)`, `E2225` for a `noexcept` C++ call unless `@allow_reload_terminate`). Partly built,
+with `unfinished` entries: `[HR-9]`, `[HR-20]` (a pinned object is never moved; `on_relocate` not
+built), `[HR-41]`. Blocked: `[HR-1]` (incremental builds), `[HR-24]` (Annex D). Fixed: D-824..D-833.
+Open, unverified: D-834, D-835. P's duplicate of `bench/bigpkg/generate.py` and its reload timer
+were dropped at the merge: Q's generator is the one `[BUD-1]` package, and `tools/compile_budgets.py`
+measures B2 (`ember build --reload` after a one-body edit) over it; `[BEN-8]`'s live set of 10,000
+instances joins that generator when `[BEN-8]` is built. Ruled under the delegation (ODR-191..195):
+`[HR-23]`'s changed header is any change to it or a file it includes; `[HR-23]` extends to `import
+c`; `[HR-14]`'s FFI row reads "layout or fields changed on a type used across FFI by value";
+`[HR-20]`'s `on_relocate` is `Retained.pin(handle, on_relocate: Option[extern "C" fn(ObjectPtr[C],
+ObjectPtr[C])])`, called after commit publishes and before reclaim; `[HR-24]` and `[HR-41]`'s GPU row
+move to the post-1.0 families with Annex D.
+
 ## ADR-259 — Helper S merged: the first-week corpus (`[TST-8]`, `[TST-9]`, `[TST-10]`)
 
 2026-10-22 (helper S, `tasks/95/S-notes.md`). `tests/firstweek/`: 30 programs a newcomer writes in

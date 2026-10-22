@@ -950,6 +950,7 @@ pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<Load
     if !modules.iter().any(|loaded| loaded.module.items.iter().any(marked)) {
         return None;
     }
+    let ffi_loaded = modules.iter().any(|loaded| loaded.path == ["std", "ffi"]);
     let mut out = modules.to_vec();
     for loaded in &mut out {
         let mut generated = Vec::new();
@@ -996,6 +997,11 @@ pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<Load
             let body = ret(Some(call(path(&[Symbol::intern("std.fmt.implicit_fmt_debug")], span), vec![read, f], span)), span);
             generated.push(extend_item(&[], owner_type(status.error, &[]), vec![named_type("std.core.Display", span)], vec![fmt_member(body, span)], span));
             generated.push(extend_item(&[], owner_type(status.error, &[]), vec![named_type("std.core.Error", span)], Vec::new(), span));
+            // `[HR-39]` — a foreign call's failure, which `?` makes `ReloadError.Foreign` inside a
+            // `migrate_from`; named where `std.ffi` is part of the build.
+            if ffi_loaded {
+                generated.push(extend_item(&[], owner_type(status.error, &[]), vec![named_type("std.ffi.ForeignFailure", span)], Vec::new(), span));
+            }
         }
         loaded.module.items.extend(generated);
     }

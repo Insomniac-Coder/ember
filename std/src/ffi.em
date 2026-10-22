@@ -4,6 +4,7 @@
 ## can express the invariant in the library.
 
 import std.core
+from std.fmt import Formatter, FmtError
 from std.string import Utf8Error
 
 ## `[FFI-15]` (ODR-081) — report the first interior NUL byte, rather than
@@ -109,11 +110,33 @@ pub type c_float = f32
 pub type c_double = f64
 pub type c_wchar = i32
 
+## `[HR-39]` — the failure a foreign call returns as a value: a C++ exception its thunk caught
+## (`CppError`), or a C function's status other than its success (`[FFI-16]`'s error types, which
+## the compiler makes implement this). `?` turns one into `std.hot.ReloadError.Foreign` inside a
+## `migrate_from`.
+pub interface ForeignFailure: Error:
+    pass
+
 ## `[FFI-24]` — a C++ exception, caught by the thunk of the C++ function that threw it: the name
 ## of its type, and what its `what()` said (empty for an exception that is no `std::exception`).
+## Its text is `<type>: <what>`.
+@derive(Debug)
 pub struct CppError:
     pub type_name: String
     pub what: String
+
+extend CppError implements Display:
+    ## It allocates: it writes into the formatter's text (`[STD-1]`).
+    fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
+        f.write_str(self.type_name)?
+        f.write_str(": ")?
+        return f.write_str(self.what)
+
+extend CppError implements Error:
+    pass
+
+extend CppError implements ForeignFailure:
+    pass
 
 ## `[FFI-36a]` — `ForeignBox[T]` owns a foreign object: its address, and the foreign function
 ## that frees it, which the box's end calls once. A box is made by `adopt[T](h)` (the destructor
