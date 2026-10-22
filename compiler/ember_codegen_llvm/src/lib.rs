@@ -29,6 +29,7 @@ mod soa;
 mod statics;
 mod sync;
 mod types;
+mod views;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;

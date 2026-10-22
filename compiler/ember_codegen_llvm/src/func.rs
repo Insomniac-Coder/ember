@@ -1455,8 +1455,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Rvalue::BinaryOp { op, lhs, rhs } => self.binary(*op, lhs, rhs, target),
             Rvalue::UnaryOp { op, operand } => {
                 let ty = self.operand_ty(operand).unwrap_or(target);
+                // D-316 — an `f16`'s negation flips its sign bit.
                 if self.m.ty.is_f16(ty) {
-                    return unsupported("`f16` arithmetic");
+                    let (bits, _) = self.scalar(operand)?;
+                    return match op {
+                        UnOp::Neg => Ok(Val::Imm(Sc::I(16), self.value(format!("xor i16 {bits}, -32768")))),
+                        _ => unsupported("an `f16` operator other than `-`"),
+                    };
                 }
                 let (value, sc) = self.scalar(operand)?;
                 let result = match (op, sc) {
@@ -1532,11 +1537,122 @@ impl<'m, 'a> FnCx<'m, 'a> {
         }
     }
 
+    /// `[TYP-29]` — float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each operation
+    /// rounded as the machine rounds it: no contraction (the runtime's `EMBER_FLOAT_FLOOR`).
+    fn float_floor(&mut self, op: BinOp, sc: Sc, a: &str, b: &str) -> String {
+        let (ty, name) = (sc.ir(), if sc == Sc::F32 { "f32" } else { "f64" });
+        let flags = self.fast_flags();
+        let floor = format!("llvm.floor.{name}");
+        self.m.declare(&floor, || format!("declare {ty} @{floor}({ty})"));
+        let quotient = self.value(format!("fdiv{flags} {ty} {a}, {b}"));
+        let q = self.value(format!("call{flags} {ty} @{floor}({ty} {quotient})"));
+        if op == BinOp::FloorDiv {
+            return q;
+        }
+        let m = self.value(format!("fmul{flags} {ty} {b}, {q}"));
+        self.value(format!("fsub{flags} {ty} {a}, {m}"))
+    }
+
+    /// An `f16` operand as a `double`, exactly: a constant as its value, else through the
+    /// runtime's conversion.
+    fn half_operand(&mut self, operand: &Operand) -> Result<String> {
+        if let Operand::Const(Const::Float { value, .. }) = operand {
+            return Ok(float_literal(ember_types::f16_value(ember_types::f16_bits(*value)), Sc::F64));
+        }
+        let (bits, _) = self.scalar(operand)?;
+        let wide = self.alloca(8, 8);
+        self.call_rt("f16_to_f64", vec![Val::Imm(Sc::I(16), bits)], Some((&wide, 8)));
+        Ok(self.load(Sc::F64, &wide, 8))
+    }
+
+    /// A `double` rounded once to `f16`, ties to even (the runtime's).
+    fn to_half(&mut self, value: &str) -> String {
+        let narrow = self.alloca(2, 2);
+        self.call_rt("f64_to_f16", vec![Val::Imm(Sc::F64, value.to_string())], Some((&narrow, 2)));
+        self.load(Sc::I(16), &narrow, 2)
+    }
+
+    /// D-316 — a numeric cast to or from `f16`, through `double`: exact from `f16`, and rounded
+    /// once to it; a float to an integer saturates (`[TYP-6]`).
+    fn half_cast(&mut self, operand: &Operand, from: Ty, to: Ty) -> Result<Val> {
+        let types = &self.m.ty;
+        if types.is_f16(from) && types.is_f16(to) {
+            return self.operand(operand);
+        }
+        let (from_signed, to_signed) = (types.is_signed(from), types.is_signed(to));
+        let to_repr = types.repr(to);
+        let double = if types.is_f16(from) {
+            self.half_operand(operand)?
+        } else {
+            let (value, sc) = self.scalar(operand)?;
+            match sc {
+                Sc::F64 => value,
+                Sc::F32 => self.value(format!("fpext float {value} to double")),
+                Sc::I(128) => {
+                    let name = if from_signed { "i128_to_f64" } else { "u128_to_f64" };
+                    let slot = self.alloca(8, 8);
+                    self.call_rt(name, vec![Val::Imm(Sc::I(128), value)], Some((&slot, 8)));
+                    self.load(Sc::F64, &slot, 8)
+                }
+                Sc::I(bits) if bits <= 64 => {
+                    let instruction = if from_signed { "sitofp" } else { "uitofp" };
+                    self.value(format!("{instruction} i{bits} {value} to double"))
+                }
+                _ => return unsupported("an `f16` conversion of this type"),
+            }
+        };
+        if self.m.ty.is_f16(to) {
+            return Ok(Val::Imm(Sc::I(16), self.to_half(&double)));
+        }
+        Ok(match to_repr {
+            Repr::Scalar(Sc::F64) => Val::Imm(Sc::F64, double),
+            Repr::Scalar(Sc::F32) => Val::Imm(Sc::F32, self.value(format!("fptrunc double {double} to float"))),
+            Repr::Scalar(Sc::I(128)) => {
+                let name = if to_signed { "ftoi_i128" } else { "ftoi_u128" };
+                let slot = self.alloca(16, 16);
+                self.call_rt(name, vec![Val::Imm(Sc::F64, double)], Some((&slot, 16)));
+                Val::Imm(Sc::I(128), self.load(Sc::I(128), &slot, 16))
+            }
+            Repr::Scalar(Sc::I(bits)) if bits <= 64 => {
+                let intrinsic = format!("llvm.fpto{}i.sat.i{bits}.f64", if to_signed { "s" } else { "u" });
+                self.m.declare(&intrinsic, || format!("declare i{bits} @{intrinsic}(double)"));
+                Val::Imm(Sc::I(bits), self.value(format!("call i{bits} @{intrinsic}(double {double})")))
+            }
+            _ => return unsupported("an `f16` conversion to this type"),
+        })
+    }
+
+    /// D-316 — an `f16` operation: in `double`, which holds every `f16` exactly, rounded back
+    /// once; a comparison compares the widened values.
+    fn half_binary(&mut self, op: BinOp, lhs: &Operand, rhs: &Operand) -> Result<Val> {
+        let (a, b) = (self.half_operand(lhs)?, self.half_operand(rhs)?);
+        if op.is_comparison() {
+            let cond = match op {
+                BinOp::Eq | BinOp::Is => "oeq",
+                BinOp::Ne | BinOp::IsNot => "une",
+                BinOp::Lt => "olt",
+                BinOp::Le => "ole",
+                BinOp::Gt => "ogt",
+                _ => "oge",
+            };
+            return Ok(Val::Imm(Sc::Bool, self.value(format!("fcmp {cond} double {a}, {b}"))));
+        }
+        let wide = match op {
+            BinOp::Add => self.value(format!("fadd double {a}, {b}")),
+            BinOp::Sub => self.value(format!("fsub double {a}, {b}")),
+            BinOp::Mul => self.value(format!("fmul double {a}, {b}")),
+            BinOp::Div => self.value(format!("fdiv double {a}, {b}")),
+            BinOp::FloorDiv | BinOp::FloorRem => self.float_floor(op, Sc::F64, &a, &b),
+            _ => return unsupported(format!("the `f16` operator `{}`", op.c_operator())),
+        };
+        Ok(Val::Imm(Sc::I(16), self.to_half(&wide)))
+    }
+
     fn binary(&mut self, op: BinOp, lhs: &Operand, rhs: &Operand, target: Ty) -> Result<Val> {
         let lhs_ty = self.operand_ty(lhs).or_else(|| self.operand_ty(rhs)).unwrap_or(target);
         let types = &self.m.ty;
         if types.is_f16(lhs_ty) || types.is_f16(target) {
-            return unsupported("`f16` arithmetic");
+            return self.half_binary(op, lhs, rhs);
         }
         let signed = types.is_signed(lhs_ty);
         let (a, sc) = self.scalar(lhs)?;
@@ -1576,6 +1692,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 BinOp::Sub => "fsub",
                 BinOp::Mul => "fmul",
                 BinOp::Div => "fdiv",
+                BinOp::FloorDiv | BinOp::FloorRem => return Ok(Val::Imm(sc, self.float_floor(op, sc, &a, &b))),
                 _ => return unsupported(format!("the float operator `{}`", op.c_operator())),
             };
             let flags = self.fast_flags();
@@ -1778,7 +1895,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let Some(from) = from else { return unsupported("a cast of an untyped operand") };
         let types = &self.m.ty;
         if types.is_f16(from) || types.is_f16(to) {
-            return unsupported("an `f16` conversion");
+            return self.half_cast(operand, from, to);
         }
         let (from_repr, to_repr) = (types.repr(from), types.repr(to));
         let signed = types.is_signed(from);

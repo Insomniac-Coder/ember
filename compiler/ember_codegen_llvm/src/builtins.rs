@@ -224,6 +224,9 @@ impl<'a> FnCx<'_, 'a> {
         if let Some(done) = self.concurrency_builtin(which, arg_ty, args, dest, span) {
             return done;
         }
+        if let Some(done) = self.view_builtin(which, args, dest, span) {
+            return done;
+        }
         match which {
             // `parse`'s `Bool` value: the text is `true` or `false`, told apart by its length.
             Builtin::ParseValue { kind: ember_mir::ParseKind::Bool } => {
@@ -994,6 +997,19 @@ impl<'a> FnCx<'_, 'a> {
                 }
                 self.call_rt("obj_retain", vec![Val::Imm(Sc::Ptr, object.clone())], None);
                 self.store_result(dest, &object, Sc::Ptr, false)
+            }
+            // `[FFI-39]` (ODR-221) — the object's class overrides the method when its table's slot
+            // is not the owner's own.
+            Builtin::CppOverrides { owner, slot } => {
+                let own = self.m.dispatch.virtual_layouts.get(owner).and_then(|slots| slots.get(*slot)).and_then(|method| method.clone());
+                let Some(own) = own.filter(|method| !method.is_abstract) else {
+                    return self.store_result(dest, "true", Sc::Bool, false);
+                };
+                crate::func::declare_body_symbol(self.m, &own.symbol)?;
+                let object = self.pointer(&args[0])?;
+                let entry = self.vtable_entry(&object, *slot);
+                let differs = self.value(format!("icmp ne ptr {entry}, {}", crate::global_name(&own.symbol)));
+                self.store_result(dest, &differs, Sc::Bool, false)
             }
             Builtin::CppObjectGive => {
                 let object = self.pointer(&args[0])?;

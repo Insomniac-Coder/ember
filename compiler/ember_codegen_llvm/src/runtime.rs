@@ -233,6 +233,7 @@ pub const FNS: &[RtFn] = &[
     inl("str_starts_with", "bool", &["$str", "$str"]),
     inl("str_ends_with", "bool", &["$str", "$str"]),
     inl("str_find", "int64_t", &["$str", "$str"]),
+    inl("str_search", "size_t", &["$str", "$str", "size_t"]),
     inl("str_contains", "bool", &["$str", "$str"]),
     inl("str_is_char_boundary", "bool", &["$str", "size_t"]),
     f("str_rfind", "int64_t", &["$str", "$str"]),
