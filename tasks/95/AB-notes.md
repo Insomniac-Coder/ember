@@ -343,3 +343,30 @@ ODR-221 (the spec's code table and the `[FFI-39]` row "overriding a virtual not 
 "../stages.hpp"` in one, `import cpp "stages.hpp"` in another) both write the module `cpp.h_stages`,
 and every member of its classes is then `E1030` ("already has a method named `tick`"); main's
 compiler does the same. `[FFI-30]` makes them one entity. The re-export form above avoids it.
+
+## AB8. `[FFI-48]` — the unsupported constructs, each `E5034` naming its row
+
+**Done** (the `FFI-48` entry is removed). Beside multiple and virtual inheritance and
+allocator-parameterised containers (built before):
+
+- *C++20 modules:* a header with a line that declares or imports a module (`export module m;`,
+  `module;`, `import m;`, `import <h>;`) is not read: the import is `E5034` ("a compiled module
+  interface has no stable AST; parse the headers instead"). An import refused for an `[E5034]`
+  reason is now reported with that code rather than `E9002`.
+- *Coroutines:* a function whose result's class declares `promise_type`, or whose body awaits,
+  yields or returns as a coroutine (`co_await`, `co_yield`, `co_return`), is not imported; naming it
+  is `E5034`.
+- *Overloads differing only in their return type:* of two methods of a class with the same
+  parameters and different results (`int& value()`, `const int& value() const`), the first is
+  imported and the other is skipped with that row's reason ("rename one in the overlay").
+- *Casts across a hierarchy the importer did not model:* `as?`/`as!` where either side is a C++
+  object Ember holds as a value or behind a pointer (not as a class of its own) is `E5034`.
+- *Non-type template parameters of class type:* a specialization of such a template is opaque with
+  that reason (so a function taking or returning one by value is not imported, `E5034` where it is
+  named), and `instantiate=[…]` naming one refuses the import with `E5034`.
+- *Overriding a virtual not named in `virtuals=[…]`:* retired by ODR-221 (AB7).
+
+Tests: `FFI-48/reject_a_cpp20_module_is_not_read.em` (`modular.hpp`),
+`reject_unsupported_cpp_constructs.em` (`unsupported.hpp`, `nttp.hpp` as the C++20 project `nttp`
+of the directory's new `ember.toml`); they pass on Windows and in WSL. The C++ corpus records are
+unchanged on both platforms.

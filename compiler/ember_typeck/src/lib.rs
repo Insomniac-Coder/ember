@@ -35931,6 +35931,18 @@ impl<'a> Checker<'a> {
                 let inner = self.synth_committed(inner);
                 let (source, target) = match (self.types.kind(inner.ty), self.types.kind(to)) {
                     (TyKind::Class(source), TyKind::Class(target)) => (*source, *target),
+                    // `[FFI-48]` — C++ classes Ember holds as values or behind pointers: their
+                    // hierarchy is C++'s, which only a `dynamic_cast` in C++ follows.
+                    _ if self.cpp_object_type(inner.ty) || self.cpp_object_type(to) => {
+                        let from = self.types.display(inner.ty);
+                        let target = self.types.display(to);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E5034, span, format!("`{from}` to `{target}`: a cast across a C++ hierarchy the importer did not model"))
+                                .help("cast in C++ (`dynamic_cast`) and export the result as a function")
+                                .note("Ember has no equivalent of `dynamic_cast` for C++ objects it does not hold as classes of its own [FFI-48]"),
+                        );
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     _ => {
                         if inner.ty != self.common.error {
                             let from = self.types.display(inner.ty);
@@ -46904,6 +46916,22 @@ impl<'a> Checker<'a> {
             kind: ExprKind::Ref { place: Box::new(payload), mutable: false },
             span,
         }
+    }
+
+    /// `[FFI-48]` — a C++ object Ember holds as a value or behind a pointer (an opaque class or a
+    /// standard-layout one, by reference or in a `ForeignBox`), not as a class of its own.
+    fn cpp_object_type(&self, ty: Ty) -> bool {
+        let ty = match *self.types.kind(ty) {
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => inner,
+            _ => self.foreign_box_inner(ty).unwrap_or(ty),
+        };
+        let name = match self.types.kind(ty) {
+            TyKind::Opaque(name) => *name,
+            TyKind::Struct(id) => self.types.struct_def(*id).name,
+            _ => return false,
+        };
+        name.as_str().rsplit_once('.').and_then(|(prefix, _)| self.prefixes.iter().position(|module| module == prefix))
+            .is_some_and(|module| self.foreign_cpp.get(module).copied().unwrap_or(false))
     }
 
     /// `[FFI-36a]` — the object a `ForeignBox[T]` owns, when `ty` is one.

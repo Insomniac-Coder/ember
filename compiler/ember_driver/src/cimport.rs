@@ -1192,6 +1192,12 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
     let from_dir = std::path::absolute(config.from_dir).map_err(|e| e.to_string())?;
     let main = from_dir.join(format!("{}_import_c.{}", ember_branding::SYMBOL_PREFIX, if config.cpp.is_some() { "cpp" } else { "c" }));
     let args = arguments(config);
+    // `[FFI-48]` — a C++20 module the header declares or imports.
+    if config.cpp.is_some() && let Some(line) = module_line(&from_dir.join(config.header)) {
+        return Err(format!(
+            "[E5034] `{line}`: a C++20 module: a compiled module interface has no stable AST to read; parse the headers instead ([FFI-48])"
+        ));
+    }
     let include = format!("#include \"{}\"\n", config.header.replace('\\', "/"));
     let unit = Unit::parse(&main, &include, &args, false)?;
     let errors: Vec<String> = unit
@@ -1242,6 +1248,10 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
             let id = written.trim().trim_start_matches("::");
             let template = id.split('<').next().unwrap_or(id).trim();
             match find_template(unit.cursor(), template) {
+                // `[FFI-48]` — a template with a non-type parameter of class type.
+                Some(found) if let Some(parameter) = class_type_parameter(found) => {
+                    return Err(format!("[E5034] `instantiate` names `{written}`: {}", class_parameter_reason(template, &parameter)));
+                }
                 Some(found) if kind(found) == CXCursor_ClassTemplate => {
                     let _ = writeln!(source, "template class ::{id};\nusing {prefix}_inst_{index} = ::{id};");
                     // Its methods, which Clang shows no visitor of an instantiation: each public one
@@ -2108,6 +2118,10 @@ impl Writer {
             if self.cpp && clang_Cursor_isNull(clang_getSpecializedCursorTemplate(cursor)) == 0 {
                 match self.instances.get(&key) {
                     Some(instance) => named = instance.clone(),
+                    None if let Some(parameter) = class_type_parameter(clang_getSpecializedCursorTemplate(cursor)) => {
+                        let why = format!("[E5034] `{}`: {}", type_spelling(clang_getCursorType(cursor)), class_parameter_reason(&spelling(clang_getSpecializedCursorTemplate(cursor)), &parameter));
+                        return self.opaque(cursor, &key, &named, Some(why));
+                    }
                     None => {
                         let why = format!(
                             "[E5055] `{}`: a specialization of a C++ template that `instantiate=[…]` does not list, and no Ember code, generic or not, instantiates one ([FFI-17b])",
@@ -2718,6 +2732,8 @@ impl Writer {
                 self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone(), derived: Derived::Nothing, variadic: false });
             }
             let mut taken: HashSet<String> = HashSet::new();
+            // `[FFI-48]` — the first method of each name, which another is compared with.
+            let mut first_of: HashMap<String, CXCursor> = HashMap::new();
             let mut friends = Vec::new();
             // `[FFI-44]` — a class with one public, non-virtual C++ base the header defines has the
             // base's public methods too (a name of its own hides the base's, as in C++): the thunk
@@ -2807,10 +2823,18 @@ impl Writer {
                 };
                 if !taken.insert(key.clone()) {
                     if !inherited {
-                        self.skip(child, &format!("{owner}.{key}"), "an overload: Ember has no overloading, and the first declaration of the name is the one imported");
+                        // `[FFI-48]` — the same parameters, another result (`T& get() &`, `T&& get() &&`).
+                        let why = match first_of.get(&key) {
+                            Some(first) if same_parameters(*first, child) && result_spelling(*first) != result_spelling(child) => {
+                                "[E5034] overloads differing only in their return type: Ember has no return-type overloading; rename one in the overlay ([FFI-48])"
+                            }
+                            _ => "an overload: Ember has no overloading, and the first declaration of the name is the one imported",
+                        };
+                        self.skip(child, &format!("{owner}.{key}"), why);
                     }
                     continue;
                 }
+                first_of.insert(key.clone(), child);
                 match self.cpp_thunk(child, &key, Some((&owner, member, &class_spelled))) {
                     Ok(function) => {
                         if let Some((method, interface)) = operator {
@@ -3505,6 +3529,9 @@ impl Writer {
             let ty = clang_getCursorType(cursor);
             if clang_isFunctionTypeVariadic(ty) != 0 {
                 return Err("a variadic C++ function: a thunk cannot pass `...` on ([FFI-8])".to_string());
+            }
+            if let Some(why) = coroutine(cursor) {
+                return Err(why);
             }
             let mut params = Vec::new();
             let mut declared = Vec::new();
@@ -4277,6 +4304,75 @@ impl Writer {
 
 /// `[FFI-17b]` — the template a template-id names, by its qualified name (`engine::Vec`), if the
 /// header declares one: a class template's cursor kind or a function template's.
+/// `[FFI-48]` — the line of a C++ header that declares or imports a C++20 module (`export module
+/// m;`, `module;`, `import m;`, `import <h>;`), if one does.
+fn module_line(header: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(header).ok()?;
+    text.lines().map(str::trim).find(|line| {
+        let line = line.strip_prefix("export ").map_or(*line, str::trim_start);
+        let declares = |word: &str| line.strip_prefix(word).is_some_and(|rest| rest.starts_with([' ', '\t', ';', '<', '"']));
+        (declares("module") || declares("import")) && line.ends_with(';')
+    }).map(str::to_string)
+}
+
+/// `[FFI-48]` — a template's non-type parameter of class type (C++20), by name.
+fn class_type_parameter(template: CXCursor) -> Option<String> {
+    // SAFETY(ffi): cursors and types of a live translation unit.
+    unsafe {
+        if clang_Cursor_isNull(template) != 0 {
+            return None;
+        }
+        children(template)
+            .into_iter()
+            .find(|child| kind(*child) == CXCursor_NonTypeTemplateParameter && clang_getCanonicalType(clang_getCursorType(*child)).kind == CXType_Record)
+            .map(|parameter| format!("{} {}", type_spelling(clang_getCursorType(parameter)), spelling(parameter)))
+    }
+}
+
+fn class_parameter_reason(template: &str, parameter: &str) -> String {
+    format!(
+        "`{template}` has a non-type template parameter of class type (`{parameter}`): its mangling differs between compilers; instantiate it in C++ and export a typedef ([FFI-48])"
+    )
+}
+
+/// `[FFI-48]` — why a C++ function is a coroutine, if it is one: its result's class declares
+/// `promise_type`, or its body awaits, yields or returns as one.
+fn coroutine(cursor: CXCursor) -> Option<String> {
+    // SAFETY(ffi): cursors and types of a live translation unit.
+    unsafe {
+        let result = clang_getCanonicalType(clang_getCursorResultType(cursor));
+        let declaration = clang_getTypeDeclaration(result);
+        let promise = result.kind == CXType_Record
+            && [clang_getCursorDefinition(declaration), clang_getSpecializedCursorTemplate(declaration)]
+                .into_iter()
+                .filter(|cursor| clang_Cursor_isNull(*cursor) == 0)
+                .any(|class| children(class).into_iter().any(|member| spelling(member) == "promise_type"));
+        let body = tokens_of(cursor).iter().any(|token| matches!(token.as_str(), "co_await" | "co_yield" | "co_return"));
+        (promise || body).then(|| {
+            let shown = if promise { format!("`{}` declares `promise_type`", type_spelling(clang_getCursorResultType(cursor))) } else { "its body awaits".to_string() };
+            format!("[E5034] a C++ coroutine ({shown}): its promise and frame layout are implementation-defined; take a callback or a completion handle ([FFI-48])")
+        })
+    }
+}
+
+/// `[FFI-48]` — whether two functions take the same parameters, as C++ spells their types.
+fn same_parameters(first: CXCursor, second: CXCursor) -> bool {
+    // SAFETY(ffi): cursors of a live translation unit.
+    unsafe {
+        let count = clang_Cursor_getNumArguments(first);
+        count == clang_Cursor_getNumArguments(second)
+            && (0..count.max(0) as c_uint).all(|index| {
+                let of = |cursor: CXCursor| type_spelling(clang_getCanonicalType(clang_getCursorType(clang_Cursor_getArgument(cursor, index))));
+                of(first) == of(second)
+            })
+    }
+}
+
+fn result_spelling(cursor: CXCursor) -> String {
+    // SAFETY(ffi): a cursor of a live translation unit.
+    type_spelling(unsafe { clang_getCanonicalType(clang_getCursorResultType(cursor)) })
+}
+
 fn find_template(cursor: CXCursor, wanted: &str) -> Option<CXCursor> {
     for child in children(cursor) {
         match kind(child) {
@@ -5092,6 +5188,11 @@ pub fn load(
             let stage = if cached { format!("import c, from its .{}", ember_branding::BINDING_EXT) } else { "import c, parsed".to_string() };
             crate::mark(&stage, &header);
             (imported, header_hash)
+        }
+        // `[FFI-48]` — a construct of the header the import refuses, naming its row.
+        Err(message) if message.starts_with("[E5034] ") => {
+            sink.emit(Diagnostic::error(codes::E5034, span, format!("cannot import `{header}`: {}", &message["[E5034] ".len()..])));
+            return None;
         }
         Err(message) => {
             sink.emit(
@@ -8031,6 +8132,10 @@ fn policy_changes(previous: &Imported, current: &Imported) -> Vec<(String, Strin
 
 fn opaque_by_value(name: &str, why: Option<&str>) -> String {
     match why {
+        // The code a reason carries leads, for the type checker (`[FFI-48]`'s `E5034`).
+        Some(why) if let Some((code, rest)) = why.strip_prefix("[E").and_then(|rest| rest.split_once("] ")) => {
+            format!("[E{code}] `{name}` by value, which is opaque: {rest}")
+        }
         Some(why) => format!("`{name}` by value, which is opaque: {why}"),
         None => format!("`{name}` by value, which the header declares but never defines"),
     }

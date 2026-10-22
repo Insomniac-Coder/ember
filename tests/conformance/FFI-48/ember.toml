@@ -1,0 +1,3 @@
+# The C++ project the FFI-48 test of class-type template parameters imports from: C++20 ([FFI-50]).
+[cpp.nttp]
+standard = "c++20"
