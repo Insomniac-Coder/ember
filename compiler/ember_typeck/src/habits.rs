@@ -68,12 +68,6 @@ pub(crate) fn suffix_edits(span: Span, operand: bool, suffix: &str) -> Vec<(Span
     }
 }
 
-fn suggestion(diagnostic: Diagnostic, message: impl Into<String>, edits: Vec<(Span, Replacement)>) -> Diagnostic {
-    let mut diagnostic = diagnostic;
-    diagnostic.suggestions.push(ember_diag::Suggestion { message: message.into(), edits, migration: false });
-    diagnostic
-}
-
 impl Checker<'_> {
     /// `[DIA-21]` P1 — `True` and `False`, which Ember spells in lowercase.
     pub(crate) fn python_constant(&self, name: Symbol, span: Span) -> Option<Diagnostic> {
@@ -92,11 +86,18 @@ impl Checker<'_> {
     /// `[DIA-21]` P1 — `None` where the type expected is not an `Option`: Python's "no value" is an
     /// `Option`'s in Ember, so the place must be declared one.
     pub(crate) fn none_without_option(&self, expected: Ty, span: Span) -> Diagnostic {
+        // Python's `return None` from a function with no result: Ember's is a bare `return`.
+        if expected == self.common.void {
+            return Diagnostic::error(codes::E2020, span, "expected nothing, found `None`")
+                .primary_label("Python's `None` for no result")
+                .habit(Habit::P1)
+                .help("a function with no result returns with a bare `return`; `None` is a value of an `Option` only");
+        }
         let wanted = self.types.display(expected);
         Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `None`"))
             .primary_label("`None` is a value of an `Option` only")
             .habit(Habit::P1)
-            .help(format!("`None` needs an `Option` type: declare the place `Option[{wanted}]`, or give it a `{wanted}`"))
+            .help(format!("`None` needs an `Option` type: declare the place `Option[{wanted}]`, or give it a value of `{wanted}`"))
     }
 
     /// `[DIA-21]` P3 (ODR-184) — `str(x)`, `int(x)` and `float(x)`, answered by what `x` is: text is
@@ -133,7 +134,7 @@ impl Checker<'_> {
         let diagnostic = match target {
             None => {
                 let edits = receiver_edits(span, &arg.value, ".to_string()");
-                suggestion(diagnostic, format!("`{shown}` is made text with `to_string()`"), edits)
+                diagnostic.suggest_edits(format!("`{shown}` is made text with `to_string()`"), edits)
             }
             Some(target) if self.is_text(ty) => {
                 let ending = if self.failure_returns_parse_error() { "?" } else { ".unwrap()" };
@@ -143,11 +144,11 @@ impl Checker<'_> {
                 } else {
                     "`unwrap` stops the program on text that is not a number, as Python raises"
                 };
-                suggestion(diagnostic, format!("text is parsed: `parse[{target}]()` gives a `Result`, and {why}"), edits)
+                diagnostic.suggest_edits(format!("text is parsed: `parse[{target}]()` gives a `Result`, and {why}"), edits)
             }
             Some(target) if self.types.is_numeric(ty) || self.types.is_untyped_literal(ty) => {
                 let edits = receiver_edits(span, &arg.value, &format!(" as {target}"));
-                suggestion(diagnostic, format!("a number is converted with `as`: `as {target}`"), edits)
+                diagnostic.suggest_edits(format!("a number is converted with `as`: `as {target}`"), edits)
             }
             Some(target) => diagnostic.help(format!("Ember converts a number with `as {target}` and parses text with `parse[{target}]()`; a `{shown}` is neither")),
         };
@@ -193,7 +194,7 @@ impl Checker<'_> {
             .primary_label(format!("Python's `{name}` of a collection"))
             .habit(Habit::P5)
             .note(format!("the prelude's `{name}(a, b)` takes two values [STD-26]; `{name}()` of an iterator is `None` when it is empty"));
-        Some(suggestion(diagnostic, format!("write `{}{suffix}`", if iterator { "it" } else { "xs" }), receiver_edits(span, arg, &suffix)))
+        Some(diagnostic.suggest_edits(format!("write `{}{suffix}`", if iterator { "it" } else { "xs" }), receiver_edits(span, arg, &suffix)))
     }
 
     /// `[DIA-14]` — whether `ty` is an error or holds one (`Array[<error>]`, `(<error>, int)`): a
@@ -353,7 +354,7 @@ impl Checker<'_> {
             (Span::new(span.file, separator.end, items.value.span.start), Replacement::Text(format!("{close}.join("))),
             (items.value.span, Replacement::Source(separator)),
         ];
-        suggestion(diagnostic, "write `xs.join(sep)`", edits)
+        diagnostic.suggest_edits("write `xs.join(sep)`", edits)
     }
 
     /// `[DIA-21]` P20 — `"{} and {}".format(a, b)` is the f-string `f"{a} and {b}"` (`[LEX-19]`):
@@ -375,7 +376,7 @@ impl Checker<'_> {
                 let mut edits = vec![(literal.shrink_to_start(), Replacement::Text("f".to_string()))];
                 edits.extend(holes.iter().zip(args).map(|(&hole, arg)| (at(hole), Replacement::Source(arg.value.span))));
                 edits.push((Span::new(span.file, literal.end, span.end), Replacement::Text(String::new())));
-                suggestion(diagnostic, "write an f-string", edits)
+                diagnostic.suggest_edits("write an f-string", edits)
             }
             _ => diagnostic.help(help),
         }
@@ -409,7 +410,7 @@ impl Checker<'_> {
             .habit(Habit::P25)
             .note("an iterator gives its items one at a time; a list of them is collected once [STD-19]");
         Some(Some(match made_at {
-            Some(at) => suggestion(diagnostic, format!("collect the items into a list: `{collect}`"), vec![(at.shrink_to_end(), Replacement::Text(collect))]),
+            Some(at) => diagnostic.suggest_edits(format!("collect the items into a list: `{collect}`"), vec![(at.shrink_to_end(), Replacement::Text(collect))]),
             None => diagnostic.help(format!("collect the items into a list where the iterator is made: `{collect}`")),
         }))
     }
@@ -429,7 +430,7 @@ impl Checker<'_> {
             return Some(match args {
                 [ast::TypeOrExpr::Expr(index)] if let ast::ExprKind::Lit(ast::Literal::Int { value, suffix: None }) = index.kind && (value as usize) < fields => {
                     let field = format!(".{value}");
-                    suggestion(diagnostic, format!("write `{field}`"), vec![(Span::new(span.file, base.span.end, span.end), Replacement::Text(field))])
+                    diagnostic.suggest_edits(format!("write `{field}`"), vec![(Span::new(span.file, base.span.end, span.end), Replacement::Text(field))])
                 }
                 _ => diagnostic.help("name the field by its position: `p.0`, `p.1`, …"),
             });
@@ -462,7 +463,7 @@ impl Checker<'_> {
                         ]
                     }
                 };
-                Some(suggestion(diagnostic, "repeat the text with `s.repeat(n)` [TXT-10]", edits))
+                Some(diagnostic.suggest_edits("repeat the text with `s.repeat(n)` [TXT-10]", edits))
             }
             ast::BinOp::Mul if count(rhs.ty) && matches!(self.types.kind(lhs.ty), TyKind::Vec { text: false, .. }) => {
                 let diagnostic = base().habit(Habit::P23).primary_label("Python's list repetition");
@@ -481,7 +482,7 @@ impl Checker<'_> {
                         edits[2].1 = Replacement::Text(")]".to_string());
                         edits
                     };
-                    return Some(suggestion(diagnostic, "make each element with a comprehension: `[x for _ in 0..n]`", edits));
+                    return Some(diagnostic.suggest_edits("make each element with a comprehension: `[x for _ in 0..n]`", edits));
                 }
                 Some(diagnostic.help("make the elements with a comprehension, `[x for _ in 0..n]`, or repeat the list's items with `xs.iter().cycle().take(xs.len() * n)`"))
             }
@@ -506,7 +507,7 @@ impl Checker<'_> {
                             edits.push((Span::new(literal.file, at(end), at(end)), Replacement::Text(format!("{spec}}}"))));
                         }
                         edits.push((Span::new(span.file, literal.end, span.end), Replacement::Text(String::new())));
-                        Some(suggestion(diagnostic, "write an f-string", edits))
+                        Some(diagnostic.suggest_edits("write an f-string", edits))
                     }
                     _ => Some(diagnostic.help("write the values into an f-string: `f\"{n} items\"`")),
                 }
@@ -522,7 +523,7 @@ impl Checker<'_> {
                     return Some(diagnostic.suggest(format!("compare with the character `{literal}`"), text_side.span, literal));
                 }
                 let char_side = if character(lhs.ty) { lhs_ast } else { rhs_ast };
-                Some(suggestion(diagnostic, "compare the character's text: `c.to_string()`", receiver_edits(char_side.span, char_side, ".to_string()")))
+                Some(diagnostic.suggest_edits("compare the character's text: `c.to_string()`", receiver_edits(char_side.span, char_side, ".to_string()")))
             }
             _ => None,
         }
@@ -574,7 +575,7 @@ impl Checker<'_> {
             && let Some(name) = local.name
         {
             let at = local.span.start + name.as_str().len() as u32;
-            return suggestion(diagnostic, format!("declare it a `String`: `{name}: String = …`"), vec![(Span::new(local.span.file, at, at), Replacement::Text(": String".to_string()))]);
+            return diagnostic.suggest_edits(format!("declare it a `String`: `{name}: String = …`"), vec![(Span::new(local.span.file, at, at), Replacement::Text(": String".to_string()))]);
         }
         diagnostic.help("build the text in a `String`: declare the place `String`")
     }
@@ -609,18 +610,16 @@ impl Checker<'_> {
         let string = matches!(self.types.kind(expected), TyKind::Vec { text: true, .. });
         let operand = checked_binds_as_operand(expr);
         if string && found == self.common.str_ {
-            return suggestion(
-                diagnostic.habit(Habit::P26).note("a `str` value is borrowed text; a `String` owns its text, so keeping one copies it [TXT-9]"),
-                "make a `String` of it: `.to_string()`",
-                suffix_edits(expr.span, operand, ".to_string()"),
-            );
+            return diagnostic
+                .habit(Habit::P26)
+                .note("a `str` value is borrowed text; a `String` owns its text, so keeping one copies it [TXT-9]")
+                .suggest_edits("make a `String` of it: `.to_string()`", suffix_edits(expr.span, operand, ".to_string()"));
         }
         if (string || expected == self.common.str_) && matches!(self.types.kind(found), TyKind::Char) {
-            return suggestion(
-                diagnostic.habit(Habit::P27).note("a `char` is one character and text a `str` or a `String`; Python has only text [TXT-10]"),
-                "make text of the character: `.to_string()`",
-                suffix_edits(expr.span, operand, ".to_string()"),
-            );
+            return diagnostic
+                .habit(Habit::P27)
+                .note("a `char` is one character and text a `str` or a `String`; Python has only text [TXT-10]")
+                .suggest_edits("make text of the character: `.to_string()`", suffix_edits(expr.span, operand, ".to_string()"));
         }
         if matches!(self.types.kind(expected), TyKind::Char)
             && let ExprKind::Str(text) = &expr.kind
@@ -637,11 +636,10 @@ impl Checker<'_> {
             let made = matches!(expr.kind, ExprKind::Str(_)) || found != self.common.str_;
             let close = if made { ")" } else { ".to_string())" };
             let edits = vec![(expr.span.shrink_to_start(), Replacement::Text("AnyError.msg(".to_string())), (expr.span.shrink_to_end(), Replacement::Text(close.to_string()))];
-            return suggestion(
-                diagnostic.habit(Habit::P21).note("a function returning `Result[T]` fails with an `AnyError`, which `AnyError.msg` makes of a message (ODR-180) [ERR-9]"),
-                "make the message an error: `AnyError.msg(…)`",
-                edits,
-            );
+            return diagnostic
+                .habit(Habit::P21)
+                .note("a function returning `Result[T]` fails with an `AnyError`, which `AnyError.msg` makes of a message (ODR-180) [ERR-9]")
+                .suggest_edits("make the message an error: `AnyError.msg(…)`", edits);
         }
         if let TyKind::ClassInterface(interface) = *self.types.kind(expected)
             && matches!(self.types.kind(found), TyKind::Struct(_) | TyKind::Enum(_))
@@ -656,7 +654,7 @@ impl Checker<'_> {
                 (true, false) => "rounds it toward zero, saturating".to_string(),
                 _ => format!("rounds it to the nearest `{wanted}` where it has more digits than `{wanted}` keeps"),
             };
-            return suggestion(diagnostic, format!("convert it: `as {wanted}` {what} [TYP-6]"), suffix_edits(expr.span, operand, &format!(" as {wanted}")));
+            return diagnostic.suggest_edits(format!("convert it: `as {wanted}` {what} [TYP-6]"), suffix_edits(expr.span, operand, &format!(" as {wanted}")));
         }
         diagnostic
     }

@@ -23810,15 +23810,13 @@ impl<'a> Checker<'a> {
                                 let mut diagnostic = Diagnostic::error(codes::E2020, value.span, format!("`+=` appends text to a `String`, found `{shown}`"));
                                 // `[DIA-21]` P27 — Python adds a one-character string; a `char` is pushed.
                                 if matches!(self.types.kind(text.ty), TyKind::Char) && target.span.end <= value.span.start {
-                                    diagnostic = diagnostic.habit(ember_diag::habits::Habit::P27);
-                                    diagnostic.suggestions.push(ember_diag::Suggestion {
-                                        message: "push the character: `s.push(c)` [TXT-11]".to_string(),
-                                        edits: vec![
+                                    diagnostic = diagnostic.habit(ember_diag::habits::Habit::P27).suggest_edits(
+                                        "push the character: `s.push(c)` [TXT-11]",
+                                        vec![
                                             (Span::new(value.span.file, target.span.end, value.span.start), ember_diag::Replacement::Text(".push(".to_string())),
                                             (value.span.shrink_to_end(), ember_diag::Replacement::Text(")".to_string())),
                                         ],
-                                        migration: false,
-                                    });
+                                    );
                                 }
                                 self.sink.emit(diagnostic);
                             }
@@ -31372,11 +31370,7 @@ impl<'a> Checker<'a> {
                             .habit(ember_diag::habits::Habit::P4)
                             .note("Python counts characters; Ember's `s.len()` counts bytes [STD-26]");
                         for (method, why) in [("char_count", "for Python's count of characters"), ("len", "for the bytes")] {
-                            diagnostic.suggestions.push(ember_diag::Suggestion {
-                                message: format!("`s.{method}()` {why}"),
-                                edits: habits::receiver_edits(span, positional[0], &format!(".{method}()")),
-                                migration: false,
-                            });
+                            diagnostic = diagnostic.suggest_edits(format!("`s.{method}()` {why}"), habits::receiver_edits(span, positional[0], &format!(".{method}()")));
                         }
                         self.sink.emit(diagnostic);
                         error
@@ -32612,15 +32606,13 @@ impl<'a> Checker<'a> {
                     // `[DIA-21]` P8 — Python's truthiness: the test it means, as a fix-it.
                     if let Some((fix, before, after)) = fix {
                         let (open, close) = if habits::binds_as_operand(expr) { ("", "") } else { ("(", ")") };
-                        diag = diag.habit(ember_diag::habits::Habit::P8);
-                        diag.suggestions.push(ember_diag::Suggestion {
-                            message: fix,
-                            edits: vec![
+                        diag = diag.habit(ember_diag::habits::Habit::P8).suggest_edits(
+                            fix,
+                            vec![
                                 (expr.span.shrink_to_start(), ember_diag::Replacement::Text(format!("{before}{open}"))),
                                 (expr.span.shrink_to_end(), ember_diag::Replacement::Text(format!("{close}{after}"))),
                             ],
-                            migration: false,
-                        });
+                        );
                     }
                     self.sink.emit(diag);
                     return Expr { ty: bool_ty, kind: ExprKind::Error, span: expr.span };
@@ -40300,6 +40292,15 @@ impl<'a> Checker<'a> {
             }
             if let TyKind::Ref { mutable: false, .. } = *self.types.kind(current.ty) {
                 let shown = self.types.display(current.ty);
+                // D-823 (B4) — `r = v` on a `ref` local is Python's rebinding of a name, and a
+                // reference is never re-pointed (ADR-010): `ref mut` would write `v` into what `r`
+                // refers to. The value it means is a copy or an index.
+                let rebinding = matches!(&place.kind, ExprKind::Deref(inner) if matches!(inner.kind, ExprKind::Local(_)));
+                let help = if rebinding {
+                    "a reference is not pointed elsewhere: this writes through it, into what it refers to; to keep another value, keep a copy of it (`.clone()`), or its index"
+                } else {
+                    "take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference"
+                };
                 self.sink.emit(
                     Diagnostic::error(
                         codes::E3021,
@@ -40307,10 +40308,7 @@ impl<'a> Checker<'a> {
                         "cannot write through a shared reference",
                     )
                     .primary_label(format!("this is `{shown}`, which only reads"))
-                    .help(concat!(
-                        "take the borrow as `ref mut` if the callee must write, ",
-                        "or assign to the place itself rather than through the reference"
-                    ))
+                    .help(help)
                     .note(concat!(
                         "while a shared borrow is live the owner may read and copy ",
                         "but not write [BRW-1]"

@@ -5,7 +5,7 @@
 
 use ember_ast::*;
 use ember_diag::habits::Habit;
-use ember_diag::{Diagnostic, Replacement, Suggestion, codes};
+use ember_diag::{Diagnostic, Replacement, codes};
 use ember_lexer::{Kw, Punct, Token, TokenKind};
 use ember_span::{Span, Symbol};
 
@@ -17,12 +17,6 @@ const PYTHON_EXCEPTIONS: [&str; 14] = [
     "OverflowError", "AssertionError", "NotImplementedError", "FileNotFoundError", "IOError", "OSError",
     "LookupError",
 ];
-
-fn with_edits(diagnostic: Diagnostic, message: impl Into<String>, edits: Vec<(Span, Replacement)>) -> Diagnostic {
-    let mut diagnostic = diagnostic;
-    diagnostic.suggestions.push(Suggestion { message: message.into(), edits, migration: false });
-    diagnostic
-}
 
 impl Parser<'_> {
     fn at_word(&self, n: usize, word: &str) -> bool {
@@ -101,14 +95,17 @@ impl Parser<'_> {
         let lambda = self.span();
         let first = self.tokens[self.pos + 1].span;
         let colon_span = self.tokens[self.pos + colon].span;
-        self.report(with_edits(
-            Diagnostic::error(codes::E0100, lambda, "`lambda` is Python's; an Ember lambda is `fn(x) => e`").habit(Habit::P13),
-            "write `fn(…) =>`",
-            vec![
-                (Span::new(lambda.file, lambda.start, first.start), Replacement::Text("fn(".to_string())),
-                (colon_span, Replacement::Text(") =>".to_string())),
-            ],
-        ));
+        self.report(
+            Diagnostic::error(codes::E0100, lambda, "`lambda` is Python's; an Ember lambda is `fn(x) => e`")
+                .habit(Habit::P13)
+                .suggest_edits(
+                    "write `fn(…) =>`",
+                    vec![
+                        (Span::new(lambda.file, lambda.start, first.start), Replacement::Text("fn(".to_string())),
+                        (colon_span, Replacement::Text(") =>".to_string())),
+                    ],
+                ),
+        );
         let token = |kind: TokenKind, span: Span| Token { kind, span };
         self.tokens[self.pos + colon] = token(TokenKind::Punct(Punct::FatArrow), colon_span);
         self.tokens.insert(self.pos + colon, token(TokenKind::Punct(Punct::RParen), colon_span.shrink_to_start()));
@@ -199,7 +196,7 @@ impl Parser<'_> {
             ],
             None => vec![(start, Replacement::Text("return Err(".to_string())), (value.span.shrink_to_end(), Replacement::Text(")".to_string()))],
         };
-        self.report(with_edits(diagnostic, "write `return Err(…)`", edits));
+        self.report(diagnostic.suggest_edits("write `return Err(…)`", edits));
         let id = self.next_id();
         let err = Expr { id, kind: ExprKind::Path { segments: vec![Ident { name: Symbol::intern("Err"), span: raise }] }, span: raise };
         let span = raise.to(value.span);
@@ -274,7 +271,7 @@ impl Parser<'_> {
                 edits.push((Span::new(file, expr.span.end, written.end), Replacement::Text(String::new())));
             }
         }
-        self.report(with_edits(diagnostic, format!("write `with {} = …:`", name.name), edits));
+        self.report(diagnostic.suggest_edits(format!("write `with {} = …:`", name.name), edits));
         let pattern = Pattern { id: self.next_id(), kind: PatternKind::Bind { name: name.clone(), by_ref: false, mutable: false, sub: None }, span: name.span };
         Some((pattern, Expr { id: self.next_id(), kind: ExprKind::Error, span: value.span }))
     }
@@ -319,13 +316,12 @@ impl Parser<'_> {
         let Some(&first) = cases.first() else { return };
         let word = Span::new(first.file, first.start, first.start + 4);
         let edits = cases.into_iter().map(|span| (span, Replacement::Text(String::new()))).collect();
-        self.sink.emit(with_edits(
+        self.sink.emit(
             Diagnostic::error(codes::E0100, word, "`case` is Python's; an Ember `match` arm is its pattern")
                 .habit(Habit::P17)
-                .note("`pattern:` and a block, or `pattern =>` and an expression [GRM-10]"),
-            "remove `case`",
-            edits,
-        ));
+                .note("`pattern:` and a block, or `pattern =>` and an expression [GRM-10]")
+                .suggest_edits("remove `case`", edits),
+        );
     }
 
     /// P28 — a statement (`x = …`, `pass`) after a `=>`, which takes an expression: the arms are
@@ -342,12 +338,11 @@ impl Parser<'_> {
                 (Span::new(span.file, start as u32, span.end), Replacement::Text(":".to_string()))
             })
             .collect();
-        self.sink.emit(with_edits(
+        self.sink.emit(
             Diagnostic::error(codes::E0100, first, "a `=>` arm is an expression, and this is a statement")
                 .habit(Habit::P28)
-                .note("a `match` whose arms do something is written with `pattern:` arms, a statement on the line or a block below [GRM-10]"),
-            "write every arm `pattern:`",
-            edits,
-        ));
+                .note("a `match` whose arms do something is written with `pattern:` arms, a statement on the line or a block below [GRM-10]")
+                .suggest_edits("write every arm `pattern:`", edits),
+        );
     }
 }

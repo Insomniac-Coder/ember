@@ -175,6 +175,12 @@ impl Diagnostic {
         self
     }
 
+    /// A fix-it of several edits, applied together.
+    pub fn suggest_edits(mut self, message: impl Into<String>, edits: Vec<(Span, Replacement)>) -> Diagnostic {
+        self.suggestions.push(Suggestion { message: message.into(), edits, migration: false });
+        self
+    }
+
     /// `[CLI-20]` — the mechanical rewrite of a 0.9.8 form, which `ember fmt --migrate` applies.
     pub fn migrate(self, message: impl Into<String>, span: Span, text: impl Into<String>) -> Diagnostic {
         self.migrate_edits(message, vec![(span, Replacement::Text(text.into()))])
