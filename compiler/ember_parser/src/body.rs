@@ -1596,12 +1596,7 @@ impl Parser<'_> {
             {
                 return Lambda { is_owned, params, ret, body: LambdaBody::Block(statement(self, kind)) };
             }
-            if !self.at_punct(Punct::Comma)
-                && !self.at_punct(Punct::RParen)
-                && !self.at_punct(Punct::RBracket)
-                && !self.at_punct(Punct::RBrace)
-                && !self.at_eof()
-            {
+            if !in_place(self) {
                 self.report(
                     Diagnostic::error(
                         codes::E0106,
