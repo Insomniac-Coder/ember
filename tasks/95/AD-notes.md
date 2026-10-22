@@ -188,3 +188,50 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   name the type `Map[str, V]`; no std location); (b) a key whose type is `str` (not a literal)
   makes `Map[str, V]`, as a list comprehension's elements stay `str`, only a literal defaulting to
   `String`; (c) convert implicitly, copying (contradicts `[TXT-9]`). Recommend (a). Not built.
+
+* **`[GRM-28]`, `[CLO-12]` — generic local functions.** `fn ident[T](x: T) -> T:` in a block
+  (`check_generic_local_fn`): its type parameters follow the enclosing function's own; its body
+  is checked once with them opaque (`[TYP-17]`, the check that reports) as the named closure it
+  is, which gives its environment (what it captures, `[CLO-2]`; an empty one if nothing) and the
+  value its name holds. A call (`synth_generic_local_call`) is a generic call of a signature with
+  the environment first, its type arguments inferred or written (`ident[int](9)`, `[TYP-18]`), the
+  enclosing function's being what they are where the call is (themselves in its opaque check, its
+  instance's arguments in an instance: a generic local in a generic function is made for each of
+  that function's instances). Each new set of type arguments makes its instance's body
+  (`generic_local_instance`): the closure's body checked with them concrete, capturing what the
+  declaration's closure does through the one environment, its diagnostics (only an instance's own)
+  noting `in \`f\` used with \`T\` = …`; it may call itself (with the same arguments) and a closure
+  in the block calls it through its capture. Its name read anywhere but as a callee is `E2060`,
+  as a module-level generic's is. Tests:
+  `GRM-28/accept_a_generic_local_function_is_made_for_each_use.em` (three profiles: inferred and
+  written arguments, capturing reads and writes from two instances, a bound, recursion, a closure
+  calling it, one inside a generic function), `GRM-28/reject_a_generic_local_function_used_as_a_value.em`
+  (`E2060` three ways, an opaque-body `E2040`, a missed bound `E2040`);
+  `GRM-28/reject_the_local_function_forms_not_built.em` keeps the local generator.
+  Not built: a call of itself inside its body is checked against its own signature (as a local
+  function's reserved one is), so one with other type arguments (`deep(n - 1, 5)` in
+  `deep[T](n: int, label: T)` called with a `str`), which a module-level generic allows, is
+  `E2020`. Building it: the self-call made as a generic call with the body's environment parameter
+  first, which the opaque check, still discovering the environment, does not have.
+* **`[GRM-28]` local generators — not built** (still `E0900`, named). The generators are written
+  out before the checker as module-level declarations (ADR-193, `coroutines.rs`): a frame struct
+  holding the parameters, its `Iterator` implementation, the body as a method of the frame. A
+  local one captures enclosing locals, whose types and needed access (`ref`, `ref mut`) only the
+  checker learns, at the declaration. Every form found needs a new mechanism:
+  (a) lift it to a module-level `gen fn` taking each captured local as a borrowed parameter (`mut`
+  for one it writes), its frame borrowing them as a borrowed parameter's field does: the captures
+  and their modes must be found before checking, syntactically (the enclosing function's names in
+  scope at the declaration, a write by assignment; a method call taking `mut self` cannot be seen),
+  and their types written: `ast::TypeKind::Infer` parameters the checker settles at the
+  declaration, as `settle_coroutine_frame` settles a frame's `ref T` fields;
+  (b) lift it generic over its environment (`gen fn count__local[E](env: E, n: int)`) and check its
+  body per instance with names resolving through `env` as a closure's captures do: a generic
+  generator's body is checked opaquely today (`yield x + i` with `x: T` is `E2040`), so it needs a
+  "checked per instance only" generic, and the frame's borrow of the environment's references
+  carried through the constructor's result;
+  (c) make the frame, its `Iterator` implementation and the body method in the checker at the
+  declaration, where the captures are known: the checker's late registration of a type, an
+  implementation and methods after collection.
+  Recommend (a): the frame's borrowed-parameter path and its settling exist, and a local function's
+  capture by `mut` versus `ref` is what `[CLO-2]` decides; it needs the syntactic capture pass and
+  the settled parameter types. A design of its own (an ADR), so left for the owner.

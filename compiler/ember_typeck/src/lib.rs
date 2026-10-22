@@ -1274,6 +1274,35 @@ struct WrittenAttributes {
     variants: HashMap<Symbol, Vec<ast::Attribute>>,
 }
 
+/// `[GRM-28]` — a generic local function: its body checked once with its type parameters opaque,
+/// its environment made where it is declared, and a function of that environment made for each
+/// set of type arguments a call infers (`check_generic_local_fn`, `generic_local_instance`).
+#[derive(Clone)]
+struct GenericLocalFn {
+    name: Symbol,
+    lambda: ast::Lambda,
+    /// The slot of its first type parameter: the enclosing function's own come before it.
+    base: usize,
+    /// The type parameters' bindings where it is declared (the enclosing function's).
+    type_params: HashMap<Symbol, Ty>,
+    /// What a closure there reaches, and what it captured, in its environment's field order.
+    outer: HashMap<Symbol, Ty>,
+    owned_loop_borrowed_handles: HashSet<Symbol>,
+    captured: Vec<(Symbol, Ty)>,
+    env: StructId,
+    env_ty: Ty,
+    env_mode: Mode,
+    /// The signature a call is checked against: the environment, then its parameters, over the
+    /// enclosing function's type parameters and its own.
+    generic: DefId,
+    /// Its body did not check with its type parameters opaque: a call makes no instance.
+    failed: bool,
+    in_unsafe: bool,
+    /// The instances whose bodies are made.
+    built: HashSet<DefId>,
+    span: Span,
+}
+
 #[derive(Clone)]
 struct LocalFnSelf {
     name: Symbol,
@@ -2458,6 +2487,13 @@ struct Checker<'a> {
     /// `[GRM-28]` — the local functions whose bodies are being checked,
     /// innermost last.
     local_fn_self: Vec<LocalFnSelf>,
+    /// `[GRM-28]` — the generic local functions, and each one's environment struct.
+    generic_local_fns: Vec<GenericLocalFn>,
+    generic_local_by_env: HashMap<StructId, usize>,
+    /// `[GRM-28]` — the generic local function a call is reading the environment of, and the
+    /// call's span, which its read of the name has: that read is the call's, every other one a
+    /// value use.
+    generic_local_callee: Option<(StructId, Span)>,
     /// `[RFL-1]` — each type's written attributes, by its qualified name.
     written_attributes: HashMap<Symbol, WrittenAttributes>,
     /// `[RFL-3]` — the structs declared `@attribute`, by their qualified names.
@@ -3357,6 +3393,9 @@ impl<'a> Checker<'a> {
             incomplete: HashSet::new(),
             closure_numbers: 0,
             local_fn_self: Vec::new(),
+            generic_local_fns: Vec::new(),
+            generic_local_by_env: HashMap::new(),
+            generic_local_callee: None,
             written_attributes: HashMap::new(),
             attribute_structs: HashSet::new(),
             pending_user_attributes: Vec::new(),
@@ -35704,7 +35743,8 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { segments } if segments.len() == 1 => {
                 let name = segments[0].name;
                 if let Some(local) = self.lookup(name) {
-                    return self.read_local_expecting(local, span, expected);
+                    let value = self.read_local_expecting(local, span, expected);
+                    return self.generic_local_value(value, name);
                 }
                 if let Some(value) = self.const_param_value(name, span) {
                     return value;
@@ -35771,7 +35811,7 @@ impl<'a> Checker<'a> {
                 // declares is a capture. Saying "cannot find it" would be
                 // false and would send the reader looking for a typo.
                 if let Some(captured) = self.resolve_capture(name, span) {
-                    return captured;
+                    return self.generic_local_value(captured, name);
                 }
                 if self.report_ambiguous_glob(name, span) {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
@@ -37078,10 +37118,12 @@ impl<'a> Checker<'a> {
         // parses as a call on an index.
         let (callee, explicit): (&ast::Expr, Vec<Ty>) = match &callee.kind {
             // A local shadows every item of its name, so `fs[1](x)` with a
-            // local `fs` indexes it and calls the element.
+            // local `fs` indexes it and calls the element; a generic local
+            // function's name takes its type arguments (`[GRM-28]`).
             ast::ExprKind::IndexOrInstantiate { base, args }
                 if matches!(&base.kind, ast::ExprKind::Path { segments }
-                    if !(segments.len() == 1 && self.lookup(segments[0].name).is_some())) =>
+                    if !(segments.len() == 1 && self.lookup(segments[0].name).is_some())
+                        || segments.len() == 1 && self.generic_local_named(segments[0].name).is_some()) =>
             {
                 let tys = self.explicit_type_arguments(args);
                 (base.as_ref(), tys)
@@ -37096,6 +37138,13 @@ impl<'a> Checker<'a> {
             && let Some(own) = self.local_fn_self.iter().rev().find(|own| own.name == name.name).cloned()
         {
             return self.synth_local_fn_self_call(own, args, span);
+        }
+        // `[GRM-28]` — a generic local function, in its block or captured by a closure there.
+        if let ast::ExprKind::Path { segments } = &callee.kind
+            && let [name] = segments.as_slice()
+            && let Some(index) = self.generic_local_named(name.name)
+        {
+            return self.synth_generic_local_call(index, args, explicit, span);
         }
         // D-692, `[FN-6]` — a `static` holding a function value (`static HOOK: extern "C" fn(i32) ->
         // i32 = f`) is called through that value, as a local of function type is: `HOOK(7)`. A local
@@ -39055,9 +39104,10 @@ impl<'a> Checker<'a> {
     /// may call itself. Its function is reserved before the body is checked,
     /// which is what a call to itself names.
     fn check_local_fn(&mut self, decl: &ast::FnDecl, span: Span, out: &mut Vec<Stmt>) {
-        let unbuilt = if !decl.generics.is_empty() {
-            Some("a generic local function")
-        } else if decl.is_gen {
+        if !decl.generics.is_empty() && !decl.is_gen && decl.abi.is_none() {
+            return self.check_generic_local_fn(decl, span, out);
+        }
+        let unbuilt = if decl.is_gen {
             Some("a local generator")
         } else if decl.abi.is_some() {
             Some("a local function with a foreign ABI")
@@ -39129,6 +39179,313 @@ impl<'a> Checker<'a> {
         // the value is a known function (ADR-169).
         let local = self.declare(Some(decl.name.name), value.ty, decl.name.span);
         out.push(Stmt::Let { local, init: Some(value) });
+    }
+
+    /// `[GRM-28]` — a generic local function (`fn ident[T](x: T) -> T:` in a block) is a named closure
+    /// generic over its type parameters. Its body is checked once with them opaque, as a generic
+    /// function's is (`[TYP-17]`: only what their bounds provide), and reports there; its
+    /// environment is made here, as any closure's, capturing what the body uses (`[CLO-2]`), and is
+    /// the value its name holds; each call infers the type arguments, as a generic function's does,
+    /// and calls the function of that environment made for them (`generic_local_instance`). A call
+    /// from a closure inside the block captures the name, so its environment, as any capture.
+    fn check_generic_local_fn(&mut self, decl: &ast::FnDecl, span: Span, out: &mut Vec<Stmt>) {
+        let Some(body) = &decl.body else { return };
+        if decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. })) {
+            self.error(codes::E2020, decl.name.span, "a local function has no receiver");
+            return;
+        }
+        // Its type parameters, opaque, after the enclosing function's own.
+        let type_params = self.type_params.clone();
+        let base = self.current_generics.len();
+        let declared = self.declare_generics_from(&decl.generics, base);
+        self.current_generics.extend(declared);
+        let mut param_tys = Vec::new();
+        for param in &decl.params {
+            if let ast::ParamKind::Named { ty, .. } = &param.kind {
+                param_tys.push(FnParam { ty: self.resolve_type(ty), mode: fn_param_mode(param.mode) });
+            }
+        }
+        let ret = decl.ret.as_ref().map_or(self.common.void, |ty| self.resolve_type(ty));
+        let named: Vec<(Symbol, Ty, Mode, Span)> = decl
+            .params
+            .iter()
+            .zip(&param_tys)
+            .map(|(param, fn_param)| {
+                let name = match &param.kind {
+                    ast::ParamKind::Named { name, .. } => name.name,
+                    ast::ParamKind::Receiver { .. } => Symbol::intern("self"),
+                };
+                (name, fn_param.ty, hir_mode(fn_param.mode), param.span)
+            })
+            .collect();
+        let def = DefId(self.signatures.len() as u32);
+        self.signatures.push(Signature { decl: decl.name.span,
+            params: named.clone(),
+            ret,
+            abi: None,
+            is_unsafe: decl.is_unsafe,
+            overflow: self.active_overflow,
+            fp: self.active_fp,
+            borrows: None,
+            generics: Vec::new(),
+        });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: param_tys, ret });
+        let lambda = ast::Lambda {
+            is_owned: false,
+            params: decl.params.clone(),
+            ret: decl.ret.clone(),
+            body: ast::LambdaBody::Block(body.clone()),
+        };
+        // What a closure here reaches, as `synth_lambda_fresh` finds it.
+        let mut outer: HashMap<Symbol, Ty> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.iter())
+            .map(|(name, local)| (*name, self.locals[local.0 as usize].ty))
+            .collect();
+        if let Some(watch) = &self.captures {
+            for (name, ty) in &watch.outer {
+                outer.entry(*name).or_insert(*ty);
+            }
+        }
+        let owned_loop_borrowed_handles: HashSet<Symbol> = outer
+            .keys()
+            .filter(|name| self.lookup(**name).is_some_and(|local| self.locals[local.0 as usize].loop_borrowed_handle))
+            .copied()
+            .collect();
+        // The body, checked once with the type parameters opaque: the one check that reports.
+        let errors = self.sink.error_count();
+        self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None, probing: true });
+        let in_unsafe = self.in_unsafe || decl.is_unsafe;
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, in_unsafe);
+        let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
+        self.in_unsafe = outer_unsafe;
+        self.local_fn_self.pop();
+        let failed = self.sink.error_count() != errors || value.ty == self.common.error;
+        let generics = self.current_generics.clone();
+        self.current_generics.truncate(base);
+        self.type_params = type_params.clone();
+        // Its environment: the closure's, or, capturing nothing, an empty one.
+        let (env, value, env_mode) = match &value.kind {
+            ExprKind::StructLit { struct_id, .. } => {
+                let mode = self.signatures[def.0 as usize].params.first().map_or(Mode::Borrow, |param| param.2);
+                (*struct_id, value, mode)
+            }
+            _ => {
+                let id = self.types.add_struct(StructDef {
+                    name: Symbol::intern(&format!("{}_local{}_env", decl.name.name, self.generic_local_fns.len())),
+                    fields: Vec::new(),
+                    span,
+                    derives_copy: true,
+                    has_drop: false,
+                    drops_fields: true,
+                    origin: None,
+                    declaring_module: self.current_module,
+                });
+                self.closure_calls.insert(id, ClosureCall { def, once: false, owned: false });
+                let ty = self.types.intern(TyKind::Struct(id));
+                (id, Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: Vec::new() }, span }, Mode::Borrow)
+            }
+        };
+        let env_ty = value.ty;
+        let captured: Vec<(Symbol, Ty)> = self
+            .types
+            .struct_def(env)
+            .fields
+            .iter()
+            .map(|field| match *self.types.kind(field.ty) {
+                TyKind::Ref { inner, .. } => (field.name, inner),
+                _ => (field.name, field.ty),
+            })
+            .collect();
+        // The signature each call is checked against, and instantiates.
+        let generic = DefId(self.signatures.len() as u32);
+        let mut params = vec![(Symbol::intern("env"), env_ty, env_mode, span)];
+        params.extend(named);
+        self.signatures.push(Signature { decl: decl.name.span,
+            params,
+            ret,
+            abi: None,
+            is_unsafe: decl.is_unsafe,
+            overflow: self.active_overflow,
+            fp: self.active_fp,
+            borrows: None,
+            generics,
+        });
+        self.generic_local_by_env.insert(env, self.generic_local_fns.len());
+        self.generic_local_fns.push(GenericLocalFn {
+            name: decl.name.name,
+            lambda,
+            base,
+            type_params,
+            outer,
+            owned_loop_borrowed_handles,
+            captured,
+            env,
+            env_ty,
+            env_mode,
+            generic,
+            failed,
+            in_unsafe,
+            built: HashSet::new(),
+            span,
+        });
+        let local = self.declare(Some(decl.name.name), env_ty, decl.name.span);
+        out.push(Stmt::Let { local, init: Some(value) });
+    }
+
+    /// `[GRM-28]` — a call of a generic local function: checked against its generic signature, its
+    /// environment (the value its name holds, read where the call is) first, so the type arguments
+    /// are inferred and checked as a generic function's are; the instance's body is then made, once
+    /// for each set of type arguments.
+    fn synth_generic_local_call(&mut self, index: usize, args: &[ast::Arg], written: Vec<Ty>, span: Span) -> Expr {
+        let entry = self.generic_local_fns[index].clone();
+        if entry.failed {
+            for arg in args {
+                let _ = self.synth(&arg.value);
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let name = ast::Expr {
+            id: ast::NodeId::DUMMY,
+            kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: entry.name, span }] },
+            span,
+        };
+        let mut call_args = vec![ast::Arg { name: None, value: name, span }];
+        call_args.extend(args.iter().cloned());
+        // The enclosing function's own type parameters are what they are here: themselves where its
+        // body is checked opaquely, its instance's arguments where an instance's is.
+        // Its own are written (`ident[int](5)`) or inferred.
+        let mut explicit: Vec<Ty> = (0..entry.base)
+            .map(|slot| {
+                let name = self.current_generics[slot].name;
+                match entry.type_params.get(&name) {
+                    Some(&ty) => ty,
+                    None => self.types.intern(TyKind::Param { index: slot as u32, name }),
+                }
+            })
+            .collect();
+        explicit.extend(written);
+        let callee = self.generic_local_callee.replace((entry.env, span));
+        let call = self.synth_generic_call(entry.generic, entry.name, &call_args, explicit, None, span);
+        self.generic_local_callee = callee;
+        if let ExprKind::Call { callee, .. } = &call.kind
+            && !self.generic_local_fns[index].built.contains(callee)
+            && let Some(key) = self.instances.iter().find(|(_, instance)| **instance == *callee).map(|(key, _)| key.clone())
+            && key.def == entry.generic
+            && !key.args.iter().any(|&arg| self.types.is_generic(arg))
+        {
+            let callee = *callee;
+            self.generic_local_fns[index].built.insert(callee);
+            self.generic_local_instance(&entry, callee, &key.args);
+        }
+        call
+    }
+
+    /// `[GRM-28]` — the generic local function a name is, where it is read: a local of the block, or
+    /// a capture of a closure in it.
+    fn generic_local_named(&self, name: Symbol) -> Option<usize> {
+        let ty = match self.lookup(name) {
+            Some(local) => self.locals[local.0 as usize].ty,
+            None => *self.captures.as_ref()?.outer.get(&name)?,
+        };
+        match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.generic_local_by_env.get(&id).copied(),
+            _ => None,
+        }
+    }
+
+    /// `[GRM-28]` — a generic local function's name read as a value: its call's own read, or, as a
+    /// generic function's name is (`[TYP-16]`), no one function and `E2060`.
+    fn generic_local_value(&mut self, value: Expr, name: Symbol) -> Expr {
+        let TyKind::Struct(id) = *self.types.kind(value.ty) else { return value };
+        if !self.generic_local_by_env.contains_key(&id) {
+            return value;
+        }
+        if self.generic_local_callee == Some((id, value.span)) {
+            return value;
+        }
+        self.sink.emit(
+            Diagnostic::error(codes::E2060, value.span, format!("`{name}` is generic, so it is not one function"))
+                .help(format!("call it, `{name}(x)` or `{name}[int](x)`, or wrap a call in a lambda, `fn(x: int) => {name}(x)`"))
+                .note("a generic is a recipe; each instantiation is its own function [TYP-16], [GRM-28]"),
+        );
+        Expr { ty: self.common.error, kind: ExprKind::Error, span: value.span }
+    }
+
+    /// `[GRM-28]` — the body of a generic local function's instance: a function of its environment,
+    /// checked with its type parameters the instance's arguments, capturing as the closure made
+    /// where it is declared does (the environment's fields). A diagnostic only these arguments
+    /// give says which they are, as a generic function's instance does.
+    fn generic_local_instance(&mut self, entry: &GenericLocalFn, def: DefId, args: &[Ty]) {
+        let generics = self.signatures[entry.generic.0 as usize].generics.clone();
+        let saved_type_params = std::mem::replace(&mut self.type_params, entry.type_params.clone());
+        for (param, &ty) in generics.iter().zip(args).skip(entry.base) {
+            self.type_params.insert(param.name, ty);
+        }
+        let declared = self.signatures[entry.generic.0 as usize].params.clone();
+        let params: Vec<(Symbol, Ty, Mode, Span)> =
+            declared.iter().skip(1).map(|&(name, ty, mode, at)| (name, self.substitute_ty(ty, args), mode, at)).collect();
+        let ret = self.substitute_ty(self.signatures[entry.generic.0 as usize].ret, args);
+        // While the body is checked, a call of itself names its parameters alone, as a local
+        // function's reserved signature does (`synth_local_fn_self_call`); `push_closure` puts the
+        // environment first after.
+        self.signatures[def.0 as usize].params = params.clone();
+        self.signatures[def.0 as usize].ret = ret;
+        let number = self.closure_numbers;
+        self.closure_numbers += 1;
+        let skipped_before = self.skipped_instances;
+        let watch = CaptureWatch {
+            outer: entry.outer.clone(),
+            owned_loop_borrowed_handles: entry.owned_loop_borrowed_handles.clone(),
+            found: entry.captured.clone(),
+            env: Some((LocalId(0), entry.env)),
+            captures_by_move: false,
+        };
+        self.local_fn_self.push(LocalFnSelf { name: entry.name, def, depth: self.lambda_depth + 1, env: Some(entry.env_mode), probing: false });
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, entry.in_unsafe);
+        let earlier = self.sink.take();
+        let (body, _, locals, _) = self.check_lambda_body(
+            &entry.lambda,
+            &params,
+            Some(ret),
+            watch,
+            Some((Symbol::intern("env"), entry.env_ty, entry.env_mode, entry.span)),
+        );
+        let own = self.sink.take();
+        for diagnostic in earlier {
+            self.sink.emit(diagnostic);
+        }
+        let used_with = generics
+            .iter()
+            .zip(args)
+            .skip(entry.base)
+            .map(|(param, &ty)| format!("`{}` = `{}`", param.name, self.types.display(ty)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        for diagnostic in own {
+            self.sink.emit(diagnostic.note(format!("in `{}` used with {used_with}", entry.name)));
+        }
+        self.in_unsafe = outer_unsafe;
+        self.local_fn_self.pop();
+        self.type_params = saved_type_params;
+        self.push_closure(
+            &params,
+            ret,
+            locals,
+            body,
+            Some((Symbol::intern("env"), entry.env_ty, entry.env_mode, false)),
+            entry.span,
+            number,
+            skipped_before,
+            Some(def),
+        );
+        // The environment is the declaration's, which every instance takes: none of them is its
+        // closure (each environment has one, `[LT-42]`'s narrowing of a capture by its closure's
+        // access), so each is a function of it, and the capture is the whole place.
+        if let Some(function) = self.lambdas.last_mut().filter(|function| function.def == def) {
+            function.closure_environment = None;
+        }
     }
 
     /// `[GRM-28]`, `[UNS-1]` — a call to an `unsafe` local function that captures (one that does not
