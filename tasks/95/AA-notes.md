@@ -62,6 +62,16 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
     `VER-3/accept_a_deprecated_item_used_in_its_own_module.em`,
     `VER-3/reject_a_deprecated_attribute_without_its_version_and_note.em`; support module
     `VER-3/support/old.em`.
+* **D-850 `[CLO-6]`** — only `once fn` is single-call: an `owned f: fn(A) -> R` parameter is
+  called any number of times (a loop was `E3041`), and a closure that moves a capture out given
+  to one is `E3030` at the argument, whose help names `once fn` (the instance is no longer made,
+  so the store inside it no longer repeats the error, `[DIA-14]`). An explicit bound
+  `[F: once fn(A) -> R]` is a `once fn` bound. Tests changed to the rule:
+  `CLO-6/reject_owned_callable_parameter_cannot_be_called_twice.em` became
+  `accept_an_owned_callable_parameter_is_called_any_number_of_times.em` (three profiles: twice,
+  in a `for`, in a `while`); `accept_once_closure_satisfies_owned_callable_parameter.em` became
+  `reject_a_once_closure_given_to_an_owned_fn_parameter.em` (and the same closure given to a
+  `once fn` parameter compiles); `accept_owned_callable_parameter_is_consumed_once.em`'s comment.
 
 ## Not done
 
@@ -87,6 +97,11 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `record_member_deprecations` (in `declare_names`), `note_item_use` / `warn_deprecated` at the
   resolution sites, `method_deprecation` read in `check_method_visible`; the attribute table marks
   `@deprecated` built (`@allow` stays `E0900`).
+* `ember_typeck`: `CallableBound.once` from the written `once fn` and a new `owned` (the
+  parameter's mode, which ODR-189's storing reads through `consumed_callable_parameter`);
+  `is_owned_callable_param` (the consuming call) is `once fn` only;
+  `reject_once_closures_for_callable_bounds` returns whether it refused, and the call is then
+  not instantiated.
 
 ## Defects found
 

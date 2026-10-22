@@ -1452,11 +1452,13 @@ struct GenericParam {
 struct CallableBound {
     params: Vec<FnParam>,
     ret: Ty,
-    /// `[CLO-6]` — "A parameter written `owned f: fn(A) -> R` is a generic
-    /// bounded by `CallableOnce`; `f: fn(A) -> R` and `mut f: fn(A) -> R` are
-    /// bounded by `Callable`." Calling a `CallableOnce` consumes it, so a
-    /// second call is `E3040` under `[OWN-3]` with no analysis of its own.
+    /// `[CLO-6]` — written `once fn(A) -> R`: calling it consumes it, so a second call is
+    /// `E3040` under `[OWN-3]` with no analysis of its own. Only `once fn` is single-call
+    /// (D-850): `owned f: fn(A) -> R` is called any number of times.
     once: bool,
+    /// `[CLO-3]` (ODR-189) — the parameter is taken over (`owned`): an owned callable value in
+    /// its function, which may store it.
+    owned: bool,
     /// `[FN-6b]` — the callable-type boundary fact, distinct from the outer
     /// parameter mode that selects `Callable` versus `CallableOnce`.
     latebound: bool,
@@ -4424,9 +4426,13 @@ impl<'a> Checker<'a> {
             declared[at].bindings.extend(found);
         }
         for (at, bound) in callables {
+            // `[CLO-14]`, `[CLO-6]` — `F: once fn(A) -> R` is the parameter form's `once fn`.
+            let once = matches!(bound.kind, ast::TypeKind::Fn { once: true, .. });
+            self.once_fn_parameter = once;
             let resolved = self.resolve_type(bound);
+            self.once_fn_parameter = false;
             if let TyKind::Fn { abi: None, latebound, is_unsafe, params, ret, .. } = self.types.kind(resolved).clone() {
-                declared[at].callable = Some(CallableBound { params, ret, once: false, latebound, is_unsafe });
+                declared[at].callable = Some(CallableBound { params, ret, once, owned: false, latebound, is_unsafe });
             }
         }
         for param in declared.iter_mut().filter(|param| param.projection.is_none()) {
@@ -4551,8 +4557,11 @@ impl<'a> Checker<'a> {
         let bound = CallableBound {
             params: params.clone(),
             ret: *ret,
-            // `[CLO-6]` — the mode already selects the bound.
-            once: mode == ast::Mode::Owned,
+            // `[CLO-6]` (D-850) — only `once fn` is called at most once; an `owned f: fn(A) -> R`
+            // is taken over and called any number of times (the parser makes a `once fn`
+            // parameter `owned`, as its call consumes it).
+            once: matches!(ty.kind, ast::TypeKind::Fn { once: true, .. }),
+            owned: mode == ast::Mode::Owned,
             latebound: *latebound,
             is_unsafe: *is_unsafe,
         };
@@ -16791,6 +16800,7 @@ impl<'a> Checker<'a> {
                 .collect(),
             ret: self.substitute_ty(bound.ret, args),
             once: bound.once,
+            owned: bound.owned,
             latebound: bound.latebound,
             is_unsafe: bound.is_unsafe,
         });
@@ -33667,7 +33677,8 @@ impl<'a> Checker<'a> {
         // This is the generic body's check, with the parameter opaque; each instance converts its
         // concrete argument as the rules below do (a function or capture-free lambda by its bits,
         // an `owned fn` by `MakeCallable`, a lambda that borrows or moves a capture out refused).
-        if let Some((signature, true)) = self.callable_bound_of(expr.ty)
+        if let Some((signature, _)) = self.callable_bound_of(expr.ty)
+            && self.consumed_callable_parameter(expr.ty)
             && let TyKind::Fn { params: found, ret: found_ret, latebound: found_late, is_unsafe: found_unsafe, .. } =
                 self.types.kind(signature).clone()
             && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe } =
@@ -37152,13 +37163,17 @@ impl<'a> Checker<'a> {
         if unmet {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        self.reject_once_closures_for_callable_bounds(
+        // A closure refused at its argument would be refused again inside the instance
+        // ([DIA-14]).
+        if self.reject_once_closures_for_callable_bounds(
             args,
             &declared_modes,
             &generics,
             &checked_args,
             &slots,
-        );
+        ) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         // Preserve a known capture-free function value through static
         // dispatch. Its body may carry a more precise late-bound result
@@ -37531,13 +37546,17 @@ impl<'a> Checker<'a> {
         if unmet {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        self.reject_once_closures_for_callable_bounds(
+        // A closure refused at its argument would be refused again inside the instance
+        // ([DIA-14]).
+        if self.reject_once_closures_for_callable_bounds(
             args,
             &declared_modes,
             &generics,
             &checked_args,
             &slots,
-        );
+        ) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         let instance = if instantiate {
             self.instantiate_method(def, &substitution, name, span)
@@ -37622,7 +37641,8 @@ impl<'a> Checker<'a> {
         generics: &[GenericParam],
         checked_args: &[Option<Expr>],
         slots: &[Option<usize>],
-    ) {
+    ) -> bool {
+        let mut rejected = false;
         for (arg_index, arg) in args.iter().enumerate() {
             let Some(param_index) = slots[arg_index] else { continue };
             let Some(&(param_ty, _)) = declared.get(param_index) else { continue };
@@ -37658,7 +37678,9 @@ impl<'a> Checker<'a> {
                 .help(help)
                 .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
             );
+            rejected = true;
         }
+        rejected
     }
 
     /// `[GRM-28]` — a local function calling itself: directly while it
@@ -37858,6 +37880,13 @@ impl<'a> Checker<'a> {
             _ => self.callable_bound_of(inner).is_some(),
         };
         if callable { self.read_through(value) } else { value }
+    }
+
+    /// `[CLO-3]` (ODR-189) — whether `ty` is the opaque type of a parameter taken over
+    /// (`owned f: fn(A) -> R`, or `once fn`).
+    fn consumed_callable_parameter(&self, ty: Ty) -> bool {
+        let TyKind::Param { index, .. } = *self.types.kind(ty) else { return false };
+        self.current_generics.get(index as usize).and_then(|param| param.callable.as_ref()).is_some_and(|bound| bound.owned)
     }
 
     fn callable_bound_of(&mut self, ty: Ty) -> Option<(Ty, bool)> {
@@ -57667,8 +57696,10 @@ fn field_vis(kind: ast::VisKind) -> FieldVis {
 /// `[CLO-6]` — this syntax creates the implicit `CallableOnce` bound. The
 /// callable's own `fn(...)` type records its argument modes; the outer
 /// `owned` mode selects consumption of the callee value.
+/// `[CLO-6]` (D-850) — a `once fn` parameter, whose call consumes it; an `owned f: fn(A) -> R`
+/// is called any number of times.
 fn is_owned_callable_param(param: &ast::Param) -> bool {
-    param.mode == ast::Mode::Owned && is_callable_param(param)
+    matches!(param.kind, ast::ParamKind::Named { ty: ast::TypeExpr { kind: ast::TypeKind::Fn { once: true, .. }, .. }, .. })
 }
 
 fn is_callable_param(param: &ast::Param) -> bool {
