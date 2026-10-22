@@ -101,33 +101,51 @@ fn version_loops(
     // Outer loops first: a loop's copies then carry the loops inside it, and
     // each of those is versioned in turn. A header that does not qualify
     // never starts to, so it is not looked at again.
+    //
+    // D-811 — every loop that shares no block with a larger one is versioned
+    // in the same round, from the same facts: versioning one appends its
+    // copy and its entry test and sends only its own header's entries
+    // through the test, so another loop's blocks, values and ranges are as
+    // they were (the copy computes what the loop does). The facts are made
+    // again only for the loops inside a versioned one, once per level of
+    // nesting, not once per loop.
     let mut settled: HashSet<usize> = HashSet::new();
     let mut count = 0;
     loop {
         let facts = BodyFacts::new(body, types);
         let ranges = Analysis::run(body, types, common, returns);
-        let mut best: Option<Plan> = None;
+        let mut plans = Vec::new();
         for header in 0..body.blocks.len() {
             if settled.contains(&header) {
                 continue;
             }
             match plan(body, types, summaries, &facts, ranges.as_ref(), header) {
-                Some(plan) => {
-                    if best.as_ref().map_or(true, |best| plan.region.len() > best.region.len()) {
-                        best = Some(plan);
-                    }
-                }
+                Some(plan) => plans.push(plan),
                 None => {
                     settled.insert(header);
                 }
             }
         }
-        let Some(plan) = best else { break };
-        let header = plan.header;
-        let fast = apply(body, types, plan);
-        settled.insert(header);
-        settled.insert(fast);
-        count += 1;
+        if plans.is_empty() {
+            break;
+        }
+        // The largest first (of two as large, the first header), each taken
+        // unless a loop already taken holds one of its blocks: that one is
+        // inside it, and its copies carry it to the next round.
+        plans.sort_by(|a, b| b.region.len().cmp(&a.region.len()));
+        let mut taken: HashSet<usize> = HashSet::new();
+        for plan in plans {
+            let blocks: Vec<usize> = plan.region.iter().copied().chain([plan.header]).collect();
+            if blocks.iter().any(|block| taken.contains(block)) {
+                continue;
+            }
+            taken.extend(blocks);
+            let header = plan.header;
+            let fast = apply(body, types, plan);
+            settled.insert(header);
+            settled.insert(fast);
+            count += 1;
+        }
     }
     count
 }

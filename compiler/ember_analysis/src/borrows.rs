@@ -4378,6 +4378,11 @@ fn check_point(
             if place.local == loan.borrower {
                 continue;
             }
+            // Writing a reference replaces the reference, not what it refers to: a loan taken
+            // through it (`*x`, the "best so far" element a loop keeps) outlives the write.
+            if matches!(access, Access::Write) && borrowed_through_reference(body, types, place, loan_place) {
+                continue;
+            }
             // `[CELL-5]` — a guard's loan (a borrow of a `RefCell`'s `value`
             // field) never conflicts statically with another guard's borrow:
             // overlapping `borrow`/`borrow_mut` are allowed here and refused
@@ -4897,6 +4902,13 @@ fn collect_reads(body: &Body) -> HashMap<LocalId, Vec<Span>> {
         record(accesses, block.terminator_span, &mut reads);
     }
     reads
+}
+
+/// Whether `loan` lies behind a reference stored at `written`: it extends `written` by a
+/// dereference of a `ref`/`mut ref` or raw pointer (never an owning pointer, whose write drops).
+fn borrowed_through_reference(body: &Body, types: &TypeTable, written: &Place, loan: &Place) -> bool {
+    loan.projection.get(written.projection.len()) == Some(&Projection::Deref)
+        && matches!(types.kind(place_ty(body, types, written)), TyKind::Ref { .. } | TyKind::Ptr { .. })
 }
 
 /// Two places overlap when one is a prefix of the other (§4.7 step 5).

@@ -5017,6 +5017,30 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-261 — D-811 in part: the MIR passes keep pace with a function's size; D-819's element half
+
+2026-10-22 (lead). Loop versioning (`loop_version.rs`) took one round per loop it versioned, each
+round re-planning the whole function: it now plans every loop of a nesting level, takes those whose
+regions (and headers) are disjoint, largest first, and versions them in one round. Region inference
+(`regions.rs`) cloned every value state at every point: `ValueState` is now copy-on-write chunks of
+32 facts (`Rc`), a merge skips chunks shared or already covered, and the worklist runs one loop group
+at a time (Tarjan's strongly connected components in topological order, reverse postorder inside),
+queueing only successors in the group. The 807-line function of D-811 checks and builds in 5.9 s
+(was 190 s) in 72 MB (was 2.4 GB); the generated C is unchanged. D-811 stays open for
+`install_callable_regions_all` and the inlining bound.
+
+D-819 (S's G5), the element half: `for x in xs: if …: best = x` kept a borrow of an element across
+turns and was refused at the `for`, which binds `x` anew each turn. `[BRW-1]`: a reference local is
+never re-seated (`r = e` writes through `r`), so a write of a reference local itself is a binding,
+which writes nothing the reference refers to; the conflict check no longer counts it against a loan
+taken through that reference (`borrowed_through_reference`). And a borrow through several
+references is bounded by each, from the innermost out, up to and including the first shared one
+(`borrow_through_facts`): what lies behind a shared reference stays put however the outer ones are
+used. A method borrowing only the fields it uses (`[BRW-10]`) routes each field's inner view slots
+as an ordinary borrow does (D-470), not with the field's own loan. The iterator half (`for k in m:`,
+`m.keys()`) is `[LT-1]` rule 1 tying `next`'s result to the iterator; ruled ODR-196 (`@borrows(self.f)`),
+built by helper X.
+
 ## ADR-260 — Helper P merged: Annex B (hot reload)
 
 2026-10-22 (helper P, `tasks/95/P-notes.md`). Built and tested: `[HR-23]` (a reload built after a

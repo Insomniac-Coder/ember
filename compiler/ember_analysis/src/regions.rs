@@ -39,6 +39,8 @@
 //! the value after it even though both occupy the same compiler region slot.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::ops::{Index, IndexMut};
+use std::rc::Rc;
 
 use ember_mir::{
     AggregateKind, BasicBlockId, Body, Builtin, CallableAccessSummary as CallAccessContract, FuncRef,
@@ -247,7 +249,7 @@ pub struct Regions {
     /// The possible value roots in every local region slot immediately before
     /// each MIR point. This is compile-time-only `[LT-21]` provenance; it is
     /// deliberately absent from layout, ABI, and generated code.
-    values_at: HashMap<Point, Vec<ValueFact>>,
+    values_at: HashMap<Point, ValueState>,
     /// `[TYP-15]` — the place each borrow expression borrows, by the loan's
     /// region: a store through the reference lands there (D-352).
     loan_places: HashMap<RegionVid, Place>,
@@ -269,6 +271,13 @@ struct ValueFact {
 }
 
 impl ValueFact {
+    /// Whether `other` adds nothing to this fact: merging it would change nothing.
+    fn covers(&self, other: &ValueFact) -> bool {
+        (self.imprecise || !other.imprecise)
+            && other.roots.iter().all(|root| self.roots.contains(root))
+            && other.origins.iter().all(|origin| self.origins.contains(origin))
+    }
+
     fn merge(&mut self, other: &ValueFact) -> bool {
         let old_roots = self.roots.len();
         self.roots.extend(other.roots.iter().copied());
@@ -279,6 +288,54 @@ impl ValueFact {
         self.roots.len() != old_roots
             || self.origins.len() != old_origins
             || self.imprecise != old_imprecise
+    }
+}
+
+/// D-811 — the value facts of every region slot at one point. A statement changes a few of them,
+/// and a state is kept at every point (`values_at`), at each block's entry, and before each call:
+/// so the facts sit in chunks a state shares with the states it was copied from until it writes one
+/// (copy on write). A copy is a few pointers, and a merge passes over the chunks two states share.
+#[derive(Clone, Debug)]
+struct ValueState {
+    chunks: Vec<Rc<Vec<ValueFact>>>,
+}
+
+const VALUE_CHUNK: usize = 32;
+
+impl ValueState {
+    /// `len` slots, each with no facts.
+    fn new(len: usize) -> ValueState {
+        let blank = Rc::new(vec![ValueFact::default(); VALUE_CHUNK]);
+        ValueState { chunks: vec![blank; len.div_ceil(VALUE_CHUNK)] }
+    }
+
+    /// Merges `other` into this state: whether that changed it. A chunk is copied only when
+    /// `other` adds to it.
+    fn merge(&mut self, other: &ValueState) -> bool {
+        let mut changed = false;
+        for (mine, theirs) in self.chunks.iter_mut().zip(&other.chunks) {
+            if Rc::ptr_eq(mine, theirs) || mine.iter().zip(theirs.iter()).all(|(mine, theirs)| mine.covers(theirs)) {
+                continue;
+            }
+            for (mine, theirs) in Rc::make_mut(mine).iter_mut().zip(theirs.iter()) {
+                changed |= mine.merge(theirs);
+            }
+        }
+        changed
+    }
+}
+
+impl Index<RegionVid> for ValueState {
+    type Output = ValueFact;
+
+    fn index(&self, slot: RegionVid) -> &ValueFact {
+        &self.chunks[slot / VALUE_CHUNK][slot % VALUE_CHUNK]
+    }
+}
+
+impl IndexMut<RegionVid> for ValueState {
+    fn index_mut(&mut self, slot: RegionVid) -> &mut ValueFact {
+        &mut Rc::make_mut(&mut self.chunks[slot / VALUE_CHUNK])[slot % VALUE_CHUNK]
     }
 }
 
@@ -642,8 +699,8 @@ impl Regions {
         body: &Body,
         types: &TypeTable,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
-    ) -> HashMap<Point, Vec<ValueFact>> {
-        let mut entry = vec![ValueFact::default(); self.points.len()];
+    ) -> HashMap<Point, ValueState> {
+        let mut entry = ValueState::new(self.points.len());
         for (local, _) in body.args() {
             for slot in &self.local_regions[local.0 as usize] {
                 entry[slot.region].roots.insert(slot.region);
@@ -651,23 +708,35 @@ impl Regions {
             }
         }
 
-        let mut block_in: Vec<Option<Vec<ValueFact>>> = vec![None; body.blocks.len()];
+        let mut block_in: Vec<Option<ValueState>> = vec![None; body.blocks.len()];
         if !body.blocks.is_empty() {
             block_in[0] = Some(entry);
         }
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (block_index, block) in body.blocks.iter().enumerate() {
+        // D-811 — the blocks a group at a time: a loop (with the loops inside it) or a block in no
+        // loop, the groups in the order control reaches them, and each group run until its facts
+        // settle before any block after it runs, so the code after a loop runs once, on the loop's
+        // final facts. Within a group a worklist in reverse postorder runs a block again only when
+        // what reaches it changed.
+        let order = reverse_postorder(body);
+        let mut rank = vec![usize::MAX; body.blocks.len()];
+        for (position, block) in order.iter().enumerate() {
+            rank[*block] = position;
+        }
+        let groups = loop_groups(body);
+        let mut group_of = vec![usize::MAX; body.blocks.len()];
+        for (index, group) in groups.iter().enumerate() {
+            for block in group {
+                group_of[*block] = index;
+            }
+        }
+        for (index, group) in groups.iter().enumerate() {
+            let mut pending: BTreeSet<usize> = group.iter().filter(|block| block_in[**block].is_some()).map(|block| rank[*block]).collect();
+            while let Some(position) = pending.pop_first() {
+                let block_index = order[position];
+                let block = &body.blocks[block_index];
                 let Some(mut state) = block_in[block_index].clone() else { continue };
-                for (index, stmt) in block.stmts.iter().enumerate() {
-                    self.transfer_statement(
-                        body,
-                        types,
-                        &mut state,
-                        Point { block: block_index, index },
-                        &stmt.kind,
-                    );
+                for (statement, stmt) in block.stmts.iter().enumerate() {
+                    self.transfer_statement(body, types, &mut state, Point { block: block_index, index: statement }, &stmt.kind);
                 }
                 self.transfer_terminator(
                     body,
@@ -678,17 +747,17 @@ impl Regions {
                     call_contract,
                 );
                 for successor in region_successors(&block.terminator) {
-                    let target = &mut block_in[successor.0 as usize];
-                    match target {
-                        Some(existing) => {
-                            for (old, incoming) in existing.iter_mut().zip(&state) {
-                                changed |= old.merge(incoming);
-                            }
-                        }
-                        None => {
+                    let successor = successor.0 as usize;
+                    let changed = match &mut block_in[successor] {
+                        Some(existing) => existing.merge(&state),
+                        target @ None => {
                             *target = Some(state.clone());
-                            changed = true;
+                            true
                         }
+                    };
+                    // A later group's block runs when its group does, on everything that reaches it.
+                    if changed && group_of[successor] == index {
+                        pending.insert(rank[successor]);
                     }
                 }
             }
@@ -712,7 +781,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &mut [ValueFact],
+        state: &mut ValueState,
         point: Point,
         kind: &StmtKind,
     ) {
@@ -745,13 +814,13 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &mut [ValueFact],
+        state: &mut ValueState,
         point: Point,
         terminator: &Terminator,
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
     ) {
         if let Terminator::Call { func, args, dest, .. } = terminator {
-            let before = state.to_vec();
+            let before = state.clone();
             let assignments = self.call_result_facts(
                 body,
                 types,
@@ -796,7 +865,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &mut [ValueFact],
+        state: &mut ValueState,
         place: &Place,
         mut assignments: HashMap<RegionVid, ValueFact>,
         value: ValueFact,
@@ -818,7 +887,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &[ValueFact],
+        state: &ValueState,
         place: &Place,
         depth: usize,
     ) -> StoreDestinations {
@@ -831,7 +900,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &[ValueFact],
+        state: &ValueState,
         place: &Place,
         depth: usize,
         out: &mut StoreDestinations,
@@ -896,11 +965,11 @@ impl Regions {
     }
 
     /// Everything an rvalue's result carries, as one fact.
-    fn rvalue_value_fact(&self, body: &Body, types: &TypeTable, state: &[ValueFact], point: Point, rvalue: &Rvalue) -> ValueFact {
+    fn rvalue_value_fact(&self, body: &Body, types: &TypeTable, state: &ValueState, point: Point, rvalue: &Rvalue) -> ValueFact {
         match rvalue {
             Rvalue::Ref { place, .. } => {
                 let mut fact = self.fact_for_place(state, place);
-                fact.merge(&self.through_facts(state, place));
+                fact.merge(&self.borrow_through_facts(state, place));
                 if let Some(loan) = self.loan_region.get(&point) {
                     fact.roots.insert(*loan);
                 }
@@ -932,7 +1001,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &[ValueFact],
+        state: &ValueState,
         point: Point,
         func: &FuncRef,
         args: &[Operand],
@@ -989,7 +1058,7 @@ impl Regions {
     /// The fact of what a reference operand points to: the places its loans
     /// borrow, where they are known, else the reference's own fact (which
     /// holds its target's as well as its own loan).
-    fn pointee_fact(&self, body: &Body, types: &TypeTable, state: &[ValueFact], operand: &Operand, rest: &[Projection]) -> ValueFact {
+    fn pointee_fact(&self, body: &Body, types: &TypeTable, state: &ValueState, operand: &Operand, rest: &[Projection]) -> ValueFact {
         let (Operand::Copy(place) | Operand::Move(place)) = operand else { return ValueFact::default() };
         let inner = match *types.kind(place_type(body, types, place)) {
             TyKind::Ref { inner, .. } => inner,
@@ -1022,7 +1091,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &[ValueFact],
+        state: &ValueState,
         func: &FuncRef,
         args: &[Operand],
         call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
@@ -1243,7 +1312,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &[ValueFact],
+        state: &ValueState,
         point: Point,
         destination: &Place,
         rvalue: &Rvalue,
@@ -1256,25 +1325,18 @@ impl Regions {
                     let Some(loan) = self.loan_region.get(&point).copied() else {
                         return result;
                     };
+                    // A `ref Pair` has slots rooted at `Deref`: each slot within a selected field
+                    // holds what the place's view there borrows (D-470, `[LT-20]`), not this loan,
+                    // which is of the field's storage and is the reference's own slot's (below).
                     for path in paths {
-                        let source = project_place(place, path);
-                        let mut fact = self.fact_for_place(state, &source);
-                        fact.merge(&self.through_facts(state, &source));
-                        fact.roots.insert(loan);
-                        if self.borrows_own_storage(&source) {
-                            fact.origins.insert(match body.local(source.local).kind {
-                                LocalKind::Arg => Origin::Param(source.local),
-                                _ => Origin::Local(source.local),
-                            });
-                        }
-                        // A `ref Pair` has slots rooted at `Deref`; route the
-                        // selected source field to its corresponding slot
-                        // rather than copying a whole-pair fact to every slot.
-                        let mut target_path = vec![Projection::Deref];
+                        let mut target_path = destination.projection.clone();
+                        target_path.push(Projection::Deref);
                         target_path.extend(path.iter().cloned());
-                        let target = project_place(destination, &target_path);
-                        for destination in self.assigned_place_regions(&target) {
-                            result.insert(destination, fact.clone());
+                        for slot in &self.local_regions[destination.local.0 as usize] {
+                            if path_is_prefix(&target_path, &slot.projection) {
+                                let below = &slot.projection[destination.projection.len() + 1..];
+                                result.insert(slot.region, self.fact_for_place(state, &project_place(place, below)));
+                            }
                         }
                     }
                     // The reference's own slot holds this loan too, as an
@@ -1375,7 +1437,7 @@ impl Regions {
         &self,
         body: &Body,
         types: &TypeTable,
-        state: &[ValueFact],
+        state: &ValueState,
         point: Point,
         func: &FuncRef,
         args: &[Operand],
@@ -1520,7 +1582,7 @@ impl Regions {
 
     fn install_facts(
         &self,
-        state: &mut [ValueFact],
+        state: &mut ValueState,
         destinations: &[RegionVid],
         mut assignments: HashMap<RegionVid, ValueFact>,
     ) {
@@ -1529,7 +1591,7 @@ impl Regions {
         }
     }
 
-    fn clear_place_facts(&self, state: &mut [ValueFact], place: &Place) {
+    fn clear_place_facts(&self, state: &mut ValueState, place: &Place) {
         for destination in self.assigned_place_regions(place) {
             state[destination] = ValueFact::default();
         }
@@ -1537,7 +1599,7 @@ impl Regions {
 
     fn map_facts(
         &self,
-        state: &[ValueFact],
+        state: &ValueState,
         sources: &[RegionVid],
         destinations: &[RegionVid],
         result: &mut HashMap<RegionVid, ValueFact>,
@@ -1560,7 +1622,7 @@ impl Regions {
         }
     }
 
-    fn fact_for_place(&self, state: &[ValueFact], place: &Place) -> ValueFact {
+    fn fact_for_place(&self, state: &ValueState, place: &Place) -> ValueFact {
         if self.heap_reads.contains(place) {
             return ValueFact::default();
         }
@@ -1574,7 +1636,7 @@ impl Regions {
     /// What a result tied to `operand` carries: the operand's fact, or, when
     /// tied through a reference (`Elision::through`), the fact of the view it
     /// refers to (D-470). An operand that is not a reference keeps its own.
-    fn tied_fact(&self, body: &Body, types: &TypeTable, state: &[ValueFact], operand: &Operand, through: bool) -> ValueFact {
+    fn tied_fact(&self, body: &Body, types: &TypeTable, state: &ValueState, operand: &Operand, through: bool) -> ValueFact {
         if through
             && let Operand::Copy(place) | Operand::Move(place) = operand
             && matches!(types.kind(place_type(body, types, place)), TyKind::Ref { .. })
@@ -1584,7 +1646,7 @@ impl Regions {
         self.fact_for_operand(state, operand)
     }
 
-    fn fact_for_operand(&self, state: &[ValueFact], operand: &Operand) -> ValueFact {
+    fn fact_for_operand(&self, state: &ValueState, operand: &Operand) -> ValueFact {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => self.fact_for_place(state, place),
             Operand::Const(_) => ValueFact::default(),
@@ -1593,7 +1655,7 @@ impl Regions {
 
     fn fact_for_operand_at(
         &self,
-        state: &[ValueFact],
+        state: &ValueState,
         operand: &Operand,
         relative_projection: &[Projection],
     ) -> ValueFact {
@@ -1893,7 +1955,7 @@ impl Regions {
     /// place can be copied out of it, so what it reaches does not depend on
     /// the outer place (`MapKeys.next`'s `ref e.key` borrows the map, not the
     /// iterator); a mutable one cannot, and the outer borrow stays (D-470).
-    fn holding_facts(&self, state: &[ValueFact], place: &Place) -> ValueFact {
+    fn holding_facts(&self, state: &ValueState, place: &Place) -> ValueFact {
         let mut enclosing: Vec<&ViewRegionSlot> = self.local_regions[place.local.0 as usize]
             .iter()
             .filter(|slot| slot.projection.len() < place.projection.len() && path_is_prefix(&slot.projection, &place.projection))
@@ -1932,11 +1994,31 @@ impl Regions {
     /// The facts of every slot `place` lies strictly inside: a reference it
     /// is reached through, or a view whose storage holds it (`s[i]` of a
     /// span). A borrow of `place` holds only while each of those does.
-    fn through_facts(&self, state: &[ValueFact], place: &Place) -> ValueFact {
+    fn through_facts(&self, state: &ValueState, place: &Place) -> ValueFact {
         let mut fact = ValueFact::default();
         for slot in &self.local_regions[place.local.0 as usize] {
             if slot.projection.len() < place.projection.len() && path_is_prefix(&slot.projection, &place.projection) {
                 fact.merge(&state[slot.region]);
+            }
+        }
+        fact
+    }
+
+    /// `[BRW-6]` — what a borrow of `place` carries from the references it goes through: each
+    /// one's, from the innermost out, up to and including the first shared one. What lies behind
+    /// a shared reference stays put however the references outside it are used, so they do not
+    /// bound the borrow (an iterator's `ref K`, read through its `owner: ref Map`, is the map's).
+    fn borrow_through_facts(&self, state: &ValueState, place: &Place) -> ValueFact {
+        let mut through: Vec<&ViewRegionSlot> = self.local_regions[place.local.0 as usize]
+            .iter()
+            .filter(|slot| slot.projection.len() < place.projection.len() && path_is_prefix(&slot.projection, &place.projection))
+            .collect();
+        through.sort_by_key(|slot| std::cmp::Reverse(slot.projection.len()));
+        let mut fact = ValueFact::default();
+        for slot in through {
+            fact.merge(&state[slot.region]);
+            if !slot.unique {
+                break;
             }
         }
         fact
@@ -2561,6 +2643,92 @@ fn aggregate_field_projection(kind: AggregateKind, field: usize) -> Vec<Projecti
         }
         AggregateKind::Callable => Vec::new(),
     }
+}
+
+/// D-811 — the blocks reachable from the entry in groups, each a loop with the loops inside it
+/// (blocks each reachable from every other: a strongly connected set, Tarjan's) or one block in no
+/// loop, the groups in the order control reaches them: a group's blocks are reached only from its
+/// own and from earlier groups'.
+fn loop_groups(body: &Body) -> Vec<Vec<usize>> {
+    let count = body.blocks.len();
+    let mut groups = Vec::new();
+    if count == 0 {
+        return groups;
+    }
+    let successors: Vec<Vec<usize>> =
+        body.blocks.iter().map(|block| region_successors(&block.terminator).into_iter().map(|next| next.0 as usize).collect()).collect();
+    const UNSEEN: usize = usize::MAX;
+    let (mut seen_at, mut lowest, mut on_stack) = (vec![UNSEEN; count], vec![0; count], vec![false; count]);
+    let (mut stack, mut next) = (Vec::new(), 0);
+    // Each frame: a block, and how many of its successors have been looked at.
+    let mut frames: Vec<(usize, usize)> = Vec::new();
+    let mut enter = |block: usize, frames: &mut Vec<(usize, usize)>, stack: &mut Vec<usize>, seen_at: &mut Vec<usize>, lowest: &mut Vec<usize>, on_stack: &mut Vec<bool>| {
+        seen_at[block] = next;
+        lowest[block] = next;
+        next += 1;
+        stack.push(block);
+        on_stack[block] = true;
+        frames.push((block, 0));
+    };
+    enter(0, &mut frames, &mut stack, &mut seen_at, &mut lowest, &mut on_stack);
+    while let Some(frame) = frames.last_mut() {
+        let block = frame.0;
+        if let Some(&successor) = successors[block].get(frame.1) {
+            frame.1 += 1;
+            if seen_at[successor] == UNSEEN {
+                enter(successor, &mut frames, &mut stack, &mut seen_at, &mut lowest, &mut on_stack);
+            } else if on_stack[successor] {
+                lowest[block] = lowest[block].min(seen_at[successor]);
+            }
+            continue;
+        }
+        frames.pop();
+        if let Some(&(parent, _)) = frames.last() {
+            lowest[parent] = lowest[parent].min(lowest[block]);
+        }
+        if lowest[block] == seen_at[block] {
+            let mut group = Vec::new();
+            while let Some(member) = stack.pop() {
+                on_stack[member] = false;
+                group.push(member);
+                if member == block {
+                    break;
+                }
+            }
+            groups.push(group);
+        }
+    }
+    // Tarjan's finds a group after every group it reaches.
+    groups.reverse();
+    groups
+}
+
+/// The blocks reachable from the entry in reverse postorder (a block before its successors, but
+/// for the edges that close a loop).
+fn reverse_postorder(body: &Body) -> Vec<usize> {
+    let mut order = Vec::with_capacity(body.blocks.len());
+    if body.blocks.is_empty() {
+        return order;
+    }
+    let mut seen = vec![false; body.blocks.len()];
+    // Each frame: a block and the successors of it still to visit.
+    let mut stack: Vec<(usize, Vec<BasicBlockId>)> = vec![(0, region_successors(&body.blocks[0].terminator))];
+    seen[0] = true;
+    while let Some((block, successors)) = stack.last_mut() {
+        if let Some(next) = successors.pop() {
+            let next = next.0 as usize;
+            if !seen[next] {
+                seen[next] = true;
+                let next_successors = region_successors(&body.blocks[next].terminator);
+                stack.push((next, next_successors));
+            }
+        } else {
+            order.push(*block);
+            stack.pop();
+        }
+    }
+    order.reverse();
+    order
 }
 
 fn region_successors(terminator: &Terminator) -> Vec<BasicBlockId> {
