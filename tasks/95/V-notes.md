@@ -113,7 +113,8 @@ lone `}`) is the new `E0009` ("malformed literal", `docs/errors/E0009.md`); a NU
 `E5064`, as `[TXT-3]` says. `tests/conformance/LEX-25/reject_malformed_literals_are_their_own_code.em`.
 **Until the specification carries `E0009` and its rule, `ember_diag`'s
 `the_registry_and_the_specification_name_the_same_codes` and `tools/rule_index.py` fail on
-`E0009`** (Q-V4). The commit can be dropped alone.
+`E0009`** (Q-V4). The commit can be dropped alone, with `docs/errors/E5064.md` (commit `c48143d3`),
+whose failing example is the c-string NUL the lexer reports as `E5064` only after it.
 
 ### The first-week corpus
 
