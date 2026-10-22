@@ -103,6 +103,9 @@ pub struct ForeignImport {
     /// `[FFI-24d]` — each function whose Ember signature a `noexcept` the header added or removed
     /// changed, by its name (`Owner.name` for a method), with the note naming the cause.
     pub policy_changes: Vec<(String, String)>,
+    /// `[DIA-5]` — each declaration of the header, by a name the module binds it to: its text as
+    /// the header writes it, and `file:line`. An import's overlay modules carry their import's.
+    pub declarations: Vec<(String, String, String)>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -307,6 +310,7 @@ pub fn check(
             .map(|(name, member)| (Symbol::intern(name), member.as_ref().map(|(owner, name)| (Symbol::intern(owner), Symbol::intern(name)))))
             .collect())
         .collect();
+    checker.c_declared = modules.iter().map(|m| m.foreign.as_ref().map(|foreign| foreign.declarations.clone()).unwrap_or_default()).collect();
     checker.foreign_skipped = modules
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
@@ -314,6 +318,9 @@ pub fn check(
     for loaded in modules {
         if let Some(foreign) = loaded.foreign.as_ref().filter(|foreign| !foreign.policy_changes.is_empty()) {
             checker.changed_declarations.extend(changed_declarations(&loaded.module, &foreign.policy_changes));
+        }
+        if let Some(foreign) = loaded.foreign.as_ref().filter(|foreign| !foreign.declarations.is_empty()) {
+            checker.c_declarations.extend(c_declarations(&loaded.module, &foreign.declarations));
         }
     }
     checker.namespaces = vec![HashMap::new(); modules.len()];
@@ -608,6 +615,7 @@ pub fn check(
         }
     }
     checker.note_changed_declarations();
+    checker.note_c_declarations();
     checker.report_unneeded_unsafe();
     let callable_declarations = checker.callable_declarations(modules);
     // `[CT-1]` — the functions computing what is still to be evaluated go to
@@ -1257,6 +1265,59 @@ struct Signature {
     /// `[DIA-22]` — the function's name where it is declared, the secondary span of a diagnostic
     /// its signature causes at a call; `Span::DUMMY` for one the compiler made.
     decl: Span,
+}
+
+/// Whether `inner` lies within `outer`, in one file.
+fn span_within(inner: Span, outer: Span) -> bool {
+    inner.file == outer.file && outer.start <= inner.start && inner.end <= outer.end
+}
+
+/// `[DIA-5]` — the declarations of a module `import c` wrote (or of an overlay for one) that the
+/// header declared, by the spans of their items (an overlay's, of its entries), each with its text
+/// as the header writes it and `file:line`.
+fn c_declarations(module: &ast::Module, declared: &[(String, String, String)]) -> Vec<(Span, String, String)> {
+    let mut out = Vec::new();
+    let mut add = |name: &str, span: Span| {
+        if let Some((_, text, at)) = declared.iter().rev().find(|(declared, ..)| declared == name) {
+            out.push((span, text.clone(), at.clone()));
+        }
+    };
+    fn named(item: &ast::Item) -> Option<Symbol> {
+        item_name(item)
+    }
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::ExternBlock(block) => {
+                for inner in &block.items {
+                    if let Some(name) = named(inner) {
+                        add(name.as_str(), inner.span);
+                    }
+                }
+            }
+            ast::ItemKind::ExternClass(class) => add(class.name.name.as_str(), item.span),
+            ast::ItemKind::Overlay(overlay) => {
+                for entry in &overlay.items {
+                    let name = match &entry.kind {
+                        ast::OverlayItemKind::Fn { name, .. }
+                        | ast::OverlayItemKind::MacroFn { name, .. }
+                        | ast::OverlayItemKind::Type(name)
+                        | ast::OverlayItemKind::Enum(name)
+                        | ast::OverlayItemKind::Hide(name)
+                        | ast::OverlayItemKind::Rename { from: name, .. }
+                        | ast::OverlayItemKind::Class { name, .. } => name.name,
+                        ast::OverlayItemKind::Extend(_) => continue,
+                    };
+                    add(name.as_str(), entry.span);
+                }
+            }
+            _ => {
+                if let Some(name) = named(item) {
+                    add(name.as_str(), item.span);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// `[FFI-24d]` — the declarations of a module `import cpp` wrote whose names `changes` lists (a
@@ -2252,6 +2313,13 @@ struct Checker<'a> {
     /// (the call, and the patterns a `match` on it tests), for the errors there to carry the note.
     changed_declarations: HashMap<Span, String>,
     changed_calls: Vec<(Span, String)>,
+    /// `[DIA-5]` — each declaration a header gave a module (or an overlay entry stating one): its
+    /// span, its text as the header writes it, and `file:line`; and each call of a foreign
+    /// function, with its declaration's name span.
+    c_declarations: Vec<(Span, String, String)>,
+    foreign_calls: Vec<(Span, Span)>,
+    /// `[DIA-5]` — per module, the header's declarations by name, skipped ones included.
+    c_declared: Vec<Vec<(String, String, String)>>,
     /// `[DIA-18]` — for a foreign declaration not asserted safe to call, each fact a safe call
     /// still lacks and the declaration line that would supply it.
     foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
@@ -3088,6 +3156,9 @@ impl<'a> Checker<'a> {
             foreign_skipped: Vec::new(),
             changed_declarations: HashMap::new(),
             changed_calls: Vec::new(),
+            c_declarations: Vec::new(),
+            foreign_calls: Vec::new(),
+            c_declared: Vec::new(),
             foreign_cpp: Vec::new(),
             foreign_trampolines: Vec::new(),
             foreign_variables: Vec::new(),
@@ -4882,7 +4953,11 @@ impl<'a> Checker<'a> {
         } else {
             "the import skipped it, and said so at the import (W5002, W5001) [FFI-20a]"
         };
-        let diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}")).note(note);
+        let mut diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}")).note(note);
+        // `[DIA-5]` — the C declaration it skipped.
+        if let Some((_, text, at)) = self.c_declared.get(module).and_then(|declared| declared.iter().rev().find(|(declared, ..)| declared == name.as_str())) {
+            diagnostic = diagnostic.note(format!("declared in the header at {at}: `{text}` [DIA-5]"));
+        }
         self.sink.emit(diagnostic);
         true
     }
@@ -5081,7 +5156,8 @@ impl<'a> Checker<'a> {
                         format!("class `{}` declares no `init`, and its C++ base `{shown}` has no default constructor", decl.name.name),
                     )
                     .help("declare `fn init(self, …)` calling `super.init(…)` with the arguments of one of its constructors")
-                    .note("`super.init(…)` selects the C++ base constructor by arity and argument types [FFI-39b]"),
+                    .note("`super.init(…)` selects the C++ base constructor by arity and argument types [FFI-39b]")
+                    .notes_from(self.c_base_note(id)),
                 );
             }
             if !declares_init {
@@ -5309,7 +5385,8 @@ impl<'a> Checker<'a> {
                         self.sink.emit(
                             Diagnostic::error(codes::E5056, method.name.span, format!("`{name}` overrides a C++ virtual of `{base}` that its trampoline does not override"))
                                 .help(format!("name it in the overlay's entry: `@ffi(trampoline, virtuals=[…, \"{name}\"]) type {base}`"))
-                                .note("the trampoline calls Ember only for the virtuals it names [FFI-39]"),
+                                .note("the trampoline calls Ember only for the virtuals it names [FFI-39]")
+                                .notes_from(self.c_base_note(id)),
                         );
                         continue;
                     }
@@ -20736,7 +20813,59 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[DIA-5]` — each FFI error about a declaration a header gave (at it, at an overlay entry for
+    /// it, at a call of it, or with one of its parameters as a secondary span) names the header and
+    /// the C declaration: its text as the header writes it, and where.
+    fn note_c_declarations(&mut self) {
+        if self.c_declarations.is_empty() {
+            return;
+        }
+        let calls = std::mem::take(&mut self.foreign_calls);
+        for mut diagnostic in self.sink.take() {
+            let ffi = diagnostic.code.is_some_and(|code| code.subsystem == ember_diag::codes::Subsystem::Ffi);
+            if diagnostic.severity == ember_diag::Severity::Error && ffi && !diagnostic.notes.iter().any(|note| note.ends_with("[DIA-5]")) {
+                let primary = diagnostic.primary.span;
+                let note = calls
+                    .iter()
+                    .filter(|(call, _)| span_within(primary, *call) || span_within(*call, primary))
+                    .map(|(_, declaration)| *declaration)
+                    .chain(std::iter::once(primary))
+                    .chain(diagnostic.secondary.iter().map(|label| label.span))
+                    .find_map(|span| self.c_declaration_note(span));
+                if let Some(note) = note {
+                    diagnostic = diagnostic.note(note);
+                }
+            }
+            self.sink.emit(diagnostic);
+        }
+    }
+
+    /// `[DIA-5]` — the note naming the header's declaration that `span` lies in, if one does.
+    fn c_declaration_note(&self, span: Span) -> Option<String> {
+        self.c_declarations
+            .iter()
+            .find(|(declaration, ..)| span_within(span, *declaration))
+            .map(|(_, text, at)| format!("declared in the header at {at}: `{text}` [DIA-5]"))
+    }
+
+    /// `[DIA-5]` — the note naming the C++ class a class derives from, its nearest base a header
+    /// declared.
+    fn c_base_note(&self, class: ClassId) -> Option<String> {
+        let mut base = self.types.class_def(class).base;
+        while let Some(id) = base {
+            if let Some(note) = self.c_declaration_note(self.types.class_def(id).span) {
+                return Some(note);
+            }
+            base = self.types.class_def(id).base;
+        }
+        None
+    }
+
     fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
+        // `[DIA-5]` — an error at the call names the C declaration.
+        if self.foreign_declarations.contains_key(&def) && !self.c_declarations.is_empty() {
+            self.foreign_calls.push((span, self.signatures[def.0 as usize].decl));
+        }
         // `[FFI-24d]` — a call of a C++ function whose header changed its `noexcept`.
         if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
             self.changed_calls.push((span, note.clone()));

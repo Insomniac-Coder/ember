@@ -80,3 +80,32 @@ Rules: DIA-15, CG-C-9, PHIL-1, CG-C-7, VER-3, CG-C-6, CG-C-10, DIA-5, LT-39, SEL
     `for`; `emit_for_loop` writes `EMBER_VECTORISE` before the `for` (and before the unrolled one).
 - Speed: the owner's laptop bench should be run before pushing (GCC/MSVC now get `ivdep` on these
   loops; clang a vectorise hint).
+
+## DIA-5 — done (built)
+- Tests: `tests/conformance/DIA-5/` — `reject_an_error_names_the_header_and_the_c_declaration.em`
+  (`E5002` at a call, `E5020` at an argument: each names `labels.h:N` and the declaration as written,
+  a two-line declaration joined), `reject_an_overlay_error_names_the_c_declaration.em` (an error at
+  the declaration an import wrote), `reject_a_cpp_base_error_names_the_class_declaration.em`
+  (`E5058` on an Ember class deriving from a C++ class: `class Gauge {…}`),
+  `accept_an_import_with_its_facts_stated_reports_nothing.em`; support `labels.h`, `gauges.hpp`,
+  `overlays/`.
+- Compiler: FFI errors named the header at most (in a help), never the C declaration.
+  - `compiler/ember_driver/src/cimport.rs` — the importer records each top-level declaration of the
+    header (functions, structs, unions, classes, enums, typedefs, aliases, variables) as the header
+    writes it: its source extent on one line, bodies elided as `{…}`, no `;`, at most 160
+    characters (`Writer::c_text`, `one_line`), with `file:line` (`Imported::declared`). Kept in the
+    `.embind` record (`EMBIND_VERSION` 8 -> 9: older records are re-read from the header once).
+    `ForeignImport::declarations` gives each module (and each C++ namespace module) its
+    declarations by the names it binds them to (an overlay's rename too).
+  - `compiler/ember_driver/src/main.rs` — an import's overlay modules carry its declarations.
+  - `compiler/ember_typeck/src/lib.rs` — `c_declarations` (each such declaration's item span, or an
+    overlay entry's), `note_c_declarations`: after checking, every FFI-subsystem error whose primary
+    span or a secondary span lies in such a declaration, or that is at a call of one, gets the note
+    "declared in the header at `file:line`: `<declaration>` [DIA-5]"; `report_skipped_foreign`
+    (a use of a declaration the import skipped) and `E5056`/`E5058` (a class deriving from a C++
+    class: its nearest header-declared base) add it too.
+  - `compiler/ember_diag/src/lib.rs` — `Diagnostic::notes_from` (an optional note).
+- Ceiling: C++ member functions are not recorded separately (an error at one names its class only
+  through the class); add them when a member-level FFI error needs its own line.
+- Baselines: `tools/rule_index_baseline.json` still lists `E5065` under codes without pages and
+  without tests; both now exist (`--write-baseline` after merging drops them).

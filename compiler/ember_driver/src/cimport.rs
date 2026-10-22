@@ -293,6 +293,9 @@ pub struct Imported {
     /// last made (and has not changed it back): its namespace, its Ember name (`Owner.name` for a
     /// member), and whether it is `noexcept` now.
     pub policy_changes: Vec<(String, String, bool)>,
+    /// `[DIA-5]` — each declaration of the header as the header writes it, for an error about it to
+    /// name: its namespace (`::`-joined), its C name, its text on one line, and `file:line`.
+    pub declared: Vec<(String, String, String, String)>,
 }
 
 /// `[FFI-39]` — a C++ class an Ember class may derive from: its Ember class, the opaque type of
@@ -305,6 +308,37 @@ pub struct Trampoline {
     pub opaque: String,
     pub default_init: bool,
     pub unnamed_virtuals: Vec<String>,
+}
+
+/// `[DIA-5]` — C source text on one line: each `{…}` body elided, whitespace collapsed, no trailing
+/// `;`, and at most 160 characters.
+fn one_line(written: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0usize;
+    for c in written.chars() {
+        match c {
+            '{' => {
+                if depth == 0 {
+                    out.push_str("{…}");
+                }
+                depth += 1;
+            }
+            '}' => depth = depth.saturating_sub(1),
+            _ if depth > 0 => {}
+            c if c.is_whitespace() => {
+                if !out.ends_with(' ') {
+                    out.push(' ');
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    let out = out.trim().trim_end_matches(';').trim_end();
+    if out.chars().count() > 160 {
+        format!("{}…", out.chars().take(159).collect::<String>())
+    } else {
+        out.to_string()
+    }
 }
 
 fn text(string: CXString) -> String {
@@ -1196,6 +1230,9 @@ struct Writer {
     /// `[FFI-42]` — for each class with `begin()` and `end()`, as C++ spells it, the type of
     /// `*c.begin()` (`void` where that or `begin() != end()` does not compile).
     elements: HashMap<String, CXType>,
+    /// `[DIA-5]` — `Imported::declared`, and each header file's text, read once for it.
+    declared: Vec<(String, String, String, String)>,
+    sources: HashMap<String, String>,
 }
 
 /// `[FFI-17a]` — a C++ standard-library type as its bridge type: the Ember type, the C++ type, and
@@ -1216,6 +1253,33 @@ impl Writer {
         let (file, line, _) = location(cursor);
         let file = Path::new(&file).file_name().map_or(file.clone(), |name| name.to_string_lossy().into_owned());
         format!("{file}:{line}")
+    }
+
+    /// `[DIA-5]` — a declaration as the header writes it, on one line: its source text with each
+    /// `{…}` body elided, its whitespace collapsed and no `;`. Its name where the text cannot be
+    /// read.
+    fn c_text(&mut self, cursor: CXCursor) -> String {
+        // SAFETY(ffi): a live cursor's extent and the locations of its ends.
+        let (file, start, end) = unsafe {
+            let extent = clang_getCursorExtent(cursor);
+            let (mut file, mut end_file): (CXFile, CXFile) = (std::ptr::null_mut(), std::ptr::null_mut());
+            let (mut line, mut column, mut start, mut end): (c_uint, c_uint, c_uint, c_uint) = (0, 0, 0, 0);
+            clang_getExpansionLocation(clang_getRangeStart(extent), &mut file, &mut line, &mut column, &mut start);
+            clang_getExpansionLocation(clang_getRangeEnd(extent), &mut end_file, &mut line, &mut column, &mut end);
+            let (name, end_name) = if file.is_null() || end_file.is_null() {
+                (String::new(), None)
+            } else {
+                (text(clang_getFileName(file)), Some(text(clang_getFileName(end_file))))
+            };
+            (if end_name.as_deref() == Some(name.as_str()) { name } else { String::new() }, start as usize, end as usize)
+        };
+        let written = if file.is_empty() {
+            None
+        } else {
+            let source = self.sources.entry(file.clone()).or_insert_with(|| std::fs::read_to_string(&file).unwrap_or_default());
+            source.get(start..end).map(one_line)
+        };
+        written.filter(|written| !written.is_empty()).unwrap_or_else(|| spelling(cursor))
     }
 
     fn skip(&mut self, cursor: CXCursor, name: &str, reason: impl Into<String>) {
@@ -1246,6 +1310,24 @@ impl Writer {
     }
 
     fn declaration(&mut self, cursor: CXCursor) {
+        // `[DIA-5]` — what an error about the declaration names.
+        if matches!(
+            kind(cursor),
+            CXCursor_FunctionDecl
+                | CXCursor_StructDecl
+                | CXCursor_UnionDecl
+                | CXCursor_ClassDecl
+                | CXCursor_EnumDecl
+                | CXCursor_TypedefDecl
+                | CXCursor_TypeAliasDecl
+                | CXCursor_VarDecl
+        ) {
+            let name = spelling(cursor);
+            if !name.is_empty() {
+                let (text, at) = (self.c_text(cursor), self.at(cursor));
+                self.declared.push((self.writing.join("::"), name, text, at));
+            }
+        }
         match kind(cursor) {
             CXCursor_FunctionDecl => self.function(cursor),
             // `extern "C" { … }` in a C++ header.
@@ -3406,6 +3488,7 @@ impl Writer {
             trampolines: self.trampolines,
             operators: self.operators,
             policy_changes: Vec::new(),
+            declared: self.declared,
         }
     }
 }
@@ -4327,6 +4410,7 @@ pub fn load(
             .collect(),
         policy_changes: changed_signatures(&imported, &applied, "", &shown),
         variables: variables(&imported, &[]),
+        declarations: declarations(&imported, &applied, ""),
     };
     // `[FFI-41]` — each C++ namespace a module under the import's.
     let children = imported
@@ -4357,6 +4441,7 @@ pub fn load(
                     .collect(),
                 policy_changes: changed_signatures(&imported, &applied, &namespace.join("::"), &foreign.header),
                 variables: variables(&imported, namespace),
+                declarations: declarations(&imported, &applied, &namespace.join("::")),
                 ..Default::default()
             };
             (child, module, foreign)
@@ -4641,6 +4726,20 @@ fn has_section(manifest: &str, wanted: &str) -> bool {
 /// A manifest list of strings as written: `["A", "B=1"]`.
 fn manifest_strings(written: &str) -> Vec<String> {
     written.trim().trim_start_matches('[').trim_end_matches(']').split(',').map(|item| item.trim().trim_matches('"').to_string()).filter(|item| !item.is_empty()).collect()
+}
+
+/// `[DIA-5]` — the declarations of one namespace's module (`""` for the import's own), each by the
+/// names the module binds it to (its C name, and the name an overlay gives it), with its text as
+/// the header writes it and where.
+fn declarations(imported: &Imported, applied: &Applied, namespace: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for (_, name, text, at) in imported.declared.iter().filter(|(written_in, ..)| written_in == namespace) {
+        out.push((name.clone(), text.clone(), at.clone()));
+        if let Some(renamed) = applied.renamed.get(name) {
+            out.push((renamed.clone(), text.clone(), at.clone()));
+        }
+    }
+    out
 }
 
 /// `[FFI-2]`, `[FFI-12]`, `[FFI-13]`, `[FFI-30a]` — what an import's overlays change in its module:
@@ -6082,7 +6181,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 8;
+const EMBIND_VERSION: u64 = 9;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -6271,6 +6370,10 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
             "policy_changes".to_string(),
             Value::Array(imported.policy_changes.iter().map(|(namespace, name, now)| texts(&[namespace, name, if *now { "1" } else { "0" }])).collect()),
         ),
+        (
+            "declared".to_string(),
+            Value::Array(imported.declared.iter().map(|(namespace, name, text, at)| texts(&[namespace, name, text, at])).collect()),
+        ),
     ]);
     let mut bytes = Vec::new();
     cbor::encode(&value, &mut bytes);
@@ -6387,6 +6490,13 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
             .collect::<Option<_>>()?,
         operators: triples(field(&value, "operators")?)?,
         policy_changes: triples(field(&value, "policy_changes")?)?.into_iter().map(|(namespace, name, now)| (namespace, name, now == "1")).collect(),
+        declared: array_of(field(&value, "declared")?)?
+            .iter()
+            .map(|entry| {
+                let entry = array_of(entry)?;
+                Some((text_of(entry.first()?)?, text_of(entry.get(1)?)?, text_of(entry.get(2)?)?, text_of(entry.get(3)?)?))
+            })
+            .collect::<Option<_>>()?,
     };
     Some((files, imported))
 }

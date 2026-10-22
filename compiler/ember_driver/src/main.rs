@@ -3474,7 +3474,9 @@ fn load_package_modules(
                     }
                     for (overlay_path, overlay, backed) in written.overlays {
                         seen.insert(overlay_path.join("."));
-                        let graded = ember_typeck::ForeignImport { backed, ..Default::default() };
+                        // `[DIA-5]` — an overlay's errors name the header's declarations too.
+                        let declarations = written.foreign.declarations.clone();
+                        let graded = ember_typeck::ForeignImport { backed, declarations, ..Default::default() };
                         queue.push((package, overlay_path, overlay, Some(graded)));
                     }
                     queue.push((package, written.path, written.module, Some(written.foreign)));

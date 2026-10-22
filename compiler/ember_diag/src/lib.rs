@@ -145,6 +145,12 @@ impl Diagnostic {
         self
     }
 
+    /// Each note `notes` holds (none, or one an `Option` gives).
+    pub fn notes_from(mut self, notes: impl IntoIterator<Item = String>) -> Diagnostic {
+        self.notes.extend(notes);
+        self
+    }
+
     pub fn note(mut self, text: impl Into<String>) -> Diagnostic {
         self.notes.push(text.into());
         self
