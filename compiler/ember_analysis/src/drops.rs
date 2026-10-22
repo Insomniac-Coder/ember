@@ -88,6 +88,8 @@ struct MovePaths {
     /// Whether a path is a class handle: a write to a field behind it goes through the handle,
     /// which it reads and leaves as it was (D-698).
     handles: Vec<bool>,
+    /// Per local, its root path.
+    roots: Vec<usize>,
 }
 
 impl MovePaths {
@@ -97,9 +99,11 @@ impl MovePaths {
             parents: Vec::new(),
             children: Vec::new(),
             handles: Vec::new(),
+            roots: Vec::with_capacity(body.locals.len()),
         };
         for (index, local) in body.locals.iter().enumerate() {
-            paths.add(Place::local(LocalId(index as u32)), local.ty, None, types);
+            let root = paths.add(Place::local(LocalId(index as u32)), local.ty, None, types);
+            paths.roots.push(root);
         }
         paths
     }
@@ -144,15 +148,19 @@ impl MovePaths {
     }
 
     /// The exact node, or the deepest atomic ancestor when a projection goes
-    /// inside a type this pass deliberately treats as indivisible.
+    /// inside a type this pass deliberately treats as indivisible. D-811 — walked down from the
+    /// local's root, field by field (a node's children are its fields, in order), not found by
+    /// comparing every path of the function.
     fn node(&self, place: &Place) -> usize {
-        self.places
-            .iter()
-            .enumerate()
-            .filter(|(_, candidate)| place_prefix(candidate, place))
-            .max_by_key(|(_, candidate)| candidate.projection.len())
-            .map(|(index, _)| index)
-            .expect("every MIR local has a move-path root")
+        let mut node = *self.roots.get(place.local.0 as usize).expect("every MIR local has a move-path root");
+        for projection in &place.projection {
+            let Projection::Field(field) = projection else { break };
+            match self.children[node].get(*field) {
+                Some(&child) => node = child,
+                None => break,
+            }
+        }
+        node
     }
 
     /// The class handle a write to `place` goes through, when `place` is a field of the object

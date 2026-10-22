@@ -39,6 +39,11 @@ use ember_mir::{
 pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_checked: bool) -> Vec<(String, String, String)> {
     let mut inlined = Vec::new();
     let mut folded: HashSet<String> = HashSet::new();
+    // D-811 — a caller's growth is bounded, as GCC bounds it (`large-function-growth`): once a
+    // function is large, what it takes in may at most double its own size. Without the bound a
+    // program's `main`, calling each of a package's functions once, became the whole program.
+    let original: Vec<usize> = bodies.iter().map(statements).collect();
+    let mut refused: HashSet<String> = HashSet::new();
     // Bottom-up, in a fixed order: a function is inlined only once nothing
     // it calls is still waiting to be, so its body is final when copied (a
     // copy made earlier would leave its callees a second call site), and the
@@ -61,6 +66,9 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_c
             .iter()
             .filter_map(|(symbol, places)| {
                 let [(caller, block)] = places.as_slice() else { return None };
+                if refused.contains(symbol) {
+                    return None;
+                }
                 if bodies[*caller].call_argument_bindings.iter().any(|binding| binding.call_block.0 as usize == *block) {
                     return None;
                 }
@@ -92,6 +100,11 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_c
         // A ready callee has no waiting calls, so nothing is inlined into it
         // this round, and a caller's other call blocks keep their numbers.
         for (caller, block, callee) in ready {
+            let grown = statements(&bodies[caller]) + statements(&bodies[callee]);
+            if grown > LARGE_FUNCTION && grown > 2 * original[caller] {
+                refused.insert(bodies[callee].symbol.clone());
+                continue;
+            }
             let callee_body = bodies[callee].clone();
             inline_call(&mut bodies[caller], block, &callee_body);
             inlined.push((callee_body.name.clone(), bodies[caller].name.clone(), bodies[caller].symbol.clone()));
@@ -103,6 +116,14 @@ pub fn inline_single_calls_all(bodies: &mut Vec<Body>, types: &TypeTable, only_c
     let named = named_symbols(bodies);
     bodies.retain(|body| !folded.contains(&body.symbol) || named.contains(&body.symbol));
     inlined
+}
+
+/// A function past this many statements (its blocks' statements and terminators) is large: what
+/// is inlined into it may at most double what it was before inlining.
+const LARGE_FUNCTION: usize = 4000;
+
+fn statements(body: &Body) -> usize {
+    body.blocks.iter().map(|block| block.stmts.len() + 1).sum()
 }
 
 /// Whether a body holds a check the range facts could remove: an assertion
@@ -277,8 +298,9 @@ pub(crate) fn read_loop_calls(body: &Body, callees: &HashMap<String, Body>, type
     for _ in 0..4 {
         let current = copy.as_ref().unwrap_or(body);
         let mut in_loops: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        let preds = crate::loop_version::predecessors(current);
         for header in 0..current.blocks.len() {
-            if let Some(shape) = crate::loop_version::counted_loop(current, types, header) {
+            if let Some(shape) = crate::loop_version::counted_loop_in(current, types, header, &preds) {
                 in_loops.extend(shape.region);
             }
         }

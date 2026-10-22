@@ -14,14 +14,14 @@
 //! A `String`'s `push_str` of a literal adds the literal's bytes (ADR-106: a
 //! text built by such a loop grew by doubling where C's is allocated once).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use ember_mir::{
     BasicBlock, BasicBlockId, Body, Builtin, Const, FuncRef, LocalId, Operand, Place, Rvalue, StmtKind, Terminator,
 };
 use ember_types::TypeTable;
 
-use crate::loop_version::{CountedLoop, counted_loop, retarget};
+use crate::loop_version::{CountedLoop, counted_loop_in, retarget};
 
 pub fn reserve_pushed_lists_all(bodies: &mut [Body], types: &TypeTable) -> usize {
     if bodies.iter().any(reads_capacity) {
@@ -57,13 +57,87 @@ fn reserve_pushed_lists(body: &mut Body, types: &TypeTable) -> usize {
     // A hint adds blocks at the end and keeps every block's number, so each
     // header is looked at once.
     let headers = body.blocks.len();
+    let mut index = FunctionIndex::new(body, types);
     let mut count = 0;
     for header in 0..headers {
-        if let Some(shape) = counted_loop(body, types, header) {
-            count += reserve_before(body, types, &shape);
+        if let Some(shape) = counted_loop_in(body, types, header, &index.predecessors) {
+            count += reserve_before(body, &mut index, &shape);
         }
     }
     count
+}
+
+/// What `reserve_before` asks of the whole function, read once and kept up to date as each hint
+/// adds its blocks (D-811: read again for every loop, the pass grew as the function squared).
+struct FunctionIndex {
+    predecessors: Vec<Vec<usize>>,
+    /// Locals a reference is made to.
+    taken: HashSet<LocalId>,
+    /// Each local's assignments: the block, and the integer constant assigned if it is one
+    /// (`None`, for a projection or any other value).
+    assigned: HashMap<LocalId, Vec<(usize, Option<i128>)>>,
+    /// The list a reference local is made from, when every value it is given is `&xs` of the
+    /// one local: loop versioning (`[OPT-2]`) copies a loop's blocks, and with them the
+    /// statement making it.
+    list_of: HashMap<LocalId, LocalId>,
+    /// The type of a push's result, for the hints' own.
+    void: Option<ember_types::Ty>,
+}
+
+impl FunctionIndex {
+    fn new(body: &Body, types: &TypeTable) -> FunctionIndex {
+        let mut taken = HashSet::new();
+        let mut assigned: HashMap<LocalId, Vec<(usize, Option<i128>)>> = HashMap::new();
+        let mut made_from: BTreeMap<u32, Vec<Option<LocalId>>> = BTreeMap::new();
+        let mut given: BTreeMap<u32, usize> = BTreeMap::new();
+        for (block, data) in body.blocks.iter().enumerate() {
+            for stmt in &data.stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { place, rvalue } => {
+                        if let Rvalue::Ref { place: target, .. } = rvalue {
+                            taken.insert(target.local);
+                        }
+                        let constant = match rvalue {
+                            Rvalue::Use(Operand::Const(ember_mir::Const::Int { value, ty })) if place.projection.is_empty() => {
+                                crate::range_facts::constant(types, *value, *ty)
+                            }
+                            _ => None,
+                        };
+                        assigned.entry(place.local).or_default().push((block, constant));
+                        *given.entry(place.local.0).or_default() += 1;
+                        if place.projection.is_empty() {
+                            let from = match rvalue {
+                                Rvalue::Ref { place: target, .. } if target.projection.is_empty() => Some(target.local),
+                                _ => None,
+                            };
+                            made_from.entry(place.local.0).or_default().push(from);
+                        }
+                    }
+                    StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
+                        *given.entry(dest.local.0).or_default() += 1;
+                        *given.entry(overflow.local.0).or_default() += 1;
+                    }
+                    _ => {}
+                }
+            }
+            if let Terminator::Call { dest, .. } = &data.terminator {
+                *given.entry(dest.local.0).or_default() += 1;
+            }
+        }
+        let list_of = made_from
+            .into_iter()
+            .filter_map(|(reference, made)| {
+                let first = (*made.first()?)?;
+                (given.get(&reference) == Some(&made.len()) && made.iter().all(|from| *from == Some(first)))
+                    .then_some((LocalId(reference), first))
+            })
+            .collect();
+        let void = body.blocks.iter().find_map(|data| match &data.terminator {
+            terminator @ Terminator::Call { dest, .. } if pushed(terminator).is_some() => Some(body.local(dest.local).ty),
+            _ => None,
+        });
+        FunctionIndex { predecessors: crate::loop_version::predecessors(body), taken, assigned, list_of, void }
+    }
 }
 
 fn successors(terminator: &Terminator) -> Vec<usize> {
@@ -93,24 +167,17 @@ fn shrinks(which: &Builtin) -> bool {
 
 /// The turns a loop takes when its counter starts at a constant (the one
 /// value it is given before the loop) and its limit is one.
-fn constant_turns(body: &Body, types: &TypeTable, shape: &CountedLoop, inside: &HashSet<usize>) -> Option<i128> {
+fn constant_turns(index: &FunctionIndex, shape: &CountedLoop, inside: &HashSet<usize>) -> Option<i128> {
     let value_of = |local: LocalId, outside_only: bool| -> Option<i128> {
         let mut found = None;
-        for (block, data) in body.blocks.iter().enumerate() {
+        for &(block, constant) in index.assigned.get(&local).map_or(&[][..], Vec::as_slice) {
             if outside_only && inside.contains(&block) {
                 continue;
             }
-            for stmt in &data.stmts {
-                if let StmtKind::Assign { place, rvalue } = &stmt.kind
-                    && place.local == local
-                {
-                    let Rvalue::Use(Operand::Const(ember_mir::Const::Int { value, ty })) = rvalue else { return None };
-                    if found.is_some() || !place.projection.is_empty() {
-                        return None;
-                    }
-                    found = Some(crate::range_facts::constant(types, *value, *ty)?);
-                }
+            if found.is_some() {
+                return None;
             }
+            found = Some(constant?);
         }
         found
     };
@@ -119,7 +186,7 @@ fn constant_turns(body: &Body, types: &TypeTable, shape: &CountedLoop, inside: &
     Some((limit - start + i128::from(shape.inclusive)).max(0))
 }
 
-fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> usize {
+fn reserve_before(body: &mut Body, index: &mut FunctionIndex, shape: &CountedLoop) -> usize {
     let region: HashSet<usize> = shape.region.iter().copied().collect();
     let mut inside = region.clone();
     inside.insert(shape.header);
@@ -134,16 +201,7 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
     }
     // The counter moves only in the step and the limit not at all, so the
     // turns are `limit - counter` as the loop starts.
-    let taken: HashSet<LocalId> = body
-        .blocks
-        .iter()
-        .flat_map(|data| &data.stmts)
-        .filter_map(|stmt| match &stmt.kind {
-            StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } => Some(place.local),
-            _ => None,
-        })
-        .collect();
-    if taken.contains(&shape.counter) || taken.contains(&shape.limit) {
+    if index.taken.contains(&shape.counter) || index.taken.contains(&shape.limit) {
         return 0;
     }
     let mut counter_writes = 0;
@@ -177,46 +235,7 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
 
     // The lists pushed onto: the local each push's reference was made from,
     // `r = &mut xs` (a reference made anywhere, for one push or for all).
-    let mut made_from: BTreeMap<u32, Vec<&Rvalue>> = BTreeMap::new();
-    let mut given: BTreeMap<u32, usize> = BTreeMap::new();
-    for data in &body.blocks {
-        for stmt in &data.stmts {
-            match &stmt.kind {
-                StmtKind::Assign { place, rvalue } => {
-                    *given.entry(place.local.0).or_default() += 1;
-                    if place.projection.is_empty() {
-                        made_from.entry(place.local.0).or_default().push(rvalue);
-                    }
-                }
-                StmtKind::CheckedBinaryOp { dest, overflow, .. } => {
-                    *given.entry(dest.local.0).or_default() += 1;
-                    *given.entry(overflow.local.0).or_default() += 1;
-                }
-                _ => {}
-            }
-        }
-        if let Terminator::Call { dest, .. } = &data.terminator {
-            *given.entry(dest.local.0).or_default() += 1;
-        }
-    }
-    // Every value the reference is given is `&xs` of the one local: loop
-    // versioning (`[OPT-2]`) copies a loop's blocks, and with them the
-    // statement making it.
-    let list_of = |reference: LocalId| -> Option<LocalId> {
-        let made = made_from.get(&reference.0)?;
-        if given.get(&reference.0) != Some(&made.len()) {
-            return None;
-        }
-        let mut list = None;
-        for rvalue in made {
-            let Rvalue::Ref { place, .. } = rvalue else { return None };
-            if !place.projection.is_empty() || list.is_some_and(|seen| seen != place.local) {
-                return None;
-            }
-            list = Some(place.local);
-        }
-        list
-    };
+    let list_of = |reference: LocalId| index.list_of.get(&reference).copied();
     // block -> (reference, list, elements added); list -> (the push's
     // `arg_ty`, the reference's type)
     let mut pushes: BTreeMap<usize, (LocalId, LocalId, u32)> = BTreeMap::new();
@@ -232,7 +251,7 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
         }
     }
     let order = forward_order(body, shape);
-    let turns = constant_turns(body, types, shape, &inside);
+    let turns = constant_turns(index, shape, &inside);
     let mut hints: Vec<(LocalId, ember_types::Ty, ember_types::Ty, u32)> = Vec::new();
     for (list, (arg_ty, reference_ty)) in lists {
         let list = LocalId(list);
@@ -258,11 +277,7 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
     // Before the loop: one block per list, each making its own reference to
     // the list, the last going to the header.
     let span = body.blocks[shape.header].terminator_span;
-    let void = body.blocks.iter().find_map(|data| match &data.terminator {
-        terminator @ Terminator::Call { dest, .. } if pushed(terminator).is_some() => Some(body.local(dest.local).ty),
-        _ => None,
-    });
-    let Some(void) = void else { return 0 };
+    let Some(void) = index.void else { return 0 };
     let first = body.blocks.len();
     let header = BasicBlockId(shape.header as u32);
     let count = hints.len();
@@ -293,11 +308,26 @@ fn reserve_before(body: &mut Body, types: &TypeTable, shape: &CountedLoop) -> us
             terminator_span: span,
         });
     }
+    // The edges into the loop from outside now reach the first hint; what the index holds
+    // follows: the hints' blocks, their references (made of the list), their results.
     let preheader = BasicBlockId(first as u32);
-    for block in 0..first {
-        if !inside.contains(&block) {
-            retarget(&mut body.blocks[block].terminator, |target| if target == header { preheader } else { target });
-        }
+    let entering: Vec<usize> = index.predecessors[shape.header].iter().copied().filter(|block| !inside.contains(block)).collect();
+    for &block in &entering {
+        retarget(&mut body.blocks[block].terminator, |target| if target == header { preheader } else { target });
+    }
+    index.predecessors[shape.header].retain(|block| inside.contains(block));
+    index.predecessors[shape.header].push(first + count - 1);
+    index.predecessors.push(entering);
+    for block in first + 1..first + count {
+        index.predecessors.push(vec![block - 1]);
+    }
+    for block in first..first + count {
+        let StmtKind::Assign { place, rvalue: Rvalue::Ref { place: list, .. } } = &body.blocks[block].stmts[0].kind else {
+            unreachable!("a hint's reference")
+        };
+        index.taken.insert(list.local);
+        index.assigned.entry(place.local).or_default().push((block, None));
+        index.list_of.insert(place.local, list.local);
     }
     count
 }

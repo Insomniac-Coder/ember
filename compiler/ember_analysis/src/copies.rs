@@ -9,6 +9,8 @@
 //! nest (`enumerate(start=round)`: 1.5x C, and C's speed without the copy).
 //! Locals the programmer named keep their reads, for the debugger.
 
+use std::collections::HashMap;
+
 use ember_mir::{Body, CastKind, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, Terminator};
 use ember_types::{Ty, TyKind, TypeTable};
 
@@ -20,10 +22,7 @@ fn propagate_copies(body: &mut Body, types: &TypeTable) -> usize {
     let mut total = 0;
     // A copy of a copy reads the first source after a second round.
     for _ in 0..4 {
-        let mut replaced = 0;
-        for (copy, defs) in candidates(body, types) {
-            replaced += propagate(body, copy, &defs);
-        }
+        let replaced = propagate(body, &candidates(body, types));
         total += replaced;
         if replaced == 0 {
             break;
@@ -105,68 +104,104 @@ fn candidates(body: &Body, types: &TypeTable) -> Vec<(LocalId, Vec<(usize, usize
         .collect()
 }
 
-/// Replaces the reads of `copy`, set by the statements `defs` (block,
-/// index), by its source where the source still holds the value copied;
-/// removes the copies once nothing reads it. Returns how many reads changed.
-fn propagate(body: &mut Body, copy: LocalId, defs: &[(usize, usize)]) -> usize {
-    // An earlier copy's reads, replaced this round, may have changed a
-    // source: every statement must still copy the same one.
-    let source_at = |(block, index): (usize, usize)| match &body.blocks[block].stmts[index].kind {
+/// Replaces the reads of each copy, set by its statements (block, index), by
+/// its source where the source still holds the value copied; removes a
+/// copy's statements once nothing reads it. Returns how many reads changed.
+/// One analysis for every copy, a fact per copy ("the copy equals its
+/// source") in bit sets, so the pass grows with the function, not with the
+/// function times its copies (D-811).
+fn propagate(body: &mut Body, copies: &[(LocalId, Vec<(usize, usize)>)]) -> usize {
+    // A copy whose statements no longer all copy one source (an earlier
+    // round's replacement changed one) waits for the next round.
+    let source_at = |body: &Body, (block, index): (usize, usize)| match &body.blocks[block].stmts[index].kind {
         StmtKind::Assign { rvalue: Rvalue::Use(Operand::Copy(source) | Operand::Move(source)), .. } => Some(source.local),
         _ => None,
     };
-    let Some(source) = defs.first().and_then(|&def| source_at(def)) else { return 0 };
-    if source == copy || defs.iter().any(|&def| source_at(def) != Some(source)) {
+    let facts: Vec<(LocalId, LocalId, &[(usize, usize)])> = copies
+        .iter()
+        .filter_map(|(copy, defs)| {
+            let source = source_at(body, *defs.first()?)?;
+            (source != *copy && defs.iter().all(|&def| source_at(body, def) == Some(source)))
+                .then_some((*copy, source, defs.as_slice()))
+        })
+        .collect();
+    if facts.is_empty() {
         return 0;
     }
-    let is_def = |block: usize, index: usize| defs.contains(&(block, index));
+    let words = facts.len().div_ceil(64);
+    // Each copy's fact; the facts a write of each local ends (those whose
+    // source it is); the fact each copying statement begins.
+    let mut fact_of = vec![None; body.locals.len()];
+    let mut ended_by: Vec<Vec<usize>> = vec![Vec::new(); body.locals.len()];
+    let mut begun_at: HashMap<(usize, usize), usize> = HashMap::new();
+    for (fact, &(copy, source, defs)) in facts.iter().enumerate() {
+        fact_of[copy.0 as usize] = Some(fact);
+        ended_by[source.0 as usize].push(fact);
+        for &def in defs {
+            begun_at.insert(def, fact);
+        }
+    }
+    let written = |kind: &StmtKind| -> Vec<LocalId> {
+        match kind {
+            StmtKind::Assign { place, .. } | StmtKind::Drop { place, .. } => vec![place.local],
+            StmtKind::CheckedBinaryOp { dest, overflow, .. } => vec![dest.local, overflow.local],
+            StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => vec![*local],
+            _ => Vec::new(),
+        }
+    };
 
-    // Where `copy == source` holds: after the copy, until the source is
-    // written or its storage begins or ends. A must-analysis: every path in.
+    // Each block's effect: the facts it begins and those it ends.
     let n = body.blocks.len();
+    let mut begins = vec![vec![0u64; words]; n];
+    let mut ends = vec![vec![0u64; words]; n];
     let mut predecessors = vec![Vec::new(); n];
     for (block, data) in body.blocks.iter().enumerate() {
         for next in successors(&data.terminator) {
             predecessors[next].push(block);
         }
-    }
-    let kills = |kind: &StmtKind| match kind {
-        StmtKind::Assign { place, .. } => place.local == source,
-        StmtKind::CheckedBinaryOp { dest, overflow, .. } => dest.local == source || overflow.local == source,
-        StmtKind::Drop { place, .. } => place.local == source,
-        StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => *local == source,
-        _ => false,
-    };
-    let out_of = |block: usize, mut holds: bool| {
-        for (index, stmt) in body.blocks[block].stmts.iter().enumerate() {
-            if is_def(block, index) {
-                holds = true;
-            } else if kills(&stmt.kind) {
-                holds = false;
+        let end_by = |local: LocalId, begins: &mut [u64], ends: &mut [u64]| {
+            for &fact in &ended_by[local.0 as usize] {
+                clear(begins, fact);
+                mark(ends, fact);
+            }
+        };
+        for (index, stmt) in data.stmts.iter().enumerate() {
+            for local in written(&stmt.kind) {
+                end_by(local, &mut begins[block], &mut ends[block]);
+            }
+            if let Some(&fact) = begun_at.get(&(block, index)) {
+                mark(&mut begins[block], fact);
+                clear(&mut ends[block], fact);
             }
         }
-        if let Terminator::Call { dest, .. } = &body.blocks[block].terminator
-            && dest.local == source
-        {
-            holds = false;
-        }
-        holds
-    };
-    let mut holds_in = vec![true; n];
-    holds_in[0] = false;
-    for (block, from) in predecessors.iter().enumerate() {
-        if from.is_empty() {
-            holds_in[block] = false;
+        if let Terminator::Call { dest, .. } = &data.terminator {
+            end_by(dest.local, &mut begins[block], &mut ends[block]);
         }
     }
-    let mut holds_out: Vec<bool> = (0..n).map(|block| out_of(block, holds_in[block])).collect();
+    // A must-analysis, every path in: optimistic everywhere but the entry and
+    // the blocks nothing reaches, then down to the fixed point.
+    let mut holds_in = vec![vec![!0u64; words]; n];
+    for (block, from) in predecessors.iter().enumerate() {
+        if block == 0 || from.is_empty() {
+            holds_in[block] = vec![0; words];
+        }
+    }
+    let out_of = |block: usize, entry: &[u64]| -> Vec<u64> {
+        (0..words).map(|word| (entry[word] & !ends[block][word]) | begins[block][word]).collect()
+    };
+    let mut holds_out: Vec<Vec<u64>> = (0..n).map(|block| out_of(block, &holds_in[block])).collect();
     loop {
         let mut changed = false;
         for block in 1..n {
-            let holds = !predecessors[block].is_empty() && predecessors[block].iter().all(|&from| holds_out[from]);
-            if holds != holds_in[block] {
-                holds_in[block] = holds;
-                holds_out[block] = out_of(block, holds);
+            if predecessors[block].is_empty() {
+                continue;
+            }
+            let entry: Vec<u64> = (0..words)
+                .map(|word| predecessors[block].iter().fold(!0u64, |all, &from| all & holds_out[from][word]))
+                .collect();
+            if entry != holds_in[block] {
+                holds_out[block] = out_of(block, &entry);
+                holds_in[block] = entry;
                 changed = true;
             }
         }
@@ -176,64 +211,96 @@ fn propagate(body: &mut Body, copy: LocalId, defs: &[(usize, usize)]) -> usize {
     }
 
     let mut replaced = 0;
-    let swap = |operand: &mut Operand, replaced: &mut usize| {
+    let mut changed = vec![false; facts.len()];
+    // A read takes the first source of a chain of copies that all hold where it is (`b = a`,
+    // `c = b`: `c` reads `a`), as copies replaced one after another in a round would; every copy
+    // passed is one whose read changed.
+    let mut swap = |operand: &mut Operand, set: &[u64], replaced: &mut usize| {
         if let Operand::Copy(place) | Operand::Move(place) = operand
-            && place.local == copy
+            && let Some(first) = fact_of[place.local.0 as usize]
+            && holds(set, first)
         {
-            *operand = Operand::Copy(Place::local(source));
+            let mut fact = first;
+            for _ in 0..facts.len() {
+                changed[fact] = true;
+                match fact_of[facts[fact].1.0 as usize] {
+                    Some(next) if holds(set, next) => fact = next,
+                    _ => break,
+                }
+            }
+            *operand = Operand::Copy(Place::local(facts[fact].1));
             *replaced += 1;
         }
     };
-    for block in 0..n {
-        let mut holds = holds_in[block];
+    for (block, entry) in holds_in.iter().enumerate() {
+        let mut set = entry.clone();
         let data = &mut body.blocks[block];
         for (index, stmt) in data.stmts.iter_mut().enumerate() {
             // A statement reads before it writes.
-            if holds && let StmtKind::Assign { rvalue, .. } = &mut stmt.kind {
-                match rvalue {
+            match &mut stmt.kind {
+                StmtKind::Assign { rvalue, .. } => match rvalue {
                     Rvalue::Use(value) | Rvalue::Cast { operand: value, .. } | Rvalue::UnaryOp { operand: value, .. } => {
-                        swap(value, &mut replaced)
+                        swap(value, &set, &mut replaced)
                     }
                     Rvalue::BinaryOp { lhs, rhs, .. } => {
-                        swap(lhs, &mut replaced);
-                        swap(rhs, &mut replaced);
+                        swap(lhs, &set, &mut replaced);
+                        swap(rhs, &set, &mut replaced);
                     }
-                    Rvalue::Aggregate { operands, .. } => operands.iter_mut().for_each(|value| swap(value, &mut replaced)),
-                    Rvalue::Repeat { value, .. } => swap(value, &mut replaced),
+                    Rvalue::Aggregate { operands, .. } => operands.iter_mut().for_each(|value| swap(value, &set, &mut replaced)),
+                    Rvalue::Repeat { value, .. } => swap(value, &set, &mut replaced),
                     Rvalue::Ref { .. } | Rvalue::Discriminant(_) => {}
+                },
+                StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                    swap(lhs, &set, &mut replaced);
+                    swap(rhs, &set, &mut replaced);
+                }
+                _ => {}
+            }
+            for local in written(&stmt.kind) {
+                for &fact in &ended_by[local.0 as usize] {
+                    clear(&mut set, fact);
                 }
             }
-            if holds && let StmtKind::CheckedBinaryOp { lhs, rhs, .. } = &mut stmt.kind {
-                swap(lhs, &mut replaced);
-                swap(rhs, &mut replaced);
-            }
-            if is_def(block, index) {
-                holds = true;
-            } else if kills(&stmt.kind) {
-                holds = false;
+            if let Some(&fact) = begun_at.get(&(block, index)) {
+                mark(&mut set, fact);
             }
         }
-        if holds {
-            match &mut data.terminator {
-                Terminator::SwitchInt { discr, .. } => swap(discr, &mut replaced),
-                Terminator::Call { args, .. } => args.iter_mut().for_each(|arg| swap(arg, &mut replaced)),
-                Terminator::Assert { cond, msg, .. } => {
-                    swap(cond, &mut replaced);
-                    if let ember_mir::AssertKind::Bounds { len, index } = msg {
-                        swap(len, &mut replaced);
-                        swap(index, &mut replaced);
-                    }
+        match &mut data.terminator {
+            Terminator::SwitchInt { discr, .. } => swap(discr, &set, &mut replaced),
+            Terminator::Call { args, .. } => args.iter_mut().for_each(|arg| swap(arg, &set, &mut replaced)),
+            Terminator::Assert { cond, msg, .. } => {
+                swap(cond, &set, &mut replaced);
+                if let ember_mir::AssertKind::Bounds { len, index } = msg {
+                    swap(len, &set, &mut replaced);
+                    swap(index, &set, &mut replaced);
                 }
-                Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
             }
+            Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }
     }
-    if replaced > 0 && !read_anywhere(body, copy) {
-        for &(block, index) in defs {
-            body.blocks[block].stmts[index].kind = StmtKind::Nop;
+    if replaced > 0 {
+        let read = reads(body);
+        for (&(copy, _, defs), _) in facts.iter().zip(&changed).filter(|(_, changed)| **changed) {
+            if !read[copy.0 as usize] {
+                for &(block, index) in defs {
+                    body.blocks[block].stmts[index].kind = StmtKind::Nop;
+                }
+            }
         }
     }
     replaced
+}
+
+fn mark(set: &mut [u64], fact: usize) {
+    set[fact / 64] |= 1 << (fact % 64);
+}
+
+fn clear(set: &mut [u64], fact: usize) {
+    set[fact / 64] &= !(1 << (fact % 64));
+}
+
+fn holds(set: &[u64], fact: usize) -> bool {
+    set[fact / 64] & (1 << (fact % 64)) != 0
 }
 
 /// G8-4 decision C — an integer widened and read back no wider than it was:
@@ -387,12 +454,17 @@ fn narrow_reads_of(body: &mut Body, types: &TypeTable, wide: LocalId, source: Lo
 }
 
 fn read_anywhere(body: &Body, local: LocalId) -> bool {
+    reads(body)[local.0 as usize]
+}
+
+/// Which locals anything reads.
+fn reads(body: &Body) -> Vec<bool> {
     let mut read = vec![false; body.locals.len()];
     for data in &body.blocks {
         data.stmts.iter().for_each(|stmt| crate::strength_reduce::stmt_reads(stmt, &mut read));
         crate::strength_reduce::terminator_reads(&data.terminator, &mut read);
     }
-    read[local.0 as usize]
+    read
 }
 
 fn successors(terminator: &Terminator) -> Vec<usize> {
