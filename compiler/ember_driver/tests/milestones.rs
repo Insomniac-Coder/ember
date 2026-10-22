@@ -7738,7 +7738,7 @@ const BIND_HEADER: &str = "\
 static inline int bind_add(int a, int b) { return a + b; }
 static inline int bind_sum(const int* items, size_t n) { int t = 0; for (size_t i = 0; i < n; i++) t += items[i]; return t; }
 static inline void bind_zero(int* items, size_t n) { for (size_t i = 0; i < n; i++) items[i] = 0; }
-int bind_log(const char* format, ...);
+static inline int bind_log(const char* format, ...) { return format[0]; }
 ";
 
 /// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay, `<stem>.overlay.em` beside the
@@ -7760,7 +7760,7 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
         "    # derived: `items` is a read-only borrow (`const`)",
         "    fn bind_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)",
         "    # derived: `items` is a mutable borrow (no `const`)",
-        "    # skipped: `bind_log` (calc.h:5): variadic",
+        "    # skipped: `bind_log` (calc.h:5): a variadic `static inline` function",
     ] {
         assert!(written.contains(line), "the starter overlay lacks {line:?}:\n{written}");
     }
@@ -7826,7 +7826,7 @@ fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
     let report = ember(&["bind", "calc.h", "--report", "--overlay", &format!("good.{SOURCE_EXT}")], &dir);
     assert_ne!(report.exit, 0, "a skip did not fail the report:\n{}", report.stdout);
     for line in [
-        "skipped: `bind_log` (calc.h:5): variadic",
+        "skipped: `bind_log` (calc.h:5): a variadic `static inline` function",
         "unsafe: `bind_zero`: `items`: TODO(count)",
         "assumes: `bind_sum`: `items` does not retain the pointer",
         "1 skipped declaration(s)",

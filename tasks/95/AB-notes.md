@@ -488,7 +488,9 @@ program calls its exports; the C has the definitions; gcc in WSL compiles it),
 `reject_an_object_of_a_class_that_is_not_sync.em`, and the milestone
 `the_cpp_header_gives_a_sync_class_a_shared_handle` (both headers' text; a C++ file using the class
 compiles). A library cannot be linked yet (`kind = "lib"` builds only `--emit header`), so no C++
-program runs one.
+program runs one. A virtual method's function calls through the object's method table, the table and
+the receiver as the class declaring the method types them, so C++ reaches an override (the accept
+test's `Shape`/`Square`).
 
 Also: an export taking a `VaList` or a `c_longdouble` now gets a header (the runtime header's
 `ember_va_list`; C's `long double`); it was "no supported public C declaration".
@@ -513,3 +515,63 @@ callback, where the bound calls the lambda directly); (b) a rule defaulting an u
 bound to "none", so `None` needs no type (a language change); (c) leave it refused (`E0900`) and
 let a header give two functions. Recommendation: (a), the cost being what a nullable callback asks
 for.
+
+## Summary for the lead: the questions, and the defects found
+
+**Spec questions** (each built as described where something is unambiguous; none ruled by me):
+
+1. `[FFI-21]` — a callback with several parameters of its user data's type: which is the user
+   data? Built: refused (`E5002`). Option: name the slot (`user_data=q@1`). (AB2)
+2. `[FFI-11]` — `destroys(f)` when the unregistering function takes the registering call's result
+   (`id = listen(…)`, `unlisten(id)`): built, `f`'s parameters are each the callback, its user data
+   or a scalar the registering call took; the result is not offered. Recommendation: offer it (the
+   token keeps it). (AB2)
+3. `[FFI-1]`, `[FFI-11]` — `threads(creator)` and `handle` on a function: a function has no creator
+   of its own; `handle`'s meaning on a function is not stated. Built: `E0900` for both. (AB3)
+4. `[FFI-8]` — the spelling of a C union and of a struct a flexible array member ends: built as
+   `@layout(c, union)` and `@layout(c, flexible)`. (AB6)
+5. `[FFI-8]` — `@ffi(newtype)`: what the new type is. Not built; recommendation: a nominal type
+   with the typedef's representation. (AB7)
+6. `[FFI-8]` — "variadic calls only in `unsafe` with explicit argument types": built as: each
+   further argument's type is written (a literal's suffix or `as`), and one C's default argument
+   promotions change (`bool`, integers narrower than `int`, `f32`) is refused with the cast to
+   write (`E5015`). (AB7)
+7. `[FFI-17a]` — a `std::unique_ptr` whose deleter holds state: refused; keeping it needs a field
+   beside every `ForeignBox`'s address or a bridge type of its own. (AB9)
+8. `[FFI-42]` — reading through `operator*`/`->`: not built; recommendation `get()`/`get_mut()`.
+   (AB10)
+9. `[FFI-42]`, `[CTL-1]` — `Iterable` as a declared interface (std declares none, and `[FFI-42a]`'s
+   `iter` takes `mut self`). Not built. (AB10)
+10. `[FFI-21]` — a `nullable` callback with user data. Not built (`E0900`); recommendation: an
+    `Option` of a callable value. (AB12)
+11. For the cut: ODR-221 retires `E5056` and the `[FFI-48]` row "overriding a virtual not named in
+    `virtuals=[…]`" (no longer emitted; its page says so). ODR-219: `[FFI-39b]`'s entry says what
+    is built; ODR-220: `[FFI-24c]` built as answered.
+
+**Defects found and fixed** (for the lead to number): `returns_owned` beside an `out` parameter
+crashed the checker (AB1); a header typedef of a function pointer naming a C alias was resolved
+before `std.ffi` (AB2); `[ENM-3]`'s `from_repr` did not exist (AB6); the importer read a callback
+parameter's function type canonically, which on Linux imported Clang's builtin `__va_list_tag` as a
+struct whose layout checks the shim could not compile (AB7).
+
+**Defects found, not fixed:**
+
+- Type checking depends on the order of the module list (AB5).
+- Two modules that each `import cpp` one header both write its module, and every member of its
+  classes is then `E1030` (AB7; main's compiler too).
+- An owned callable passed to an `owned` parameter is never dropped: its captures' `drop` never
+  runs (AB9; not FFI).
+
+**Build-wide changes to know of:** `clang-sys`'s feature is `clang_11_0` (`_Atomic`'s value type);
+cl compiles C with `/experimental:c11atomics`; the runtime header includes `<stdarg.h>` and defines
+`ember_va_list`; `.embind` is at version 14 (main: 12).
+
+**The last run** (this branch, Windows): the whole conformance tree with `tests/run-pass`,
+`compile-pass`, `compile-fail` and `run-fail` (failing 0); the `ui`, `milestones` (two `ember bind`
+milestones took `int bind_log(const char*, ...)` as their skipped declaration: a variadic function
+imports now, so their header's is a variadic `static inline` one), `firstweek`, `reload` and
+`package` (the C++ corpus) tests; the unit tests of the changed crates; `tools/error_pages.py` and
+`tools/rule_index.py`; the FFI and BLD-FFI-5a directories again with the C gate
+(`EMBER_C_WARNINGS_AS_ERRORS=1`) under cl and clang-cl; and in WSL (Linux libclang 21, gcc 15)
+the FFI-8, FFI-17a, FFI-20a, FFI-21, FFI-39, FFI-42, FFI-44, FFI-48 and BLD-FFI-5a directories and
+the corpus's Linux records.

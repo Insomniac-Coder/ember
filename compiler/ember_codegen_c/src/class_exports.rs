@@ -125,9 +125,27 @@ fn method_plan(emitter: &Emitter<'_>, body: &Body, names: &HashMap<ClassId, Stri
     };
     let call = match body.class_virtual_slot {
         // Through the object's method table: an override's body when the object's class has one.
+        // The table and its slot's types are those of the class that declares the method, which
+        // each argument a pointer is given as (the call sites' rule).
         Some(slot) if let Some(owner) = body.class_owner => {
-            let table = emitter.class_vtable(owner);
-            format!("(((const struct {table}*)(((const {RT}obj_header*)(self))->ti->vtable))->slot{slot})({})", arguments.join(", "))
+            let mut declaring = owner;
+            let mut current = Some(owner);
+            while let Some(class) = current {
+                if emitter.virtual_signatures.contains_key(&(class, slot)) {
+                    declaring = class;
+                }
+                current = emitter.types.class_def(class).base;
+            }
+            // The receiver as the declaring class's slot takes it (an override's own is a subclass's).
+            let receiver = emitter.virtual_signatures.get(&(declaring, slot)).and_then(|signature| signature.params.first()).map(|ty| emitter.c_type(*ty));
+            let mut passed = arguments.clone();
+            if let (Some(c), Some(first)) = (receiver, passed.first_mut())
+                && c.ends_with('*')
+            {
+                *first = format!("({c})({first})");
+            }
+            let table = emitter.class_vtable(declaring);
+            format!("(((const struct {table}*)(((const {RT}obj_header*)(self))->ti->vtable))->slot{slot})({})", passed.join(", "))
         }
         _ => format!("{}({})", body.symbol, arguments.join(", ")),
     };
