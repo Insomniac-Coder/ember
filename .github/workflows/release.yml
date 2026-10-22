@@ -1,0 +1,37 @@
+name: release
+
+# `[BLD-10]` — the compile-time budgets of `[BUD-2]` are release gates: a release tag is cut only
+# when `tools/compile_budgets.py` passes over `bench/bigpkg`. Its times are normalised by a fixed
+# calibration workload against the reference machine's (`[BUD-3a]`), so a runner's speed does not
+# decide the gate; a run whose calibration moves more than 10 % is inconclusive (exit 2), not
+# failed, and is run again. Every step a release adds goes after `compile-budgets` (`needs:`).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  compile-budgets:
+    runs-on: windows-latest
+    name: compile-time budgets (release gate)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build
+        run: cargo build --locked --release -p ember_driver --bin ember
+      - name: the budgets
+        run: python tools/compile_budgets.py --ember target/release/ember.exe --json budgets.json
+      - name: the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compile-budgets
+          path: budgets.json

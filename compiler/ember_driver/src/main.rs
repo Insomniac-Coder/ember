@@ -4879,6 +4879,13 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         print_foreign_calls(input, &bodies, &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
+    // `ember check` reports what the passes below decide only for an `@simd(assert)` loop
+    // (`[SIMD-2]`'s `E4020`): without one, nothing below can say anything, and the check is done.
+    if command == "check" && !bodies.iter().any(|body| body.loop_notes.simd.iter().any(|note| note.assert)) {
+        interface_cache.commit().map_err(|error| error.to_string())?;
+        report(&sink, &map, options);
+        return Ok(ExitCode::SUCCESS);
+    }
     // A function called from one place is inlined there, so the analyses
     // below see what its caller knows. For clang and gcc, only a function
     // holding a check the caller's facts could remove: they inline the rest
@@ -4908,6 +4915,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // made (a call through a parameter became a direct call; a call became
     // its callee's body): make them again from the MIR as it now is.
     ember_analysis::install_callable_regions_all(&mut bodies, &types);
+    mark("inlining", "all modules");
     // `[RNG-4]` — on the final checks: remove every check the range facts
     // prove cannot fail, before the loop passes group what is left.
     // A branch they decide goes one way, and what only the other way read
@@ -4919,6 +4927,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // D-759, `[TXT-4]` — a text slice's bound that is a character boundary by construction (`0`, the
     // text's length, a cursor `next_char` stepped from one) is not checked again.
     ember_analysis::remove_known_boundary_checks_all(&mut bodies, &types);
+    mark("checks the range facts remove", "all modules");
     // `[OPT-2]` — last, on the final checks: a counted loop whose indices are
     // all provably in bounds at entry runs a copy without its bounds checks;
     // then `[SIMD-7]` groups the overflow checks of every loop in
@@ -4931,6 +4940,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[SIMD-2]` — each `@simd` loop's verdict, now that it is final: an
     // `@simd(assert)` loop not in vectorisable form is `E4020`, naming the
     // first clause of `[SIMD-5]` it fails; the report says the same of each.
+    mark("loop versioning", "all modules");
     let simd_report = simd_verdicts(&bodies, &map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
@@ -4997,6 +5007,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if command != "check" && options.emit.as_deref() != Some("mir") {
         ember_analysis::give_stack_buffers_all(&mut bodies, &types);
     }
+    mark("loop passes", "all modules");
     if command == "check" {
         interface_cache
             .commit()
@@ -6413,7 +6424,7 @@ fn report_timings(options: &Options) {
             .iter()
             .map(|(stage, module, took)| serde_json::json!({ "stage": stage, "module": module, "ms": ms(*took) }))
             .collect();
-        eprintln!("{}", serde_json::json!({ "timings": stages, "total_ms": ms(last - start) }));
+        eprintln!("{}", serde_json::json!({ "timings": stages, "total_ms": ms(last - start), "peak_memory_mb": peak_memory_mb() }));
         return;
     }
     eprintln!("timings (ms):");
@@ -6421,6 +6432,44 @@ fn report_timings(options: &Options) {
         eprintln!("  {stage:<22}{:>10.2}  {module}", ms(*took));
     }
     eprintln!("  {:<22}{:>10.2}", "total", ms(last - start));
+    if let Some(peak) = peak_memory_mb() {
+        eprintln!("peak memory: {peak:.1} MB");
+    }
+}
+
+/// `[BUD-2]`'s B9 — the compiler's own peak memory so far, in megabytes (not the C compiler's it
+/// started): its peak working set on Windows, its resident high-water mark on Linux; `None` where
+/// the system does not say.
+#[allow(unsafe_code)]
+fn peak_memory_mb() -> Option<f64> {
+    #[cfg(windows)]
+    {
+        #[repr(C)]
+        #[derive(Default)]
+        struct Counters {
+            cb: u32,
+            page_faults: u32,
+            peak_working_set: usize,
+            working_set: usize,
+            quota: [usize; 4],
+            pagefile: usize,
+            peak_pagefile: usize,
+        }
+        unsafe extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn K32GetProcessMemoryInfo(process: *mut std::ffi::c_void, counters: *mut Counters, size: u32) -> i32;
+        }
+        let mut counters = Counters { cb: std::mem::size_of::<Counters>() as u32, ..Counters::default() };
+        // SAFETY(ffi): this process's pseudo-handle and a counters struct of the size it is told.
+        let read = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) };
+        (read != 0).then(|| counters.peak_working_set as f64 / (1024.0 * 1024.0))
+    }
+    #[cfg(not(windows))]
+    {
+        let status = std::fs::read_to_string("/proc/self/status").ok()?;
+        let kb: f64 = status.lines().find_map(|line| line.strip_prefix("VmHWM:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
+        Some(kb / 1024.0)
+    }
 }
 
 /// `[UNS-8]` — `W3012` for each `unsafe:` block or `unsafe fn` with no

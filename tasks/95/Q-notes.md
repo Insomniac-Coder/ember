@@ -53,10 +53,58 @@ the lead: build what is missing, commit after each rule.
     warning gcc gives only at the LTO link would fail the `-Werror` C gate (`[TST-27]`), and would
     be a defect to fix in the emitted C.
 
+- **BLD-10** — built: the budgets are a release gate.
+  - `bench/bigpkg/generate.py` writes `[BUD-1]`'s package: 400 modules, ~48,600 lines, ~15.6 %
+    generic code (generic structs, methods, bounded functions), `m000` holding the widely imported
+    `Item`, a leaf module imported by `main` alone, and `import c "./vkimpl.c"` with a generated
+    20,000-line header of Vulkan's shape; deterministic; `edit()` makes `[BUD-2]`'s edits (body,
+    leaf signature, widely imported type), each new so no cache serves it.
+  - `tools/compile_budgets.py`: B1–B9 as `[BUD-2]` lists them (`--list`), 3 warm-ups and the
+    median of 15 runs, each figure published with its spread (IQR/median), a calibration workload
+    before and after (more than 10 % drift: inconclusive, exit 2), times normalised to the
+    reference machine's calibration (`bench/bigpkg/reference.json`, `--write-reference`), a figure
+    failing above its budget or 15 % above `bench/bigpkg/baseline.json`; a figure with a spread of
+    15 % or more is not gated (my reading of `[BUD-3b]`); a run past ten times its budget is ended
+    and fails; exit 1 when any figure fails.
+  - B9 needed the compiler's own peak memory: `--timings` / `--timings=json` now report it
+    (`peak_memory_mb`: the peak working set on Windows, `VmHWM` on Linux).
+  - `.github/workflows/release.yml`: on every `v*` tag (and by hand) the gate runs; release steps
+    go after it.
+  - Test: `milestones.rs` `the_compile_time_budgets_are_a_release_gate` (the tool's table equals
+    `[BUD-2]`'s; a small bigpkg passes generous budgets and fails B1 = 0; the workflow runs it on
+    tags).
+  - Today the gate fails, and by far: see defect 1. B1 on the full bigpkg is ~19 s (budget
+    250 ms); `ember build` of it did not finish in 15 minutes (11.5 GB).
+
 ## Compiler changes
 
 - `compiler/ember_build/src/lib.rs`, `cdylib.rs`, `reload.rs`; `compiler/ember_driver/src/main.rs`
   (manifest `lto`, `set_lto`, `write_build_record`) — BLD-6 above.
+- `compiler/ember_driver/src/main.rs` — `ember check` stops after the checks when no body has an
+  `@simd(assert)` loop: the optimisation passes after them (inlining, range facts, loop versioning,
+  the loop passes) report nothing but `[SIMD-2]`'s `E4020`. On a 10-module bigpkg, check went from
+  14 s to 1.5 s. `--timings` marks four more stages (`inlining`, `checks the range facts remove`,
+  `loop versioning`, `loop passes`) and the peak memory. The `[BLD-9]` test finds its JSON line by
+  its `"timings"` key, not by its first key (serde_json orders keys).
+
+## Defects found (for the lead to number)
+
+1. **Per-function MIR passes are superlinear in a function's size, and single-call inlining makes
+   one function the size of the program.** `ember check` of one function of N lines (repeated
+   list loops; `scratchpad onefn.py`): 207 lines 1.3 s, 407 lines 4.4 s, 807 lines 113 s (loop
+   versioning 98 s, borrow checks 6.9 s). In a 407-line function: `check_all_with_installed_callable_regions`
+   0.83 s, `check_unused_all` 0.92 s, `insert_shared_accesses_all` 1.45 s, `install_callable_regions_all`
+   0.47 s, `remove_proven_checks_all` 1.49 s, `version_bounds_checked_loops_all` 0.74 s. Then
+   `inline_single_calls_all` inlines every function called once into its caller with no growth
+   limit (for MSVC every such one), so `main` of bigpkg becomes the whole program: a 10-module,
+   838-line bigpkg spent 2.2 s inlining, 5.5 s in range facts and 5.8 s in loop versioning; the
+   400-module one did not build in 15 minutes and used 11.5 GB (17.8 GB for `ember check` before
+   the change above). Needed: a growth limit on single-call inlining (as GCC's
+   `max-inline-functions-called-once-insns` and `large-function-growth`), and the dataflow of
+   these passes made linear-ish (sparse states). Not fixed here: it is the analysis crate's
+   design, outside these rules; it blocks every bigpkg figure but B1 and B8.
+2. The front end on bigpkg (no inlining): `ember check` ~19 s, of which "move, drop, borrow checks"
+   8.2 s across ~2,500 small functions; `prepare_callable_interface_cache` is about 2.4 s of it.
 
 ## Spec questions (for the lead)
 
@@ -73,3 +121,13 @@ the lead: build what is missing, commit after each rule.
    cost of the above; the CMake test's `/MDd` evidence cannot be read from such an archive).
    Recommendation: as built. ADR-067's passing remark ("retaining profile checks and LTO flags")
    no longer holds for MSVC archives.
+4. `[BUD-3b]` "a gate applies only to a figure whose measured spread is below the gate": built as
+   "spread (IQR/median) below 15 %" for both gates. Options: per gate (the baseline gate's 15 %, the
+   budget gate's distance from the budget); or a fixed spread. Recommendation: as built, and say
+   which spread measure in the spec.
+5. `[BUD-1]` "a 50k-line package … one C header import of Vulkan's size": the generated header is
+   20,000 lines of Vulkan's shape (enums, structs, function pointer types, prototypes); the
+   package's lines exclude it. `[BUD-2]` B6 "cold cache" is read as a new, empty global build
+   cache (`EMBER_CACHE`), so the MSVC environment and the runtime object are made again too; B7 and
+   B9 turn the program cache off (`EMBER_NO_COMPILE_CACHE`), else a clean build of an unchanged
+   package is a cache hit.
