@@ -14,7 +14,7 @@ the editor rules, the debugger session, the guide, and the build rules.
   WSL has `/usr/bin/ninja`.
 - `cdb`: not installed. `gdb`: not installed in WSL. `lldb`: `C:\Program Files\LLVM\bin\lldb.exe`.
 
-## `[IMP-11]` (in progress)
+## `[IMP-11]` (done)
 
 ### The MIR is verified after every pass (done)
 
@@ -98,3 +98,71 @@ Ember's sizes are what that compiler's C reports; and the non-Clang-layout probe
 at its assertion under MSVC and GCC and builds under clang-cl and Clang. Passed here with MSVC,
 clang-cl and Clang, and in WSL (a Linux build of this tree) with GCC and Clang. CI runs it on both
 systems.
+
+### Every run test also runs on the evaluator (done)
+
+Every program the suite runs is run twice: compiled, and on the evaluator (`ember run --interp`,
+below), and the evaluator must give the compiled run's standard output, exit status and panic
+line exactly; a program it refuses with `E6010` (a foreign call, a thread) is the one exception.
+Both harnesses do it: `assert_the_evaluator_agrees` in `ember_driver/tests/milestones.rs` (so
+`run_pass_programs_pass`, `run_fail_programs_panic`, `milestones_pass`) and `evaluator_disagrees`
+in `tasks/impl-0.9.9/annotations.py` (the whole conformance tree). The evaluator's runs add about
+a minute to the conformance tree with 8 workers. **For whoever merges**: a helper's new run test
+that uses a builtin the evaluator does not have yet now fails with "the evaluator stopped: the
+builtin `x` is not run by the evaluator yet"; the fix is the builtin in `ember_interp`
+(`builtin.rs`'s dispatcher), following the C backend's `call_expression` arm.
+
+## `[CLI-21]` (done)
+
+`ember run --interp <file>` runs the program on a new evaluator, `compiler/ember_interp`, with no
+C compiler: the toolchain is not even looked for (a run with `EMBER_CC=no-such-cc` works).
+
+- **What it runs**: the program's MIR as `ember check` leaves it — every check passed, drops
+  elaborated, generators made state machines, the dynamic access checks inserted — before the
+  passes that only make code faster (`compile`'s hook before the `@simd(assert)` reports).
+- **How**: every value lives in one flat byte heap with the target's layout (`TypeTable::layout`),
+  so a value is its bytes as in the compiled program, and what the C backend and the runtime do
+  for a construct is done the same way: class objects with the runtime's header and access words,
+  counting, drop glue and `drop` adapters, virtual and interface dispatch, callable values and
+  their descriptors, niche `Option`s, the list buffer's growth, `Shared`/`Weak`, `RefCell`,
+  statics (lazy, with the cycle panic), formatting (the format mini-language, Python's float
+  text), parsing, ranges, SoA (`[SOA-1]`..`[SOA-7]`), arenas (`[ARN-1]`..`[ARN-12]`, the runtime's
+  chunk list), SIMD lane by lane (`[SIMD-1]`..`[SIMD-9]`), atomics and locks on one thread,
+  256-bit integers (`wide.rs`), files, console, `process`, arguments, the panic line, the `[RT-4]`
+  backtrace outside `release`, the `debug` run's leak report (`[WK-4]`, `[WK-15]`: the runtime's
+  components, edges and shortest cycles) and the debug access-conflict text (`[EXC-6]`).
+- **Compile-time values**: with `--interp` the compile-time evaluator's requests run on the
+  evaluator too (`ember_interp::comptime`), answering as the C program `emit_comptime` builds does
+  (the same value text, exit statuses, `ember-comptime-*` lines), so `E6004`, `E6001` and
+  `read_file`'s `E6010` are word for word the same (checked: every compile-fail test under
+  `CT-*`, `STA-*`, `TYP-41` gives the same diagnostics both ways). Its answers are cached apart
+  from the C program's, so neither hides the other.
+- **Refused**: a foreign function (called directly or through its wrapper), a thread, a job, a C++
+  or foreign object, a pinned object's address: `E6010` at the call, "… cannot run on the
+  evaluator", with a help to use `ember run`. A lock its own thread holds, or a `wait` no thread
+  can wake, stops with a fault (the compiled program would wait for ever).
+- **Speed**: the hot paths read and write words without building values (`scalar_binary`, copies,
+  checked arithmetic, branches), layouts and sizes are cached per type and frames per body. A
+  MIR statement costs about 20 ns; the slowest run test (20 million loop turns, D-752's) takes 12 s.
+- Tests: `ember_driver/tests/interp.rs` (no C compiler, console, files, a compile-time value, both
+  ways; a foreign call and a thread are `E6010`; a panic and a compile-time panic are the compiled
+  program's), and every run test of the suite both ways (above). Sweep: 1,864 run tests pass both
+  ways, 172 refused (foreign calls, threads, jobs, C++), none differ.
+
+### Questions and observations for the owner (`[CLI-21]`)
+
+1. **Should the evaluator become the compile-time evaluator for every build?** It answers every
+   request the C program does, word for word, without compiling and linking a program per check
+   pass (on this laptop that program's build is most of a cold `ember check` of a program with
+   compile-time values). Options: (a) keep the C program for builds, the evaluator for `--interp`
+   (what is built; no change to builds); (b) the evaluator for every build, the C program kept as
+   a cross-check in CI; (c) the evaluator only. Recommendation: (b) — faster checks, one less
+   compiler run per pass, and the C program still checks the evaluator. Not done: it changes
+   `[CT-4]`'s "the target's own code, built by the target's C compiler" wording, which is the
+   owner's.
+2. **What "equal a compiled run's" cannot mean**: an address. `{:p}`, a class's `Debug`
+   (`<Node at 0x…>`) and the leak report's `Node@…` print the evaluator's addresses, which are not
+   the program's (no test prints one). And `rsqrt_approx`/`rcp_approx` are exact on the evaluator,
+   as on a target without SSE, where SSE's are 12-bit estimates: `[SIMD-4]` allows either. I read
+   the rule as "the same output for a program whose output is defined", which is what the suite
+   checks.

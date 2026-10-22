@@ -6,8 +6,9 @@ line of code also needs the diagnostic's primary span on that line. A missing di
 unclaimed one both fail. Also `#$ help:`, `#$ not-help:`, and for run tests `#$ stdout:` (with its
 `#$` continuation lines), `#$ stdin:` (one input line each; stdin is otherwise empty),
 `#$ args:` (one program argument each, after `--`), `#$ flags:` (one compiler flag
-each, for the check), `#$ exit:` and `#$ panics:`. A test uses its first listed profile. Files are checked side by side, one per
-core, and reported in order.
+each, for the check), `#$ exit:` and `#$ panics:`. A test uses its first listed profile. A run test
+runs on the evaluator too (`ember run --interp`), which must print, exit and panic as the compiled
+program does (`[IMP-11]`). Files are checked side by side, one per core, and reported in order.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 """
 import glob
@@ -181,6 +182,26 @@ def check(path):
             problems.append(f'expected a panic {panics[1].strip() if panics else ""!r}, got exit {code}: {err.strip()[:160]!r}')
         if kind == 'run-pass' and code != expected_exit:
             problems.append(f'exit {code}, not {expected_exit}: {err.strip()[:200]!r}')
+        problems += evaluator_disagrees(path, text, profile, code, out, err)
+    return problems
+
+
+def evaluator_disagrees(path, text, profile, code, out, err):
+    """`[IMP-11]`, `[CLI-21]` — the program run on the evaluator (`ember run --interp`) too, with
+    the compiled run's standard output, exit status and panic exactly; a program the evaluator
+    refuses (`E6010`: a foreign call, a thread) is the one exception."""
+    icode, iout, ierr = run(['run', '--interp', '--profile', profile, '--out-dir', out_dir(path)], path,
+                            expected_stdin(text), program_args(text))
+    if icode != 0 and 'error[E6010]' in ierr and 'cannot run on the evaluator' in ierr:
+        return []
+    problems = []
+    if iout != out:
+        problems.append(f'the evaluator printed {iout.rstrip()[:200]!r}, the program {out.rstrip()[:200]!r}: {ierr.strip()[:200]!r}')
+    if icode != code:
+        problems.append(f'the evaluator exited {icode}, the program {code}: {ierr.strip()[:200]!r}')
+    panic = lambda stderr: next((line for line in stderr.splitlines() if line.startswith('panic')), None)
+    if panic(ierr) != panic(err):
+        problems.append(f'the evaluator panicked {panic(ierr)!r}, the program {panic(err)!r}')
     return problems
 
 
