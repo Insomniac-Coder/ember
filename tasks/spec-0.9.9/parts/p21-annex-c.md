@@ -48,7 +48,7 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   | custom allocators | overlay or native island |
   | ownership the header does not state | unsafe until `adopt` or a contract (`[FFI-36]`) |
 
-* `[FFI-17a]` *(changed in 0.9.9)* *(changed in 0.9.10)*
+* `[FFI-17a]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.10)*
 
   | C++ | Ember |
   |---|---|
@@ -57,7 +57,7 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   | `std::string_view` | `Span[u8]`; `.to_str()` is the fallible conversion to `str` (`[TXT-2]`) |
   | `std::string` | `CppString`; `.to_str() -> Result[str, Utf8Error]`; `String.from(c)` copies |
   | `std::vector<T>` | `CppVector[T]` with `.span()`, `.span_mut()`, `.to_array()`, `push_back`, `len` |
-  | `std::unique_ptr<T>` | `ForeignBox[T]`, dropped through the deleter |
+  | `std::unique_ptr<T>` | `ForeignBox[T]`, dropped through the deleter; one whose deleter holds state is refused (`E5034`): a `ForeignBox` holds one address |
   | `std::optional<T>` | `Option[T]` for a `T` that maps by value |
   | `std::shared_ptr<T>`, `std::weak_ptr<T>` | `CppShared[T]`, `CppWeak[T]` — never `Shared`/`Weak` (`[WK-14]`, `E5065`) |
   | `std::variant<…>` | a generated enum, when every alternative maps and the overlay names each: `@ffi(variant=["A", "B"])` on a `type` entry naming the header's alias of the variant, the names in the alternatives' order |
@@ -161,9 +161,10 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   their outer type's name; namespaces become module paths, an inline one adding nothing to a name, as in
   C++ (`nlohmann::json_abi_v3_11_3::json` is `cpp.nlohmann.json`, ODR-165); entities in anonymous
   namespaces are skipped (`W5034`).
-* `[FFI-42]` Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
-  `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through); C++ iterators with
-  `begin`/`end` become `Iterable`.
+* `[FFI-42]` *(changed in 0.9.10)* Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
+  `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through: such a class
+  imports `get()`, and `get_mut()` where the operator is not `const`, through which `->` is reached);
+  C++ iterators with `begin`/`end` become `Iterable`.
 * `[FFI-42a]` Iterating an imported C++ container borrows it mutably for the loop, so any method that
   could invalidate its iterators — every `mut self` method, including the `const` ones `[FFI-40a]` gives
   `mut self` — is rejected inside the loop by the ordinary borrow rules.

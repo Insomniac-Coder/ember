@@ -13,7 +13,7 @@
     "BLD-FFI": "5", "ABI": "5", "MNG": "5", "BLD": "5", "GRM": "5",
     "BEN": "6",
     "CXX": "7",
-    "TST": "8", "LNT": "8", "DOC": "8", "TOOL": "8", "IDE": "8", "CONF": "8", "IMP": "8", "VER": "8"
+    "TST": "8", "LNT": "8", "DOC": "8", "TOOL": "8", "IDE": "8", "CONF": "8", "IMP": "8", "VER": "8", "CG-LL": "9"
   },
   "placed_by_part_or_rule": {
     "_what": "Rules whose phase their family does not give: Annex C's C++ rules share `FFI` with Part XVI's C rules, and `ember run --interp` is a `CLI` rule; both are the work of phase 7 (owner, 2026-10-21). `[HR-24]` needs Annex D's `std.gpu` (in-flight GPU frames) and goes after 1.0 with it, with `[HR-41]`'s GPU row, which the spec now gives to `[HR-24]` (ODR-195).",
@@ -21,7 +21,7 @@
   },
   "post_1_0": {
     "_what": "Work the plan schedules after 1.0, counted in its own row and outside the Overall (owner, 2026-10-15).",
-    "families": {"CG-LL": "the LLVM backend (v2)", "GPU": "the GPU host model (v0.6)"}
+    "families": {"GPU": "the GPU host model (v0.6)"}
   },
   "unfinished": {
     "IDE-3": "built: names and types are checked whatever parsing and module loading reported, each failure a placeholder that satisfies everything (the lexer closes a bracket never closed at the next declaration; the parser's reported constructs, a failed import's names and a missing `return` after one are not reported again), and the editor queries answer in a broken file (ember_driver/tests/editor.rs); not built: the stages after type checking (borrow and effect checks, MIR lints) do not run on a program with a type error (tasks/95/AC-notes.md)",

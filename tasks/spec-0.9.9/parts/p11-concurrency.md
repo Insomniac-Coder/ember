@@ -36,7 +36,8 @@ fn main():
 ## XI.1 `Send` and `Sync`
 
 * `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* A type is **`Send`** when a value of it may be moved to another thread.
-  Structs, enums, tuples, fixed arrays and collections are `Send` when every component is. Raw
+  Structs, enums, tuples, fixed arrays and collections are `Send` when every component is. `dyn I`
+  is `Send` when `I` requires `Send` (`interface I: Send:`), and `Sync` when it requires `Sync`. Raw
   pointers are not `Send`. `ref T` and `Span[T]` are `Send` when `T` is `Sync`; `ref mut T` and
   `MutSpan[T]` when `T` is `Send`. A class handle, and `Weak` of one, is `Send` only if the class is
   `@sync` (`[THR-2]`). `Shared[T]` is never `Send` (`[HEAP-10]`); `SyncShared[T]` and its `Weak` are

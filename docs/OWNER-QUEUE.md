@@ -1386,6 +1386,279 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-239 — `std.mem.System` — **CLOSED**
+
+    ID:        ODR-239
+    Status:    CLOSED — decided by the owner, 2026-10-22; built; incorporated in 0.9.10_Hardened_35
+    Category:  MEMORY / ALLOCATORS, delegated, confirmed by the owner
+    Location:  Ember_v0.9.10_Hardened_34.md [ALC-2], [ALC-3]
+
+**The question.** A global allocator that wants to count or trace allocations must hand them on to some allocator, and `Global` is itself (helper AA, question 1).
+
+**Ruling.** `std.mem.System` is the platform's allocator, which a global allocator may wrap (a counting or tracing allocator delegates to `System()`); `Global` stays the package's configured allocator, so `Array[T, Global]` never bypasses it, and an allocator that delegates to `Global` from inside the global allocator recurses. The owner confirmed it on 2026-10-22.
+
+---
+
+## ODR-240 — Callables given to std — **CLOSED**
+
+    ID:        ODR-240
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  LIBRARY / ITERATION, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_34.md [STD-19], [CLO-*]
+
+**The question.** Whether the standard library's callable-taking functions take over a callable the caller passes (ODR-210, delegated) or borrow it.
+
+**Ruling.** The owner, 2026-10-22, replacing ODR-210: every standard-library function that takes a callable, consumers and adapters alike, borrows a named callable the caller passes: the caller keeps it and may pass it again; one that changes what it captured is lent with leave to change it, and what it captured stays lent while it is still used (`[BRW-2]`). A lambda written at the call is given to the call, so an adapter's iterator made from one can be kept or returned.
+
+---
+
+## ODR-241 — `Box` and `==` — **CLOSED**
+
+    ID:        ODR-241
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  TYPES / IMPLEMENTATIONS, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_34.md [TYP-36], IX.1
+
+**The question.** Whether two boxes compare with `==`, and what two different kinds behind `dyn` compare to (left open by ODR-237).
+
+**Ruling.** The owner, 2026-10-22: two boxes compare with `==` when what they hold does; `Box[dyn I]` compares when `I` requires `Eq` (`interface Shape: Eq:`, a method-table entry as for `Clone`): two different kinds are never equal, two of one kind compare their contents.
+
+---
+
+## ODR-242 — Compile-time budgets — **CLOSED**
+
+    ID:        ODR-242
+    Status:    CLOSED — decided by the owner, 2026-10-22; the gate to be rebuilt; incorporated in 0.9.10_Hardened_35
+    Category:  TOOLCHAIN / BUDGETS, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_34.md [BLD-10], [BUD-1]..[BUD-3b]
+
+**The question.** B1..B9 held the compiler to fixed times (B1 `ember check` within 250 ms), which differ from one CPU to another.
+
+**Ruling.** The owner, 2026-10-22: no fixed time limits ("I do not like the idea of setting 250 ms time limit, it varies from CPU to CPU"); the compiler is made as fast as it can be ("just find ways to get the fastest CPU instructions") and memory safe ("fast and memory safe"). The lead's text: the figures are measured on one recorded machine, before and after each change, and a change may not make one worse beyond its spread; every figure is published.
+
+---
+
+## ODR-243 — `const` values and the evaluator — **CLOSED**
+
+    ID:        ODR-243
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  COMPILE TIME, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [CT-3], [CT-4]
+
+**The question.** Whether a `const` value may be computed by building and running a C program, as the first implementation did.
+
+**Ruling.** A `const` value is computed by the compiler's own evaluator (`[CLI-21]`), never by building and running a C program; the test suite runs every program both compiled and on the evaluator and fails on any difference (under ODR-242, and the spec's "evaluator").
+
+---
+
+## ODR-244 — C files per module — **CLOSED**
+
+    ID:        ODR-244
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  TOOLCHAIN / BUILDS, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_34.md [BLD-1], [BLD-4]
+
+**The question.** Whether a build writes one C file for the program or one per module (helper AC, question 3).
+
+**Ruling.** The owner, 2026-10-22: a `debug` build writes one C file per module and recompiles only the modules that changed; a `release` build keeps one C unit, so the C compiler optimises across modules and the shipped program loses no speed.
+
+---
+
+## ODR-245 — Which parameter gets the user data — **CLOSED**
+
+    ID:        ODR-245
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  C INTEROP / CALLBACKS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-21]
+
+**The question.** A callback with several parameters of its user data's type gave no way to say which receives it (helper AB, question 1).
+
+**Ruling.** `user_data=p@N` names the callback's `N`th parameter (1-based, as in the C signature); without `@N`, exactly one parameter has that type, or the contract is `E5002`, whose help shows the `@N` form.
+
+---
+
+## ODR-246 — `destroys(f)` with the call's result — **CLOSED**
+
+    ID:        ODR-246
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  C INTEROP / CONTRACTS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-11]
+
+**The question.** An unregistering function that takes the registering call's result (`id = listen(…)`, `unlisten(id)`) could not be named in `destroys(f)` (helper AB, question 2).
+
+**Ruling.** `f`'s parameters may be the registering call's own and its result; the token keeps them.
+
+---
+
+## ODR-247 — `threads(creator)` and `handle` on a function — **CLOSED**
+
+    ID:        ODR-247
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  C INTEROP / CONTRACTS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-1], [FFI-11]
+
+**The question.** Whether `threads(creator)` and `handle` written on a function are a not-yet-built form (`E0900`) or a mistake (helper AB, question 3).
+
+**Ruling.** They are words of a type's or a result's contract, not a function's: on a function each is a contract error (`E5002`).
+
+---
+
+## ODR-248 — Unions and flexible arrays — **CLOSED**
+
+    ID:        ODR-248
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; built; incorporated in 0.9.10_Hardened_35
+    Category:  C INTEROP / TYPES, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-8]
+
+**The question.** How the mapping writes a C union and a struct ending in a flexible array member (helper AB, question 4).
+
+**Ruling.** A union is `@layout(c, union) struct`, a struct a flexible array member ends `@layout(c, flexible)`, as built.
+
+---
+
+## ODR-249 — `@ffi(newtype)` — **CLOSED**
+
+    ID:        ODR-249
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  C INTEROP / TYPES, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-8]
+
+**The question.** What the new type `@ffi(newtype)` makes of a `typedef` is (helper AB, question 5).
+
+**Ruling.** A nominal type with the typedef's representation, passed to C as the typedef is, converted with `as` only.
+
+---
+
+## ODR-250 — Variadic arguments — **CLOSED**
+
+    ID:        ODR-250
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; built; incorporated in 0.9.10_Hardened_35
+    Category:  C INTEROP / CALLS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-8]
+
+**The question.** How a variadic call's further arguments are typed, since C promotes some (helper AB, question 6).
+
+**Ruling.** Each has a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5015`, naming the cast to write, as built.
+
+---
+
+## ODR-251 — `std::unique_ptr` with a stateful deleter — **CLOSED**
+
+    ID:        ODR-251
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; built; incorporated in 0.9.10_Hardened_35
+    Category:  C++ INTEROP / TYPES, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-17a]
+
+**The question.** Whether a `unique_ptr` whose deleter holds state crosses as `ForeignBox` (helper AB, question 7).
+
+**Ruling.** It is refused (`E5034`): a `ForeignBox` holds one address, as built.
+
+---
+
+## ODR-252 — Smart-pointer-like classes — **CLOSED**
+
+    ID:        ODR-252
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  C++ INTEROP / OPERATORS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-42]
+
+**The question.** How a class with `operator*`/`operator->` is read through (helper AB, question 8).
+
+**Ruling.** It imports `get()`, and `get_mut()` where the operator is not `const`, through which `->` is reached.
+
+---
+
+## ODR-253 — A nullable callback with user data — **CLOSED**
+
+    ID:        ODR-253
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  C INTEROP / CALLBACKS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [FFI-21]
+
+**The question.** What a `nullable` callback with user data is on the Ember side (helper AB, question 10).
+
+**Ruling.** An `Option` of a callable value: `None` passes `NULL` and no user data.
+
+---
+
+## ODR-254 — Which panics get a twin — **CLOSED**
+
+    ID:        ODR-254
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  LIBRARY / FAILURE, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [STD-14], [ERR-13]
+
+**The question.** `[STD-14]` asked a non-panicking twin of every caller's-bug panic, which a constructor or a mutation has no sensible form of (helper AA, question 2).
+
+**Ruling.** The twin is an accessor's, as `[ERR-13]` says: `Mat2`/`Mat3`/`Mat4` `col`/`row` and `CppShared.get` gain twins; a constructor's or a mutation's caller's bug panics with none.
+
+---
+
+## ODR-255 — `dyn I` and threads — **CLOSED**
+
+    ID:        ODR-255
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  CONCURRENCY, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [THR-8], [ECS-4]
+
+**The question.** Whether a `dyn I` value is ever `Send`, and what `run_parallel` asks of a component two systems read (helper AA, question 3).
+
+**Ruling.** `dyn I` is `Send` when `I` requires `Send`, and `Sync` when it requires `Sync`; in one `run_parallel` a component two systems read must be `Sync`, and one a system writes `Send` (`E7004`).
+
+---
+
+## ODR-256 — The interner and the session — **CLOSED**
+
+    ID:        ODR-256
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  TOOLCHAIN / EDITOR, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [IDE-6]
+
+**The question.** Whether the identifier interner, which outlives every session today, is the session's (helper AC, question 2).
+
+**Ruling.** It is one per session (an identifier's text borrows from it), built with the language server.
+
+---
+
+## ODR-257 — What the front-end cache serves first — **CLOSED**
+
+    ID:        ODR-257
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  TOOLCHAIN / BUILDS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [BLD-1], [BLD-2], [BLD-8]
+
+**The question.** Whether the module cache serves `ember check` or `ember build` first (helper AC, question 4).
+
+**Ruling.** It serves `ember check` first, then `ember build` (with ODR-244's one C file per module in `debug`).
+
+---
+
+## ODR-258 — Ninja — **CLOSED**
+
+    ID:        ODR-258
+    Status:    CLOSED — delegated (lead), 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_35
+    Category:  TOOLCHAIN / BUILDS, delegated
+    Location:  Ember_v0.9.10_Hardened_34.md [BLD-4]
+
+**The question.** Where the build finds Ninja (helper AC, question 3).
+
+**Ruling.** Ember's download carries Ninja beside Clang and LLD (ODR-223); a build from a source checkout finds it on `PATH`, and without it is an error naming the install command.
+
+---
+
+## ODR-259 — A `debug` build and the speed rewrites — **CLOSED**
+
+    ID:        ODR-259
+    Status:    CLOSED — decided by the owner, 2026-10-22; built; incorporated in 0.9.10_Hardened_35
+    Category:  TOOLCHAIN / PROFILES, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_34.md [PRF-3], [PRF-1], [TST-5]
+
+**The question.** A debugger could not stop on an Ember line of a `debug` build: the compiler inlined a function called once and copied its loops (a vectorised copy kept the running total in a temporary), so the line had eight places in the code and the local had no name there.
+
+**Ruling.** The owner, 2026-10-22: a `debug` build skips Ember's own speed rewrites, so a debugger follows the program as written ("give the option to turn the speed rewrite on or off for debug"; "yes, off by default"); a package turns them on with `[profiles.debug] rewrites = true`. The lead's, under `[PRF-1]`: what the rewrites decide that a program is told (the `@simd` verdicts) is decided the same in every profile.
+
+---
+
 ## ODR-238 — How a user's callback registry marks its parameter — **OPEN**
 
     ID:        ODR-238

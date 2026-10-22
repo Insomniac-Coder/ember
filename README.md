@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_34` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_34.md`](docs/spec-source/Ember_v0.9.10_Hardened_34.md) |
+| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_35` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_35.md`](docs/spec-source/Ember_v0.9.10_Hardened_35.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -43,13 +43,14 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 2 | Ownership, borrowing, regions | 99% |
 | 3 | Classes, reference counting, exclusivity | 100% |
 | 4 | Effects, compile time, reflection, derives | 100% |
-| 5 | C interoperability | 86% |
+| 5 | C interoperability | 84% |
 | 6 | Concurrency and data-oriented design | 91% |
-| 7 | C++ interoperability and the interpreter | 96% |
-| 7a | Iteration, determinism, cost control | 91% |
-| 8 | Hardening and 1.0 | 80% |
-| | Overall (1.0) | 96% |
-| | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
+| 7 | C++ interoperability and the interpreter | 95% |
+| 7a | Iteration, determinism, cost control | 90% |
+| 8 | Hardening and 1.0 | 79% |
+| 9 | The LLVM backend (ODR-223) | 0% |
+| | Overall (1.0) | 95% |
+| | After 1.0: the GPU host model (v0.6) | 0% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10
 ([`docs/MIGRATION-0.9.10.md`](docs/MIGRATION-0.9.10.md)): every iterator counts and numbers its items

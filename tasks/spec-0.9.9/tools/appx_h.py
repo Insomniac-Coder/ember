@@ -681,6 +681,48 @@ ODRS = [
      "`[GRM-27]`, `[GRM-15]`"),
     ('ODR-237', "the owner's answer: `Box[T]` is `Clone` when `T` is; an interface may require `Clone`, and then `Box[dyn I]` is `Clone`; to be built",
      "`[TYP-36]`, `[TYP-22]`, IX.1"),
+    ('ODR-239', "delegated, confirmed by the owner: `std.mem.System`, the platform's allocator, for a global allocator to wrap",
+     "`[ALC-2]`"),
+    ('ODR-240', "the owner: std's callable-taking functions borrow a named callable; a lambda written at the call is given (replaces ODR-210)",
+     "`[STD-19]`"),
+    ('ODR-241', "the owner: `Box == Box` as what they hold; `Box[dyn I]` when `I` requires `Eq`, two kinds never equal",
+     "`[TYP-36]`"),
+    ('ODR-242', "the owner: no fixed times; the figures are a gate by before-and-after comparison on one machine",
+     "`[BLD-10]`, `[BUD-1]`, `[BUD-2]`, `[BUD-3]`, `[BUD-3a]`"),
+    ('ODR-243', "delegated: a `const` value by the compiler's own evaluator, never a built C program",
+     "`[CT-4]`"),
+    ('ODR-244', "the owner: `debug` one C file per module, recompiled as it changes; `release` one C unit",
+     "`[BLD-1]`"),
+    ('ODR-245', "delegated: `user_data=p@N` names the callback parameter that receives the user data",
+     "`[FFI-21]`"),
+    ('ODR-246', "delegated: `destroys(f)` may take the registering call's result, which the token keeps",
+     "`[FFI-11]`"),
+    ('ODR-247', "delegated: `threads(creator)` and `handle` on a function are `E5002`",
+     "`[FFI-1]`"),
+    ('ODR-248', "delegated: `@layout(c, union)` and `@layout(c, flexible)`, as built",
+     "`[FFI-8]`"),
+    ('ODR-249', "delegated: `@ffi(newtype)` a nominal type with the typedef's representation, `as` only",
+     "`[FFI-8]`"),
+    ('ODR-250', "delegated: a variadic call's further arguments typed; a promoted one `E5015`, as built",
+     "`[FFI-8]`"),
+    ('ODR-251', "delegated: a `unique_ptr` whose deleter holds state is `E5034`",
+     "`[FFI-17a]`"),
+    ('ODR-252', "delegated: `operator*`/`->` import `get()` and `get_mut()`",
+     "`[FFI-42]`"),
+    ('ODR-253', "delegated: a `nullable` callback with user data is an `Option` of a callable value",
+     "`[FFI-21]`"),
+    ('ODR-254', "delegated: the non-panicking twin is an accessor's; a constructor's or mutation's bug panics with none",
+     "`[STD-14]`"),
+    ('ODR-255', "delegated: `dyn I` is `Send`/`Sync` when `I` requires it; shared reads in `run_parallel` need `Sync`",
+     "`[THR-8]`, `[ECS-4]`"),
+    ('ODR-256', "delegated: the identifier interner is the session's",
+     "`[IDE-6]`"),
+    ('ODR-257', "delegated: the module cache serves `ember check` as `ember build`",
+     "`[BLD-2]`"),
+    ('ODR-258', "delegated: Ninja carried beside Clang and LLD; from a checkout on `PATH`, else an error naming the install",
+     "`[BLD-4]`"),
+    ('ODR-259', "the owner: `debug` without Ember's speed rewrites unless `rewrites = true`",
+     "`[PRF-3]`"),
 ]
 
 H5_HEAD = """
@@ -749,7 +791,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 34)
+CURRENT = ('0.9.10', 35)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -784,6 +826,7 @@ V010_H30_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h30')
 V010_H31_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h31')
 V010_H32_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h32')
 V010_H33_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h33')
+V010_H34_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h34')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1612,8 +1655,37 @@ Generated: every rule whose text differs from 0.9.10_Hardened_33.
 """
 
 
-def v010_h33_to_now():
-    return H39_HEAD + rule_diff(V010_H33_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h33_to_h34():
+    return H39_HEAD + rule_diff(V010_H33_PARTS, V010_H34_PARTS)
+
+
+H40_HEAD = """
+## H.40 Changes in 0.9.10_Hardened_35 (from 0.9.10_Hardened_34)
+
+**0.9.10_Hardened_35** records the owner's answers of 2026-10-22 and 2026-10-23 (ODR-240, ODR-241, ODR-242, ODR-244, ODR-259, and ODR-223 again: the LLVM backend is part of 1.0, begun now) and the rulings on helpers AA, AB and AC's smaller questions (ODR-239, ODR-243, ODR-245..ODR-258, for the owner's review; ODR-239 the owner confirmed) (`docs/DECISIONS.md` ADR-273); the owner also confirmed ODR-175, ODR-207, ODR-209, ODR-211, ODR-213 and ODR-215, and ODR-238 (`[CLO-15]`) stays open:
+
+* For `[ALC-2]`: `Global` is the package's configured allocator and `System` the platform's, which a global allocator may wrap (ODR-239).
+* For `[STD-19]`: a callable given to the standard library is borrowed; a lambda written at the call is given (ODR-240, the owner, replacing ODR-210).
+* For `[TYP-36]`: two boxes compare with `==` as what they hold does; `Box[dyn I]` when `I` requires `Eq`, two kinds never equal (ODR-241, the owner).
+* For `[BLD-10]`, `[BUD-1]`, `[BUD-2]`, `[BUD-3]`, `[BUD-3a]`: no fixed times; the figures are a gate by before-and-after comparison on one machine (ODR-242, the owner).
+* For `[CT-4]`: a `const` value is the compiler's own evaluator's, never a built C program's (ODR-243).
+* For `[BLD-1]`, `[BLD-2]`, `[BLD-4]`: `debug` writes one C file per module, `release` one unit (ODR-244, the owner); the cache serves `ember check` (ODR-257); Ninja is carried, or found on `PATH` (ODR-258).
+* For `[FFI-1]`, `[FFI-8]`, `[FFI-11]`, `[FFI-21]`, `[FFI-17a]`, `[FFI-42]`: helper AB's questions (ODR-245..ODR-253).
+* For `[STD-14]`: the non-panicking twin is an accessor's (ODR-254).
+* For `[THR-8]`, `[ECS-4]`: `dyn I` is `Send`/`Sync` when `I` requires it; a component two parallel systems read is `Sync` (ODR-255).
+* For `[IDE-6]`: the identifier interner is the session's (ODR-256).
+* For `[PRF-3]`: a `debug` build makes none of Ember's speed rewrites unless `[profiles.debug] rewrites = true` (ODR-259, the owner).
+* For `[CG-LL-1]`: the LLVM backend is part of 1.0, built beside the C backend now (ODR-223, the owner, again on 2026-10-23); the progress table counts it as phase 9, inside 1.0.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_34.
+
+| Rule | 0.9.10_Hardened_34 → 0.9.10_Hardened_35 |
+|---|---|
+"""
+
+
+def v010_h34_to_now():
+    return H40_HEAD + rule_diff(V010_H34_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1684,7 +1756,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

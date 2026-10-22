@@ -37,8 +37,9 @@ SCOPES = {
     '7': 'C++ interoperability and the interpreter',
     '7a': 'Iteration, determinism, cost control',
     '8': 'Hardening and 1.0',
+    '9': 'The LLVM backend (ODR-223)',
 }
-ORDER = ['1', '2', '3', '4', '5', '6', '7', '7a', '8']
+ORDER = ['1', '2', '3', '4', '5', '6', '7', '7a', '8', '9']
 RULE = re.compile(r'\[([A-Z]+(?:-[A-Z]+)?-[0-9]+[a-z0-9]*)\]')
 TABLE_HEAD = '| Phase | Scope | Done |'
 

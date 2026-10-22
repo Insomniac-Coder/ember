@@ -39,9 +39,12 @@ anything this Part leaves open.
     iterator of references (`sorted(m.keys())`) the array holds clones of the items (`T: Clone`), as
     `sorted(m)`'s does: an `Array` cannot hold views of a local (`[TYP-15]`).
   `min` and `max` stay two-argument functions; `xs.iter().min()` gives an `Option` for a collection.
-* `[STD-14]` *(new in 0.9.9)* Failure follows `[ERR-13]`: a caller's bug panics and has a
-  non-panicking twin; a failure of the world returns `Result` or `Option`. Every allocating function
-  is documented as allocating and carries `Alloc`.
+* `[STD-14]` *(new in 0.9.9)* *(changed in 0.9.10)* Failure follows `[ERR-13]`: a caller's bug
+  panics; a failure of the world returns `Result` or `Option`. The non-panicking twin `[ERR-13]` asks
+  for is an accessor's (`Mat4.col`/`col_checked`, `CppShared.get`); a constructor's or a mutation's
+  caller's bug (`stepped(0)`, `BitSet.insert` of a negative, `Entity.new` out of range, `World.add` to
+  a dead entity, `normalize` of zero, `split` on an empty separator) panics with none. Every
+  allocating function is documented as allocating and carries `Alloc`.
 
 | Module | Contents |
 |---|---|
@@ -255,11 +258,14 @@ anything this Part leaves open.
   consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
   (`Array.join`) takes precedence. An adapter takes the iterator it wraps (`owned self`), and so
-  does a consumer; an adapter also takes over what it keeps: `zip` and `chain` their other iterator,
-  and the adapters that apply a callable that callable (`owned`), and a consumer that applies a
-  callable (`any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`, the `…_by` and
-  `…_by_key` forms) takes it over too. So a named iterator given to `zip` is moved (`.clone()` keeps
-  the caller's), and a lambda written at the call keeps its captures (`[CLO-15]`). What a caller
+  does a consumer; `zip` and `chain` take their other iterator too, so a named iterator given to
+  `zip` is moved (`.clone()` keeps the caller's). A callable is **borrowed**, by the adapters that
+  apply one and the consumers alike (`any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`,
+  the `…_by` and `…_by_key` forms): a named callable the caller passes stays the caller's, who may
+  pass it again; one that changes what it captured is lent with leave to change it, and what it
+  captured stays lent while it is still used (`[BRW-2]`). A lambda written at the call is given to
+  it, since nothing else can name it, so an adapter's iterator made from one can be kept or returned
+  (`return xs.iter().map(fn(x) => x * 2)`), its captures with it (`[CLO-15]`). What a caller
   passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
   `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
   `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from

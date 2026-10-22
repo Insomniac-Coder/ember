@@ -141,7 +141,11 @@ fn main():
 * `[ALC-2]` *(changed in 0.9.10)* `std.mem` declares `pub unsafe interface Allocator` with
   `allocate(self, layout: Layout) -> *mut u8` (null on failure), `deallocate(self, p: *mut u8,
   layout: Layout)` and `reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8`;
-  `Layout` is a struct of `size: usize` and `align: usize`, and `Global` is the runtime's allocator.
+  `Layout` is a struct of `size: usize` and `align: usize`. `Global` is the package's configured
+  allocator (the one `[ALC-3]` names, else the platform's), so `Array[T, Global]` never bypasses it;
+  `System` is the platform's, which a global allocator may wrap (a counting or tracing allocator
+  delegates to `System()`). An allocator that delegates to `Global` from inside the global allocator
+  recurses.
   Implementing `Allocator` is `unsafe` (`unsafe extend A implements Allocator:`, `[TYP-43]`): the
   implementer promises valid, aligned, unaliased memory.
 * `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with
