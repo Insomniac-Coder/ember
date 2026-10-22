@@ -637,7 +637,7 @@ impl<'a> Lexer<'a> {
             Some(c) => self.push(TokenKind::Lit(Lit::Char(c)), start),
             None => {
                 let span = self.span(start);
-                let d = Diagnostic::error(codes::E0101, span, "not a Unicode scalar value");
+                let d = Diagnostic::error(codes::E0009, span, "not a Unicode scalar value");
                 self.sink.emit(d);
                 self.push(TokenKind::Error, start);
             }
@@ -689,12 +689,12 @@ impl<'a> Lexer<'a> {
         }
         if hashes > 8 {
             let span = self.span(start);
-            let d = Diagnostic::error(codes::E0101, span, "a raw string may have at most 8 hashes");
+            let d = Diagnostic::error(codes::E0009, span, "a raw string may have at most 8 hashes");
             self.sink.emit(d);
         }
         if !self.eat('"') {
             let span = self.span(start);
-            let d = Diagnostic::error(codes::E0101, span, "expected `\"` after a raw string prefix");
+            let d = Diagnostic::error(codes::E0009, span, "expected `\"` after a raw string prefix");
             self.sink.emit(d);
             self.push(TokenKind::Error, start);
             return;
@@ -801,7 +801,7 @@ impl<'a> Lexer<'a> {
                     let at = self.pos;
                     self.pos += 1;
                     let span = self.span(at);
-                    let d = Diagnostic::error(codes::E0101, span, "unmatched `}` in an f-string")
+                    let d = Diagnostic::error(codes::E0009, span, "unmatched `}` in an f-string")
                         .help("write `}}` for a literal brace");
                     self.sink.emit(d);
                 }
@@ -813,7 +813,7 @@ impl<'a> Lexer<'a> {
                                 bytes.push(c as u8);
                             } else {
                                 let span = self.span(start);
-                                let d = Diagnostic::error(codes::E0101, span, "a byte string may hold ASCII only",
+                                let d = Diagnostic::error(codes::E0009, span, "a byte string may hold ASCII only",
                                 );
                                 self.sink.emit(d);
                             }
@@ -829,7 +829,7 @@ impl<'a> Lexer<'a> {
             StringFlavour::CStr => {
                 if bytes.contains(&0) {
                     let span = self.span(start);
-                    let d = Diagnostic::error(codes::E0101, span, "a C string literal may not contain a NUL byte")
+                    let d = Diagnostic::error(codes::E5064, span, "a C string literal may not contain a NUL byte")
                         .note("the terminating NUL is added by the compiler");
                     self.sink.emit(d);
                 }
@@ -1136,29 +1136,29 @@ impl EscapeError {
     fn into_diagnostic(self, span: Span) -> Diagnostic {
         match self {
             EscapeError::Truncated => {
-                Diagnostic::error(codes::E0101, span, "escape sequence is cut off")
+                Diagnostic::error(codes::E0009, span, "escape sequence is cut off")
             }
             EscapeError::HexDigits => {
-                Diagnostic::error(codes::E0101, span, r"`\x` needs exactly two hex digits")
+                Diagnostic::error(codes::E0009, span, r"`\x` needs exactly two hex digits")
             }
             EscapeError::HexAboveAscii => {
-                Diagnostic::error(codes::E0101, span, r"`\x` above 0x7F is not valid in a string")
+                Diagnostic::error(codes::E0009, span, r"`\x` above 0x7F is not valid in a string")
                     .help(r"use `\u{…}` for a non-ASCII character")
             }
             EscapeError::MissingBrace => {
-                Diagnostic::error(codes::E0101, span, r"`\u` must be followed by `{`")
+                Diagnostic::error(codes::E0009, span, r"`\u` must be followed by `{`")
             }
             EscapeError::UnicodeDigits => {
-                Diagnostic::error(codes::E0101, span, r"`\u{…}` takes 1 to 6 hex digits")
+                Diagnostic::error(codes::E0009, span, r"`\u{…}` takes 1 to 6 hex digits")
             }
             EscapeError::NotScalar(v) => Diagnostic::error(
-                codes::E0101,
+                codes::E0009,
                 span,
                 format!("{v:#x} is not a Unicode scalar value"),
             )
             .note("surrogates D800-DFFF are not scalar values [TYP-3]"),
             EscapeError::Unknown(c) => {
-                Diagnostic::error(codes::E0101, span, format!(r"unknown escape `\{c}`"))
+                Diagnostic::error(codes::E0009, span, format!(r"unknown escape `\{c}`"))
                     .help(VALID_ESCAPES)
             }
         }
