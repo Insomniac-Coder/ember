@@ -32986,6 +32986,23 @@ impl<'a> Checker<'a> {
         {
             return Expr { ty: expected, ..expr };
         }
+        // `[CLO-3]` (ODR-189) — a consumed callable parameter (`owned f: fn(A) -> R`) is an owned
+        // callable value in its function: it may be stored where one of its signature is wanted.
+        // This is the generic body's check, with the parameter opaque; each instance converts its
+        // concrete argument as the rules below do (a function or capture-free lambda by its bits,
+        // an `owned fn` by `MakeCallable`, a lambda that borrows or moves a capture out refused).
+        if let Some((signature, true)) = self.callable_bound_of(expr.ty)
+            && let TyKind::Fn { params: found, ret: found_ret, latebound: found_late, is_unsafe: found_unsafe, .. } =
+                self.types.kind(signature).clone()
+            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe } =
+                self.types.kind(expected).clone()
+            && found == wanted
+            && found_ret == wanted_ret
+            && found_late == latebound
+            && found_unsafe == is_unsafe
+        {
+            return Expr { ty: expected, ..expr };
+        }
         // `[CLO-3]`, `[CLO-10]` — a closure where an owned callable value is
         // wanted: an `owned fn` gives the value its environment; a lambda
         // that borrows is a view (`E3063`), and one that moves a capture out
