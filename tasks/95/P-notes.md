@@ -59,6 +59,16 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   reload applies) and `ember tcb` lists it ("Reload may end the process (1)"); the attribute
   anywhere but a `migrate_from` is `E0104`.
 
+* **HR-41** — every row but the GPU one built and tested; `unfinished` entry added naming the GPU
+  row. `compiler/ember_driver/tests/reload.rs`, `the_failure_matrix`: source that does not compile
+  (the reload build fails, no image, the old code runs every frame), a schema change with no
+  outcome (refused in plan), a failing `migrate_from` (discarded in prepare), a panic in a `drop`
+  during reclaim (after the reload succeeded; the process aborts); its comment names the tests of
+  the other rows (`E9037` is the runtime's own C test in `ember_build`).
+* **HR-24** — not built: it is about objects in use by an in-flight GPU frame, and `std.gpu`
+  (Annex D) does not exist; the phase table places the GPU host model after 1.0. Recommendation
+  (spec question 5): count `[HR-24]` with Annex D (post-1.0), and with it `[HR-41]`'s GPU row.
+
 ## Compiler changes
 
 * HR-23: `cimport.rs` (`import_cached` returns a hash over every file the header included),
@@ -194,9 +204,14 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
    told the new address once the new image is live, with `ObjectPtr[C]` for the class case
    (`[FFI-23]`, ODR-132) instead of `*void`.
 
+5. **HR-24 and Annex D.** `[HR-24]` (and `[HR-41]`'s GPU row) need GPU frames and resources,
+   which only `std.gpu` (Annex D) has; Annex D is after 1.0 in the phase table. Options: (a) move
+   `[HR-24]` to the post-1.0 families with Annex D; (b) build enough of `std.gpu` for frames and
+   in-flight tracking now. Recommendation: (a).
+
 ## Not done yet
 
-HR-1, HR-9, HR-24, HR-41 — in progress.
+HR-1, HR-9 — in progress.
 
 One transient failure seen once and not again (four reruns): a reload build in
 `value_data_migrates_through_its_container` exited -1 with no output.

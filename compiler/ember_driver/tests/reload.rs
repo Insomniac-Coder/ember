@@ -1062,6 +1062,63 @@ fn a_foreign_failure_in_migrate_from_is_foreign() {
     assert!(checked.stderr.contains("error[E0104]") && checked.stderr.contains("`@allow_reload_terminate` applies to a type's `migrate_from`"), "{}", checked.stderr);
 }
 
+/// `[HR-41]` — the failure matrix, row by row, each where it is detected and with its outcome:
+/// source that does not compile is caught before any poll (the build fails, nothing is announced,
+/// the old image runs on); a schema change with no defined outcome is refused in plan; a
+/// `migrate_from` that fails is discarded in prepare, the old image running on; a panic in a `drop`
+/// during reclaim comes after the reload has succeeded and aborts as any panic does. The other
+/// rows have their own tests: a protocol mismatch (`E9037`, the runtime's own reload test in
+/// `ember_build`), a C++ header changed (`a_changed_cpp_header_refuses_the_reload_and_an_overlay_does_not`),
+/// a `@noreload` body (`a_noreload_body_change_is_refused_whole`), a reference that cannot be
+/// rewritten (`an_instance_moves_only_where_its_references_are_found`), allocation and foreign
+/// failures (`a_failing_migration_is_reported_not_fatal`, `a_foreign_failure_in_migrate_from_is_foreign`),
+/// and the rows that cannot occur (`E2225`, `[HR-35]`).
+#[test]
+fn the_failure_matrix() {
+    let root = workspace_root();
+    // Does not compile: the reload build fails before any poll; the old image runs every frame.
+    let (dir, file) = package("reload-matrix-compile", RELOAD_ALL, PARTICLES);
+    let out = dir.join("target");
+    let out_arg = out.to_string_lossy().into_owned();
+    let file_arg = file.to_string_lossy().into_owned();
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    std::fs::write(&file, PARTICLES.replace("total += p.x.load()", "total += p.x.load() + \"one\"")).expect("the edit is writable");
+    let broken = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+    assert_ne!(broken.exit, 0, "a reload that does not compile was built");
+    assert!(!bin(&out).join("main.image.1.dll").exists() && !bin(&out).join("main.image.1.so").exists(), "an image was made");
+    let program = link_host(&dir, &out, FRAME_HOST);
+    quiet_errors();
+    let mut command = Command::new(&program);
+    command.arg(bin(&out)).arg("3").env("LD_LIBRARY_PATH", bin(&out));
+    let output = ember_build::output_started(&mut command).expect("the host runs");
+    drop(dir);
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n6\n9\n");
+
+    // A schema change with no defined outcome: refused in plan.
+    let undefined = PARTICLES.replace("step: int = 1", "step: str = \"one\"").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step.len())");
+    let run = host_run("reload-matrix-plan", PARTICLES, &[&undefined], 2);
+    assert!(run.stdout.contains("refused:") && run.stdout.ends_with("6\n"), "{}", run.stdout);
+
+    // `migrate_from` fails: discarded in prepare, the old image running on.
+    let failing = MIGRATED.replace("        return Ok(Particle(old.x.load() * 100, old.step * 10))", "        return Err(ReloadError.Migration(\"Particle\", 0, \"no\"))");
+    let run = host_run("reload-matrix-prepare", PARTICLES, &[&failing], 2);
+    assert!(run.stdout.contains("returned Migration(Particle, 0, no)") && run.stdout.ends_with("6\n"), "{}", run.stdout);
+
+    // A panic in a `drop` during reclaim: after commit, so the reload has succeeded; the panic
+    // aborts the process as any panic does.
+    let tagged = PARTICLES.replace(
+        "@sync\nclass Particle:\n",
+        "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop(self):\n        panic(\"the tag would not go\")\n\n@sync\nclass Particle:\n    tag: Tag = Tag()\n",
+    );
+    let untagged = tagged.replace("    tag: Tag = Tag()\n", "");
+    let run = host_run("reload-matrix-reclaim", &tagged, &[&untagged], 2);
+    assert_ne!(run.exit, 0, "the panic in reclaim did not abort: {}", run.stdout);
+    assert_eq!(run.stdout, "3\n", "{}", run.stderr);
+    assert!(run.stderr.contains("the tag would not go") && !run.stdout.contains("refused"), "{}", run.stderr);
+}
+
 /// `[HR-20]` — an object a `Retained` token pins (foreign code may keep its address, `[FFI-23]`)
 /// is never moved: a reload that would move it (its new size does not fit) is refused, naming the
 /// class and how many are pinned, though every reference to it could be found and rewritten (the
