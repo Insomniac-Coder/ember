@@ -3910,8 +3910,8 @@ mod tests {
         assert_eq!(table.arguments_spelling(&[pair, bytes_ref, param, function]), "[(i64, str), ref mut [u8; 4], $T0, fn(i64) -> i64]");
         // `[MNG-1]` (ODR-215) — a built-in type's own path is under `std.core`, a scalar's keyword
         // staying its spelling as an argument.
-        assert_eq!(table.method_symbol(i64_ty, None, "of", None), "em_3std4core3i642of");
-        assert_eq!(table.method_symbol(str_ty, None, "chars", None), "em_3std4core3str5chars");
+        assert_eq!(table.method_symbol(i64_ty, None, "of", None), format!("{}3std4core3i642of", ember_branding::mangle_prefix()));
+        assert_eq!(table.method_symbol(str_ty, None, "chars", None), format!("{}3std4core3str5chars", ember_branding::mangle_prefix()));
         assert_eq!(item_path("root.str"), "str");
     }
 
