@@ -5017,6 +5017,44 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-263 — Helper U merged: `[MNG-1]`'s injective symbols
+
+2026-10-22 (helper U, `tasks/95/U-notes.md`). One scheme makes every symbol: `em_` and each path
+component as its length and its text, transliterated per `[MNG-3]` before the length is taken
+(`em_3lib3m_x1f`, `em_3lib1m3x_f`; root `main` is `em_4main`); a generic instance ends in `G` and
+16 hex digits of the BLAKE3 hash of its arguments' canonical spelling (functions, types, methods of
+instances, generic methods; `[CLO-3]`'s callable copies are instances of their callee); `[MNG-4]`'s
+`em_obj_`, `em_vt_`, `em_ti_` take the type's mangled form (`em_obj_6Animal`); a name the compiler
+makes for itself starts with a letter after `em_`, so it never meets an item's. Every site calls
+`item_symbol`, `instance_symbol`, `TypeTable::mangled` or `method_symbol` with components; nothing
+joins or splits text. Two instances with one symbol are `E9040`, naming both. `ember demangle`
+decodes exactly. The interface artifacts' schema is 12. Fixed: D-809, D-782, D-844..D-848; open:
+D-843, D-849 (ODR-201, ODR-202, helper Y). Ruled under the delegation: ODR-201..206 (a module and an
+item of one name in one scope is an error; a transliterated component marked in its prefix; the
+per-type symbols without a second `em_`; a root package's items without a package component; the
+canonical spelling of generic arguments written into the spec; four cases as built). The laptop
+benchmark runs before the push (symbols do not change the code, but every needle did).
+
+## ADR-262 — Helper T merged: D-808 and `[FFI-17a]`'s bridges
+
+2026-10-22 (helper T, `tasks/95/T-notes.md`). D-808: an overlay entry that states every fact on a
+C++ function reached through a wrapper contracts the thunk's own declaration, so the checker's
+lowering applies as it does to a C function, for throwing functions and methods alike; what the
+importer passes itself (the receiver, opaque references, bridge objects through the new
+`std.ffi.CppObject`, trampoline objects) is `borrowed one`; an entry leaving a pointer without facts
+is `E5002` on a wrapped function as on a C one. `[FFI-17a]`: `std::string_view` and `std::span<T>` /
+`std::span<const T>` cross as `Span[u8]` / `MutSpan[T]` / `Span[T]` without copying (a view result
+borrows what the entry's lifetime word names, `E5002` without one); `std::optional<T>` as `Option[T]`
+for a `T` that maps by value; `std::weak_ptr<T>` as `std.ffi.CppWeak[T]` (`lock`, `expired`,
+`clone`); a `std::unique_ptr<T>` parameter takes the `ForeignBox` its caller gives up
+(`ForeignBox.into_raw`). The C++ corpus passes its text through `json_api.overlay.em` with no
+`unsafe:` left. A thunk gives an owned object's address as `std::uintptr_t`, so the corpus records
+were re-recorded (Linux's written to match Windows' byte for byte: re-record there if Linux CI
+disagrees). Fixed: D-808, D-836..D-840; open: D-841, D-842. Ruled under the delegation (ODR-197..200):
+`borrowed one exclusive` written `p: ref mut T` as well as `mut p: T`; `std::variant` by
+`@ffi(variant=[…])` on a `type` entry; `@ffi(std_function)` as an `owned fn(A…) -> R`; a fixed-extent
+`std::span<T, N>` as `ref [T; N]`. Not built: `std::variant`, `std::function`, fixed-extent spans.
+
 ## ADR-261 — D-811 in part: the MIR passes keep pace with a function's size; D-819's element half
 
 2026-10-22 (lead). Loop versioning (`loop_version.rs`) took one round per loop it versioned, each
