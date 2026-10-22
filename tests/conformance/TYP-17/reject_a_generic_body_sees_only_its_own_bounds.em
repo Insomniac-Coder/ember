@@ -14,7 +14,7 @@ extend[T: Copy] Wrap[T]:
         return 1
 
 fn f[T](w: Wrap[T]) -> int:
-    return w.dup()    #$ error[E1010]: `Wrap[T]` has no method named `dup`
+    return w.dup()    #$ error[E2072]: `Wrap[T]` has no method named `dup`
 
 fn main():
     println(f(Wrap(x = "s".to_string())))

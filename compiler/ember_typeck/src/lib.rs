@@ -21,6 +21,7 @@ mod derives;
 mod serial;
 mod comptime;
 mod coroutines;
+mod habits;
 
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
@@ -1770,29 +1771,6 @@ struct GenericClass {
 }
 
 /// `[GRM-34]` — the built-in generic types an `extend[...]` may name.
-/// `[STD-13]` — a Python method name Ember spells otherwise (Appendix E): `E2072`, whose help names
-/// Ember's method. There is no second name.
-fn python_method_name(shown: &str, name: ast::Ident) -> Option<Diagnostic> {
-    let ember = match name.name.as_str() {
-        "append" => "push",
-        "index" => "index_of",
-        "strip" => "trim",
-        "lstrip" => "trim_start",
-        "rstrip" => "trim_end",
-        "splitlines" => "lines",
-        "startswith" => "starts_with",
-        "endswith" => "ends_with",
-        "upper" => "to_upper",
-        "lower" => "to_lower",
-        _ => return None,
-    };
-    Some(
-        Diagnostic::error(codes::E2072, name.span, format!("no method `{}` on `{shown}`", name.name))
-            .help(format!("Ember's name for it is `{ember}`"))
-            .note("a Python method Ember spells otherwise has one name, Ember's (Appendix E) [STD-13]"),
-    )
-}
-
 const BUILTIN_GENERICS: [&str; 6] = ["Array", "Span", "MutSpan", "Option", "Result", "SoA"];
 
 /// V.7 — a `const` that is not a bare literal: a constant expression
@@ -31305,6 +31283,15 @@ impl<'a> Checker<'a> {
             _ => (1, 2),
         };
         let named_ok = args.iter().all(|a| a.name.is_none_or(|n| name == "sum" && n.name.is("start")));
+        // `[DIA-21]` P5 — `min(xs)`, `max(xs)` of one collection.
+        if matches!(name, "min" | "max")
+            && named_ok
+            && let [only] = positional.as_slice()
+            && let Some(diagnostic) = self.min_max_of_one(name, only, span)
+        {
+            self.sink.emit(diagnostic);
+            return Some(error);
+        }
         if !named_ok || positional.len() < fewest || positional.len() > most {
             let wanted = if fewest == most { format!("{fewest}") } else { format!("{fewest} or {most}") };
             self.error(
@@ -33312,7 +33299,8 @@ impl<'a> Checker<'a> {
                 .note("calling an `unsafe fn` needs `unsafe`, and a call through a safe callable type would not [FN-6]")
                 .help("declare the place `unsafe fn(…)`, and call it inside `unsafe:`");
         }
-        let mut diagnostic = self.literal_local_help(diagnostic, &expr, expected);
+        let diagnostic = self.literal_local_help(diagnostic, &expr, expected);
+        let mut diagnostic = if diagnostic.helps.is_empty() { self.mismatch_habit(&expr, expected, diagnostic) } else { diagnostic };
         // `[DIA-22]` — a mismatch an argument causes points at the parameter it is given to.
         if let Some((argument, param, declared)) = self.argument_of
             && argument == span
@@ -33882,6 +33870,15 @@ impl<'a> Checker<'a> {
                 // `None` carries nothing, so only the expected type can say
                 // which `Option` it is.
                 if name.is("None") {
+                    // `[DIA-21]` P1 — Python's "no value" where the place is not an `Option`.
+                    if let Some(wanted) = expected
+                        && wanted != self.common.error
+                        && !self.is_option(wanted)
+                        && !matches!(self.types.kind(wanted), TyKind::Param { .. } | TyKind::Infer(_))
+                    {
+                        self.sink.emit(self.none_without_option(wanted, span));
+                        return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                    }
                     return match expected.filter(|e| self.is_option(*e)) {
                         Some(ty) => {
                             let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!() };
@@ -33892,10 +33889,10 @@ impl<'a> Checker<'a> {
                             }
                         }
                         None => {
-                            self.error(
-                                codes::E2060,
-                                span,
-                                "cannot tell which `Option` this `None` is; annotate the type",
+                            self.sink.emit(
+                                Diagnostic::error(codes::E2060, span, "cannot tell which `Option` this `None` is; annotate the type")
+                                    .habit(ember_diag::habits::Habit::P1)
+                                    .help("`None` is a value of an `Option` only: declare the place `Option[T]` for the `T` it holds"),
                             );
                             Expr { ty: self.common.error, kind: ExprKind::Error, span }
                         }
@@ -33926,6 +33923,10 @@ impl<'a> Checker<'a> {
                             .note("a module reaches its items, its child modules and the modules it re-exports (`pub import c`); \
                                    its other imports are its own [MOD-2], [FFI-30b]"),
                     );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
+                if let Some(diagnostic) = self.python_constant(name, span) {
+                    self.sink.emit(diagnostic);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let mut diagnostic = Diagnostic::error(
@@ -34254,10 +34255,10 @@ impl<'a> Checker<'a> {
                     }
                     if base.ty != self.common.error {
                         let shown = self.types.display(base.ty);
-                        self.sink.emit(
-                            Diagnostic::error(codes::E2020, span, format!("cannot index `{shown}`"))
-                                .note("a type is indexed by implementing `Index` [TYP-21]"),
-                        );
+                        let diagnostic = Diagnostic::error(codes::E2020, span, format!("cannot index `{shown}`"))
+                            .note("a type is indexed by implementing `Index` [TYP-21]");
+                        let diagnostic = self.index_habit(&base, args, span, diagnostic);
+                        self.sink.emit(diagnostic);
                     }
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
@@ -35851,6 +35852,10 @@ impl<'a> Checker<'a> {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if segments.len() == 1 && self.comptime_names_runtime_local(name, name_span) {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            // `[DIA-21]` P3 — `str(x)`, `int(x)`, `float(x)`.
+            if segments.len() == 1 && self.python_conversion(name, args, name_span, span) {
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             let mut diagnostic = Diagnostic::error(
@@ -41621,6 +41626,11 @@ impl<'a> Checker<'a> {
             }
             receiver = self.read_through(receiver);
         }
+        // `[DIA-21]` P6 — a Python call shape Ember spells with another method.
+        if let Some(diagnostic) = self.python_call_shape(&receiver, name, args) {
+            self.sink.emit(diagnostic);
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[FFI-23]` (ODR-132) — `token.ptr()`: the address foreign code keeps, typed by what the
         // token holds.
         if name.name.is("ptr") && args.is_empty() && generic_args.is_empty()
@@ -42270,7 +42280,7 @@ impl<'a> Checker<'a> {
         // `[JOB-2]`, `[JOB-3]` — `s.submit(f)` and `s.submit_after(deps, f)`.
         if self.is_job_scope(receiver.ty) {
             if !matches!(name.name.as_str(), "submit" | "submit_after") {
-                self.error(codes::E1010, name.span, format!("`std.jobs.JobScope` has no method named `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("`std.jobs.JobScope` has no method named `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_job_scope_submit(receiver, name.name.is("submit_after"), args, &explicit, span);
@@ -42278,14 +42288,14 @@ impl<'a> Checker<'a> {
         // `[THR-11]` — `scope.spawn(f)`; `h.join()` on a scoped handle.
         if self.is_scope(receiver.ty) {
             if !name.name.is("spawn") {
-                self.error(codes::E1010, name.span, format!("`std.thread.Scope` has no method named `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("`std.thread.Scope` has no method named `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return self.synth_scope_spawn(receiver, args, &explicit, span);
         }
         if let Some(result) = self.lock_inner(receiver.ty, "std.thread.ScopedJoinHandle") {
             if !name.name.is("join") || !explicit.is_empty() || !args.is_empty() {
-                self.error(codes::E1010, name.span, format!("a scoped thread's handle has `join()` only, not `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("a scoped thread's handle has `join()` only, not `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             return Expr { ty: result, kind: ExprKind::Builtin { which: Builtin::ScopedJoin, args: vec![receiver] }, span };
@@ -42294,7 +42304,7 @@ impl<'a> Checker<'a> {
         if let Some(result) = self.lock_inner(receiver.ty, "std.thread.JoinHandle") {
             if !name.name.is("join") {
                 let shown = self.types.display(receiver.ty);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{}`", name.name));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{}`", name.name));
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
             if !explicit.is_empty() || !args.is_empty() {
@@ -42887,19 +42897,7 @@ impl<'a> Checker<'a> {
                 return call;
             }
             let shown = self.types.display(receiver.ty);
-            if let Some(diagnostic) = python_method_name(&shown, name) {
-                self.sink.emit(diagnostic);
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let mut diagnostic = Diagnostic::error(
-                codes::E1010,
-                name.span,
-                format!("`{shown}` has no method named `{}`", name.name),
-            );
-            for candidate in self.method_name_suggestions(receiver.ty, name.name, name.span) {
-                diagnostic = diagnostic.suggest(format!("did you mean `{candidate}`?"), name.span, candidate);
-            }
-            diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
+            let mut diagnostic = self.no_method(&receiver, name, args, span);
             // ODR-091 — `rev` is an iterator's only where it can run backwards.
             if name.name.is("rev") && self.lookup_method(receiver.ty, Symbol::intern("next")).is_some() {
                 diagnostic = diagnostic.note(
@@ -45376,7 +45374,7 @@ impl<'a> Checker<'a> {
             "assume_init" => 0,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!(
                         "`MaybeUninit[{}]` has no method named `{}`",
@@ -45448,7 +45446,7 @@ impl<'a> Checker<'a> {
         let method = name.name.as_str();
         if !matches!(method, "get" | "into_inner") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`UnsafeCell[{}]` has no method named `{}`",
@@ -45520,7 +45518,7 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if !name.name.is("upgrade") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`Weak[{}]` has no method named `{}`", self.types.display(class), name.name),
             );
@@ -45679,7 +45677,7 @@ impl<'a> Checker<'a> {
             _ => {
                 let kind = if sync { "SyncShared" } else { "Shared" };
                 let mut diagnostic = Diagnostic::error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!("`{kind}[{}]` has no method named `{}`", self.types.display(inner), name.name),
                 );
@@ -45781,7 +45779,7 @@ impl<'a> Checker<'a> {
             "set" | "replace" | "update" => 1,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!("`Cell[{shown}]` has no method named `{}`", name.name),
                 );
@@ -45966,7 +45964,7 @@ impl<'a> Checker<'a> {
         let method = name.name.as_str();
         if !matches!(method, "borrow" | "borrow_mut" | "try_borrow" | "try_borrow_mut") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`RefCell[{shown}]` has no method named `{}`", name.name),
             );
@@ -46801,7 +46799,7 @@ impl<'a> Checker<'a> {
         // `swap` and `truncate` are std's own, for `retain` and `sort_by_key`.
         if matches!(method, "swap" | "truncate" | "move_slot" | "drop_at" | "set_len") && !self.is_std_module(self.current_module) {
             let shown = self.types.display(soa);
-            self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+            self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
             return error;
         }
         // `[SOA-4]` — an `ArenaSoA` never grows: no `reserve`; it tells its `capacity`.
@@ -46817,7 +46815,7 @@ impl<'a> Checker<'a> {
         let wanted = match wanted {
             usize::MAX => {
                 let shown = self.types.display(soa);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
                 return error;
             }
             wanted => wanted,
@@ -48175,7 +48173,7 @@ impl<'a> Checker<'a> {
             "fetch_xor" if bitwise => (Form::Plain(Op::FetchXor), 1),
             _ => {
                 let shown = self.types.display(receiver.ty);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
                 return error;
             }
         };
@@ -48357,7 +48355,7 @@ impl<'a> Checker<'a> {
             "try_write" => (true, true),
             _ => {
                 let shown = self.types.display(receiver.ty);
-                self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+                self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
                 return error;
             }
         };
@@ -48388,7 +48386,7 @@ impl<'a> Checker<'a> {
         let method = name.name.as_str();
         if !matches!(method, "lock" | "try_lock") {
             let shown = self.types.display(receiver.ty);
-            self.error(codes::E1010, name.span, format!("`{shown}` has no method named `{method}`"));
+            self.error(codes::E2072, name.span, format!("`{shown}` has no method named `{method}`"));
             return error;
         }
         if !args.is_empty() {
@@ -49376,7 +49374,7 @@ impl<'a> Checker<'a> {
             "insert" => 2,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!(
                         "`{}` has no method named `{}`",
@@ -49548,7 +49546,7 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if !name.name.is("next") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`{}` has no method named `{}`",
@@ -49593,7 +49591,7 @@ impl<'a> Checker<'a> {
             && (name.name.is("next_back") || name.name.is("len"));
         if !name.name.is("next") && !back {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`{}` has no method named `{}`",
@@ -49764,7 +49762,7 @@ impl<'a> Checker<'a> {
             "insert" => 2,
             _ => {
                 self.error(
-                    codes::E1010,
+                    codes::E2072,
                     name.span,
                     format!(
                         "`{}` has no method named `{}`",
@@ -49923,7 +49921,7 @@ impl<'a> Checker<'a> {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if !name.name.is("next") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!(
                     "`{}` has no method named `{}`",
@@ -50166,7 +50164,7 @@ impl<'a> Checker<'a> {
 
         if !matches!(method, "alloc" | "alloc_nodrop") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`Arena` has no method named `{}`", name.name),
             );
@@ -50280,7 +50278,7 @@ impl<'a> Checker<'a> {
         }
         if !matches!(method, "alloc" | "alloc_nodrop") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`FixedArena` has no method named `{}`", name.name),
             );
@@ -50408,7 +50406,7 @@ impl<'a> Checker<'a> {
         }
         if !matches!(method, "alloc" | "alloc_nodrop") {
             self.error(
-                codes::E1010,
+                codes::E2072,
                 name.span,
                 format!("`ScopedArena` has no method named `{}`", name.name),
             );
@@ -50977,7 +50975,7 @@ impl<'a> Checker<'a> {
         if name.name.is("split_at_mut") && !is_string {
             let shown = self.types.display(receiver.ty);
             self.sink.emit(
-                Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no method named `split_at_mut`"))
+                Diagnostic::error(codes::E2072, name.span, format!("`{shown}` has no method named `split_at_mut`"))
                     .help("split the array's mutable view: `.as_mut_span().split_at(k)` gives two `MutSpan`s")
                     .note("`split_at` of a `MutSpan` is the mutable split; there is no separate `split_at_mut` [SPN-5]"),
             );
@@ -51094,14 +51092,7 @@ impl<'a> Checker<'a> {
             if let Some(call) = self.iterable_form(receiver.ty, name, args, span) {
                 return call;
             }
-            let shown = self.types.display(receiver.ty);
-            if let Some(diagnostic) = python_method_name(&shown, name) {
-                self.sink.emit(diagnostic);
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
-            let diagnostic =
-                Diagnostic::error(codes::E1010, name.span, format!("`{shown}` has no method named `{}`", name.name));
-            let diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
+            let diagnostic = self.no_method(&receiver, name, args, span);
             self.sink.emit(diagnostic);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
@@ -53379,6 +53370,11 @@ impl<'a> Checker<'a> {
         } else {
             (self.synth(lhs_ast), self.synth(rhs_ast))
         };
+        // `[DIA-14]` — an operand whose type is already an error was reported; the operation is
+        // that error too, and nothing more is said about it.
+        if lhs.ty == self.common.error || rhs.ty == self.common.error {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[TXT-11]` — `a + b` with a `String` on the left consumes it and
         // returns it extended; `str + str` is `E2040`, whose help is an
         // f-string.
@@ -53723,6 +53719,11 @@ impl<'a> Checker<'a> {
             }
         }
         if lhs.ty != rhs.ty && !shift_by_another_integer && lhs.ty != self.common.error && rhs.ty != self.common.error {
+            // `[DIA-21]` P20, P23, P27 — `"%d" % n`, `s * n`, `c == "x"`.
+            if let Some(diagnostic) = self.operator_habit(op, (lhs_ast, rhs_ast), &lhs, &rhs, span) {
+                self.sink.emit(diagnostic);
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             let left = self.types.display(lhs.ty);
             let right = self.types.display(rhs.ty);
             let mut diagnostic = Diagnostic::error(

@@ -5,4 +5,4 @@
 # User text cannot bypass UTF-8 boundary and exhaustion invariants with a cursor.
 fn main():
     at = 1
-    "é".next_char(at) #$ error[E1010]: `str` has no method named `next_char`
+    "é".next_char(at) #$ error[E2072]: `str` has no method named `next_char`

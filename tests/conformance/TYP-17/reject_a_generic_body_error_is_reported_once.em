@@ -9,7 +9,7 @@ struct Wrap[T]:
     x: T
 
 fn f[T](w: Wrap[T]) -> int:
-    return w.nothing()    #$ error[E1010]: `Wrap[T]` has no method named `nothing`
+    return w.nothing()    #$ error[E2072]: `Wrap[T]` has no method named `nothing`
 
 fn main():
     println(f(Wrap(x = "s".to_string())), f(Wrap(x = 1)))

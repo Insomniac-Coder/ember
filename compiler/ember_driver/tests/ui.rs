@@ -684,3 +684,107 @@ fn a_returned_view_of_a_local_is_one_error() {
     assert_ne!(exit, 0, "the escaping view must be rejected");
     assert_eq!(error_codes(&stderr), ["E3060"], "{stderr}");
 }
+
+/// `[DIA-21]`, `[DIA-13]` (ODR-179) — a Python habit's case lives at `tests/ui/python/<id>/<name>.em`
+/// with its `.stderr` and its `.fixed.em`. The check reports exactly one error, answering habit
+/// `<id>` (`--json`'s `"shape"`) under one of the habit's codes; where the diagnostic carries a
+/// machine-applicable fix-it, `.fixed.em` is the source with the first one applied, byte for byte;
+/// and `.fixed.em` compiles.
+#[test]
+fn committed_python_habit_snapshots_match_and_fixes_compile() {
+    use ember_diag::habits::Habit;
+    let root = workspace_root();
+    let base = root.join("tests/ui/python");
+    let source_suffix = format!(".{}", ember_branding::SOURCE_EXT);
+    let fixed_suffix = format!(".fixed.{}", ember_branding::SOURCE_EXT);
+    let mut cases = Vec::new();
+    for dir in std::fs::read_dir(&base).expect("tests/ui/python is readable") {
+        let dir = dir.expect("an entry").path();
+        let habit = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(Habit::from_id)
+            .unwrap_or_else(|| panic!("{} is not named for a habit of [DIA-21]", dir.display()));
+        for entry in std::fs::read_dir(&dir).expect("a habit's directory is readable") {
+            let path = entry.expect("an entry").path();
+            let text = path.to_string_lossy().into_owned();
+            if let Some(stem) = text.strip_suffix(&fixed_suffix).or_else(|| text.strip_suffix(".stderr")) {
+                assert!(Path::new(&format!("{stem}{source_suffix}")).is_file(), "{text} has no source case");
+            } else {
+                cases.push((habit, path));
+            }
+        }
+    }
+    cases.sort_by(|a, b| a.1.cmp(&b.1));
+    let covered: std::collections::BTreeSet<String> = cases.iter().map(|(h, _)| h.to_string()).collect();
+    let missing: Vec<String> = Habit::ALL.iter().map(|h| h.to_string()).filter(|h| !covered.contains(h)).collect();
+    assert!(missing.is_empty(), "habits with no case under tests/ui/python: {missing:?}");
+
+    let mut failures = Vec::new();
+    for (habit, before) in cases {
+        let stem = before.with_extension("");
+        let snapshot = stem.with_extension("stderr");
+        let fixed = stem.with_extension(format!("fixed.{}", ember_branding::SOURCE_EXT));
+        let shown = before.display().to_string();
+        let expected = normalize(&std::fs::read(&snapshot).unwrap_or_else(|_| panic!("{shown} has no .stderr")));
+        let (exit, actual) = check(&before, &root);
+        if exit == 0 {
+            failures.push(format!("{shown} unexpectedly compiled"));
+            continue;
+        }
+        if actual != expected {
+            failures.push(format!("{shown} diagnostic changed:\n{actual}"));
+        }
+
+        let relative = before.strip_prefix(&root).unwrap_or(&before).to_string_lossy().replace('\\', "/");
+        let output = Command::new(EMBER).args(["check", "--json", &relative]).current_dir(&root).output().expect("ember runs");
+        let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        let errors: Vec<serde_json::Value> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
+            .filter(|d| d["severity"] == "error")
+            .collect();
+        if errors.len() != 1 {
+            failures.push(format!("{shown} must report exactly one error, found {}", errors.len()));
+            continue;
+        }
+        let error = &errors[0];
+        if error["shape"] != habit.to_string() {
+            failures.push(format!("{shown} is filed under {}, not {habit}", error["shape"]));
+        }
+        let code = error["code"].as_str().unwrap_or("");
+        if !habit.codes().iter().any(|c| c.to_string() == code) {
+            failures.push(format!("{shown} reports {code}, which is not one of {habit}'s codes"));
+        }
+
+        let fixed_text = normalize(&std::fs::read(&fixed).unwrap_or_else(|_| panic!("{shown} has no .fixed companion")));
+        if let Some(suggestion) = error["suggestions"].as_array().and_then(|s| s.iter().find(|s| s["migration"] == false)) {
+            let mut source = std::fs::read(&before).expect("readable");
+            let mut edits: Vec<(usize, usize, String)> = suggestion["edits"]
+                .as_array()
+                .map(|edits| {
+                    edits
+                        .iter()
+                        .map(|e| {
+                            let at = |key: &str| e["span"][key].as_u64().expect("a byte offset") as usize;
+                            (at("byte_start"), at("byte_end"), e["replacement"].as_str().unwrap_or("").to_string())
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            // From the end, so each edit's offsets still hold; two at one place keep their order.
+            edits.sort_by(|a, b| b.0.cmp(&a.0));
+            for (start, end, replacement) in edits {
+                source.splice(start..end, replacement.into_bytes());
+            }
+            if normalize(&source) != fixed_text {
+                failures.push(format!("{shown}: the fix-it applied is not the .fixed companion:\n{}", normalize(&source)));
+            }
+        }
+        let (fixed_exit, fixed_stderr) = check(&fixed, &root);
+        if fixed_exit != 0 {
+            failures.push(format!("{} does not compile:\n{fixed_stderr}", fixed.display()));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}

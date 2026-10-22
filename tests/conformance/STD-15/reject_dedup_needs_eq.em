@@ -9,4 +9,4 @@ struct Token:
     id: int
 
 ts = [Token(1)]
-ts.dedup()   #$ error[E1010]: `Array[Token]` has no method named `dedup`
+ts.dedup()   #$ error[E2072]: `Array[Token]` has no method named `dedup`

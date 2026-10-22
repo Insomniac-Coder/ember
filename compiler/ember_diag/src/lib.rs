@@ -14,6 +14,7 @@ use std::fmt::Write as _;
 use ember_span::{FileId, SourceMap, Span};
 
 pub mod shapes;
+pub mod habits;
 pub mod codes;
 pub use codes::Code;
 
@@ -102,6 +103,8 @@ pub struct Diagnostic {
     pub helps: Vec<String>,
     pub notes: Vec<String>,
     pub suggestions: Vec<Suggestion>,
+    /// `[DIA-21]` — the Python habit this diagnostic answers (ODR-179).
+    pub habit: Option<habits::Habit>,
 }
 
 impl Diagnostic {
@@ -115,6 +118,7 @@ impl Diagnostic {
             helps: Vec::new(),
             notes: Vec::new(),
             suggestions: Vec::new(),
+            habit: None,
         }
     }
 
@@ -127,6 +131,12 @@ impl Diagnostic {
     /// `[lints]` table has something to name.
     pub fn lint(code: Code, span: Span, message: impl Into<String>) -> Diagnostic {
         Diagnostic { severity: Severity::Warning, ..Diagnostic::error(code, span, message) }
+    }
+
+    /// `[DIA-21]` — this diagnostic answers a Python habit (ODR-179).
+    pub fn habit(mut self, habit: habits::Habit) -> Diagnostic {
+        self.habit = Some(habit);
+        self
     }
 
     /// Text on the primary caret itself, distinct from the header message.
@@ -489,6 +499,7 @@ pub fn to_json(d: &Diagnostic, map: &SourceMap) -> serde_json::Value {
     json!({
         "severity": d.severity.label(),
         "code": d.code.map(|c| c.to_string()),
+        "shape": d.habit.map(|h| h.to_string()),
         "message": d.message,
         "labels": labels,
         "helps": d.helps,

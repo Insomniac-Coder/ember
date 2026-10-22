@@ -7,7 +7,7 @@
 
 fn main():
     xs = [1, 2, 3]
-    halves = xs.split_at_mut(1) #$ error[E1010]: `Array[i64]` has no method named `split_at_mut`
+    halves = xs.split_at_mut(1) #$ error[E2072]: `Array[i64]` has no method named `split_at_mut`
     (left, right) = xs.as_mut_span().split_at(1)
     left[0] = right[0]
     println(xs)
