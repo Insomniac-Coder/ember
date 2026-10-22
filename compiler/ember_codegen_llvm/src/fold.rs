@@ -87,6 +87,76 @@ fn terminator_locals(terminator: &Terminator, out: &mut Vec<LocalId>) {
     }
 }
 
+/// D-569 — the functions whose views (`str`, `Span`, `MutSpan`) go as two words, a pointer and a
+/// length, where Windows x64 passes a 16-byte view behind a pointer to a copy: the C backend's
+/// `split_view_params`, the same bodies. Only a function called by name alone qualifies (no value
+/// of it is taken, it fills no table slot), so every call is this module's own.
+pub(crate) fn split_view_functions(bodies: &[Body]) -> std::collections::BTreeSet<String> {
+    let mut taken: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    fn mentions<'b>(operand: &'b Operand, taken: &mut std::collections::BTreeSet<&'b str>) {
+        if let Operand::Const(ember_mir::Const::Fn(symbol)) = operand {
+            taken.insert(symbol.as_str());
+        }
+    }
+    for body in bodies {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                match &stmt.kind {
+                    StmtKind::Assign { rvalue, .. } => match rvalue {
+                        Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } | Rvalue::Repeat { value: o, .. } => mentions(o, &mut taken),
+                        Rvalue::Cast { operand, kind, .. } => {
+                            mentions(operand, &mut taken);
+                            if let ember_mir::CastKind::InterfaceUpcast { implementations, .. }
+                            | ember_mir::CastKind::ClassInterfaceUpcast { implementations, .. } = kind
+                            {
+                                taken.extend(implementations.iter().flatten().map(|method| method.symbol.as_str()));
+                            }
+                        }
+                        Rvalue::BinaryOp { lhs, rhs, .. } => {
+                            mentions(lhs, &mut taken);
+                            mentions(rhs, &mut taken);
+                        }
+                        Rvalue::Aggregate { operands, .. } => operands.iter().for_each(|o| mentions(o, &mut taken)),
+                        Rvalue::Ref { .. } | Rvalue::Discriminant(_) => {}
+                    },
+                    StmtKind::CheckedBinaryOp { lhs, rhs, .. } => {
+                        mentions(lhs, &mut taken);
+                        mentions(rhs, &mut taken);
+                    }
+                    _ => {}
+                }
+            }
+            match &block.terminator {
+                Terminator::Call { func, args, .. } => {
+                    if let FuncRef::Indirect { operand, .. } = func {
+                        mentions(operand, &mut taken);
+                    }
+                    args.iter().for_each(|o| mentions(o, &mut taken));
+                }
+                Terminator::SwitchInt { discr, .. } => mentions(discr, &mut taken),
+                Terminator::Assert { cond, .. } => mentions(cond, &mut taken),
+                _ => {}
+            }
+        }
+    }
+    bodies
+        .iter()
+        .filter(|body| {
+            body.abi.is_none()
+                && !body.is_extern_declaration
+                && !body.is_abstract
+                && !body.restrict_views
+                && !body.is_lambda
+                && body.closure_environment.is_none()
+                && body.class_virtual_slot.is_none()
+                && body.ffi_counted.is_none()
+                && body.name != "main"
+                && !taken.contains(body.symbol.as_str())
+        })
+        .map(|body| body.symbol.clone())
+        .collect()
+}
+
 fn quiet(stmt: &Stmt) -> bool {
     matches!(stmt.kind, StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop)
 }

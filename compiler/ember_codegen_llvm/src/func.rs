@@ -101,6 +101,13 @@ pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
                     Part { offset: 8, ty: PartTy::I(64), ext: abi::Ext::None },
                 ]);
             }
+            // D-569 — a view as its two words, not behind a pointer to a copy (Windows x64).
+            (pass, TyKind::Span { .. } | TyKind::Str) if m.split_views.contains(&body.symbol) => {
+                *pass = Pass::Direct(vec![
+                    Part { offset: 0, ty: PartTy::Ptr, ext: abi::Ext::None },
+                    Part { offset: 8, ty: PartTy::I(64), ext: abi::Ext::None },
+                ]);
+            }
             _ => {}
         }
     }

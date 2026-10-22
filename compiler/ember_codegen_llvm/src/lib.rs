@@ -131,6 +131,8 @@ pub(crate) struct Module<'a> {
     pub inline_bodies: BTreeMap<String, bool>,
     /// `[FFI-21]` — the lambdas C calls back through a trampoline, with what C passes.
     pub callback_closures: BTreeSet<String>,
+    /// D-569 — on Windows x64, the functions whose views go as two words (`fold::split_view_functions`).
+    pub split_views: BTreeSet<String>,
 }
 
 impl<'a> Module<'a> {
@@ -230,6 +232,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
             .filter_map(|body| body.ffi_counted.as_ref())
             .flat_map(|counted| counted.callbacks.iter().filter_map(|callback| callback.closure.clone()))
             .collect(),
+        split_views: if options.target == Target::Win64 { fold::split_view_functions(bodies) } else { BTreeSet::new() },
     };
     module.dispatch = dispatch::Dispatch::collect(&module, bodies);
     module.callables = closures::Callables::collect(&module, bodies);
