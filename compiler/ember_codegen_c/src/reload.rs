@@ -697,9 +697,12 @@ impl Emitter<'_> {
     /// static's value; a tuple a function makes and takes apart (`(self, default)` in a `match`) is
     /// gone before any poll.
     fn contained_structs(&self, reload: &ReloadImage) -> BTreeSet<String> {
+        // A struct's or an enum's: an enum's values a reload cannot reach keep their old
+        // discriminants as surely as a struct's keep their old layout.
         let schema_struct = |ty: Ty| -> Option<String> {
             match self.types.kind(ty) {
                 TyKind::Struct(id) if self.has_schema(ty, reload) => Some(self.types.struct_def(*id).name.to_string()),
+                TyKind::Enum(id) if self.has_schema(ty, reload) => Some(self.types.enum_def(*id).name.to_string()),
                 _ => None,
             }
         };
@@ -734,7 +737,14 @@ impl Emitter<'_> {
         // Where a reload cannot reach: inside a tuple, or a struct, an enum or a class with no
         // schema. A struct, an enum with a schema and an `Array` or a fixed array migrate what
         // they hold (`[HR-14]`, `[HR-13]`), unless they sit where a reload cannot reach themselves.
-        let mut unreached: Vec<Ty> = Vec::new();
+        // A value made an interface value (`Box[dyn I]`) is behind its interface's methods, which a
+        // reload repoints to code built for the new layout; the runtime cannot tell its type there.
+        let mut unreached: Vec<Ty> = self
+            .interface_adapters
+            .values()
+            .map(|adapter| adapter.concrete)
+            .filter(|concrete| !matches!(self.types.kind(*concrete), TyKind::Class(_)))
+            .collect();
         for (ty, kind) in self.types.all() {
             // An instance of a class lives on the heap, held or not.
             if !held.contains(&ty) && !matches!(kind, TyKind::Class(_)) {
@@ -1641,8 +1651,10 @@ impl Emitter<'_> {
                 drop_name
             };
             let mut layout = if self.types.enum_is_bare(id) { "EMBER_RL_LAYOUT_UNIT" } else { "0" }.to_string();
-            if abi.contains(&name) {
-                layout = if layout == "0" { "EMBER_RL_LAYOUT_ABI".to_string() } else { format!("{layout} | EMBER_RL_LAYOUT_ABI") };
+            for (flag, holds) in [("EMBER_RL_LAYOUT_ABI", abi.contains(&name)), ("EMBER_RL_LAYOUT_CONTAINED", contained.contains(&name))] {
+                if holds {
+                    layout = if layout == "0" { flag.to_string() } else { format!("{layout} | {flag}") };
+                }
             }
             let attributes = self.attributes_hash(ty);
             types.push(format!(

@@ -1062,6 +1062,36 @@ fn a_foreign_failure_in_migrate_from_is_foreign() {
     assert!(checked.stderr.contains("error[E0104]") && checked.stderr.contains("`@allow_reload_terminate` applies to a type's `migrate_from`"), "{}", checked.stderr);
 }
 
+/// `[HR-13]` — value data a reload cannot reach is never left under a new layout: a struct value
+/// made an interface value (`Box[dyn Speak]`) is behind its interface's methods, which the reload
+/// repoints to code built for the new layout, while the runtime cannot tell the value's type there;
+/// so a change to the struct's layout is refused, and the old code runs on. So is a change to a
+/// unit enum's variants while a value of it sits in a tuple a closure captured.
+#[test]
+fn value_data_a_reload_cannot_reach_is_refused() {
+    let v1 = "import std.hot\n\ninterface Speak:\n    fn speak(self) -> int\n\nstruct Point:\n    x: int = 7\n\n\
+              extend Point implements Speak:\n    fn speak(self) -> int:\n        return self.x\n\n\
+              fn tick(b: Box[dyn Speak]) -> int:\n    return b.speak()\n\n\
+              fn main():\n    b: Box[dyn Speak] = Box(Point())\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
+    let v2 = v1.replace("    x: int = 7\n", "    pad: int = 1000\n    x: int = 7\n");
+    let (run, reloads) = reload_run("reload-unreached-dyn", RELOAD_ALL, v1, &[&v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.stdout, "7\n7\n", "{}", run.stderr);
+    assert!(run.stderr.contains("refused: values of `Point` may sit where a reload cannot reach them"), "{}", run.stderr);
+
+    // A unit enum's value made an interface value: its variants reordered would leave it the old
+    // discriminant, read as another variant by the new code.
+    let modes = "import std.hot\n\ninterface Speak:\n    fn speak(self) -> int\n\nenum Mode:\n    Slow\n    Fast\n\n\
+                 extend Mode implements Speak:\n    fn speak(self) -> int:\n        match self:\n            Mode.Slow:\n                return 1\n            Mode.Fast:\n                return 10\n\n\
+                 fn tick(b: Box[dyn Speak]) -> int:\n    return b.speak()\n\n\
+                 fn main():\n    b: Box[dyn Speak] = Box(Mode.Fast)\n    for i in 0..2:\n        println(tick(b))\n        hot.checkpoint()\n";
+    let reordered = modes.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Slow\n");
+    let (run, reloads) = reload_run("reload-unreached-enum", RELOAD_ALL, modes, &[&reordered]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.stdout, "10\n10\n", "{}", run.stderr);
+    assert!(run.stderr.contains("refused: values of `Mode` may sit where a reload cannot reach them"), "{}", run.stderr);
+}
+
 /// `[HR-9]` — a call through a thunk costs one load and one indirect jump: each reloadable
 /// function's thunk is one statement, a load of its target from the call table and a call through
 /// it with the thunk's own arguments (a tail call, which an optimising C compiler makes a jump), in

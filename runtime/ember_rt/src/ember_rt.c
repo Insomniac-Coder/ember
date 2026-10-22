@@ -11180,7 +11180,7 @@ static bool rl_plan_type(const ember_rl_manifest* next, const ember_rl_type* old
         return false;
     }
     if ((to->layout & EMBER_RL_LAYOUT_CONTAINED) != 0 || (old->layout & EMBER_RL_LAYOUT_CONTAINED) != 0) {
-        rl_report(report, cap, "refused: values of `%s` sit in containers (an `Array`, an `Option`, a payload), whose elements a reload cannot migrate yet [HR-13]\n", to->name);
+        rl_report(report, cap, "refused: values of `%s` may sit where a reload cannot reach them (in a tuple, a closure's captured state, an interface value or a type with no schema), and its schema changed [HR-13]\n", to->name);
         return false;
     }
     if (to->migrate != NULL) {

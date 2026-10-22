@@ -191,6 +191,12 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
    allocate, copy and free, which the arena follows. Test: `a_foreign_failure_in_migrate_from_is_foreign`
    (its first case crashed the host before the fix).
 9. `[HR-20]` a pinned object whose references were all enumerable was moved (see HR-20 above).
+10. `[HR-13]` a struct or enum value made an interface value (`Box[dyn I]`) kept its old layout or
+    discriminant while the interface's methods were repointed to code built for the new one: after
+    a reload that changed `Point`'s layout, `b.speak()` returned `-9223344547056323478` (memory
+    read past the value). Such a type is now "contained" (the interface adapters' concrete types
+    seed the walk), and enums are counted as structs are; the change is refused. Test:
+    `value_data_a_reload_cannot_reach_is_refused`.
 
 ## Defects suspected (not verified)
 
@@ -202,10 +208,6 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   second time at `<reload helpers of the root module>` (the helper written for its default). The
   same holds for a declared default that does not check. Dropping the helpers' diagnostics when
   the user's own code has errors would remove the noise.
-
-* A struct value inside a `Box[dyn I]` (an interface value) is not described to the runtime and
-  not flagged contained; if its layout changes while such a value lives, the new image's methods
-  would read the old layout. Worth a test.
 
 ## Spec questions
 

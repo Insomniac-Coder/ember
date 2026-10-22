@@ -3098,7 +3098,7 @@ typedef struct ember_rl_frame {
 ember_rl_frame** ember_reload_frames(void);
 
 /* EMBER_RL_LAYOUT_* — a type's layout facts. */
-#define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it sits in a container somewhere ([HR-13]) */
+#define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it may sit where a reload cannot reach it: a tuple, captures, an interface value ([HR-13]) */
 #define EMBER_RL_LAYOUT_UNIT UINT32_C(2)      /* an enum with no payload */
 #define EMBER_RL_LAYOUT_FOREIGN UINT32_C(4)   /* a raw pointer can reach a value of it ([HR-13b]) */
 #define EMBER_RL_LAYOUT_ABI UINT32_C(8)       /* crosses a foreign boundary by value: its layout attributes are the C side's ([HR-14]) */
