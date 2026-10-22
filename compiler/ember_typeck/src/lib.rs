@@ -22936,6 +22936,38 @@ impl<'a> Checker<'a> {
         name_suggestions::rank(written.as_str(), use_span, candidates)
     }
 
+    /// `[DIA-12]` N3, `[DIA-15]` — the nearest methods of `ty` (and of a class's bases) to a name
+    /// it has no method for, from the method table type checking already built, ranked as `[DIA-24]`
+    /// ranks names. A private or package method this module cannot call is not offered.
+    fn method_name_suggestions(&self, ty: Ty, written: Symbol, use_span: Span) -> Vec<String> {
+        let mut owners = vec![ty];
+        while let TyKind::Class(id) = *self.types.kind(*owners.last().expect("one owner"))
+            && let Some(base) = self.types.class_def(id).base
+            && let Some(base_ty) = self.class_ty(base)
+        {
+            owners.push(base_ty);
+        }
+        let candidates = self.methods.iter().filter(|((owner, _), _)| owners.contains(owner)).filter_map(|(&(owner, method), entry)| {
+            if let Some(&(vis, module)) = self.method_vis.get(&entry.def) {
+                let visible = match vis {
+                    ast::VisKind::Private => module == self.current_module,
+                    ast::VisKind::Package => self.same_package(module, self.current_module),
+                    _ => true,
+                };
+                if !visible {
+                    return None;
+                }
+            }
+            let declaration = self.signatures.get(entry.def.0 as usize).map_or(Span::DUMMY, |signature| signature.decl);
+            Some(name_suggestions::Candidate {
+                name: method.as_str().to_owned(),
+                declaration,
+                canonical_name: format!("{}.{method}", self.types.display(owner)),
+            })
+        });
+        name_suggestions::rank(written.as_str(), use_span, candidates)
+    }
+
     fn missing_field_diagnostic(&self, ty: Ty, name: Symbol, span: Span) -> Diagnostic {
         let shown_type = self.types.display(ty);
         let mut diagnostic = Diagnostic::error(
@@ -33039,6 +33071,18 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
+        // `[SEL-2]`, `[WK-14]` — Ember's counted handles and C++'s smart pointers never convert
+        // into each other, in either direction: they keep different counts.
+        if let Some(mut diagnostic) = self.counted_family_mismatch(expr.ty, expected, span) {
+            if let Some((argument, param, declared)) = self.argument_of
+                && argument == span
+                && declared != Span::DUMMY
+            {
+                diagnostic = diagnostic.secondary(declared, format!("parameter `{param}` is declared `{wanted}` here"));
+            }
+            self.sink.emit(diagnostic);
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         let mut diagnostic =
             Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`"))
                 .primary_label(format!("this is `{found}`"));
@@ -34625,6 +34669,9 @@ impl<'a> Checker<'a> {
                         let address = Expr { ty: usize, kind: ExprKind::Cast { expr: Box::new(inner), to: usize }, span };
                         return Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(address), to }, span };
                     }
+                } else if let Some(diagnostic) = self.counted_family_mismatch(inner.ty, to, span) {
+                    self.sink.emit(diagnostic);
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 } else if !char_cast && !reference_pointer_cast
                     && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
                     let from = self.types.display(inner.ty);
@@ -42648,6 +42695,9 @@ impl<'a> Checker<'a> {
                 name.span,
                 format!("`{shown}` has no method named `{}`", name.name),
             );
+            for candidate in self.method_name_suggestions(receiver.ty, name.name, name.span) {
+                diagnostic = diagnostic.suggest(format!("did you mean `{candidate}`?"), name.span, candidate);
+            }
             diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
             // ODR-091 — `rev` is an iterator's only where it can run backwards.
             if name.name.is("rev") && self.lookup_method(receiver.ty, Symbol::intern("next")).is_some() {
@@ -45798,6 +45848,41 @@ impl<'a> Checker<'a> {
     }
 
     /// `[THR-3]` — the payload type, if this is the `std.sync` lock type `origin` of one.
+    /// `[SEL-2]` — whose count a smart-pointer type uses: `Some(false)` for Ember's `Shared`,
+    /// `SyncShared` and `Weak`, `Some(true)` for C++'s `std.ffi.CppShared` and `std.ffi.CppWeak`.
+    fn counted_family(&self, ty: Ty) -> Option<bool> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        match &self.types.struct_def(id).origin {
+            Some((name, args)) if args.len() == 1 => match name.as_str() {
+                "Shared" | "SyncShared" | "Weak" => Some(false),
+                "std.ffi.CppShared" | "std.ffi.CppWeak" => Some(true),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `[SEL-2]`, `[WK-14]` — `E5065` when `found` and `wanted` are counted handles of the two
+    /// families: Ember's and C++'s never convert into each other, implicitly or with `as`.
+    fn counted_family_mismatch(&self, found: Ty, wanted: Ty, span: Span) -> Option<Diagnostic> {
+        let (found_cpp, wanted_cpp) = (self.counted_family(found)?, self.counted_family(wanted)?);
+        if found_cpp == wanted_cpp {
+            return None;
+        }
+        let (found, wanted) = (self.types.display(found), self.types.display(wanted));
+        let (ember_side, cpp_side) = if found_cpp { (&wanted, &found) } else { (&found, &wanted) };
+        Some(
+            Diagnostic::error(
+                codes::E5065,
+                span,
+                format!("`{found}` does not convert to `{wanted}`: Ember's and C++'s reference counts are different counts"),
+            )
+            .primary_label(format!("this is `{found}`"))
+            .note(format!("`{ember_side}` is counted by Ember and `{cpp_side}` by C++; a conversion would leave each count believing it owns the object, and both would free it [SEL-2]"))
+            .help("keep each object on its own side: an Ember value in a `Shared`, a `std::shared_ptr` C++ made in a `CppShared`, and share the object itself through a reference or a C++ call"),
+        )
+    }
+
     fn lock_inner(&self, ty: Ty, origin: &str) -> Option<Ty> {
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         match &self.types.struct_def(id).origin {
