@@ -33,6 +33,9 @@ pub struct ReloadImage {
     /// `[HR-16]` — each type that declares `migrate_from`, with the name of the adapter the driver
     /// wrote, and the name of the struct its old schema became.
     pub migrations: BTreeMap<String, (String, String)>,
+    /// `[HR-23]` — each C++ header the package imports, by name, with the content hash of it and
+    /// every file it includes.
+    pub headers: BTreeMap<String, String>,
 }
 
 /// What a field holds, for the runtime's migration and reference walk ([HR-14], [HR-15]).
@@ -518,6 +521,15 @@ impl Emitter<'_> {
         self.line(&format!("static {RT}rl_identity* const {identities_symbol}[{}] = {{", identities.len().max(1)));
         self.line(&format!("    {}", if identities.is_empty() { "NULL".to_string() } else { identities.join(", ") }));
         self.line("};");
+        let headers_symbol = table("headers");
+        self.line(&format!("static const {RT}rl_header {headers_symbol}[{}] = {{", reload.headers.len().max(1)));
+        for (name, hash) in &reload.headers {
+            self.line(&format!("    {{ {}, {} }},", c_string_literal(name), c_string_literal(hash)));
+        }
+        if reload.headers.is_empty() {
+            self.line("    { NULL, NULL },");
+        }
+        self.line("};");
         let layout = if reload.instances { "obj_header_v40" } else { "obj_header_v24" };
         let entry = if has_entry { table("entry") } else { "NULL".to_string() };
         self.line(&format!("EMBER_RL_MANIFEST const {RT}rl_manifest {} = {{", manifest_symbol()));
@@ -529,7 +541,8 @@ impl Emitter<'_> {
         self.line(&format!("    {}u, {statics_symbol}, {}, {},", statics.len(), table("static_data"), table("static_state")));
         self.line(&format!("    {}u, {types_symbol},", types.len()));
         self.line(&format!("    {}u, {identities_symbol},", identities.len()));
-        self.line(&format!("    {entry}"));
+        self.line(&format!("    {entry},"));
+        self.line(&format!("    {}u, {headers_symbol}", reload.headers.len()));
         self.line("};");
         self.line("");
     }

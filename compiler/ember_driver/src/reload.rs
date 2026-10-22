@@ -55,7 +55,13 @@ pub fn plan(
     let mut decided: BTreeMap<(ember_span::FileId, u32), (bool, u64)> = BTreeMap::new();
     let mut statics = BTreeMap::new();
     let mut files = BTreeSet::new();
+    let mut headers = BTreeMap::new();
     for loaded in modules {
+        if let Some(foreign) = &loaded.foreign
+            && let Some(hash) = &foreign.header_hash
+        {
+            headers.insert(foreign.header.clone(), hash.clone());
+        }
         if loaded.path.first().is_some_and(|first| first == ember_branding::STD_PACKAGE) {
             continue;
         }
@@ -141,6 +147,7 @@ pub fn plan(
         defaults: additions.defaults.clone(),
         renamed: additions.renamed.clone(),
         migrations: additions.migrations.clone(),
+        headers,
     }
 }
 

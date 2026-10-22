@@ -3090,7 +3090,13 @@ ember_rl_frame** ember_reload_frames(void);
  * the runtime fills: a thunk loads its target from `targets`; code that takes a reloadable
  * function's address reads it from `addresses`, so it is the permanent thunk's ([HR-6]); a static's
  * storage and state are the runtime's ([HR-4a]). `layout` names the runtime function whose
- * presence says both agree on the object header ([HR-12a]). */
+ * presence says both agree on the object header ([HR-12a]). `headers` lists each C++ header the image
+ * imports, with the content hash of it and every file it includes ([HR-23]). */
+typedef struct ember_rl_header {
+    const char* name;
+    const char* hash;
+} ember_rl_header;
+
 typedef struct ember_rl_manifest {
     uint64_t magic;
     uint32_t protocol;
@@ -3114,6 +3120,8 @@ typedef struct ember_rl_manifest {
     uint32_t identity_count;
     ember_rl_identity* const* identities;
     int (*entry)(int argc, char** argv);
+    uint32_t header_count;
+    const ember_rl_header* headers;
 } ember_rl_manifest;
 
 /* Where an image's manifest goes: its own section, which the linker keeps. */

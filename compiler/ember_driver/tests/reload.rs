@@ -1258,3 +1258,46 @@ fn a_trampoline_reaches_an_edited_override_after_a_reload() {
     assert_eq!(run.exit, 0, "{}", run.stderr);
     assert_eq!(run.stdout, "30\n3000\n", "{}", run.stderr);
 }
+
+/// `[HR-23]` — a changed C++ header refuses the reload in plan, naming the header (the
+/// host was compiled against the old one), and the old image keeps running; a changed overlay
+/// does not, since an overlay edit changes only Ember code, and the edited body beside it applies.
+#[test]
+fn a_changed_cpp_header_refuses_the_reload_and_an_overlay_does_not() {
+    let root = workspace_root();
+    let overlay = format!("engine_overlay.{}", ember_branding::SOURCE_EXT);
+    let v1 = &(format!("import std.hot\nimport cpp \"engine.hpp\" with (overlay = \"{overlay}\")\n\n") + "\
+              class Mine(cpp.Layer):\n    override fn on_update(self, step: i32) -> i32:\n        return step * 10\n\n\
+              fn main():\n    layer = Mine()\n    unsafe:  # SAFETY(ffi): C++ calls the object's virtual while it lives\n        println(cpp.drive(layer))\n    \
+              hot.checkpoint()\n    unsafe:  # SAFETY(ffi): as above\n        println(cpp.drive(layer))\n");
+    let v2 = v1.replace("return step * 10", "return step * 1000");
+    let header = "#pragma once\nclass Layer {\npublic:\n    Layer() noexcept {}\n    virtual ~Layer() {}\n    virtual int on_update(int step) noexcept { return step; }\n};\n\
+                  inline int drive(Layer& layer) noexcept { return layer.on_update(1) + layer.on_update(2); }\n";
+    let overlay_text = "unsafe overlay cpp \"engine.hpp\":\n    @ffi(trampoline, virtuals=[\"on_update\"])\n    type Layer\n";
+    // Each case: the header and the overlay the reload is built with, and what the host prints.
+    let changed_header = header.replace("inline int drive", "inline int spare() noexcept { return 0; }\ninline int drive");
+    let changed_overlay = format!("# the engine's layer, which Ember classes derive from\n{overlay_text}");
+    for (label, next_header, next_overlay, expected) in
+        [("reload-header-changed", changed_header.as_str(), overlay_text, "30\n30\n"), ("reload-overlay-changed", header, changed_overlay.as_str(), "30\n3000\n")]
+    {
+        let (package, file) = package(label, RELOAD_ALL, v1);
+        std::fs::write(package.join("engine.hpp"), header).expect("the header is writable");
+        std::fs::write(package.join(&overlay), overlay_text).expect("the overlay is writable");
+        let out = package.join("target");
+        let out_arg = out.to_string_lossy().into_owned();
+        let file_arg = file.to_string_lossy().into_owned();
+        let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+        assert_eq!(built.exit, 0, "the first build failed:\n{}", built.stderr);
+        std::fs::write(&file, &v2).expect("the edit is writable");
+        std::fs::write(package.join("engine.hpp"), next_header).expect("the header is writable");
+        std::fs::write(package.join(&overlay), next_overlay).expect("the overlay is writable");
+        let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+        assert_eq!(reloaded.exit, 0, "the reload build failed:\n{}", reloaded.stderr);
+        let run = run_host(&out);
+        drop(package);
+        assert_eq!(run.exit, 0, "{label}: {}", run.stderr);
+        assert_eq!(run.stdout, expected, "{label}: {}", run.stderr);
+        let refused = run.stderr.contains("refused: C++ header `engine.hpp` changed; the host must be rebuilt against it [HR-23]");
+        assert_eq!(refused, label == "reload-header-changed", "{label}: {}", run.stderr);
+    }
+}

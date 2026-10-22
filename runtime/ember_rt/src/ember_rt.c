@@ -10170,6 +10170,8 @@ static struct {
     rl_table statics;
     rl_table types;
     rl_table identities;
+    /* The manifest of the image applied last: the C++ headers the process was built with ([HR-23]). */
+    const ember_rl_manifest* running;
     ember_reload_timings timings;
 } g_rl;
 
@@ -11562,6 +11564,19 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
         return true;
     }
     bool bodies_only = next->mode == 3u;
+    /* [HR-23] A C++ header the running image imports that changed (it, or a file it includes) is
+     * refused, naming it: the host was compiled against the old one and must be rebuilt. An
+     * overlay is Ember code, so an edit of it is not a header change. */
+    const ember_rl_manifest* running = g_rl.running;
+    for (uint32_t at = 0; running != NULL && at < next->header_count; ++at) {
+        for (uint32_t was = 0; was < running->header_count; ++was) {
+            if (strcmp(running->headers[was].name, next->headers[at].name) == 0
+                && strcmp(running->headers[was].hash, next->headers[at].hash) != 0) {
+                rl_report(report, cap, "refused: C++ header `%s` changed; the host must be rebuilt against it [HR-23]\n", next->headers[at].name);
+                refused = true;
+            }
+        }
+    }
     /* A reloadable function the edit removed keeps its thunk, now a stub; refused when data may
      * hold the thunk ([HR-7]). */
     for (size_t index = 0; index < g_rl.slots.cap; ++index) {
@@ -12098,6 +12113,7 @@ static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t comp
     }
 #endif
     /* The new image's schemas are the running ones from here: the next reload compares with them. */
+    g_rl.running = next;
     for (uint32_t index = 0; index < next->type_count; ++index) {
         rl_type* type = (rl_type*)rl_table_get(&g_rl.types, next->types[index].name);
         type->schema = &next->types[index];

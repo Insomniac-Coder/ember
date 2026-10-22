@@ -88,6 +88,8 @@ pub struct ForeignImport {
     /// `[FFI-24d]` — each function whose Ember signature a `noexcept` the header added or removed
     /// changed, by its name (`Owner.name` for a method), with the note naming the cause.
     pub policy_changes: Vec<(String, String)>,
+    /// `[HR-23]` — for `import cpp`: the content hash of the header and every file it includes.
+    pub header_hash: Option<String>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
