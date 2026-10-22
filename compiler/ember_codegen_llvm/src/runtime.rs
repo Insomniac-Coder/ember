@@ -30,6 +30,12 @@ impl CTy {
             CTy::Struct("i128") => Shape::Scalar(Scalar::Int { bytes: 16, signed: true }),
             CTy::Struct("u128") => Shape::Scalar(Scalar::Int { bytes: 16, signed: false }),
             CTy::Struct("i256" | "u256") => agg(32, 16, &[(0, word), (8, word), (16, word), (24, word)]),
+            // `{uint32 fill; char align, sign; bool alternate, zero; uint32 width; char grouping;
+            // int32 precision; char kind}`.
+            CTy::Struct("fmt_spec") => {
+                let byte = Scalar::Int { bytes: 1, signed: true };
+                agg(24, 4, &[(0, half), (4, byte), (5, byte), (6, Scalar::Bool), (7, Scalar::Bool), (8, half), (12, byte), (16, half), (20, byte)])
+            }
             CTy::Struct(other) => unreachable!("no shape for the runtime struct `{other}`"),
         })
     }
@@ -223,6 +229,38 @@ pub const FNS: &[RtFn] = &[
     // -- text ([TXT-*])
     inl("str_eq", "bool", &["$str", "$str"]),
     f("str_cmp", "int", &["$str", "$str"]),
+    // -- formatting ([TYP-39], [LEX-19])
+    f("fmt_i64", "void", &["$vec*", "int64_t"]),
+    f("fmt_u64", "void", &["$vec*", "uint64_t"]),
+    f("fmt_i128", "void", &["$vec*", "$i128"]),
+    f("fmt_u128", "void", &["$vec*", "$u128"]),
+    f("fmt_i256", "void", &["$vec*", "$i256"]),
+    f("fmt_u256", "void", &["$vec*", "$u256"]),
+    f("fmt_f64", "void", &["$vec*", "double"]),
+    f("fmt_f32", "void", &["$vec*", "float"]),
+    f("fmt_f16", "void", &["$vec*", "uint16_t"]),
+    f("fmt_bool", "void", &["$vec*", "bool"]),
+    f("fmt_char", "void", &["$vec*", "uint32_t"]),
+    f("fmt_str", "void", &["$vec*", "$str"]),
+    f("fmt_repr_str", "void", &["$vec*", "$str"]),
+    f("fmt_repr_char", "void", &["$vec*", "uint32_t"]),
+    f("fmt_handle", "void", &["$vec*", "const void*"]),
+    f("fmt_spec_i64", "void", &["$vec*", "int64_t", "$fmt_spec"]),
+    f("fmt_spec_u64", "void", &["$vec*", "uint64_t", "$fmt_spec"]),
+    f("fmt_spec_i128", "void", &["$vec*", "$i128", "$fmt_spec"]),
+    f("fmt_spec_u128", "void", &["$vec*", "$u128", "$fmt_spec"]),
+    f("fmt_spec_i256", "void", &["$vec*", "$i256", "$fmt_spec"]),
+    f("fmt_spec_u256", "void", &["$vec*", "$u256", "$fmt_spec"]),
+    f("fmt_spec_f64", "void", &["$vec*", "double", "$fmt_spec"]),
+    f("fmt_spec_f32", "void", &["$vec*", "float", "$fmt_spec"]),
+    f("fmt_spec_f16", "void", &["$vec*", "uint16_t", "$fmt_spec"]),
+    f("fmt_spec_str", "void", &["$vec*", "$str", "$fmt_spec"]),
+    f("fmt_spec_bool", "void", &["$vec*", "bool", "$fmt_spec"]),
+    f("fmt_spec_char", "void", &["$vec*", "uint32_t", "$fmt_spec"]),
+    f("fmt_sink_open", "$vec", &["void*", "size_t"]),
+    f("fmt_sink_close", "size_t", &["const $vec*"]),
+    f("int_text", "$str", &["int64_t"]),
+    f("uint_text", "$str", &["uint64_t"]),
     // -- exclusivity ([EXC-1], [EXC-15], [EXC-19])
     f("object_begin_write", "void", &["$obj_header*", "$loc"]),
     f("object_end_write", "void", &["$obj_header*", "$loc"]),
@@ -240,7 +278,8 @@ pub const FNS: &[RtFn] = &[
     panic_fn("panic_field_exclusivity_debug", &["bool", "uint32_t", "const uint32_t*", "const char*", "$loc"]),
     f("debug_field_begin", "void", &["const uint32_t*", "bool", "$loc"]),
     f("debug_field_end", "void", &["const uint32_t*", "bool", "$loc"]),
-    // -- the lifecycle ([RT-2], [FN-8])
+    // -- the lifecycle ([RT-2], [FN-8], [FFI-22])
+    f("rt_thread_attach", "void", &[]),
     f("rt_set_args", "void", &["int", "char**"]),
     f("rt_init_v3", "int", &["const $rt_config*", "uint32_t"]),
     f("rt_shutdown", "void", &[]),

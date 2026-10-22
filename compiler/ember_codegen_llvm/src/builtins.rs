@@ -482,6 +482,40 @@ impl<'a> FnCx<'_, 'a> {
                 let value = self.gep(&cell, offset);
                 self.store_result(dest, &value, Sc::Ptr, false)
             }
+            // `[LEX-19]`, `[TYP-39]` — an f-string's piece appended to its text.
+            Builtin::Format | Builtin::FormatWith(_) => {
+                let out = self.pointer(&args[0])?;
+                let value = self.operand(&args[1])?;
+                let spec = match which {
+                    Builtin::FormatWith(spec) => Some(*spec),
+                    _ => None,
+                };
+                self.format_piece(&out, value, arg_ty, spec.as_ref())
+            }
+            // `format_to`: a text over the caller's bytes, and how many it holds at the end.
+            Builtin::FmtSinkOpen => {
+                let (words, align) = self.view_words(&args[0])?;
+                let bytes = self.load(Sc::Ptr, &words, align.min(8));
+                let len_at = self.gep(&words, 8);
+                let len = self.load(Sc::I(64), &len_at, align.min(8));
+                let dest = self.dest_of(dest)?;
+                self.call_rt("fmt_sink_open", vec![Val::Imm(Sc::Ptr, bytes), Val::Imm(Sc::I(64), len)], dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
+                Ok(())
+            }
+            Builtin::FmtSinkClose => {
+                let sink = self.pointer(&args[0])?;
+                let slot = self.alloca(8, 8);
+                self.call_rt("fmt_sink_close", vec![Val::Imm(Sc::Ptr, sink)], Some((&slot, 8)));
+                let held = self.load(Sc::I(64), &slot, 8);
+                self.store_result(dest, &held, Sc::I(64), false)
+            }
+            Builtin::SpanToStr => {
+                let (words, align) = self.view_words(&args[0])?;
+                let bytes = self.load(Sc::Ptr, &words, align.min(8));
+                let len_at = self.gep(&words, 8);
+                let len = self.load(Sc::I(64), &len_at, align.min(8));
+                self.store_view(dest, &bytes, &len)
+            }
             // A standard function whose body is the runtime's.
             Builtin::Runtime(function) => {
                 let mut values = Vec::with_capacity(args.len());

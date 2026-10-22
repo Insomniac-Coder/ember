@@ -14,7 +14,9 @@
 
 pub mod abi;
 mod builtins;
+mod closures;
 mod dispatch;
+mod fmt;
 mod func;
 mod glue;
 mod runtime;
@@ -100,6 +102,8 @@ pub(crate) struct Module<'a> {
     pub dispatch: dispatch::Dispatch,
     /// The runtime's inline functions the module calls through the shim (`runtime::shim_source`).
     pub shims: BTreeSet<&'static str>,
+    /// The program's callable values.
+    pub callables: closures::Callables,
 }
 
 impl<'a> Module<'a> {
@@ -168,8 +172,10 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         helpers: BTreeSet::new(),
         dispatch: dispatch::Dispatch::default(),
         shims: BTreeSet::new(),
+        callables: closures::Callables::default(),
     };
     module.dispatch = dispatch::Dispatch::collect(&module, bodies);
+    module.callables = closures::Callables::collect(&module, bodies);
     let defined: BTreeSet<&str> = bodies
         .iter()
         .filter(|body| !body.is_abstract && !body.is_extern_declaration)

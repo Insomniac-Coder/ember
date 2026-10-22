@@ -17,6 +17,7 @@ pub(crate) enum Pending {
     Drop(Ty),
     Retain(Ty),
     ClassInfo(ClassId),
+    Fmt(Ty),
 }
 
 /// An internal function of the module the backend writes itself: `void @symbol(ptr %p0, …)`,
@@ -136,6 +137,7 @@ pub(crate) fn emit_pending(m: &mut Module<'_>) -> Result<()> {
             Pending::Drop(ty) => emit_drop_glue(m, ty)?,
             Pending::Retain(ty) => emit_retain_glue(m, ty)?,
             Pending::ClassInfo(id) => emit_class(m, id)?,
+            Pending::Fmt(ty) => crate::fmt::emit_fmt_fn(m, ty)?,
         }
     }
     Ok(())

@@ -50,6 +50,8 @@ pub(crate) struct FnCx<'m, 'a> {
     sig: Signature,
     /// The label of the block being written.
     block: String,
+    /// The span of the statement or terminator being written, for the panics it may make.
+    span: ember_span::Span,
 }
 
 /// The ABI signature of a function returning `ret` and taking `params`.
@@ -61,6 +63,39 @@ fn signature(m: &Module<'_>, ret: Ty, params: impl Iterator<Item = Ty>) -> Signa
 
 pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     signature(m, body.return_ty(), body.args().map(|(_, decl)| decl.ty))
+}
+
+/// The type of `place` in `body`.
+pub(crate) fn place_type(m: &Module<'_>, body: &Body, place: &Place) -> Ty {
+    let types = m.ty.table;
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        ty = match (projection, types.kind(ty)) {
+            (Projection::Downcast(v), TyKind::Enum(_)) => {
+                variant = Some(*v);
+                continue;
+            }
+            (Projection::Field(index), TyKind::Enum(id)) => {
+                let fields = &types.enum_def(*id).variants[variant.take().unwrap_or(0)].fields;
+                fields.get(*index).map_or(ty, |field| field.ty)
+            }
+            (Projection::Field(index), TyKind::Struct(id)) => types.struct_def(*id).fields.get(*index).map_or(ty, |field| field.ty),
+            (Projection::Field(index), TyKind::Class(id)) => types.class_field_at(*id, *index).map_or(ty, |field| field.ty),
+            (Projection::Field(index), TyKind::Tuple(items)) => items.get(*index).copied().unwrap_or(ty),
+            (Projection::Field(0), TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. }) => ty,
+            (Projection::Field(_), TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. }) => m.ty.usize_ty,
+            (
+                Projection::Index(_) | Projection::ConstIndex(_),
+                TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. },
+            ) => *elem,
+            (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Ptr { inner, .. }) => *inner,
+            (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => *inner,
+            _ => ty,
+        };
+        variant = None;
+    }
+    ty
 }
 
 /// Declares a body of this program the module calls (its definition, when it has one, removes
@@ -153,6 +188,7 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
         addr: vec![None; body.locals.len()],
         sig,
         block: "entry".to_string(),
+        span: ember_span::Span::DUMMY,
     };
     cx.frame()?;
     for (index, block) in body.blocks.iter().enumerate() {
@@ -329,6 +365,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             addr: Vec::new(),
             sig: Signature { ret: Return::Void, params: Vec::new() },
             block: "start".to_string(),
+            span: ember_span::Span::DUMMY,
         }
     }
 
@@ -670,34 +707,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     pub(crate) fn place_ty(&self, place: &Place) -> Ty {
-        let types = self.m.ty.table;
-        let mut ty = self.local_ty(place.local);
-        let mut variant = None;
-        for projection in &place.projection {
-            ty = match (projection, types.kind(ty)) {
-                (Projection::Downcast(v), TyKind::Enum(_)) => {
-                    variant = Some(*v);
-                    continue;
-                }
-                (Projection::Field(index), TyKind::Enum(id)) => {
-                    let fields = &types.enum_def(*id).variants[variant.take().unwrap_or(0)].fields;
-                    fields.get(*index).map_or(ty, |field| field.ty)
-                }
-                (Projection::Field(index), TyKind::Struct(id)) => {
-                    types.struct_def(*id).fields.get(*index).map_or(ty, |field| field.ty)
-                }
-                (Projection::Field(index), TyKind::Class(id)) => types.class_field_at(*id, *index).map_or(ty, |field| field.ty),
-                (Projection::Field(index), TyKind::Tuple(items)) => items.get(*index).copied().unwrap_or(ty),
-                (Projection::Field(0), TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. }) => ty,
-                (Projection::Field(_), TyKind::Str | TyKind::Vec { .. } | TyKind::Span { .. }) => self.m.ty.usize_ty,
-                (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. }) => *elem,
-                (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Ptr { inner, .. }) => *inner,
-                (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => *inner,
-                _ => ty,
-            };
-            variant = None;
-        }
-        ty
+        place_type(self.m, self.mir(), place)
     }
 
     fn read_scalar(&mut self, place: &Place) -> Result<(String, Sc)> {
@@ -710,7 +720,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     // -- operands ---------------------------------------------------------------------------------
 
-    fn operand_ty(&self, operand: &Operand) -> Option<Ty> {
+    pub(crate) fn operand_ty(&self, operand: &Operand) -> Option<Ty> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => Some(self.place_ty(place)),
             Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. }) => Some(*ty),
@@ -780,7 +790,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 Val::Imm(Sc::I(64), if *per_word { "63" } else { "0" }.to_string())
             }
             Const::Fn(symbol) => {
-                // A function the program calls through a C pointer is its address.
+                // `[FN-6]` — a native value of the function; one a C pointer holds is its address.
+                if let Some(signature) = self.m.callables.natives.get(symbol.as_str()).copied() {
+                    return self.native_fn_value(symbol, signature);
+                }
                 let symbol = symbol.clone();
                 self.declare_body(&symbol)?;
                 Val::Imm(Sc::Ptr, global_name(&symbol))
@@ -811,6 +824,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     fn stmt(&mut self, kind: &StmtKind, span: ember_span::Span) -> Result<()> {
+        self.span = span;
         match kind {
             StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => Ok(()),
             StmtKind::Assign { place, rvalue } => self.assign(place, rvalue, span),
@@ -1161,7 +1175,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let offsets = table.variant_field_offsets(*id)[*variant].clone();
                 def.variants[*variant].fields.iter().zip(offsets).map(|(field, offset)| (offset, field.ty)).collect()
             }
-            (AggregateKind::Callable, _) => return unsupported("an owned callable value ([CLO-10])"),
+            (AggregateKind::Callable, _) => return self.make_callable(operands, &at.ptr, at.align),
             (kind, other) => return unsupported(format!("an aggregate {kind:?} of {other:?}")),
         };
         for ((offset, field_ty), value) in fields.into_iter().zip(values) {
@@ -1597,7 +1611,11 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 return Ok(Val::Imm(Sc::Ptr, self.load(Sc::Ptr, &boxed, 8)));
             }
             CastKind::Numeric | CastKind::Widen => {}
-            other => return unsupported(format!("the cast {}", cast_name(other))),
+            // ODR-102 — a native value's C entry.
+            CastKind::FnToC => {
+                let span = self.span;
+                return self.fn_to_c(operand, span);
+            }
         }
         let Some(from) = from else { return unsupported("a cast of an untyped operand") };
         let types = &self.m.ty;
@@ -1654,6 +1672,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     // -- terminators ------------------------------------------------------------------------------
 
     fn terminator(&mut self, terminator: &Terminator, span: ember_span::Span) -> Result<()> {
+        self.span = span;
         match terminator {
             Terminator::Goto(target) => self.emit(format!("br label %bb{}", target.0)),
             Terminator::Unreachable => self.emit("unreachable"),
@@ -1857,6 +1876,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
             FuncRef::DynBoxNew { concrete, interfaces, .. } => {
                 let dest = self.dest(dest)?;
                 return self.dyn_box_new(*concrete, interfaces, args, dest);
+            }
+            FuncRef::Indirect { operand, ty, .. } => {
+                if let TyKind::Fn { params, .. } = self.m.ty.kind(*ty).clone() {
+                    self.retain_owned_copies(args, |index| params.get(index).is_some_and(|param| param.mode == ember_types::FnParamMode::Owned))?;
+                }
+                let dest = self.dest(dest)?;
+                return self.indirect_call(operand, *ty, args, dest);
             }
             _ => {}
         }
@@ -2146,72 +2172,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Builtin::EPrint => "eprint",
             _ => "print",
         };
-        let table = self.m.ty.table;
-        let ty = self.m.ty.through_range(arg_ty);
         let value = self.operand(&args[0])?;
-        // `[TYP-36]` — `void` prints `()`, a unit-only enum its variant's name.
-        if matches!(table.kind(ty), TyKind::Void) {
-            let text = self.str_value(b"()");
-            self.call_rt(&format!("{printer}_str"), vec![text], None);
-            return Ok(());
-        }
-        if let TyKind::Enum(id) = *table.kind(ty) {
-            let def = table.enum_def(id);
-            if !def.is_unit_only() || !table.enum_is_bare(id) || def.open {
-                return unsupported("printing an enum value ([TYP-36])");
-            }
-            let Val::Imm(Sc::I(bits), tag) = value else { return unsupported("a unit enum held in memory") };
-            let empty = self.m.bytes(b"");
-            let (mut ptr, mut len) = (empty, "0".to_string());
-            for variant in def.variants.iter().rev() {
-                let name = variant.name.as_str().as_bytes().to_vec();
-                let is = self.value(format!("icmp eq i{bits} {tag}, {}", int_literal(variant.discriminant as u128, bits)));
-                let text = self.m.bytes(&name);
-                ptr = self.value(format!("select i1 {is}, ptr {text}, ptr {ptr}"));
-                len = self.value(format!("select i1 {is}, i64 {}, i64 {len}", name.len()));
-            }
-            let slot = self.alloca(16, 8);
-            self.emit(format!("store ptr {ptr}, ptr {slot}, align 8"));
-            let len_at = self.gep(&slot, 8);
-            self.emit(format!("store i64 {len}, ptr {len_at}, align 8"));
-            self.call_rt(&format!("{printer}_str"), vec![Val::Mem(slot, 8)], None);
-            return Ok(());
-        }
-        let (suffix, value) = match (table.kind(ty), value) {
-            (TyKind::Bool, value) => ("bool", value),
-            (TyKind::Char, value) => ("char", value),
-            (TyKind::Str, value) => ("str", value),
-            (TyKind::Float(ember_types::FloatTy::F64), value) => ("f64", value),
-            (TyKind::Float(ember_types::FloatTy::F32), value) => ("f32", value),
-            (TyKind::Float(ember_types::FloatTy::F16), value) => ("f16", value),
-            (TyKind::Int(ember_types::IntTy::I128), value) => ("i128", value),
-            (TyKind::Uint(ember_types::UintTy::U128), value) => ("u128", value),
-            (TyKind::Int(ember_types::IntTy::I256), value) => ("i256", value),
-            (TyKind::Uint(ember_types::UintTy::U256), value) => ("u256", value),
-            (TyKind::Int(_), Val::Imm(Sc::I(bits), v)) => ("i64", Val::Imm(Sc::I(64), self.int_convert(&v, bits, 64, true))),
-            (TyKind::Uint(_), Val::Imm(Sc::I(bits), v)) => ("u64", Val::Imm(Sc::I(64), self.int_convert(&v, bits, 64, false))),
-            _ => return unsupported(format!("printing `{}`", table.display(arg_ty))),
-        };
-        let value = match (suffix, value) {
-            // A 256-bit count is the runtime's struct of words, passed in memory.
-            ("i256" | "u256", Val::Imm(sc, v)) => {
-                let (slot, align) = self.spill(&Val::Imm(sc, v), 32, 16);
-                Val::Mem(slot, align)
-            }
-            (_, value) => value,
-        };
-        self.call_rt(&format!("{printer}_{suffix}"), vec![value], None);
-        Ok(())
-    }
-
-    /// A `str` of these bytes.
-    fn str_value(&mut self, bytes: &[u8]) -> Val {
-        let ptr = self.m.bytes(bytes);
-        let slot = self.alloca(16, 8);
-        self.emit(format!("store ptr {ptr}, ptr {slot}, align 8"));
-        let len = self.gep(&slot, 8);
-        self.emit(format!("store i64 {}, ptr {len}, align 8", bytes.len()));
-        Val::Mem(slot, 8)
+        self.print_value(printer, value, arg_ty)
     }
 }
 
@@ -2248,18 +2210,6 @@ fn float_suffix(sc: Sc) -> &'static str {
         Sc::F32 => "f32",
         Sc::F64 => "f64",
         _ => "f80",
-    }
-}
-
-fn cast_name(kind: &CastKind) -> &'static str {
-    match kind {
-        CastKind::FnToC => "of a function value to its C entry",
-        CastKind::Numeric | CastKind::Widen => "of a number",
-        CastKind::ClassUpcast | CastKind::ClassUpcastBorrowed => "of a class handle to its base ([CLS-4])",
-        CastKind::InterfaceUpcast { .. } => "to `dyn` ([TYP-22])",
-        CastKind::ClassInterfaceUpcast { .. } => "to an interface handle ([OBJ-2])",
-        CastKind::ViewsDisjoint => "of disjoint views",
-        CastKind::InterfaceDowncast => "of `Box[dyn]` to its value",
     }
 }
 
@@ -2315,6 +2265,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         addr: Vec::new(),
         sig: Signature { ret: Return::Void, params: Vec::new() },
         block: "entry".to_string(),
+        span: ember_span::Span::DUMMY,
     };
     // `ember_rt_config_default()`: its size, and nothing else set.
     let cfg = cx.alloca(48, 8);
