@@ -286,3 +286,92 @@ pages are marked as such). Not mine to change (FFI evidence, helper AB's area).
 `{name: name.char_count() for _, name in pairs}` with `pairs = [(1, "one")]` — is `E2020`,
 "expected `String`, found `str`": the map's key type is taken as `String` and the `str` is not
 converted. A list comprehension of the same `str`s is fine. The guide uses an `int` key instead.
+
+## `[BLD-1]`, `[BLD-8]`, `[BLD-7]`, `[BLD-4]` — not built: each needs a decision first
+
+I read Q's notes and the code again before starting, and stopped short of building these: each
+needs one of the decisions Q listed, two of them the owner's (the C-speed rule, a required tool),
+and the front-end work runs into the MIR passes and the compile-time budgets, which are the lead's
+work now. What each needs, with options and a recommendation:
+
+### `[BLD-4]` — C through a generated Ninja file (with `[CG-C-3]`'s units)
+
+- **Today**: one C translation unit per program (`ember_codegen_c`: types, prototypes, `static`
+  helpers, every body), compiled and linked in one compiler run; ADR-136's program cache serves
+  an unchanged build. `[CG-C-11]`'s relaxed-FP units already show the shape of several units (the
+  main unit declares what a unit defines), but each unit repeats every `static` helper.
+- **What it needs**: the units `[CG-C-3]` describes — a package header (type definitions, every
+  function's prototype, `static inline` helpers and the inline bodies), one support unit (vtables,
+  type information, statics, the entry) and one unit per module (its bodies, external linkage) —
+  each written only when its text changes; then `target/<profile>/c/build.ninja`: a compile edge
+  per unit (`cl /showIncludes` with `deps = msvc`, `-MD -MF $out.d` with `depfile`), the runtime
+  object as an input, and a link (or archive) edge; cdylib, staticlib, reload, test, FFI
+  instrumentation and the relaxed units follow the same split. Ninja then rebuilds an edited
+  module's unit alone.
+- **Decisions**: (1) **the owner's C-speed rule**: a call across modules is no longer inlined by
+  the C compiler in `debug`, and in `development`/`release` relies on LTO (`[BLD-6]`, on for cl)
+  and the inline header — it needs the laptop benchmark before it lands. (2) **ninja**: here it is
+  only inside Visual Studio
+  (`C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe`,
+  1.12.1, not on `PATH`); WSL has `/usr/bin/ninja`; a CI Linux runner needs
+  `sudo apt-get install -y ninja-build`. Options: require it (an error like `E9002` naming the
+  remedy when missing; on Windows, find Visual Studio's), ship it in `[TOOL-1]`'s archive, or run
+  the generated file with a small executor of the compiler's own. Recommendation: find it (`PATH`,
+  then Visual Studio's), ship it with `[TOOL-1]`, and without it build the same edges directly,
+  saying so. To put it on `PATH` here: `winget install Ninja-build.Ninja`.
+- **Estimate**: several days for the split and the build file, then the benchmark.
+
+### `[BLD-1]`, `[BLD-8]` — the module (and the function) as the front end's cache
+
+- **Today**: `ember_typeck::check` checks every loaded module in one `Checker`, then the MIR
+  passes run over every body; `ember_build::interface` writes each module's interface record
+  (`[BLD-2]`: signatures, layouts, effect sets, inline bodies, region summaries) but nothing reads a
+  module's result back to skip work.
+- **Options** (Q's): (a) `ember check` only: a module whose source, compiler and imports' interface
+  hashes are unchanged has its bodies neither type-checked nor borrow-checked (`Checker` already
+  has a `body_filter`, `[TYP-32]`), its diagnostics replayed, its callers reading its facts from
+  its interface record; `ember build` checks everything (then `[BUD-2]`'s B3 cannot be met). (b)
+  each module's checked MIR serialised and read back (types re-interned by canonical name, generic
+  instances and closure types made again), so `build` skips clean modules too. (c) a query-based
+  front end. `[BLD-8]` within a module needs, besides, each body's record of the same-module facts
+  it used and a `Checker` that checks one function.
+- **Recommendation**: (a) first — a fast `check` for the editor (`ember_driver::session` would reuse
+  the same records) and CI — then (b). Both touch the passes and the budgets the lead is working
+  on, which is why I did not start them.
+- **Estimate**: (a) days; (b) a week or more; (c) weeks.
+
+### `[BLD-7]` — front-end stages in parallel across modules (`-j`)
+
+- **Blockers** (Q's, confirmed): `Symbol`'s order is its interning order and `BTreeMap<Symbol, _>`s
+  order the output, so lexing modules on several threads makes the output depend on timing
+  (`[BLD-13]`) unless interning is made deterministic (lex to raw tokens in parallel, intern in
+  module order, parse in parallel); `Symbol::as_str` takes one global lock; type checking is one
+  `Checker` over all modules; the MIR passes, where the time goes, are the lead's.
+- **Cheap, and not worth it alone**: parsing in parallel. Lexing and parsing are a few percent of
+  `ember check` on every program measured here.
+- **Recommendation**: with `[BLD-1]`'s per-module results, run each dirty module's body checks and
+  MIR passes on its own thread (results merged in module order), after making interning
+  deterministic. `-j` defaults to the physical cores (`GetLogicalProcessorInformationEx` on Windows,
+  `/sys/devices/system/cpu/*/topology/core_id` on Linux).
+
+## `[TOOL-1]`, `[TOOL-2]`, `[TOOL-4]` — not mine; what each needs
+
+- **`[TOOL-1]`** (a self-contained archive per host, and a one-line installer): a release job per host
+  (windows-latest, ubuntu-latest, macos-14) building `ember` with `--release`, and an archive of it
+  with the runtime sources and headers (`runtime/ember_rt`), `std/src`, editor support (an editor
+  extension, when there is one) and `ninja` if `[BLD-4]` ships it, laid out as the compiler looks
+  for them (beside the binary, or `EMBER_STD`/`EMBER_RUNTIME_DIR`); attached to the release as
+  `ember-<version>-<host>.zip`/`.tar.gz` with a SHA-256 file; the installer a PowerShell one-liner
+  (`irm …/install.ps1 | iex`) and a POSIX `curl … | sh` that download the host's archive, check its
+  hash and put `ember` on `PATH`. Decisions: where it is hosted (GitHub releases, or a domain of the
+  project's), and code signing on Windows and macOS.
+- **`[TOOL-2]`** (`ember toolchain install cc`: a pinned Clang and linker): an LLVM release's clang,
+  lld and C headers, and on Windows the SDK's libraries (or `xwin`'s extraction of them, whose
+  licence needs reading), downloaded into the cache (`cache_root()`), checked against a pinned hash,
+  and chosen by `[build] c_compiler = "bundled"` (`Toolchain::detect` gets a `bundled` arm);
+  `ember toolchain list`/`default` read and write the installed set. Decisions: the LLVM version to
+  pin, where its archive is hosted, and on Windows how the SDK's libraries are obtained.
+- **`[TOOL-4]`**: the first hour is measured from `ember new` today (`tests/package.rs`); it starts
+  with installing Ember, so it waits on `[TOOL-1]`'s installer, after which a test on a clean CI
+  machine runs the installer, `ember new hello`, `cd hello` and `ember run` and times it against the
+  five minutes.
