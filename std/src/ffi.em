@@ -185,6 +185,12 @@ fn foreign_release[T](pointer: *mut T, creator: u32):
     pass
 
 
+## `[FFI-17a]` — the C++ object a bridge value owns (a `std::vector`, a `std::string`, a
+## `std::shared_ptr`), as a declaration `import cpp` writes takes it: only ever behind a reference,
+## so no Ember code reads or writes it.
+unsafe extern "C":
+    pub type CppObject
+
 ## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::vector<T>` Ember owns, its elements in place. The import
 ## that made it gives the thunks of its element type, which each operation calls: `len`,
 ## `push_back` and its end are calls into C++, never inlined (`[FFI-17f]`). `span()` and

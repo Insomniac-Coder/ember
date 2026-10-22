@@ -449,6 +449,7 @@ fn the_cpp_corpus_binds_as_recorded() {
     let thunks = read(&entry.join(format!("nlohmann_json.{platform}.thunks.cpp")));
     let program = corpus.join("program");
     let (main, api, printed) = (read(&program.join("main.em")), read(&program.join("json_api.hpp")), read(&program.join("expected.txt")));
+    let overlay = read(&program.join("json_api.overlay.em"));
     let dir = scratch();
     for (index, flags) in configurations.iter().enumerate() {
         let shown = flags.join(" ");
@@ -473,6 +474,7 @@ fn the_cpp_corpus_binds_as_recorded() {
         let manifest = format!("[package]\nname = \"corpus\"\nversion = \"0.1.0\"\n\n[cpp.json]\ninclude_paths = [\"{third_party}\"]\nflags = [{}]\n", quoted.join(", "));
         package(&built, &manifest, &[("main", &main)]);
         std::fs::write(built.join("src").join("json_api.hpp"), &api).unwrap();
+        std::fs::write(built.join("json_api.overlay.em"), &overlay).unwrap();
         let run = ember(&["run"], &built);
         assert!(run.ok, "`{shown}`: it printed
 {}

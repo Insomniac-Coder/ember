@@ -19768,7 +19768,7 @@ impl<'a> Checker<'a> {
             }
             if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ty) {
-                if !self.types.is_ffi_safe(inner) {
+                if !self.foreign_referent(inner) {
                     self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
@@ -19786,7 +19786,7 @@ impl<'a> Checker<'a> {
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ty) {
-                if !self.types.is_ffi_safe(*inner) {
+                if !self.foreign_referent(*inner) {
                     self.error(codes::E5015, span,
                         format!("`{name}` refers to a type with no foreign representation"));
                 }
@@ -19823,13 +19823,13 @@ impl<'a> Checker<'a> {
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let Some((inner, _)) = self.foreign_nullable_ref_inner(ret) {
-                if !self.types.is_ffi_safe(inner) {
+                if !self.foreign_referent(inner) {
                     self.error(codes::E5015, decl.name.span,
                         "the nullable reference result refers to a type with no foreign representation");
                 }
             } else if decl.is_foreign_decl && decl.is_safe
                 && let TyKind::Ref { inner, .. } = self.types.kind(ret) {
-                if !self.types.is_ffi_safe(*inner) {
+                if !self.foreign_referent(*inner) {
                     self.error(codes::E5015, decl.name.span,
                         "the reference result refers to a type with no foreign representation");
                 }
@@ -19885,16 +19885,16 @@ impl<'a> Checker<'a> {
                         let matches_safe_form = match kind {
                             FfiPointerContract::NulTerminated { nullable } => mode == Mode::Borrow &&
                                 if nullable { self.foreign_nullable_cstr(ty) } else { ty == self.common.cstr },
-                            FfiPointerContract::MutOne => mode == Mode::Mut && self.types.is_ffi_safe(ty),
+                            FfiPointerContract::MutOne => self.foreign_mut_one(ty, mode),
                             FfiPointerContract::SharedOne => mode == Mode::Borrow && matches!(
                                 self.types.kind(ty), TyKind::Ref { mutable: false, inner }
-                                    if self.types.is_ffi_safe(*inner)),
+                                    if self.foreign_referent(*inner)),
                             FfiPointerContract::NullableSharedOne => mode == Mode::Borrow
                                 && self.foreign_nullable_ref_inner(ty)
-                                    .is_some_and(|(inner, mutable)| !mutable && self.types.is_ffi_safe(inner)),
+                                    .is_some_and(|(inner, mutable)| !mutable && self.foreign_referent(inner)),
                             FfiPointerContract::NullableMutOne => mode == Mode::Borrow
                                 && self.foreign_nullable_ref_inner(ty)
-                                    .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)),
+                                    .is_some_and(|(inner, mutable)| mutable && self.foreign_referent(inner)),
                             FfiPointerContract::Count { exclusive, nullable, .. } => {
                                 let span = if nullable {
                                     self.foreign_nullable_span_elem(ty)
@@ -19971,22 +19971,22 @@ impl<'a> Checker<'a> {
                         "`@ffi` nullable NUL-terminated result contract needs `Option[cstr]`"),
                 Some(FfiResultContract::SharedOneStatic | FfiResultContract::SharedOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: false, inner }
-                        if self.types.is_ffi_safe(*inner)) =>
+                        if self.foreign_referent(*inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` result contract needs a shared reference result"),
                 Some(FfiResultContract::NullableSharedOneStatic | FfiResultContract::NullableSharedOneFrom(_))
                     if !self.foreign_nullable_ref_inner(ret)
-                        .is_some_and(|(inner, mutable)| !mutable && self.types.is_ffi_safe(inner)) =>
+                        .is_some_and(|(inner, mutable)| !mutable && self.foreign_referent(inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` result contract needs a nullable shared reference result"),
                 Some(FfiResultContract::ExclusiveOneStatic | FfiResultContract::ExclusiveOneFrom(_))
                     if !matches!(self.types.kind(ret), TyKind::Ref { mutable: true, inner }
-                        if self.types.is_ffi_safe(*inner)) =>
+                        if self.foreign_referent(*inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` exclusive result contract needs a mutable reference result"),
                 Some(FfiResultContract::NullableExclusiveOneStatic | FfiResultContract::NullableExclusiveOneFrom(_))
                     if !self.foreign_nullable_ref_inner(ret)
-                        .is_some_and(|(inner, mutable)| mutable && self.types.is_ffi_safe(inner)) =>
+                        .is_some_and(|(inner, mutable)| mutable && self.foreign_referent(inner)) =>
                     self.error(codes::E5002, decl.name.span,
                         "`@ffi` nullable exclusive result contract needs an optional mutable reference result"),
                 Some(FfiResultContract::SharedFixedStatic { len } | FfiResultContract::SharedFixedFrom { len, .. })
@@ -20094,7 +20094,7 @@ impl<'a> Checker<'a> {
                         format!("`safe fn` needs an `@ffi` nullable NUL-terminated contract for `{name}`"));
                 }
                 if matches!(self.types.kind(ty), TyKind::Ref { .. })
-                    && !matches!(contract, Some(FfiPointerContract::SharedOne | FfiPointerContract::Fixed { nullable: false, .. }))
+                    && !matches!(contract, Some(FfiPointerContract::SharedOne | FfiPointerContract::MutOne | FfiPointerContract::Fixed { nullable: false, .. }))
                     && unknown.is_empty() {
                     self.error(codes::E5002, span,
                         format!("`safe fn` needs an `@ffi` contract for reference parameter `{name}`"));
@@ -20367,6 +20367,22 @@ impl<'a> Checker<'a> {
         matches!(signature.params.as_slice(),
             [(_, ty, _, _)] if matches!(*self.types.kind(*ty), TyKind::Ptr { inner, .. } if inner == pointee))
             .then_some((def, symbol, signature.ret))
+    }
+
+    /// `[FFI-8]`, `[FFI-11]` — what a `one` contract's reference may refer to: a type C lays out,
+    /// or an incomplete one (`extern type`), which is only ever behind the pointer.
+    fn foreign_referent(&self, ty: Ty) -> bool {
+        self.types.is_ffi_safe(ty) || matches!(self.types.kind(ty), TyKind::Opaque(_))
+    }
+
+    /// `[FFI-11]` — the safe forms of `borrowed one exclusive`: the table's `ref mut T`, or the
+    /// parameter mode `mut p: T` (`[FFI-10]`), which an incomplete `T` cannot take (`[TYP-22]`,
+    /// `E5015`).
+    fn foreign_mut_one(&self, ty: Ty, mode: Mode) -> bool {
+        match self.types.kind(ty) {
+            TyKind::Ref { mutable: true, inner } => mode == Mode::Borrow && self.foreign_referent(*inner),
+            _ => mode == Mode::Mut && self.types.is_ffi_safe(ty),
+        }
     }
 
     fn foreign_pointer_contract_required(&self, ty: Ty) -> bool {

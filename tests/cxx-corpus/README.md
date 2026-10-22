@@ -20,7 +20,8 @@ The two platforms differ only where they must: `size_t` is `unsigned long long` 
 `unsigned long` on Linux, and the header defines other compiler-detection macros for each.
 
 `program/` is a program that uses the library: `json_api.hpp` is the few lines of C++ that reach it
-by types Ember has, `main.em` the program, `expected.txt` what it prints.
+by types Ember has, `json_api.overlay.em` the facts the headers cannot state (each text a
+`Span[u8]`, each call safe), `main.em` the program, `expected.txt` what it prints.
 
 ## The test
 
