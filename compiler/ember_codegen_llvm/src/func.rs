@@ -381,6 +381,14 @@ impl<'m, 'a> FnCx<'m, 'a> {
         self.block.clone()
     }
 
+    /// Whether the block being written has ended (its last instruction a terminator).
+    pub(crate) fn terminated(&self) -> bool {
+        let last = self.out.trim_end().lines().last().unwrap_or("").trim_start();
+        ["br ", "ret ", "ret\n", "switch ", "unreachable"].iter().any(|start| last.starts_with(start))
+            || last == "ret void"
+            || last.starts_with(']')
+    }
+
     // -- writing ----------------------------------------------------------------------------------
 
     pub(crate) fn tmp(&mut self) -> String {
@@ -625,8 +633,15 @@ impl<'m, 'a> FnCx<'m, 'a> {
             (Projection::Field(index), TyKind::Struct(id)) => {
                 let table = self.m.ty.table;
                 if let Some(inner) = shared_inner(table, id) {
-                    let _ = inner;
-                    return unsupported("a `Shared` payload");
+                    // `[HEAP-5]` — a `Shared`'s payload follows its object's header, at the offset
+                    // its alignment gives (`ember_obj_payload`): the field is that address.
+                    let field_ty = table.struct_def(id).fields[*index].ty;
+                    let header = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
+                    let (_, align) = self.m.ty.size_align(inner);
+                    let payload = self.gep(&header, crate::glue::payload_offset(align));
+                    let slot = self.alloca(8, 8);
+                    self.emit(format!("store ptr {payload}, ptr {slot}, align 8"));
+                    return Ok(PlaceRef { ptr: slot, ty: field_ty, variant: None, align: 8 });
                 }
                 let field_ty = table.struct_def(id).fields[*index].ty;
                 let offset = table.layout(at.ty).field_offsets[*index];
@@ -708,6 +723,12 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     pub(crate) fn place_ty(&self, place: &Place) -> Ty {
         place_type(self.m, self.mir(), place)
+    }
+
+    /// The object a class handle, an interface handle or a `Shared` at `place` points at.
+    fn object_of(&mut self, place: &Place) -> Result<String> {
+        let at = self.place(place)?;
+        Ok(self.load(Sc::Ptr, &at.ptr, at.align.min(8)))
     }
 
     fn read_scalar(&mut self, place: &Place) -> Result<(String, Sc)> {
@@ -840,7 +861,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             }
             StmtKind::BeginAccessTransfer { place, mutable } => {
                 let operation = if *mutable { "access_begin_write" } else { "access_begin_read" };
-                let object = self.read_scalar(place)?.0;
+                let object = self.object_of(place)?;
                 let what = self.m.ty.table.display(self.place_ty(place));
                 let what = self.m.bytes(what.as_bytes());
                 let loc = self.loc(span);
@@ -937,7 +958,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         }
         let loc = self.loc(span);
         if matches!(self.m.ty.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) {
-            let object = self.read_scalar(place)?.0;
+            let object = self.object_of(place)?;
             self.call_rt(&format!("object_{operation}"), vec![Val::Imm(Sc::Ptr, object), loc], None);
             return Ok(());
         }
@@ -948,7 +969,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             self.emit(format!("call void {helper}(ptr {word}, ptr {what}, ptr {loc_ptr})"));
             return Ok(());
         }
-        let object = self.read_scalar(place)?.0;
+        let object = self.object_of(place)?;
         let what = self.m.ty.table.display(ty);
         let what = self.m.bytes(what.as_bytes());
         self.call_rt(&format!("access_{operation}"), vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, what), loc], None);
@@ -974,7 +995,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         if !matches!(self.m.ty.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) {
             return Ok(false);
         }
-        let object = self.read_scalar(place)?.0;
+        let object = self.object_of(place)?;
         let loc = self.loc(span);
         if let TyKind::Class(id) = *self.m.ty.kind(ty)
             && self.m.ty.table.class_def(id).openness == ember_types::ClassOpenness::Final
@@ -1220,6 +1241,26 @@ impl<'m, 'a> FnCx<'m, 'a> {
         self.emit(format!("{next} = add i64 {i}, 1"));
         self.emit(format!("br label %{head}"));
         self.start(&done);
+        Ok(())
+    }
+
+    /// The variant `variant` of the enum `id` marked at `at`: its tag, or for a niche `Option`'s
+    /// `None` the niche (its `Some` is its payload, which the caller writes).
+    pub(crate) fn write_variant(&mut self, at: &PlaceRef, id: ember_types::EnumId, variant: usize) -> Result<()> {
+        let table = self.m.ty.table;
+        if let Some(niche) = table.option_niche(id) {
+            if variant != niche.some {
+                self.niche_none(at, niche.payload)?;
+            }
+            return Ok(());
+        }
+        let def = table.enum_def(id);
+        let Repr::Scalar(sc) = self.m.ty.repr(def.repr) else {
+            return unsupported("an enum whose tag is not an integer");
+        };
+        let tag = int_literal(def.variants[variant].discriminant as u128, sc.bits());
+        let align = at.align.min(self.natural_align(def.repr));
+        self.store_scalar(sc, &tag, &at.ptr, align);
         Ok(())
     }
 
@@ -1725,7 +1766,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Terminator::Call { func, args, dest, next } => {
                 self.call(func, args, dest, span)?;
                 // A call that never returns (`process.exit`) has ended the block already.
-                if !self.out.ends_with("  unreachable\n") {
+                if !self.terminated() {
                     self.emit(format!("br label %bb{}", next.0));
                 }
             }

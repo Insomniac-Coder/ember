@@ -13,8 +13,10 @@
 //! The IR is written for LLVM 21 and later (opaque pointers; nothing newer).
 
 pub mod abi;
+mod arrays;
 mod builtins;
 mod closures;
+mod cmp;
 mod dispatch;
 mod fmt;
 mod func;
@@ -104,6 +106,10 @@ pub(crate) struct Module<'a> {
     pub shims: BTreeSet<&'static str>,
     /// The program's callable values.
     pub callables: closures::Callables,
+    /// Functions the module's C shim defines beyond the wrappers (a sort), by symbol.
+    pub shim_functions: BTreeMap<String, String>,
+    /// Each type with a `clone` method, its symbol and whether it takes its receiver by address.
+    pub clone_fns: HashMap<ember_types::Ty, (String, bool)>,
 }
 
 impl<'a> Module<'a> {
@@ -173,6 +179,21 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         dispatch: dispatch::Dispatch::default(),
         shims: BTreeSet::new(),
         callables: closures::Callables::default(),
+        shim_functions: BTreeMap::new(),
+        clone_fns: bodies
+            .iter()
+            .filter(|body| {
+                body.arg_count == 1 && body.name == "clone" && body.locals.get(1).is_some_and(|local| local.name.as_deref() == Some("self"))
+            })
+            .filter_map(|body| {
+                let receiver = body.locals[1].ty;
+                let (owner, by_address) = match mir.types().kind(receiver) {
+                    ember_types::TyKind::Ref { inner, .. } => (*inner, true),
+                    _ => (receiver, false),
+                };
+                (body.return_ty() == owner).then(|| (owner, (body.symbol.clone(), by_address)))
+            })
+            .collect(),
     };
     module.dispatch = dispatch::Dispatch::collect(&module, bodies);
     module.callables = closures::Callables::collect(&module, bodies);
@@ -227,6 +248,12 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
     }
     ir.push('\n');
     ir.push_str(&module.fns);
-    let shim = (!module.shims.is_empty()).then(|| runtime::shim_source(&module.shims));
+    let shim = (!module.shims.is_empty() || !module.shim_functions.is_empty()).then(|| {
+        let mut source = runtime::shim_source(&module.shims);
+        for function in module.shim_functions.values() {
+            source.push_str(function);
+        }
+        source
+    });
     Ok(Output { ir, shim })
 }

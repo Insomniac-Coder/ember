@@ -18,6 +18,7 @@ pub(crate) enum Pending {
     Retain(Ty),
     ClassInfo(ClassId),
     Fmt(Ty),
+    Eq(Ty),
 }
 
 /// An internal function of the module the backend writes itself: `void @symbol(ptr %p0, …)`,
@@ -138,6 +139,7 @@ pub(crate) fn emit_pending(m: &mut Module<'_>) -> Result<()> {
             Pending::Retain(ty) => emit_retain_glue(m, ty)?,
             Pending::ClassInfo(id) => emit_class(m, id)?,
             Pending::Fmt(ty) => crate::fmt::emit_fmt_fn(m, ty)?,
+            Pending::Eq(ty) => crate::cmp::emit_eq_fn(m, ty)?,
         }
     }
     Ok(())
@@ -844,6 +846,50 @@ pub(crate) fn vec_push_helper(m: &mut Module<'_>, aligned: bool) -> String {
     });
     built.expect("the push helpers are always built");
     global_name(symbol)
+}
+
+/// `EMBER_OBJ_PAYLOAD_OFFSET` — where a shared value's payload starts after its object's header.
+pub(crate) fn payload_offset(align: u64) -> u64 {
+    (24 + align - 1) & !(align - 1)
+}
+
+/// `[HEAP-5]`, `[HEAP-10]` — a `Shared[T]`'s (or `SyncShared[T]`'s) type information: the header
+/// and the payload, its alignment, atomic counts for a `SyncShared`, and the payload's drop.
+pub(crate) fn shared_type_info(m: &mut Module<'_>, id: ember_types::StructId) -> Result<String> {
+    let table = m.ty.table;
+    let mangled = table.mangled_struct(id);
+    let symbol = format!("{}_type_info", ember_branding::symbol(&mangled));
+    if m.helper_defined(&symbol) {
+        return Ok(global_name(&symbol));
+    }
+    let def = table.struct_def(id);
+    let Some(inner) = crate::func::shared_inner(table, id) else {
+        return unsupported("the type information of a struct that is not `Shared`");
+    };
+    let sync = def.origin.as_ref().is_some_and(|(name, _)| name.is("SyncShared"));
+    let (size, align) = m.ty.size_align(inner);
+    let offset = payload_offset(align);
+    let drop = if table.needs_drop(inner) {
+        let drop = format!("{}_drop_payload", ember_branding::symbol(&mangled));
+        define_glue(m, &drop, &["ptr"], "", |cx| {
+            let payload = cx.gep("%p0", offset);
+            cx.drop_at(&payload, align, inner)
+        })?;
+        global_name(&drop)
+    } else {
+        "null".to_string()
+    };
+    let display = format!("{}[{}]", if sync { "SyncShared" } else { "Shared" }, table.display(inner));
+    let name = m.bytes(display.as_bytes());
+    m.global(format!(
+        "{} = internal constant {{ i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, i32, ptr, i32, ptr }} \
+         {{ i32 {}, i32 {}, i32 {}, ptr {name}, ptr null, ptr {drop}, ptr null, ptr null, ptr null, i32 0, ptr null, i32 0, ptr null }}, align 8",
+        global_name(&symbol),
+        offset + size,
+        align.max(8),
+        u32::from(sync),
+    ));
+    Ok(global_name(&symbol))
 }
 
 pub(crate) fn weak_inner(table: &ember_types::TypeTable, id: ember_types::StructId) -> Option<Ty> {

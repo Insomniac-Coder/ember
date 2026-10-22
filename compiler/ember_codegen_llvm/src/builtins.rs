@@ -3,7 +3,15 @@
 
 use crate::func::{FnCx, Val};
 use crate::types::{Repr, Sc, offset_align};
-use crate::{Result, unsupported};
+use crate::{Result, global_name, unsupported};
+
+fn float_name(sc: Sc) -> &'static str {
+    match sc {
+        Sc::F32 => "f32",
+        Sc::F80 => "f80",
+        _ => "f64",
+    }
+}
 use ember_mir::{Builtin, Operand, Place};
 use ember_types::{Ty, TyKind};
 
@@ -12,6 +20,8 @@ impl<'a> FnCx<'_, 'a> {
     pub(crate) fn pointer(&mut self, operand: &Operand) -> Result<String> {
         match self.operand(operand)? {
             Val::Imm(Sc::Ptr, value) => Ok(value),
+            // A wrapper of one pointer (a `Shared`, a `Box`).
+            Val::Mem(at, align) => Ok(self.load(Sc::Ptr, &at, align.min(8))),
             other => unsupported(format!("a pointer held as {other:?}")),
         }
     }
@@ -103,9 +113,309 @@ impl<'a> FnCx<'_, 'a> {
         (size, (align > 16).then_some(align))
     }
 
+    /// A call of the runtime's `name` with `args` as C converts them, its result written to
+    /// `dest` (a scalar result converted to the destination's width, as C's assignment does).
+    pub(crate) fn call_rt_into(&mut self, name: &str, args: Vec<Val>, dest: &Place) -> Result<()> {
+        let entry = crate::runtime::find(name);
+        let values = self.fit_args(entry, args)?;
+        match crate::runtime::c_type(entry.ret) {
+            crate::runtime::CTy::Void => {
+                self.call_rt(name, values, None);
+                Ok(())
+            }
+            crate::runtime::CTy::Scalar(scalar) if !matches!(scalar, crate::abi::Scalar::Int { bytes: 16, .. }) => {
+                let size = scalar.size();
+                let slot = self.alloca(size, size.max(1));
+                self.call_rt(name, values, Some((&slot, size.max(1))));
+                let sc = match scalar {
+                    crate::abi::Scalar::Bool => Sc::Bool,
+                    crate::abi::Scalar::Int { bytes, .. } => Sc::I(bytes as u32 * 8),
+                    crate::abi::Scalar::F32 => Sc::F32,
+                    crate::abi::Scalar::F64 => Sc::F64,
+                    crate::abi::Scalar::F80 => Sc::F80,
+                    crate::abi::Scalar::Ptr => Sc::Ptr,
+                };
+                let value = self.load(sc, &slot, size.max(1));
+                let signed = matches!(scalar, crate::abi::Scalar::Int { signed: true, .. });
+                self.store_result(dest, &value, sc, signed)
+            }
+            _ => {
+                let dest = self.dest_of(dest)?;
+                self.call_rt(name, values, dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
+                Ok(())
+            }
+        }
+    }
+
+    /// The built-ins the C backend writes as one runtime call of their operands in order.
+    fn runtime_builtin(&self, which: &Builtin, args: &[Operand]) -> Option<&'static str> {
+        use ember_mir::ParseKind;
+        Some(match which {
+            Builtin::StrStartsWith => "str_starts_with",
+            Builtin::StrEndsWith => "str_ends_with",
+            Builtin::StrFind { reverse: false } => "str_find",
+            Builtin::StrFind { reverse: true } => "str_rfind",
+            Builtin::StrCount => "str_count",
+            Builtin::StrReplace => "str_replace",
+            Builtin::StrRepeat => "str_repeat",
+            Builtin::StrTrimStart => "str_trim_start",
+            Builtin::StrTrimEnd => "str_trim_end",
+            Builtin::StrToUpper => "str_to_upper",
+            Builtin::StrToLower => "str_to_lower",
+            Builtin::StrSliceOk => "str_slice_ok",
+            Builtin::StrCharCount => "str_char_count",
+            Builtin::StrContains => "str_contains",
+            Builtin::StrContainsChar => "str_contains_char",
+            Builtin::StrIsCharBoundary => "str_is_char_boundary",
+            Builtin::ProcessKey => "process_key",
+            Builtin::ProcessArgs => "process_args",
+            // The cursor keeps its type: native text loops use `usize`, std's iterators `int`.
+            Builtin::StrCharNext => {
+                let cursor = self.operand_ty(&args[1])?;
+                match self.m.ty.kind(cursor) {
+                    TyKind::Ref { inner, .. } if matches!(self.m.ty.kind(*inner), TyKind::Uint(ember_types::UintTy::Usize)) => "str_char_next_usize",
+                    _ => "str_char_next",
+                }
+            }
+            Builtin::ParseStatus { kind } => match kind {
+                ParseKind::Signed => "parse_signed_status",
+                ParseKind::Unsigned => "parse_unsigned_status",
+                ParseKind::I128 => "parse_i128_status",
+                ParseKind::U128 => "parse_u128_status",
+                ParseKind::I256 => "parse_i256_status",
+                ParseKind::U256 => "parse_u256_status",
+                ParseKind::F16 | ParseKind::F32 | ParseKind::F64 => "parse_float_status",
+                ParseKind::Bool => "parse_bool_status",
+                ParseKind::Char => "parse_char_status",
+            },
+            Builtin::ParseValue { kind } => match kind {
+                ParseKind::Signed => "parse_signed_value",
+                ParseKind::Unsigned => "parse_unsigned_value",
+                ParseKind::I128 => "parse_i128_value",
+                ParseKind::U128 => "parse_u128_value",
+                ParseKind::I256 => "parse_i256_value",
+                ParseKind::U256 => "parse_u256_value",
+                ParseKind::F16 => "parse_f16_value",
+                ParseKind::F32 => "parse_f32_value",
+                ParseKind::F64 => "parse_f64_value",
+                ParseKind::Char => "str_char_at",
+                ParseKind::Bool => return None,
+            },
+            _ => return None,
+        })
+    }
+
     pub(crate) fn builtin_call(&mut self, which: &Builtin, arg_ty: Ty, args: &[Operand], dest: &Place, span: ember_span::Span) -> Result<()> {
         let size_word = |size: u64| Val::Imm(Sc::I(64), size.to_string());
+        if let Some(name) = self.runtime_builtin(which, args) {
+            let mut values = Vec::with_capacity(args.len());
+            for argument in args {
+                values.push(self.operand(argument)?);
+            }
+            // `parse`'s `Char` value is the text's first character.
+            if name == "str_char_at" {
+                values.push(size_word(0));
+            }
+            return self.call_rt_into(name, values, dest);
+        }
         match which {
+            // `parse`'s `Bool` value: the text is `true` or `false`, told apart by its length.
+            Builtin::ParseValue { kind: ember_mir::ParseKind::Bool } => {
+                let (words, align) = self.view_words(&args[0])?;
+                let len_at = self.gep(&words, 8);
+                let len = self.load(Sc::I(64), &len_at, align.min(8));
+                let truth = self.value(format!("icmp eq i64 {len}, 4"));
+                self.store_result(dest, &truth, Sc::Bool, false)
+            }
+            Builtin::Utf8Valid => {
+                let (words, align) = self.view_words(&args[0])?;
+                self.call_rt_into("utf8_valid", vec![Val::Mem(words, align)], dest)
+            }
+            // `[STD-26]` — the count and the values in 64 bits, signed or unsigned as the type is.
+            Builtin::RangeCount | Builtin::RangeNth => {
+                let wide = matches!(self.m.ty.repr(arg_ty), Repr::Scalar(Sc::I(128)));
+                let unsigned = matches!(self.m.ty.kind(self.m.ty.through_range(arg_ty)), TyKind::Uint(_));
+                let stem = if matches!(which, Builtin::RangeCount) { "count" } else { "nth" };
+                let suffix = match (wide, unsigned) {
+                    (true, true) => "u128",
+                    (true, false) => "i128",
+                    (false, true) => "u64",
+                    (false, false) => "i64",
+                };
+                let mut values = Vec::with_capacity(args.len());
+                for argument in args {
+                    values.push(self.operand(argument)?);
+                }
+                self.call_rt_into(&format!("range_{stem}_{suffix}"), values, dest)
+            }
+            // `[TYP-37]` — floats by totalOrder, everything else by `<` (text by its bytes).
+            Builtin::TotalLess => {
+                let ty = self.m.ty.through_range(arg_ty);
+                let a = self.operand(&args[0])?;
+                let b = self.operand(&args[1])?;
+                match self.m.ty.kind(ty).clone() {
+                    TyKind::Float(ember_types::FloatTy::F64) => self.call_rt_into("total_lt_f64", vec![a, b], dest),
+                    TyKind::Float(ember_types::FloatTy::F32) => self.call_rt_into("total_lt_f32", vec![a, b], dest),
+                    TyKind::Float(ember_types::FloatTy::F16) => self.call_rt_into("total_lt_f16", vec![a, b], dest),
+                    TyKind::Str => {
+                        let slot = self.alloca(4, 4);
+                        self.call_rt("str_cmp", vec![a, b], Some((&slot, 4)));
+                        let order = self.load(Sc::I(32), &slot, 4);
+                        let less = self.value(format!("icmp slt i32 {order}, 0"));
+                        self.store_result(dest, &less, Sc::Bool, false)
+                    }
+                    _ => {
+                        let (Val::Imm(sc, a), Val::Imm(_, b)) = (a, b) else {
+                            return unsupported(format!("`<` of `{}`", self.m.ty.table.display(ty)));
+                        };
+                        let less = if sc == Sc::Ptr {
+                            let a = self.value(format!("ptrtoint ptr {a} to i64"));
+                            let b = self.value(format!("ptrtoint ptr {b} to i64"));
+                            self.value(format!("icmp ult i64 {a}, {b}"))
+                        } else {
+                            let condition = if self.m.ty.is_signed(ty) { "slt" } else { "ult" };
+                            self.value(format!("icmp {condition} {} {a}, {b}", sc.ir()))
+                        };
+                        self.store_result(dest, &less, Sc::Bool, false)
+                    }
+                }
+            }
+            // `mem.replace` and `mem.swap` are a load and stores; `mem.forget` nothing.
+            Builtin::MemReplace { elem } => {
+                let target = self.pointer(&args[0])?;
+                let value = self.operand(&args[1])?;
+                let (size, align) = self.m.ty.size_align(*elem);
+                let at = self.place(dest)?;
+                self.copy(&at.ptr, at.align, &target, align, size, true);
+                self.store(&value, &target, align, size, true);
+                Ok(())
+            }
+            Builtin::MemSwap { elem } => {
+                let (left, right) = (self.pointer(&args[0])?, self.pointer(&args[1])?);
+                let (size, align) = self.m.ty.size_align(*elem);
+                let held = self.alloca(size, align);
+                self.copy(&held, align, &left, align, size, false);
+                self.copy(&left, align, &right, align, size, true);
+                self.copy(&right, align, &held, align, size, false);
+                Ok(())
+            }
+            Builtin::MemForget { .. } => Ok(()),
+            // `[STD-20]` — over the value's own width, zero-extended: LLVM's bit counts, which give
+            // the width for zero, as the runtime's helpers do.
+            Builtin::IntBits(bits) => {
+                let (value, sc) = self.scalar(&args[0])?;
+                let Sc::I(width) = sc else { return unsupported("a bit count of a non-integer") };
+                let ty = format!("i{width}");
+                let (name, extra) = match bits {
+                    ember_mir::IntBits::CountOnes => ("ctpop", ""),
+                    ember_mir::IntBits::LeadingZeros => ("ctlz", ", i1 false"),
+                    ember_mir::IntBits::TrailingZeros => ("cttz", ", i1 false"),
+                };
+                let intrinsic = format!("llvm.{name}.{ty}");
+                let declaration = if extra.is_empty() { format!("declare {ty} @{intrinsic}({ty})") } else { format!("declare {ty} @{intrinsic}({ty}, i1)") };
+                self.m.declare(&intrinsic, || declaration);
+                let count = self.value(format!("call {ty} @{intrinsic}({ty} {value}{extra})"));
+                let count = self.int_convert(&count, width, 64, false);
+                self.store_result(dest, &count, Sc::I(64), false)
+            }
+            Builtin::FloatAbs | Builtin::FloatPow | Builtin::FloatLib(_) => self.float_lib(which, arg_ty, args, dest),
+            // D-187 — `==`, `!=` and text's orders.
+            Builtin::ValueCompare { op } => {
+                let a = self.operand(&args[0])?;
+                let b = self.operand(&args[1])?;
+                let result = self.value_compare(*op, a, b, arg_ty)?;
+                self.store_result(dest, &result, Sc::Bool, false)
+            }
+            // `[STD-15]` — each through its helper for the element type.
+            Builtin::ArraySort => {
+                let elem = self.element_of(arg_ty);
+                let list = self.pointer(&args[0])?;
+                let sort = crate::arrays::sort_fn(self.m, elem)?;
+                self.emit(format!("call void {sort}(ptr {list})"));
+                Ok(())
+            }
+            Builtin::ArrayClear | Builtin::ArrayTruncate => {
+                let elem = self.element_of(arg_ty);
+                let list = self.pointer(&args[0])?;
+                if matches!(which, Builtin::ArrayClear) {
+                    let function = crate::arrays::helper(self.m, crate::arrays::Helper::Clear, elem)?;
+                    self.emit(format!("call void {function}(ptr {list})"));
+                } else {
+                    let n = self.word(&args[1])?;
+                    let function = crate::arrays::helper(self.m, crate::arrays::Helper::Truncate, elem)?;
+                    self.emit(format!("call void {function}(ptr {list}, i64 {n})"));
+                }
+                Ok(())
+            }
+            Builtin::ArrayPop { option } => {
+                let list = self.pointer(&args[0])?;
+                let function = crate::arrays::helper(self.m, crate::arrays::Helper::Pop, *option)?;
+                let at = self.place(dest)?;
+                self.emit(format!("call void {function}(ptr {list}, ptr {})", at.ptr));
+                Ok(())
+            }
+            Builtin::ArrayRemove | Builtin::ArraySwapRemove => {
+                let elem = self.element_of(arg_ty);
+                let list = self.pointer(&args[0])?;
+                let index = self.word(&args[1])?;
+                let kind = if matches!(which, Builtin::ArrayRemove) { crate::arrays::Helper::Remove } else { crate::arrays::Helper::SwapRemove };
+                let function = crate::arrays::helper(self.m, kind, elem)?;
+                let (size, align) = self.m.ty.size_align(elem);
+                let at = match self.dest_of(dest)? {
+                    Some((ptr, _)) => ptr,
+                    None => self.alloca(size, align),
+                };
+                self.emit(format!("call void {function}(ptr {list}, i64 {index}, ptr {at})"));
+                Ok(())
+            }
+            Builtin::ArrayDrain => {
+                let elem = self.element_of(arg_ty);
+                let list = self.pointer(&args[0])?;
+                let (lo, hi) = (self.word(&args[1])?, self.word(&args[2])?);
+                let function = crate::arrays::helper(self.m, crate::arrays::Helper::Drain, elem)?;
+                let at = self.place(dest)?;
+                self.emit(format!("call void {function}(ptr {list}, i64 {lo}, i64 {hi}, ptr {})", at.ptr));
+                Ok(())
+            }
+            Builtin::ArrayExtend => {
+                let elem = self.element_of(arg_ty);
+                let list = self.pointer(&args[0])?;
+                let (words, align) = self.view_words(&args[1])?;
+                let elems = self.load(Sc::Ptr, &words, align.min(8));
+                let len_at = self.gep(&words, 8);
+                let count = self.load(Sc::I(64), &len_at, align.min(8));
+                let function = crate::arrays::helper(self.m, crate::arrays::Helper::Extend, elem)?;
+                self.emit(format!("call void {function}(ptr {list}, ptr {elems}, i64 {count})"));
+                Ok(())
+            }
+            Builtin::ArrayClone { elem } | Builtin::ArraySorted { elem } => {
+                let (words, align) = self.view_words(&args[0])?;
+                let elems = self.load(Sc::Ptr, &words, align.min(8));
+                let len_at = self.gep(&words, 8);
+                let count = self.load(Sc::I(64), &len_at, align.min(8));
+                let at = self.place(dest)?;
+                if matches!(which, Builtin::ArrayClone { .. }) {
+                    let function = crate::arrays::helper(self.m, crate::arrays::Helper::Clone, *elem)?;
+                    self.emit(format!("call void {function}(ptr {elems}, i64 {count}, ptr {})", at.ptr));
+                } else {
+                    let (size, align) = self.m.ty.size_align(*elem);
+                    if align > 16 {
+                        self.call_rt("vec_from_elems_aligned", vec![size_word(size), size_word(align), Val::Imm(Sc::Ptr, elems), Val::Imm(Sc::I(64), count)], Some((&at.ptr, 8)));
+                    } else {
+                        self.call_rt("vec_from_elems", vec![size_word(size), Val::Imm(Sc::Ptr, elems), Val::Imm(Sc::I(64), count)], Some((&at.ptr, 8)));
+                    }
+                    let sort = crate::arrays::sort_fn(self.m, *elem)?;
+                    self.emit(format!("call void {sort}(ptr {})", at.ptr));
+                }
+                Ok(())
+            }
+            // A structural clone, straight into the destination.
+            Builtin::CloneParts { ty } => {
+                let source = self.pointer(&args[0])?;
+                let at = self.place(dest)?;
+                let (_, align) = self.m.ty.size_align(*ty);
+                self.clone_part(&at.ptr, &source, align.min(at.align), *ty)
+            }
             Builtin::ArrayLen | Builtin::StringLen | Builtin::SpanLen => {
                 let (words, align) = self.view_words(&args[0])?;
                 let len_at = self.gep(&words, 8);
@@ -444,6 +754,23 @@ impl<'a> FnCx<'_, 'a> {
                 );
                 Ok(())
             }
+            // `[HEAP-5]` — the value moved into a counted object of its own.
+            Builtin::SharedNew { elem, shared } => {
+                let TyKind::Struct(id) = *self.m.ty.kind(*shared) else {
+                    return unsupported("a `Shared` that is not a struct");
+                };
+                let info = crate::glue::shared_type_info(self.m, id)?;
+                let value = self.operand(&args[0])?;
+                let (size, align) = self.m.ty.size_align(*elem);
+                let (source, _) = self.spill(&value, size, align);
+                let dest = self.dest_of(dest)?;
+                self.call_rt(
+                    "obj_new_copy",
+                    vec![Val::Imm(Sc::Ptr, info), size_word(align), size_word(size), Val::Imm(Sc::Ptr, source)],
+                    dest.as_ref().map(|(p, a)| (p.as_str(), *a)),
+                );
+                Ok(())
+            }
             // `[WK-*]` — a weak handle takes a weak count; `upgrade` the runtime's compare-exchange
             // (`[RT-10]`, `[WK-12]`); an empty one holds nothing.
             Builtin::WeakNew { .. } => {
@@ -530,6 +857,93 @@ impl<'a> FnCx<'_, 'a> {
             }
             other => unsupported(format!("the built-in `{}`", other.name())),
         }
+    }
+
+    /// `[STD-27]`, `[STD-3]` — the C library's mathematics (`sqrt`, `hypot`, …; `f` for `f32`), as
+    /// the C backend calls it; the predicates and `abs` by the bits, as the runtime's helpers
+    /// are; an `f16` through `double`, rounded back once.
+    fn float_lib(&mut self, which: &Builtin, arg_ty: Ty, args: &[Operand], dest: &Place) -> Result<()> {
+        let ty = self.m.ty.through_range(arg_ty);
+        let half = self.m.ty.is_f16(ty);
+        let mut values = Vec::with_capacity(args.len());
+        for argument in args {
+            match self.operand(argument)? {
+                Val::Imm(sc, value) => values.push((value, sc)),
+                other => return unsupported(format!("a float held as {other:?}")),
+            }
+        }
+        let predicate = match which {
+            Builtin::FloatLib(f) if f.is_predicate() => Some(*f),
+            _ => None,
+        };
+        if let Some(predicate) = predicate {
+            let (value, sc) = values[0].clone();
+            let truth = if half {
+                let magnitude = self.value(format!("and i16 {value}, 32767"));
+                match predicate {
+                    ember_hir::FloatLib::IsNan => self.value(format!("icmp ugt i16 {magnitude}, 31744")),
+                    ember_hir::FloatLib::IsInfinite => self.value(format!("icmp eq i16 {magnitude}, 31744")),
+                    _ => self.value(format!("icmp ult i16 {magnitude}, 31744")),
+                }
+            } else {
+                let ir = sc.ir();
+                match predicate {
+                    ember_hir::FloatLib::IsNan => self.value(format!("fcmp uno {ir} {value}, {value}")),
+                    other => {
+                        let intrinsic = format!("llvm.fabs.{}", float_name(sc));
+                        self.m.declare(&intrinsic, || format!("declare {ir} @{intrinsic}({ir})"));
+                        let magnitude = self.value(format!("call {ir} @{intrinsic}({ir} {value})"));
+                        let infinity = crate::func::float_literal(f64::INFINITY, sc);
+                        if other == ember_hir::FloatLib::IsInfinite {
+                            self.value(format!("fcmp oeq {ir} {magnitude}, {infinity}"))
+                        } else {
+                            self.value(format!("fcmp olt {ir} {magnitude}, {infinity}"))
+                        }
+                    }
+                }
+            };
+            return self.store_result(dest, &truth, Sc::Bool, false);
+        }
+        // Widen an `f16`'s operands to `double`.
+        let mut operands = Vec::with_capacity(values.len());
+        for (value, sc) in values {
+            if half {
+                let slot = self.alloca(8, 8);
+                self.call_rt("f16_to_f64", vec![Val::Imm(Sc::I(16), value)], Some((&slot, 8)));
+                operands.push((self.load(Sc::F64, &slot, 8), Sc::F64));
+            } else {
+                operands.push((value, sc));
+            }
+        }
+        let sc = operands[0].1;
+        let ir = sc.ir();
+        let result = match which {
+            Builtin::FloatAbs => {
+                let intrinsic = format!("llvm.fabs.{}", float_name(sc));
+                self.m.declare(&intrinsic, || format!("declare {ir} @{intrinsic}({ir})"));
+                self.value(format!("call {ir} @{intrinsic}({ir} {})", operands[0].0))
+            }
+            _ => {
+                let base = match which {
+                    Builtin::FloatPow => "pow",
+                    Builtin::FloatLib(f) => f.c_name(),
+                    _ => unreachable!("a float library call"),
+                };
+                let name = if sc == Sc::F32 { format!("{base}f") } else { base.to_string() };
+                let params = vec![ir.clone(); operands.len()].join(", ");
+                let symbol = global_name(&name);
+                self.m.declare(&name, || format!("declare {ir} {symbol}({params}) nounwind"));
+                let arguments: Vec<String> = operands.iter().map(|(value, _)| format!("{ir} {value}")).collect();
+                self.value(format!("call {ir} {symbol}({})", arguments.join(", ")))
+            }
+        };
+        if half {
+            let slot = self.alloca(2, 2);
+            self.call_rt("f64_to_f16", vec![Val::Imm(Sc::F64, result)], Some((&slot, 2)));
+            let bits = self.load(Sc::I(16), &slot, 2);
+            return self.store_result(dest, &bits, Sc::I(16), false);
+        }
+        self.store_result(dest, &result, sc, false)
     }
 
     /// Arguments converted to the C parameter types of `entry` where C converts them implicitly:
