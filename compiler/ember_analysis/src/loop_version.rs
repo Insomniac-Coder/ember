@@ -1713,11 +1713,8 @@ pub(crate) struct CountedLoop {
     pub(crate) last: Option<usize>,
 }
 
-pub(crate) fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Option<CountedLoop> {
-    counted_loop_in(body, types, header, &predecessors(body))
-}
-
-/// `counted_loop` with the body's predecessors, made once for every header a pass asks about.
+/// The counted loop headed by `header`, if it is one, given the body's predecessors: a pass makes
+/// them once for every header it asks about (D-811), never once per header.
 pub(crate) fn counted_loop_in(body: &Body, types: &TypeTable, header: usize, predecessors: &[Vec<usize>]) -> Option<CountedLoop> {
     let head = body.blocks.get(header)?;
     let Terminator::SwitchInt { discr: Operand::Copy(discr), targets, otherwise } = &head.terminator else {

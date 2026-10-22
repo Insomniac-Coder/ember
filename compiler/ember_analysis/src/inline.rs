@@ -298,8 +298,9 @@ pub(crate) fn read_loop_calls(body: &Body, callees: &HashMap<String, Body>, type
     for _ in 0..4 {
         let current = copy.as_ref().unwrap_or(body);
         let mut in_loops: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        let preds = crate::loop_version::predecessors(current);
         for header in 0..current.blocks.len() {
-            if let Some(shape) = crate::loop_version::counted_loop(current, types, header) {
+            if let Some(shape) = crate::loop_version::counted_loop_in(current, types, header, &preds) {
                 in_loops.extend(shape.region);
             }
         }

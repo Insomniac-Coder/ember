@@ -3423,11 +3423,11 @@ fn check_body(
     // `[LT-1a]` is about exactly that function. A reference to a view
     // parameter's own slot is not a question of which parameter the result
     // borrows: it is `E3060` (`[BRW-8]`), and `check_escapes` reports it.
-    let loans = collect_loans(body, types, &regions, call_contract);
+    let loans = Loans::new(collect_loans(body, types, &regions, call_contract), &regions);
     if let Some(reports) = reports {
         report_loans(body, types, &regions, &loans, reports);
     }
-    let own_slot = own_slot_returns(body, types, &loans, &regions);
+    let own_slot = own_slot_returns(body, types, &loans);
     check_return_regions(body, types, &regions, &own_slot, sink);
     check_multi_result_summary(
         body,
@@ -3502,7 +3502,7 @@ fn check_body(
                     let return_point = Point { block: block_index, index: block.stmts.len() };
                     let escapes_at_return = returning
                         && (is_arena_ty(types, place_ty(body, types, place))
-                            || in_scope(&loans, &regions, return_point).iter().any(|loan| {
+                            || in_scope(&loans, return_point).iter().any(|loan| {
                                 loan.capability.must_not_outlive_storage()
                                     && loan
                                         .capability
@@ -3522,7 +3522,7 @@ fn check_body(
                         check_point(
                             body,
                             types,
-                            &depending,
+                            &in_scope_of(&depending, &regions, point),
                             &regions,
                             &reads,
                             point,
@@ -3559,14 +3559,14 @@ fn check_body(
                             // The escape checker reports a returned local
                             // borrow once, at the return expression.
                             !(returning && source.local == *local
-                                && in_scope(std::slice::from_ref(*loan), &regions, return_point).len() == 1)
+                                && regions.contains(loan.capability.validity_interval.0, return_point))
                         })
                         .cloned()
                         .collect();
                     check_point(
                         body,
                         types,
-                        &depending,
+                        &in_scope_of(&depending, &regions, point),
                         &regions,
                         &reads,
                         point,
@@ -3587,7 +3587,7 @@ fn check_body(
             check_point(
                 body,
                 types,
-                &loans,
+                &in_scope(&loans, point),
                 &regions,
                 &reads,
                 point,
@@ -3637,7 +3637,7 @@ fn check_body(
         check_point(
             body,
             types,
-            &loans,
+            &in_scope(&loans, point),
             &regions,
             &reads,
             point,
@@ -3658,7 +3658,6 @@ fn check_body(
                 body,
                 types,
                 &loans,
-                &regions,
                 point,
                 block.terminator_span,
                 sink,
@@ -3673,7 +3672,6 @@ fn check_body(
                 body,
                 types,
                 &loans,
-                &regions,
                 point,
                 block.terminator_span,
                 sink,
@@ -3693,13 +3691,12 @@ fn check_body(
 fn check_escapes(
     body: &Body,
     types: &TypeTable,
-    loans: &[Loan],
-    regions: &Regions,
+    loans: &Loans,
     point: Point,
     span: Span,
     sink: &mut Sink,
 ) {
-    for loan in in_scope(loans, regions, point) {
+    for loan in in_scope(loans, point) {
         // `[IMP-7]` — enforce only the storage-survival obligation carried by
         // the canonical capability. Current reference producers all include
         // it; future raw/handle/observing capabilities may have different
@@ -3933,8 +3930,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
 fn check_refcell_call(
     body: &Body,
     types: &TypeTable,
-    loans: &[Loan],
-    regions: &Regions,
+    loans: &Loans,
     point: Point,
     span: Span,
     sink: &mut Sink,
@@ -3944,7 +3940,7 @@ fn check_refcell_call(
     // Only guard loans (borrows of a `RefCell`'s `value`) count: a whole-cell
     // borrow taken for the call's own `mut` argument is not a guard live
     // across the call.
-    let mut live: Vec<&Loan> = in_scope(loans, regions, point)
+    let mut live: Vec<&Loan> = in_scope(loans, point)
         .into_iter()
         .filter(|loan| {
             // `collect_loans` is the producer for this canonical fact. Do not
@@ -4359,11 +4355,41 @@ fn method_autoref_target(
 
 /// `[BRW-2]` — the loans in scope at a point: created before it, and with the
 /// borrower still live. Liveness *is* the region, for a borrow held in a local.
-fn in_scope<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a Loan> {
-    loans
-        .iter()
-        .filter(|loan| regions.contains(loan.capability.validity_interval.0, point))
-        .collect()
+fn in_scope(loans: &Loans, point: Point) -> Vec<&Loan> {
+    loans.at.get(&point).map_or_else(Vec::new, |indices| indices.iter().map(|&index| &loans.list[index]).collect())
+}
+
+/// `in_scope` over a few loans picked out of the body's, which have no index.
+fn in_scope_of<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a Loan> {
+    loans.iter().filter(|loan| regions.contains(loan.capability.validity_interval.0, point)).collect()
+}
+
+/// A body's loans, and at each point the loans in scope there, in the loans' order. D-811 — made
+/// once, from each loan's region, so a query is a lookup: testing every loan at every point grew
+/// with the square of the body.
+struct Loans {
+    list: Vec<Loan>,
+    at: HashMap<Point, Vec<usize>>,
+}
+
+impl Loans {
+    fn new(list: Vec<Loan>, regions: &Regions) -> Loans {
+        let mut at: HashMap<Point, Vec<usize>> = HashMap::new();
+        for (index, loan) in list.iter().enumerate() {
+            for point in regions.points(loan.capability.validity_interval.0) {
+                at.entry(point).or_default().push(index);
+            }
+        }
+        Loans { list, at }
+    }
+}
+
+impl std::ops::Deref for Loans {
+    type Target = [Loan];
+
+    fn deref(&self) -> &[Loan] {
+        &self.list
+    }
 }
 
 /// `[BRW-3]` — a call's arguments are evaluated before the call starts, and a
@@ -4379,7 +4405,7 @@ fn in_scope<'a>(loans: &'a [Loan], regions: &Regions, point: Point) -> Vec<&'a L
 fn check_call_activation(
     body: &Body,
     types: &TypeTable,
-    loans: &[Loan],
+    loans: &Loans,
     regions: &Regions,
     reads: &HashMap<LocalId, Vec<Span>>,
     point: Point,
@@ -4392,34 +4418,51 @@ fn check_call_activation(
     let passes = |local: LocalId| {
         args.iter().any(|arg| matches!(arg, Operand::Copy(p) | Operand::Move(p) if p.local == local))
     };
-    let activated: Vec<usize> = loans
+    // D-811 — only the loans in scope at the call can be activated by it or conflict there: a
+    // loan it activates is held in a local the call reads, so its region holds the call.
+    let scope = in_scope(loans, point);
+    let activated: Vec<&Loan> = scope
         .iter()
-        .enumerate()
-        .filter(|(_, loan)| loan.capability.is_mut() && !loan.reserved_at.is_empty()
+        .copied()
+        .filter(|loan| loan.capability.is_mut() && !loan.reserved_at.is_empty()
             && (passes(loan.borrower) || body.call_argument_bindings.iter().any(|binding|
                 binding.source == loan.borrower && binding.call_block.0 as usize == point.block
                     && passes(binding.binding))))
-        .map(|(index, _)| index)
         .collect();
 
     let mut argument_reads = Vec::new();
     for arg in args {
         operand_read(arg, &mut argument_reads);
     }
-    let mut before_activation = loans.to_vec();
-    for &index in &activated {
-        before_activation[index].reserved_at.insert(point);
-    }
+    let before_activation: Vec<Loan> = scope
+        .iter()
+        .map(|&loan| {
+            let mut copy = loan.clone();
+            if activated.iter().any(|&active| std::ptr::eq(active, loan)) {
+                copy.reserved_at.insert(point);
+            }
+            copy
+        })
+        .collect();
     check_point(
-        body, types, &before_activation, regions, reads, point, &argument_reads, span, is_method, sink, reported,
+        body,
+        types,
+        &before_activation.iter().collect::<Vec<_>>(),
+        regions,
+        reads,
+        point,
+        &argument_reads,
+        span,
+        is_method,
+        sink,
+        reported,
     );
 
-    for &index in &activated {
-        let loan = &loans[index];
-        let during: Vec<Loan> = loans
+    for loan in &activated {
+        let during: Vec<&Loan> = scope
             .iter()
+            .copied()
             .filter(|other| !other.capability.is_mut() && loan.reserved_at.contains(&other.created_at))
-            .cloned()
             .collect();
         if during.is_empty() {
             continue;
@@ -4445,7 +4488,7 @@ fn check_call_activation(
 fn check_point(
     body: &Body,
     types: &TypeTable,
-    loans: &[Loan],
+    scope: &[&Loan],
     regions: &Regions,
     reads: &HashMap<LocalId, Vec<Span>>,
     point: Point,
@@ -4455,14 +4498,13 @@ fn check_point(
     sink: &mut Sink,
     reported: &mut HashSet<(usize, usize)>,
 ) {
-    let scope = in_scope(loans, regions, point);
     if scope.is_empty() {
         return;
     }
     for (place, access) in accesses {
         let canonical_place = call_argument_place(body, place);
         let place = &canonical_place;
-        for loan in &scope {
+        for loan in scope {
             let loan_place = loan
                 .capability
                 .source_place()
@@ -5171,14 +5213,14 @@ fn pointee_ty(types: &TypeTable, ty: Ty) -> Option<Ty> {
 
 /// The view parameters whose own slot a loan still live at a `return` points
 /// into: a reference to the parameter's copy, not to what it views (`E3060`).
-fn own_slot_returns(body: &Body, types: &TypeTable, loans: &[Loan], regions: &Regions) -> HashSet<LocalId> {
+fn own_slot_returns(body: &Body, types: &TypeTable, loans: &Loans) -> HashSet<LocalId> {
     let mut found = HashSet::new();
     for (block_index, block) in body.blocks.iter().enumerate() {
         if !matches!(block.terminator, Terminator::Return) {
             continue;
         }
         let point = Point { block: block_index, index: block.stmts.len() };
-        for loan in in_scope(loans, regions, point) {
+        for loan in in_scope(loans, point) {
             let Some(place) = loan.capability.source_place() else { continue };
             if loan.capability.must_not_outlive_storage()
                 && body.local(place.local).kind == LocalKind::Arg

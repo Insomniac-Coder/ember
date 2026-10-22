@@ -480,6 +480,11 @@ impl Regions {
         self.points[region].contains(&point)
     }
 
+    /// Every point where the region is live.
+    pub fn points(&self, region: RegionVid) -> impl Iterator<Item = Point> + '_ {
+        self.points[region].iter().copied()
+    }
+
     pub fn origins(&self, region: RegionVid) -> &HashSet<Origin> {
         &self.origins[region]
     }
