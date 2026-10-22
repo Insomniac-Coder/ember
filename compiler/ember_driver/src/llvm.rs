@@ -91,6 +91,12 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
     super::mark("LLVM IR generation", "all modules");
     if options.emit.as_deref() == Some("llvm-ir") {
         print!("{}", output.ir);
+        if let Some(shim) = &output.shim {
+            print!("\n; the runtime's inline functions, called through this C:\n");
+            for line in shim.lines() {
+                println!("; {line}");
+            }
+        }
         return Ok(super::finish(sink, request.map, options));
     }
     if !request.has_main {
@@ -100,6 +106,13 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     let ll_path = layout.c.join(format!("{}.ll", request.module_name));
     std::fs::write(&ll_path, &output.ir).map_err(|e| e.to_string())?;
+    let mut sources = vec![ll_path];
+    // The runtime's inline functions the IR calls, through their one-line C wrappers.
+    if let Some(shim) = &output.shim {
+        let shim_path = layout.c.join(format!("{}.rt.c", request.module_name));
+        std::fs::write(&shim_path, shim).map_err(|e| e.to_string())?;
+        sources.push(shim_path);
+    }
     let toolchain = clang(options)?;
     let runtime = super::runtime_dir()?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
@@ -121,10 +134,11 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
     retained.sort();
     retained.dedup();
     let _ = request.input;
+    sources.push(runtime_input);
     ember_build::compile_and_link_program(
         &toolchain,
         &LinkRequest {
-            sources: &[ll_path, runtime_input],
+            sources: &sources,
             include_dirs: &includes,
             output: exe.clone(),
             profile: options.profile,

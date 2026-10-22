@@ -13,7 +13,10 @@
 //! The IR is written for LLVM 21 and later (opaque pointers; nothing newer).
 
 pub mod abi;
+mod builtins;
+mod dispatch;
 mod func;
+mod glue;
 mod runtime;
 mod types;
 
@@ -52,6 +55,9 @@ pub struct Options<'a> {
 pub struct Output {
     /// The module's IR.
     pub ir: String,
+    /// The C unit through which the IR calls the runtime's inline functions, when it calls any:
+    /// compiled and linked beside the IR (`runtime::shim_source`).
+    pub shim: Option<String>,
 }
 
 /// What this backend cannot build yet: an error naming the construct, never a crash.
@@ -86,9 +92,26 @@ pub(crate) struct Module<'a> {
     globals: Vec<String>,
     /// The function definitions.
     pub fns: String,
+    /// The glue the functions asked for, written after them (`glue::emit_pending`).
+    pub pending: Vec<glue::Pending>,
+    /// The helper functions written so far, by symbol.
+    helpers: BTreeSet<String>,
+    /// What the program's MIR says about dynamic dispatch.
+    pub dispatch: dispatch::Dispatch,
+    /// The runtime's inline functions the module calls through the shim (`runtime::shim_source`).
+    pub shims: BTreeSet<&'static str>,
 }
 
 impl<'a> Module<'a> {
+    pub fn request(&mut self, work: glue::Pending) {
+        self.pending.push(work);
+    }
+
+    /// Whether the helper `symbol` is written; from now on it counts as written.
+    pub fn helper_defined(&mut self, symbol: &str) -> bool {
+        !self.helpers.insert(symbol.to_string())
+    }
+
     /// A NUL-terminated constant holding `bytes`, as a `ptr` operand.
     pub fn bytes(&mut self, bytes: &[u8]) -> String {
         let next = self.strings.len();
@@ -141,7 +164,12 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         decls: BTreeMap::new(),
         globals: Vec::new(),
         fns: String::new(),
+        pending: Vec::new(),
+        helpers: BTreeSet::new(),
+        dispatch: dispatch::Dispatch::default(),
+        shims: BTreeSet::new(),
     };
+    module.dispatch = dispatch::Dispatch::collect(&module, bodies);
     let defined: BTreeSet<&str> = bodies
         .iter()
         .filter(|body| !body.is_abstract && !body.is_extern_declaration)
@@ -159,6 +187,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
     if options.has_main {
         func::emit_entry(&mut module, bodies, options)?;
     }
+    glue::emit_pending(&mut module)?;
     for symbol in &defined {
         module.decls.remove(*symbol);
     }
@@ -192,5 +221,6 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
     }
     ir.push('\n');
     ir.push_str(&module.fns);
-    Ok(Output { ir })
+    let shim = (!module.shims.is_empty()).then(|| runtime::shim_source(&module.shims));
+    Ok(Output { ir, shim })
 }

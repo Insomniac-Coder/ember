@@ -4,7 +4,7 @@
 //! memory, reached by byte offsets, so no IR struct type has to repeat C's layout rules.
 
 use crate::abi::{Scalar, Shape, Target};
-use ember_types::{EnumId, FloatTy, IntTy, Niche, Ty, TyKind, TypeTable, UintTy};
+use ember_types::{EnumId, FloatTy, IntTy, Ty, TyKind, TypeTable, UintTy};
 
 /// A scalar as the IR holds it in a register. A `bool` is `i1` there and a byte in memory.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -152,14 +152,6 @@ impl<'a> Types<'a> {
 
     pub fn is_zst(&self, ty: Ty) -> bool {
         self.repr(ty) == Repr::Zst
-    }
-
-    /// `[TYP-13]` — `Some` is the payload itself; `None` a value the payload never holds.
-    pub fn niche(&self, ty: Ty) -> Option<Niche> {
-        match self.kind(ty) {
-            TyKind::Enum(id) => self.table.option_niche(*id),
-            _ => None,
-        }
     }
 
     pub fn is_signed(&self, ty: Ty) -> bool {

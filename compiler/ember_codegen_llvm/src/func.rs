@@ -28,16 +28,17 @@ pub(crate) enum Val {
 
 /// A place's address, its type, the variant a `Downcast` chose, and the alignment the address
 /// is known to have.
-struct PlaceRef {
-    ptr: String,
-    ty: Ty,
-    variant: Option<usize>,
-    align: u64,
+pub(crate) struct PlaceRef {
+    pub ptr: String,
+    pub ty: Ty,
+    pub variant: Option<usize>,
+    pub align: u64,
 }
 
 pub(crate) struct FnCx<'m, 'a> {
-    m: &'m mut Module<'a>,
-    body: &'a Body,
+    pub(crate) m: &'m mut Module<'a>,
+    /// The MIR body this function is (`None` for the glue the backend writes itself).
+    body: Option<&'a Body>,
     /// The entry block's slots.
     allocas: String,
     /// What the entry block does after them: the parameters stored into their slots.
@@ -58,8 +59,25 @@ fn signature(m: &Module<'_>, ret: Ty, params: impl Iterator<Item = Ty>) -> Signa
     abi::classify(m.ty.target, ret.as_ref(), &params)
 }
 
-fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
+pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     signature(m, body.return_ty(), body.args().map(|(_, decl)| decl.ty))
+}
+
+/// Declares a body of this program the module calls (its definition, when it has one, removes
+/// the declaration).
+pub(crate) fn declare_body_symbol(m: &mut Module<'_>, symbol: &str) -> Result<()> {
+    let Some(body) = m.bodies.get(symbol).copied() else {
+        return unsupported(format!("a call to `{symbol}`, which has no body"));
+    };
+    let sig = body_signature(m, body);
+    let name = global_name(symbol);
+    let attrs = fn_attrs(m);
+    m.declare(symbol, || {
+        let ret = sig.ret.ir();
+        let ext = ret_attr(&sig);
+        format!("declare{ext} {ret} {name}({}) {attrs}", ir_params(&sig, false).join(", "))
+    });
+    Ok(())
 }
 
 /// The IR parameter list of `sig`, `%p<N>` named when `named`.
@@ -110,7 +128,7 @@ fn ret_attr(sig: &Signature) -> &'static str {
 /// The attributes every function of the program has: no unwinding (a panic aborts), unwind
 /// tables for the backtrace and the debugger, and on Linux stack probes (`[RT-12]`; Windows
 /// probes every frame larger than a page itself).
-fn fn_attrs(m: &Module<'_>) -> &'static str {
+pub(crate) fn fn_attrs(m: &Module<'_>) -> &'static str {
     match m.ty.target {
         abi::Target::SysV => "nounwind uwtable \"probe-stack\"=\"inline-asm\"",
         abi::Target::Win64 => "nounwind uwtable",
@@ -127,7 +145,7 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     let sig = body_signature(m, body);
     let mut cx = FnCx {
         m,
-        body,
+        body: Some(body),
         allocas: String::new(),
         prologue: String::new(),
         out: String::new(),
@@ -139,9 +157,7 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     cx.frame()?;
     for (index, block) in body.blocks.iter().enumerate() {
         cx.start(&format!("bb{index}"));
-        for stmt in &block.stmts {
-            cx.stmt(&stmt.kind, stmt.span)?;
-        }
+        cx.stmts(&block.stmts)?;
         cx.terminator(&block.terminator, block.terminator_span)?;
     }
     let mut attrs = fn_attrs(cx.m).to_string();
@@ -168,62 +184,221 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     Ok(())
 }
 
+/// A parameter of a function the backend writes itself: a value of an Ember type, or one of the
+/// C types its tables erase to.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Param {
+    Ty(Ty),
+    /// `void*` (a receiver a table erases, a callback's state).
+    Ptr,
+    /// C's `int`.
+    Int,
+    /// The runtime's `ember_loc`.
+    Loc,
+}
+
+impl Param {
+    fn shape(self, m: &Module<'_>) -> Shape {
+        match self {
+            Param::Ty(ty) => m.ty.shape(ty),
+            Param::Ptr => Shape::Scalar(abi::Scalar::Ptr),
+            Param::Int => Shape::Scalar(abi::Scalar::Int { bytes: 4, signed: true }),
+            Param::Loc => runtime::c_type("$loc").shape().expect("ember_loc has a shape"),
+        }
+    }
+
+    fn repr(self, m: &Module<'_>) -> Repr {
+        match self {
+            Param::Ty(ty) => m.ty.repr(ty),
+            Param::Ptr => Repr::Scalar(Sc::Ptr),
+            Param::Int => Repr::Scalar(Sc::I(32)),
+            Param::Loc => Repr::Mem { size: 16, align: 8 },
+        }
+    }
+}
+
+/// A function the backend writes itself with the platform C ABI's signature for `ret` and
+/// `params`: `build` gets each parameter as a value and the result's slot, and writes the body
+/// up to its return.
+pub(crate) fn define_c_fn<'a>(
+    m: &mut Module<'a>,
+    symbol: &str,
+    linkage: &str,
+    ret: Option<Ty>,
+    params: &[Param],
+    attrs: &str,
+    build: impl FnOnce(&mut FnCx<'_, 'a>, &[Val], Option<(String, u64)>) -> Result<()>,
+) -> Result<()> {
+    let ret = ret.filter(|ty| !m.ty.is_zst(*ty));
+    let shapes: Vec<Shape> = params.iter().map(|param| param.shape(m)).collect();
+    let sig = c_fn_signature(m, ret, params);
+    let mut cx = FnCx::glue(m);
+    let mut index = 0usize;
+    let ret_slot = match (&sig.ret, ret) {
+        (Return::Sret { align, .. }, Some(_)) => {
+            index = 1;
+            Some(("%p0".to_string(), *align))
+        }
+        (Return::Direct(_), Some(ty)) => {
+            let (size, align) = cx.m.ty.size_align(ty);
+            Some((cx.alloca(size, align), align))
+        }
+        _ => None,
+    };
+    let mut values = Vec::with_capacity(params.len());
+    for ((param, pass), shape) in params.iter().zip(sig.params.clone()).zip(&shapes) {
+        let repr = param.repr(cx.m);
+        let value = match pass {
+            Pass::Ignore => Val::Zst,
+            Pass::Indirect { align, .. } => {
+                let value = Val::Mem(format!("%p{index}"), align);
+                index += 1;
+                value
+            }
+            Pass::Direct(parts) => match (repr, parts.as_slice()) {
+                (Repr::Scalar(sc), [part]) if sc_part(sc) == Some(part.ty) => {
+                    let value = Val::Imm(sc, format!("%p{index}"));
+                    index += 1;
+                    value
+                }
+                _ => {
+                    let (size, align) = (shape.size(), shape.align());
+                    let slot = cx.alloca(size, align);
+                    for part in &parts {
+                        let incoming = format!("%p{index}");
+                        cx.store_part(&slot, align, part, &incoming);
+                        index += 1;
+                    }
+                    match repr {
+                        Repr::Scalar(sc) => Val::Imm(sc, cx.load(sc, &slot, align)),
+                        _ => Val::Mem(slot, align),
+                    }
+                }
+            },
+        };
+        values.push(value);
+    }
+    build(&mut cx, &values, ret_slot.clone())?;
+    match &sig.ret {
+        Return::Void | Return::Sret { .. } => cx.emit("ret void"),
+        Return::Direct(parts) => {
+            let (slot, align) = ret_slot.expect("a result in registers has a slot");
+            let loaded: Vec<String> = parts.iter().map(|part| cx.load_part(&slot, align, part)).collect();
+            if parts.len() == 1 {
+                cx.emit(format!("ret {} {}", parts[0].ty, loaded[0]));
+            } else {
+                let ty = sig.ret.ir();
+                let mut aggregate = "undef".to_string();
+                for (index, (part, value)) in parts.iter().zip(&loaded).enumerate() {
+                    aggregate = cx.value(format!("insertvalue {ty} {aggregate}, {} {value}, {index}", part.ty));
+                }
+                cx.emit(format!("ret {ty} {aggregate}"));
+            }
+        }
+    }
+    let base = fn_attrs(cx.m);
+    let text = format!(
+        "define {linkage}{} {}({}) {base}{attrs} {{\nentry:\n{}  br label %start\nstart:\n{}}}\n\n",
+        ret_with_attr(&sig),
+        global_name(symbol),
+        ir_params(&sig, true).join(", "),
+        cx.allocas,
+        cx.out
+    );
+    cx.m.fns.push_str(&text);
+    Ok(())
+}
+
+/// The ABI signature of a function the backend writes itself (as `define_c_fn` makes it).
+pub(crate) fn c_fn_signature(m: &Module<'_>, ret: Option<Ty>, params: &[Param]) -> Signature {
+    let ret = ret.filter(|ty| !m.ty.is_zst(*ty)).map(|ty| m.ty.shape(ty));
+    let shapes: Vec<Shape> = params.iter().map(|param| param.shape(m)).collect();
+    abi::classify(m.ty.target, ret.as_ref(), &shapes)
+}
+
 impl<'m, 'a> FnCx<'m, 'a> {
+    /// A function the backend writes itself, with no MIR body.
+    pub(crate) fn glue(m: &'m mut Module<'a>) -> FnCx<'m, 'a> {
+        FnCx {
+            m,
+            body: None,
+            allocas: String::new(),
+            prologue: String::new(),
+            out: String::new(),
+            next: 0,
+            addr: Vec::new(),
+            sig: Signature { ret: Return::Void, params: Vec::new() },
+            block: "start".to_string(),
+        }
+    }
+
+    pub(crate) fn allocas_text(&self) -> &str {
+        &self.allocas
+    }
+
+    pub(crate) fn out_text(&self) -> &str {
+        &self.out
+    }
+
+    pub(crate) fn block_label(&self) -> String {
+        self.block.clone()
+    }
+
     // -- writing ----------------------------------------------------------------------------------
 
-    fn tmp(&mut self) -> String {
+    pub(crate) fn tmp(&mut self) -> String {
         self.next += 1;
         format!("%t{}", self.next)
     }
 
-    fn label(&mut self) -> String {
+    pub(crate) fn label(&mut self) -> String {
         self.next += 1;
         format!("l{}", self.next)
     }
 
-    fn emit(&mut self, line: impl AsRef<str>) {
+    pub(crate) fn emit(&mut self, line: impl AsRef<str>) {
         self.out.push_str("  ");
         self.out.push_str(line.as_ref());
         self.out.push('\n');
     }
 
-    fn start(&mut self, label: &str) {
+    pub(crate) fn start(&mut self, label: &str) {
         let _ = writeln!(self.out, "{label}:");
         self.block = label.to_string();
     }
 
     /// A value of its own: `%t = <rhs>`.
-    fn value(&mut self, rhs: impl AsRef<str>) -> String {
+    pub(crate) fn value(&mut self, rhs: impl AsRef<str>) -> String {
         let name = self.tmp();
         let line = format!("{name} = {}", rhs.as_ref());
         self.emit(line);
         name
     }
 
-    fn alloca(&mut self, size: u64, align: u64) -> String {
+    pub(crate) fn alloca(&mut self, size: u64, align: u64) -> String {
         let name = self.tmp();
         let _ = writeln!(self.allocas, "  {name} = alloca [{} x i8], align {align}", size.max(1));
         name
     }
 
-    fn gep(&mut self, ptr: &str, offset: u64) -> String {
+    pub(crate) fn gep(&mut self, ptr: &str, offset: u64) -> String {
         if offset == 0 {
             return ptr.to_string();
         }
         self.value(format!("getelementptr i8, ptr {ptr}, i64 {offset}"))
     }
 
-    fn load(&mut self, sc: Sc, ptr: &str, align: u64) -> String {
+    pub(crate) fn load(&mut self, sc: Sc, ptr: &str, align: u64) -> String {
         let loaded = self.value(format!("load {}, ptr {ptr}, align {align}", sc.mem()));
         if sc == Sc::Bool { self.value(format!("trunc i8 {loaded} to i1")) } else { loaded }
     }
 
-    fn store_scalar(&mut self, sc: Sc, value: &str, ptr: &str, align: u64) {
+    pub(crate) fn store_scalar(&mut self, sc: Sc, value: &str, ptr: &str, align: u64) {
         let value = if sc == Sc::Bool { self.value(format!("zext i1 {value} to i8")) } else { value.to_string() };
         self.emit(format!("store {} {value}, ptr {ptr}, align {align}", sc.mem()));
     }
 
-    fn copy(&mut self, to: &str, to_align: u64, from: &str, from_align: u64, size: u64, overlap: bool) {
+    pub(crate) fn copy(&mut self, to: &str, to_align: u64, from: &str, from_align: u64, size: u64, overlap: bool) {
         if size == 0 {
             return;
         }
@@ -235,7 +410,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         ));
     }
 
-    fn zero(&mut self, to: &str, align: u64, size: u64) {
+    pub(crate) fn zero(&mut self, to: &str, align: u64, size: u64) {
         if size == 0 {
             return;
         }
@@ -245,7 +420,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     /// `val` written to `ptr`, a place of `size` bytes.
-    fn store(&mut self, val: &Val, ptr: &str, align: u64, size: u64, overlap: bool) {
+    pub(crate) fn store(&mut self, val: &Val, ptr: &str, align: u64, size: u64, overlap: bool) {
         match val {
             Val::Zst => {}
             Val::Imm(sc, value) => {
@@ -262,7 +437,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     /// `val`'s bytes in memory: its own when it has them, else a slot it is stored to.
-    fn spill(&mut self, val: &Val, size: u64, align: u64) -> (String, u64) {
+    pub(crate) fn spill(&mut self, val: &Val, size: u64, align: u64) -> (String, u64) {
         match val {
             Val::Mem(ptr, align) => (ptr.clone(), *align),
             Val::Imm(sc, value) => {
@@ -277,8 +452,12 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     // -- the frame --------------------------------------------------------------------------------
 
+    fn mir(&self) -> &'a Body {
+        self.body.expect("a function made from a MIR body")
+    }
+
     fn frame(&mut self) -> Result<()> {
-        let body = self.body;
+        let body = self.mir();
         let mut param = 0usize;
         if let Return::Sret { .. } = self.sig.ret {
             self.addr[0] = Some("%p0".to_string());
@@ -317,6 +496,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 }
             }
         }
+        // ADR-141 — each list's frame buffer, aligned for any element it may hold.
+        for index in 0..body.stack_buffers.len() {
+            let _ = writeln!(self.allocas, "  %sb{index} = alloca [64 x i8], align 16");
+        }
+        // `[OPT-1]` — each class object made in the frame: the whole object, header and all.
+        for local in &body.frame_objects {
+            if let TyKind::Class(class) = *self.m.ty.kind(body.local(*local).ty) {
+                let layout = crate::glue::object_layout(self.m, class);
+                let _ = writeln!(self.allocas, "  %fo{} = alloca [{} x i8], align {}", local.0, layout.size, layout.align);
+            }
+        }
         for (index, decl) in body.locals.iter().enumerate() {
             if self.addr[index].is_some() || (index >= 1 && index <= body.arg_count) {
                 continue;
@@ -342,7 +532,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     // -- places -----------------------------------------------------------------------------------
 
     fn local_ty(&self, local: LocalId) -> Ty {
-        self.body.local(local).ty
+        self.mir().local(local).ty
     }
 
     fn natural_align(&self, ty: Ty) -> u64 {
@@ -350,7 +540,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     /// The address of `place`.
-    fn place(&mut self, place: &Place) -> Result<PlaceRef> {
+    pub(crate) fn place(&mut self, place: &Place) -> Result<PlaceRef> {
         let ty = self.local_ty(place.local);
         let ptr = match &self.addr[place.local.0 as usize] {
             Some(ptr) => ptr.clone(),
@@ -479,7 +669,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         })
     }
 
-    fn place_ty(&self, place: &Place) -> Ty {
+    pub(crate) fn place_ty(&self, place: &Place) -> Ty {
         let types = self.m.ty.table;
         let mut ty = self.local_ty(place.local);
         let mut variant = None;
@@ -528,7 +718,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         }
     }
 
-    fn operand(&mut self, operand: &Operand) -> Result<Val> {
+    pub(crate) fn operand(&mut self, operand: &Operand) -> Result<Val> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => {
                 let at = self.place(place)?;
@@ -543,7 +733,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     /// A scalar operand's register value.
-    fn scalar(&mut self, operand: &Operand) -> Result<(String, Sc)> {
+    pub(crate) fn scalar(&mut self, operand: &Operand) -> Result<(String, Sc)> {
         match self.operand(operand)? {
             Val::Imm(sc, value) => Ok((value, sc)),
             other => unsupported(format!("a scalar operand held as {other:?}")),
@@ -600,30 +790,239 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     // -- statements -------------------------------------------------------------------------------
 
+    /// A block's statements: `[EXC-19]` — an access begun and ended back to back is one check,
+    /// since nothing between could observe a count.
+    fn stmts(&mut self, stmts: &[ember_mir::Stmt]) -> Result<()> {
+        let mut index = 0;
+        while index < stmts.len() {
+            let stmt = &stmts[index];
+            if let StmtKind::BeginAccess { place, mutable } = &stmt.kind
+                && let Some(next) = stmts.get(index + 1)
+                && matches!(&next.kind, StmtKind::EndAccess { place: end, mutable: end_mutable } if end == place && end_mutable == mutable)
+                && self.access_check(place, *mutable, stmt.span)?
+            {
+                index += 2;
+                continue;
+            }
+            self.stmt(&stmt.kind, stmt.span)?;
+            index += 1;
+        }
+        Ok(())
+    }
+
     fn stmt(&mut self, kind: &StmtKind, span: ember_span::Span) -> Result<()> {
         match kind {
             StmtKind::StorageLive(_) | StmtKind::StorageDead(_) | StmtKind::Nop => Ok(()),
             StmtKind::Assign { place, rvalue } => self.assign(place, rvalue, span),
             StmtKind::CheckedBinaryOp { dest, overflow, op, lhs, rhs } => self.checked(dest, overflow, *op, lhs, rhs),
-            StmtKind::Drop { place, .. } => {
-                let ty = self.place_ty(place);
-                if self.m.ty.table.needs_drop(ty) {
-                    return unsupported(format!("a drop of `{}`", self.m.ty.table.display(ty)));
-                }
+            StmtKind::Drop { place, flag, .. } => self.drop_stmt(place, *flag),
+            StmtKind::BeginAccess { place, mutable } => {
+                let operation = if *mutable { "begin_write" } else { "begin_read" };
+                self.access(place, operation, span)
+            }
+            StmtKind::EndAccess { place, mutable } => {
+                let operation = if *mutable { "end_write" } else { "end_read" };
+                self.access(place, operation, span)
+            }
+            StmtKind::BeginAccessTransfer { place, mutable } => {
+                let operation = if *mutable { "access_begin_write" } else { "access_begin_read" };
+                let object = self.read_scalar(place)?.0;
+                let what = self.m.ty.table.display(self.place_ty(place));
+                let what = self.m.bytes(what.as_bytes());
+                let loc = self.loc(span);
+                self.call_rt(operation, vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, what), loc], None);
                 Ok(())
             }
-            StmtKind::BeginAccess { .. }
-            | StmtKind::BeginAccessTransfer { .. }
-            | StmtKind::EndAccess { .. }
-            | StmtKind::EndAccessTransfer { .. }
-            | StmtKind::LendAccess { .. } => unsupported("a dynamic exclusivity check ([EXC-1])"),
+            StmtKind::EndAccessTransfer { place, mutable } => {
+                // The object's header, at the payload offset before the payload the place names.
+                let operation = if *mutable { "access_end_write" } else { "access_end_read" };
+                let at = self.place(place)?;
+                let (_, align) = self.m.ty.size_align(at.ty);
+                let offset = (24 + align - 1) & !(align - 1);
+                let object = self.value(format!("getelementptr i8, ptr {}, i64 -{offset}", at.ptr));
+                let what = self.mir().symbol.clone();
+                let what = self.m.bytes(what.as_bytes());
+                let loc = self.loc(span);
+                self.call_rt(operation, vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, what), loc], None);
+                Ok(())
+            }
+            // `[EXC-5]` (D-690) — a `mut self` method lends its object for a call.
+            StmtKind::LendAccess { place, lend } => {
+                let (end, begin) = if *lend { ("end_write", "begin_read") } else { ("end_read", "begin_write") };
+                self.access(place, end, span)?;
+                self.access(place, begin, span)
+            }
         }
     }
 
-    /// Whether a copy of a value of `ty` must retain what it holds (`[OWN-7]`).
-    fn holds_handles(&self, ty: Ty) -> bool {
+    /// `[OWN-2]`, `[DRP-2]` — the value's life ends: behind its flag when it was moved on some paths
+    /// (`[OWN-3]`); never for a handle that borrows a list's count (`[RC-3]`); not for a list
+    /// still in its frame buffer (ADR-141).
+    fn drop_stmt(&mut self, place: &Place, flag: Option<LocalId>) -> Result<()> {
+        let body = self.mir();
+        if place.projection.is_empty() && body.uncounted_handles.contains(&place.local) {
+            return Ok(());
+        }
+        let ty = self.place_ty(place);
+        if !self.m.ty.table.needs_drop(ty) {
+            return Ok(());
+        }
+        let done = self.label();
+        let mut branched = false;
+        if let Some(flag) = flag {
+            let (set, _) = self.read_scalar(&Place::local(flag))?;
+            let go = self.label();
+            self.emit(format!("br i1 {set}, label %{go}, label %{done}"));
+            self.start(&go);
+            branched = true;
+        }
+        if place.projection.is_empty()
+            && let Some(buffer) = self.stack_buffer(place.local)
+        {
+            let at = self.place(place)?;
+            let held = self.load(Sc::Ptr, &at.ptr, 8);
+            let heap = self.value(format!("icmp ne ptr {held}, {buffer}"));
+            let go = self.label();
+            self.emit(format!("br i1 {heap}, label %{go}, label %{done}"));
+            self.start(&go);
+            branched = true;
+        }
+        let at = self.place(place)?;
+        let align = if ember_mir::unaligned_place(self.m.ty.table, body, place) { 1 } else { at.align };
+        self.drop_at(&at.ptr, align, ty)?;
+        if branched {
+            self.emit(format!("br label %{done}"));
+            self.start(&done);
+        }
+        Ok(())
+    }
+
+    /// The frame buffer of a list local (ADR-141), if it has one.
+    fn stack_buffer(&self, local: LocalId) -> Option<String> {
+        self.body?.stack_buffers.iter().position(|buffer| buffer.local == local).map(|index| format!("%sb{index}"))
+    }
+
+    /// The runtime's operation on an access to `place` (`[EXC-1]`): a class object's every word
+    /// (`[EXC-15]`), a class field's own word (`[EXC-19]`), or a `Shared` payload's header word
+    /// (`[HEAP-5]`).
+    fn access(&mut self, place: &Place, operation: &str, span: ember_span::Span) -> Result<()> {
+        let ty = self.place_ty(place);
+        if self.is_dyn_place(ty) {
+            // `[EXC-18]` — through the table's `access` entry.
+            let code = match operation {
+                "begin_read" => 0,
+                "end_read" => 1,
+                "begin_write" => 2,
+                _ => 3,
+            };
+            // A `ref dyn I`, a `dyn I` and a `Box[dyn I]` are each the carrier itself.
+            let at = self.place(place)?;
+            let loc = self.loc(span);
+            self.dyn_access(&at, code, loc);
+            return Ok(());
+        }
+        let loc = self.loc(span);
+        if matches!(self.m.ty.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) {
+            let object = self.read_scalar(place)?.0;
+            self.call_rt(&format!("object_{operation}"), vec![Val::Imm(Sc::Ptr, object), loc], None);
+            return Ok(());
+        }
+        if let Some((word, what)) = self.field_word(place)? {
+            let helper = crate::glue::field_helper(self.m, operation);
+            let what = self.m.bytes(what.as_bytes());
+            let (loc_ptr, _) = self.spill(&loc, 16, 8);
+            self.emit(format!("call void {helper}(ptr {word}, ptr {what}, ptr {loc_ptr})"));
+            return Ok(());
+        }
+        let object = self.read_scalar(place)?.0;
+        let what = self.m.ty.table.display(ty);
+        let what = self.m.bytes(what.as_bytes());
+        self.call_rt(&format!("access_{operation}"), vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, what), loc], None);
+        Ok(())
+    }
+
+    /// `[EXC-19]` — an access nothing can overlap, as one check; `false` when `place` is neither
+    /// a class field with its own word nor a class object.
+    fn access_check(&mut self, place: &Place, mutable: bool, span: ember_span::Span) -> Result<bool> {
+        let ty = self.place_ty(place);
+        if self.is_dyn_place(ty) {
+            return Ok(false);
+        }
+        let operation = if mutable { "check_write" } else { "check_read" };
+        if let Some((word, what)) = self.field_word(place)? {
+            let loc = self.loc(span);
+            let helper = crate::glue::field_helper(self.m, operation);
+            let what = self.m.bytes(what.as_bytes());
+            let (loc_ptr, _) = self.spill(&loc, 16, 8);
+            self.emit(format!("call void {helper}(ptr {word}, ptr {what}, ptr {loc_ptr})"));
+            return Ok(true);
+        }
+        if !matches!(self.m.ty.kind(ty), TyKind::Class(_) | TyKind::ClassInterface(_)) {
+            return Ok(false);
+        }
+        let object = self.read_scalar(place)?.0;
+        let loc = self.loc(span);
+        if let TyKind::Class(id) = *self.m.ty.kind(ty)
+            && self.m.ty.table.class_def(id).openness == ember_types::ClassOpenness::Final
+        {
+            // A final class's words are known: read in place, two at a time.
+            let layout = crate::glue::object_layout(self.m, id);
+            // An odd level's last read takes its zero pad word too.
+            let pairs: Vec<u64> = layout.levels.iter().flat_map(|words| words.iter().step_by(2).copied()).collect();
+            if pairs.is_empty() {
+                return Ok(true);
+            }
+            let mut all = String::new();
+            for offset in pairs {
+                let at = self.gep(&object, offset);
+                let align = offset_align(offset).min(4);
+                let pair = self.value(format!("load i64, ptr {at}, align {align}"));
+                all = if all.is_empty() { pair } else { self.value(format!("or i64 {all}, {pair}")) };
+            }
+            let test = if mutable {
+                self.value(format!("icmp ne i64 {all}, 0"))
+            } else {
+                let writers = self.value(format!("and i64 {all}, -9223372034707292160"));
+                self.value(format!("icmp ne i64 {writers}, 0"))
+            };
+            let (fail, ok) = (self.label(), self.label());
+            self.emit(format!("br i1 {test}, label %{fail}, label %{ok}"));
+            self.start(&fail);
+            self.call_rt("object_check_failed", vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Bool, mutable.to_string()), loc], None);
+            self.start(&ok);
+            return Ok(true);
+        }
+        self.call_rt(&format!("object_{operation}"), vec![Val::Imm(Sc::Ptr, object), loc], None);
+        Ok(true)
+    }
+
+    fn is_dyn_place(&self, ty: Ty) -> bool {
         let table = self.m.ty.table;
-        table.is_copy(ty) && table.needs_drop(ty)
+        match table.kind(ty) {
+            TyKind::Dyn { .. } => true,
+            TyKind::Ref { inner, .. } => matches!(table.kind(*inner), TyKind::Dyn { .. }),
+            TyKind::Struct(id) => table.compiler_box_inner(*id).is_some_and(|inner| matches!(table.kind(inner), TyKind::Dyn { .. })),
+            _ => false,
+        }
+    }
+
+    /// When `place` is a class handle's field with its own access word (`h.f`), the word's address
+    /// and what a conflict names (`Bag.items`).
+    fn field_word(&mut self, place: &Place) -> Result<Option<(String, String)>> {
+        let Some((Projection::Field(index), prefix)) = place.projection.split_last() else { return Ok(None) };
+        let handle = Place { local: place.local, projection: prefix.to_vec() };
+        let TyKind::Class(id) = *self.m.ty.kind(self.place_ty(&handle)) else { return Ok(None) };
+        let table = self.m.ty.table;
+        if !table.class_field_has_access_word(id, *index) {
+            return Ok(None);
+        }
+        let layout = crate::glue::object_layout(self.m, id);
+        let Some(offset) = layout.words[*index] else { return Ok(None) };
+        let field = table.class_field_at(id, *index).expect("a class field").name.to_string();
+        let what = format!("{}.{field}", table.class_display_name(id));
+        let object = self.read_scalar(&handle)?.0;
+        let word = self.gep(&object, offset);
+        Ok(Some((word, what)))
     }
 
     fn assign(&mut self, place: &Place, rvalue: &Rvalue, span: ember_span::Span) -> Result<()> {
@@ -633,13 +1032,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
         }
         if let Rvalue::Use(Operand::Copy(from) | Operand::Move(from)) = rvalue
             && from == place
+            && !self.holds_counts(ty)
         {
             return Ok(());
         }
-        if matches!(rvalue, Rvalue::Use(Operand::Copy(_))) && self.holds_handles(ty) {
-            return unsupported("a copy of a value holding class handles ([OWN-7])");
-        }
         let _ = span;
+        // `[OWN-7]` — a copy retains what it holds before the new value becomes visible; an
+        // uncounted handle borrows the list's count (`[RC-3]`).
+        let counted = !(place.projection.is_empty() && self.mir().uncounted_handles.contains(&place.local));
+        if counted {
+            self.retain_rvalue(rvalue, ty)?;
+        }
         match rvalue {
             Rvalue::Aggregate { kind, operands } => return self.aggregate(place, ty, kind, operands),
             Rvalue::Repeat { value, count } => return self.repeat(place, ty, value, *count),
@@ -653,6 +1056,51 @@ impl<'m, 'a> FnCx<'m, 'a> {
             _ => false,
         };
         self.store(&value, &at.ptr, at.align, size, overlap);
+        Ok(())
+    }
+
+    /// `[OWN-7]` — the retains a copy made by `rvalue` takes: each `Copy` operand's handles.
+    fn retain_rvalue(&mut self, rvalue: &Rvalue, target: Ty) -> Result<()> {
+        match rvalue {
+            Rvalue::Use(Operand::Copy(from)) => {
+                if self.holds_counts(target) {
+                    let at = self.place(from)?;
+                    self.retain_lines(&at.ptr, at.align, target)?;
+                }
+            }
+            Rvalue::Aggregate { kind, operands } => {
+                let table = self.m.ty.table;
+                let types: Vec<Ty> = match kind {
+                    AggregateKind::Callable => operands.iter().map(|operand| self.operand_ty(operand).unwrap_or(target)).collect(),
+                    AggregateKind::Struct(id) => table.struct_def(*id).fields.iter().map(|field| field.ty).collect(),
+                    AggregateKind::Tuple => match table.kind(target) {
+                        TyKind::Tuple(items) => items.clone(),
+                        _ => Vec::new(),
+                    },
+                    AggregateKind::Array => match table.kind(target) {
+                        TyKind::Array { elem, len } => vec![*elem; *len as usize],
+                        _ => Vec::new(),
+                    },
+                    AggregateKind::Enum(id, variant) => {
+                        table.enum_def(*id).variants.get(*variant).map(|v| v.fields.iter().map(|f| f.ty).collect()).unwrap_or_default()
+                    }
+                };
+                for (operand, ty) in operands.iter().zip(types) {
+                    if let Operand::Copy(from) = operand
+                        && self.holds_counts(ty)
+                    {
+                        let at = self.place(from)?;
+                        self.retain_lines(&at.ptr, at.align, ty)?;
+                    }
+                }
+            }
+            Rvalue::Cast { kind: CastKind::ClassUpcast | CastKind::ClassInterfaceUpcast { .. }, operand: Operand::Copy(from), .. } => {
+                let ty = self.place_ty(from);
+                let (handle, _) = self.read_scalar(from)?;
+                self.retain_handle(&handle, ty);
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -894,7 +1342,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let Repr::Scalar(Sc::I(bits)) = self.m.ty.repr(target) else {
                     return unsupported("a discriminant read into a non-integer");
                 };
-                let value = self.discriminant(&at)?;
+                let value = self.discriminant_at(&at)?;
                 let (value, from) = value;
                 Ok(Val::Imm(Sc::I(bits), self.int_convert(&value, from, bits, true)))
             }
@@ -914,7 +1362,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     /// The discriminant of the enum at `at` and its width.
-    fn discriminant(&mut self, at: &PlaceRef) -> Result<(String, u32)> {
+    pub(crate) fn discriminant_at(&mut self, at: &PlaceRef) -> Result<(String, u32)> {
         let table = self.m.ty.table;
         let TyKind::Enum(id) = *table.kind(at.ty) else {
             return match self.m.ty.repr(at.ty) {
@@ -940,7 +1388,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     /// An integer of `from` bits as one of `to` bits.
-    fn int_convert(&mut self, value: &str, from: u32, to: u32, signed: bool) -> String {
+    pub(crate) fn int_convert(&mut self, value: &str, from: u32, to: u32, signed: bool) -> String {
         match from.cmp(&to) {
             std::cmp::Ordering::Equal => value.to_string(),
             std::cmp::Ordering::Greater => self.value(format!("trunc i{from} {value} to i{to}")),
@@ -1060,7 +1508,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     /// (every relaxation but `nnan` and `ninf`, as the C backend's flags, ODR-090) or
     /// `@fp(contract)`.
     fn fast_flags(&self) -> &'static str {
-        match self.body.fp {
+        match self.body.map_or(ember_types::FpMode::Strict, |body| body.fp) {
             ember_types::FpMode::Strict => "",
             ember_types::FpMode::Contract => " contract",
             ember_types::FpMode::Fast => " nsz arcp contract afn reassoc",
@@ -1134,7 +1582,20 @@ impl<'m, 'a> FnCx<'m, 'a> {
     fn cast(&mut self, kind: &CastKind, operand: &Operand, to: Ty) -> Result<Val> {
         let from = self.operand_ty(operand);
         match kind {
+            // `[DSJ-1]` — a proved pair is the pair itself.
             CastKind::ViewsDisjoint => return self.operand(operand),
+            // `[CLS-4]`, `[OBJ-2]` — a base class's handle, and an interface's one-word handle,
+            // are the derived object's own pointer (the retain a copy takes is `retain_rvalue`'s).
+            // A borrowed upcast is the same reference: C needs a base-typed copy only for its
+            // aliasing rules, which the IR does not have.
+            CastKind::ClassUpcast | CastKind::ClassUpcastBorrowed => return self.operand(operand),
+            CastKind::InterfaceUpcast { concrete, interfaces, .. } => return self.interface_upcast(*concrete, interfaces, operand),
+            CastKind::ClassInterfaceUpcast { .. } => return self.class_interface_upcast(operand),
+            // ADR-186 — a borrowed `Box[dyn I]`'s value: its data pointer.
+            CastKind::InterfaceDowncast => {
+                let (boxed, _) = self.scalar(operand)?;
+                return Ok(Val::Imm(Sc::Ptr, self.load(Sc::Ptr, &boxed, 8)));
+            }
             CastKind::Numeric | CastKind::Widen => {}
             other => return unsupported(format!("the cast {}", cast_name(other))),
         }
@@ -1198,7 +1659,12 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Terminator::Unreachable => self.emit("unreachable"),
             Terminator::Return => self.ret()?,
             Terminator::SwitchInt { discr, targets, otherwise } => {
-                let (value, sc) = self.scalar(discr)?;
+                let (mut value, mut sc) = self.scalar(discr)?;
+                // A pointer is tested as its address.
+                if sc == Sc::Ptr {
+                    value = self.value(format!("ptrtoint ptr {value} to i64"));
+                    sc = Sc::I(64);
+                }
                 match (sc, targets.as_slice()) {
                     (Sc::Bool, [(0, target)]) => {
                         self.emit(format!("br i1 {value}, label %bb{}, label %bb{}", otherwise.0, target.0))
@@ -1220,7 +1686,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 }
             }
             Terminator::Assert { cond, expected, msg, next, span } => {
-                let (cond, _) = self.scalar(cond)?;
+                let (cond, sc) = self.scalar(cond)?;
+                // A pointer or an integer holds when it is not zero, as C tests it.
+                let cond = match sc {
+                    Sc::Bool => cond,
+                    Sc::Ptr => self.value(format!("icmp ne ptr {cond}, null")),
+                    other => self.value(format!("icmp ne {} {cond}, 0", other.ir())),
+                };
                 let fail = self.label();
                 let ok = format!("bb{}", next.0);
                 if *expected {
@@ -1233,7 +1705,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
             }
             Terminator::Call { func, args, dest, next } => {
                 self.call(func, args, dest, span)?;
-                self.emit(format!("br label %bb{}", next.0));
+                // A call that never returns (`process.exit`) has ended the block already.
+                if !self.out.ends_with("  unreachable\n") {
+                    self.emit(format!("br label %bb{}", next.0));
+                }
             }
         }
         Ok(())
@@ -1244,7 +1719,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Return::Void | Return::Sret { .. } => self.emit("ret void"),
             Return::Direct(parts) => {
                 let slot = self.addr[0].clone().expect("a result with bytes has a slot");
-                let (_, align) = self.m.ty.size_align(self.body.return_ty());
+                let (_, align) = self.m.ty.size_align(self.mir().return_ty());
                 let values: Vec<String> = parts.iter().map(|part| self.load_part(&slot, align, part)).collect();
                 if parts.len() == 1 {
                     let line = format!("ret {} {}", parts[0].ty, values[0]);
@@ -1320,7 +1795,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     /// A call by `sig` to `callee` with `values`; the result, if any, written to `dest`.
-    fn lowered_call(&mut self, callee: &str, sig: &Signature, values: &[(Val, u64, u64)], dest: Option<(&str, u64, u64)>, attrs: &str) {
+    pub(crate) fn lowered_call(&mut self, callee: &str, sig: &Signature, values: &[(Val, u64, u64)], dest: Option<(&str, u64, u64)>, attrs: &str) {
         let mut args = Vec::new();
         let sret = if let Return::Sret { size, align } = sig.ret {
             let slot = self.alloca(size, align);
@@ -1362,21 +1837,29 @@ impl<'m, 'a> FnCx<'m, 'a> {
     /// Declares a body of this program the module calls (its definition, when it has one, removes
     /// the declaration).
     fn declare_body(&mut self, symbol: &str) -> Result<()> {
-        let Some(body) = self.m.bodies.get(symbol).copied() else {
-            return unsupported(format!("a call to `{symbol}`, which has no body"));
-        };
-        let sig = body_signature(self.m, body);
-        let name = global_name(symbol);
-        let attrs = fn_attrs(self.m);
-        self.m.declare(symbol, || {
-            let ret = sig.ret.ir();
-            let ext = ret_attr(&sig);
-            format!("declare{ext} {ret} {name}({}) {attrs}", ir_params(&sig, false).join(", "))
-        });
-        Ok(())
+        declare_body_symbol(self.m, symbol)
     }
 
     fn call(&mut self, func: &FuncRef, args: &[Operand], dest: &Place, span: ember_span::Span) -> Result<()> {
+        match func {
+            FuncRef::Virtual { owner, slot, receiver, param_modes } => {
+                self.retain_owned_copies(args, |index| param_modes.get(index) == Some(&ember_mir::ParameterMode::Owned))?;
+                let dest = self.dest(dest)?;
+                return self.virtual_call(*owner, *slot, *receiver, args, dest);
+            }
+            FuncRef::Interface { interfaces, interface, slot, params, ret, class_handle, param_modes, .. } => {
+                self.retain_owned_copies(args, |index| {
+                    index.checked_sub(1).and_then(|parameter| param_modes.get(parameter)) == Some(&ember_mir::ParameterMode::Owned)
+                })?;
+                let dest = self.dest(dest)?;
+                return self.interface_call(interfaces, *interface, *slot, params, *ret, *class_handle, args, dest);
+            }
+            FuncRef::DynBoxNew { concrete, interfaces, .. } => {
+                let dest = self.dest(dest)?;
+                return self.dyn_box_new(*concrete, interfaces, args, dest);
+            }
+            _ => {}
+        }
         match func {
             FuncRef::Direct { symbol, .. } => {
                 let Some(body) = self.m.bodies.get(symbol.as_str()).copied() else {
@@ -1385,34 +1868,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 if body.is_extern_declaration {
                     return unsupported("a foreign call ([FFI-10])");
                 }
-                for (index, argument) in args.iter().enumerate() {
-                    if let Operand::Copy(place) = argument
-                        && body.param_modes.get(index) == Some(&ember_mir::ParameterMode::Owned)
-                        && self.holds_handles(self.place_ty(place))
-                    {
-                        return unsupported("a class handle copied into an owned parameter ([RC-1])");
-                    }
-                }
-                self.declare_body(symbol)?;
-                let sig = body_signature(self.m, body);
-                let params: Vec<Ty> = body.args().map(|(_, decl)| decl.ty).collect();
+                self.retain_owned_copies(args, |index| body.param_modes.get(index) == Some(&ember_mir::ParameterMode::Owned))?;
                 let mut values = Vec::with_capacity(args.len());
-                for (argument, ty) in args.iter().zip(params) {
-                    let value = self.operand(argument)?;
-                    let (size, align) = self.m.ty.size_align(ty);
-                    values.push((value, size, align));
+                for argument in args {
+                    values.push(self.operand(argument)?);
                 }
-                let dest_ty = self.place_ty(dest);
-                let target = if self.m.ty.is_zst(dest_ty) {
-                    None
-                } else {
-                    let at = self.place(dest)?;
-                    let (size, _) = self.m.ty.size_align(dest_ty);
-                    Some((at.ptr, at.align, size))
-                };
-                let callee = global_name(symbol);
-                self.lowered_call(&callee, &sig, &values, target.as_ref().map(|(p, a, s)| (p.as_str(), *a, *s)), "");
-                Ok(())
+                let dest = self.dest(dest)?;
+                self.call_body(symbol, values, dest.as_ref().map(|(ptr, align)| (ptr.as_str(), *align)))
             }
             FuncRef::Builtin { which, arg_ty } => self.builtin(which, *arg_ty, args, dest, span),
             FuncRef::Virtual { .. } => unsupported("a virtual call ([DSP-2])"),
@@ -1422,14 +1884,82 @@ impl<'m, 'a> FnCx<'m, 'a> {
         }
     }
 
+    /// `[RC-1]`, `[FN-1]` — a value copied into an owned parameter retains its handles first: the
+    /// callee releases its parameter. A moved one hands its references over.
+    fn retain_owned_copies(&mut self, args: &[Operand], owned: impl Fn(usize) -> bool) -> Result<()> {
+        for (index, argument) in args.iter().enumerate() {
+            if let Operand::Copy(place) = argument
+                && owned(index)
+            {
+                let ty = self.place_ty(place);
+                if self.holds_counts(ty) {
+                    let at = self.place(place)?;
+                    self.retain_lines(&at.ptr, at.align, ty)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The address a call's result is written to, or `None` when it has no bytes.
+    fn dest(&mut self, dest: &Place) -> Result<Option<(String, u64)>> {
+        let ty = self.place_ty(dest);
+        if self.m.ty.is_zst(ty) {
+            return Ok(None);
+        }
+        let at = self.place(dest)?;
+        Ok(Some((at.ptr, at.align)))
+    }
+
+    /// A call of the program's function `symbol` with `values`; its result written to `dest`.
+    pub(crate) fn call_body(&mut self, symbol: &str, values: Vec<Val>, dest: Option<(&str, u64)>) -> Result<()> {
+        let Some(body) = self.m.bodies.get(symbol).copied() else {
+            return unsupported(format!("a call to `{symbol}`, which has no body"));
+        };
+        self.declare_body(symbol)?;
+        let sig = body_signature(self.m, body);
+        let values: Vec<(Val, u64, u64)> = values
+            .into_iter()
+            .zip(body.args())
+            .map(|(value, (_, decl))| {
+                let (size, align) = self.m.ty.size_align(decl.ty);
+                (value, size, align)
+            })
+            .collect();
+        let (size, _) = self.m.ty.size_align(body.return_ty());
+        let dest = dest.map(|(ptr, align)| (ptr, align, size));
+        self.lowered_call(&global_name(symbol), &sig, &values, dest, "");
+        Ok(())
+    }
+
+    /// A call through `callee` (a function pointer or a symbol) of the C signature `ret(params)`;
+    /// its result written to `dest`.
+    pub(crate) fn call_c(&mut self, callee: &str, ret: Option<Ty>, params: &[Param], values: Vec<Val>, dest: Option<(&str, u64)>) {
+        let sig = c_fn_signature(self.m, ret, params);
+        let values: Vec<(Val, u64, u64)> = values
+            .into_iter()
+            .zip(params)
+            .map(|(value, param)| {
+                let shape = param.shape(self.m);
+                (value, shape.size(), shape.align())
+            })
+            .collect();
+        let size = ret.map_or(0, |ty| self.m.ty.size_align(ty).0);
+        let dest = dest.map(|(ptr, align)| (ptr, align, size));
+        self.lowered_call(callee, &sig, &values, dest, "");
+    }
+
     /// A call to the runtime's `name` with `values` by its C prototype; its result written to
     /// `dest` when given.
-    fn call_rt(&mut self, name: &str, values: Vec<Val>, dest: Option<(&str, u64)>) {
+    pub(crate) fn call_rt(&mut self, name: &str, values: Vec<Val>, dest: Option<(&str, u64)>) {
         let entry = runtime::find(name);
         let ret = runtime::c_type(entry.ret).shape();
         let shapes: Vec<Shape> = entry.params.iter().map(|param| runtime::c_type(param).shape().expect("a parameter has a type")).collect();
         let sig = abi::classify(self.m.ty.target, ret.as_ref(), &shapes);
-        let symbol = ember_branding::runtime(name);
+        let symbol = runtime::symbol(entry);
+        if entry.inline {
+            self.m.shims.insert(entry.name);
+        }
         let ir_name = global_name(&symbol);
         let attrs = if entry.noreturn { " noreturn nounwind cold" } else { " nounwind" };
         self.m.declare(&symbol, || {
@@ -1448,7 +1978,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     /// `ember_loc` for `span`: the file as the build names it, the line and the column
     /// (`ember_loc_unknown()` without one).
-    fn loc(&mut self, span: ember_span::Span) -> Val {
+    pub(crate) fn loc(&mut self, span: ember_span::Span) -> Val {
         let slot = self.alloca(16, 8);
         if span.is_dummy() || self.m.map.get(span.file).is_none() {
             self.zero(&slot, 8, 16);
@@ -1523,11 +2053,89 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     fn builtin(&mut self, which: &Builtin, arg_ty: Ty, args: &[Operand], dest: &Place, span: ember_span::Span) -> Result<()> {
-        let _ = (dest, span);
+        let _ = span;
         match which {
             Builtin::Print | Builtin::Println | Builtin::EPrint | Builtin::EPrintln => self.print(which, arg_ty, args),
-            other => unsupported(format!("the built-in `{}`", other.name())),
+            // `[CLS-1]` — the object's header from the runtime; `[OPT-1]` in the frame when the
+            // compiler proved no handle outlives the function.
+            Builtin::ClassNew { class_id, .. } => {
+                let handle = if dest.projection.is_empty() && self.mir().frame_objects.contains(&dest.local) {
+                    let info = global_name(&crate::glue::type_info(self.m, *class_id));
+                    let slot = self.alloca(8, 8);
+                    let storage = format!("%fo{}", dest.local.0);
+                    self.call_rt("obj_new_frame", vec![Val::Imm(Sc::Ptr, storage), Val::Imm(Sc::Ptr, info)], Some((&slot, 8)));
+                    self.load(Sc::Ptr, &slot, 8)
+                } else {
+                    self.class_new(*class_id)
+                };
+                let at = self.place(dest)?;
+                self.store_scalar(Sc::Ptr, &handle, &at.ptr, at.align);
+                Ok(())
+            }
+            // `[DSP-4]` — the runtime walks the object's base chain; MIR retains the result.
+            Builtin::ClassDowncast { target, .. } => {
+                let (object, _) = self.scalar(&args[0])?;
+                let info = global_name(&crate::glue::type_info(self.m, *target));
+                let dest = self.dest(dest)?;
+                self.call_rt("downcast", vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, info)], dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
+                Ok(())
+            }
+            // An empty list; ADR-141's in its frame buffer when it has one.
+            Builtin::ArrayNew | Builtin::StringNew => {
+                let at = self.place(dest)?;
+                if dest.projection.is_empty()
+                    && let Some(index) = self.mir().stack_buffers.iter().position(|buffer| buffer.local == dest.local)
+                {
+                    let capacity = self.mir().stack_buffers[index].capacity;
+                    return self.stack_vec(&at.ptr, &format!("%sb{index}"), capacity);
+                }
+                self.zero(&at.ptr, 8, 24);
+                Ok(())
+            }
+            other => self.builtin_call(other, arg_ty, args, dest, span),
         }
+    }
+
+    /// ADR-141 — `ember_stack_vec(buffer, cap)`: the list in its frame buffer where the runtime
+    /// can tell the buffer from a heap block (Windows x64 always; Linux when the buffer is in this
+    /// thread's stack range), else empty.
+    fn stack_vec(&mut self, to: &str, buffer: &str, capacity: u64) -> Result<()> {
+        self.zero(to, 8, 24);
+        match self.m.ty.target {
+            abi::Target::Win64 => {
+                self.emit(format!("store ptr {buffer}, ptr {to}, align 8"));
+                let cap = self.gep(to, 16);
+                self.emit(format!("store i64 {capacity}, ptr {cap}, align 8"));
+            }
+            abi::Target::SysV => {
+                let (low, high) = ("@ember_stack_low", "@ember_stack_high");
+                self.m.declare(low, || format!("{low} = external thread_local global i64, align 8"));
+                self.m.declare(high, || format!("{high} = external thread_local global i64, align 8"));
+                let known = self.load(Sc::I(64), high, 8);
+                let (find, check) = (self.label(), self.label());
+                let unset = self.value(format!("icmp eq i64 {known}, 0"));
+                self.emit(format!("br i1 {unset}, label %{find}, label %{check}"));
+                self.start(&find);
+                self.call_rt("stack_find", Vec::new(), None);
+                self.emit(format!("br label %{check}"));
+                self.start(&check);
+                let low_value = self.load(Sc::I(64), low, 8);
+                let high_value = self.load(Sc::I(64), high, 8);
+                let address = self.value(format!("ptrtoint ptr {buffer} to i64"));
+                let from_low = self.value(format!("sub i64 {address}, {low_value}"));
+                let span = self.value(format!("sub i64 {high_value}, {low_value}"));
+                let inside = self.value(format!("icmp ult i64 {from_low}, {span}"));
+                let (yes, done) = (self.label(), self.label());
+                self.emit(format!("br i1 {inside}, label %{yes}, label %{done}"));
+                self.start(&yes);
+                self.emit(format!("store ptr {buffer}, ptr {to}, align 8"));
+                let cap = self.gep(to, 16);
+                self.emit(format!("store i64 {capacity}, ptr {cap}, align 8"));
+                self.emit(format!("br label %{done}"));
+                self.start(&done);
+            }
+        }
+        Ok(())
     }
 
     /// `[STD-9]` — `print` and its kin through the runtime's printer for the argument's type.
@@ -1614,7 +2222,7 @@ fn may_overlap(to: &Place, from: &Place) -> bool {
         || from.projection.iter().any(|step| matches!(step, Projection::Deref | Projection::Index(_) | Projection::ConstIndex(_)))
 }
 
-fn shared_inner(table: &ember_types::TypeTable, id: ember_types::StructId) -> Option<Ty> {
+pub(crate) fn shared_inner(table: &ember_types::TypeTable, id: ember_types::StructId) -> Option<Ty> {
     let def = table.struct_def(id);
     match &def.origin {
         Some((name, args)) if (name.is("Shared") || name.is("SyncShared")) && args.len() == 1 => Some(args[0]),
@@ -1699,7 +2307,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     };
     let mut cx = FnCx {
         m,
-        body: called_body,
+        body: None,
         allocas: String::new(),
         prologue: String::new(),
         out: String::new(),
