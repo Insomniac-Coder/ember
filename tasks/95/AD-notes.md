@@ -153,7 +153,10 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   the rule, `ember_branding` `a_name_beyond_ascii_is_transliterated_before_its_length`,
   `ember_types` `the_canonical_spelling_of_instance_arguments` (names `[MNG-6]`, and the
   built-in paths); `milestones.rs` `inline_header_functions_and_inline_attributes_reach_the_c`
-  names `std.core.str.chars`. `phase-status.json`: `MNG-1`, `MNG-3` removed.
+  names `std.core.str.chars`; the C assertions of `MOD-5/accept_an_unused_std_extension_is_not_emitted.em`,
+  `TYP-22/accept_dyn_interface_bool_literal.em` and `TYP-22/accept_dyn_interface_scalar.em`
+  re-recorded to the new spellings, each asserting what it did (`MOD-5`'s absent ones too, which
+  the old spelling made pass vacuously). `phase-status.json`: `MNG-1`, `MNG-3` removed.
 
 * **D-876 `[CLO-1]`, `[OWN-3]`** — a lambda with no result type written whose body is a value read
   through a reference that only a copy could give by value gives the reference

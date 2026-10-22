@@ -4,9 +4,9 @@
 #$ stdout: 41
 #$ stdout: 41
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_7Inspect em_vt_dyn_7Inspect_for_3i32)
-#$ assert-c: contains(em_vt_dyn_7Inspect_for_3i32_drop)
-#$ assert-c: contains(return em_3i327inspect(*(int32_t*)_0);)
+#$ assert-c: contains(static const struct em_vt_dyn_7Inspect em_vt_dyn_7Inspect_for_3std4core3i32)
+#$ assert-c: contains(em_vt_dyn_7Inspect_for_3std4core3i32_drop)
+#$ assert-c: contains(return em_3std4core3i327inspect(*(int32_t*)_0);)
 #$ assert-c: contains(ember_box_new_copy(sizeof(int32_t), _Alignof(int32_t), &((int32_t){42}))
 
 interface Inspect:
