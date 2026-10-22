@@ -655,9 +655,10 @@ fn every_type_has_a_schema() {
     }
     // A field: name, renamed from, type name, type schema hash, offset, size — in declaration order,
     // the base's first.
+    let mote_object = format!("{}*)0)->", ember_branding::object_struct(&ember_branding::mangled_path("Mote")));
     let fields: Vec<Vec<String>> = c.lines()
         .map(str::trim_start)
-        .filter(|line| line.starts_with("{ \"") && line.contains("_Mote*)0)->"))
+        .filter(|line| line.starts_with("{ \"") && line.contains(&mote_object))
         .map(|line| line.trim_start_matches("{ ").split(", ").map(str::to_string).collect())
         .collect();
     let names: Vec<&str> = fields.iter().map(|field| field[0].as_str()).collect();
