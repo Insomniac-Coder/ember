@@ -1644,7 +1644,7 @@ impl Writer {
                 | CXType_Char16 | CXType_Char32 => fixed_integer(ty),
                 CXType_Float => Ok("f32".to_string()),
                 CXType_Double => Ok("f64".to_string()),
-                CXType_LongDouble => Err("`long double` (Ember's `c_longdouble` is not built yet)".to_string()),
+                CXType_LongDouble => Ok("c_longdouble".to_string()),
                 CXType_Int128 | CXType_UInt128 => {
                     Err("a 128-bit integer (`__int128`: its argument passing differs between C compilers)".to_string())
                 }
@@ -1971,9 +1971,8 @@ impl Writer {
             if clang_Cursor_isNull(definition) != 0 {
                 return self.opaque(cursor, &key, &named, None);
             }
-            if kind(definition) == CXCursor_UnionDecl {
-                return self.opaque(cursor, &key, &named, Some("a C union (Ember's `union` is reserved for a later version)".to_string()));
-            }
+            // `[FFI-8]` — a C union is a `@layout(c, union)` struct: its fields share its storage.
+            let union = kind(definition) == CXCursor_UnionDecl;
             // `[FFI-48]` — multiple inheritance and virtual bases: `E5034` where the class is named.
             if self.cpp {
                 let bases: Vec<CXCursor> = children(definition).into_iter().filter(|child| kind(*child) == CXCursor_CXXBaseSpecifier).collect();
@@ -2027,17 +2026,30 @@ impl Writer {
                                 continue;
                             }
                             let field_ty = clang_getCursorType(child);
-                            let canonical = clang_getCanonicalType(field_ty).kind;
+                            let canonical_ty = clang_getCanonicalType(field_ty);
+                            // `[FFI-8]` — a C enum's bit-field reads and writes the enum, through
+                            // its integer type.
+                            let enumeration = (canonical_ty.kind == CXType_Enum).then(|| clang_getTypeDeclaration(canonical_ty));
+                            let integer_ty = enumeration.map_or(canonical_ty, |declaration| clang_getCanonicalType(clang_getEnumDeclIntegerType(declaration)));
+                            let canonical = integer_ty.kind;
                             let boolean = canonical == CXType_Bool;
                             let integer = matches!(canonical, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong
                                 | CXType_Char_U | CXType_UChar | CXType_UShort | CXType_UInt | CXType_ULong | CXType_ULongLong);
+                            let first_variant = enumeration.and_then(|declaration| children(declaration).into_iter().find(|child| kind(*child) == CXCursor_EnumConstantDecl).map(|child| ident(&spelling(child))));
                             let mapped = match self.ty(field_ty, false) {
-                                Ok(mapped) if boolean || integer => mapped,
-                                _ => return self.opaque(cursor, &key, &named, Some(format!("bit-field `{field}` of type `{}` (only integer and `bool` bit-fields have accessors)", type_spelling(field_ty)))),
+                                Ok(mapped) if boolean || (integer && (enumeration.is_none() || first_variant.is_some())) => mapped,
+                                _ => return self.opaque(cursor, &key, &named, Some(format!("bit-field `{field}` of type `{}` (only integer, `bool` and C enum bit-fields have accessors)", type_spelling(field_ty)))),
+                            };
+                            let enumerated = match (enumeration, first_variant) {
+                                (Some(_), Some(first)) => match fixed_integer(integer_ty) {
+                                    Ok(repr) => Some((repr, first)),
+                                    Err(reason) => return self.opaque(cursor, &key, &named, Some(format!("bit-field `{field}`: {reason}"))),
+                                },
+                                _ => None,
                             };
                             let signed = matches!(canonical, CXType_Char_S | CXType_SChar | CXType_Short | CXType_Int | CXType_Long | CXType_LongLong);
                             let offset = clang_Cursor_getOffsetOfField(child).max(0) as u64;
-                            bits.push(BitField { name: ident(&field), offset, width, ty: mapped, signed, boolean });
+                            bits.push(BitField { name: ident(&field), offset, width, ty: mapped, signed, boolean, enumerated });
                             continue;
                         }
                         let field_ty = clang_getCursorType(child);
@@ -2058,9 +2070,6 @@ impl Writer {
                             (clang_Cursor_getOffsetOfField(child).max(0) as u64) / 8
                         };
                         let (field, mapped) = if anonymous_member {
-                            if kind(member) == CXCursor_UnionDecl {
-                                return self.opaque(cursor, &key, &named, Some("an anonymous union member (Ember's `union` is reserved for a later version)".to_string()));
-                            }
                             let generated = format!("{named}_anon{anonymous}");
                             self.anonymous.insert(generated.clone());
                             match self.record(member, Some(&generated)) {
@@ -2094,6 +2103,9 @@ impl Writer {
             // lays out beside them and the accessors.
             let c_fields = layout.clone();
             let mut accessors = String::new();
+            if union && !bits.is_empty() {
+                return self.opaque(cursor, &key, &named, Some("a union with bit-fields".to_string()));
+            }
             if !bits.is_empty() {
                 match bit_field_members(&name, &plain, &bits, size, align, packed, visibility) {
                     Ok((lines, members, methods)) => (fields, layout, accessors) = (lines, members, methods),
@@ -2105,7 +2117,7 @@ impl Writer {
                 let why = (!self.cpp).then(|| "a struct with no fields (a GNU C extension)".to_string());
                 return self.opaque(cursor, &key, &named, why);
             }
-            let fingerprint = format!("struct {size} {align} {:?}", layout.iter().map(|(_, offset)| offset).collect::<Vec<_>>());
+            let fingerprint = format!("{} {size} {align} {:?}", if union { "union" } else { "struct" }, layout.iter().map(|(_, offset)| offset).collect::<Vec<_>>());
             if let Some(adopted) = self.adopt(cursor, &key, &named, &fingerprint, false) {
                 return adopted;
             }
@@ -2113,7 +2125,7 @@ impl Writer {
                 return self.opaque_unclaimed(cursor, &key, &named);
             }
             packed |= align == 1 && natural > 1;
-            let mut attributes = String::from("@layout(c)\n@derive(Copy)\n");
+            let mut attributes = String::from(if union { "@layout(c, union)\n@derive(Copy)\n" } else { "@layout(c)\n@derive(Copy)\n" });
             if packed {
                 attributes.push_str("@packed\n");
             }
@@ -4473,6 +4485,9 @@ struct BitField {
     ty: String,
     signed: bool,
     boolean: bool,
+    /// `[FFI-8]` — a C enum's bit-field: the enum's integer type, and a variant (the first) that
+    /// `from_repr` falls back to, which it never does (a C enum holds every value of its type).
+    enumerated: Option<(String, String)>,
 }
 
 /// `[FFI-8]` — a struct with bit-fields, laid out as C lays it out: its plain fields, each run of
@@ -4553,19 +4568,31 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
             })
             .collect();
         let (f, ty, width) = (&field.name, &field.ty, field.width);
+        // A C enum's: its integer, as the enum (every value is one: `from_repr` is always `Some`).
+        let integer = field.enumerated.as_ref().map_or(ty.as_str(), |(repr, _)| repr.as_str());
         let value = if field.boolean {
             "value != 0".to_string()
         } else if field.signed {
-            format!("(((value << {0}) as i64) >> {0}) as {ty}", 64 - width)
+            format!("(((value << {0}) as i64) >> {0}) as {integer}", 64 - width)
         } else {
-            format!("value as {ty}")
+            format!("value as {integer}")
+        };
+        let value = match &field.enumerated {
+            Some((_, first)) => format!("{ty}.from_repr({value}).unwrap_or({ty}.{first})"),
+            None => value,
         };
         let _ = write!(
             methods,
             "    ## The {width}-bit field `{f}`.\n    {visibility}fn get_{f}(self) -> {ty}:\n        bits: u64 = {}\n        value = (bits >> {shift}) & {mask:#x}\n        return {value}\n\n",
             read.join(" | ")
         );
-        let input = if field.boolean { "bits: u64 = 0\n        if value:\n            bits = 1".to_string() } else { "bits: u64 = value as u64".to_string() };
+        let input = if field.boolean {
+            "bits: u64 = 0\n        if value:\n            bits = 1".to_string()
+        } else if field.enumerated.is_some() {
+            format!("bits: u64 = (value as {integer}) as u64")
+        } else {
+            "bits: u64 = value as u64".to_string()
+        };
         let _ = write!(methods, "    ## Writes the {width}-bit field `{f}`: its low {width} bits.\n    {visibility}fn set_{f}(mut self, value: {ty}):\n        {input}\n        bits = (bits & {mask:#x}) << {shift}\n");
         for byte in first..=last {
             let j = byte - first;
@@ -5540,7 +5567,7 @@ fn take(applied: &mut Applied, sink: &mut Sink, layer: usize, is_override: bool,
 }
 
 /// `std.ffi`'s C aliases, each with the C type it names (`[FFI-8]`).
-const C_ALIASES: [(&str, &str); 14] = [
+const C_ALIASES: [(&str, &str); 15] = [
     ("c_char", "char"),
     ("c_schar", "signed char"),
     ("c_uchar", "unsigned char"),
@@ -5555,6 +5582,7 @@ const C_ALIASES: [(&str, &str); 14] = [
     ("c_float", "float"),
     ("c_double", "double"),
     ("c_wchar", "wchar_t"),
+    ("c_longdouble", "long double"),
 ];
 
 /// `[FFI-6b]` — the C type a macro's wrapper declares for an Ember type its entry writes: a scalar,

@@ -217,3 +217,35 @@ rules (it goes with the next cut).
 header failed with "`std.ffi.CppError` implements `Error` but does not define `source`" — a pass
 over the modules in reverse visits an `extend … implements Error` before `Error`'s default methods
 are known. The importer's modules are kept where they were; the order dependence itself is open.
+
+## AB6. `[FFI-8]` — the type-mapping rows (first part), and `[ENM-3]`'s `from_repr`
+
+**Built so far** (each with its test; the rows below still open are listed in `FFI-8`'s entry):
+
+- *Enum-typed bit-fields.* A bit-field of a C enum has `get_<f>`/`set_<f>` of the enum, through
+  the enum's integer type (sign-extended where it is signed: MSVC's enums are `int`), the
+  getter turning the integer back with `from_repr` (every value is a C enum's, so it is always
+  `Some`). Test: `FFI-8/accept_enum_bit_fields_are_read_and_written_by_accessors.em`
+  (`enum_bits.h`).
+- *`[ENM-3]` `E.from_repr(x) -> Option[E]`* was missing (the rule had no `unfinished` entry and a
+  test naming it, but `from_repr` was "no variant `from_repr`"): built in typeck
+  (`synth_enum_from_repr`, HIR only: `Some` of the cast when a variant's discriminant is `x`,
+  else `None`; a `@non_exhaustive` enum's is always `Some`, with no test). Test:
+  `ENM-3/accept_from_repr_converts_back.em`. **Defect, fixed** (for the lead to number).
+- *`long double`* is `std.ffi.c_longdouble`, a new `TyKind::CLongDouble`: opaque bytes of the
+  target's layout (`c_long_double_layout`: 8 on Windows and Apple ARM, 16 on x86-64 and AArch64
+  Linux, 12/4 on 32-bit x86), emitted as C's `long double` so it is passed and returned as C
+  passes it (System V's x87 class), `Copy`, FFI-safe, no arithmetic, comparison or `as`. The
+  importer maps `long double` to it. Tests: `FFI-8/accept_long_double_is_c_longdouble.em`
+  (`precise.c`, a struct holding one), `reject_c_longdouble_has_no_arithmetic.em`.
+- *Unions.* A C union is `@layout(c, union) @derive(Copy) struct` (spec question 4 on the
+  spelling): `LayoutAttrs.union`, every field at offset zero (`aggregate_layout`), emitted as a C
+  `union`; made with one field by name (`Builtin::UnionLit`, a designated initialiser, the rest of
+  its storage zero); a field read is `unsafe` (`E3100`, `check_union_read`), a store into one
+  (`u.f = v`, the whole assignment target) is not; no implicit `Eq`/`Debug` (they would read), its
+  `Clone` a copy; each field `Copy` (`E0104` otherwise). An anonymous union member of a struct is a
+  generated union type read through, in `unsafe`. A union with bit-fields stays opaque. Tests:
+  `FFI-8/accept_unions_are_layout_c_unions.em` (`unions.h`), `reject_a_union_field_is_read_in_unsafe.em`.
+
+`FFI-20a`'s header gave a union, an enum bit-field and `long double` as what cannot be represented:
+now a union with bit-fields and a function with no prototype (its tests are updated).

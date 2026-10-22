@@ -1630,6 +1630,14 @@ enum FusedCount {
 
 /// `@fp(contract)`, the one form `[TYP-9b]` gives `@fp`.
 /// Whether the attribute's one argument is the bare name `word`.
+/// `[FFI-8]` — `@layout(c, union)`: a C union.
+fn layout_is_union(attr: &ast::Attribute) -> bool {
+    let word = |arg: &ast::AttrArg, wanted: &str| matches!(arg, ast::AttrArg::Expr(ast::Expr {
+        kind: ast::ExprKind::Path { segments }, ..
+    }) if segments.len() == 1 && segments[0].name.is(wanted));
+    matches!(attr.args.as_slice(), [c, union] if word(c, "c") && word(union, "union"))
+}
+
 fn attribute_names(attr: &ast::Attribute, word: &str) -> bool {
     matches!(attr.args.as_slice(), [ast::AttrArg::Expr(ast::Expr {
         kind: ast::ExprKind::Path { segments }, ..
@@ -3036,6 +3044,9 @@ struct Checker<'a> {
     foreign_outs: HashMap<DefId, Vec<(Symbol, Ty)>>,
     /// `[FFI-21]` — each foreign function's callbacks with user data, by its definition.
     foreign_callbacks: HashMap<DefId, Vec<ForeignCallbackDecl>>,
+    /// `[FFI-8]` — the assignment target being checked when it stores into a field (`u.f = v`),
+    /// which is no read of a union's field.
+    union_store: Option<Span>,
     /// `[FFI-21]` — each lambda's C symbol, by its definition.
     closure_symbols: HashMap<DefId, String>,
     /// `[EFF-19]` — what `@realtime` stands for in the program's package: its manifest's
@@ -3401,6 +3412,7 @@ impl<'a> Checker<'a> {
             foreign_c_results: HashMap::new(),
             foreign_outs: HashMap::new(),
             foreign_callbacks: HashMap::new(),
+            union_store: None,
             closure_symbols: HashMap::new(),
             derive_requests: Vec::new(),
             realtime_contracts: hir::Effects::REALTIME_DEFAULT,
@@ -9818,7 +9830,9 @@ impl<'a> Checker<'a> {
                 );
             }
         }
-        self.types.declare_layout(name, LayoutAttrs { packed, align });
+        // `[FFI-8]` — a C union.
+        let union = attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("layout") && layout_is_union(attr));
+        self.types.declare_layout(name, LayoutAttrs { packed, align, union });
     }
 
     /// `[RFL-1]` — what `reflect[T]()` lists as written on a type, its fields and its variants.
@@ -12921,11 +12935,28 @@ impl<'a> Checker<'a> {
     /// field does, unless `@no_derive(Clone)` opts out or it writes its own
     /// `clone`; a class only when `@derive(Clone)` asks (`[OWN-8]`).
     fn collect_derived_clone(&mut self, ty: Ty, attrs: &[ast::Attribute], span: Span) {
+        // `[FFI-8]` — a C union compares and shows no field (which it holds is not known): it has
+        // no implicit `Eq` or `Debug`, and as a `Copy` value its `Clone` is a copy.
+        let union = self.types.is_union(ty);
         self.record_opt_outs(
             ty,
-            (has_attribute_argument(attrs, "no_derive", "Eq"), has_attribute_argument(attrs, "no_derive", "Debug")),
+            (union || has_attribute_argument(attrs, "no_derive", "Eq"), union || has_attribute_argument(attrs, "no_derive", "Debug")),
         );
         let is_class = matches!(self.types.kind(ty), TyKind::Class(_));
+        if union {
+            // Its fields share its storage, so none may own anything: plain data, as C's are.
+            let TyKind::Struct(id) = *self.types.kind(ty) else { return };
+            for field in self.types.struct_def(id).fields.clone() {
+                if !self.types.is_copy(field.ty) {
+                    let shown = self.types.display(field.ty);
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, span, format!("the union's field `{}` is a `{shown}`, which is not `Copy`", field.name))
+                            .note("a C union's fields share its storage, so each is plain data: nothing ends or is copied but its bytes [FFI-8]"),
+                    );
+                }
+            }
+            return;
+        }
         if let Some(explicit) = clone_request(attrs, is_class) {
             self.pending_derived_clones.push((ty, span, explicit));
         }
@@ -24495,7 +24526,13 @@ impl<'a> Checker<'a> {
                 let soa_target = soa_place_ty.is_some();
                 let previous_target = self.in_assignment_target;
                 self.in_assignment_target = true;
+                // `[FFI-8]` — `u.f = v` stores into a union's field: no read.
+                let previous_store = self.union_store.take();
+                if op.is_none() && matches!(target.kind, ast::ExprKind::Field { .. }) {
+                    self.union_store = Some(target.span);
+                }
                 let place = self.synth(target);
+                self.union_store = previous_store;
                 self.in_assignment_target = previous_target;
                 let place = self.index_place_for_write(place);
                 let place = if soa_target { self.bind_soa_column_views(place, out) } else { place };
@@ -35347,6 +35384,9 @@ impl<'a> Checker<'a> {
                 if let Some(ty) = self.enum_associated(id, name.name) {
                     return self.synth_associated_call(ty, *name, generic_args, args, span);
                 }
+                if let Some(made) = self.synth_enum_from_repr(id, *name, args, span) {
+                    return made;
+                }
                 self.reject_method_type_args(name.name, generic_args, span);
                 self.synth_variant(id, *name, args, span)
             }
@@ -36065,6 +36105,9 @@ impl<'a> Checker<'a> {
             if let Some(id) = self.enum_named(base) {
                 if let Some(ty) = self.enum_associated(id, name.name) {
                     return self.synth_associated_call(ty, *name, &[], args, span);
+                }
+                if let Some(made) = self.synth_enum_from_repr(id, *name, args, span) {
+                    return made;
                 }
                 return self.synth_variant(id, *name, args, span);
             }
@@ -40270,8 +40313,8 @@ impl<'a> Checker<'a> {
             }
             // `[LAY-2]` — `@layout` names `c` and `@packed` nothing; `@repr` is an enum's discriminant
             // type, not a struct's (the attribute table's, ODR-139).
-            if name == "layout" && !attribute_names(attr, "c") {
-                self.error(codes::E0104, attr.span, "`@layout` takes `c`: `@layout(c)`");
+            if name == "layout" && !attribute_names(attr, "c") && !layout_is_union(attr) {
+                self.error(codes::E0104, attr.span, "`@layout` takes `c`, or `c, union` for a C union: `@layout(c)`");
                 continue;
             }
             if name == "packed" && !attr.args.is_empty() {
@@ -41614,6 +41657,61 @@ impl<'a> Checker<'a> {
     fn enum_associated(&mut self, id: EnumId, name: Symbol) -> Option<Ty> {
         let ty = self.types.intern(TyKind::Enum(id));
         (self.types.enum_def(id).variant(name).is_none() && self.associated.contains_key(&(ty, name))).then_some(ty)
+    }
+
+    /// `[ENM-3]` — `Mode.from_repr(x) -> Option[Mode]` on a unit-only enum that has no variant of
+    /// that name: `Some` of the variant whose discriminant `x` is, `None` when none is. A C enum
+    /// (`@non_exhaustive`, `[FFI-8]`) holds every value of its integer type, so it is always
+    /// `Some`, with no test. `None` when `name` is not `from_repr` here.
+    fn synth_enum_from_repr(&mut self, id: EnumId, name: ast::Ident, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let def = self.types.enum_def(id).clone();
+        if !name.name.is("from_repr") || def.variant(name.name).is_some() || !def.is_unit_only() {
+            return None;
+        }
+        let ty = self.types.intern(TyKind::Enum(id));
+        let option = self.option_of(ty);
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let [arg] = args else {
+            self.error(codes::E2020, span, format!("`{}.from_repr` takes one value of its representation, `{}`", def.name, self.types.display(def.repr)));
+            return Some(error);
+        };
+        let value = self.check_expr(&arg.value, def.repr);
+        if value.ty == self.common.error {
+            return Some(error);
+        }
+        let TyKind::Enum(option_id) = *self.types.kind(option) else { return Some(error) };
+        let some = |value: Expr| Expr {
+            ty: option,
+            kind: ExprKind::EnumLit { enum_id: option_id, variant: 1, fields: vec![Expr { ty, kind: ExprKind::Cast { expr: Box::new(value), to: ty }, span }] },
+            span,
+        };
+        if def.open {
+            return Some(some(value));
+        }
+        // `t = x; made = None; if t == d0 or t == d1 …: made = Some(t as Mode)`.
+        let held = self.declare(None, def.repr, span);
+        let made = self.declare(None, option, span);
+        let read = |local: LocalId, ty: Ty| Expr { ty, kind: ExprKind::Local(local), span };
+        let bool_ = self.common.bool_;
+        let cond = def.variants.iter().map(|variant| Expr {
+            ty: bool_,
+            kind: ExprKind::Binary {
+                op: BinOp::Eq,
+                lhs: Box::new(read(held, def.repr)),
+                rhs: Box::new(Expr { ty: def.repr, kind: ExprKind::Int(variant.discriminant as u128), span }),
+            },
+            span,
+        }).reduce(|left, right| Expr { ty: bool_, kind: ExprKind::Binary { op: BinOp::Or, lhs: Box::new(left), rhs: Box::new(right) }, span });
+        let none = Expr { ty: option, kind: ExprKind::EnumLit { enum_id: option_id, variant: 0, fields: Vec::new() }, span };
+        let mut stmts = vec![Stmt::Let { local: held, init: Some(value) }, Stmt::Let { local: made, init: Some(none) }];
+        if let Some(cond) = cond {
+            stmts.push(Stmt::If {
+                cond,
+                then_block: Block { stmts: vec![Stmt::Assign { place: read(made, option), value: some(read(held, def.repr)) }], span },
+                else_block: None,
+            });
+        }
+        Some(Expr { ty: option, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(read(made, option)) }, span })
     }
 
     /// `[ENM-1]` — a variant constructor, positional or by name. A unit
@@ -44428,11 +44526,17 @@ impl<'a> Checker<'a> {
                     // Resolve, then check, then build. One check on one
                     // path — see `check_field_visible`.
                     self.check_field_visible(id, field.vis, field.name, name.span);
+                    self.check_union_read(base.ty, name, span);
                     Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
                 }
                 // `[FFI-8]` — a field of an imported struct's anonymous member reads through it.
                 None if let Some(path) = self.anonymous_member_path(id, name.name) => {
-                    path.into_iter().fold(base, |base, (index, ty)| Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span })
+                    let mut owner = base.ty;
+                    path.into_iter().fold(base, |base, (index, ty)| {
+                        self.check_union_read(owner, name, span);
+                        owner = ty;
+                        Expr { ty, kind: ExprKind::Field { base: Box::new(base), index }, span }
+                    })
                 }
                 None => {
                     self.sink
@@ -44471,6 +44575,20 @@ impl<'a> Checker<'a> {
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
         }
+    }
+
+    /// `[FFI-8]` — a C union's field is read only in `unsafe`: which field holds the value is the
+    /// program's to know. Storing into one (`u.f = v`, the whole assignment target) is not a read.
+    fn check_union_read(&mut self, owner: Ty, name: ast::Ident, span: Span) {
+        if !self.types.is_union(owner) || self.union_store == Some(span) || self.unsafe_context() {
+            return;
+        }
+        let shown = self.types.display(owner);
+        self.sink.emit(
+            Diagnostic::error(codes::E3100, span, format!("reading `{}` of the union `{shown}` requires an `unsafe` block", name.name))
+                .help("wrap the read in `unsafe:` and state which field the union holds")
+                .note("a C union's fields share its storage; which one holds the value is the program's to know [FFI-8]"),
+        );
     }
 
     /// `[FFI-8]` — the fields from struct `id` to `name` through anonymous members: a struct
@@ -52942,6 +53060,29 @@ impl<'a> Checker<'a> {
         if !self.check_memberwise_constructor(id, args.len(), span) {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        // `[FFI-8]` — a C union is made with one of its fields: `Number(i = 5)`.
+        let ty = self.types.intern(TyKind::Struct(id));
+        if self.types.is_union(ty) {
+            let fields = self.types.struct_def(id).fields.clone();
+            let found = match args {
+                [arg] => match &arg.name {
+                    Some(field) => fields.iter().position(|candidate| candidate.name == field.name),
+                    None => None,
+                },
+                _ => None,
+            };
+            let Some(field) = found else {
+                let names: Vec<String> = fields.iter().map(|field| format!("`{}`", field.name)).collect();
+                self.sink.emit(
+                    Diagnostic::error(codes::E2020, span, format!("the union `{name}` is made with one of its fields, by name"))
+                        .help(format!("write `{name}({} = …)`, one of {}", fields.first().map_or("f".to_string(), |field| field.name.to_string()), names.join(", ")))
+                        .note("a C union holds one of its fields at a time [FFI-8]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
+            let value = self.check_expr(&args[0].value, fields[field].ty);
+            return Expr { ty, kind: ExprKind::Builtin { which: Builtin::UnionLit { union: id, field }, args: vec![value] }, span };
+        }
         let field_info: Vec<(Symbol, Ty, bool)> = self
             .types
             .struct_def(id)
@@ -58481,6 +58622,8 @@ fn target_c_alias(name: &str, pointer_size: u64) -> Option<TyKind> {
         "std.ffi.c_ulong" => TyKind::Uint(if long32 { UintTy::U32 } else { UintTy::U64 }),
         "std.ffi.c_wchar" if windows => TyKind::Uint(UintTy::U16),
         "std.ffi.c_wchar" => TyKind::Int(IntTy::I32),
+        // `[FFI-8]` — C's `long double`, a type of its own (opaque bytes of the target's layout).
+        "std.ffi.c_longdouble" => TyKind::CLongDouble,
         _ => return None,
     })
 }

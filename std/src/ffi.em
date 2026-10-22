@@ -110,6 +110,10 @@ pub type c_ulonglong = u64
 pub type c_float = f32
 pub type c_double = f64
 pub type c_wchar = i32
+## `[FFI-8]` — C's `long double`: opaque bytes of the target's size and alignment (8 on Windows,
+## 16 on x86-64 and AArch64 Linux), passed and returned as C passes the type, with no arithmetic.
+## The compiler gives it its own type; `u8` here only stands in.
+pub type c_longdouble = u8
 
 ## `[HR-39]` — the failure a foreign call returns as a value: a C++ exception its thunk caught
 ## (`CppError`), or a C function's status other than its success (`[FFI-16]`'s error types, which

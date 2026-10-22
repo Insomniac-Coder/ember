@@ -286,6 +286,7 @@ fn collect_strong_targets(
         | TyKind::Int(_)
         | TyKind::Uint(_)
         | TyKind::Float(_)
+        | TyKind::CLongDouble
         | TyKind::Void
         | TyKind::Never
         | TyKind::Str
@@ -361,6 +362,7 @@ fn collect_weak_targets(
         | TyKind::Int(_)
         | TyKind::Uint(_)
         | TyKind::Float(_)
+        | TyKind::CLongDouble
         | TyKind::Void
         | TyKind::Never
         | TyKind::Str
@@ -428,6 +430,7 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         | TyKind::Int(_)
         | TyKind::Uint(_)
         | TyKind::Float(_)
+        | TyKind::CLongDouble
         | TyKind::Void
         | TyKind::Never
         | TyKind::Str

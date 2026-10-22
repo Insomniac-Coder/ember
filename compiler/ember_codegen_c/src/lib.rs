@@ -2742,8 +2742,9 @@ impl Emitter<'_> {
         // another defined later. An alias is complete where it stands; an
         // owned callable type's is complete already (`[CLO-10]`).
         let callable = format!("struct {RT}fn_value");
-        for (name, definition, _) in &plan {
+        for (name, definition, node) in &plan {
             match definition {
+                Definition::Struct(_) if self.node_layout_attrs(*node).union => self.line(&format!("typedef union {name} {name};")),
                 Definition::Struct(_) => self.line(&format!("typedef struct {name} {name};")),
                 Definition::Alias(underlying) if *underlying == callable => {
                     self.line(&format!("typedef {underlying} {name};"));
@@ -2817,7 +2818,9 @@ impl Emitter<'_> {
         };
         let align = kind.and_then(|kind| self.types.find(&kind)).map_or(attrs.align as u64, |ty| self.types.layout(ty).align.max(attrs.align as u64));
         let aligned = if attrs.align > 1 { format!("EMBER_ALIGNED({align}) ") } else { String::new() };
-        out.push(format!("struct {aligned}{name} {{"));
+        // `[FFI-8]` — a C union is one.
+        let keyword = if attrs.union { "union" } else { "struct" };
+        out.push(format!("{keyword} {aligned}{name} {{"));
         if members.is_empty() {
             out.push("    char _empty;".to_string());
         }
@@ -4717,6 +4720,7 @@ impl Emitter<'_> {
             | TyKind::Int(_)
             | TyKind::Uint(_)
             | TyKind::Float(_)
+            | TyKind::CLongDouble
             | TyKind::Void
             | TyKind::Never
             | TyKind::Str
@@ -9029,6 +9033,12 @@ impl Emitter<'_> {
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
                     Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
+                    // `[FFI-8]` — a C union with one field set, the rest of its storage zero.
+                    Builtin::UnionLit { union, field } => {
+                        let ty = self.types.find(&TyKind::Struct(*union)).expect("a union literal's type is interned");
+                        let name = member(self.types.struct_def(*union).fields[*field].name);
+                        return format!("(({}){{ .{name} = {} }})", self.c_type(ty), rendered[0]);
+                    }
                     // `[FFI-39]` (ODR-221) — the object's class overrides the method when its
                     // method table's slot is not the owner's own; in a reloadable build, where a
                     // reload may add an override (`[HR-9a]`), every one is taken as overridden.
@@ -11309,6 +11319,8 @@ impl Emitter<'_> {
 
     fn c_type(&self, ty: ember_types::Ty) -> String {
         match self.types.kind(ty) {
+            // `[FFI-8]` — C's own, so it is passed and returned as C passes it.
+            TyKind::CLongDouble => "long double".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Char => "uint32_t".into(),
             TyKind::Int(i) => match i {

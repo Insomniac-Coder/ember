@@ -2,15 +2,13 @@
 #ifndef UNREPRESENTABLE_H
 #define UNREPRESENTABLE_H
 
-union Number { int i; float f; };
-enum Mode { MODE_OFF, MODE_ON };
-struct Flags { enum Mode mode : 2; unsigned count : 6; };
+union Packed { unsigned low : 4; int whole; };
 static int unrepresentable_hidden = 4;
 
 int unrepresentable_log(const char* format, ...);
-long double unrepresentable_precise(void);
-int unrepresentable_number(union Number n);
-int unrepresentable_flags_ready(const struct Flags* flags);
+int unrepresentable_legacy();
+int unrepresentable_number(union Packed n);
+int unrepresentable_packed_low(const union Packed* packed);
 
 static inline int unrepresentable_fine(int x) { return x + unrepresentable_hidden; }
 #endif

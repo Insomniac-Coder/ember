@@ -1577,6 +1577,9 @@ pub enum Builtin {
     /// `[FFI-39]` — in a module `import cpp` wrote: a class object's address
     /// (the argument, a handle), which a trampoline keeps without a count.
     CppObjectAddress,
+    /// `[FFI-8]` — a C union's value with one field set (the argument), the
+    /// rest of its storage zero: `Number(i = 5)`.
+    UnionLit { union: StructId, field: usize },
     /// `[FFI-39]` (ODR-221) — in a module `import cpp` wrote: whether the
     /// object's own class (the argument, a handle of `owner` or below it)
     /// overrides `owner`'s virtual method in `slot`, so that its trampoline
@@ -2158,6 +2161,7 @@ impl Builtin {
             Builtin::RetainedAddress => "retained_address",
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppOverrides { .. } => "cpp_overrides",
+            Builtin::UnionLit { .. } => "union_literal",
             Builtin::CppObjectHandle { .. } => "cpp_object_handle",
             Builtin::CppObjectGive => "cpp_object_give",
             Builtin::CppSpan { .. } => "cpp_span",
