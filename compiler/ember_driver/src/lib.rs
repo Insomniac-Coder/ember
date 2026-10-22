@@ -243,6 +243,23 @@ fn retain_referenced_standard_bodies(
             if let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Virtual { slot, .. }, .. } = &block.terminator {
                 referenced.extend(by_slot.get(slot).into_iter().flatten().cloned());
             }
+            // IX.1 (ODR-241) — a table of an interface requiring `Eq` calls std's `dyn_eq` instance.
+            if let ember_mir::Terminator::Call { func: ember_mir::FuncRef::DynBoxNew { concrete, interfaces, .. }, .. } = &block.terminator
+                && types.dyn_eqs(interfaces)
+            {
+                referenced.extend(types.dyn_eq_symbol(*concrete).map(str::to_string));
+            }
+            for stmt in &block.stmts {
+                let ember_mir::StmtKind::Assign { rvalue: ember_mir::Rvalue::Cast { kind, .. }, .. } = &stmt.kind else { continue };
+                let (concrete, eqs) = match kind {
+                    ember_mir::CastKind::InterfaceUpcast { concrete, interfaces, .. } => (*concrete, types.dyn_eqs(interfaces)),
+                    ember_mir::CastKind::ClassInterfaceUpcast { concrete, interface, .. } => (*concrete, types.dyn_eqs(&[*interface])),
+                    _ => continue,
+                };
+                if eqs {
+                    referenced.extend(types.dyn_eq_symbol(concrete).map(str::to_string));
+                }
+            }
         }
         for target in referenced {
             if by_symbol.contains_key(&target) && keep.insert(target.clone()) {

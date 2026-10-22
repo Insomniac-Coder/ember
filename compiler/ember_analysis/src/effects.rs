@@ -1106,6 +1106,15 @@ impl SiteBuilder<'_> {
                         }
                     }
                     Builtin::MemDrop { elem } => self.drop_sites(*elem, span, sites),
+                    // IX.1 (ODR-241) — two `Box[dyn I]` compare through their table's `eq`, which
+                    // runs the `==` of a type nothing here names.
+                    Builtin::ValueCompare { .. } if holds_dyn_box(self.types, *arg_ty, &mut std::collections::HashSet::new()) => {
+                        sites.push(Site {
+                            effects: Effects::ALL,
+                            span,
+                            origin: Origin::Operation("a comparison through a `dyn` value's table, whose effects nothing declares"),
+                        });
+                    }
                     // ADR-186 — formatting a value runs the written `Debug`
                     // of each part of it that has one.
                     Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint => {
@@ -1308,6 +1317,25 @@ fn lends_fixed_text(body: &Body, operand: &Operand) -> bool {
         matches!(&stmt.kind, StmtKind::Assign { place, rvalue: Rvalue::Ref { place: lent, .. } }
             if place.local == target.local && place.projection.is_empty() && lent.projection.is_empty() && made(lent.local))
     })
+}
+
+/// IX.1 (ODR-241) — whether comparing a `ty` may compare two `Box[dyn I]`, through their table.
+fn holds_dyn_box(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+    if !seen.insert(ty) {
+        return false;
+    }
+    match types.kind(ty) {
+        TyKind::Struct(id) => match types.compiler_box_inner(*id) {
+            Some(inner) => matches!(types.kind(inner), TyKind::Dyn { .. }) || holds_dyn_box(types, inner, seen),
+            None => types.struct_def(*id).fields.iter().any(|field| holds_dyn_box(types, field.ty, seen)),
+        },
+        TyKind::Enum(id) => types.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| holds_dyn_box(types, field.ty, seen))),
+        TyKind::Tuple(items) => items.iter().any(|&item| holds_dyn_box(types, item, seen)),
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
+            holds_dyn_box(types, *elem, seen)
+        }
+        _ => false,
+    }
 }
 
 fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {

@@ -111,3 +111,25 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
     readers printed from two threads at once, which interleaves (below), so they record what they
     saw for `main` to print. `phase-status.json`: `ECS-4` removed; `THR-8`, `CLO-10` say what is
     left (question 1).
+
+* **ODR-241 `[TYP-36]`, `[TYP-22]`, IX.1** — two boxes compare with `==` when what they hold does.
+  `Box(3) == Box(3)` compared before, by reading through both boxes; `Box[T]` was no `Eq` type
+  (`T: Eq` bounds, `Array[Box[int]]`, `Option[Box[int]]` and a recursive `@derive(Eq)` through a
+  `Box` were `E2040`). Now `has_implicit_eq` gives a box `Eq` when `T` has it (a recursive type
+  is the largest set, as the struct case already was), a held type's written `eq` is called
+  (`needs_written_eq`, `synth_eq_of` read through the box), and both backends compare a box's
+  payload (C's equality function, the evaluator's `equal`). `Box[dyn I]` when `I` requires `Eq`:
+  `Eq` is no slot (as `Clone`, ODR-237: `dyn_methods_in_order`, `dyn_incompatibility_inner`);
+  each type a table of such an interface is made for gets std's `dyn_eq[T]` instance
+  (`core.em`: `a == b` as the type writes it; made in `dyn_concrete_adapter`, its symbol given
+  to the backends through `TypeTable::declare_dyn_eq_symbol`), the table an `eq` entry after
+  `access` (and `clone`), and two boxes compare their tables first (two kinds are never equal),
+  then call it (C: `dyn_eq_header` / `dyn_clone_eq_header`; the evaluator: `invoke`). `==` on two
+  `Box[dyn I]` no longer reads through the boxes (`synth_binary`). MIR reachability and std's
+  body retention keep the `dyn_eq` instances a table holds. Effects: comparing a value holding a
+  `Box[dyn I]` is every effect, as a call through a `dyn` value is (`holds_dyn_box`).
+  Tests: `TYP-36/accept_two_boxes_compare_what_they_hold.em`,
+  `TYP-22/accept_a_box_dyn_of_an_interface_requiring_eq_compares.em` (three profiles each, shown
+  under development and release too, and with the C gate under cl and clang-cl),
+  `TYP-22/reject_eq_where_an_interface_or_a_box_payload_is_not_eq.em`,
+  `TYP-22/reject_noalloc_compares_dyn_boxes_through_their_table.em` (`E4001`).

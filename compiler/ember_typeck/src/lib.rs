@@ -557,6 +557,14 @@ pub fn check(
     }
     functions.extend(checker.take_some_forwarder_bodies());
     checker.publish_debug_writers(&functions);
+    // IX.1 (ODR-241) — the comparing function of each type a `dyn` table of an interface requiring
+    // `Eq` holds, by its symbol, for the backends.
+    for (concrete, def) in std::mem::take(&mut checker.dyn_eq_instances) {
+        if let Some(function) = functions.iter().find(|function| function.def == def) {
+            let symbol = function.symbol.clone();
+            checker.types.declare_dyn_eq_symbol(concrete, symbol);
+        }
+    }
     checker.reflect_classes();
     checker.check_declared_layouts();
     // `[CLO-1]` — the functions capture-free closures lowered to. They have no
@@ -2791,6 +2799,9 @@ struct Checker<'a> {
     /// `[COST-1]` — the inherent extension methods a built-in instance took
     /// when a method was first looked up on it: emitted only if called.
     emit_if_used_methods: HashSet<DefId>,
+    /// IX.1 (ODR-241) — each type a `dyn` table of an interface requiring `Eq` is made for, with its
+    /// instance of std's `dyn_eq`.
+    dyn_eq_instances: Vec<(Ty, DefId)>,
     /// The bodies of those methods, checked only once one is called: an
     /// instance takes every matching extension at its first method call, and
     /// a body need not hold for an instance that never calls it.
@@ -3394,6 +3405,7 @@ impl<'a> Checker<'a> {
             const_bound_depth: 0,
             applied_extensions: HashSet::new(),
             emit_if_used_methods: HashSet::new(),
+            dyn_eq_instances: Vec::new(),
             deferred_methods: HashMap::new(),
             std_instances: HashSet::new(),
             instantiations: Vec::new(),
@@ -12448,8 +12460,9 @@ impl<'a> Checker<'a> {
             }
         }
         for parent in &def.supertraits {
-            // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a method.
-            if parent.is("std.core.Clone") {
+            // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a method;
+            // ODR-241, a required `Eq` its `eq` entry.
+            if parent.is("std.core.Clone") || parent.is("std.core.Eq") {
                 continue;
             }
             if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting) {
@@ -12602,8 +12615,9 @@ impl<'a> Checker<'a> {
         methods: &mut Vec<(Symbol, DefId, Mode)>,
         visiting: &mut HashSet<Symbol>,
     ) {
-        // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a slot.
-        if !visiting.insert(interface) || interface.is("std.core.Clone") {
+        // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a slot; ODR-241, a
+        // required `Eq` its `eq` entry.
+        if !visiting.insert(interface) || interface.is("std.core.Clone") || interface.is("std.core.Eq") {
             return;
         }
         let Some(def) = self.interfaces.get(&interface) else { return };
@@ -12693,6 +12707,17 @@ impl<'a> Checker<'a> {
             }
         }
 
+        // IX.1 (ODR-241) — a table of an interface requiring `Eq` compares two values of this
+        // type: std's `dyn_eq[T]`, `a == b` as the type writes it, made once per type.
+        if self.types.dyn_eqs(interfaces)
+            && !self.types.is_generic(concrete)
+            && !self.dyn_eq_instances.iter().any(|(ty, _)| *ty == concrete)
+            && let Some(def) = self.fn_ids.get(&Symbol::intern("std.core.dyn_eq")).copied()
+        {
+            let span = self.signatures[def.0 as usize].decl;
+            let instance = self.instantiate(def, &[concrete], Vec::new(), Symbol::intern("dyn_eq"), span);
+            self.dyn_eq_instances.push((concrete, instance));
+        }
         let mut methods = Vec::new();
         let mut visiting = HashSet::new();
         for interface in interfaces {
@@ -15369,6 +15394,15 @@ impl<'a> Checker<'a> {
             }
             // `@no_derive(Eq)` opts out of the implicit one.
             TyKind::Struct(_) | TyKind::Enum(_) if self.no_implicit_eq.contains(&ty) => false,
+            // IX.1 (ODR-241) — a `Box[T]` compares what it holds, when `T` has `Eq`; a
+            // `Box[dyn I]` when `I` requires `Eq`.
+            TyKind::Struct(_) if self.box_inner(ty).is_some() => {
+                let inner = self.box_inner(ty).expect("a box");
+                match self.types.kind(inner) {
+                    TyKind::Dyn { interfaces } => self.types.dyn_eqs(interfaces),
+                    _ => !seen.insert(ty) || self.has_implicit_eq_in(inner, seen),
+                }
+            }
             TyKind::Tuple(items) => items.iter().all(|&item| self.has_implicit_eq_in(item, seen)),
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } => {
                 self.has_implicit_eq_in(*elem, seen)
@@ -51427,6 +51461,11 @@ impl<'a> Checker<'a> {
         }
         match self.types.kind(ty) {
             TyKind::Struct(_) | TyKind::Enum(_) if self.methods.contains_key(&(ty, Symbol::intern("eq"))) => true,
+            // ODR-241 — what a `Box` holds; a `Box[dyn I]` compares through its table.
+            TyKind::Struct(_) if self.box_inner(ty).is_some() => {
+                let inner = self.box_inner(ty).expect("a box");
+                !matches!(self.types.kind(inner), TyKind::Dyn { .. }) && self.needs_written_eq(inner, seen)
+            }
             TyKind::Tuple(items) => items.clone().iter().any(|&item| self.needs_written_eq(item, seen)),
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
                 self.needs_written_eq(*elem, seen)
@@ -51481,6 +51520,11 @@ impl<'a> Checker<'a> {
             })
         };
         let value = match self.types.kind(ty).clone() {
+            // ODR-241 — two boxes compare what they hold.
+            TyKind::Struct(_) if self.box_inner(ty).is_some() => {
+                let (a, b) = (self.read_box_through(left.read(span)), self.read_box_through(right.read(span)));
+                self.synth_eq_of(a, b, span)
+            }
             TyKind::Tuple(items) => {
                 let parts = items
                     .into_iter()
@@ -56110,11 +56154,16 @@ impl<'a> Checker<'a> {
         // `add`, not fail to find one on a reference.
         lhs = self.read_through(lhs);
         rhs = self.read_through(rhs);
-        // `[TYP-14]` — and through a `Box`, as a field access does.
-        while self.box_inner(lhs.ty).is_some() {
+        // `[TYP-14]` — and through a `Box`, as a field access does. IX.1 (ODR-241) — but two
+        // `Box[dyn I]` compare as boxes, through their tables: the values they hold are of kinds
+        // the operator cannot see.
+        let dyn_boxes = matches!(hir_op, BinOp::Eq | BinOp::Ne)
+            && lhs.ty == rhs.ty
+            && self.box_inner(lhs.ty).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }));
+        while !dyn_boxes && self.box_inner(lhs.ty).is_some() {
             lhs = self.read_box_through(lhs);
         }
-        while self.box_inner(rhs.ty).is_some() {
+        while !dyn_boxes && self.box_inner(rhs.ty).is_some() {
             rhs = self.read_box_through(rhs);
         }
         // `[SIMD-8]` — a lane-wise operator on two `std.simd` vectors or masks.

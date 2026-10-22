@@ -1184,6 +1184,44 @@ impl Interp<'_, '_> {
         }
         match self.types.kind(ty).clone() {
             TyKind::Fn { abi: None, .. } => Ok(self.mem.read(a + 8, 32)? == self.mem.read(b + 8, 32)?),
+            // IX.1 (ODR-241) — two boxes compare what they hold; two `Box[dyn I]` of one kind (one
+            // table) through the comparing function of the type the table was made for, of two
+            // kinds never.
+            TyKind::Struct(id) if self.types.compiler_box_inner(id).is_some() => {
+                let inner = self.types.compiler_box_inner(id).expect("a box");
+                if !matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                    let (x, y) = (self.mem.read_u64(a)?, self.mem.read_u64(b)?);
+                    return self.equal(x, y, inner);
+                }
+                let (data_a, table_a) = (self.mem.read_u64(a)?, self.mem.read_u64(a + 8)?);
+                let (data_b, table_b) = (self.mem.read_u64(b)?, self.mem.read_u64(b + 8)?);
+                if table_a != table_b {
+                    return Ok(false);
+                }
+                let Some((memory::Region::Table, index)) = memory::decode(table_a) else {
+                    return fault("a `Box[dyn I]` with no table");
+                };
+                let concrete = self.calls.tables[index].concrete;
+                let Some(symbol) = self.types.dyn_eq_symbol(concrete).map(str::to_string) else {
+                    return fault("a table compared with no comparing function");
+                };
+                let Some(&body) = self.by_symbol.get(symbol.as_str()) else {
+                    return fault(format!("no body `{symbol}`"));
+                };
+                let class = matches!(self.types.kind(concrete), TyKind::Class(_));
+                let mut args = Vec::new();
+                for (local, data) in [(1, data_a), (2, data_b)] {
+                    let param = self.bodies[body].locals[local].ty;
+                    args.push(if class || matches!(self.types.kind(param), TyKind::Ref { .. }) {
+                        data.to_le_bytes().to_vec()
+                    } else {
+                        let size = self.size(concrete);
+                        self.mem.read(data, size)?.to_vec()
+                    });
+                }
+                let result = self.invoke(body, args)?;
+                Ok(result.first().is_some_and(|&byte| byte != 0))
+            }
             TyKind::Struct(id) => {
                 let fields: Vec<Ty> = self.types.struct_def(id).fields.iter().map(|f| f.ty).collect();
                 let offsets = self.layout(ty).field_offsets.clone();

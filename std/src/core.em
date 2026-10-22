@@ -2161,6 +2161,12 @@ fn result_unwrap_or_else[T, E, Call: once fn(owned E) -> T](owned r: Result[T, E
         Err(e):
             return f(e)
 
+## IX.1 (ODR-241) — the compiler's: what the table of a `dyn I` whose interface requires `Eq` calls
+## to compare two values of the type it was made for, after it has found both are of that type:
+## `a == b` as the type writes it.
+fn dyn_eq[T: Eq](a: T, b: T) -> bool:
+    return a == b
+
 ## `[TYP-36]` — the table's `Default` column: zero, `0.0`, `false`, `'\0'`,
 ## empty text, an empty `Array` and `None`.
 

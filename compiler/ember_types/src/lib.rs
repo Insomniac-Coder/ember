@@ -587,6 +587,10 @@ pub struct TypeTable {
     /// `[THR-8]`, `[THR-9]` (ODR-255) — each interface's supertraits, so a `dyn I` is `Send` when
     /// `I` requires `Send` and `Sync` when it requires `Sync`, itself or through a parent.
     interface_parents: HashMap<Symbol, Vec<Symbol>>,
+    /// `[TYP-36]` (ODR-241) — for each type a `dyn` table of an interface requiring `Eq` is made
+    /// for, the symbol of the function comparing two of its values (std's `dyn_eq` instance), which
+    /// the table's `eq` entry calls.
+    dyn_eq_symbols: HashMap<Ty, String>,
 }
 
 /// `[BLD-FFI-5a]` (ODR-162) — a `@sync` class whose objects an export hands to C and C++: the class,
@@ -750,6 +754,7 @@ impl TypeTable {
             must_drop_declared: HashSet::new(),
             dyn_clone: HashSet::new(),
             interface_parents: HashMap::new(),
+            dyn_eq_symbols: HashMap::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
             coroutine_frames: HashMap::new(),
@@ -2129,7 +2134,7 @@ impl TypeTable {
 
     /// `[THR-8]`, `[THR-9]` (ODR-255) — whether one of `interfaces` is `marker` (`Send`, `Sync`)
     /// or requires it, through any supertrait.
-    fn interfaces_require(&self, interfaces: &[Symbol], marker: &str) -> bool {
+    pub fn interfaces_require(&self, interfaces: &[Symbol], marker: &str) -> bool {
         let mut pending: Vec<Symbol> = interfaces.to_vec();
         let mut seen = HashSet::new();
         while let Some(next) = pending.pop() {
@@ -2143,6 +2148,23 @@ impl TypeTable {
             }
         }
         false
+    }
+
+    /// `[TYP-36]` (ODR-241) — whether the `dyn` table of `interfaces` compares two values: one of
+    /// them requires `Eq`.
+    pub fn dyn_eqs(&self, interfaces: &[Symbol]) -> bool {
+        self.interfaces_require(interfaces, "std.core.Eq")
+    }
+
+    /// `[TYP-36]` (ODR-241) — record the function comparing two values of `concrete` for its tables.
+    pub fn declare_dyn_eq_symbol(&mut self, concrete: Ty, symbol: String) {
+        self.dyn_eq_symbols.insert(concrete, symbol);
+    }
+
+    /// `[TYP-36]` (ODR-241) — the function comparing two values of `concrete`, for a table of an
+    /// interface requiring `Eq`.
+    pub fn dyn_eq_symbol(&self, concrete: Ty) -> Option<&str> {
+        self.dyn_eq_symbols.get(&concrete).map(String::as_str)
     }
 
     /// `[THR-6]` — record a struct's or class's `@must_drop`.

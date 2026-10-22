@@ -1560,6 +1560,16 @@ pub fn reached_bodies(
                         }
                         _ => {}
                     }
+                    // IX.1 (ODR-241) — a table that compares its values reaches the comparing function.
+                    match kind {
+                        CastKind::InterfaceUpcast { concrete, interfaces, .. } if types.dyn_eqs(interfaces) => {
+                            reached.extend(types.dyn_eq_symbol(*concrete).and_then(|symbol| by_symbol.get(symbol)).copied());
+                        }
+                        CastKind::ClassInterfaceUpcast { concrete, interface, .. } if types.dyn_eqs(&[*interface]) => {
+                            reached.extend(types.dyn_eq_symbol(*concrete).and_then(|symbol| by_symbol.get(symbol)).copied());
+                        }
+                        _ => {}
+                    }
                     if let CastKind::InterfaceUpcast { implementations, .. }
                     | CastKind::ClassInterfaceUpcast { implementations, .. } = kind
                     {
@@ -1577,6 +1587,9 @@ pub fn reached_bodies(
                 reached.extend(table(implementations));
                 if types.dyn_clones(interfaces) {
                     clone_dependencies(*concrete, types, clone_of, &mut reached, &mut Default::default());
+                }
+                if types.dyn_eqs(interfaces) {
+                    reached.extend(types.dyn_eq_symbol(*concrete).and_then(|symbol| by_symbol.get(symbol)).copied());
                 }
             }
             FuncRef::Indirect { operand, .. } => reached.extend(function_value(operand)),
