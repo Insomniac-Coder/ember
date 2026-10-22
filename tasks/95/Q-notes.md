@@ -76,6 +76,54 @@ the lead: build what is missing, commit after each rule.
   - Today the gate fails, and by far: see defect 1. B1 on the full bigpkg is ~19 s (budget
     250 ms); `ember build` of it did not finish in 15 minutes (11.5 GB).
 
+## Not done: BLD-1, BLD-4, BLD-7, BLD-8 (each needs a decision first)
+
+What the compiler is today: one whole-program front end (`ember_typeck::check` over every loaded
+module, one `Checker` of ~800 lines of fields holding `&mut TypeTable`), then MIR passes over every
+body, then **one C translation unit for the whole program** (std and dependencies included;
+`ember_codegen_c::inline_bodies`: "the program is one translation unit"), compiled and linked in
+one compiler invocation. `ember_build::interface` writes per-module interface records (`[BLD-2]`)
+but its own header says the compiler "still checks a whole loaded module graph on every
+invocation"; nothing reads a module's front-end result back to skip work.
+
+- **BLD-4** (Ninja, incremental C). Meaningful only with more than one C unit: `[CG-C-3]` says each
+  module is one translation unit with a per-package inline header; today there is one per
+  program. Building it: the emitter writes a package header (types, prototypes, the inline
+  bodies), one support unit (vtables, type infos, statics, the generated helpers: drop glue,
+  `fmt`, `eq`, clone parts, array, SoA and thread helpers, today all `static` and emitted once) and
+  one unit per module (its bodies, external linkage, namespaced in library mode); the reload,
+  cdylib, staticlib, test, FFI-instrumentation and relaxed-FP paths follow; then a generated
+  `build.ninja` per profile (compile edges per unit with `deps = msvc` / depfiles, link and archive
+  edges), units written only when their text changes. Decisions: (a) the owner's C-speed rule —
+  cross-module calls in `debug` stop being inlined by the C compiler; `development`/`release`
+  rely on LTO (`[BLD-6]`, now on for cl) and the inline header; needs the laptop benchmark after;
+  (b) `ninja` is only inside Visual Studio here and on no Linux runner by default: require it,
+  ship it, or run the generated file with a small built-in executor. Estimate: several days.
+- **BLD-1 / BLD-8** (module and function front-end caching). Skipping a clean module needs its
+  front-end result back. For `ember check` that can be its diagnostics plus the facts its importers
+  use (already in the interface record: signatures, effects, inline bodies, region summaries,
+  layouts): clean modules' bodies need not be type-checked or borrow-checked. For `ember build` the
+  back end needs every body of the package, so either (a) `check` only, `build` re-checks
+  everything (then B3 cannot be met), or (b) each module's checked MIR is serialised and read back
+  (types re-interned by canonical name, generic instances and closure types re-made), or (c) a
+  query-based incremental front end. BLD-8 within a module additionally needs each body's
+  record of which same-module facts it used (`[BLD-2]`'s rule applied per function) and the
+  `Checker` able to check one function of a module (it has `body_filter` for `[TYP-32]` already).
+  Decision: (a), (b) or (c). Estimate: (a) days, (b) a week or more, (c) weeks.
+- **BLD-7** (parallel front end, `-j`, physical cores). Three blockers: `Symbol`'s order is its
+  interning order (derived `Ord` on the index) and `BTreeMap<Symbol, _>`s decide output order, so
+  parsing modules in parallel would make the output depend on thread timing (`[BLD-13]`) unless
+  interning is made deterministic (lex in parallel to raw tokens, intern in module order, parse in
+  parallel); `Symbol::as_str` locks one global mutex, so parallel passes would queue on it; and
+  type checking is one `Checker` over all modules — checking bodies module by module in parallel
+  means forking it per thread and merging new types (`TypeTable` ids), instances, lambdas and
+  diagnostics back in a fixed order. The MIR passes (most of the front end's time on bigpkg) are
+  per body and could run per module in parallel once the first two are solved. Decision: whether
+  parallel parsing and MIR passes, with type checking still sequential, is worth building first
+  (it would leave BLD-7 with an `unfinished` entry). Estimate: days for that part; the `Checker`
+  split, weeks.
+- Defect 1 below dominates all of these on any large function or package; it is worth fixing first.
+
 ## Compiler changes
 
 - `compiler/ember_build/src/lib.rs`, `cdylib.rs`, `reload.rs`; `compiler/ember_driver/src/main.rs`
