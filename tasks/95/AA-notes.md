@@ -188,7 +188,7 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
 
 * ODR-218 `[ECS-4]` — `world.run_parallel([…])` runs systems whose sets do not conflict at once,
   on threads; an owned callable value is `Send` when everything it captures is; a component used
-  by `run_parallel` must be `Send`.
+  by `run_parallel` must be `Send`. **Not built** (see Not done, and question 3).
 * ODR-236 — a comprehension may take its list over (`[s for s in owned shapes if …]`, moving the
   chosen items) or copy them (`s.clone()`); first-week 16 re-marked after.
 * ODR-237 — `Box[T]` is `Clone` when `T` is (recursive types' derived clone a function);
@@ -216,7 +216,51 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   re-recorded); 16's round-3 step is now the compiler's own help applied literally
   (`helped/16_shapes_interface.em`: `[s for s in owned shapes if …]`). The rate did not move.
 
+## For the merge
+
+`docs/phase-status.json` on `main` (cut 34) has entries this branch's work meets, which this
+branch, cut from `f00f2d61`, does not have to remove: `STD-19` (ODR-240, not ODR-210), `GRM-27` and
+`GRM-15` (ODR-236), `TYP-36` and `TYP-22` (ODR-237), `ALC-2` and `ALC-3` (ODR-175, ODR-239), and
+`GRM-38`; `STD-14`'s text is this branch's (the open twins). `ECS-4`, `THR-8` and `CLO-10` stay.
+
 ## Not done
+
+* **ODR-218 `[ECS-4]` — `run_parallel` on threads.** Not built; `run_parallel` still runs the
+  systems one after another, and `ECS-4`'s entry stays. Tried and reverted: each system on a
+  thread of its own, the world touched only in turns (a turnstile of atomics: take the storages
+  one at a time, run together, apply the commands one at a time). It compiles, and the run
+  panics in debug: `a std.ecs.AosStorage_Pos object made on thread 1 (main) is retained or
+  released on thread 2` (`ember_obj_check_thread`, `[FFI-33a]`): a class object that is not
+  `@sync` belongs to the thread that made it, so no thread but the caller's may take a storage,
+  copy the world's handle, or touch a `Commands`. What a sound build needs:
+  1. Everything that touches the world on the calling thread. That is buildable as it stands:
+     `run_parallel` stages the systems one inside the next (each system's erased run takes the
+     rest of the systems and recurses), so each query's storages are taken, and its loans begun
+     and ended, in a frame of the calling thread; each body runs on a scoped thread started in
+     that frame (`thread.scope`), while the next systems are staged; the scopes join innermost
+     first and the commands are applied in the systems' order at the top. The query carries the
+     live entities as its own list (moved in and out for a serial `run`, copied only for a
+     parallel query that requires no component), never the world's handle.
+  2. A command buffer a system's thread can fill: today `Commands` and every `Command` are
+     classes, made on the system's thread and applied on the caller's. A buffer of
+     `Box[dyn Change]` is the general shape, and `[THR-8]` does not say whether a `dyn I` is
+     ever `Send`: as written it never is (`thread_properties`), so a query holding one is not
+     `Send` and the scoped thread cannot borrow it. **Question 3.**
+  3. `E7004` where a system is made (`std.ecs.system`, and the literal's systems): its function
+     `Send` (what it captures), each component its query writes `Send` and each it reads `Sync`
+     (two systems read one column at once; `[ECS-4]` says `Send` only: question 3 too).
+  An owned callable value is `Send` when what it captures is, as `[THR-8]` says, for a closure
+  value (its type is its captures, checked structurally: `thread.spawn(f)` with `f = owned fn()
+  => n` is accepted today); one erased to a written `fn(A) -> R` type may hold anything, and its
+  type cannot say otherwise.
+* **`[GRM-28]` generic and `gen` local functions.** Not built; each is refused by name (`E0900`;
+  a `gen fn` in a block now parses, so its refusal is that, not parse errors). A local function
+  is a named closure checked where it is declared; a generic one needs instances made per type
+  arguments that still capture the enclosing locals visible at the declaration (and only those),
+  and a local generator a frame holding borrowed captures. Both are a design of their own: an
+  instance per type arguments made as a closure at the declaration (the statement inserted
+  there once the block's uses are known), and a generator frame whose captured locals are
+  borrowed parameters of the lifted `gen fn`, whose types only the checker knows.
 
 ## Compiler changes
 
@@ -330,3 +374,13 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
    `normalize_or_identity` for `Quat`, `try_normalize` for `Plane`, `try_insert` for `BitSet`);
    (b) twins for the accessors only (`col`, `row`, `CppShared.get`), the argument checks settled
    as ODR-089 settled the adapters'. **Recommend (b)**, with (a)'s names for the three accessors.
+3. **Is a `dyn I` ever `Send` or `Sync`?** (ODR-218's `run_parallel` needs a command buffer a
+   system's thread fills and the caller's applies.) Options: (a) `dyn I` is `Send` when `I`
+   requires `Send` (`interface Change: Send:`), and `Sync` when it requires `Sync`, as Rust's
+   `dyn Trait + Send`: every type implementing `I` is then `Send` (checked, `E2040` naming it, as
+   `Clone` is), so a value of the erased type may move; (b) never (as built), and std erases a
+   command as a function and its payload's bytes, by hand; (c) never, and a command buffer is a
+   compiler-known type. **Recommend (a)**: it is the general rule `[THR-8]`'s definition gives,
+   and the same shape as ODR-237's `Clone`. And: do two systems that read one component at once
+   need it `Sync`, beside `[ECS-4]`'s `Send`? **Recommend yes** (`E7005`, naming it), as
+   `[THR-11]` asks of what scoped threads borrow shared.
