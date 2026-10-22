@@ -133,8 +133,16 @@ fn run_host(out: &Path) -> Run {
 /// the next image (`ember build --reload`), and run the host: it starts with the first image and
 /// its polls find the last one announced.
 fn reload_run(label: &str, manifest: &str, source: &str, edits: &[&str]) -> (Run, Vec<Run>) {
+    reload_run_with(label, manifest, &[], source, edits)
+}
+
+/// `reload_run`, with the files `files` written beside the source (C files an import compiles).
+fn reload_run_with(label: &str, manifest: &str, files: &[(&str, &str)], source: &str, edits: &[&str]) -> (Run, Vec<Run>) {
     let root = workspace_root();
     let (package, file) = package(label, manifest, source);
+    for (name, text) in files {
+        std::fs::write(package.join(name), text).expect("the file is writable");
+    }
     let out = package.join("target");
     let out_arg = out.to_string_lossy().into_owned();
     let file_arg = file.to_string_lossy().into_owned();
@@ -889,6 +897,79 @@ fn value_data_migrates_through_its_container() {
     assert_eq!(run.exit, 0, "{}", run.stderr);
     assert_eq!(run.stdout, "3\n3\n", "the old code did not run on: {}", run.stderr);
     assert!(run.stderr.contains("changed, and `main`, live below this checkpoint, still uses its old layout"), "{}", run.stderr);
+}
+
+/// Build `source` with the C files `files` beside it as a reloadable program's first image, then
+/// each of `edits` as the next one, and run `FRAME_HOST` over `frames` frames.
+fn host_run_with(label: &str, files: &[(&str, &str)], source: &str, edits: &[&str], frames: u32) -> Run {
+    let root = workspace_root();
+    let (package, file) = package(label, RELOAD_ALL, source);
+    for (name, text) in files {
+        std::fs::write(package.join(name), text).expect("the file is writable");
+    }
+    let out = package.join("target");
+    let out_arg = out.to_string_lossy().into_owned();
+    let file_arg = file.to_string_lossy().into_owned();
+    let built = ember(&["build", &file_arg, "--out-dir", &out_arg], &root);
+    assert_eq!(built.exit, 0, "{label}: the first build failed:\n{}", built.stderr);
+    for edit in edits {
+        std::fs::write(&file, edit).expect("the edit is writable");
+        let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
+        assert_eq!(reloaded.exit, 0, "{label}: the reload build failed:\n{}{}", reloaded.stdout, reloaded.stderr);
+    }
+    let program = link_host(&package, &out, FRAME_HOST);
+    quiet_errors();
+    let mut command = Command::new(&program);
+    command.arg(bin(&out)).arg(frames.to_string()).env("LD_LIBRARY_PATH", bin(&out));
+    let output = ember_build::output_started(&mut command).expect("the host runs");
+    drop(package);
+    Run {
+        stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+        exit: output.status.code().unwrap_or(-1),
+    }
+}
+
+/// The C side of the foreign-object tests: widgets made by C, freed by `widget_free`, which says so.
+const WIDGETS_H: &str = "#include <stdint.h>\ntypedef struct Widget Widget;\nWidget* widget_new(int32_t id);\n\
+                         void widget_free(Widget* widget);\nint32_t widget_id(const Widget* widget);\n";
+const WIDGETS_C: &str = "#include \"widgets.h\"\n#include <stdio.h>\n#include <stdlib.h>\nstruct Widget { int32_t id; };\n\
+                         Widget* widget_new(int32_t id) { Widget* w = (Widget*)malloc(sizeof *w); w->id = id; return w; }\n\
+                         void widget_free(Widget* w) { printf(\"widget %d freed\\n\", (int)w->id); fflush(stdout); free(w); }\n\
+                         int32_t widget_id(const Widget* w) { return w->id; }\n";
+const WIDGETS_OVERLAY: &str = "unsafe overlay c \"widgets.h\":\n    @ffi(destroys(widget_free))\n    type Widget\n\n    \
+                               fn widget_new(id) -> returns_owned(destructor=widget_free) one\n";
+
+/// `[HR-22]` — a foreign object Ember owns (a `ForeignBox`) is carried across a reload unchanged:
+/// the instance holding it migrates (a field replaced beside it), the box's object and destructor
+/// are the same afterwards, and nothing frees it then; only when an edit removes the field holding
+/// it does reclaim drop the box, freeing the object once, by the destructor it was made with.
+#[test]
+fn a_foreign_object_ember_owns_is_carried_across() {
+    let v1 = "import std.hot\nfrom std.ffi import ForeignBox\nimport c \"./widgets.c\" with (overlay = \"widgets_overlay.em\") as b\n\n\
+              class Device:\n    w: ForeignBox[b.Widget]\n    n: int = 1\n    spare: int = 0\n\n    \
+              fn init(self, owned w: ForeignBox[b.Widget]):\n        self.w = w\n\n\
+              fn tick(d: Device) -> int:\n    unsafe:  # SAFETY(ffi): the box keeps the widget alive for the call\n        \
+              return b.widget_id(d.w.as_ptr() as *b.Widget) as int + d.n\n\n\
+              fn main():\n    d = Device(b.widget_new(7))\n    for i in 0..2:\n        println(tick(d))\n        hot.checkpoint()\n    \
+              println(\"end\")\n";
+    let files = [("widgets.h", WIDGETS_H), ("widgets.c", WIDGETS_C), ("widgets_overlay.em", WIDGETS_OVERLAY)];
+    // `spare` gives way to `bonus`: the instance migrates in place, its box carried.
+    let grown = v1.replace("    spare: int = 0\n", "    bonus: int = 100\n").replace("as int + d.n\n", "as int + d.n + d.bonus\n");
+    let (run, reloads) = reload_run_with("reload-foreign-carried", RELOAD_ALL, &files, v1, &[&grown]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
+    assert_eq!(run.stdout, "8\n108\nend\nwidget 7 freed\n", "{}", run.stderr);
+    // The field holding it removed: reclaim drops the box, which frees the widget once, then.
+    let removed = v1
+        .replace("    w: ForeignBox[b.Widget]\n", "    other: int = 0\n")
+        .replace("        self.w = w\n", "        pass\n")
+        .replace("fn tick(d: Device) -> int:\n    unsafe:  # SAFETY(ffi): the box keeps the widget alive for the call\n        return b.widget_id(d.w.as_ptr() as *b.Widget) as int + d.n\n",
+                 "fn tick(d: Device) -> int:\n    return d.n\n");
+    let (run, reloads) = reload_run_with("reload-foreign-dropped", RELOAD_ALL, &files, v1, &[&removed]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
+    assert_eq!(run.stdout, "8\nwidget 7 freed\n1\nend\n", "{}", run.stderr);
 }
 
 /// `[HR-11a]`, `[HR-14]` — an enum value migrates by variant name: reordering the variants

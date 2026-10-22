@@ -35,6 +35,13 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   standard-library class holding the package's types or references now has a schema the package
   emits.
 
+* **HR-22** — holds as built; tested. `compiler/ember_driver/tests/reload.rs`,
+  `a_foreign_object_ember_owns_is_carried_across`: a class instance holding a `ForeignBox` of a C
+  widget (`import c "./widgets.c"` with an overlay's `destroys`/`returns_owned`) migrates at a
+  checkpoint with the box carried unchanged (the widget read afterwards, freed once at the
+  program's end by the destructor it was made with); an edit removing the field drops the box in
+  reclaim, freeing the widget once.
+
 ## Compiler changes
 
 * HR-23: `cimport.rs` (`import_cached` returns a hash over every file the header included),
@@ -114,6 +121,15 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
    described. Named after its members now.
 
 ## Defects suspected (not verified)
+
+* `[FFI-33b]`/`[THR-1]`: `static S: Mutex[Array[ForeignBox[b.Widget]]] = Mutex([])` is `E7002`
+  ("not Sync"), though `std.ffi` declares `unsafe extend[T] ForeignBox[T] implements Send` and
+  `[FFI-33b]` says a box is `Send`. Either the marker is not applied to an imported opaque type's
+  box or the rule intends a `threads` contract first; not mine to rule.
+* Diagnostics: a field whose type does not resolve is reported twice in a reloadable build, the
+  second time at `<reload helpers of the root module>` (the helper written for its default). The
+  same holds for a declared default that does not check. Dropping the helpers' diagnostics when
+  the user's own code has errors would remove the noise.
 
 * A struct value inside a `Box[dyn I]` (an interface value) is not described to the runtime and
   not flagged contained; if its layout changes while such a value lives, the new image's methods
