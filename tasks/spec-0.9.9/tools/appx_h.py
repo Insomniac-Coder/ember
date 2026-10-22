@@ -543,6 +543,144 @@ ODRS = [
      "`[CXX-1]`"),
     ('ODR-168', "delegated: `format`'s spec is a string literal, checked where it is written",
      "`[STD-18]`, `[LEX-19]`"),
+    ('ODR-169', "delegated: `lto = \"thin\"` is `on` where the toolchain does only `off` and `on` (cl, gcc)",
+     "`[BLD-6]`"),
+    ('ODR-170', "delegated: the build record is `target/<profile>/inspect/<name>.build.json`, its `lto` keys `asked`, `used`, `why`",
+     "`[BLD-6]`"),
+    ('ODR-171', "delegated: objects another link reads take no LTO with cl or Clang, fat LTO objects with gcc",
+     "`[BLD-6]`"),
+    ('ODR-172', "delegated: a figure's spread is its IQR over its median; both gates apply below 15 %",
+     "`[BUD-3b]`"),
+    ('ODR-173', "delegated: the Vulkan-sized header is generated in Vulkan's shape and not counted; B6's cold cache is a new global cache; B7 and B9 build with the program cache off",
+     "`[BUD-1]`, `[BUD-2]`"),
+    ('ODR-174', "delegated: `W2192`, use of a deprecated item, at each use outside its module; to be built",
+     "`[VER-3]`, \u00a7XVII.9"),
+    ('ODR-175', "delegated: `pub unsafe interface Allocator` with `allocate`, `deallocate`, `reallocate` over `Layout`; `[TYP-43]` admits an `unsafe interface`; to be built",
+     "`[ALC-2]`, `[TYP-43]`, III.2"),
+    ('ODR-176', "delegated: an ended region a run-time selection needs is a loan conflict, `E3021`",
+     "`[LT-39]`"),
+    ('ODR-177', "delegated: `[CLS-1]` and `[OBJ-4]` hold except as `[OPT-1]` permits; a host's allocator count is not behaviour",
+     "`[CLS-1]`, `[OBJ-4]`, `[OPT-1]`"),
+    ('ODR-178', "delegated: Visual Studio shows a lone local collection's length only; a C struct per collection instance with the backend's next rework",
+     "`[CG-C-9]`"),
+    ('ODR-179', "delegated: each `[DIA-21]` row is a catalogued shape with an id and codes, named by marks and `tests/ui/`",
+     "`[DIA-21]`, `[TST-9]`"),
+    ('ODR-180', "delegated: an `AnyError` function fails with a message through `AnyError.msg(text)`, which a catalogued help names",
+     "`[ERR-8]`, `[DIA-21]`"),
+    ('ODR-181', "delegated: `ref T` implements `Eq`, `Ord`, `Hash`, `Display`, `Debug` as `T` does",
+     "`[TYP-36]`"),
+    ('ODR-182', "delegated: a bare interface name in a type position, read with `[OBJ-2]` by ODR-226",
+     "`[OBJ-2]`, `[GRM-8b]`, `[DIA-21]`"),
+    ('ODR-183', "delegated: `char` has `is_digit`, `is_alphabetic`, `is_alphanumeric`, `is_whitespace` and `is_ascii_*`, with Appendix E rows",
+     "`[TXT-10]`, Appendix E"),
+    ('ODR-184', "delegated: `float(x)` and `int(x)` are answered by the argument's type",
+     "`[DIA-21]`"),
+    ('ODR-185', "delegated: sequence repetition is refused with a catalogued help",
+     "`[PHIL-14]`, `[DIA-21]`"),
+    ('ODR-186', "delegated: a single-quoted string is a `[DIA-21]` row whose fix-it is the double-quoted string",
+     "`[DIA-21]`"),
+    ('ODR-187', "delegated: a list operation on an iterator has the help `.collect[Array[\u2026]]()`",
+     "`[DIA-21]`"),
+    ('ODR-188', "delegated: the published rate counts the catalogue's helps; the gap to the printed ones is a defect",
+     "`[TST-10]`"),
+    ('ODR-189', "delegated: a consumed callable parameter is an owned callable value in its function and may be stored",
+     "`[CLO-3]`"),
+    ('ODR-190', "delegated: MSVC gets no vectorisation pragma",
+     "`[CG-C-6]`"),
+    ('ODR-191', "delegated: a changed header is any change to it or a file it includes",
+     "`[HR-23]`, `[HR-41]`"),
+    ('ODR-192', "delegated: `[HR-23]` covers `import c` headers",
+     "`[HR-23]`, `[HR-41]`"),
+    ('ODR-193', "delegated: `[HR-14]`'s FFI row reads \"layout or fields changed on a type used across FFI by value\"",
+     "`[HR-14]`"),
+    ('ODR-194', "delegated: `on_relocate` is 0.8.5's spelling with `ObjectPtr[C]`, called after commit publishes and before reclaim; to be built",
+     "`[HR-20]`"),
+    ('ODR-195', "delegated: `[HR-24]` and `[HR-41]`'s GPU row go after 1.0 with Annex D",
+     "`[HR-24]`, `[HR-41]`"),
+    ('ODR-196', "delegated: `@borrows(self.f)` names a view field of the receiver; std's iterators declare it, so a map's keys borrow the map",
+     "`[LT-1a]`, `[CTL-1]`"),
+    ('ODR-197', "delegated: `borrowed one exclusive` is written `p: ref mut T` as well as `mut p: T`",
+     "`[FFI-11]`"),
+    ('ODR-198', "delegated: `std::variant` crosses as an enum named by `@ffi(variant=[\u2026])` on a `type` entry; to be built",
+     "`[FFI-17a]`"),
+    ('ODR-199', "delegated: `@ffi(std_function)` makes a `std::function` an owned callable value; to be built",
+     "`[FFI-17a]`"),
+    ('ODR-200', "delegated: a fixed-extent `std::span<T, N>` crosses as `ref [T; N]` / `ref mut [T; N]`; to be built",
+     "`[FFI-17a]`"),
+    ('ODR-201', "delegated: a module and an item of one name in one scope, or a type named like a built-in type, is `E1032`",
+     "`[MOD-1]`, `[MNG-1]`, \u00a7XVII.9"),
+    ('ODR-202', "delegated: a transliterated component is marked `u` before its length",
+     "`[MNG-3]`"),
+    ('ODR-203', "delegated: `em_obj_`, `em_vt_`, `em_ti_` take the mangled form without its own `em_`",
+     "`[MNG-4]`"),
+    ('ODR-204', "delegated: a root package's items have no package component in a symbol",
+     "`[MNG-1]`"),
+    ('ODR-205', "delegated: the canonical spelling of generic arguments is written into the spec, as built",
+     "`[MNG-6]`, `[MNG-1]`, `[MONO-1]`"),
+    ('ODR-206', "delegated: an interface-qualified method, a structural owner and `[CLO-3]`'s copies are spelled as built",
+     "`[MNG-1]`"),
+    ('ODR-207', "delegated: `sorted` over an iterator of references gives clones; to be built",
+     "`[STD-26]`"),
+    ('ODR-208', "delegated: a lambda given to a `mut` callable parameter is `E3027`, shape B10",
+     "`[CLO-3]`"),
+    ('ODR-209', "delegated: a same-line `:` lambda body ends at the statement's newline; to be built",
+     "`[GRM-17]`"),
+    ('ODR-210', "delegated: std's consumers that take a callable take it over; to be built",
+     "`[STD-19]`"),
+    ('ODR-211', "delegated: `@borrows(self.f)` may name a field of a type-parameter type, checked per instance; to be built",
+     "`[LT-1a]`"),
+    ('ODR-212', "delegated: `@borrows(self.f)` holds for a receiver in any mode",
+     "`[LT-1a]`"),
+    ('ODR-213', "delegated: an ASCII `_` beginning an escape-like run is `_u005F_` in every component, which is then transliterated; C member names alike; to be built",
+     "`[MNG-3]`"),
+    ('ODR-214', "delegated: `E1032` is name shape N14",
+     "\u00a7XVII.6.2"),
+    ('ODR-215', "delegated: a built-in type's path is under `std.core` in a symbol; to be built",
+     "`[MNG-1]`"),
+    ('ODR-216', "delegated: `E1032` compares the build's modules",
+     "`[MOD-1]`"),
+    ('ODR-217', "delegated: `E1032` covers an `import` binding",
+     "`[MOD-1]`"),
+    ('ODR-218', "the owner's answer: `run_parallel` runs systems on threads; a function value is `Send` when its captures are; a component must be `Send`; to be built",
+     "`[ECS-4]`, `[THR-8]`, `[CLO-10]`"),
+    ('ODR-219', "the owner's answer: a class with a C++ base is built in Ember's order, the C++ constructor at `super.init(\u2026)`",
+     "`[FFI-39b]`"),
+    ('ODR-220', "the owner's answer: the catching C++ calls on `@noalloc` or main-thread paths are listed by `ember inspect --cost`; to be built",
+     "`[FFI-24c]`"),
+    ('ODR-221', "the owner's answer: an Ember class inherits from a C++ class with no overlay entry; the trampoline passes on the overridden virtuals; to be built",
+     "`[FFI-39]`, `[FFI-48]`"),
+    ('ODR-222', "the owner's answer: releases are published on the Ember repository's GitHub Releases by the release workflow; to be built",
+     "`[TOOL-1]`"),
+    ('ODR-223', "the owner's answer: the LLVM backend is part of 1.0; Ember's download carries Clang and LLD; to be built",
+     "`[TOOL-2]`"),
+    ('ODR-224', "the owner's answer: the macOS download is built and tested on GitHub's macOS machines and stays in 1.0; to be built",
+     "`[TOOL-1]`"),
+    ('ODR-225', "delegated: `[DIA-21]` gains P21..P30 as built, an id column, and Appendix E rows",
+     "`[DIA-21]`, Appendix E"),
+    ('ODR-226', "delegated: a bare interface name is the class handle; where no class implements the interface it is `E2173` (P22)",
+     "`[OBJ-2]`, `[GRM-8b]`, `[DIA-21]`, \u00a7XVII.9"),
+    ('ODR-227', "delegated: `x == None` compiles where the payload is `Eq`; the habit row is where it has none",
+     "`[DIA-21]`"),
+    ('ODR-228', "delegated: `[LEX-26]`: a malformed literal is `E0009`, an unclosed one `E0101`",
+     "`[LEX-26]`, \u00a7XVII.9"),
+    ('ODR-229', "delegated: `char`'s classes have Python's meaning; `is_ascii_*` restrict them to ASCII",
+     "`[TXT-10]`"),
+    ('ODR-230', "delegated: `AnyError.msg(owned text: String)` is an error whose text is `text`",
+     "`[ERR-8]`"),
+    ('ODR-231', "delegated: `int(s)`'s fix-it ends in `?` or `.unwrap()`, `max(xs)`'s in `.unwrap()`",
+     "`[DIA-21]`"),
+    ('ODR-232', "delegated: an unknown field is `E2072` (shape N3), not `E1010`; to be built",
+     "\u00a7XVII.6.2"),
+    ('ODR-233', "delegated: a type name is a value candidate only before `.`",
+     "`[DIA-24]`"),
+    ('ODR-234', "delegated: O2's help offers the borrow first, then `.clone()` and `owned`",
+     "\u00a7XVII.6.1"),
+    ('ODR-235', "delegated: B4's help adds a new local for a rebound parameter",
+     "\u00a7XVII.6.1"),
+    ('ODR-236', "the owner's answer: a comprehension may take its list over and move the items, or copy them with `.clone()`; to be built",
+     "`[GRM-27]`, `[GRM-15]`"),
+    ('ODR-237', "the owner's answer: `Box[T]` is `Clone` when `T` is; an interface may require `Clone`, and then `Box[dyn I]` is `Clone`; to be built",
+     "`[TYP-36]`, `[TYP-22]`, IX.1"),
 ]
 
 H5_HEAD = """
@@ -611,7 +749,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 33)
+CURRENT = ('0.9.10', 34)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -645,6 +783,7 @@ V010_H29_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h29')
 V010_H30_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h30')
 V010_H31_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h31')
 V010_H32_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h32')
+V010_H33_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h33')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1405,8 +1544,76 @@ Generated: every rule whose text differs from 0.9.10_Hardened_32.
 """
 
 
-def v010_h32_to_now():
-    return H38_HEAD + rule_diff(V010_H32_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h32_to_h33():
+    return H38_HEAD + rule_diff(V010_H32_PARTS, V010_H33_PARTS)
+
+
+H39_HEAD = """
+## H.39 Changes in 0.9.10_Hardened_34 (from 0.9.10_Hardened_33)
+
+**0.9.10_Hardened_34** records the rulings made under the restored delegation on helpers P to Y's questions and the lead's (ODR-169..ODR-217, ODR-225..ODR-235), for the owner's review, and nine answers the owner gave on 2026-10-22 (ODR-218..ODR-224, ODR-236, ODR-237) (`docs/DECISIONS.md` ADR-256..ADR-267); `[LEX-26]` and `[MNG-6]` are new, and one question stays open for the owner (ODR-238, `[CLO-15]`):
+
+* For `[VER-3]`: each use of a deprecated item outside its own module is `W2192` (use of a deprecated item), naming `since` and `note` (ODR-174, delegated).
+* For `[PHIL-14]`: sequence repetition (`s * n`, `[x] * n`) is rejected likewise, with `s.repeat(n)` and `[x for _ in 0..n]` as the fixes (ODR-185, delegated).
+* For `[LEX-26]` (new): a literal is written as II.5's grammar gives it, and anything else is `E0009` (malformed literal); a string left unclosed, or an f-string's `{`, is `E0101` (unclosed delimiter or literal) (ODR-228, delegated).
+* For III.2's grammar: `interface_decl` takes `unsafe` (`pub unsafe interface Allocator`, ODR-175, delegated).
+* For `[GRM-8b]`: an interface named as a type that no class implements is `E2173` (ODR-226, delegated, reading ODR-182 with `[OBJ-2]`).
+* For `[GRM-15]`: `owned e` may be the iterable of a comprehension's `for` clause (ODR-236, the owner).
+* For `[GRM-17]`: outside brackets, a same-line `:` lambda body ends at the statement's `NEWLINE` (`h = fn(x): total += x`) (ODR-209, delegated).
+* For `[GRM-27]`: a comprehension may take its collection over (`[s for s in owned shapes if …]`: the kept items move, the rest are dropped) or copy its items with `.clone()`, the collection staying as it was (ODR-236, the owner).
+* For `[TYP-43]`: an `unsafe extend` may implement an `unsafe interface`, which only an `unsafe extend` implements (`E3100` without `unsafe`) (ODR-175, delegated).
+* For `[TYP-36]`: a shared `ref T` implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does (ODR-181, delegated); `Box[T]` is `Clone` when `T` is, and `Box[dyn I]` when `I` requires `Clone` (ODR-237, the owner).
+* For `[TYP-22]`: an interface that requires `Clone` is usable as `dyn`; every type implementing it is `Clone`, and its method table copies the value into a new box (ODR-237, the owner).
+* For `[MOD-1]`: a module and an item of one name in one scope, an import binding among them, and a type named like a built-in type that the prelude does not let a declaration shadow, are `E1032`; the modules compared are the build's (ODR-201, ODR-216, ODR-217, delegated).
+* For `[CLS-1]`, `[OBJ-4]` and `[OPT-1]`: a class object lives on the heap and is made by the runtime allocator except as `[OPT-1]` permits; how many times an embedding host's allocation functions are called is not behaviour (ODR-177, delegated).
+* For `[CLO-3]`: a consumed (`owned`) callable parameter is an owned callable value in its function and may be stored (ODR-189, delegated); a lambda given to a `mut` callable parameter is `E3027`, shape B10 (ODR-208, delegated).
+* For `[CLO-10]` and `[THR-8]`: an owned callable value is `Send` when everything it captures is `Send`, as a function and a capture-free lambda always are (ODR-218, the owner).
+* For `[ECS-4]`: `run_parallel` runs non-conflicting systems at once, on threads; each system and every component its query uses must be `Send` (`E7004`) (ODR-218, the owner).
+* For `[LT-1a]`: `@borrows(self.f)` names a view field of the receiver, in any receiver mode, or a field whose type is a type parameter, checked in each instance; the standard library's iterators that read through a shared field declare it, so `for k in m:` and `m.keys()` yield references that borrow the map (ODR-196, ODR-211, ODR-212, delegated).
+* For `[LT-39]`: an ended region a run-time selection needs is a loan conflict, `E3021`, not `E3065` (ODR-176, delegated).
+* For `[OBJ-2]`: a bare interface name in a type position is a class handle typed by the interface; where no class implements the interface it is `E2173` (P22) (ODR-226, delegated).
+* For IX.1's `Box[T]`: `Clone` when `T` is, a new box holding a clone; `Box[dyn I]` when `I` requires `Clone`, through its method table (ODR-237, the owner).
+* For `[ALC-2]`: `std.mem`'s `pub unsafe interface Allocator` has `allocate`, `deallocate` and `reallocate` over `Layout` (`size`, `align`), and `Global` is the runtime's allocator (ODR-175, delegated).
+* For `[ERR-8]`: `AnyError.msg(owned text: String)` is an error whose text is `text` (ODR-180, ODR-230, delegated).
+* For `[STD-26]`: `sorted` over an iterator of references gives an `Array` of clones, as `sorted(m)` does (ODR-207, delegated).
+* For `[TXT-10]`: `char` has `is_alphabetic`, `is_digit`, `is_alphanumeric` and `is_whitespace` with Python's meaning, and their `is_ascii_*` forms (ODR-183, ODR-229, delegated).
+* For `[STD-19]`: the consumers that apply a callable (`any`, `all`, `find`, …) take it over, as the adapters and `for_each` do (ODR-210, delegated).
+* For `[FFI-11]`: `borrowed one exclusive` is written `p: ref mut T` as well as `mut p: T`; an opaque type takes only the first (ODR-197, delegated).
+* For `[BLD-6]`: `thin` becomes `on` with cl and gcc; the build record is `target/<profile>/inspect/<name>.build.json` with `lto`'s `asked`, `used` and `why`; a static library's objects take no LTO with cl or Clang and fat ones with gcc (ODR-169, ODR-170, ODR-171, delegated).
+* For `[BUD-1]` and `[BUD-2]`: the Vulkan-sized header is a generated 20,000 lines in Vulkan's shape, not counted in the package's lines; B6's cold cache is a new, empty global build cache, and B7 and B9 build with the program cache off (ODR-173, delegated).
+* For `[BUD-3b]`: the spread is the interquartile range over the median, and both gates apply only below 15 % (ODR-172, delegated).
+* For `[TST-9]`: a mark names its shape by its catalogue id (ODR-179, delegated).
+* For `[TST-10]`: the published rate counts the catalogue's helps; a help the compiler does not print is a defect (ODR-188, delegated).
+* For `[DIA-21]`: each row is a catalogued shape with an id and its codes (ODR-179); the table gains P21..P30 as built (ODR-180, ODR-182, ODR-185, ODR-186, ODR-187, ODR-225, ODR-226); `float(x)` and `int(x)` are answered by the argument's type and `int(s)` and `max(xs)` end in `?` or `.unwrap()` (ODR-184, ODR-231); `x == None` is a habit only where the `Option` has no `Eq` (ODR-227) (delegated).
+* For `[DIA-24]`: a type name is a value candidate only before `.` (`Color` in `Color.Red`) (ODR-233, delegated).
+* For §XVII.6's shapes: O2's help offers the borrow first (ODR-234); B4's adds a new local for a rebound parameter (ODR-235); N3 is an unknown method or field, `E2072` (ODR-232); N14 is `E1032` (ODR-214) (delegated).
+* For `[TOOL-1]`: releases are published on the Ember repository's GitHub Releases, built by the release workflow, the macOS archive built and tested on GitHub's macOS machines (ODR-222, ODR-224, the owner).
+* For `[TOOL-2]`: Ember's download carries LLVM's Clang and LLD, which compile the generated C and the C and C++ glue; Windows' system libraries are the one part it does not carry (ODR-223, the owner; the LLVM backend's own plan is the owner's to give).
+* For `[CG-C-6]`: MSVC gets no vectorisation pragma; Clang `loop vectorize(enable)` and GCC `ivdep` stay (ODR-190, delegated).
+* For `[MNG-1]`: a root package's items have no package component; a method told apart by its interface, a built-in type's path (under `std.core`), a structural owner and `[CLO-3]`'s copies are spelled as built (ODR-204, ODR-206, ODR-215, delegated).
+* For `[MNG-3]`: an ASCII `_` that begins what would otherwise read as an escape is transliterated too, as `_u005F_`, a transliterated component has `u` before its length, and C member names are spelled so too (ODR-202, ODR-213, delegated).
+* For `[MNG-4]`: the per-type symbols take the type's mangled form without its own `em_` (`em_obj_6Animal`) (ODR-203, delegated).
+* For `[MNG-6]` (new) and `[MONO-1]`: the canonical spelling of a generic instance's arguments is written into the spec, so every compiler spells alike and packages deduplicate instances at link time (ODR-205, delegated).
+* For `[HR-14]`: the FFI row reads "layout or fields changed on a type used across FFI by value" (ODR-193, delegated).
+* For `[HR-20]`: `on_relocate` is `Retained.pin(handle, on_relocate: Option[extern "C" fn(ObjectPtr[C], ObjectPtr[C])])`, called with the old and the new address after commit publishes and before reclaim (ODR-194, delegated).
+* For `[HR-23]` and `[HR-41]`: any change to a C or C++ header, or to a file it includes, refuses the reload (ODR-191, ODR-192, delegated).
+* For `[HR-24]` and `[HR-41]`: the GPU row moves into `[HR-24]`, which goes after 1.0 with Annex D in `docs/phase-status.json` (ODR-195, delegated).
+* For `[FFI-17a]`: a fixed-extent `std::span<T, N>` crosses as `ref [T; N]` / `ref mut [T; N]`; `std::variant` is named by `@ffi(variant=[…])` on a `type` entry; `@ffi(std_function)` makes an owned callable value (ODR-198, ODR-199, ODR-200, delegated).
+* For `[FFI-24c]`: the catching C++ calls on `@noalloc` or main-thread paths are listed by `ember inspect --cost`, not `ember bind --report` (ODR-220, the owner).
+* For `[FFI-39]` and `[FFI-48]`: an Ember class inherits from a C++ class with no overlay entry, the trampoline passing on exactly the virtuals the class overrides; `@ffi(trampoline, virtuals=[…])` and its unsupported-construct row are gone (ODR-221, the owner).
+* For `[FFI-39b]`: the C++ base constructor runs at `super.init(…)` (`[CLS-11]`) (ODR-219, the owner).
+* For §XVII.9: `E0009`, `E1032` and `W2192` are added; `E0101` reads "unclosed delimiter or literal" and `E2173` "an argument or type position that is neither a type nor a constant" (ODR-228, ODR-201, ODR-174, ODR-226).
+* For Appendix E: rows for `c.isdigit()` and its kin, `xs.sort(key=f)`, `"%d" % n` and `"{}".format(n)`, `s * n` and `[x] * n` (ODR-183, ODR-225).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_33.
+
+| Rule | 0.9.10_Hardened_33 → 0.9.10_Hardened_34 |
+|---|---|
+"""
+
+
+def v010_h33_to_now():
+    return H39_HEAD + rule_diff(V010_H33_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1477,7 +1684,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

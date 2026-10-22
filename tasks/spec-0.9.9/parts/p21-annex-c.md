@@ -48,19 +48,20 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   | custom allocators | overlay or native island |
   | ownership the header does not state | unsafe until `adopt` or a contract (`[FFI-36]`) |
 
-* `[FFI-17a]` *(changed in 0.9.9)*
+* `[FFI-17a]` *(changed in 0.9.9)* *(changed in 0.9.10)*
 
   | C++ | Ember |
   |---|---|
   | `std::span<T>`, `std::span<const T>` | `MutSpan[T]`, `Span[T]`, zero-copy; a result needs a lifetime word (`[FFI-11]`) |
+  | `std::span<T, N>`, `std::span<const T, N>` (a fixed extent) | `ref mut [T; N]`, `ref [T; N]` |
   | `std::string_view` | `Span[u8]`; `.to_str()` is the fallible conversion to `str` (`[TXT-2]`) |
   | `std::string` | `CppString`; `.to_str() -> Result[str, Utf8Error]`; `String.from(c)` copies |
   | `std::vector<T>` | `CppVector[T]` with `.span()`, `.span_mut()`, `.to_array()`, `push_back`, `len` |
   | `std::unique_ptr<T>` | `ForeignBox[T]`, dropped through the deleter |
   | `std::optional<T>` | `Option[T]` for a `T` that maps by value |
   | `std::shared_ptr<T>`, `std::weak_ptr<T>` | `CppShared[T]`, `CppWeak[T]` — never `Shared`/`Weak` (`[WK-14]`, `E5065`) |
-  | `std::variant<…>` | a generated enum, when every alternative maps and the overlay names each |
-  | `std::function` | an opaque owned object, or `@ffi(std_function, signature=…)`; never a parameter type (`E5030`) |
+  | `std::variant<…>` | a generated enum, when every alternative maps and the overlay names each: `@ffi(variant=["A", "B"])` on a `type` entry naming the header's alias of the variant, the names in the alternatives' order |
+  | `std::function<R(A…)>` | an opaque owned object; with `@ffi(std_function)` on its overlay entry, an owned callable value `fn(A…) -> R` (`[CLO-3]`), called as any other, its target owned by the value; never a parameter type (`E5030`) |
 
 * `[FFI-17e]` The bridge types `CppVector[T]`, `CppString` and `CppShared[T]` are declared in `std.ffi`;
   they are not `Copy`, `Send` or `Sync`; the first two drop through their C++ destructors; and a span
@@ -75,12 +76,11 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   class's destructor; an abstract class, or one without a public destructor, is refused (ODR-166).
 * `[FFI-11f]` A result lifetime derived from `[[clang::lifetimebound]]` imports as an asserted fact:
   the attribute is not enforced by C++, so it never counts as checked.
-* `[FFI-48]` **Unsupported constructs** (`E5034`, naming the row):
+* `[FFI-48]` *(changed in 0.9.10)* **Unsupported constructs** (`E5034`, naming the row):
 
   | Construct | Why not | Instead |
   |---|---|---|
   | multiple inheritance, virtual bases | the pointer adjustment is ABI-private and differs between MSVC and Itanium | a single-inheritance facade in C++ |
-  | overriding a virtual not named in `virtuals=[…]` | the trampoline has no slot for it | name it (`E5056`) |
   | C++20 modules | no stable AST for a compiled module interface | parse the headers |
   | C++ coroutines | promise and frame layout are implementation-defined | a callback or completion handle |
   | overloads differing only in return type | Ember has no return-type overloading | rename one in the overlay |
@@ -98,9 +98,9 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 * `[FFI-24b]` An overlay may assert `@ffi(noexcept)` for a function the header leaves throwing; its
   thunk still catches, and a throw then panics naming the declaration — never an unexplained
   `std::terminate`.
-* `[FFI-24c]` `ember inspect` reports each C++ call's mode (`noexcept (derived)`, `noexcept
-  (asserted)`, `catching`), and `ember bind --report` lists catching calls on `@noalloc` or main-thread
-  paths.
+* `[FFI-24c]` *(changed in 0.9.10)* `ember inspect --cost`, which reads the built program, reports each
+  C++ call's mode (`noexcept (derived)`, `noexcept (asserted)`, `catching`) and lists the catching
+  calls on `@noalloc` or main-thread paths; `ember bind --report` reads a header and lists none.
 * `[FFI-24d]` A header that adds or removes `noexcept` changes the Ember signature; the diagnostic in
   dependent code names the header, the declaration and the change as the cause, and `ember bind
   --report` lists it under API changes.
@@ -113,15 +113,16 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 
 * `[FFI-36]` A C++ function returning a raw pointer with no ownership contract yields `*mut T`;
   `ffi.adopt[T](p)` (`unsafe`) turns it into a `ForeignBox[T]` using the contract's destructor.
-* `[FFI-39]` An Ember class may derive from a C++ class the overlay declares with `@ffi(trampoline,
-  virtuals=[…])`, which makes the base open and sized; the importer generates a C++ subclass whose named
-  virtuals call the Ember overrides (naming a method that is not virtual is `E5057`).
-  Its constructor is an ordinary `fn init(self, …)` calling `super.init(…)` exactly once.
+* `[FFI-39]` *(changed in 0.9.10)* An Ember class may derive from a C++ class with no overlay entry
+  (`[FFI-44]`), which makes the base open and sized; the importer generates a C++ subclass, the
+  trampoline, which passes on to the Ember class exactly the virtual methods it overrides (`override
+  fn`), read from the class. Its constructor is an ordinary `fn init(self, …)` calling `super.init(…)`
+  exactly once.
 * `[FFI-39a]` The trampoline calls the overrides through their permanent thunks, so overrides survive
   hot reload (`[HR-6]`).
-* `[FFI-39b]` `super.init(…)` selects the C++ base constructor by arity and argument types and runs it
-  before any Ember field is initialised; a base with no default constructor and no declared `init` is
-  `E5058`.
+* `[FFI-39b]` *(changed in 0.9.10)* `super.init(…)` selects the C++ base constructor by arity and
+  argument types and runs it at `super.init(…)` (`[CLS-11]`); a base with no default constructor and
+  no declared `init` is `E5058`.
 * `[FFI-39c]` *(changed in 0.9.10)* A C++ parameter that keeps the pointer it is given takes a
   `Retained` token (`[FFI-23]`) the program holds: `tok = Retained.pin(self)` upcasts `self` to the
   C++ base, the call is given `tok`, and the object lives while the program keeps the token. Passing

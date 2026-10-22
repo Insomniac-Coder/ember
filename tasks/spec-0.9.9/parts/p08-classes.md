@@ -44,13 +44,17 @@ offset  size  field
 * `[OBJ-1]` *(changed in 0.9.9)* The header is 24 bytes on 64-bit targets and is part of the runtime ABI
   (`[VER-4]`). Foreign code never reads it; it calls `ember_rt`. The per-field access words of
   `[EXC-19]` belong to the class's layout, not the header.
-* `[OBJ-2]` A handle points at offset 0. An interface-typed handle is the same single pointer: the
-  interface table is reached through the header's type information, so `Option[Handle]` is one pointer
-  wide.
+* `[OBJ-2]` *(changed in 0.9.10)* A handle points at offset 0. An interface-typed handle is the same
+  single pointer: the interface table is reached through the header's type information, so
+  `Option[Handle]` is one pointer wide. A bare interface name in a type position (`s: Shape`,
+  `Array[Shape]`) is such a handle, a class handle typed by the interface. Where every type
+  implementing the interface is a struct or enum and none a class, it is `E2173` (`[DIA-21]`'s P22),
+  and a struct given where the handle is expected gets P22's help at the use.
 * `[OBJ-3]` `weak` starts at 1 on behalf of all strong handles. When `strong` reaches 0 the object is
   deinitialised (its `drop` chain and field drops run) and `weak` is decremented; the block is freed
   when `weak` reaches 0.
-* `[OBJ-4]` Objects are allocated through the runtime allocator (`[RT-1]`).
+* `[OBJ-4]` *(changed in 0.9.10)* Objects are allocated through the runtime allocator (`[RT-1]`),
+  except as `[OPT-1]` permits.
 * `[OBJ-5]` The runtime sets the deinitialising flag before the `drop` chain and checks `strong`
   after it and after the field drops; a nonzero count means the object was resurrected, which panics
   in every profile.
@@ -256,6 +260,7 @@ accesses to the same field conflict (`[EXC-19]`).
 
 ## VIII.6 Stack promotion
 
-* `[OPT-1]` When escape analysis proves that no handle to an object outlives the function that
-  created it, the compiler MAY place the object in the function's frame with the same header and run
-  its `drop` at scope end. This cannot be observed.
+* `[OPT-1]` *(changed in 0.9.10)* When escape analysis proves that no handle to an object outlives the
+  function that created it, the compiler MAY place the object in the function's frame with the same
+  header and run its `drop` at scope end. This cannot be observed: how many times an embedding host's
+  allocation functions (`[FFI-27]`) are called is not behaviour.

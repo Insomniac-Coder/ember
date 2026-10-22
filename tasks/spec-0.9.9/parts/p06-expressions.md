@@ -202,7 +202,10 @@ fn main():
   * As a **parameter type** it is a bound, not a representation: the parameter is an implicit generic
     constrained by the callable type, each argument monomorphises the callee, and a call through it is
     a direct call. This is the zero-cost form. It accepts any lambda, local function or function,
-    including non-`owned` lambdas that borrow the caller's locals.
+    including non-`owned` lambdas that borrow the caller's locals. A consumed parameter (`owned f:
+    fn(A) -> R`) is an owned callable value in its function's body, which may store it, return it or
+    pass it on as one. A `mut` callable parameter takes a mutable place, as any `mut` parameter does,
+    and a lambda written there is not one (`E3027`, shape B10).
   * In **any other position** — a field, a local annotation, a return type, a collection element, a
     `static` — it is an **owned callable value**: a function pointer plus the callee's captured state,
     owning that state. A value of this kind may be stored anywhere an owned value may. It is filled
@@ -223,9 +226,10 @@ fn main():
   a parameter so bounded is called like a function. `Callable[…]` is not source syntax.
 * `[CLO-10]` *(new in 0.9.9)* *(changed in 0.9.10)* An owned callable value holds up to **three pointer-sized words** of captured state inline
   and makes no allocation; larger captured state is placed in one heap allocation, which carries the
-  `Alloc` effect and is reported by `ember inspect --alloc`. Calling one is one indirect call. Its type
-  does not say what it captured, so it is neither `Send` nor `Sync` (`[THR-8]`, `[THR-9]`); two are
-  equal (`==`) when they call the same function with the same state (ODR-102).
+  `Alloc` effect and is reported by `ember inspect --alloc`. Calling one is one indirect call. It is
+  `Send` when everything it captures is `Send`, as a function and a lambda that captures nothing always
+  are (`[THR-8]`), and it is not `Sync` (`[THR-9]`); two are equal (`==`) when they call the same
+  function with the same state (ODR-102).
 * `[CLO-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* A non-`owned` lambda cannot outlive what it
   borrows: storing it, returning it or passing it to an `owned` parameter follows the view rules
   (`[TYP-15]`); a value a callee returns holding it lives no longer than its captures. A lambda written

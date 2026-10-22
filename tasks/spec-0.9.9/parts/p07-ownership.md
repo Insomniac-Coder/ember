@@ -135,12 +135,23 @@ points at which it must be valid — and the compiler infers every region.
   Rule 3 always type-checks; it may borrow more than the function needs. A returned reference or view
   that borrows any other parameter is rejected: `E3060` when that parameter is `owned` or is passed
   as a copy (`[BRW-8]`), and `E3062` otherwise.
-* `[LT-1a]` *(changed in 0.9.9)* `@borrows(p, …)`, on its own line before the function, replaces the rule the compiler would
+* `[LT-1a]` *(changed in 0.9.9)* *(changed in 0.9.10)* `@borrows(p, …)`, on its own line before the function, replaces the rule the compiler would
   apply: the result borrows from exactly the named parameters (`self` names the receiver). Returning
   a value that borrows from anything else is `E3062`. Each named parameter is a source parameter (`[LT-1]`)
   or a `mut` parameter; naming a borrowed `Copy` parameter, or an `owned` parameter that is not a
-  reference or view, is `E2031`. It is needed only where rule 1 or 3 borrows more than the caller can
-  afford, or to let the result borrow a `mut` parameter of a `Copy` type:
+  reference or view, is `E2031`. `self.f` names a field `f` of the receiver whose type is a reference
+  or view, the receiver passed in any mode (`self`, `mut self`, `owned self`, or as a copy,
+  `[BRW-8]`): the result borrows what `f` borrows, and the call's loan on the receiver ends with the
+  call. A result read through a `ref mut` field borrows `self` as well, so it cannot name the field
+  alone (`E3062`): an iterator gives no two mutable items. `f` may instead be a field whose type is a
+  type parameter, with a result whose type names one (`Option[I.Item]`); each instance is checked, as
+  a source is (`[LT-1]`, ODR-048): where the instance's field and result are views the result borrows
+  what the field borrows, and where they are not it borrows nothing. Naming `self.f` with no
+  receiver, or a field of neither kind, is `E2031`. The standard library's iterators that read
+  through a shared field declare it on `next`, and its iterator adapters on the iterator they wrap,
+  so `for k in m:` and `m.keys()` yield references that borrow the map (`[CTL-1]`), which a program
+  may keep across turns and after the loop. It is needed only where rule 1 or 3 borrows more than
+  the caller can afford, or to let the result borrow a `mut` parameter of a `Copy` type:
 
 ```ember
 @borrows(haystack)
@@ -242,8 +253,9 @@ fn main():
 * `[LT-36]` Treating the view as a whole — passing it where every field may be used, comparing,
   hashing or formatting it, copying or moving it — requires every region to be valid.
 * `[LT-38]` Moving one field out moves only that field's constraint; the remaining fields keep theirs.
-* `[LT-39]` An operation that selects a field by a run-time value (reflection, a field descriptor)
-  requires every region it could select (`E3065` if a region it needs has ended).
+* `[LT-39]` *(changed in 0.9.10)* An operation that selects a field by a run-time value (reflection, a
+  field descriptor) requires every region it could select; a region it needs that has ended is a loan
+  conflict, `E3021`.
 * `[LT-42]` A non-`owned` closure capturing a view records the regions of the fields it uses; an
   `owned fn` capturing a view requires every region to be `static` (`[TYP-15]`).
 * `[LT-43]` Region tracking never lets a view survive a `yield` that `[CORO-6]` forbids.

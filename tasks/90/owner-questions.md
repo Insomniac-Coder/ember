@@ -30,7 +30,7 @@ owner's to overturn.
    `b == c` on a `Box` itself compile, by auto-deref, and act on the payloads.) Options: (a) as
    built, neither; (b) `Box[T]` is `Clone` (a new box holding a clone) and `Eq` (payloads equal)
    when `T` is, so derives see through it — a recursive type's derived `eq` then has to be a
-   function, not the inline comparison built today; (c) `Clone` only. **OPEN.**
+   function, not the inline comparison built today; (c) `Clone` only. **ANSWERED 2026-10-22 for `Clone`: a box is copyable when what it holds is, and `interface I: Clone:` makes `Box[dyn I]` copyable (ODR-237). `Eq` not yet decided.**
 
 ## Layout attributes (`[LAY-2]`), helper L — `tasks/90/L-notes.md` §4
 

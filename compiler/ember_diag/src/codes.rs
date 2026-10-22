@@ -131,7 +131,7 @@ codes! {
     E0006 = (Error, 6, Lex, "[VER-8]", "a `#!` language directive names a version other than the current one");
     E0007 = (Error, 7, Lex, "[LT-6]", "named lifetimes are not supported in this version");
     E0008 = (Error, 8, Lex, "[LEX-22]", "unterminated character literal");
-    // ODR-186 — what `E0101` reported besides an unclosed delimiter: a literal II.5's grammar
+    // ODR-228 — what `E0101` reported besides an unclosed delimiter: a literal II.5's grammar
     // does not write (an escape, a character's value, a raw string's prefix, a byte string's
     // character, an f-string's lone `}`).
     E0009 = (Error, 9, Lex, "[LEX-26]", "malformed literal");
@@ -423,6 +423,7 @@ codes! {
     W2016 = (Warning, 2016, Types, "[PAN-1]", "`debug_assert` argument has side effects");
     W2111 = (Warning, 2111, Types, "[CLS-4]", "`virtual` has no effect in a final class");
     W2190 = (Warning, 2190, Types, "[ERR-5]", "unused `Result`");
+    W2192 = (Warning, 2192, Types, "[VER-3]", "use of a deprecated item");
     W5001 = (Warning, 5001, Ffi, "[FFI-6]", "function-like macro ignored");
     W5031 = (Warning, 5031, Ffi, "[FFI-20a]", "C++ declaration skipped: the header could not be parsed");
 

@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_33` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_33.md`](docs/spec-source/Ember_v0.9.10_Hardened_33.md) |
+| Language version being implemented | **0.9.10**, specification `Ember_v0.9.10_Hardened_34` ([what changed from 0.9.9](docs/MIGRATION-0.9.10.md)) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.10_Hardened_34.md`](docs/spec-source/Ember_v0.9.10_Hardened_34.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -39,16 +39,16 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 
 | Phase | Scope | Done |
 |---|---|---:|
-| 1 | Core language (Parts II–VI) | 98% |
-| 2 | Ownership, borrowing, regions | 99% |
+| 1 | Core language (Parts II–VI) | 95% |
+| 2 | Ownership, borrowing, regions | 80% |
 | 3 | Classes, reference counting, exclusivity | 100% |
 | 4 | Effects, compile time, reflection, derives | 100% |
-| 5 | C interoperability | 94% |
-| 6 | Concurrency and data-oriented design | 95% |
-| 7 | C++ interoperability and the interpreter | 89% |
-| 7a | Iteration, determinism, cost control | 90% |
-| 8 | Hardening and 1.0 | 73% |
-| | Overall (1.0) | 96% |
+| 5 | C interoperability | 85% |
+| 6 | Concurrency and data-oriented design | 91% |
+| 7 | C++ interoperability and the interpreter | 85% |
+| 7a | Iteration, determinism, cost control | 89% |
+| 8 | Hardening and 1.0 | 70% |
+| | Overall (1.0) | 90% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10

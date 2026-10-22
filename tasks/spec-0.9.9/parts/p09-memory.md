@@ -42,7 +42,10 @@ pays a heap allocation, a header, reference counting and exclusivity checks for 
   allocation. No length or capacity computation in the runtime wraps.
 * `[HEAP-9]` *(new in 0.9.9)* Heap storage for elements of type `T` is aligned to at least
   `align_of[T]()`, whatever that alignment is.
-* `Box[T]`: one owner; `Box(v)`, auto-deref, `b.get()`; `Box[dyn I]` holds any implementer. Move-only.
+* `Box[T]`: one owner; `Box(v)`, auto-deref, `b.get()`; `Box[dyn I]` holds any implementer. Move-only,
+  and `Clone` when `T` is: the clone is a new box holding a clone of the value, so a struct or enum
+  with a `Box` field derives `Clone` (`[STR-5]`). `Box[dyn I]` is `Clone` when `I` requires it
+  (`interface I: Clone:`), copying through the entry `I`'s method table holds for it (`[TYP-22]`).
 * `[HEAP-3]` `Shared(value) -> Shared[T]` allocates one counted block holding `value`.
 * `[HEAP-4]` *(changed in 0.9.9)* `s.get() -> ref T` borrows the payload: it begins a checked read
   access (`[EXC-2]`) that ends where the loan dies (`[EXC-18]`), and the loan keeps the block alive
@@ -135,8 +138,12 @@ fn main():
 * `[ALC-1]` `Array[T, A: Allocator = Global]`, `Map`, `Set` and `Box` accept an allocator type
   parameter; an allocator instance is passed at construction (`Array.new_in(a)`). In `Map[K, V, H,
   A]` and `Set[T, H, A]` it follows the hasher (`[STD-11]`).
-* `[ALC-2]` Implementing `Allocator` is `unsafe`: the implementer promises valid, aligned, unaliased
-  memory.
+* `[ALC-2]` *(changed in 0.9.10)* `std.mem` declares `pub unsafe interface Allocator` with
+  `allocate(self, layout: Layout) -> *mut u8` (null on failure), `deallocate(self, p: *mut u8,
+  layout: Layout)` and `reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8`;
+  `Layout` is a struct of `size: usize` and `align: usize`, and `Global` is the runtime's allocator.
+  Implementing `Allocator` is `unsafe` (`unsafe extend A implements Allocator:`, `[TYP-43]`): the
+  implementer promises valid, aligned, unaliased memory.
 * `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with
   `[build] global_allocator = "module.NAME"` naming a `static` whose type implements `Allocator`; an
   embedding host may pass allocation functions to `ember_rt_init` (`[FFI-27]`).

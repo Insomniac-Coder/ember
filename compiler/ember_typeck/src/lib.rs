@@ -1977,6 +1977,15 @@ struct GenericMethod {
     span: Span,
 }
 
+/// `[VER-3]` (ODR-174) — what `@deprecated(since, note)` says, and the file of the module whose
+/// item it is (a use there is not warned about).
+#[derive(Clone, Debug)]
+struct Deprecation {
+    since: String,
+    note: String,
+    file: FileId,
+}
+
 /// A method of one instantiation, waiting for its body to be checked against
 /// the concrete types. The same work list as `pending`, for methods.
 struct PendingMethod {
@@ -2508,6 +2517,11 @@ struct Checker<'a> {
     /// The declaring module's visibility for each canonical item. This is the
     /// resolver's visibility fact, reused when enumerating qualified N1 names.
     item_visibility: HashMap<Symbol, ast::VisKind>,
+    /// `[VER-3]` (ODR-174) — each `@deprecated` item by its qualified name, each `@deprecated`
+    /// member by its span, and each method registered from one by its `DefId`.
+    deprecated_items: HashMap<Symbol, Deprecation>,
+    deprecated_members: HashMap<Span, Deprecation>,
+    method_deprecation: HashMap<DefId, Deprecation>,
     /// Per module: names bound to a whole module by `import a.b.c`, so that
     /// `c.thing` resolves.
     namespaces: Vec<HashMap<Symbol, usize>>,
@@ -3185,6 +3199,9 @@ impl<'a> Checker<'a> {
             const_initializer: false,
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
+            deprecated_items: HashMap::new(),
+            deprecated_members: HashMap::new(),
+            method_deprecation: HashMap::new(),
             namespaces: vec![HashMap::new()],
             public_namespaces: vec![HashMap::new()],
             current_module: 0,
@@ -4288,6 +4305,7 @@ impl<'a> Checker<'a> {
                     }
                     Some(name) => {
                         let resolved = self.resolve_name(name);
+                        self.note_item_use(resolved, bound.span);
                         if !self.interfaces.contains_key(&resolved) {
                             self.unresolved_bounds.push((resolved, name, bound.span));
                             if self.bounds_known {
@@ -4822,11 +4840,15 @@ impl<'a> Checker<'a> {
                 );
                 continue;
             }
+            self.record_member_deprecations(item);
             let Some(name) = item_name(item) else { continue };
             let qualified = self.qualified(name);
             self.visible[index].insert(name, qualified);
             self.item_spans.insert(qualified, item.span);
             self.item_visibility.insert(qualified, item.vis.kind);
+            if let Some(deprecation) = self.read_deprecation(&item.attrs) {
+                self.deprecated_items.insert(qualified, deprecation);
+            }
             if let ast::ItemKind::Const(decl) = &item.kind {
                 self.const_values.insert(qualified, (decl.value.clone(), index));
             }
@@ -8643,6 +8665,9 @@ impl<'a> Checker<'a> {
         }
         let vis = self.member_visibility(interface, method.vis, method.source.0);
         self.method_vis.insert(def, vis);
+        if let Some(deprecation) = self.deprecated_members.get(&method.span).cloned() {
+            self.method_deprecation.insert(def, deprecation);
+        }
         // `[DRP-1]` — a generic that writes `fn drop` gives every one of its
         // instantiations a destructor.
         if method.name.is("drop") {
@@ -11855,6 +11880,7 @@ impl<'a> Checker<'a> {
             }
             return None;
         };
+        self.note_item_use(name, segments[segments.len() - 1].span);
         if args.is_empty() && definition.generic_params.is_empty() {
             return Some(name);
         }
@@ -12727,6 +12753,9 @@ impl<'a> Checker<'a> {
                 self.record_defaults(def, decl);
                 let vis = self.member_visibility(from_interface, member.vis.kind, self.current_module);
                 self.method_vis.insert(def, vis);
+                if let Some(deprecation) = self.deprecated_members.get(&member.span).cloned() {
+                    self.method_deprecation.insert(def, deprecation);
+                }
                 if is_abstract_class_method {
                     self.abstract_methods.insert(def);
                     self.pending_abstract_methods.push(PendingAbstractMethod {
@@ -13885,6 +13914,7 @@ impl<'a> Checker<'a> {
                     return self.scoped_arena_ty();
                 }
                 let resolved = self.resolve_name(name);
+                self.note_item_use(resolved, segments[0].span);
                 if self.interfaces.contains_key(&resolved) {
                     return self.class_interface_type(resolved, ty.span);
                 }
@@ -13946,6 +13976,7 @@ impl<'a> Checker<'a> {
             self.report_item_not_visible(module, qualified, last.span);
             return self.common.error;
         }
+        self.note_item_use(qualified, last.span);
         if args.is_empty() {
             if self.interfaces.contains_key(&qualified) {
                 return self.class_interface_type(qualified, span);
@@ -13989,6 +14020,7 @@ impl<'a> Checker<'a> {
         span: Span,
         name_span: Span,
     ) -> Ty {
+        self.note_item_use(self.resolve_name(name), name_span);
         if let Some((collecting, own)) = &self.collecting_generic
             && self.resolve_name(name) == *collecting
             && args.len() == own.len()
@@ -23120,9 +23152,95 @@ impl<'a> Checker<'a> {
 
     /// `[MOD-2]` (D-328) — `E1052` for a method or associated function that
     /// is not visible here.
+    /// `[VER-3]` (ODR-174) — `@deprecated(since, note)`: both text, by position or by name. A
+    /// malformed one is `E0104` and deprecates nothing.
+    fn read_deprecation(&mut self, attrs: &[ast::Attribute]) -> Option<Deprecation> {
+        let attr = attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("deprecated"))?;
+        let text = |expr: &ast::Expr| match &expr.kind {
+            ast::ExprKind::Lit(ast::Literal::Str(value)) => Some(value.to_string()),
+            _ => None,
+        };
+        let mut since = None;
+        let mut note = None;
+        let mut well_formed = attr.args.len() == 2;
+        for (index, arg) in attr.args.iter().enumerate() {
+            let (slot, value) = match arg {
+                ast::AttrArg::Named { name, value } if name.name.is("since") => (&mut since, value),
+                ast::AttrArg::Named { name, value } if name.name.is("note") => (&mut note, value),
+                ast::AttrArg::Expr(value) if index == 0 => (&mut since, value),
+                ast::AttrArg::Expr(value) if index == 1 => (&mut note, value),
+                _ => {
+                    well_formed = false;
+                    continue;
+                }
+            };
+            match text(value) {
+                Some(value) if slot.is_none() => *slot = Some(value),
+                _ => well_formed = false,
+            }
+        }
+        match (since, note) {
+            (Some(since), Some(note)) if well_formed => Some(Deprecation { since, note, file: attr.span.file }),
+            _ => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, attr.span, "`@deprecated` takes the version it was deprecated in and a note")
+                        .help("write `@deprecated(since=\"1.2\", note=\"use `other` instead\")`")
+                        .note("a use of the item from another module is warned about with both [VER-3]"),
+                );
+                None
+            }
+        }
+    }
+
+    /// `[VER-3]` — the `@deprecated` members of an item's body, by their spans, read before any
+    /// method is registered.
+    fn record_member_deprecations(&mut self, item: &ast::Item) {
+        let members = match &item.kind {
+            ast::ItemKind::Struct(decl) => &decl.members,
+            ast::ItemKind::Class(decl) => &decl.members,
+            ast::ItemKind::Enum(decl) => &decl.members,
+            ast::ItemKind::Extend(decl) => &decl.members,
+            _ => return,
+        };
+        for member in members {
+            if let Some(deprecation) = self.read_deprecation(&member.attrs) {
+                self.deprecated_members.insert(member.span, deprecation);
+            }
+        }
+    }
+
+    /// `[VER-3]` (ODR-174) — a use of the item `qualified` at `span`: `W2192` when it is
+    /// deprecated and the use is outside its module.
+    fn note_item_use(&mut self, qualified: Symbol, span: Span) {
+        if let Some(deprecation) = self.deprecated_items.get(&qualified).cloned() {
+            let shown = qualified.as_str().strip_prefix("root.").unwrap_or(qualified.as_str()).to_string();
+            self.warn_deprecated(&shown, deprecation, span);
+        }
+    }
+
+    /// `W2192`, once per use, naming the version and the note; a use in the item's own module,
+    /// or one the compiler wrote, is none. Once: a generic body is checked per instance, and a
+    /// check whose diagnostics were discarded (a closure's probe) leaves none to count.
+    fn warn_deprecated(&mut self, shown: &str, deprecation: Deprecation, span: Span) {
+        if span == Span::DUMMY
+            || span.file == deprecation.file
+            || self.sink.diagnostics().iter().any(|d| d.code == Some(codes::W2192) && d.primary.span == span)
+        {
+            return;
+        }
+        self.sink.emit(
+            Diagnostic::warning(codes::W2192, span, format!("`{shown}` is deprecated since {}: {}", deprecation.since, deprecation.note))
+                .note("a deprecated item is removed no earlier than the next major version [VER-3]"),
+        );
+    }
+
     fn check_method_visible(&mut self, def: DefId, owner: Ty, name: ast::Ident) {
         if self.routed_call {
             return;
+        }
+        if let Some(deprecation) = self.method_deprecation.get(&def).cloned() {
+            let shown = format!("{}.{}", self.types.display(owner), name.name);
+            self.warn_deprecated(&shown, deprecation, name.span);
         }
         let Some(&(vis, module)) = self.method_vis.get(&def) else { return };
         let visible_as = |this: &Self, (vis, module): (ast::VisKind, usize)| match vis {
@@ -26472,6 +26590,7 @@ impl<'a> Checker<'a> {
             ast::PatternKind::Path { segments } => {
                 match self.variant_named(segments, expected) {
                     Some((id, index)) => {
+                        self.note_enum_path_use(id, segments);
                         self.variant_pattern(id, index, &[], false, expected, span)
                     }
                     None => {
@@ -26490,6 +26609,7 @@ impl<'a> Checker<'a> {
 
             ast::PatternKind::Constructor { path, fields, has_rest } => {
                 if let Some((id, index)) = self.variant_named(path, expected) {
+                    self.note_enum_path_use(id, path);
                     return self.variant_pattern(id, index, fields, *has_rest, expected, span);
                 }
                 // `Point(x=1, y=2)` — a struct pattern.
@@ -26769,6 +26889,15 @@ impl<'a> Checker<'a> {
 
     /// Resolve `Shape.Circle`, or bare `Circle` when the scrutinee's type says
     /// which enum is meant (`[ENM-1]`).
+    /// `[VER-3]` — a pattern that names its enum (`Shape.Square`) uses the enum.
+    fn note_enum_path_use(&mut self, id: EnumId, path: &[ast::Ident]) {
+        if let [.., enum_name, _] = path {
+            let def = self.types.enum_def(id);
+            let qualified = def.origin.as_ref().map_or(def.name, |(name, _)| *name);
+            self.note_item_use(qualified, enum_name.span);
+        }
+    }
+
     fn variant_named(&self, path: &[ast::Ident], expected: Ty) -> Option<(EnumId, usize)> {
         let TyKind::Enum(id) = *self.types.kind(expected) else { return None };
         let def = self.types.enum_def(id);
@@ -34405,6 +34534,7 @@ impl<'a> Checker<'a> {
                 }
                 // A `const` or `static` is substituted where its name appears.
                 let qualified = self.resolve_name(name);
+                self.note_item_use(qualified, span);
                 if self.constants.contains_key(&qualified) {
                     return self.constant_use(qualified, span);
                 }
@@ -34572,6 +34702,7 @@ impl<'a> Checker<'a> {
                             self.report_item_not_visible(module, qualified, name.span);
                             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                         }
+                        self.note_item_use(qualified, name.span);
                         if self.constants.contains_key(&qualified) {
                             return self.constant_use(qualified, span);
                         }
@@ -34990,6 +35121,7 @@ impl<'a> Checker<'a> {
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 }
                 let explicit = self.resolve_method_type_args(generic_args);
+                self.note_item_use(qualified, name.span);
                 self.synth_qualified_call(qualified, name.span, args, explicit, span)
             }
 
@@ -35930,6 +36062,9 @@ impl<'a> Checker<'a> {
             }
         };
 
+        if let Some(last) = segments.last() {
+            self.note_item_use(self.resolve_name(name), last.span);
+        }
         // `Vec3(1, 2, 3)` — the synthesised memberwise constructor (`[STR-1]`).
         if let Some(id) = self.struct_through_alias(self.resolve_name(name)) {
             return self.synth_struct_literal(id, name, args, span);
@@ -40099,7 +40234,9 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name,
             ast::ExprKind::Field { .. } => {
                 let qualified = self.item_through_module(expr)?;
-                return self.enum_through_alias(qualified);
+                let id = self.enum_through_alias(qualified)?;
+                self.note_item_use(qualified, expr.span);
+                return Some(id);
             }
             ast::ExprKind::IndexOrInstantiate { base, .. } => {
                 let ast::ExprKind::Path { segments } = &base.kind else { return None };
@@ -40123,7 +40260,10 @@ impl<'a> Checker<'a> {
         if self.lookup(name).is_some() {
             return None;
         }
-        self.enum_through_alias(self.resolve_name(name))
+        let qualified = self.resolve_name(name);
+        let id = self.enum_through_alias(qualified)?;
+        self.note_item_use(qualified, expr.span);
+        Some(id)
     }
 
     /// `[RNG-1]` — a `type` alias with no `in` clause is transparent: the struct an alias names is
@@ -55999,7 +56139,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     // compiler takes (ADR-106).
     (&["inline", "noinline", "cold", "hot"], &["fn"], true),
     (&["must_use"], &["fn", "struct", "enum", "class", "type"], false),
-    (&["deprecated", "allow"], &["item"], false),
+    // `[VER-3]` — `W2192` at each use outside the item's module (`note_item_use`).
+    (&["deprecated"], &["item"], true),
+    (&["allow"], &["item"], false),
     (&["export"], &["fn", "static"], false),
     // `[FFI-26]` — its arguments and fields are checked by `collect_export_tables`.
     (&["export_table"], &["struct"], true),

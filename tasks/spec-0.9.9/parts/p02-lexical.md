@@ -144,6 +144,12 @@ escape      := "\n" | "\r" | "\t" | "\0" | "\\" | "\"" | "\'" | "\x" hex hex | "
 * `[LEX-25]` *(new in 0.9.9)* A raw string contains no escapes; a `r#"…"#` raw string may contain `"`. A multiline
   string removes the longest common run of leading spaces from its lines and drops a first line that
   is empty.
+* `[LEX-26]` *(new in 0.9.10)* A literal is written as the grammar above gives it: an escape is one of
+  `escape`'s forms, a character literal one Unicode scalar value, a raw string's prefix at most eight
+  `#` and a `"`, a byte or C string ASCII characters or escapes, and an f-string's `}` doubled outside
+  a hole. Anything else is `E0009` (malformed literal). A string left unclosed, or an f-string's `{`,
+  is `E0101` (unclosed delimiter or literal); an unterminated character literal is `E0008`
+  (`[LEX-22]`).
 
 ## II.6 Operators and punctuation
 

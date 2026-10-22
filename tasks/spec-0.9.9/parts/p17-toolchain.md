@@ -58,19 +58,24 @@ ember --help | --version [--matrix]
 * `[CLI-21]` *(new in 0.9.9)* `ember run --interp` runs a program on the compile-time evaluator instead
   of compiling it: no C compiler is needed; console and file I/O work; foreign calls and threads are
   unavailable (`E6010`); results equal a compiled run's.
-* `[TOOL-2]` `ember toolchain install cc` installs a pinned Clang and linker and selects it with `[build]
-  c_compiler = "bundled"`; `ember toolchain list` and `default` show and choose among installed ones.
-  A working Ember installation never requires a separately installed C toolchain; a system compiler may
-  be chosen explicitly, and its configuration is recorded with each build.
+* `[TOOL-2]` *(changed in 0.9.10)* Ember's toolchain archive (`[TOOL-1]`) carries LLVM's Clang and its
+  linker LLD, pinned and selected with `[build] c_compiler = "bundled"`, which compile the generated C
+  and the C and C++ glue: a working Ember installation never requires a separately installed C
+  toolchain, and there is no separate Clang download. On Windows the system libraries, which their
+  licence keeps out of the archive, are the one part it does not carry. `ember toolchain list` and
+  `default` show and choose among installed ones; a system compiler may be chosen explicitly, and its
+  configuration is recorded with each build.
 * `[TOOL-3]` When no C compiler is found, `E9002`'s message says so and its help names the remedy for
   the host (on Windows, the Visual Studio Build Tools C++ workload, or `ember toolchain install cc`);
   a bare missing path is never the primary message.
 * `[CLI-11]` `ember audit` prints a one-page summary of a package's safety surface: `unsafe` blocks
   and their notes, the effect totals, the foreign boundary and its contracts, and the trusted-base
   report of Annex C.
-* `[TOOL-1]` Each release publishes a self-contained toolchain archive per supported host (Windows
-  x64, Linux x64, macOS arm64) with `ember`, the runtime, `std` and editor support, and a one-line
-  installer that puts `ember` on `PATH`.
+* `[TOOL-1]` *(changed in 0.9.10)* Each release publishes, on the GitHub Releases page of the Ember
+  repository, a self-contained toolchain archive per supported host (Windows x64, Linux x64, macOS
+  arm64) with `ember`, the runtime, `std` and editor support, and a one-line installer that puts
+  `ember` on `PATH`. The release workflow (`.github/workflows/release.yml`) builds them, the macOS
+  archive built and tested on GitHub's macOS machines.
 * `[TOOL-4]` `ember --version` prints the compiler version, the language version, the backend, and the
   resolved C compiler and linker, so a bug report carries its environment. **The first hour:** on a
   clean Windows or Linux machine, installing Ember, `ember new hello`, `cd hello` and `ember run` print
@@ -186,14 +191,21 @@ large_copy = { level = "warn", threshold = 256 }
 * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
 * `[BLD-7]` Front-end stages run in parallel across modules by default (`-j`, default the number of
   physical cores).
-* `[BLD-6]` `lto = "off" | "thin" | "on"`. A value the backend's toolchain does not support is replaced
-  by the nearest one it does, and the build record says so. No correctness property depends on LTO.
+* `[BLD-6]` *(changed in 0.9.10)* `lto = "off" | "thin" | "on"`. A value the backend's toolchain does
+  not support is replaced by the nearest one it does, `on` for `thin` where the toolchain does only
+  `off` and `on` (cl, gcc), and the build record, `target/<profile>/inspect/<name>.build.json`, says
+  so: its `lto` gives what was asked (`asked`), what was used (`used`) and, where the two differ, why
+  (`why`). Objects another link reads (a static library) take no LTO with cl or Clang, and fat LTO
+  objects with gcc. No correctness property depends on LTO.
 * `[BLD-9]` `--timings` writes a per-stage, per-module timing report (`--timings=json` for tools).
 * `[BLD-10]` *(changed in 0.9.9)* The compile-time budgets below are release gates.
-* `[BUD-1]` They are measured on a recorded reference machine (an 8-core laptop CPU of 2020 or later,
-  16 GB, NVMe, warm caches) over `bench/bigpkg`, a generated 50k-line package of 400 modules with
-  15 % generic code and one C header import of Vulkan's size.
-* `[BUD-2]` Each figure is the median of 15 runs after 3 warm-up runs:
+* `[BUD-1]` *(changed in 0.9.10)* They are measured on a recorded reference machine (an 8-core laptop
+  CPU of 2020 or later, 16 GB, NVMe, warm caches) over `bench/bigpkg`, a generated 50k-line package of
+  400 modules with 15 % generic code and one C header import of Vulkan's size: a generated header of
+  20,000 lines in Vulkan's shape (enums, structs, function-pointer types, prototypes), not counted in
+  the package's lines.
+* `[BUD-2]` *(changed in 0.9.10)* Each figure is the median of 15 runs after 3 warm-up runs. B6's cold
+  cache is a new, empty global build cache; B7 and B9 build with the program cache off:
 
   | # | Operation | Budget |
   |---|---|---|
@@ -211,8 +223,9 @@ large_copy = { level = "warn", threshold = 256 }
   baseline even inside its budget.
 * `[BUD-3a]` CI normalises its measurements by a fixed calibration workload, and a run whose
   calibration varies by more than 10 % is inconclusive, not failed.
-* `[BUD-3b]` A gate applies only to a figure whose measured spread is below the gate, and every figure
-  is published with its spread.
+* `[BUD-3b]` *(changed in 0.9.10)* A figure's spread is its interquartile range over its median. Both
+  gates of `[BUD-3]` apply only to a figure whose spread is below 15 %, and every figure is published
+  with its spread.
 * `[BUD-5]` A proposed language or compiler feature states its measured effect on B3 and is rejected if
   it adds more than 5 percentage points.
 * `[BLD-11]` A package that omits a `[STD-6]` layer cannot use it or depend on a package that does.
@@ -293,10 +306,12 @@ fn main():
   week one (a text adventure, a CSV summariser, a scene graph with parent links, an event bus, an
   inventory, a path finder…), each written by someone who has read only Part I and Annex A and
   committed unmodified.
-* `[TST-9]` Each is marked `accepted` or `rejected(<shape>)`; a rejection whose shape is in no
-  catalogue (§XVII.6) blocks the release, and the help of the shape, applied literally, must make the
-  program compile.
-* `[TST-10]` The acceptance rate is published with each release; a release that lowers it says why.
+* `[TST-9]` *(changed in 0.9.10)* Each is marked `accepted` or `rejected(<shape>)`, the shape named by
+  its catalogue id (`O2`, `N3`, `P21`); a rejection whose shape is in no catalogue (§XVII.6) blocks the
+  release, and the help of the shape, applied literally, must make the program compile.
+* `[TST-10]` *(changed in 0.9.10)* The acceptance rate is published with each release; a release that
+  lowers it says why. It counts the programs that compile as written or with the catalogue's helps
+  applied as `[TST-9]` says; a help the catalogue gives that the compiler does not print is a defect.
 * `[TST-27]` *(new in 0.9.9)* **The C gate.** Every accepted program in the test suite is compiled
   through the C compiler with warnings as errors on each supported host compiler. A C compiler error
   on an accepted program is a compiler defect and fails CI (`[CG-C-2]`).
@@ -383,40 +398,54 @@ fn main():
 * `[DIA-14]` Only the first error of a cascade is reported: nothing is reported about an expression
   whose type is already an error, a name bound to a failed import, or a call to a failed declaration.
 * `[DIA-20]` *(new in 0.9.9)* A run of invalid bytes or characters is one diagnostic, not one per byte.
-* `[DIA-21]` *(new in 0.9.9)* **Python habits.** Each of these is recognised and answered with the
-  Ember form as a machine-applicable fix-it:
+* `[DIA-21]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python habits.** Each of these is a catalogued
+  shape, named by its id in marks, in `--json` and in `tests/ui/` (`[TST-9]`, `[DIA-13]`), and is
+  recognised and answered with the Ember form: as a machine-applicable fix-it where the help is a
+  rewrite of what was written, and as text where it is advice (P18, P19, P22, P29, and P12's `try` and
+  `except`):
 
-  | Written | Help |
-  |---|---|
-  | `True`, `False`, `None` as a value where no `Option` is expected | `true`, `false`; `None` needs an `Option` type |
-  | `def f():` | `fn f():` |
-  | `str(x)`, `int(s)`, `float(s)`, `int(x)` | `x.to_string()` or `f"{x}"`, `s.parse[int]()`, `s.parse[float]()`, `x as int` |
-  | `len(s)` for a string (`E2073`) | `s.char_count()` (Python's count) or `s.len()` (bytes) |
-  | `min(xs)`, `max(xs)` of one collection | `xs.iter().min()`, `xs.iter().max()` (an `Option`) |
-  | `xs.append(x)`, `s.strip()`, `s.startswith(p)`, `s.upper()`, … | the `[STD-13]` table (Appendix E) |
-  | `xs[a:b]` | `xs[a..b]` |
-  | `if xs:` | `if not xs.is_empty():` (`[CTL-0]`) |
-  | `let x = 5`, `var x = 5` | `x = 5` |
-  | `x == None` | `x is None` |
-  | `with open(p) as f:` | `with f = fs.File.open(p)?:` |
-  | `raise e`, `try:`, `except E:`, `finally:` | `return Err(e)`, `?`, `match`, `defer:` (Part XIII) |
-  | `lambda x: e` | `fn(x) => e` |
-  | `self` missing from a method's parameters | add `self` |
-  | `a / b` on integers | `a // b`, or `a as float / b` (`[TYP-28]`) |
-  | `if x = 5:` | `if x == 5:` |
-  | `case p:` inside `match` | `p:` (or `p =>`), without `case` |
-  | `global x`, `nonlocal x` | a `static` or a class field for shared state; a closure captures `x` without a declaration (`[CLO-2]`) |
-  | `*args`, `**kwargs` in a signature | an `Array` or `Span` parameter, or keyword arguments with defaults; Ember has no variadic functions (§I.6) |
-  | `"%d" % n`, `"{}".format(n)` | `f"{n}"` (`[LEX-19]`) |
+  | Shape | Written | Codes | Help |
+  |---|---|---|---|
+  | P1 | `True`, `False`, `None` as a value where no `Option` is expected | `E1010`, `E2020`, `E2060` | `true`, `false`; `None` needs an `Option` type |
+  | P2 | `def f():` | `E0100` | `fn f():` |
+  | P3 | `str(x)`, `int(s)`, `float(s)`, `int(x)`, `float(x)` | `E1010` | by the argument's type: `x.to_string()` or `f"{x}"`; for text `s.parse[int]()?`, `s.parse[float]()?` in a function whose `Result` takes a `ParseError`, else with `.unwrap()`, giving the number as Python's does; for a number `x as int`, `x as float` |
+  | P4 | `len(s)` for a string | `E2073` | `s.char_count()` (Python's count) or `s.len()` (bytes) |
+  | P5 | `min(xs)`, `max(xs)` of one collection | `E2020` | `xs.iter().min().unwrap()`, `xs.iter().max().unwrap()` (Python's raises on an empty one) |
+  | P6 | `xs.append(x)`, `s.strip()`, `s.startswith(p)`, `s.upper()`, … | `E2072`, `E2020` | the `[STD-13]` table (Appendix E) |
+  | P7 | `xs[a:b]` | `E0100` | `xs[a..b]` |
+  | P8 | `if xs:` | `E2035` | `if not xs.is_empty():` (`[CTL-0]`) |
+  | P9 | `let x = 5`, `var x = 5` | `E0100` | `x = 5` |
+  | P10 | `x == None` where the `Option` has no `Eq` | `E2040` | `x is None` |
+  | P11 | `with open(p) as f:` | `E0100` | `with f = fs.File.open(p)?:` |
+  | P12 | `raise e`, `try:`, `except E:`, `finally:` | `E0100` | `return Err(e)`, `?`, `match`, `defer:` (Part XIII) |
+  | P13 | `lambda x: e` | `E0100` | `fn(x) => e` |
+  | P14 | `self` missing from a method's parameters | `E1010` | add `self` |
+  | P15 | `a / b` on integers | `E2240` | `a // b`, or `a as float / b` (`[TYP-28]`) |
+  | P16 | `if x = 5:` | `E2036` | `if x == 5:` |
+  | P17 | `case p:` inside `match` | `E0100` | `p:` (or `p =>`), without `case` |
+  | P18 | `global x`, `nonlocal x` | `E0100` | a `static` or a class field for shared state; a closure captures `x` without a declaration (`[CLO-2]`) |
+  | P19 | `*args`, `**kwargs` in a signature | `E0100` | an `Array` or `Span` parameter, or keyword arguments with defaults; Ember has no variadic functions (§I.6) |
+  | P20 | `"%d" % n`, `"{}".format(n)` | `E2020`, `E2072` | `f"{n}"` (`[LEX-19]`) |
+  | P21 | `Err("…")` in a function whose error type is `AnyError` | `E2020` | `Err(AnyError.msg("…"))` (`[ERR-8]`) |
+  | P22 | an interface as a type where every type implementing it is a struct or enum (`s: Shape`) | `E2173`; `E2020` at a use | `ref dyn Shape`, `Box[dyn Shape]` or `[T: Shape]` (`[OBJ-2]`) |
+  | P23 | `s * n`, `[x] * n` | `E2020` | `s.repeat(n)`, `[x for _ in 0..n]` (`[PHIL-14]`) |
+  | P24 | `'abc'`, `''` | `E0008` | `"abc"`, `""` |
+  | P25 | `len(it)`, `it[i]` on an iterator (`s.split(",")`) | `E2072`, `E2020` | `.collect[Array[…]]()` where the iterator is made |
+  | P26 | a `str` kept where a `String` is wanted; `+=` on a `str` | `E2020` | `.to_string()`; `name: String = …` |
+  | P27 | a `char` against a `str` (`c == "S"`, `s + c`) | `E2020`, `E2040` | `'S'`, `c.to_string()`, `s.push(c)` |
+  | P28 | a statement after `=>` in a `match` arm | `E0100` | every arm written `pattern:` with a block |
+  | P29 | `s[i]` on a string | `E2020` | `s.chars()` collected, or `s.as_bytes()[i]`; there is no indexing by character (`[TXT-4]`) |
+  | P30 | `p[1]` on a tuple | `E2020` | `p.1` |
 
 * `[DIA-22]` *(new in 0.9.9)* A diagnostic caused by a callee's contract or signature is reported at the
   call site in the programmer's code, with the callee's declaration as a secondary span.
 * `[DIA-23]` *(new in 0.9.9)* A run-time panic names Ember entities — the class, field, variable, file
   and line — never a C symbol or a mangled name.
-* `[DIA-24]` *(new in 0.9.9)* **Name suggestions (shape N1).** A candidate is suggested when its
-  Damerau–Levenshtein distance from the unknown name is at most 1 for names of up to 4 characters and
-  at most 2 otherwise, and it is of the right kind for the position (a type where a type is expected,
-  a value where a value is). At most three are suggested, closest first, then same file before other
+* `[DIA-24]` *(new in 0.9.9)* *(changed in 0.9.10)* **Name suggestions (shape N1).** A candidate is
+  suggested when its Damerau–Levenshtein distance from the unknown name is at most 1 for names of up
+  to 4 characters and at most 2 otherwise, and it is of the right kind for the position (a type where
+  a type is expected, a value where a value is, and a type where a value is only before `.`, as
+  `Color` in `Color.Red`). At most three are suggested, closest first, then same file before other
   files, then by qualified name.
 
 ### XVII.6.1 Ownership and borrow shapes
@@ -424,7 +453,7 @@ fn main():
 | Shape | Situation | Codes | Primary help |
 |---|---|---|---|
 | O1 | use after move | `E3040` | `x.clone()` if `Clone`; else reorder so the last use precedes the move; for a collection, a note that assignment moves a list where Python's aliases it (Appendix E) |
-| O2 | move out of a container or field | `E3010`–`E3013` | `mem.take`, `mem.replace`, `swap`; `pop`, `swap_remove`, `remove`, `drain` |
+| O2 | move out of a container or field | `E3010`–`E3013` | a borrow (`ref`, `ref mut`) first (`[DIA-9]`); then `mem.take`, `mem.replace`, `swap`; `pop`, `swap_remove`, `remove`, `drain`; then `.clone()`, or taking the container over (`owned`) |
 | O3 | move inside a loop | `E3041` | declare inside the loop, clone per iteration, or `mem.take` |
 | O4 | whole use after a partial move | `E3042` | reassign the field, or destructure up front |
 | O5 | closure moves out a capture | `E3030` | declare the parameter `once fn` |
@@ -435,7 +464,7 @@ fn main():
 | B1 | two mutable borrows of one place, e.g. two indices | `E3022` | `get_pair_mut(i, j)`, `split_at`, `chunks_mut`, `iter_mut`, `swap(i, j)`; `SoA` columns |
 | B2 | mutation while iterating | `E3020` | `retain`, `drain`, collect first, or an index loop |
 | B3 | shared and mutable overlap | `E3021` | end the shared borrow first, or copy the value out |
-| B4 | two writers of one value | `E3023` | a single owner passing `mut`; `Cell` for a counter |
+| B4 | two writers of one value | `E3023` | a single owner passing `mut`; `Cell` for a counter; for a parameter given a new value, a new local first (`letter = letter.lower()` becomes `lower = letter.lower()`) |
 | B5 | self-referential struct | `E3024` | store an index or `Handle`; split the struct |
 | B6 | returned view not derived from a parameter | `E3062` | return an owned value, or `@borrows(p)` |
 | B7 | borrow outlives its source | `E3060` | move the source outward, return an owned value, or bind with `with`; for a parameter, borrow it instead of taking it `owned`, or take it as `Span[T]`, `str` or `ref T` |
@@ -458,7 +487,7 @@ fn main():
 |---|---|---|
 | N1 | unknown name | up to three candidates (`[DIA-24]`) |
 | N2 | name exported elsewhere | the import line, as a fix-it |
-| N3 | unknown method | nearest member; the interface that would supply it; a Python name per `[DIA-21]` |
+| N3 | unknown method or field (`E2072`) | nearest member; the interface that would supply it; a Python name per `[DIA-21]` |
 | N4 | scalar mismatch | the exact lossless `as`, and which side set the expected type; for an `int` and a `float` operand (`i * 0.5`), `i as float * 0.5` as a machine-applicable fix-it |
 | N5 | literal does not fit (`E2010`) | the suffix or annotation that fits |
 | N6 | wrong number of arguments | the signature with names and modes |
@@ -469,6 +498,7 @@ fn main():
 | N11 | ambiguous method (`E2070`) | `I.m(recv, …)` for each candidate |
 | N12 | indentation (`E0002`–`E0004`) | the expected column and the line that set it |
 | N13 | a field assigned (`self.x = …`) but not declared (`E2072`) | `field 'x' is not declared in class C`, with a machine-applicable fix-it adding `x: <inferred type>` to the class body |
+| N14 | an item has the path of a module or the name of a built-in type (`E1032`) | rename the item, or the module's file |
 
 ### XVII.6.3 Code ranges
 

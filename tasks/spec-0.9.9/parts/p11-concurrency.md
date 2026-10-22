@@ -35,12 +35,14 @@ fn main():
 
 ## XI.1 `Send` and `Sync`
 
-* `[THR-8]` *(new in 0.9.9)* A type is **`Send`** when a value of it may be moved to another thread.
+* `[THR-8]` *(new in 0.9.9)* *(changed in 0.9.10)* A type is **`Send`** when a value of it may be moved to another thread.
   Structs, enums, tuples, fixed arrays and collections are `Send` when every component is. Raw
   pointers are not `Send`. `ref T` and `Span[T]` are `Send` when `T` is `Sync`; `ref mut T` and
   `MutSpan[T]` when `T` is `Send`. A class handle, and `Weak` of one, is `Send` only if the class is
   `@sync` (`[THR-2]`). `Shared[T]` is never `Send` (`[HEAP-10]`); `SyncShared[T]` and its `Weak` are
-  when `T` is `Send` and `Sync`: the last release may drop the `T` on any thread (ODR-052).
+  when `T` is `Send` and `Sync`: the last release may drop the `T` on any thread (ODR-052). An owned
+  callable value (`[CLO-3]`) is `Send` when everything it captures is `Send`; a function, or a lambda
+  that captures nothing, always is.
 * `[THR-9]` *(new in 0.9.9)* A type is **`Sync`** when several threads may read one value of it at
   the same time. Structural types are `Sync` when every component is. `Cell`, `RefCell`, `UnsafeCell`,
   raw pointers, `Shared[T]`, and handles (and `Weak`s) of classes that are not `@sync` are not `Sync`.

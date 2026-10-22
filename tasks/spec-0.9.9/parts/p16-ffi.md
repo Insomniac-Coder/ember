@@ -237,7 +237,7 @@ unsafe overlay c "vulkan/vulkan.h":
   method line — is an
   assertion about foreign code and MUST be declared `unsafe overlay` (`E5067`), the third boundary of
   `[TIER-1]`; an overlay of only `rename` and `hide` items needs no `unsafe`.
-* `[FFI-11]` *(changed in 0.9.9)* **Contract vocabulary.** A pointer contract has five axes;
+* `[FFI-11]` *(changed in 0.9.9)* *(changed in 0.9.10)* **Contract vocabulary.** A pointer contract has five axes;
   mutability comes from `const` and is never written. The same words appear after a parameter name
   in an overlay and inside `@ffi(param(name, word, …), result(word, …))` on a hand declaration
   (ODR-073); that attribute does not create a separate contract system.
@@ -249,6 +249,9 @@ unsafe overlay c "vulkan/vulkan.h":
   | nullability | `nullable` | `Option[…]` |
   | lifetime (results) | `from(self)`, `from(p)`, `from(static)` | the region of the receiver, of `p`, or static (`[LT-1a]`) |
   | aliasing | `exclusive`, `aliased` | `ref mut` and `MutSpan[T]` results allowed only with `exclusive`; a result is `aliased` unless stated |
+
+  A parameter `borrowed one exclusive` is written `p: ref mut T` or `mut p: T`; an opaque type, which
+  has no value to pass, only as the first.
 
   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`

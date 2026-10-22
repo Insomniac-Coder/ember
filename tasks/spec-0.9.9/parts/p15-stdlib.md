@@ -35,7 +35,9 @@ anything this Part leaves open.
     backwards) return lazy iterators, as Python 3's do.
   * `sum(it, start=0)`, `any(it)` and `all(it)` consume an iterable (of numbers, of `bool`s);
     `any(x > 0 for x in xs)` uses a generator expression (`[GRM-38]`).
-  * `sorted(it, key=None, reverse=false) -> Array[T]` returns a new sorted array (stable).
+  * `sorted(it, key=None, reverse=false) -> Array[T]` returns a new sorted array (stable). Over an
+    iterator of references (`sorted(m.keys())`) the array holds clones of the items (`T: Clone`), as
+    `sorted(m)`'s does: an `Array` cannot hold views of a local (`[TYP-15]`).
   `min` and `max` stay two-argument functions; `xs.iter().min()` gives an `Option` for a collection.
 * `[STD-14]` *(new in 0.9.9)* Failure follows `[ERR-13]`: a caller's bug panics and has a
   non-panicking twin; a failure of the world returns `Result` or `Option`. Every allocating function
@@ -120,7 +122,12 @@ anything this Part leaves open.
   -> String`, `to_upper`, `to_lower`, `repeat(n)`, `parse[T]() -> Result[T, ParseError]`,
   `to_string`, `get(range)`, `is_char_boundary(i)`, and `x in s` (`[STD-8b]`). Methods returning
   several strings return iterators of `str` borrowing `s`. Case mapping and `char_count` are
-  Unicode-aware; nothing depends on the locale. `parse[T]()` (ODR-029) reads the whole text as an
+  Unicode-aware; nothing depends on the locale. `char` has `is_alphabetic` (Unicode's Lu, Ll, Lt, Lm
+  and Lo), `is_digit` (the digits of every script, and the superscripts), `is_alphanumeric`
+  (alphabetic or numeric) and `is_whitespace` (what `split_whitespace` splits at), which mean what
+  Python's `isalpha`, `isdigit`, `isalnum` and `isspace` do, and `is_ascii_alphabetic`,
+  `is_ascii_digit`, `is_ascii_alphanumeric` and `is_ascii_whitespace`, the same restricted to ASCII.
+  `parse[T]()` (ODR-029) reads the whole text as an
   integer type (the 256-bit counts included, over their whole range), a float type, `bool` or `char`,
   skipping no white space (`s.trim().parse[int]()`): an
   integer is an optional sign (`-` only for a signed type) and ASCII decimal digits, and must fit `T`;
@@ -249,9 +256,11 @@ anything this Part leaves open.
   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
   (`Array.join`) takes precedence. An adapter takes the iterator it wraps (`owned self`), and so
   does a consumer; an adapter also takes over what it keeps: `zip` and `chain` their other iterator,
-  and the adapters that apply a callable that callable (`owned`), so a named iterator given to `zip`
-  is moved (`.clone()` keeps the caller's), and a lambda written at the call keeps its captures
-  (`[CLO-15]`). What a caller passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
+  and the adapters that apply a callable that callable (`owned`), and a consumer that applies a
+  callable (`any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`, the `…_by` and
+  `…_by_key` forms) takes it over too. So a named iterator given to `zip` is moved (`.clone()` keeps
+  the caller's), and a lambda written at the call keeps its captures (`[CLO-15]`). What a caller
+  passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
   `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
   `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
   `start` as `[STD-26]`'s `enumerate` does. A negative count or index, or a `k` of zero or less,
