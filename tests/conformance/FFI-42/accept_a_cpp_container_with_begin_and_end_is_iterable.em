@@ -7,11 +7,15 @@
 #$ stdout: 21 3
 #$ stdout: 6 7 8
 #$ stdout: 0
+#$ assert-c: contains("struct em_3cpp12h_containers8Bag_iter {")
+#$ assert-c: contains("em_3cpp12h_containers3Bag4iter(")
 # `[FFI-42]` — a C++ class with `begin()` and `end()` is iterable: `for x in c` walks its C++
 # iterators, a standard library's class (`std::vector<int>::iterator`) or a pointer, each element a
 # `ref` to it, which reads through as the element. `[FFI-42a]` — the loop borrows the container
 # mutably for its length: after it, the container's methods are called as ever. An empty container
-# gives no element.
+# gives no element. The iterator is `Bag_iter`, named as a member's static is, and `[MNG-1]` keeps
+# its symbol apart from the method `Bag.iter`'s (D-782: the two were one C name, and the iterator
+# was `Bag_cpp_iter` to keep them apart).
 
 import cpp "containers.hpp" with (overlay = "overlays/containers.em")
 

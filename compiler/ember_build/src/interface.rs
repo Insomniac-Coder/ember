@@ -45,7 +45,9 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 13 records what `@borrows` names as a parameter and, for `self.f` (`[LT-1a]`, ODR-196),
 // the receiver's field: a schema 12 record has positions only, so `@borrows(self.f)` and
 // `@borrows(self)`, which lend a caller different things, would be one contract.
-const SCHEMA_VERSION: u32 = 13;
+// Schema 14 marks a transliterated component in its length (`[MNG-3]`, ODR-202: `café` is
+// `u10caf_u00E9_`): a schema 13 record names `café` as the ASCII name `caf_u00E9_` is now named.
+const SCHEMA_VERSION: u32 = 14;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a

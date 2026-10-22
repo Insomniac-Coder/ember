@@ -5017,6 +5017,24 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-266 — Helper Y merged: the rest of `[MNG-1]` (ODR-201, ODR-202)
+
+2026-10-22 (helper Y, `tasks/95/Y-notes.md`). ODR-202: a component with a character beyond ASCII is
+marked in its length (`café` is `em_u10caf_u00E9_`, the ASCII name `caf_u00E9_` `em_10caf_u00E9_`),
+written in `ember_branding::push_component` and read back by `starts_component`/`split_component`
+everywhere symbols are read (`ember demangle` among them). ODR-201: `E1032` (`[MOD-1]`, its page,
+a `tests/ui/` pair), refusing an item with a module's path, an item named like a module its own
+module imports, and a type named like a built-in type (the prelude's shadowable names and `import c`
+declarations left alone); an `E9040` that only repeats a reported `E1032` is dropped. D-782's
+workaround is gone: the C++ importer's iterator is `<Class>_iter`, claimed like every other name
+and written after the header's own declarations (a header's own `Row_iter` keeps its name; the
+iteration is skipped with `W5002`). The runtime's reload refusal reports and the removed-function
+panic print Ember paths (`rl_path` decodes a slot's symbol as `demangle` does). The interface
+artifacts' schema is 14 (13 for `@borrows(self.f)`, ADR-265; 14 for the mark). `E9040` joins the
+error-page baseline (D-861): no program reaches it once paths are unique, short of two instances'
+64-bit hashes meeting. Fixed: D-843, D-849. Open: D-859..D-863. Ruled: ODR-213..217.
+`[DIA-6]`'s registry test waits on `E1032`'s row in the specification's code table (the next cut).
+
 ## ADR-265 — Helper X merged: `@borrows(self.f)`, the iterator half of D-819
 
 2026-10-22 (helper X, `tasks/95/X-notes.md`). ODR-196 built: `@borrows(self.f)` names a view field of

@@ -372,6 +372,26 @@ fn committed_module_item_name_suggestion_matches_and_fixed_source_compiles() {
     );
 }
 
+/// ODR-201, `[DIA-13]` — an item named like a module in its scope is `E1032`, which names the
+/// module's file; renaming the item, the primary help, compiles.
+#[test]
+fn committed_item_named_like_a_module_matches_and_fixed_source_compiles() {
+    let root = workspace_root();
+    let dir = root.join("tests/ui/basic/E1032");
+    let before = dir.join(ember_branding::source_file("item_named_like_a_module"));
+    let fixed = dir.join(ember_branding::source_file("item_named_like_a_module.fixed"));
+
+    let expected = normalize(&std::fs::read(before.with_extension("stderr")).expect("the snapshot is readable"));
+    let (before_exit, actual) = check(&before, &root);
+    assert_ne!(before_exit, 0, "{} unexpectedly compiled", before.display());
+    assert_eq!(actual, expected, "{} diagnostic changed", before.display());
+    assert_eq!(error_codes(&actual), ["E1032"], "{} must isolate the path conflict", before.display());
+    assert!(primary_help(&actual).contains("rename the item"), "the primary help renames the item:\n{actual}");
+
+    let (fixed_exit, fixed_stderr) = check(&fixed, &root);
+    assert_eq!(fixed_exit, 0, "{} does not compile:\n{fixed_stderr}", fixed.display());
+}
+
 #[test]
 fn qualified_name_suggestion_preserves_namespace_and_targets_leaf() {
     let workspace = workspace_root();

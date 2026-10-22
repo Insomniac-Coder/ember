@@ -168,6 +168,8 @@ codes! {
     E1020 = (Error, 1020, Resolve, "[GRM-4]", "name is already declared in this block");
     E1030 = (Error, 1030, Resolve, "[TYP-26]", "two items with the same name in one scope");
     E1031 = (Error, 1031, Resolve, "[MOD-8]", "a name bound by two glob imports is used");
+    // ODR-201 — every item has one path (`[MNG-1]`).
+    E1032 = (Error, 1032, Resolve, "[MOD-1]", "an item has the path of a module or the name of a built-in type");
     E1041 = (Error, 1041, Resolve, "[MOD-4]", "import cycle between packages");
     E1050 = (Error, 1050, Resolve, "[MOD-7]", "field is read-only outside its module");
     E1051 = (Error, 1051, Resolve, "[MOD-7]", "`read` visibility is valid on fields only");

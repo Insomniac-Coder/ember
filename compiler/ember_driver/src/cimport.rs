@@ -1117,6 +1117,14 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         let written = config.instantiate[index].trim().trim_start_matches("::").to_string();
         writer.instantiation(cursor, &written, methods.get(&index).map_or(&[], Vec::as_slice));
     }
+    // `[FFI-42]` — each iterable class's iterator (`Bag_iter`), after the header's own declarations,
+    // so one of them named so keeps its name and the iteration is the one skipped, saying why.
+    let writing = std::mem::take(&mut writer.writing);
+    for (class, owner, spelled, namespace) in std::mem::take(&mut writer.iterations) {
+        writer.writing = namespace;
+        writer.cpp_iteration(class, &owner, &spelled);
+    }
+    writer.writing = writing;
     // `[FFI-6a]` — the object-like macros, evaluated by Clang in a second parse.
     let macros = writer.macro_names.clone();
     if !macros.is_empty() {
@@ -1296,6 +1304,9 @@ struct Writer {
     /// `[FFI-42]` — for each class with `begin()` and `end()`, as C++ spells it, the type of
     /// `*c.begin()` (`void` where that or `begin() != end()` does not compile).
     elements: HashMap<String, CXType>,
+    /// `[FFI-42]` — each class whose iterator is written once every declaration of the header has
+    /// taken its name (`cpp_iteration`): its definition, Ember name, C++ spelling and namespace.
+    iterations: Vec<(CXCursor, String, String, Vec<String>)>,
     /// `[FFI-17b]` — each class instantiation `instantiate=[…]` lists, by its USR: its Ember name.
     instances: HashMap<String, String>,
     /// `[DIA-5]` — `Imported::declared`, and each header file's text, read once for it.
@@ -2463,7 +2474,7 @@ impl Writer {
             if let Some((decl, slots)) = trampoline {
                 self.trampoline(definition, &opaque, &decl, slots, unnamed_virtuals);
             } else if taken.insert("iter".to_string()) {
-                self.cpp_iteration(definition, &owner, &class_spelled);
+                self.iterations.push((definition, owner.clone(), class_spelled.clone(), self.writing.clone()));
             }
         }
     }
@@ -2505,6 +2516,13 @@ impl Writer {
                     return;
                 }
             };
+            // The iterator is the class's, named as a member's static is (`Outer_name`): `Bag_iter`,
+            // whose symbol `[MNG-1]` keeps apart from the method `Bag.iter`'s.
+            let walker = format!("{owner}_iter");
+            if !self.claim(&walker) {
+                self.skip(begin, &name, format!("its iterator's name `{walker}` is taken by another declaration of the header ([FFI-42])"));
+                return;
+            }
             let prefix = ember_branding::SYMBOL_PREFIX;
             let ops = format!("{prefix}_cpp_{}_iter_{}", self.stem, self.thunks);
             self.thunks += 1;
@@ -2515,7 +2533,6 @@ impl Writer {
                  extern \"C\" void* {ops}_next(void* range) noexcept {{ try {{ auto* walk = static_cast<{ops}_range*>(range); if (walk->at == walk->end) return nullptr; auto* item = std::addressof(*walk->at); ++walk->at; return const_cast<void*>(static_cast<const void*>(item)); }} catch (...) {{ crossed(\"the iterator of {spelled}\"); }} }}\n\
                  extern \"C\" void {ops}_end(void* range) noexcept {{ delete static_cast<{ops}_range*>(range); }}"
             );
-            let walker = format!("{owner}_cpp_iter");
             self.push(
                 &walker,
                 Kind::Class,
