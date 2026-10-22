@@ -4768,6 +4768,15 @@ impl<'a> Checker<'a> {
     fn check_item_paths(&mut self, modules: &[LoadedModule]) {
         let by_path: HashMap<&str, usize> =
             self.prefixes.iter().enumerate().map(|(index, prefix)| (prefix.as_str(), index)).collect();
+        // Each module by the scope it is in and its name there (`inner.cells` is `inner`'s `cells`).
+        let children: HashMap<(&str, &str), usize> = self
+            .prefixes
+            .iter()
+            .enumerate()
+            .filter(|(_, prefix)| !prefix.is_empty())
+            .map(|(index, prefix)| (prefix.rsplit_once('.').unwrap_or(("", prefix.as_str())), index))
+            .collect();
+        let path_of = |prefix: &str, name: Symbol| if prefix.is_empty() { name.to_string() } else { format!("{prefix}.{name}") };
         for (index, loaded) in modules.iter().enumerate() {
             let prefix = self.prefixes[index].as_str();
             // The names this module's `import a.b [as c]` bind to modules, as `bind_imports` binds them.
@@ -4782,8 +4791,8 @@ impl<'a> Checker<'a> {
             }
             for item in &loaded.module.items {
                 let Some(name) = item_ident(item) else { continue };
-                let path = if prefix.is_empty() { name.name.to_string() } else { format!("{prefix}.{}", name.name) };
-                if let Some(&module) = by_path.get(path.as_str()) {
+                if let Some(&module) = children.get(&(prefix, name.name.as_str())) {
+                    let path = path_of(prefix, name.name);
                     let file = modules[module].module.span.file;
                     self.sink.emit(
                         Diagnostic::error(codes::E1032, name.span, format!("item `{path}` has the path of module `{path}`"))
@@ -4794,7 +4803,7 @@ impl<'a> Checker<'a> {
                                 "every item has one path [MOD-1] [MNG-1], and the item's members and the module's items would both be `{path}.<name>`"
                             )),
                     );
-                    self.path_conflicts.insert(path.clone());
+                    self.path_conflicts.insert(path);
                 } else if let Some((import, module)) = imported.get(&name.name) {
                     let bound = name.name;
                     self.sink.emit(
@@ -4816,7 +4825,7 @@ impl<'a> Checker<'a> {
                             .help("rename the type")
                             .note("a built-in type's name means the built-in wherever a type is written, and its path is the built-in's [MNG-1]"),
                     );
-                    self.path_conflicts.insert(path);
+                    self.path_conflicts.insert(path_of(prefix, name.name));
                 }
             }
         }
