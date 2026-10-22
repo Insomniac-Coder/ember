@@ -1136,6 +1136,7 @@ impl Parser<'_> {
         if self.eat_punct(Punct::LParen) {
             while !self.at_punct(Punct::RParen) && !self.at_eof() {
                 let field_start = self.span();
+                let attrs = self.parse_attributes();
                 // `Circle(radius: f32)` names its field; `Io(io.Error)` does not.
                 let named = self.at_ident() && self.at_punct_at(1, Punct::Colon);
                 let name = named.then(|| {
@@ -1144,7 +1145,7 @@ impl Parser<'_> {
                     ident
                 });
                 let ty = self.parse_type();
-                fields.push(VariantField { name, ty, span: field_start.to(self.prev_span()) });
+                fields.push(VariantField { attrs, name, ty, span: field_start.to(self.prev_span()) });
                 if !self.eat_punct(Punct::Comma) {
                     break;
                 }

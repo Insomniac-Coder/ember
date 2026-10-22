@@ -501,6 +501,21 @@ pub fn inject(
                         if let Some(old) = string_argument(&variant.attrs, "renamed_from") {
                             additions.renamed.insert((name.clone(), variant.name.name.to_string()), old);
                         }
+                        // `[HR-14]` — a payload field renamed, or added with its type `Default`, as a
+                        // type's field.
+                        for (index, field) in variant.fields.iter().enumerate() {
+                            let field_name = field.name.map_or_else(|| format!("_{index}"), |name| name.name.to_string());
+                            if let Some(old) = string_argument(&field.attrs, "renamed_from") {
+                                additions.renamed.insert((name.clone(), format!("{}.{field_name}", variant.name.name)), old);
+                            }
+                            if !decl.generics.is_empty() || zero_default(&field.ty) {
+                                continue;
+                            }
+                            let function = helper("__reload_default", &format!("{}_{}", decl.name.name, variant.name.name), &field_name);
+                            source.push_str(&format!("fn {function}() -> {}:\n    return 0\n\n", snippet(field.ty.span)));
+                            if_default.insert(function.clone(), field.ty.clone());
+                            additions.defaults.insert((name.clone(), format!("{}.{field_name}", variant.name.name)), function);
+                        }
                     }
                     continue;
                 }

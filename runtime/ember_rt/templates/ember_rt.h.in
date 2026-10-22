@@ -3049,8 +3049,12 @@ typedef struct ember_rl_type {
     int (*migrate)(void* out, const void* old, char* report, size_t report_size);
     /* The struct `Old<Name>` the `migrate_from` reads, by name in this image. */
     const char* old_type;
-    /* Drops field `index` of the value at `object` ([HR-2a]'s reclaim). */
+    /* Drops field `index` of the value at `object` ([HR-2a]'s reclaim). For an enum with payloads,
+     * this and `init_field` number every variant's payload fields in turn ([HR-14]). */
     void (*drop_field)(void* object, uint32_t index);
+    /* The hash of its layout attributes alone (`@packed`, `@align`, an enum's representation), 0
+     * for none ([HR-14], [LAY-2]). */
+    uint64_t attributes;
 } ember_rl_type;
 
 /* [HR-3b] (A1, ODR-133) What a checkpoint's frames still use. A function of a reloadable image with
@@ -3086,6 +3090,7 @@ ember_rl_frame** ember_reload_frames(void);
 #define EMBER_RL_LAYOUT_CONTAINED UINT32_C(1) /* a value of it sits in a container somewhere ([HR-13]) */
 #define EMBER_RL_LAYOUT_UNIT UINT32_C(2)      /* an enum with no payload */
 #define EMBER_RL_LAYOUT_FOREIGN UINT32_C(4)   /* a raw pointer can reach a value of it ([HR-13b]) */
+#define EMBER_RL_LAYOUT_ABI UINT32_C(8)       /* crosses a foreign boundary by value: its layout attributes are the C side's ([HR-14]) */
 
 /* [HR-8] The reload manifest: in a section of the image named `.emrl` (PE) or `ember_reload`
  * (ELF). `targets`, `addresses`, `static_data` and `static_state` are this image's tables, which

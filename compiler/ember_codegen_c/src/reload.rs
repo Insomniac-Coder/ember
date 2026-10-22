@@ -439,6 +439,24 @@ impl Emitter<'_> {
         let params = self.c_params(body);
         let mut parts = vec![ret];
         parts.extend(params.into_iter().map(|(ty, _)| ty));
+        // `[HR-21]` — a C-ABI function's values cross by their layout: an aggregate whose layout
+        // changed changes what the foreign side must pass, which only a rebuilt host does.
+        if body.abi.is_some() {
+            // A class crosses as its handle, whose own layout is not the foreign side's; a parameter
+            // borrowed by default crosses by value.
+            let crossing = |ty: Ty| {
+                let ty = match self.types.kind(ty) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => ty,
+                };
+                match self.types.kind(ty) {
+                    TyKind::Class(id) => fnv(&["handle", &self.types.class_def(*id).name.to_string()]).to_string(),
+                    _ => self.type_schema(ty, &mut Vec::new()).to_string(),
+                }
+            };
+            parts.push(crossing(body.return_ty()));
+            parts.extend((1..=body.arg_count).filter_map(|index| body.locals.get(index)).map(|local| crossing(local.ty)));
+        }
         fnv(&parts.iter().map(String::as_str).collect::<Vec<_>>())
     }
 
@@ -563,7 +581,8 @@ impl Emitter<'_> {
                 if *reinit { "EMBER_RL_STATIC_REINIT" } else { "0" },
             ));
         }
-        let (types, mut identities) = self.emit_type_schemas(&reload);
+        let abi = self.abi_types(bodies, &reload);
+        let (types, mut identities) = self.emit_type_schemas(&reload, &abi);
         identities.extend(self.reload_interface_ids.borrow().iter().map(|id| format!("&{id}")));
 
         let fns_symbol = table("fns");
@@ -656,8 +675,11 @@ impl Emitter<'_> {
     }
 
     /// `[HR-13]` — the package structs a value of which sits inside something that is not a
-    /// package type's field: an `Array`, an `Option`, a tuple, a payload, a standard type. A reload
-    /// cannot yet migrate such values, so a change to one is refused.
+    /// package type's field: an `Array`, a tuple, a payload without a schema, a standard type. A
+    /// reload cannot yet migrate such values, so a change to one is refused. Only a holder whose
+    /// values can outlive a call counts: one held by another type, a closure's captured state or a
+    /// static's value; a tuple a function makes and takes apart (`(self, default)` in a `match`) is
+    /// gone before any poll.
     fn contained_structs(&self, reload: &ReloadImage) -> BTreeSet<String> {
         let schema_struct = |ty: Ty| -> Option<String> {
             match self.types.kind(ty) {
@@ -665,12 +687,31 @@ impl Emitter<'_> {
                 _ => None,
             }
         };
+        let mut held: BTreeSet<Ty> = self.closure_values.values().map(|(_, env)| *env).collect();
+        held.extend(self.reload_static_names().into_iter().map(|(_, ty, _)| ty));
+        for (_, kind) in self.types.all() {
+            match kind {
+                TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } => {
+                    held.insert(*elem);
+                }
+                TyKind::Tuple(items) => held.extend(items.iter().copied()),
+                TyKind::Struct(id) => held.extend(self.types.struct_def(*id).fields.iter().map(|field| field.ty)),
+                TyKind::Enum(id) => held.extend(self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty))),
+                TyKind::Class(id) => held.extend(self.types.class_def(*id).fields.iter().map(|field| field.ty)),
+                _ => {}
+            }
+        }
         let mut out = BTreeSet::new();
         for (ty, kind) in self.types.all() {
+            if !held.contains(&ty) {
+                continue;
+            }
             let inside: Vec<Ty> = match kind {
                 TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } => vec![*elem],
                 TyKind::Tuple(items) => items.clone(),
-                TyKind::Enum(id) => {
+                // `[HR-14]` — an enum with a schema migrates its payloads by the field rows; any
+                // other holds them where a reload cannot reach.
+                TyKind::Enum(id) if !self.has_schema(ty, reload) => {
                     self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)).collect()
                 }
                 // A struct with a schema migrates its fields depth-first; any other holds them
@@ -1057,7 +1098,61 @@ impl Emitter<'_> {
     /// name, type, schema hash, offset, size, what it holds), a unit enum's variants; and, for a
     /// type with declared field defaults, the function that writes one into a new instance
     /// (`[HR-14]`). The entries for the manifest's type table, and every identity.
-    fn emit_type_schemas(&mut self, reload: &ReloadImage) -> (Vec<String>, Vec<String>) {
+    /// `[HR-14]` — the package types that cross a foreign boundary by value: a parameter or the
+    /// result of a function with a C ABI (an export, a foreign declaration, a C function pointer's
+    /// type), and what such a value holds by value. The foreign side was compiled for their layout
+    /// attributes, so a change to those is refused.
+    fn abi_types(&self, bodies: &[Body], reload: &ReloadImage) -> BTreeSet<String> {
+        let mut roots: Vec<Ty> = Vec::new();
+        for body in bodies.iter().filter(|body| body.abi.is_some() || body.is_extern_declaration) {
+            roots.push(body.return_ty());
+            roots.extend((1..=body.arg_count).filter_map(|index| body.locals.get(index).map(|local| local.ty)));
+        }
+        for (_, kind) in self.types.all() {
+            if let TyKind::Fn { abi: Some(_), params, ret, .. } = kind {
+                roots.extend(params.iter().map(|param| param.ty));
+                roots.push(*ret);
+            }
+        }
+        let mut out = BTreeSet::new();
+        let mut seen = BTreeSet::new();
+        while let Some(ty) = roots.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
+            match self.types.kind(ty) {
+                TyKind::Struct(id) if self.has_schema(ty, reload) => {
+                    out.insert(self.types.struct_def(*id).name.to_string());
+                    roots.extend(self.types.struct_def(*id).fields.iter().map(|field| field.ty));
+                }
+                TyKind::Enum(id) if self.has_schema(ty, reload) => {
+                    out.insert(self.types.enum_def(*id).name.to_string());
+                    roots.extend(self.types.enum_def(*id).variants.iter().flat_map(|variant| variant.fields.iter().map(|field| field.ty)));
+                }
+                TyKind::Array { elem, .. } => roots.push(*elem),
+                TyKind::Tuple(items) => roots.extend(items.iter().copied()),
+                // A parameter borrowed by default crosses by value, and one the foreign side reads
+                // through a pointer relies on the layout as much.
+                TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => roots.push(*inner),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// `[HR-14]`, `[LAY-2]` — a type's layout attributes alone, hashed: 0 for none.
+    fn attributes_hash(&self, ty: Ty) -> u64 {
+        let repr = match self.types.kind(ty) {
+            TyKind::Enum(id) => self.types.display(self.types.enum_def(*id).repr),
+            _ => String::new(),
+        };
+        match self.layout_schema(ty) {
+            None if repr.is_empty() => 0,
+            layout => fnv(&[&repr, layout.as_deref().unwrap_or("")]),
+        }
+    }
+
+    fn emit_type_schemas(&mut self, reload: &ReloadImage, abi: &BTreeSet<String>) -> (Vec<String>, Vec<String>) {
         let mut types = Vec::new();
         let mut identities = Vec::new();
         let contained = self.contained_structs(reload);
@@ -1173,11 +1268,15 @@ impl Emitter<'_> {
                 self.line("}");
                 drop_name
             };
-            let layout = match (kind == "struct" && contained.contains(&name), foreign.contains(&name)) {
+            let mut layout = match (kind == "struct" && contained.contains(&name), foreign.contains(&name)) {
                 (_, true) => "EMBER_RL_LAYOUT_FOREIGN",
                 (true, false) => "EMBER_RL_LAYOUT_CONTAINED",
                 (false, false) => "0",
-            };
+            }
+            .to_string();
+            if abi.contains(&name) {
+                layout = if layout == "0" { "EMBER_RL_LAYOUT_ABI".to_string() } else { format!("{layout} | EMBER_RL_LAYOUT_ABI") };
+            }
             let ty = if kind == "class" {
                 self.types.classes().find(|(_, def)| def.name.to_string() == name).and_then(|(id, _)| self.types.find(&TyKind::Class(id)))
             } else {
@@ -1198,9 +1297,10 @@ impl Emitter<'_> {
                 ));
             } else {
                 types.push(format!(
-                    "    {{ {}, EMBER_RL_TYPE_STRUCT, NULL, {layout}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), 0, NULL, NULL, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field} }},",
+                    "    {{ {}, EMBER_RL_TYPE_STRUCT, NULL, {layout}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), 0, NULL, NULL, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field}, UINT64_C(0x{:016x}) }},",
                     c_string_literal(&name),
                     rows.len(),
+                    ty.map_or(0, |ty| self.attributes_hash(ty)),
                 ));
             }
         }
@@ -1222,6 +1322,12 @@ impl Emitter<'_> {
                 ));
             }
             let mut rows = Vec::new();
+            // `[HR-14]` — a payload's fields migrate by the rows a type's take: each one's default
+            // (its type's `Default`, `init_field`) and its drop (`drop_field`) are numbered over
+            // every variant's payload fields in turn.
+            let mut cases = Vec::new();
+            let mut drops = Vec::new();
+            let mut numbered = 0u32;
             for variant in &def.variants {
                 let renamed = reload.renamed.get(&(name.clone(), variant.name.to_string())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let payload: Vec<String> = variant.fields.iter().map(|field| self.type_schema(field.ty, &mut Vec::new()).to_string()).collect();
@@ -1230,8 +1336,27 @@ impl Emitter<'_> {
                 for field in &held {
                     let shape = self.field_shape(field.ty, reload);
                     let member = format!("payload.{}.{}", member(variant.name), member(field.name));
+                    let mut flags = shape.flags.clone();
+                    let key = (name.clone(), format!("{}.{}", variant.name, field.name));
+                    if let Some(symbol) = reload.defaults.get(&key).and_then(|function| self.reload_function_symbol(function)) {
+                        flags.push("EMBER_RL_FIELD_DEFAULT");
+                        let member_type = self.c_member_type(field.ty);
+                        cases.push(format!("    case {numbered}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {member})) = {symbol}(); break;"));
+                    }
+                    if self.types.needs_drop(field.ty) {
+                        let access = format!("(*({}*)((unsigned char*)object + offsetof({c_type}, {member})))", self.c_member_type(field.ty));
+                        let mut lines = Vec::new();
+                        match self.drop_glue_call(&access, field.ty) {
+                            Some(call) => lines.push(call),
+                            None => self.drop_lines(&access, field.ty, &mut lines),
+                        }
+                        drops.push((numbered, lines));
+                    }
+                    numbered += 1;
+                    let flags = if flags.is_empty() { "0".to_string() } else { flags.join(" | ") };
+                    let renamed = reload.renamed.get(&key).map_or("NULL".to_string(), |old| c_string_literal(old));
                     fields.push(format!(
-                        "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), 0, {} }},",
+                        "    {{ {}, {renamed}, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({c_type}, {member}), (uint32_t)sizeof((({c_type}*)0)->{member}), {flags}, {} }},",
                         c_string_literal(&field.name.to_string()),
                         c_string_literal(&shape.type_name),
                         self.type_schema(field.ty, &mut Vec::new()),
@@ -1263,10 +1388,41 @@ impl Emitter<'_> {
                 }
                 self.line("};");
             }
+            let init = if cases.is_empty() {
+                "NULL".to_string()
+            } else {
+                let init_name = table(&format!("init_{}", c_name(&name)));
+                self.line(&format!("static void {init_name}(void* object, uint32_t index) {{\n    switch (index) {{"));
+                for case in &cases {
+                    self.line(case);
+                }
+                self.line("    default: break;\n    }\n}");
+                init_name
+            };
+            let drop_field = if drops.is_empty() {
+                "NULL".to_string()
+            } else {
+                let drop_name = table(&format!("drop_{}", c_name(&name)));
+                self.line(&format!("static void {drop_name}(void* object, uint32_t index) {{\n    switch (index) {{"));
+                for (index, lines) in drops {
+                    self.line(&format!("    case {index}u: {{"));
+                    for line in lines {
+                        self.line(&format!("        {line}"));
+                    }
+                    self.line("        break;\n    }");
+                }
+                self.line("    default: break;\n    }\n}");
+                drop_name
+            };
+            let mut layout = if self.types.enum_is_bare(id) { "EMBER_RL_LAYOUT_UNIT" } else { "0" }.to_string();
+            if abi.contains(&name) {
+                layout = if layout == "0" { "EMBER_RL_LAYOUT_ABI".to_string() } else { format!("{layout} | EMBER_RL_LAYOUT_ABI") };
+            }
+            let attributes = self.attributes_hash(ty);
             types.push(format!(
-                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, NULL, NULL, NULL, NULL }},",
+                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, {init}, NULL, NULL, {drop_field}, UINT64_C(0x{attributes:016x}) }},",
                 c_string_literal(&name),
-                if self.types.enum_is_bare(id) { "EMBER_RL_LAYOUT_UNIT" } else { "0" },
+                layout,
                 self.type_schema(ty, &mut Vec::new()),
                 if payloads { format!("1u, {tag_name}") } else { "0, NULL".to_string() },
                 rows.len(),

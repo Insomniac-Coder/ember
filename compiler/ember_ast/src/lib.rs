@@ -394,6 +394,8 @@ pub struct Variant {
 
 #[derive(Clone, Debug)]
 pub struct VariantField {
+    /// `variant_field := {attribute} [IDENT ":"] type` — `@renamed_from` (`[HR-14]`).
+    pub attrs: Vec<Attribute>,
     pub name: Option<Ident>,
     pub ty: TypeExpr,
     pub span: Span,

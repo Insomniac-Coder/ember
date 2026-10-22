@@ -38783,6 +38783,9 @@ impl<'a> Checker<'a> {
             ast::ItemKind::Enum(decl) => {
                 for variant in &decl.variants {
                     self.check_attribute_list(&variant.attrs, "variant");
+                    for field in &variant.fields {
+                        self.check_attribute_list(&field.attrs, "payload field");
+                    }
                 }
                 &decl.members
             }
@@ -39010,7 +39013,7 @@ impl<'a> Checker<'a> {
                 not_an_attribute(self, "the attributes are listed in Part V's table [ATT-1]");
                 continue;
             };
-            let applies_here = applies.contains(&"item") && !matches!(site, "field" | "variant")
+            let applies_here = applies.contains(&"item") && !matches!(site, "field" | "variant" | "payload field")
                 || applies.contains(&site);
             if !applies_here {
                 self.sink.emit(
@@ -54969,8 +54972,9 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     (&["reloadable", "noreload"], &["item", "module"], true),
     // `[HR-17a]` — the static's edited initialiser runs again at a reload.
     (&["reinit_on_reload"], &["static"], true),
-    // `[HR-14]` — a field's or a variant's old name, whose value a reload carries over.
-    (&["renamed_from"], &["field", "variant"], true),
+    // `[HR-14]` — a field's, a variant's or a payload field's old name, whose value a reload
+    // carries over.
+    (&["renamed_from"], &["field", "variant", "payload field"], true),
     // `[HR-43]` — admitting a call that may end the process: C++ calls are not built.
     (&["allow_reload_terminate"], &["fn"], false),
     (&["prelude"], &["module"], false),

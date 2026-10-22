@@ -682,6 +682,86 @@ fn a_field_changed_to_a_range_type_is_tested_by_checked() {
     assert_eq!(run.stdout, "7\napplied, 0 migrated\n8\n", "{}", run.stderr);
 }
 
+/// `[HR-14]` — an enum variant's payload changed migrates by the field rows, applied to the payload:
+/// each live value keeps its variant by name (a variant added before it rewrites its tag), a payload
+/// field widened is converted, one added whose type is `Default` takes `default()`; one added whose
+/// type is not is refused, naming it; a variant removed while values hold it is refused with their
+/// count; a payload field removed is dropped in reclaim, running its `drop`. A struct inside a
+/// payload (`Option[Point]`) migrates depth-first when it changes.
+#[test]
+fn an_enum_payload_migrates_by_the_field_rows() {
+    let v1 = PARTICLES
+        .replace(
+            "@sync\nclass Particle:\n",
+            "enum Shape:\n    Dot\n    Circle(r: i32)\n\n@sync\nclass Particle:\n    shape: Shape = Shape.Circle(2)\n",
+        )
+        .replace("total += p.x.load()", "total += p.x.load() + size(p.shape)")
+        .replace(
+            "fn main():",
+            "fn size(s: Shape) -> int:\n    match s:\n        Shape.Dot:\n            return 0\n        Shape.Circle(r):\n            return r as int\n\nfn main():",
+        );
+    // Widened, a `Default` field added, a variant added before `Circle`.
+    let grown = v1
+        .replace(
+            "enum Shape:\n    Dot\n    Circle(r: i32)\n",
+            "@derive(Default)\nstruct Mark:\n    w: int = 7\n\nenum Shape:\n    Square(side: int)\n    Dot\n    Circle(r: int, mark: Mark)\n",
+        )
+        .replace("Shape.Circle(2)", "Shape.Circle(2, Mark())")
+        .replace("        Shape.Circle(r):\n            return r as int\n", "        Shape.Square(side):\n            return side\n        Shape.Circle(r, mark):\n            return r * 10 + mark.w\n");
+    let run = host_run("reload-payload-grown", &v1, &[&grown], 3);
+    assert_eq!(run.stdout, "9\napplied, 3 migrated\n87\n90\n", "{}", run.stderr);
+    // Renamed with `@renamed_from`: carried. Without it, a removal and an addition, which starts at
+    // `i32`'s default.
+    let renamed = |attribute: &str| {
+        v1.replace("Circle(r: i32)", &format!("Circle({attribute}radius: i32)"))
+            .replace("        Shape.Circle(r):\n            return r as int\n", "        Shape.Circle(radius):\n            return radius as int\n")
+    };
+    let run = host_run("reload-payload-renamed", &v1, &[&renamed("@renamed_from(\"r\") ")], 3);
+    assert_eq!(run.stdout, "9\napplied, 3 migrated\n12\n15\n", "{}", run.stderr);
+    let run = host_run("reload-payload-replaced", &v1, &[&renamed("")], 3);
+    assert_eq!(run.stdout, "9\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
+    // Added with a type that is not `Default`: refused.
+    let undefaulted = v1
+        .replace("enum Shape:\n    Dot\n    Circle(r: i32)\n", "struct Tag2:\n    w: int\n\nenum Shape:\n    Dot\n    Circle(r: i32, tag: Tag2)\n")
+        .replace("Shape.Circle(2)", "Shape.Circle(2, Tag2(w = 1))")
+        .replace("        Shape.Circle(r):\n", "        Shape.Circle(r, tag):\n");
+    let run = host_run("reload-payload-undefaulted", &v1, &[&undefaulted], 2);
+    assert!(run.stdout.contains("refused: field `tag` added to `Shape.Circle`, whose type `Tag2` is not `Default`"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("12\n"), "the old code did not run on: {}", run.stdout);
+    // The variant the values hold removed: refused, with their count.
+    let removed = v1
+        .replace("enum Shape:\n    Dot\n    Circle(r: i32)\n", "enum Shape:\n    Dot\n    Ring(r: i32)\n")
+        .replace("Shape.Circle(2)", "Shape.Ring(2)")
+        .replace("        Shape.Circle(r):\n", "        Shape.Ring(r):\n");
+    let run = host_run("reload-payload-removed", &v1, &[&removed], 2);
+    assert!(run.stdout.contains("variant `Shape.Circle` was removed while 3 values of it live (field `shape` of `Particle`)"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("12\n"), "the old code did not run on: {}", run.stdout);
+    // A payload field removed: dropped in reclaim.
+    let tagged = v1
+        .replace(
+            "enum Shape:\n    Dot\n    Circle(r: i32)\n",
+            "@sync\nclass Tag:\n    id: int = 0\n\n    fn drop(self):\n        println(\"tag dropped\")\n\nenum Shape:\n    Dot\n    Circle(r: i32, tag: Tag)\n",
+        )
+        .replace("Shape.Circle(2)", "Shape.Circle(2, Tag())")
+        .replace("        Shape.Circle(r):\n", "        Shape.Circle(r, tag):\n");
+    let untagged = tagged
+        .replace("    Circle(r: i32, tag: Tag)\n", "    Circle(r: i32)\n")
+        .replace("Shape.Circle(2, Tag())", "Shape.Circle(2)")
+        .replace("        Shape.Circle(r, tag):\n", "        Shape.Circle(r):\n");
+    let run = host_run("reload-payload-dropped", &tagged, &[&untagged], 2);
+    assert_eq!(run.stdout, "9\ntag dropped\ntag dropped\ntag dropped\napplied, 3 migrated\n12\n", "{}", run.stderr);
+
+    // A struct inside an `Option`'s payload, grown: migrated depth-first.
+    let spotted = PARTICLES
+        .replace("@sync\nclass Particle:\n", "@derive(Copy)\nstruct Point:\n    y: int = 4\n\n@sync\nclass Particle:\n    spot: Option[Point] = Some(Point())\n")
+        .replace("total += p.x.load()", "total += p.x.load() + p.spot.unwrap_or(Point()).y");
+    let grown = spotted
+        .replace("    y: int = 4\n", "    y: int = 4\n    z: int = 50\n")
+        .replace("p.spot.unwrap_or(Point()).y", "p.spot.unwrap_or(Point()).y + p.spot.unwrap_or(Point()).z");
+    let run = host_run("reload-payload-struct", &spotted, &[&grown], 3);
+    assert_eq!(run.stdout, "15\napplied, 3 migrated\n168\n171\n", "{}", run.stderr);
+}
+
 /// `[HR-11a]`, `[HR-14]` — an enum value migrates by variant name: reordering the variants
 /// rewrites each value's discriminant; removing a variant a live value holds is refused, naming it.
 #[test]
@@ -1094,6 +1174,17 @@ fn a_changed_layout_attribute_is_a_schema_change() {
     let packed = plain.replace("struct Score:\n", "@packed\nstruct Score:\n");
     let run = host_run("reload-layout-packed", &plain, &[&packed], 2);
     assert_eq!(run.stdout, "53\napplied, 0 migrated\n103\n", "{}", run.stderr);
+    // Crossing a foreign boundary by value, in a C-ABI function's signature: the foreign side was
+    // compiled for its old layout attributes, so a change to them is refused.
+    let crossing = plain.replace("fn main():", "extern \"C\" fn tally(s: Score) -> i64:\n    return s.points\n\nfn main():");
+    let run = host_run("reload-layout-abi", &crossing, &[&crossing.replace("struct Score:\n", "@align(64)\nstruct Score:\n")], 2);
+    assert!(run.stdout.contains("refused: the layout attributes of `Score` changed, and it crosses a foreign boundary by value"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("103\n"), "the old code did not run on: {}", run.stdout);
+    // A field added changes what the foreign side passes as much: the C function's signature
+    // changed, which only a rebuilt host can call (`[HR-21]`).
+    let run = host_run("reload-layout-abi-field", &crossing, &[&crossing.replace("    points: int = 0\n", "    points: int = 0\n    bonus: int = 1\n")], 2);
+    assert!(run.stdout.contains("refused: the signature of export `tally` changed"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("103\n"), "the old code did not run on: {}", run.stdout);
 }
 
 /// `[HR-14]` — a class whose base changed is refused, and an enum variant renamed with
