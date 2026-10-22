@@ -34,8 +34,9 @@ usage (`[CLI-15]`: every command and flag of the specification's XVII.1; \"not b
 this compiler does not have yet):
     ember new <name> [--lib | --bin | --cdylib]    create a package
     ember run [file.em] [args…] [--hot | --interp] build and run; a single file needs no manifest;
-                                                   --hot reloads edited sources at std.hot.checkpoint()
-                                                   (--interp is not built yet)
+                                                   --hot reloads edited sources at std.hot.checkpoint();
+                                                   --interp runs the program on the compile-time
+                                                   evaluator, with no C compiler
     ember build [file.em|package-dir] [--profile <name>] [--target <triple>] [--backend c|llvm]
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
@@ -454,6 +455,9 @@ struct Options {
     explain: bool,
     /// `[HR-33]` — `ember run --hot`: run, watch the sources, rebuild and reload.
     hot: bool,
+    /// `[CLI-21]` — `ember run --interp`: run the checked program on the evaluator, with no C
+    /// compiler.
+    interp: bool,
     /// `[MAN-2]` — `--locked`: a build that would change `ember.lock` fails.
     locked: bool,
     /// `[CLI-13]` — `ember calls --foreign <item>`: check the program, then list the foreign
@@ -713,6 +717,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             if options.hot && command != "run" {
                 return Err("`--hot` is only valid with `ember run`".to_string());
             }
+            if options.interp && command != "run" {
+                return Err("`--interp` is only valid with `ember run`".to_string());
+            }
+            if options.interp && options.hot {
+                return Err("`--interp` and `--hot` cannot be combined: a reload replaces compiled code".to_string());
+            }
             if options.emit.as_deref() == Some("header") && command != "build" {
                 return Err("`--emit header` is only valid with `ember build`".to_string());
             }
@@ -737,7 +747,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 PathBuf::from(input)
             };
             // `[HR-33]` — the toolchain's own host: build, run, watch, rebuild, reload.
-            if command == "run" && options.hot && options.profile != Profile::Release {
+            if command == "run" && options.hot && !options.interp && options.profile != Profile::Release {
                 return run_hot(&source, &options);
             }
             compile(&source, command, &options)
@@ -3324,6 +3334,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--reload" => options.reload = true,
             "--explain" => options.explain = true,
             "--hot" => options.hot = true,
+            "--interp" => options.interp = true,
             // `[MAN-2]` — fail rather than change `ember.lock`.
             "--locked" => options.locked = true,
             "-Dwarnings" | "-D" => {
@@ -5076,6 +5087,15 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         print_foreign_calls(input, mir.bodies(), &types, &modules, &map, request)?;
         return Ok(ExitCode::SUCCESS);
     }
+    // `[CLI-21]` — the checked program run on the evaluator: everything after this point only
+    // makes code faster or writes C.
+    if options.interp {
+        if sink.has_errors() {
+            return Ok(finish(&sink, &map, options));
+        }
+        report(&sink, &map, options);
+        return run_interpreted(input, mir.bodies(), &types, &common, &map, options);
+    }
     // `ember check` reports what the passes below decide only for an `@simd(assert)` loop
     // (`[SIMD-2]`'s `E4020`): without one, nothing below can say anything, and the check is done.
     if command == "check" && !mir.bodies().iter().any(|body| body.loop_notes.simd.iter().any(|note| note.assert)) {
@@ -5795,6 +5815,63 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     Ok(ExitCode::SUCCESS)
 }
 
+/// `[CLI-21]` — `ember run --interp`: the program run on the evaluator, its console the
+/// process's, its status the one a compiled run ends with (a panic, after the runtime's report,
+/// as `abort` ends a process). What compile time cannot run is `E6010` (`[CT-2]`).
+fn run_interpreted(
+    input: &Path,
+    bodies: &[ember_mir::Body],
+    types: &TypeTable,
+    common: &ember_types::CommonTypes,
+    map: &SourceMap,
+    options: &Options,
+) -> Result<ExitCode, String> {
+    let entry = [ember_branding::generated("main_entry"), ember_branding::entry_symbol()]
+        .into_iter()
+        .find(|symbol| bodies.iter().any(|body| &body.symbol == symbol))
+        .ok_or("this file declares no `main`, so there is nothing to run")?;
+    // The program's name, as a compiled run's `argv[0]` would give it.
+    let stem = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let target = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+    let exe = target.join(options.profile.name()).join("bin").join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
+    let mut args = vec![exe.to_string_lossy().into_owned()];
+    args.extend(options.program_args.iter().cloned());
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let stdin = std::io::stdin();
+    let (mut out, mut err, mut input_lines) = (stdout.lock(), stderr.lock(), stdin.lock());
+    let program = ember_interp::Program {
+        bodies,
+        types,
+        common,
+        map,
+        debug: options.profile == Profile::Debug,
+        backtrace: options.profile != Profile::Release,
+        leak_check: options.leak_check,
+    };
+    let io = ember_interp::Io { stdout: &mut out, stderr: &mut err, stdin: &mut input_lines, args };
+    let limits = ember_interp::Limits { steps: u64::MAX, heap: u64::MAX };
+    let outcome = ember_interp::run(&program, io, limits, &entry);
+    drop((out, err, input_lines));
+    match outcome {
+        ember_interp::Outcome::Exited(0) => Ok(ExitCode::SUCCESS),
+        ember_interp::Outcome::Exited(code) => Ok(ExitCode::from(u8::try_from(code).unwrap_or(1))),
+        // `abort`'s status: 3 on Windows; a signal elsewhere, which `ember run` reports as 1.
+        ember_interp::Outcome::Panicked => Ok(ExitCode::from(if cfg!(windows) { 3 } else { 1 })),
+        ember_interp::Outcome::Refused { what, span } => {
+            let mut sink = Sink::new();
+            sink.emit(
+                Diagnostic::error(codes::E6010, span, format!("{what} cannot run on the evaluator"))
+                    .note("`ember run --interp` runs the program as compile time runs it: foreign calls and threads are unavailable [CLI-21], [CT-2]")
+                    .help("build and run it with `ember run`"),
+            );
+            Ok(finish(&sink, map, options))
+        }
+        ember_interp::Outcome::Limit(what) => Err(what),
+        ember_interp::Outcome::Fault(what) => Err(format!("the evaluator stopped: {what}")),
+    }
+}
+
 /// `[HR-33]`, `[HR-31]` — `ember run --hot`: build the program under `debug`, run it, and while
 /// it runs watch the package's sources; after each edit, build the next image and announce it,
 /// which the program applies at its next `std.hot.checkpoint()`. Building happens here, in the
@@ -5965,7 +6042,8 @@ const COMPTIME_PASSES: usize = 8;
 /// with: the build's C compiler and profile, a directory of its own under the
 /// build's, and the manifest's `[comptime]` limits.
 struct ComptimeBuild {
-    toolchain: Toolchain,
+    /// `None` under `--interp`, which runs no C compiler (`[CLI-21]`).
+    toolchain: Option<Toolchain>,
     profile: Profile,
     for_msvc: bool,
     runtime: PathBuf,
@@ -5977,7 +6055,7 @@ struct ComptimeBuild {
 impl ComptimeBuild {
     fn build(&self) -> comptime::Build<'_> {
         comptime::Build {
-            toolchain: &self.toolchain,
+            toolchain: self.toolchain.as_ref(),
             profile: self.profile,
             for_msvc: self.for_msvc,
             runtime: &self.runtime,
@@ -5996,7 +6074,7 @@ fn comptime_build(input: &Path, options: &Options) -> Result<ComptimeBuild, Stri
         .cc
         .clone()
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
-    let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+    let toolchain = if options.interp { None } else { Some(Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?) };
     let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     // One directory per source file, so builds of two programs side by side

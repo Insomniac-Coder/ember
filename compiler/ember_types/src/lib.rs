@@ -3222,6 +3222,13 @@ impl fmt::Debug for Ty {
     }
 }
 
+impl Ty {
+    /// The type's position in its table: dense, for a side table indexed by type.
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 fn int_bits(ty: IntTy, pointer_size: u64) -> u64 {
     match ty {
         IntTy::I8 => 8,

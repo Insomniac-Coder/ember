@@ -13,6 +13,7 @@ members = [
     "compiler/ember_mir",
     "compiler/ember_analysis",
     "compiler/ember_codegen_c",
+    "compiler/ember_interp",
     "compiler/ember_fmt",
     "compiler/ember_build",
     "compiler/ember_driver",
@@ -40,6 +41,7 @@ ember_hir = { path = "compiler/ember_hir" }
 ember_mir = { path = "compiler/ember_mir" }
 ember_analysis = { path = "compiler/ember_analysis" }
 ember_codegen_c = { path = "compiler/ember_codegen_c" }
+ember_interp = { path = "compiler/ember_interp" }
 ember_build = { path = "compiler/ember_build" }
 
 [workspace.lints.rust]

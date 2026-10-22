@@ -133,6 +133,7 @@ dependencies = [
  "ember_diag",
  "ember_fmt",
  "ember_hir",
+ "ember_interp",
  "ember_lexer",
  "ember_mir",
  "ember_parser",
@@ -155,6 +156,17 @@ dependencies = [
 name = "ember_hir"
 version = "0.1.0"
 dependencies = [
+ "ember_span",
+ "ember_types",
+]
+
+[[package]]
+name = "ember_interp"
+version = "0.1.0"
+dependencies = [
+ "ember_branding",
+ "ember_hir",
+ "ember_mir",
  "ember_span",
  "ember_types",
 ]
