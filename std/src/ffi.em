@@ -4,6 +4,7 @@
 ## can express the invariant in the library.
 
 import std.core
+import std.mem
 from std.string import Utf8Error
 
 ## `[FFI-15]` (ODR-081) — report the first interior NUL byte, rather than
@@ -133,6 +134,15 @@ pub struct ForeignBox[T]:
     ## The object's address, for a call that borrows it.
     pub fn as_ptr(self) -> *mut T:
         return self.pointer
+
+    ## The object, given up: the box frees nothing, and its address leaves the runtime's record
+    ## (`[FFI-36b]`), so foreign code may own it — what a parameter contracted `owned` does
+    ## (`[FFI-11]`), and how a `std::unique_ptr` parameter takes its object (`[FFI-17a]`).
+    pub fn into_raw(owned self) -> *mut T:
+        pointer = self.pointer
+        foreign_release(self.pointer, self.creator)
+        mem.forget(self)
+        return pointer
 
     fn drop(mut self):
         foreign_release(self.pointer, self.creator)
@@ -359,6 +369,59 @@ extend[T] CppShared[T] implements Clone:
         copy = self.copy
         unsafe:  # SAFETY(ffi): a copy of the `std::shared_ptr`, which C++ counts
             return CppShared(copy(self.object), self.pointee, self.copy, self.destroy)
+
+## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::weak_ptr<T>` Ember holds, never a `Weak` (`[WK-14]`):
+## `lock()` is a `CppShared[T]` of the object while C++'s count keeps it, `None` once it has gone,
+## and `expired()` says which without making one. It carries the thunks of `std::shared_ptr<T>` for
+## what `lock()` gives. Its copy (`clone()`) and its end are calls into C++ (`[FFI-17f]`). Not `Copy`,
+## `Send` or `Sync`.
+pub struct CppWeak[T]:
+    object: *mut u8
+    locker: unsafe extern "C" fn(*mut u8) -> *mut u8
+    expiry: unsafe extern "C" fn(*mut u8) -> bool
+    copy: unsafe extern "C" fn(*mut u8) -> *mut u8
+    destroy: unsafe extern "C" fn(*mut u8)
+    pointee: unsafe extern "C" fn(*mut u8) -> *mut T
+    shared_copy: unsafe extern "C" fn(*mut u8) -> *mut u8
+    shared_destroy: unsafe extern "C" fn(*mut u8)
+
+    ## `[FFI-17a]` — the `std::weak_ptr` at `object`, with its thunks and those of the
+    ## `std::shared_ptr` its `lock()` gives: what `import cpp` makes of one.
+    @safety("`object` is a live `std::weak_ptr<T>` nothing else owns, and the functions are its thunks and those of `std::shared_ptr<T>`")
+    pub unsafe fn from_thunks(object: *mut u8, locker: unsafe extern "C" fn(*mut u8) -> *mut u8, expiry: unsafe extern "C" fn(*mut u8) -> bool, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8), pointee: unsafe extern "C" fn(*mut u8) -> *mut T, shared_copy: unsafe extern "C" fn(*mut u8) -> *mut u8, shared_destroy: unsafe extern "C" fn(*mut u8)) -> CppWeak[T]:  # SAFETY: the caller keeps the obligation
+        return CppWeak(object, locker, expiry, copy, destroy, pointee, shared_copy, shared_destroy)
+
+    ## The `std::weak_ptr` itself, for a call into C++.
+    pub fn as_ptr(self) -> *mut u8:
+        return self.object
+
+    ## The object, shared again while C++'s count keeps it; `None` once it has gone.
+    pub fn lock(self) -> Option[CppShared[T]]:
+        locker = self.locker
+        shared = null[*mut u8]()
+        unsafe:  # SAFETY(ffi): the pointer's own thunk
+            shared = locker(self.object)
+        if shared.is_null():
+            return None
+        unsafe:  # SAFETY: a `std::shared_ptr<T>` the thunk made for this value alone, with its thunks
+            return Some(CppShared.from_thunks(shared, self.pointee, self.shared_copy, self.shared_destroy))
+
+    ## Whether the object has gone.
+    pub fn expired(self) -> bool:
+        expiry = self.expiry
+        unsafe:  # SAFETY(ffi): the pointer's own thunk
+            return expiry(self.object)
+
+    fn drop(mut self):
+        destroy = self.destroy
+        unsafe:  # SAFETY(ffi): this `std::weak_ptr`'s end, once
+            destroy(self.object)
+
+extend[T] CppWeak[T] implements Clone:
+    fn clone(self) -> CppWeak[T]:
+        copy = self.copy
+        unsafe:  # SAFETY(ffi): a copy of the `std::weak_ptr`, which C++ counts
+            return CppWeak(copy(self.object), self.locker, self.expiry, self.copy, self.destroy, self.pointee, self.shared_copy, self.shared_destroy)
 
 ## `[FFI-17e]` — compiler-known: a C++ container's elements as a view, and a smart pointer's
 ## object as a reference, each borrowing `owner`.

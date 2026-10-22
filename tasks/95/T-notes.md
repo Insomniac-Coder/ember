@@ -97,7 +97,64 @@ are out of `[FFI-11]`'s `unfinished` entry.
 
 ## T2. `[FFI-17a]`'s bridges
 
-(below)
+First a refactor (`ea74c514`): `render_wrapper` writes the contracted and the uncontracted
+declaration and wrapper from one list of slots, so each mode the importer passes in its own way is
+written once; `render_contracted` is gone, and an `[FFI-40a]` method line is checked against the
+signature the wrapper actually has (`method_value` is gone).
+
+### T2.1 `std::string_view`, `std::span<T>`, `std::span<const T>` — done
+
+Zero-copy both ways. A parameter (by value or `const&`) is the wrapper's `Span[u8]` /
+`Span[T]` / `MutSpan[T]`; the thunk takes its pointer and length (`const char* a0, std::size_t
+a0_size`) and makes the view the callee takes. Contracted, the declaration takes the `Span` with
+`param(p, borrowed, count(ember_p_size))` and the witness, so the checker lowers it (its length
+checks, its empty-view sentinel); uncontracted, `p.as_ptr()` and `p.len()`. A result: the thunk
+gives the data's address (`ADDRESS`) and writes the length (`std::size_t* size`); the wrapper makes
+the view with `ember_cpp_span(owner, address, length)` (new, compiler-known in an `import cpp`
+module only, `unsafe`, typeck `synth_cpp_span`: `Builtin::CppSpan`, borrowing `owner`; the two-argument
+form is `static`) from what the entry's lifetime word names — `from(self)`, `from(<parameter>)`,
+`from(static)` (`[FFI-11]`: a result's lifetime is never derived) — and its wrapper has
+`@borrows(…)`. An entry for a view result without a lifetime word is `E5002` (apply). With no
+entry, a view result is `(*T, usize)`, the caller's to keep (`[FFI-38]`). `std::span<T, N>` of fixed
+extent as a parameter is refused (`W5002`, naming why); as a result it is read as any span. A view
+lent mutably (`std::string_view&`) is refused.
+
+### T2.2 `std::optional<T>` — done
+
+For a `T` that maps by value. A parameter (by value or `const&`) is `Option[T]`; the thunk takes a
+pointer to the value, null for none (`(a0 ? std::optional<T>(*a0) : std::optional<T>())`).
+Contracted: `param(p, borrowed, one, nullable)` on `Option[ref T]`, the wrapper passing
+`p.as_ref()`; uncontracted: a `match` with `Some(ref inner)` gives the address. A result: the thunk
+says whether there is a value and writes it (`T* value`, zeroed when there is none or it caught);
+the wrapper gives `Some(v) if has else None`. An optional lent mutably is refused.
+
+### T2.3 a `std::unique_ptr<T>` parameter — done
+
+By value or `&&`: the wrapper takes `owned p: ForeignBox[T]` and the thunk makes the
+`std::unique_ptr<T>` C++ owns from the object's address. Contracted: `param(p, owned, one)`, which the
+checker lowers (the box leaves the runtime's record and frees nothing); uncontracted:
+`p.into_raw()`, a new `std.ffi` method (`pub fn into_raw(owned self) -> *mut T`: the record released,
+the box forgotten — what `owned` does). By reference (`std::unique_ptr<T>&`) is refused: no ownership
+crosses. A `std::unique_ptr` with a deleter of its own is still refused, as before.
+
+### T2.4 `std::weak_ptr<T>` — done
+
+`CppWeak[T]` (`std.ffi`, `[WK-14]`: never a `Weak`): `lock() -> Option[CppShared[T]]` (the thunk
+makes a `std::shared_ptr<T>` only while the object lives, `None` otherwise), `expired()`, `clone()`
+(C++ counts it), its end deletes it. It carries the thunks of `std::shared_ptr<T>` for what `lock()`
+gives, so it is eight words, as each bridge type holds its thunks inline (N4's design; a per-type
+table of thunks would make every bridge value two words — an improvement for all of them, not done
+here). It crosses as a result and by `const&`, `&`, `&&` or value like the other bridge types;
+`ember inspect --cost` lists its operations (`[FFI-17f]`, `bridge_type` in main.rs). Test:
+`accept_a_weak_pointer_observes_a_shared_one.em` (`library.hpp` gains `watch`).
+
+Tests (T2.1–T2.3): `tests/conformance/FFI-17a/views.hpp` (C++20: the directory's `ember.toml`
+`[cpp.views] standard = "c++20"`), `accept_views_and_optional_values_cross_safely.em` (contracted:
+no `unsafe`; views both ways, `from(self)`, `from(text)`, `from(static)`, `MutSpan` written through,
+optionals both ways, a `std::unique_ptr` given to C++ and destroyed there once),
+`accept_views_cross_in_unsafe_without_an_overlay.em` (uncontracted), `reject_a_view_result_without_a_lifetime_word.em`
+(`E5002`), `reject_a_view_cannot_outlive_what_it_borrows.em` (`E3060`: a `from(self)` view cannot
+outlive the `ForeignBox`).
 
 ## Defects found (for the lead to number)
 
@@ -121,6 +178,60 @@ are out of `[FFI-11]`'s `unfinished` entry.
    `ember_failed`, `ember_slot`, `ember_result` in both the contracted and the uncontracted
    declaration and wrapper (`fill(int* out, …)` in `texts.hpp` takes a parameter named `out`).
 
+6. **`[LT-40]` — two programs in one folder that reach different instantiations of a module's
+   private generic stop with an internal error** (pre-existing; `main`'s compiler does it too):
+   "cannot load interface cache: cached callable-region metadata disagrees with the current verified
+   summary for `m`". Probe, in one folder: `m.em` = `pub fn digit() -> Option[i32]: return some(true,
+   7)`, `pub fn plain() -> i32: return 3`, `fn some[T](has: bool, owned value: T) -> Option[T]: …`;
+   `a.em` = `import m` + `println(m.plain())`; `b.em` = `import m` + `println(m.digit().unwrap_or(0))`;
+   `ember check a.em`, then `ember check b.em`. With `some` not generic there is no error. An
+   `import cpp` module is such a module (its catching wrappers call the generic
+   `ember_cpp_result[T]`), so two tests of one folder that import one header with one overlay and
+   call different functions can fail the quick check (`annotations.py` checks every file into the
+   repository's shared `target/`); the milestones harness gives each command its own `--out-dir`, so
+   CI does not see it. I gave the new tests that share a header distinct overlays (`texts_dot.em`,
+   `views_first.em`) and wrote no new generic helper into import modules (an optional's value is
+   `Some(v) if has else None`, inline). Open.
+7. **A bridge value's C++ object is a heap allocation a C++ caller would not make** (pre-existing,
+   N4's design, which `CppWeak` follows): a `std::string` result is moved into `new
+   std::string(…)` so the `CppString` can own it by pointer, and each bridge value carries its thunks
+   inline (four to eight words). The allocation has a reason: Ember moves a value by copying its
+   bytes, and a C++ object need not survive that (libstdc++'s `std::string` points into itself), so it
+   needs an address of its own. It is not needed for a type every standard library lays out as
+   pointers that may be moved bytewise (`std::shared_ptr`, `std::weak_ptr`, `std::unique_ptr`, a
+   `std::vector` in practice), which could live inside the Ember value (storage of the `sizeof` and
+   `alignof` Clang gives, constructed into by the thunk as a class by value is through `out`), and the
+   thunks could be one pointer to a per-type table. A design question for the owner's rule ("no
+   allocation the C++ does not make"): which types count as movable bytewise is a promise the C++
+   standard does not make.
+
 ## Spec questions
 
-None for T1.
+1. **`[FFI-17a]` `std::variant<…>`: how does an overlay name each alternative?** The table says
+   "a generated enum, when every alternative maps and the overlay names each", and `[GRM-35]` has
+   no form that names a variant's alternatives (`enum IDENT` names an enum, nothing more). Options:
+   (a) an attribute on the `type` entry for the header's alias of the variant, the names in the
+   alternatives' order: `using Shape = std::variant<Circle, Square>;` with
+   `@ffi(variant=["Circle", "Square"]) type Shape` gives `enum Shape: Circle(Circle), Square(Square)`;
+   a variant with no alias cannot be named, and is refused (`W5002`). It crosses by value both ways:
+   the thunk takes or writes the tag and the payload. (b) A section restating it in Ember, as
+   `class C:` restates methods: `enum Shape:` with a line per alternative — a grammar change.
+   (c) Names from the alternatives' types, with no overlay — contradicts "the overlay names each",
+   and `int`/`double` give no names. **Recommendation: (a)** — the existing grammar (`@ffi(…)` on a
+   `type` item), and a variant is only nameable through the alias a header gives it anyway. Not built.
+2. **`[FFI-17a]` `std::function`: what is "an opaque owned object", and what does
+   `@ffi(std_function, signature=…)` give, where is it written, and in what syntax?** `[FFI-44]`
+   puts `std::function` in the overlay row. Options: (a) a `std::function<R(A…)>` result is, with no
+   statement, a `CppFunction` (`std.ffi`, owned, dropped through its destructor, not callable); an
+   entry `@ffi(std_function) fn make_adder(n)` makes it an Ember `owned fn(A…) -> R` value whose
+   capture is the C++ object (each call one thunk call, no copy; its drop the destructor), the
+   signature read from the template argument, `signature="fn(i32) -> i32"` stating it only where the
+   header spells the type through something the importer cannot read. (b) Always the opaque object,
+   with a `call` method generated per signature (`CppFunction_i32_i32.call(a0)`): a type per
+   signature where Ember has callable types already. **Recommendation: (a)**: a C++ callable becomes
+   an Ember callable, called as any other. Not built.
+3. **`std::span<T, N>` of fixed extent** is not in the table (its rows are `std::span<T>` and
+   `std::span<const T>`, whose extent is dynamic). Built: refused as a parameter (a `Span` could be
+   of another length, and `std::span<T, N>(p, n)` with `n != N` is undefined behaviour); read as any
+   span as a result. Option: `ref [T; N]` / `ref mut [T; N]` both ways (the type says the length, no
+   check needed). **Recommendation:** that option, as an addition to the table.

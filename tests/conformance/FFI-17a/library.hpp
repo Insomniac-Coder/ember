@@ -35,3 +35,4 @@ inline int destroyed() noexcept { return destroyed_counters; }
 inline std::shared_ptr<Counter> shared_counter(int start) { return std::make_shared<Counter>(start); }
 inline long owners(const std::shared_ptr<Counter>& counter) noexcept { return counter.use_count(); }
 inline std::unique_ptr<Counter> unique_counter(int start) { return std::make_unique<Counter>(start); }
+inline std::weak_ptr<Counter> watch(const std::shared_ptr<Counter>& counter) noexcept { return counter; }

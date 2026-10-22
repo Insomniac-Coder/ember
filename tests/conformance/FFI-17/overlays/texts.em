@@ -1,5 +1,5 @@
-# The overlay of ../accept_contract_words_reach_a_wrapped_function.em and
-# ../run_fail_two_counted_views_of_unequal_lengths.em: the facts `texts.hpp` cannot state.
+# The overlay of ../accept_contract_words_reach_a_wrapped_function.em: the facts `texts.hpp` cannot
+# state.
 
 unsafe overlay cpp "texts.hpp":
     fn checksum(data: borrowed count(length), length)

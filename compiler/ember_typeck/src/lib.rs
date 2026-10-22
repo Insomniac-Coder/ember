@@ -15941,6 +15941,37 @@ impl<'a> Checker<'a> {
         None
     }
 
+    /// `[FFI-17a]` — in a module `import cpp` wrote, and nowhere else: a C++ view's elements, from the
+    /// address and length its thunk gave, as the view its function's lifetime word says it is
+    /// (`[FFI-11]`): `ember_cpp_span(owner, pointer, count)` borrows `owner` (`ember_cpp_span_mut`,
+    /// a `MutSpan`), `ember_cpp_span(pointer, count)` is `static`. Reading through the address needs
+    /// `unsafe`.
+    fn synth_cpp_span(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
+        let cpp_span = format!("{}_cpp_span", ember_branding::SYMBOL_PREFIX);
+        if !(name.is(&cpp_span) || name.is(&format!("{cpp_span}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
+            return None;
+        }
+        let mutable = name.as_str().ends_with("_mut");
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        if args.iter().any(|arg| arg.name.is_some()) || !(2..=3).contains(&args.len()) {
+            return Some(error);
+        }
+        // A view no argument owns borrows what a string literal does: nothing, for the program's
+        // whole run (`[LT-3]`).
+        let owner = match args {
+            [owner, _, _] => self.synth_committed(&owner.value),
+            _ => Expr { ty: self.common.str_, kind: ExprKind::Str(String::new()), span },
+        };
+        let pointer = self.synth_committed(&args[args.len() - 2].value);
+        let count = self.check_expr(&args[args.len() - 1].value, self.common.usize);
+        let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else { return Some(error) };
+        if !self.unsafe_context() {
+            self.error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block");
+        }
+        let ty = self.types.intern(TyKind::Span { elem: inner, mutable });
+        Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppSpan { mutable }, args: vec![owner, pointer, count] }, span })
+    }
+
     fn synth_cpp_ref(&mut self, name: Symbol, args: &[ast::Arg], span: Span) -> Option<Expr> {
         let cpp_ref = format!("{}_cpp_ref", ember_branding::SYMBOL_PREFIX);
         if !(name.is(&cpp_ref) || name.is(&format!("{cpp_ref}_mut"))) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
@@ -35173,6 +35204,9 @@ impl<'a> Checker<'a> {
         // compiler-known constructor: a declared `Box[T]` is built by
         // `Box(5)` (D-305).
         if segments.len() == 1 && let Some(built) = self.synth_cpp_ref(name, args, span) {
+            return built;
+        }
+        if segments.len() == 1 && let Some(built) = self.synth_cpp_span(name, args, span) {
             return built;
         }
         if segments.len() == 1 && let Some(built) = self.synth_cpp_object(name, args, &explicit, span) {

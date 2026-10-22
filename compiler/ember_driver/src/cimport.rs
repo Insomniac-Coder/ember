@@ -1455,7 +1455,13 @@ impl Writer {
                         return Err(match self.bridge(ty) {
                             Some(Ok(bridge)) => format!("`{}` by value or behind a pointer: it crosses as `{}`, by reference or as a result ([FFI-17a])", cpp_spelling(ty), bridge.ember),
                             Some(Err(reason)) => reason,
-                            None => format!("`{}`: a C++ standard library type with no bridge type ([FFI-17a] bridges `std::vector`, `std::string`, `std::shared_ptr` and `std::unique_ptr`)", cpp_spelling(ty)),
+                            None if matches!(std_template(clang_getCanonicalType(ty)).as_deref(), Some("basic_string_view" | "span" | "optional")) => {
+                                format!("`{}` here: a view or an optional value crosses as a function's parameter or result ([FFI-17a])", cpp_spelling(ty))
+                            }
+                            None => format!(
+                                "`{}`: a C++ standard library type with no bridge type ([FFI-17a] bridges `std::vector`, `std::string`, `std::string_view`, `std::span`, `std::optional`, `std::shared_ptr`, `std::weak_ptr` and `std::unique_ptr`)",
+                                cpp_spelling(ty)
+                            ),
                         });
                     }
                     // A struct with no tag is known by its typedef's name once that is written
@@ -2481,7 +2487,7 @@ impl Writer {
         unsafe {
             let ty = clang_getCanonicalType(ty);
             let name = std_template(ty)?;
-            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "unique_ptr") {
+            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "weak_ptr" | "unique_ptr") {
                 return None;
             }
             let declaration = clang_getTypeDeclaration(ty);
@@ -2579,6 +2585,40 @@ impl Writer {
                         ember: format!("CppShared[{mapped}]"),
                         spelled: spelled.clone(),
                         make: format!("CppShared.from_thunks(@ as *mut u8, {ops}_pointee, {ops}_copy, {ops}_destroy)"),
+                        unique: None,
+                    }
+                }
+                // `[WK-14]` — a `std::weak_ptr<T>` is a `CppWeak[T]`, never a `Weak`: its `lock()` gives
+                // the `CppShared[T]` C++ counts, so it carries that bridge's thunks too.
+                "weak_ptr" => {
+                    let mapped = match self.ty(argument, true) {
+                        Ok(mapped) => mapped,
+                        Err(reason) => return Some(Err(format!("`{spelled}`: the type it observes does not map ({reason}) [FFI-17a]"))),
+                    };
+                    let shared = format!("std::shared_ptr<{element}>");
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" void* {ops}_lock(void* w) noexcept {{ auto locked = static_cast<{spelled}*>(w)->lock(); return locked ? new {shared}(std::move(locked)) : nullptr; }}\n\
+                         extern \"C\" bool {ops}_expired(void* w) noexcept {{ return static_cast<{spelled}*>(w)->expired(); }}\n\
+                         extern \"C\" void* {ops}_copy(void* w) noexcept {{ return new {spelled}(*static_cast<{spelled}*>(w)); }}\n\
+                         extern \"C\" void {ops}_destroy(void* w) noexcept {{ delete static_cast<{spelled}*>(w); }}\n\
+                         extern \"C\" {element}* {ops}_pointee(void* p) noexcept {{ return static_cast<{shared}*>(p)->get(); }}\n\
+                         extern \"C\" void* {ops}_shared_copy(void* p) noexcept {{ return new {shared}(*static_cast<{shared}*>(p)); }}\n\
+                         extern \"C\" void {ops}_shared_destroy(void* p) noexcept {{ delete static_cast<{shared}*>(p); }}"
+                    );
+                    declare(&mut decls, "lock", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "expired", "(object: *mut u8) -> bool");
+                    declare(&mut decls, "copy", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    declare(&mut decls, "pointee", &format!("(object: *mut u8) -> *mut {mapped}"));
+                    declare(&mut decls, "shared_copy", "(object: *mut u8) -> *mut u8");
+                    declare(&mut decls, "shared_destroy", "(object: *mut u8)");
+                    Bridge {
+                        ember: format!("CppWeak[{mapped}]"),
+                        spelled: spelled.clone(),
+                        make: format!(
+                            "CppWeak.from_thunks(@ as *mut u8, {ops}_lock, {ops}_expired, {ops}_copy, {ops}_destroy, {ops}_pointee, {ops}_shared_copy, {ops}_shared_destroy)"
+                        ),
                         unique: None,
                     }
                 }
@@ -3031,8 +3071,15 @@ impl Writer {
             } else {
                 self.bridge(clang_getCanonicalType(result_ty))
             };
+            // `[FFI-17a]` — a view or an optional value: the thunk gives the view's address and writes
+            // its length, or says whether the optional has a value and writes it.
+            let viewed = if discarded || result_ty.kind == CXType_Void || bridged_result.is_some() || member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) {
+                None
+            } else {
+                self.std_result(clang_getCanonicalType(result_ty))
+            };
             // `[FFI-32]` (ODR-166) — an opaque class by value is held as a constructor's object is.
-            let boxed = if member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) || bridged_result.is_some() {
+            let boxed = if member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) || bridged_result.is_some() || viewed.is_some() {
                 None
             } else {
                 self.boxed_class(result_ty)
@@ -3056,6 +3103,18 @@ impl Writer {
                     let class = cpp_spelling(result_ty);
                     let ember = CType { ember: "usize".to_string(), pointee: Some((owner.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: "boxed".to_string(), opaque: false };
                     (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(new {class}({call}))"))
+                }
+                _ if let Some(found) = &viewed => {
+                    let (ember, element) = found.clone().map_err(|reason| tagged(None, "its result", &reason))?;
+                    if ember.mode == "optional" {
+                        let made = format!(
+                            "[&] {{ auto optional = {call}; if (optional) {{ ::new (static_cast<void*>(value)) {element}(*optional); return true; }} std::memset(static_cast<void*>(value), 0, sizeof *value); return false; }}()"
+                        );
+                        (Some(ember), Some("bool".to_string()), made)
+                    } else {
+                        let made = format!("[&] {{ auto view = {call}; *size = view.size(); return reinterpret_cast<{ADDRESS}>(view.data()); }}()");
+                        (Some(ember), Some(ADDRESS.to_string()), made)
+                    }
                 }
                 // `[FFI-17a]` — a standard-library value: moved to the heap (or, for a
                 // `std::unique_ptr`, given up) for its bridge type to own.
@@ -3120,6 +3179,7 @@ impl Writer {
                     && clang_getCanonicalType(result_ty).kind == CXType_Record
                     && !matches!(member, Some((_, Member::BoxedConstructor, _)))
                     && boxed.is_none()
+                    && viewed.is_none()
                     && !result.as_ref().is_some_and(|ty| ty.mode.starts_with("bridge ")));
             let (returned, call) = match (class_result, returned) {
                 (true, Some(class)) => {
@@ -3129,21 +3189,142 @@ impl Writer {
                 }
                 (_, returned) => (returned, call),
             };
+            // What the thunk writes beside its result, cleared when it caught.
+            let cleared = match result.as_ref().map(|ty| ty.mode.as_str()) {
+                _ if class_result => " std::memset(static_cast<void*>(out), 0, sizeof *out);",
+                Some("view" | "view mut") => {
+                    declared.push("std::size_t* size".to_string());
+                    " *size = 0;"
+                }
+                Some("optional") => {
+                    let element = viewed.clone().and_then(Result::ok).map(|(_, element)| element).unwrap_or_default();
+                    declared.push(format!("{element}* value"));
+                    " std::memset(static_cast<void*>(value), 0, sizeof *value);"
+                }
+                _ => "",
+            };
             if catching {
                 declared.push("int* failed".to_string());
             }
             let declared = if declared.is_empty() { "void".to_string() } else { declared.join(", ") };
-            let cleared = if class_result { " std::memset(static_cast<void*>(out), 0, sizeof *out);" } else { "" };
             let body = match (&returned, catching) {
                 (None, false) => format!("{call};"),
                 (Some(_), false) => format!("return {call};"),
                 (None, true) => format!("try {{ *failed = 0; {call}; }} catch (...) {{ *failed = 1; caught();{cleared} }}"),
-                (Some(returned), true) => format!("try {{ *failed = 0; return {call}; }} catch (...) {{ *failed = 1; caught(); return zero<{returned}>(); }}"),
+                (Some(returned), true) => format!("try {{ *failed = 0; return {call}; }} catch (...) {{ *failed = 1; caught();{cleared} return zero<{returned}>(); }}"),
             };
             let returned = returned.unwrap_or_else(|| "void".to_string());
             let _ = writeln!(self.shim, "extern \"C\" {returned} {thunk}({declared}) noexcept {{ {body} }}");
             let owner = member.map(|(owner, member, _)| (owner.to_string(), member));
             Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result, namespace: Vec::new() })
+        }
+    }
+
+    /// `[FFI-17a]` — a standard-library result the wrapper makes in its own way: a view
+    /// (`std::string_view` as `Span[u8]`, `std::span<const T>` as `Span[T]`, `std::span<T>` as
+    /// `MutSpan[T]`) from the address and length its thunk gives, borrowing what the overlay's
+    /// lifetime word names (`[FFI-11]`: a result's lifetime is never derived); a
+    /// `std::optional<T>` of a `T` that maps by value as `Option[T]`. Its Ember type and mode, and
+    /// the C++ type of what the thunk writes; `None` for any other type.
+    fn std_result(&mut self, canonical: CXType) -> Option<Result<(CType, String), String>> {
+        let template = std_template(canonical)?;
+        // SAFETY(ffi): types of a live translation unit.
+        unsafe {
+            let spelled = cpp_spelling(canonical);
+            let argument = clang_Type_getTemplateArgumentAsType(canonical, 0);
+            let made = |ember: &str, pointee: (String, bool), c: &str, mode: &str| CType { ember: ember.to_string(), pointee: Some(pointee), char_pointer: false, c: c.to_string(), mode: mode.to_string(), opaque: false };
+            match template.as_str() {
+                "basic_string_view" => Some(if matches!(clang_getCanonicalType(argument).kind, CXType_Char_S | CXType_Char_U) {
+                    Ok((made("usize", ("u8".to_string(), true), ADDRESS, "view"), "char".to_string()))
+                } else {
+                    Err(format!("`{spelled}`: only a view of `char` crosses, as `Span[u8]` ([FFI-17a])"))
+                }),
+                "span" => Some(match self.ty(argument, false) {
+                    Ok(mapped) => {
+                        let constant = clang_isConstQualifiedType(argument) != 0;
+                        Ok((made("usize", (mapped, constant), ADDRESS, if constant { "view" } else { "view mut" }), cpp_spelling(argument)))
+                    }
+                    Err(reason) => Err(format!("`{spelled}`: its element does not map by value ({reason}) [FFI-17a]")),
+                }),
+                "optional" => Some(match self.ty(argument, false) {
+                    Ok(mapped) => Ok((made("bool", (mapped, false), "bool", "optional"), cpp_spelling(argument))),
+                    Err(reason) => Err(format!("`{spelled}`: its value does not map by value ({reason}) [FFI-17a]")),
+                }),
+                _ => None,
+            }
+        }
+    }
+
+    /// `[FFI-17a]` — a standard-library parameter the wrapper passes in its own way, zero-copy: a view
+    /// (`std::string_view` as `Span[u8]`, `std::span<const T>` as `Span[T]`, `std::span<T>` as
+    /// `MutSpan[T]`) as its pointer and its length, from which the thunk makes the view the callee
+    /// takes; a `std::optional<T>` of a `T` that maps by value (`Option[T]`) as a pointer to its
+    /// value, null for none; a `std::unique_ptr<T>` taken by value or `&&` as the object the
+    /// caller's `ForeignBox[T]` gives up. `value` is the parameter's type without its reference,
+    /// `ty` its type as written. `None` for any other type.
+    fn std_parameter(&mut self, value: CXType, ty: CXType, name: &str) -> Result<Option<(CType, String, String)>, String> {
+        // SAFETY(ffi): types and cursors of a live translation unit.
+        unsafe {
+            let canonical = clang_getCanonicalType(value);
+            let Some(template) = std_template(canonical) else { return Ok(None) };
+            // The type as its declaration names it: without the parameter's `const`.
+            let spelled = cpp_spelling(clang_getCursorType(clang_getTypeDeclaration(canonical)));
+            let lent = ty.kind == CXType_LValueReference && clang_isConstQualifiedType(value) == 0;
+            let c = type_spelling(ty);
+            let argument = clang_Type_getTemplateArgumentAsType(canonical, 0);
+            let by_value = |writer: &mut Self, what: &str| {
+                writer.ty(argument, false).map_err(|reason| format!("`{spelled}`: {what} does not map by value ({reason}) [FFI-17a]"))
+            };
+            let made = |ember: String, pointee: (String, bool), mode: &str| CType { ember, pointee: Some(pointee), char_pointer: false, c: c.clone(), mode: mode.to_string(), opaque: false };
+            match template.as_str() {
+                "basic_string_view" | "span" => {
+                    if lent {
+                        return Err(format!("`{spelled}` lent mutably (`&`): a view crosses by value or by `const&` ([FFI-17a])"));
+                    }
+                    let (element, mapped, constant) = if template == "basic_string_view" {
+                        if !matches!(clang_getCanonicalType(argument).kind, CXType_Char_S | CXType_Char_U) {
+                            return Err(format!("`{spelled}`: only a view of `char` crosses, as `Span[u8]` ([FFI-17a])"));
+                        }
+                        ("const char".to_string(), "u8".to_string(), true)
+                    } else {
+                        // `std::span<T, N>`: its length is part of its type, which a `Span` has not.
+                        let declaration = clang_getTypeDeclaration(canonical);
+                        let extent = clang_Cursor_getTemplateArgumentUnsignedValue(declaration, 1);
+                        if clang_Cursor_getNumTemplateArguments(declaration) > 1 && extent != u64::MAX && extent != u64::from(u32::MAX) {
+                            return Err(format!("`{spelled}`: a span of fixed extent (a `std::span<T>` of any length crosses as a `Span`) [FFI-17a]"));
+                        }
+                        let mapped = by_value(self, "its element")?;
+                        (cpp_spelling(argument), mapped, clang_isConstQualifiedType(argument) != 0)
+                    };
+                    let mode = if constant { "view " } else { "view mut " };
+                    let ember = made(format!("*{}{mapped}", if constant { "" } else { "mut " }), (mapped, constant), mode);
+                    Ok(Some((ember, format!("{element}* {name}, std::size_t {name}_size"), format!("{spelled}({name}, {name}_size)"))))
+                }
+                "optional" => {
+                    if lent {
+                        return Err(format!("`{spelled}` lent mutably (`&`): an optional value crosses by value or by `const&` ([FFI-17a])"));
+                    }
+                    let mapped = by_value(self, "its value")?;
+                    let element = cpp_spelling(argument);
+                    let ember = made(format!("*{mapped}"), (mapped, true), "optional ");
+                    Ok(Some((ember, format!("const {element}* {name}"), format!("({name} ? {spelled}(*{name}) : {spelled}())"))))
+                }
+                "unique_ptr" => {
+                    if ty.kind == CXType_LValueReference {
+                        return Err(format!("`{spelled}` by reference: the callee takes no ownership a `ForeignBox` could give; take it by value or by `&&` ([FFI-17a])"));
+                    }
+                    let bridge = match self.bridge(canonical) {
+                        Some(Ok(bridge)) => bridge,
+                        Some(Err(reason)) => return Err(reason),
+                        None => return Ok(None),
+                    };
+                    let inner = bridge.unique.clone().unwrap_or_default();
+                    let element = cpp_spelling(argument);
+                    let ember = made(format!("*mut {inner}"), (inner, false), "unique ");
+                    Ok(Some((ember, format!("{element}* {name}"), format!("{spelled}({name})"))))
+                }
+                _ => Ok(None),
+            }
         }
     }
 
@@ -3166,11 +3347,11 @@ impl Writer {
                         cpp_spelling(clang_getCanonicalType(value))
                     ));
                 }
+                if let Some(found) = self.std_parameter(value, ty, name)? {
+                    return Ok(found);
+                }
                 if let Some(found) = self.bridge(clang_getCanonicalType(value)) {
                     let bridge = found?;
-                    if bridge.unique.is_some() {
-                        return Err(format!("`{}`: a `std::unique_ptr` crosses as a result only", cpp_spelling(value)));
-                    }
                     let constant = clang_isConstQualifiedType(value) != 0;
                     let (mode, pass) = match ty.kind {
                         CXType_LValueReference if !constant => ("bridged mut ", format!("*static_cast<{}*>({name})", bridge.spelled)),
@@ -5192,6 +5373,19 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     );
                     continue;
                 }
+                // `[FFI-17a]`, `[FFI-11]` — a view's lifetime is never derived: the entry names what it
+                // borrows.
+                // An entry that leaves a fact unknown (`TODO(…)`, `unsafe`) asserts nothing yet.
+                let unknown = params.iter().flat_map(|param| &param.contract).chain(result).any(|written| matches!(word(&snippet(written.span)), "TODO" | "unsafe"));
+                let lifetime = unknown || result.iter().any(|written| word(&snippet(written.span)) == "from");
+                if function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view")) && !lifetime {
+                    sink.emit(
+                        Diagnostic::error(codes::E5002, name.span, format!("`{}` returns a view (a `std::string_view` or a `std::span`), whose lifetime only its entry states", name.name))
+                            .help(format!("write what the view borrows: `fn {}(…) -> from(self)`, `from(<parameter>)` or `from(static)`", name.name))
+                            .note("a result's lifetime is never derived from a header [FFI-11], [FFI-17a]"),
+                    );
+                    continue;
+                }
                 if !take(applied, sink, layer, entry.is_override, "fn", name) {
                     continue;
                 }
@@ -5730,7 +5924,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppObject"]).filter(|name| words.contains(name)).collect();
+    let used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject"]).filter(|name| words.contains(name)).collect();
     if !used.is_empty() {
         let _ = writeln!(imports, "from std.ffi import {}", used.join(", "));
     }
@@ -5860,7 +6054,10 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     let mut slots: Vec<(String, String, Vec<String>, Option<String>)> = Vec::new();
     let mut params: Vec<String> = Vec::new();
     let mut locals: Vec<String> = Vec::new();
-    let mut needs_unsafe = !contracted;
+    // Lines before the call that need no `unsafe`, each indented as written.
+    let mut prelude: Vec<String> = Vec::new();
+    // Whether passing the arguments needs `unsafe` (to name an object by its address).
+    let mut call_unsafe = !contracted;
     // The receiver: the object `self` is, or the C++ object a trampoline class's object owns.
     let receiver = match (member, trampoline) {
         (Some(Member::Method), None) => Some((owner, false, "ref self".to_string(), format!("(ref self) as *{owner}"))),
@@ -5873,7 +6070,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     if let Some((object, mutable, reference, address)) = receiver {
         let mutable_word = if mutable { "mut " } else { "" };
         if contracted {
-            needs_unsafe |= trampoline.is_some();
+            call_unsafe |= trampoline.is_some();
             slots.push((self_name.clone(), format!("{self_name}: ref {mutable_word}{object}"), one(mutable), Some(reference)));
         } else {
             slots.push((self_name.clone(), format!("{self_name}: *{mutable_word}{object}"), Vec::new(), Some(address)));
@@ -5943,7 +6140,9 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 slots.push((param.clone(), format!("{param}: {}[{inner}]", if constant { "Span" } else { "MutSpan" }), contract_words, Some(param.clone())));
                 slots.push((length.clone(), format!("{length}: usize"), Vec::new(), None));
             } else {
-                slots.push((param.clone(), format!("{param}: {}", ty.ember), Vec::new(), Some(format!("{param}.as_ptr()"))));
+                // A `MutSpan` the caller lent: its elements are the callee's to write.
+                let pointer = if constant { format!("{param}.as_ptr()") } else { format!("{param}.as_ptr() as *mut {inner}") };
+                slots.push((param.clone(), format!("{param}: {}", ty.ember), Vec::new(), Some(pointer)));
                 slots.push((length.clone(), format!("{length}: usize"), Vec::new(), Some(format!("{param}.len()"))));
             }
             continue;
@@ -5959,13 +6158,24 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             ("token ", true) => (format!("{param}: ref {mutable_word}{opaque}"), one(!constant), deref(format!("{prefix}_cpp_token_object({param}).{prefix}_cpp_base.object"), constant)),
             // `[FFI-17a]` — `std::optional<T>`: a pointer to the value, null for none.
             ("optional ", true) => (format!("{param}: Option[ref {inner}]"), ["borrowed", "one", "nullable"].map(str::to_string).to_vec(), format!("{param}.as_ref()")),
-            ("optional ", false) => (format!("{param}: {}", ty.ember), Vec::new(), format!("{prefix}_cpp_optional(ref {param})")),
+            ("optional ", false) => {
+                let at = format!("{prefix}_{}_at", param.trim_start_matches("r#"));
+                prelude.extend([
+                    format!("{at} = null[*{inner}]()"),
+                    format!("match {param}:"),
+                    "    Some(ref inner):".to_string(),
+                    format!("        {at} = (ref inner) as *{inner}"),
+                    "    None:".to_string(),
+                    "        pass".to_string(),
+                ]);
+                (format!("{param}: {}", ty.ember), Vec::new(), at)
+            }
             // `[FFI-17a]` — a `std::unique_ptr<T>` parameter: the box is given up (`owned`).
             ("unique ", true) => (format!("owned {param}: ForeignBox[{inner}]"), vec!["owned".to_string(), "one".to_string()], param.clone()),
             ("unique ", false) => (format!("{param}: {}", ty.ember), Vec::new(), format!("{param}.into_raw()")),
             (_, _) => (format!("{param}: {}", ty.ember), Vec::new(), wrapper_argument(param, &ty)),
         };
-        needs_unsafe |= ty.mode.starts_with("bridged ") || matches!(ty.mode.as_str(), "tramp " | "token ");
+        call_unsafe |= ty.mode.starts_with("bridged ") || matches!(ty.mode.as_str(), "tramp " | "token ");
         slots.push((param.clone(), text, contract_words, Some(argument)));
     }
     // What the thunk writes where the caller says: a class by value (`[FFI-32]`), a view's length,
@@ -6088,7 +6298,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 };
                 (Some(made), Some(format!("{span}[{pointee}]")), true)
             }
-            (_, "optional") => (Some(format!("{prefix}_cpp_some({}, {})", given_or("false"), slot.unwrap_or_default())), Some(format!("Option[{pointee}]")), false),
+            (_, "optional") => (Some(format!("Some({}) if {} else None", slot.unwrap_or_default(), given_or("false"))), Some(format!("Option[{pointee}]")), false),
             (_, mode) if mode.starts_with("ref") && !contracted => {
                 let mutable = mode.starts_with("ref mut");
                 (Some(format!("{prefix}_cpp_ref{}({})", if mutable { "_mut" } else { "" }, given_or("0"))), Some(format!("ref {}{pointee}", if mutable { "mut " } else { "" })), true)
@@ -6097,6 +6307,8 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         }
     };
     let mut statements = Vec::new();
+    // Whether making the value needs `unsafe` (to own an object the thunk gives, or view it).
+    let mut value_unsafe = !contracted;
     let status = has(&result_words, "status");
     let (value_expr, value) = if contracted && status {
         let error = result.as_deref().and_then(status_error).unwrap_or_default();
@@ -6126,7 +6338,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             (given, user, rest.next())
         };
         let (own_value, own_ty, unsafe_made) = own(given, slot);
-        needs_unsafe |= unsafe_made;
+        value_unsafe |= unsafe_made;
         let value_expr = std::iter::once(own_value.clone()).flatten().chain(user.iter().cloned()).collect::<Vec<_>>();
         let value_ty = std::iter::once(own_ty.clone()).flatten().chain(outs.iter().cloned()).collect::<Vec<_>>();
         if value_expr.is_empty() {
@@ -6137,7 +6349,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     } else {
         // The thunk's slot is read once the call has written it.
         let slot = written.as_ref().map(|(what, _)| if what == "size" { format!("{prefix}_size") } else { format!("{prefix}_slot.assume_init()") });
-        let given = if result.is_some() {
+        let given = if result_mode == "optional" {
+            // Whether there is a value, before the slot is read.
+            statements.push(format!("{prefix}_has = {call}"));
+            Some(format!("{prefix}_has"))
+        } else if result.is_some() {
             Some(call.clone())
         } else {
             statements.push(call.clone());
@@ -6166,43 +6382,50 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     let public = if hidden { "" } else { "pub " };
     let note = if safe { String::new() } else { "  # SAFETY: the caller keeps what the header does not state".to_string() };
     let _ = writeln!(text, "{public}{}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, params.join(", "));
-    for local in locals.iter().chain(&given) {
+    for local in locals.iter().chain(&given).chain(&prelude) {
         let _ = writeln!(text, "    {local}");
     }
-    let indent = if needs_unsafe {
-        let lifetime_bound = function.result.as_ref().and_then(|ty| ty.mode.split_once(" from ")).map(|(_, from)| from.to_string()).filter(|_| !contracted);
-        let safety = match lifetime_bound {
-            Some(from) => format!(
-                "# SAFETY: the thunk takes this function's own arguments; its result lives as long as `{from}`, as the header's `[[clang::lifetimebound]]` states: asserted, never checked, since C++ does not enforce it [FFI-11f]"
-            ),
-            None if contracted => "# SAFETY: each object is one this function's arguments own, borrowed for the call; the object the thunk gives is owned once".to_string(),
-            None => "# SAFETY: the thunk takes this function's own arguments".to_string(),
-        };
-        let _ = writeln!(text, "    unsafe:  {safety}");
-        "        "
-    } else {
-        "    "
-    };
-    for statement in &statements {
-        let _ = writeln!(text, "{indent}{statement}");
-    }
+    // The body's lines, each with whether it needs `unsafe`: the statements (which make the call),
+    // the line that returns the value (which makes it, and the call when no statement does), and
+    // what follows. Consecutive lines that need it share one `unsafe:` block, and no other line is
+    // in one (`L3010`).
+    let mut lines: Vec<(String, bool)> = statements.iter().map(|statement| (statement.clone(), call_unsafe)).collect();
+    let returned_unsafe = value_unsafe || (statements.is_empty() && call_unsafe);
     match (value_expr, policy) {
-        (Some(value), Policy::Direct) => {
-            let _ = writeln!(text, "{indent}return {value}");
-        }
-        (Some(value), Policy::Asserted) => {
-            let _ = writeln!(text, "{indent}return {prefix}_cpp_value({value}, {failed}, \"{quoted}\")");
-        }
-        (Some(value), _) => {
-            let _ = writeln!(text, "{indent}return {prefix}_cpp_result({value}, {failed})");
-        }
+        (Some(value), Policy::Direct) => lines.push((format!("return {value}"), returned_unsafe)),
+        (Some(value), Policy::Asserted) => lines.push((format!("return {prefix}_cpp_value({value}, {failed}, \"{quoted}\")"), returned_unsafe)),
+        (Some(value), _) => lines.push((format!("return {prefix}_cpp_result({value}, {failed})"), returned_unsafe)),
         (None, Policy::Direct) => {}
-        (None, Policy::Asserted) => {
-            let _ = writeln!(text, "    {prefix}_cpp_value((), {failed}, \"{quoted}\")");
+        (None, Policy::Asserted) => lines.push((format!("{prefix}_cpp_value((), {failed}, \"{quoted}\")"), false)),
+        (None, _) => lines.push((format!("return {prefix}_cpp_result((), {failed})"), false)),
+    }
+    let lifetime_bound = function.result.as_ref().and_then(|ty| ty.mode.split_once(" from ")).map(|(_, from)| from.to_string()).filter(|_| !contracted);
+    let safety = match lifetime_bound {
+        Some(from) => format!(
+            "# SAFETY: the thunk takes this function's own arguments; its result lives as long as `{from}`, as the header's `[[clang::lifetimebound]]` states: asserted, never checked, since C++ does not enforce it [FFI-11f]"
+        ),
+        None if contracted => {
+            let mut reasons = Vec::new();
+            if call_unsafe {
+                reasons.push("each object named by its address is the one this function's argument holds, borrowed for the call".to_string());
+            }
+            if result_mode.starts_with("view") {
+                let lives = lifetime.as_deref().filter(|from| *from != "static").map_or("for the program's whole run".to_string(), |from| format!("as long as `{from}`"));
+                reasons.push(format!("the view the thunk gives lives {lives}, as the overlay's entry asserts [FFI-17a]"));
+            } else if result_mode == "boxed" || result_mode.starts_with("bridge ") || member == Some(Member::BoxedConstructor) {
+                reasons.push("the object the thunk gives is a new one, which nothing else owns".to_string());
+            }
+            format!("# SAFETY: {}", reasons.join("; "))
         }
-        (None, _) => {
-            let _ = writeln!(text, "    return {prefix}_cpp_result((), {failed})");
+        None => "# SAFETY: the thunk takes this function's own arguments".to_string(),
+    };
+    let mut open = false;
+    for (line, needs) in lines {
+        if needs && !open {
+            let _ = writeln!(text, "    unsafe:  {safety}");
         }
+        open = needs;
+        let _ = writeln!(text, "{}{line}", if needs { "        " } else { "    " });
     }
     text.push('\n');
     (raw_text, text)
@@ -6245,9 +6468,11 @@ fn signature_of(wrapper: &str) -> Option<(Vec<String>, Option<String>)> {
 /// (`[FFI-11c]`), and `-> unsafe` where every parameter and the result are scalars, since being safe
 /// to call is the one fact no header states (`[FFI-2]`).
 fn starter_entry(function: &Function) -> String {
-    let todo = |ty: &CType| ty.pointee.is_some() || ty.ember.starts_with("Option[");
+    // A pointer the header declares; what the importer passes in its own way (a C++ reference, a
+    // bridge value, a view, an optional value) states its facts.
+    let todo = |ty: &CType| (ty.pointee.is_some() && ty.mode.is_empty()) || ty.ember.starts_with("Option[");
     let mut text = String::new();
-    for (name, ty) in &function.params {
+    for (name, ty) in function.params.iter().filter(|(_, ty)| ty.mode.is_empty()) {
         if let Some((_, constant)) = &ty.pointee {
             let borrow = if *constant { "a read-only borrow (`const`)" } else { "a mutable borrow (no `const`)" };
             let _ = writeln!(text, "    # derived: `{name}` is {borrow}");
@@ -6259,6 +6484,8 @@ fn starter_entry(function: &Function) -> String {
         .map(|(name, ty)| if todo(ty) { format!("{name}: TODO(ownership) TODO(count) TODO(nullable)") } else { name.trim_start_matches("r#").to_string() })
         .collect();
     let result = match &function.result {
+        // `[FFI-17a]` — a view's lifetime, which no header states.
+        Some(ty) if ty.mode.starts_with("view") => " -> TODO(lifetime)",
         Some(ty) if todo(ty) => " -> TODO(ownership) TODO(count) TODO(nullable) TODO(lifetime)",
         _ if function.params.iter().any(|(_, ty)| todo(ty)) => "",
         _ => " -> unsafe",
@@ -6614,9 +6841,11 @@ fn outcome_lines(imported: &Imported, applied: &Applied) -> String {
         let pointers: Vec<&str> = function
             .params
             .iter()
-            .filter(|(_, ty)| ty.pointee.is_some())
+            // `[FFI-17a]` — a view, an optional value and a `std::unique_ptr` state their facts; a view
+            // result its lifetime only in an overlay.
+            .filter(|(_, ty)| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "view " | "view mut " | "optional " | "unique "))
             .map(|(param, _)| param.as_str())
-            .chain(function.result.iter().filter(|ty| ty.pointee.is_some() && ty.mode != "boxed").map(|_| "the result"))
+            .chain(function.result.iter().filter(|ty| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "boxed" | "optional")).map(|_| "the result"))
             .collect();
         let line = if applied.functions.contains_key(&function.name) {
             format!("overlay  fn     {} ({policy}; stated)", path(&function.namespace, &name))

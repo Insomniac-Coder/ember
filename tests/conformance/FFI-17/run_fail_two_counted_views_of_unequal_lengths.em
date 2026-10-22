@@ -7,7 +7,7 @@
 # other: the call panics before C++ runs, as a C function's does.
 
 from std.ffi import c_int
-import cpp "texts.hpp" with (overlay = "overlays/texts.em")
+import cpp "texts.hpp" with (overlay = "overlays/texts_dot.em")
 
 fn main():
     left: Array[c_int] = [1, 2, 3]
