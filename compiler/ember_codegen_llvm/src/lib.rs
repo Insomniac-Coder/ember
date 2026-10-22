@@ -18,6 +18,7 @@ mod arrays;
 mod builtins;
 mod closures;
 mod cmp;
+mod debug;
 mod dispatch;
 mod ffi;
 mod fmt;
@@ -118,6 +119,8 @@ pub(crate) struct Module<'a> {
     pub shim_functions: BTreeMap<String, String>,
     /// Each type with a `clone` method, its symbol and whether it takes its receiver by address.
     pub clone_fns: HashMap<ember_types::Ty, (String, bool)>,
+    /// `[CG-LL-3]` — the debug information.
+    pub debug: debug::Debug,
 }
 
 impl<'a> Module<'a> {
@@ -210,6 +213,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
                 (body.return_ty() == owner).then(|| (owner, (body.symbol.clone(), by_address)))
             })
             .collect(),
+        debug: debug::Debug::new(map, options.target, options.module_name, options.profile != Profile::Debug),
     };
     module.dispatch = dispatch::Dispatch::collect(&module, bodies);
     module.callables = closures::Callables::collect(&module, bodies);
@@ -265,6 +269,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
     }
     ir.push('\n');
     ir.push_str(&module.fns);
+    module.debug.write(options.target, &mut ir);
     let shim = (!module.shims.is_empty() || !module.shim_functions.is_empty()).then(|| {
         let mut source = runtime::shim_source(&module.shims);
         for function in module.shim_functions.values() {

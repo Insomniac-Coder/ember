@@ -6,6 +6,7 @@
 //! ABI (`crate::abi`): a value passed behind a pointer is the callee's own copy, so the parameter
 //! is that copy's slot, and an `sret` result is written in place.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::abi::{self, Part, PartTy, Pass, Return, Shape, Signature};
@@ -52,6 +53,10 @@ pub(crate) struct FnCx<'m, 'a> {
     block: String,
     /// The span of the statement or terminator being written, for the panics it may make.
     span: ember_span::Span,
+    /// `[CG-LL-3]` — the function's `DISubprogram` and line, when it is made from a MIR body.
+    scope: Option<(usize, u32)>,
+    /// Each line and column's `DILocation` in it.
+    locations: HashMap<(u32, u32), usize>,
 }
 
 /// The ABI signature of a function returning `ret` and taking `params`.
@@ -223,6 +228,9 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
 /// The function `body` names, its frame laid out and its code what `build` writes from `bb0`.
 pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl FnOnce(&mut FnCx<'_, 'a>) -> Result<()>) -> Result<()> {
     let sig = body_signature(m, body);
+    let optimized = m.profile != Profile::Debug;
+    let link = crate::link_symbol(&body.symbol);
+    let (subprogram, line) = m.debug.subprogram(m.map, &link, body.span, optimized);
     let mut cx = FnCx {
         m,
         body: Some(body),
@@ -234,6 +242,8 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
         sig,
         block: "entry".to_string(),
         span: ember_span::Span::DUMMY,
+        scope: Some((subprogram, line)),
+        locations: HashMap::new(),
     };
     cx.frame()?;
     build(&mut cx)?;
@@ -251,7 +261,7 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
     }
     let linkage = if body.abi.is_some() { "" } else { "internal " };
     let header = format!(
-        "define {linkage}{} {}({}) {attrs} {{",
+        "define {linkage}{} {}({}) {attrs} !dbg !{subprogram} {{",
         ret_with_attr(&cx.sig),
         global_name(&body.symbol),
         ir_params(&cx.sig, true).join(", ")
@@ -407,6 +417,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
             sig: Signature { ret: Return::Void, params: Vec::new() },
             block: "start".to_string(),
             span: ember_span::Span::DUMMY,
+            scope: None,
+            locations: HashMap::new(),
         }
     }
 
@@ -458,6 +470,27 @@ impl<'m, 'a> FnCx<'m, 'a> {
     pub(crate) fn emit(&mut self, line: impl AsRef<str>) {
         self.out.push_str("  ");
         self.out.push_str(line.as_ref());
+        // `[CG-LL-3]` — the Ember line and column of the statement the instruction is made from
+        // (the function's own line where it has none).
+        if let Some((scope, own)) = self.scope {
+            let span = self.span;
+            let (line, col) = match self.m.map.get(span.file) {
+                Some(_) if !span.is_dummy() => {
+                    let at = self.m.map.line_col(span);
+                    (at.line, at.col)
+                }
+                _ => (own, 0),
+            };
+            let node = match self.locations.get(&(line, col)) {
+                Some(node) => *node,
+                None => {
+                    let node = self.m.debug.location(line, col, scope);
+                    self.locations.insert((line, col), node);
+                    node
+                }
+            };
+            let _ = write!(self.out, ", !dbg !{node}");
+        }
         self.out.push('\n');
     }
 
@@ -2676,6 +2709,9 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     let Some(called_body) = m.bodies.get(called.as_str()).copied() else {
         return unsupported("a program without `main`");
     };
+    // The C `main` is a frame of the backtrace too, at the Ember `main`'s declaration.
+    let optimized = m.profile != Profile::Debug;
+    let (subprogram, line) = m.debug.subprogram(m.map, "main", called_body.span, optimized);
     let mut cx = FnCx {
         m,
         body: None,
@@ -2687,6 +2723,8 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         sig: Signature { ret: Return::Void, params: Vec::new() },
         block: "entry".to_string(),
         span: ember_span::Span::DUMMY,
+        scope: Some((subprogram, line)),
+        locations: HashMap::new(),
     };
     // `ember_rt_config_default()`: its size, and nothing else set.
     let cfg = cx.alloca(48, 8);
@@ -2729,7 +2767,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     cx.emit(format!("ret i32 {status}"));
     let attrs = fn_attrs(cx.m);
     let text = format!(
-        "define i32 @main(i32 %argc, ptr %argv) {attrs} {{\nentry:\n{}{}}}\n\n",
+        "define i32 @main(i32 %argc, ptr %argv) {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n",
         cx.allocas, cx.out
     );
     cx.m.fns.push_str(&text);
