@@ -10,6 +10,7 @@ pub struct JsonWriter:
     ## For each open object or array: whether it is an array, and whether nothing is in it yet.
     open: Array[(bool, bool)]
 
+    ## It allocates a new `String`.
     pub fn new() -> JsonWriter:
         return JsonWriter(String(), [])
 
@@ -18,6 +19,7 @@ pub struct JsonWriter:
         return self.out.as_str()
 
     ## A comma before an array's element after its first.
+    ## It allocates as the `String` it writes to grows.
     fn before_value(mut self):
         n = len(self.open)
         if n > 0 and self.open[n - 1].0:
@@ -25,6 +27,7 @@ pub struct JsonWriter:
                 self.out.push_str(",")
             self.open[n - 1] = (true, false)
 
+    ## It allocates as the `String` it writes to grows.
     fn quoted(mut self, text: str):
         self.out.push_str("\"")
         for c in text.chars():
@@ -44,6 +47,7 @@ pub struct JsonWriter:
                 self.out.push(c)
         self.out.push_str("\"")
 
+    ## It allocates as the `String` it writes to grows.
     fn key(mut self, name: str):
         n = len(self.open)
         if n > 0 and not self.open[n - 1].1:
@@ -54,6 +58,7 @@ pub struct JsonWriter:
         self.out.push_str(":")
 
 extend JsonWriter implements Writer:
+    ## It allocates as the `String` it writes to grows.
     fn begin_struct(mut self, name: str, version: int) -> Result[void, SerError]:
         self.before_value()
         self.out.push_str("{")
@@ -63,15 +68,18 @@ extend JsonWriter implements Writer:
             self.out.push_str(f"{version}")
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn field(mut self, name: str) -> Result[void, SerError]:
         self.key(name)
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn end_struct(mut self) -> Result[void, SerError]:
         _ = self.open.pop()
         self.out.push_str("}")
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn begin_variant(mut self, name: str) -> Result[void, SerError]:
         self.before_value()
         self.out.push_str("{")
@@ -80,30 +88,36 @@ extend JsonWriter implements Writer:
         self.quoted(name)
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn end_variant(mut self) -> Result[void, SerError]:
         return self.end_struct()
 
+    ## It allocates as the `String` it writes to grows.
     fn begin_list(mut self, count: int) -> Result[void, SerError]:
         self.before_value()
         self.out.push_str("[")
         self.open.push((true, true))
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn end_list(mut self) -> Result[void, SerError]:
         _ = self.open.pop()
         self.out.push_str("]")
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn write_none(mut self) -> Result[void, SerError]:
         self.before_value()
         self.out.push_str("null")
         return Ok(())
 
+    ## It allocates a new `String`.
     fn write_int(mut self, value: i64) -> Result[void, SerError]:
         self.before_value()
         self.out.push_str(f"{value}")
         return Ok(())
 
+    ## It allocates a new `String`.
     fn write_float(mut self, value: f64) -> Result[void, SerError]:
         if value != value or value - value != 0.0:
             return Err(SerError.Malformed(String.from("JSON has no NaN or infinity")))
@@ -111,11 +125,13 @@ extend JsonWriter implements Writer:
         self.out.push_str(f"{value}")
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn write_bool(mut self, value: bool) -> Result[void, SerError]:
         self.before_value()
         self.out.push_str("true" if value else "false")
         return Ok(())
 
+    ## It allocates as the `String` it writes to grows.
     fn write_str(mut self, value: str) -> Result[void, SerError]:
         self.before_value()
         self.quoted(value)
@@ -128,9 +144,11 @@ pub struct JsonReader:
     ## For each open array: whether no element has been read yet.
     lists: Array[bool]
 
+    ## It allocates a new `String`.
     pub fn new(text: str) -> JsonReader:
         return JsonReader(String.from(text), 0, [])
 
+    ## It allocates the error's message when the input is malformed.
     fn malformed(self, what: str) -> SerError:
         return SerError.Malformed(f"{what} at byte {self.at}")
 
@@ -142,6 +160,7 @@ pub struct JsonReader:
             return bytes[self.at] as int
         return -1
 
+    ## It allocates the error's message when the input is malformed.
     fn expect(mut self, byte: int, what: str) -> Result[void, SerError]:
         if self.peek() != byte:
             return Err(self.malformed(f"expected {what}"))
@@ -155,6 +174,7 @@ pub struct JsonReader:
             return true
         return false
 
+    ## It allocates a new `String`.
     fn string(mut self) -> Result[String, SerError]:
         self.expect(34, "a string")?
         out = String()
@@ -216,6 +236,7 @@ pub struct JsonReader:
         return self.text.as_str()[start..self.at]
 
 extend JsonReader implements Reader:
+    ## It allocates the error's message when the input is malformed.
     fn begin_struct(mut self) -> Result[int, SerError]:
         self.expect(123, "`{`")?
         mark = self.at
@@ -230,6 +251,7 @@ extend JsonReader implements Reader:
         self.at = mark
         return Ok(0)
 
+    ## It allocates a new `String`.
     fn next_field(mut self) -> Result[Option[String], SerError]:
         c = self.peek()
         if c == 125:
@@ -240,9 +262,11 @@ extend JsonReader implements Reader:
         self.expect(58, "`:`")?
         return Ok(Some(name))
 
+    ## It allocates the error's message when the input is malformed.
     fn end_struct(mut self) -> Result[void, SerError]:
         return self.expect(125, "`}`")
 
+    ## It allocates the error's message when the input is malformed.
     fn begin_variant(mut self) -> Result[String, SerError]:
         self.expect(123, "`{`")?
         key = self.string()?
@@ -251,14 +275,17 @@ extend JsonReader implements Reader:
         self.expect(58, "`:`")?
         return self.string()
 
+    ## It allocates the error's message when the input is malformed.
     fn end_variant(mut self) -> Result[void, SerError]:
         return self.expect(125, "`}`")
 
+    ## It allocates as the `Array` it adds to grows.
     fn begin_list(mut self) -> Result[void, SerError]:
         self.expect(91, "`[`")?
         self.lists.push(true)
         return Ok(())
 
+    ## It allocates the error's message when the input is malformed.
     fn next_element(mut self) -> Result[bool, SerError]:
         if self.peek() == 93:
             self.at += 1
@@ -274,6 +301,7 @@ extend JsonReader implements Reader:
     fn read_none(mut self) -> Result[bool, SerError]:
         return Ok(self.word("null"))
 
+    ## It allocates the error's message when the input is malformed.
     fn read_int(mut self) -> Result[i64, SerError]:
         match self.number().parse[i64]():
             Ok(n):
@@ -281,6 +309,7 @@ extend JsonReader implements Reader:
             Err(_):
                 return Err(self.malformed("expected an integer"))
 
+    ## It allocates the error's message when the input is malformed.
     fn read_float(mut self) -> Result[f64, SerError]:
         match self.number().parse[f64]():
             Ok(x):
@@ -288,6 +317,7 @@ extend JsonReader implements Reader:
             Err(_):
                 return Err(self.malformed("expected a number"))
 
+    ## It allocates the error's message when the input is malformed.
     fn read_bool(mut self) -> Result[bool, SerError]:
         if self.word("true"):
             return Ok(true)
@@ -295,9 +325,11 @@ extend JsonReader implements Reader:
             return Ok(false)
         return Err(self.malformed("expected `true` or `false`"))
 
+    ## It allocates a new `String`.
     fn read_str(mut self) -> Result[String, SerError]:
         return self.string()
 
+    ## It allocates a new `String`.
     fn skip_value(mut self) -> Result[void, SerError]:
         c = self.peek()
         if c == 123:

@@ -97,6 +97,7 @@ pub open class AnyStorage:
     pub entities: Array[Entity]
     sparse: Array[u32]
 
+    ## It allocates a new `Array`.
     fn init(mut self):
         self.entities = []
         self.sparse = []
@@ -112,6 +113,7 @@ pub open class AnyStorage:
         return self.slot(e).is_some()
 
     ## Records `e` at the end of the dense order.
+    ## It allocates as the `Array` it adds to grows.
     fn push_entity(mut self, e: Entity):
         i = e.index() as int
         while self.sparse.len() <= i:
@@ -196,6 +198,7 @@ pub class World:
     live: Array[Entity]
     live_slot: Array[u32]
 
+    ## It allocates a new `Array`.
     fn init(mut self):
         self.generations = []
         self.free = []
@@ -205,6 +208,7 @@ pub class World:
         self.live_slot = []
 
     ## A new entity: a freed index at its next generation, else a new index.
+    ## It allocates as the `Array` it adds to grows.
     pub fn create(mut self) -> Entity:
         self.alive += 1
         if self.free.len() > 0:
@@ -224,6 +228,7 @@ pub class World:
         return alive_in(self.generations, e)
 
     ## Removes every component of `e` and frees its index for a later generation.
+    ## It allocates as the `Array` it adds to grows.
     pub fn destroy(mut self, e: Entity) -> bool:
         if not alive_in(self.generations, e):
             return false
@@ -318,6 +323,7 @@ pub class World:
     ## checked against each other before any of them starts, and a conflict panics, naming both
     ## systems and the component. (A conflict between systems written in the call's own array
     ## literal is `E7020` at compile time.)
+    ## It allocates a new `Array`.
     pub fn run_parallel(self, owned systems: Array[System]):
         sets: Array[Array[Access]] = []
         for system in systems.iter_mut():
@@ -343,6 +349,7 @@ pub class World:
         self.apply(q.cmds)
 
     ## `[ECS-5]` — the changes `commands` holds, in the order they were asked for.
+    ## It allocates as the `Array` it adds to grows.
     pub fn apply(self, commands: Commands):
         for command in commands.queued:
             command.apply(self)
@@ -1117,6 +1124,7 @@ pub open class Command:
     fn init(mut self):
         pass
 
+    ## An override allocates as the change it makes to the world does.
     virtual fn apply(self, world: World):
         pass
 
@@ -1127,6 +1135,7 @@ class DestroyCommand(Command):
         self.e = e
         super.init()
 
+    ## It allocates as `World.destroy` does.
     override fn apply(self, world: World):
         _was = world.destroy(self.e)
 
@@ -1161,10 +1170,12 @@ class AddCommand[T: Component](Command):
 pub class Commands:
     queued: Array[Command]
 
+    ## It allocates a new `Array`.
     fn init(mut self):
         self.queued = []
 
     ## Destroys `e` (and every component it has).
+    ## It allocates the command it queues.
     pub fn destroy(self, e: Entity):
         self.queued.push(DestroyCommand(e))
 
@@ -1190,6 +1201,7 @@ pub struct System:
     run_on: fn(World)
 
     ## `[ECS-4]` — the components it reads and writes.
+    ## It allocates a new `Array`.
     pub fn accesses(mut self) -> Array[Access]:
         out: Array[Access] = []
         self.accesses_of(out)

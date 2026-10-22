@@ -15,6 +15,7 @@ pub enum ParseError:
 ## `[ERR-3]`, `[ERR-8]` (D-764) — an error type: `?` carries a failed `parse` into an `AnyError`
 ## (`s.parse[int]()?` in a function returning `Result[T]`), and its text says why.
 extend ParseError implements Display:
+    ## It allocates as the `String` it writes to grows.
     fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
         return match self:
             Empty => f.write_str("the text is empty")

@@ -4796,8 +4796,8 @@ fn the_optimization_report_gives_each_simd_loop_its_verdict_then_the_host_compil
 /// `[STD-1]` — every function in `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena` is
 /// `@noalloc` unless its documentation says it allocates: a copy of `std` whose `core` gains a
 /// function that allocates with nothing saying so stops the build with `E4001`; the same function
-/// whose documentation says it allocates, a generic one, and the same function in `std.thread`
-/// (not one of the five) do not.
+/// whose documentation says it allocates, and a generic one, do not. `[STD-14]` holds every other
+/// module of `std` to the same: the function in `std.thread` stops the build too.
 #[test]
 fn std_functions_are_noalloc_unless_documented() {
     let root = workspace_root();
@@ -4840,7 +4840,137 @@ fn std_functions_are_noalloc_unless_documented() {
     let generic = with("core", "pub fn leaky_list[T](owned x: T) -> Array[T]:\n    return [x]\n");
     assert_eq!(generic.exit, 0, "a generic function was held to it:\n{}", generic.stderr);
     let elsewhere = with("thread", leaky);
-    assert_eq!(elsewhere.exit, 0, "a module outside the five was held to it:\n{}", elsewhere.stderr);
+    assert!(
+        elsewhere.exit != 0 && elsewhere.stderr.contains("E4001") && elsewhere.stderr.contains("leaky_text"),
+        "an undocumented allocation in std.thread was accepted:\n{}",
+        elsewhere.stderr
+    );
+}
+
+/// `[STD-14]` — the standard library follows `[ERR-13]` and says what allocates. A program that
+/// imports every module of `std` checks clean: each function that allocates is documented as
+/// allocating (the word `allocates`), which `[STD-1]`'s contract holds every module to, so its
+/// effects carry `Alloc` and its documentation says so. And each `panic` in std's sources is a
+/// caller's bug that names its non-panicking twin (`; use .get(i) for an Option`, a function std
+/// declares), or one listed here with the rule that settles it, or one listed as open: a caller's
+/// bug with no twin yet, which `docs/phase-status.json` keeps as `[STD-14]`'s unfinished part. A
+/// place that cannot fail is `unreachable()`, not a panic. Every listed place must still panic, so
+/// the lists stay exact.
+#[test]
+fn std_panics_name_their_twins_and_allocations_are_documented() {
+    let root = workspace_root();
+    let std_src = root.join("std").join("src");
+    fn files(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("std's sources") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                files(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == SOURCE_EXT) {
+                out.push(path);
+            }
+        }
+    }
+    let mut sources = Vec::new();
+    files(&std_src, &mut sources);
+    sources.sort();
+    // Every module, by its path: `math/mod` is `std.math`, and `lib` is `std` itself.
+    let mut imports = String::new();
+    for path in &sources {
+        let relative = path.strip_prefix(&std_src).expect("under std/src").with_extension("");
+        let mut parts: Vec<String> = relative.iter().map(|part| part.to_string_lossy().into_owned()).collect();
+        if parts.last().is_some_and(|last| last == "mod") {
+            parts.pop();
+        }
+        if parts == ["lib"] {
+            continue;
+        }
+        imports.push_str(&format!("import std.{}\n", parts.join(".")));
+    }
+    let scratch = temporary_directory("std_conventions");
+    let program = scratch.join(format!("main.{SOURCE_EXT}"));
+    std::fs::write(&program, format!("{imports}\nfn main():\n    pass\n")).expect("the program writes");
+    let checked = ember(&["check", &program.to_string_lossy()], &root);
+    assert_eq!(checked.exit, 0, "std does not check clean with every module loaded:\n{}", checked.stderr);
+
+    // The panics that name no twin, by file, function and a piece of their message.
+    const SETTLED: &[(&str, &str, &str, &str)] = &[
+        ("core.em", "of_wide", "does not fit", "integer overflow panics ([ERR-13]); `ItemCount.at_most` saturates"),
+        ("core.em", "to_wide", "is not a count", "a negative number has no count (`ItemCount`)"),
+        ("core.em", "of", "cannot be negative", "a count is not negative (`ItemCount`)"),
+        ("core.em", "to_int", "does not fit an int", "integer overflow panics ([ERR-13])"),
+        ("core.em", "take", "cannot be negative", "ODR-089: a negative count panics when the adapter is made"),
+        ("core.em", "skip", "cannot be negative", "ODR-089"),
+        ("core.em", "step_by", "must be positive", "ODR-089: a step of zero or less"),
+        ("core.em", "nth", "cannot be negative", "ODR-089: a negative index panics when the consumer is called"),
+        ("ecs.em", "run_parallel", "cannot run at once", "[ECS-4]: a conflict panics before any system starts"),
+    ];
+    // Open: a caller's bug with no non-panicking twin in std yet (the owner names them).
+    const OPEN: &[(&str, &str, &str)] = &[
+        ("core.em", "stepped", "step must not be zero"),
+        ("collections.em", "insert", "non-negative integers"),
+        ("ecs.em", "new", "an entity's index"),
+        ("ecs.em", "add", "added to a live entity"),
+        ("ffi.em", "get", "is empty"),
+        ("mod.em", "col", "has columns"),
+        ("mod.em", "row", "has rows"),
+        ("mod.em", "normalize", "zero quaternion"),
+        ("mod.em", "normalize", "plane with no normal"),
+        ("string.em", "split", "separator is empty"),
+    ];
+    let declared: String = sources.iter().map(|path| std::fs::read_to_string(path).expect("a std file reads")).collect();
+    let mut used = vec![0usize; SETTLED.len() + OPEN.len()];
+    let mut wrong = Vec::new();
+    for path in &sources {
+        let file = path.file_name().expect("a name").to_string_lossy().into_owned();
+        let text = std::fs::read_to_string(path).expect("a std file reads");
+        let lines: Vec<&str> = text.lines().collect();
+        for (at, line) in lines.iter().enumerate() {
+            let Some(start) = line.find("panic(") else { continue };
+            let message = &line[start..];
+            // A body the compiler or the runtime replaces never runs.
+            if message.contains("is the compiler's") || message.contains("the runtime's") {
+                continue;
+            }
+            let function = lines[..at]
+                .iter()
+                .rev()
+                .find_map(|line| {
+                    let (_, rest) = line.split_once("fn ")?;
+                    let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                    (!name.is_empty()).then_some(name)
+                })
+                .unwrap_or_default();
+            if let Some((_, after)) = message.split_once("; use ") {
+                let twin: String =
+                    after.trim_start_matches('.').chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                let declares = declared.contains(&format!("fn {twin}(")) || declared.contains(&format!("fn {twin}["));
+                if !declares {
+                    wrong.push(format!("{file}:{}: `{function}` names twin `{twin}`, which std does not declare", at + 1));
+                }
+                continue;
+            }
+            let settled = SETTLED.iter().position(|(f, n, piece, _)| *f == file && *n == function && message.contains(piece));
+            let open = OPEN.iter().position(|(f, n, piece)| *f == file && *n == function && message.contains(piece));
+            match (settled, open) {
+                (Some(index), _) => used[index] += 1,
+                (None, Some(index)) => used[SETTLED.len() + index] += 1,
+                (None, None) => wrong.push(format!(
+                    "{file}:{}: `{function}` panics naming no twin: name it (`; use NAME …`), or list the rule that settles it",
+                    at + 1
+                )),
+            }
+        }
+    }
+    for (index, count) in used.iter().enumerate() {
+        if *count == 0 {
+            let (file, function) = match SETTLED.get(index) {
+                Some((file, function, _, _)) => (*file, *function),
+                None => (OPEN[index - SETTLED.len()].0, OPEN[index - SETTLED.len()].1),
+            };
+            wrong.push(format!("{file}: `{function}` is listed but no longer panics: take it off the list"));
+        }
+    }
+    assert!(wrong.is_empty(), "std's panics break [ERR-13]:\n{}", wrong.join("\n"));
 }
 
 /// `[RC-6]` — `ember inspect --counts` lists the retains and releases a build

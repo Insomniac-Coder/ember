@@ -5,6 +5,7 @@ import std.io
 from std.io import Error
 
 ## `[STD-22]` — the bytes of the file at `path`.
+## It allocates a new `Array`.
 pub fn read(path: str) -> Result[Array[u8], Error]:
     bytes: Array[u8] = []
     code = read_raw(path, bytes)
@@ -13,6 +14,7 @@ pub fn read(path: str) -> Result[Array[u8], Error]:
     return Ok(bytes)
 
 ## The text of the file at `path`; `Err` with `InvalidData` when it is not UTF-8.
+## It allocates a new `String`.
 pub fn read_to_string(path: str) -> Result[String, Error]:
     bytes = read(path)?
     match bytes.as_span().to_str():
@@ -22,26 +24,32 @@ pub fn read_to_string(path: str) -> Result[String, Error]:
             return Err(Error.invalid_data(f"{path} is not UTF-8"))
 
 ## Writes `data` to the file at `path`, making it or replacing what it held.
+## It allocates: the operating system is called with a copy of the path or the data.
 pub fn write(path: str, data: Span[u8]) -> Result[void, Error]:
     return done(write_raw(path, data, false))
 
 ## Writes `data` at the end of the file at `path`, making it if it is not there.
+## It allocates: the operating system is called with a copy of the path or the data.
 pub fn append(path: str, data: Span[u8]) -> Result[void, Error]:
     return done(write_raw(path, data, true))
 
 ## Whether anything is at `path`.
+## It allocates: the operating system is called with a copy of the path or the data.
 pub fn exists(path: str) -> bool:
     return exists_raw(path)
 
 ## Removes the file, or the empty directory, at `path`.
+## It allocates: the operating system is called with a copy of the path or the data.
 pub fn remove(path: str) -> Result[void, Error]:
     return done(remove_raw(path))
 
 ## Makes the directory at `path` and each missing directory above it; one already there is kept.
+## It allocates: the operating system is called with a copy of the path or the data.
 pub fn create_dir_all(path: str) -> Result[void, Error]:
     return done(create_dir_all_raw(path))
 
 ## The names of what the directory at `path` holds, in order (`.` and `..` left out).
+## It allocates a new `Array`.
 pub fn read_dir(path: str) -> Result[Array[String], Error]:
     names: Array[String] = []
     code = read_dir_raw(path, names)
@@ -57,6 +65,7 @@ pub struct Metadata:
     pub is_file: bool
 
 ## What is at `path`: its size in bytes and whether it is a file or a directory.
+## It allocates: the operating system is called with a copy of the path or the data.
 pub fn metadata(path: str) -> Result[Metadata, Error]:
     size = 0
     kind = 0
@@ -70,14 +79,17 @@ pub struct File:
     handle: int
 
     ## The file at `path`, open to read.
+    ## It allocates: the operating system is called with a copy of the path or the data.
     pub fn open(path: str) -> Result[File, Error]:
         return opened(path, 0)
 
     ## The file at `path`, made or emptied, open to write.
+    ## It allocates: the operating system is called with a copy of the path or the data.
     pub fn create(path: str) -> Result[File, Error]:
         return opened(path, 1)
 
     ## Reads into `into`; the count read, 0 at the end of the file.
+    ## It allocates: the operating system is called with a copy of the path or the data.
     pub fn read(mut self, mut into: MutSpan[u8]) -> Result[int, Error]:
         got = 0
         code = file_read(self.handle, into, got)
@@ -86,14 +98,17 @@ pub struct File:
         return Ok(got)
 
     ## Writes all of `data`.
+    ## It allocates: the operating system is called with a copy of the path or the data.
     pub fn write(mut self, data: Span[u8]) -> Result[void, Error]:
         return done(file_write(self.handle, data))
 
     ## Writes what the file holds back to the system.
+    ## It allocates: the operating system is called with a copy of the path or the data.
     pub fn flush(mut self) -> Result[void, Error]:
         return done(file_flush(self.handle))
 
 extend File:
+    ## It allocates: the operating system is called with a copy of the path or the data.
     fn drop(mut self):
         if self.handle != 0:
             file_close(self.handle)
@@ -106,6 +121,7 @@ pub struct BufReader:
     filled: int
 
     ## A buffered reader of `file`.
+    ## It allocates a new `Array`.
     pub fn new(owned file: File) -> BufReader:
         buffer: Array[u8] = []
         buffer.reserve(8192)
@@ -115,6 +131,7 @@ pub struct BufReader:
 
     ## One line without its line ending; `None` at the end of the file, and `Err` when the line is
     ## not UTF-8 or reading failed.
+    ## It allocates a new `Array`.
     pub fn read_line(mut self) -> Result[Option[String], Error]:
         line: Array[u8] = []
         read_any = false
@@ -146,10 +163,12 @@ pub struct BufWriter:
     buffer: Array[u8]
 
     ## A buffered writer to `file`.
+    ## It allocates a new `Array`.
     pub fn new(owned file: File) -> BufWriter:
         return BufWriter(file = file, buffer = [])
 
     ## Adds `data` to the buffer, writing the buffer out when it grows past 8 KiB.
+    ## It allocates as the `Array` it adds to grows.
     pub fn write(mut self, data: Span[u8]) -> Result[void, Error]:
         self.buffer.extend(data)
         if self.buffer.len() >= 8192:
@@ -157,6 +176,7 @@ pub struct BufWriter:
         return Ok(())
 
     ## Writes the buffer out.
+    ## It allocates: the operating system is called with a copy of the path or the data.
     pub fn flush(mut self) -> Result[void, Error]:
         if self.buffer.len() > 0:
             self.file.write(self.buffer.as_span())?
@@ -164,9 +184,11 @@ pub struct BufWriter:
         return self.file.flush()
 
 extend BufWriter:
+    ## It allocates: the operating system is called with a copy of the path or the data.
     fn drop(mut self):
         _ = self.flush()
 
+## It allocates: the operating system is called with a copy of the path or the data.
 fn opened(path: str, mode: int) -> Result[File, Error]:
     handle = 0
     code = file_open(path, mode, handle)
@@ -174,6 +196,7 @@ fn opened(path: str, mode: int) -> Result[File, Error]:
         return Err(Error.from_code(code))
     return Ok(File(handle = handle))
 
+## It allocates a new `String`.
 fn done(code: int) -> Result[void, Error]:
     if code != 0:
         return Err(Error.from_code(code))

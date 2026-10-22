@@ -2,6 +2,7 @@
 
 ## `[STD-24]` — the value of the environment variable `name`, or `None` when it is not set. A value
 ## that is not UTF-8 has each invalid sequence replaced by U+FFFD.
+## It allocates a new `String`.
 pub fn var(name: str) -> Option[String]:
     value = String()
     if lookup(name, value):

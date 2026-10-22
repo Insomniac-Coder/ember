@@ -17,6 +17,7 @@ pub struct CString:
     bytes: String
 
 extend str:
+    ## It allocates a new `String`.
     pub fn to_cstring(self) -> Result[CString, NulError]:
         match self.find("\0"):
             Some(index):
@@ -27,6 +28,7 @@ extend str:
                 return Ok(CString(bytes))
 
 extend String:
+    ## It allocates a new `String`.
     pub fn to_cstring(self) -> Result[CString, NulError]:
         return self.as_str().to_cstring()
 
@@ -46,6 +48,7 @@ pub struct WideString:
     pub fn as_ptr(self) -> *u16:
         return self.units.as_span().as_ptr()
 
+    ## It allocates a new `Array`.
     pub fn from_units(units: Span[u16]) -> WideString:
         kept: Array[u16] = []
         for unit in units:
@@ -55,6 +58,7 @@ pub struct WideString:
         kept.push(0)
         return WideString(kept)
 
+    ## It allocates a new `String`.
     pub fn to_string(self) -> String:
         out = String()
         units = self.units()
@@ -76,6 +80,7 @@ pub struct WideString:
         return out
 
 extend str:
+    ## It allocates a new `Array`.
     pub fn to_wide(self) -> Result[WideString, NulError]:
         units: Array[u16] = []
         for (at, c) in self.char_indices():
@@ -319,30 +324,36 @@ pub struct CppString:
     pub fn as_ptr(self) -> *mut u8:
         return self.object
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     pub fn len(self) -> usize:
         size = self.size
         unsafe:  # SAFETY(ffi): the string's own thunk
             return size(self.object)
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     pub fn bytes(self) -> Span[u8]:
         data = self.data
         unsafe:  # SAFETY(ffi): the string's bytes, which the view borrows the string for
             return cpp_span(ref self, data(self.object), self.len())
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     pub fn to_str(self) -> Result[str, Utf8Error]:
         return self.bytes().to_str()
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     fn drop(mut self):
         destroy = self.destroy
         unsafe:  # SAFETY(ffi): the string's end, once
             destroy(self.object)
 
 extend String implements From[CppString]:
+    ## It allocates a new `String`.
     fn from(owned value: CppString) -> String:
         return cpp_string_copy(value)
 
 ## `[FFI-17a]` — `String.from(c)`: the bytes of a `std::string`, copied, each invalid sequence
 ## becoming U+FFFD. Compiler-known: `String.from` of a `CppString` is this.
+## It allocates a new `String`.
 fn cpp_string_copy(owned value: CppString) -> String:
     bytes = value.bytes()
     out = String()

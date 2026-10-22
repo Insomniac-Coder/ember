@@ -140,6 +140,7 @@ pub enum SerError:
     Malformed(String)
 
 extend SerError implements Display:
+    ## It allocates the message it formats.
     fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
         match self:
             SerError.MissingField(name):

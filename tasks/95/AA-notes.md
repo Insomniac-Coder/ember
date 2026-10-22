@@ -140,6 +140,19 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   captured variable `E3063`; outside a job it panics. Effects `Alloc` and `Panic`.
   `JOB-5/accept_a_jobs_local_arena.em` (three profiles: four jobs, a helper taking a second view),
   `JOB-5/reject_an_allocation_escaping_the_call.em`, `JOB-5/run_fail_a_local_arena_outside_a_job.em`.
+* **`[STD-14]`** (part) — `[STD-1]`'s contract (every function `@noalloc` unless its
+  documentation says it allocates, `E4001`) now holds every module of `std`, not five: 128
+  functions that allocated undocumented are documented, each saying what it allocates (an
+  `override` inherits its base method's contract, `[EFF-8]`, so `Command.apply` says an override
+  allocates). Of std's 55 panics that run: 7 were internal invariants (`Map`'s "a listed entry was
+  removed") and are `unreachable()`; `Pool.insert`, `pool[h]` and `Pool.get_unchecked` now name
+  their twins (`try_insert`, `get`); 9 are settled by a rule (ODR-089's adapters, `[ECS-4]`'s
+  conflict, `ItemCount`'s overflow); 10 are a caller's bug with no twin in std yet (question 2),
+  which keep `[STD-14]` in `phase-status.json`.
+  `ember_driver/tests/milestones.rs`, `std_panics_name_their_twins_and_allocations_are_documented`
+  (a program importing every std module checks clean; every panic names a twin std declares, or
+  is listed settled or open, and every listed one still panics); `std_functions_are_noalloc_unless_documented`
+  now expects `std.thread` held too.
 
 ## Added to the job by the coordinator (owner answers, binding)
 
@@ -206,6 +219,9 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   argument, as `ArenaScope`; `E3060`'s wording for the anchor; `stores.rs` names it); runtime
   `ember_job_local_arena` and the rewind in `job_run`; std `jobs.local_arena`.
 
+* `[STD-14]`: `std_contracts` holds every `std` module (it held `core`, `mem`, `math`, `simd`,
+  `arena`).
+
 ## Defects found
 
 * **AA1 — fixed.** A block-bodied lambda that assigns a capture and reads another
@@ -233,3 +249,13 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
    `System`); (c) `Global` is always the platform's, and the configured allocator is reached only
    through the runtime's own allocations. **Recommend (b)**: a decorating allocator is the common
    case, and (c) would make `Array[T, Global]` bypass the package's allocator.
+2. **The twins `[STD-14]` asks for that std does not have.** A caller's bug panics "and has a
+   non-panicking twin"; these have none: `range(...).stepped(0)`, `BitSet.insert` of a negative,
+   `Entity.new` out of range, `World.add` to a dead entity, `CppShared.get` of an empty pointer,
+   `Mat2`/`Mat3`/`Mat4` `col`/`row` out of range, `Quat.normalize` and `Plane.normalize` of zero,
+   `str.split` on an empty separator. `[ERR-13]` says "each panicking *accessor*", `[STD-14]` "a
+   caller's bug", so whether a constructor or an argument check needs one is open too. Options:
+   (a) a twin for each, named by std's habits (`try_col`/`try_row`, `try_get`, `try_new`,
+   `normalize_or_identity` for `Quat`, `try_normalize` for `Plane`, `try_insert` for `BitSet`);
+   (b) twins for the accessors only (`col`, `row`, `CppShared.get`), the argument checks settled
+   as ODR-089 settled the adapters'. **Recommend (b)**, with (a)'s names for the three accessors.

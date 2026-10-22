@@ -18809,8 +18809,9 @@ impl<'a> Checker<'a> {
     /// method's, effects are its instances' (`[EFF-2]`), so it is checked where it is written only.
     fn std_contracts(&self, mut contracts: hir::Contracts, span: Span, generic: bool) -> hir::Contracts {
         let module = self.prefixes[self.current_module].as_str();
-        let listed = matches!(module, "std.core" | "std.mem" | "std.math" | "std.math.det" | "std.simd" | "std.arena")
-            || module.starts_with("std.math.");
+        // `[STD-14]` — every allocating function of every module is documented as allocating: the
+        // same contract, so one that allocates undocumented stops every build that loads it.
+        let listed = module == "std" || module.starts_with("std.");
         let generic = generic || self.std_generic_members.contains(&span);
         if listed && !generic && !self.allocation_documented.contains(&span) {
             contracts.forbidden |= hir::Effects::ALLOC;
