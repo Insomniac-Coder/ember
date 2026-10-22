@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: DIA-12, TYP-20, TYP-6
-#$ help: derive it, `@derive(Hash)` on `Pos`
 #$ help: convert it: `as f32`
+#$ help: derive it, `@derive(Hash)` on `Pos`
 # `[DIA-12]` (D-822) — shape N9 names the bound to add and where (`@derive(Hash)` on the program's
 # own struct); shape N4 names the `as` that converts the value, and what it does to it.
 

@@ -61,8 +61,11 @@ A2..A10 are P24, P23, P27, P25, P21, P22, P28, P29, P30; A1 is P26; A11 is B1 be
 * B3: O2's help (`E3011`, `E3012`, `E3013`) names the borrow (`ref`, `ref mut`) first (`[DIA-9]`),
   then the catalogue's `mem.take`, `mem.replace`, `swap`, `pop`, `swap_remove`, `remove`, `drain`,
   then `.clone()` for a value the owner keeps. (16's case: Q-V10.)
-* B4: E3021's "take the borrow as `ref mut`" was not changed: in the corpus it is now G4 (W) or a
-  clone the O2 help names (29); recorded.
+* B4: `r = v` on a `ref` local (Python's rebinding; a reference is never re-pointed, ADR-010) is no
+  longer offered `ref mut`, which would have written `v` into the element: the help keeps a copy or
+  an index. `tests/conformance/BRW-1/reject_a_reference_is_not_re_pointed.em`. (`m[k].iter_mut()`
+  is G4, W's.)
+* `return None` in a function with no result: P1, "returns with a bare `return`".
 * B5: P6's call shapes (`sort(key=)`, `get(k, d)`, `split()`).
 * B6: P3 by the argument's type (ODR-184).
 * B7 (G5's "best so far"): the lead's gap; its help stands until then.
