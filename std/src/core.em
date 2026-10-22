@@ -767,6 +767,12 @@ pub interface Iterator:
     fn flat_map[U: IntoIterator, F: fn(Item) -> U](owned self, owned f: F) -> FlatMap[Self, U, F]:
         return FlatMap(self, f, None)
 
+    ## `[GRM-38]` — the compiler's, for a generator expression's later `for` clause: each item
+    ## with each item of the iterator `f` makes of it, as a pair. The item is copied into each
+    ## pair, so it is `Copy` (a reference to an element, a number).
+    fn __nested[U: Iterator, F: fn(Item) -> U](owned self, owned f: F) -> Nested[Self, Item, U, F] where Item: Copy:
+        return Nested(self, f, None, None)
+
     ## The items of each item, one after another, when the items are
     ## iterable themselves.
     fn flatten(owned self) -> Flatten[Self, Item] where Item: IntoIterator:
@@ -1412,6 +1418,46 @@ extend[I: Iterator, U: IntoIterator, F: fn(I.Item) -> U] FlatMap[I, U, F] implem
             match self.outer.next():
                 Some(x):
                     self.inner = Some((self.f)(x).into_iter())
+                None:
+                    return None
+        return None
+
+## `[GRM-38]` — a generator expression's later `for` clause, `(e for x in xs for y in f(x))`: for
+## each item `x` of `outer`, the pairs of `x` with each item of the iterator `f` makes of it. The
+## iterator is held in place, so nothing is allocated, and what it iterates it borrows.
+pub struct Nested[I, X, U, F]:
+    outer: I
+    f: F
+    item: Option[X]
+    inner: Option[U]
+
+extend[X, I: Iterator[Item = X], U: Iterator, F: fn(X) -> U] Nested[I, X, U, F] implements Iterator:
+    type Item = (X, U.Item)
+    ## G8-4 — every inner iterator's items together, as `flat_map`'s.
+    type Count = CountProduct[I.Count, U.Count]
+    ## And the numbers `enumerate` gives them.
+    type Position = PositionOf[CountProduct[I.Count, U.Count]]
+
+    @borrows(self.outer, self.f, self.item, self.inner)
+    fn next(mut self) -> Option[(X, U.Item)]:
+        while true:
+            match self.item:
+                Some(x):
+                    match self.inner.as_mut():
+                        Some(it):
+                            match it.next():
+                                Some(y):
+                                    return Some((x, y))
+                                None:
+                                    pass
+                        None:
+                            pass
+                None:
+                    pass
+            match self.outer.next():
+                Some(x):
+                    self.item = Some(x)
+                    self.inner = Some(self.f(x))
                 None:
                     return None
         return None

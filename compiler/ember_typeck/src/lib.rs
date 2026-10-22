@@ -1630,17 +1630,23 @@ fn attribute_names(attr: &ast::Attribute, word: &str) -> bool {
 
 /// `[GRM-38]` — `fn(x) => body` for a comprehension clause binding `pattern`: a name binds the
 /// item directly; any other irrefutable pattern destructures it, `fn($item) => match $item: p => body`.
+/// `[GRM-38]` — the method name of the compiler's call for what a generator expression's later
+/// `for` clause iterates; a `·` begins no identifier, so no program can write it.
+const ITERATOR_OF: &str = "\u{b7}iterator_of";
+
 fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Expr {
     let infer = || ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span };
-    let param = |name: Symbol| ast::Param {
+    // A name bound as the parameter keeps its written span: each clause function a generator
+    // expression makes binds it again, and it is one binding (`L1001`).
+    let param = |name: ast::Ident| ast::Param {
         id: ast::NodeId::DUMMY,
         mode: ast::Mode::Borrow,
-        kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty: infer() },
+        kind: ast::ParamKind::Named { name, ty: infer() },
         default: None,
-        span,
+        span: name.span,
     };
     let (name, body) = match &pattern.kind {
-        ast::PatternKind::Bind { name, by_ref: false, mutable: false, sub: None } => (name.name, body),
+        ast::PatternKind::Bind { name, by_ref: false, mutable: false, sub: None } => (*name, body),
         _ => {
             let item = Symbol::intern("$item");
             let scrutinee = ast::Expr {
@@ -1660,7 +1666,7 @@ fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Ex
                 kind: ast::ExprKind::Match { scrutinee: Box::new(scrutinee), arms: vec![arm] },
                 span,
             };
-            (item, matched)
+            (ast::Ident { name: item, span }, matched)
         }
     };
     ast::Expr {
@@ -30122,27 +30128,63 @@ impl<'a> Checker<'a> {
             return error;
         }
         let Some(mut pipeline) = self.iterator_of(source, iter.span) else { return error };
-        let conditions = rest.iter().take_while(|clause| matches!(clause, ast::CompClause::If(_))).count();
-        for clause in &rest[..conditions] {
-            let ast::CompClause::If(condition) = clause else { unreachable!("counted above") };
-            let lambda = clause_lambda(pattern, condition.clone(), span);
-            pipeline = self.call_adapter(pipeline, "filter", lambda, span);
+        // The pattern that binds the clauses' names in each item: a later `for` pairs each item
+        // with each of its own (`std.core.Nested`), so its pattern is the pair's.
+        let mut names = pattern.clone();
+        for clause in rest {
+            pipeline = match clause {
+                ast::CompClause::If(condition) => {
+                    let lambda = clause_lambda(&names, condition.clone(), span);
+                    self.call_adapter(pipeline, "filter", lambda, span)
+                }
+                ast::CompClause::For { pattern: next, iter } => {
+                    if let ast::ExprKind::Owned(_) = &iter.kind {
+                        self.error(
+                            codes::E0109,
+                            iter.span,
+                            "a later `for` clause of a generator expression cannot take its collection over: it runs once for each item before it",
+                        );
+                        return error;
+                    }
+                    let iterable = ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::MethodCall {
+                            recv: Box::new(iter.clone()),
+                            name: ast::Ident { name: Symbol::intern(ITERATOR_OF), span: iter.span },
+                            generic_args: Vec::new(),
+                            args: Vec::new(),
+                        },
+                        span: iter.span,
+                    };
+                    let lambda = clause_lambda(&names, iterable, span);
+                    let nested = self.call_adapter(pipeline, "__nested", lambda, span);
+                    // Each item of the clauses before is copied into each pair this one makes.
+                    if let TyKind::Struct(id) = *self.types.kind(nested.ty)
+                        && let Some((_, args)) = self.types.struct_def(id).origin.clone()
+                        && let Some(&item) = args.get(1)
+                        && !self.types.is_copy(item)
+                    {
+                        let shown = self.types.display(item);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2040, names.span, format!("a later `for` clause pairs each of these items with its own, and a `{shown}` is not `Copy`"))
+                                .help("iterate the collection borrowed, whose items are references")
+                                .note("a generator expression's later `for` runs once for each item of the clauses before it, which it copies [GRM-38]"),
+                        );
+                        return error;
+                    }
+                    names = ast::Pattern {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::PatternKind::Tuple(vec![names, next.clone()]),
+                        span: next.span,
+                    };
+                    nested
+                }
+            };
             if pipeline.ty == self.common.error {
                 return error;
             }
         }
-        if conditions < rest.len() {
-            // A second `for` is a `flat_map` over generators, whose inner iterators borrow both
-            // their source and the outer clause's names: the region analysis cannot yet give
-            // `FlatMap.next`'s result one source relation for that.
-            self.error(
-                codes::E0900,
-                span,
-                "a generator expression with more than one `for` is not implemented yet as a value",
-            );
-            return error;
-        }
-        let lambda = clause_lambda(pattern, element.clone(), span);
+        let lambda = clause_lambda(&names, element.clone(), span);
         self.call_adapter(pipeline, "map", lambda, span)
     }
 
@@ -41880,6 +41922,15 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        // `[GRM-38]` — what a generator expression's later `for` clause iterates, as a `for` loop
+        // over it would (`iterator_of`): the compiler's own call, which no program can write.
+        if name.name.is(ITERATOR_OF) {
+            let source = self.synth_committed(recv);
+            if source.ty == self.common.error {
+                return source;
+            }
+            return self.iterator_of(source, recv.span).unwrap_or(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
         self.method_receivers.push((recv.clone(), generic_args.to_vec()));
         let call = self.synth_method_call_on(recv, name, generic_args, args, span);
         self.method_receivers.pop();
