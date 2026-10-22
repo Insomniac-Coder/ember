@@ -11,6 +11,12 @@ Closed entries stay, with the authority that resolved them, because a closed
 question is evidence about what kind of question this project generates — and
 because a future agent who cannot find where a decision was made will reopen it.
 
+**2026-10-21, the owner's review of the rulings made under the delegation.** The owner withdrew the
+delegation and reviewed every ruling made under it (`docs/reviews/odr-review-2026-10-21.pdf`): all are
+accepted except ODR-021, reversed by ODR-164, and a delegated ODR-163 (a variable holding a pointer left
+out of an import), rejected before it was committed and replaced by the owner's ODR-163. The list is in
+`tasks/90/owner-questions.md`. New questions go to the owner.
+
 *(Referred to as `OWNERQUEUE.md` in owner feedback; the file is
 `docs/OWNER-QUEUE.md`.)*
 
@@ -441,6 +447,32 @@ diagnostic suggestion ordering and does not require a language-version bump.
 **The question.** N3 question 4: `[FFI-41]`'s `extern static` needs the mangled symbol `[FFI-3]` forbids.
 
 **Ruling.** The owner, 2026-10-21: (b), it reads and writes as a global through the address thunk. ADR-252.
+
+---
+
+## ODR-163 — A C or C++ variable holding a pointer — **CLOSED**
+
+    ID:        ODR-163
+    Status:    CLOSED — the owner's ruling 2026-10-21; incorporated in 0.9.10_Hardened_31
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_30.md [STA-1], [FFI-41], Part XVI's table
+
+**The question.** An imported global holding a pointer is a foreign static, and `[STA-1]` refused every static whose type is not `Sync` (`E7002`), so a header with such a variable could not be imported at all.
+
+**Ruling.** The owner, 2026-10-21: such a variable imports and is read and written in `unsafe`; `E7002` applies only to a static read without `unsafe` (an Ember one, or a foreign one under `@ffi(immutable)`). ADR-253.
+
+---
+
+## ODR-164 — Float `//` and `%`: ODR-021 reversed — **CLOSED**
+
+    ID:        ODR-164
+    Status:    CLOSED — the owner's ruling 2026-10-21; incorporated in 0.9.10_Hardened_31
+    Category:  LANGUAGE
+    Location:  Ember_v0.9.10_Hardened_30.md [TYP-29]
+
+**The question.** ODR-021 (ruled under the delegation) gave float `//` and `%` Python's answers: `1.0 // 0.1 == 9.0`, `1.0 % 0.1 == 0.09999999999999995`.
+
+**Ruling.** The owner, 2026-10-21: not Python's. `[TYP-29]`'s formula, each step rounded: `1.0 // 0.1 == 10.0`, `1.0 % 0.1 == 0.0`. ADR-253.
 
 ---
 
@@ -4521,6 +4553,8 @@ declaration and that annotation. Hardened_3 states the rule in `[TYP-23]`.
     ID:        ODR-021
     Status:    CLOSED — ruled 2026-09-23 under the owner's delegation for 0.9.9;
                incorporated in 0.9.9_Hardened_3
+    Reversed:  by the owner 2026-10-21 (ODR-164): float `//` and `%` follow
+               `[TYP-29]`'s formula, not Python
     Category:  LANGUAGE / FLOATING-POINT SEMANTICS
     Priority:  —
     Location:  Ember_v0.9.9_Hardened_2.md [TYP-29], [PHIL-14], [TYP-9]

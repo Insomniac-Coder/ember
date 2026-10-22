@@ -577,48 +577,19 @@ fn unsigned_arithmetic(
     arithmetic_overflow(types, ty, span, spelling, policy, Num::Unsigned(wrapped), negative)
 }
 
-/// The runtime's `ember_floordiv_f64` and `ember_floorrem_f64`: Python's float
-/// `//` and `%` (ODR-021). An `f16`'s go through these, as its every
+/// The runtime's `ember_floordiv_f64` and `ember_floorrem_f64`: `[TYP-29]`'s
+/// formula, `floor(a / b)` and `a - b * floor(a / b)`, each step rounded (the
+/// owner's reversal of ODR-021). An `f16`'s go through these, as its every
 /// operation goes through `double`.
 fn floor_div_rem_f64(a: f64, b: f64) -> (f64, f64) {
-    let modulo = a % b;
-    let rem = if modulo != 0.0 {
-        if (b < 0.0) != (modulo < 0.0) { modulo + b } else { modulo }
-    } else {
-        0.0f64.copysign(b)
-    };
-    let mut div = (a - modulo) / b;
-    if modulo != 0.0 && ((b < 0.0) != (modulo < 0.0)) {
-        div -= 1.0;
-    }
-    let div = if div != 0.0 {
-        let floor = div.floor();
-        if div - floor > 0.5 { floor + 1.0 } else { floor }
-    } else {
-        0.0f64.copysign(a / b)
-    };
-    (div, rem)
+    let div = (a / b).floor();
+    (div, a - b * div)
 }
 
 /// The same in `f32`, as `ember_floordiv_f32` and `ember_floorrem_f32` are.
 fn floor_div_rem_f32(a: f32, b: f32) -> (f32, f32) {
-    let modulo = a % b;
-    let rem = if modulo != 0.0 {
-        if (b < 0.0) != (modulo < 0.0) { modulo + b } else { modulo }
-    } else {
-        0.0f32.copysign(b)
-    };
-    let mut div = (a - modulo) / b;
-    if modulo != 0.0 && ((b < 0.0) != (modulo < 0.0)) {
-        div -= 1.0;
-    }
-    let div = if div != 0.0 {
-        let floor = div.floor();
-        if div - floor > 0.5 { floor + 1.0 } else { floor }
-    } else {
-        0.0f32.copysign(a / b)
-    };
-    (div, rem)
+    let div = (a / b).floor();
+    (div, a - b * div)
 }
 
 /// `[CT-1]` — a value the compile-time evaluator printed (`ember_codegen_c`'s

@@ -6,7 +6,7 @@
 //! its `@ffi(…)` contract. Each is graded **asserted** (`[TCB-1]`): nothing written raises a grade
 //! (`[TCB-2]`); a grade above asserted needs evidence, which a hand declaration has no way to claim.
 
-use ember_ast::{AttrArg, Item, ItemKind};
+use ember_ast::{AttrArg, Item, ItemKind, Mode, OverlayItemKind};
 use ember_span::{SourceMap, Span};
 use ember_typeck::LoadedModule;
 
@@ -23,7 +23,7 @@ pub struct ForeignDecl {
     /// The name the program uses, qualified by its module as the checker qualifies it.
     pub qualified: String,
     pub name: String,
-    /// `fn`, `static` or `type`.
+    /// `fn`, `static`, `type`, or `method` for an overlay's method line (`[FFI-40a]`).
     pub kind: &'static str,
     pub abi: String,
     pub safe: bool,
@@ -42,11 +42,39 @@ pub fn declarations(modules: &[LoadedModule], map: &SourceMap, module_name: &dyn
         let module = module_name(loaded);
         let prefix = if loaded.path.is_empty() { String::new() } else { format!("{}.", loaded.path.join(".")) };
         for item in &loaded.module.items {
-            let ItemKind::ExternBlock(block) = &item.kind else { continue };
-            for inner in &block.items {
-                if let Some(decl) = declaration(inner, &block.abi, &module, &prefix, map) {
-                    out.push(decl);
+            match &item.kind {
+                ItemKind::ExternBlock(block) => {
+                    for inner in &block.items {
+                        if let Some(decl) = declaration(inner, &block.abi, &module, &prefix, map) {
+                            out.push(decl);
+                        }
+                    }
                 }
+                // `[FFI-40a]` (ODR-160) — a method line of an overlay asserts its method's receiver.
+                ItemKind::Overlay(overlay) => {
+                    for entry in &overlay.items {
+                        let OverlayItemKind::Class { name: class, methods } = &entry.kind else { continue };
+                        for method in methods {
+                            let name = format!("{}.{}", class.name, method.name.name);
+                            let fact = if method.params.first().is_some_and(|receiver| receiver.mode == Mode::Mut) {
+                                "it may change its object: `mut self`, as the overlay's method line says"
+                            } else {
+                                "it changes no field of its object: `self`, as the overlay's method line says"
+                            };
+                            out.push(ForeignDecl {
+                                module: module.clone(),
+                                qualified: format!("{prefix}{name}"),
+                                name,
+                                kind: "method",
+                                abi: "C++".to_string(),
+                                safe: false,
+                                source: method.name.span,
+                                facts: vec![ForeignFact { text: fact.to_string(), source: method.name.span, grade: "asserted" }],
+                            });
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }

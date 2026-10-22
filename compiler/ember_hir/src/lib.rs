@@ -1447,7 +1447,9 @@ pub enum Builtin {
     /// any other (a field, an element of an array in it, a whole non-`Copy`
     /// record) and C's storage is what changes. `immutable` is
     /// `@ffi(immutable)` (ODR-082): the C declaration is `extern const T`.
-    ForeignStatic { symbol: Symbol, ty: Ty, immutable: bool },
+    /// `thunk` (`[FFI-41]`, ODR-161): `symbol` is a C++ variable's thunk, a
+    /// function giving its address, which every use calls.
+    ForeignStatic { symbol: Symbol, ty: Ty, immutable: bool, thunk: bool },
     /// `[FFI-36a]`, `[FFI-36b]` — record the foreign object at the pointer
     /// (the one argument, also the result) as one Ember owns, with where;
     /// a second owner of a live one panics naming both places.

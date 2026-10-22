@@ -2961,6 +2961,32 @@ fn tcb_lists_every_unsafe_with_its_note_and_obligations() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[FFI-40a]` (ODR-160), `[TCB-1]` — an overlay's method line asserts its method's receiver, and
+/// `ember tcb` lists it with the overlay's module, graded asserted.
+#[test]
+fn tcb_lists_an_overlay_method_line_as_an_asserted_fact() {
+    let root = workspace_root();
+    let dir = temporary_directory("tcb-method-line");
+    std::fs::create_dir_all(dir.join("overlays")).expect("make the overlay folder");
+    let fixture = root.join("tests/conformance/FFI-40a");
+    std::fs::copy(fixture.join("cache.hpp"), dir.join("cache.hpp")).expect("copy the header");
+    let overlay = format!("overlays/stricter.{SOURCE_EXT}");
+    std::fs::copy(fixture.join(&overlay), dir.join(&overlay)).expect("copy the overlay");
+    let source = dir.join(format!("main.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "import cpp \"cache.hpp\" with (overlay = \"overlays/stricter.em\")\n\n\
+         fn main():\n    unsafe:  # SAFETY(ffi): the box owns the cache for every call\n\
+         \x20       cache = cpp.Cache.new()\n        println(cache.get_mut().lookups())\n",
+    )
+    .expect("write the program");
+    let report = ember(&["tcb", &source.to_string_lossy()], &dir);
+    assert_eq!(report.exit, 0, "tcb failed:\n{}\n{}", report.stdout, report.stderr);
+    assert!(report.stdout.contains("method `Cache.lookups`"), "{}", report.stdout);
+    assert!(report.stdout.contains("it may change its object: `mut self`, as the overlay's method line says  [asserted]"), "{}", report.stdout);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[FFI-10]`, `[TCB-1]`, `[TCB-2]`, `[TCB-3]` — `ember tcb` separates what the language guarantees
 /// from what the program supplies, and lists, grouped by module, every fact its foreign
 /// declarations assert (`safe fn` among them), each with its source and its grade: asserted, for

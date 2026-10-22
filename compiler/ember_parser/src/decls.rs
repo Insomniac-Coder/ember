@@ -680,8 +680,8 @@ impl Parser<'_> {
     }
 
     /// `overlay_item := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
-    /// | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl)`; `rename` and
-    /// `hide` are keywords only here (`[LEX-15]`).
+    /// | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl | overlay_class)`;
+    /// `rename` and `hide` are keywords only here (`[LEX-15]`).
     fn parse_overlay_item(&mut self) -> Option<OverlayItem> {
         // `[FFI-30c]` (ODR-149) — `override` replaces an earlier overlay's entry: the item begins
         // with it, before or after its attributes.
@@ -761,13 +761,53 @@ impl Parser<'_> {
                 OverlayItemKind::Hide(name)
             }
             TokenKind::Ident(_) if self.at_extend_decl() => OverlayItemKind::Extend(self.parse_extend()),
+            // `[FFI-40a]` (ODR-160) — `class C:` and a method line for each method it restates.
+            TokenKind::Keyword(Kw::Class) => {
+                self.bump();
+                let name = self.expect_ident();
+                self.expect_punct(Punct::Colon);
+                let mut methods = Vec::new();
+                if self.at_newline() {
+                    self.bump();
+                    if self.eat_indent() {
+                        while !self.at_dedent() && !self.at_eof() {
+                            self.eat_newlines();
+                            if self.at_dedent() || self.at_eof() {
+                                break;
+                            }
+                            if !self.at_kw(Kw::Fn) {
+                                let span = self.span();
+                                self.report(
+                                    Diagnostic::error(codes::E0100, span, "expected a method line")
+                                        .help("an overlay's `class` section restates methods, as `fn name(self, …) -> T` [GRM-35]"),
+                                );
+                                self.bump();
+                                self.recover_to_line_end();
+                                continue;
+                            }
+                            let method = self.parse_method();
+                            if let Some(body) = &method.body {
+                                self.report(
+                                    Diagnostic::error(codes::E0100, body.span, "a method line of an overlay has no body")
+                                        .help("the C++ class's own method runs; the line states its signature [FFI-40a]"),
+                                );
+                            }
+                            methods.push(method);
+                        }
+                        self.eat_dedent();
+                    }
+                } else {
+                    self.expect_newline();
+                }
+                OverlayItemKind::Class { name, methods }
+            }
             other => {
                 let found = other.to_string();
                 let span = self.span();
                 self.report(
                     Diagnostic::error(codes::E0100, span, "expected an overlay item")
                         .primary_label(format!("found {found}"))
-                        .help("an overlay holds `fn`, `type`, `enum`, `rename`, `hide` and `extend` items [GRM-35]"),
+                        .help("an overlay holds `fn`, `type`, `enum`, `rename`, `hide`, `extend` and `class` items [GRM-35]"),
                 );
                 return None;
             }

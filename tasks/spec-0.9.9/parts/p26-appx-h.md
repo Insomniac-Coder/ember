@@ -441,6 +441,8 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-160 | the owner's answer: a `const` method of a class with a `mutable` member is `self` when its visible body writes no field, else `mut self`; an overlay `class C:` method line wins; to be built | `[FFI-40a]` |
 | ODR-161 | the owner's answer: a C++ static data member reads and writes as a global, through the address thunk; to be built | `[FFI-41]` |
 | ODR-162 | the owner's answer: an `@export` function may hand C++ an object of a `@sync` class, presented by the `--cpp` header as a class of the same name; to be built | `[BLD-FFI-5a]`, `[FFI-31b]` |
+| ODR-163 | the owner's ruling: a foreign static read only in `unsafe` need not be `Sync`; a C or C++ variable holding a pointer imports as any other, used in `unsafe` | `[STA-1]`, `[FFI-41]`, `[FFI-10]` |
+| ODR-164 | the owner's ruling, reversing ODR-021: float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each step rounded | `[TYP-29]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1154,3 +1156,22 @@ Generated: every rule whose text differs from 0.9.10_Hardened_29.
 | Rule | 0.9.10_Hardened_29 → 0.9.10_Hardened_30 |
 |---|---|
 
+
+## H.36 Changes in 0.9.10_Hardened_31 (from 0.9.10_Hardened_30)
+
+**0.9.10_Hardened_31** builds the owner's answers ODR-160 (`[FFI-40a]`) and ODR-161 (`[FFI-41]`), whose rule texts now say what is built, and records two rulings the owner made on 2026-10-21: ODR-163, on variables holding a pointer, and ODR-164, which reverses ODR-021 (`docs/DECISIONS.md` ADR-253):
+
+* For `[FFI-40a]`: the importer reads each `const` method's body when the class has a `mutable` member, its own or a base's; a method line of an overlay's `class C:` section (`[GRM-35]`'s `overlay_class`) restates the method, and its receiver wins; a line that differs from the import's method is `E5010` (ODR-160, the owner).
+* For `[FFI-41]`: a static data member, and a variable of a namespace, is a foreign static read and written as a global, through the thunk giving its address (ODR-161, the owner); every variable of a C++ header goes through its thunk, an `inline` one too.
+* For `[STA-1]`, `[FFI-41]` and Part XVI's table: a foreign static read only in `unsafe` need not be `Sync`, so a C or C++ variable holding a pointer imports as any other; one read without `unsafe` under `@ffi(immutable)` must be `Sync` (ODR-163, the owner).
+* For `[TYP-29]`: float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each step rounded, so `1.0 // 0.1 == 10.0` and `1.0 % 0.1 == 0.0` (ODR-164, the owner, reversing ODR-021).
+
+Generated: every rule whose text differs from 0.9.10_Hardened_30.
+
+| Rule | 0.9.10_Hardened_30 → 0.9.10_Hardened_31 |
+|---|---|
+| `[FFI-40a]` | changed |
+| `[FFI-41]` | changed |
+| `[FFI-42a]` | changed |
+| `[STA-1]` | changed |
+| `[TYP-29]` | changed |

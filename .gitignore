@@ -26,3 +26,7 @@ __pycache__/
 
 # Build and test output (benchmarks, probes)
 /build/
+
+# The owner's reading copy of the 2026-10-21 ruling review, not part of the project.
+/docs/reviews/odr-review-2026-10-21.html
+/docs/reviews/odr-review-2026-10-21.pdf

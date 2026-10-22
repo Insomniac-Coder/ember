@@ -10832,6 +10832,13 @@ formal 1/9 count or Phase 2's estimate.
 > fixed (an `unsafe` implementation of a safe interface method is `E2040`). `[MNG-4]` and `[PHIL-6]`
 > tested. ODR-159 (serialisation formats) and ODR-160..162 (the owner's 2026-10-21 answers, to be built)
 > cut as `0.9.10_Hardened_30`. Overall 95% — the owner's goal (stop at 95%) is met.
+> ADR-253: the owner's answers ODR-160 (`[FFI-40a]`: `const` methods' bodies read; overlay `class C:`
+> method lines) and ODR-161 (`[FFI-41]`: C++ variables as foreign statics through their thunks) built;
+> the owner's ODR-163 (a C/C++ variable holding a pointer imports; `E7002` only for a static read without
+> `unsafe`) and ODR-164 (float `//` and `%` by `[TYP-29]`'s formula, reversing ODR-021); cut as
+> `0.9.10_Hardened_31`. The owner withdrew the delegation: every new spec question goes to the owner
+> (all earlier delegated rulings reviewed: `docs/reviews/odr-review-2026-10-21.pdf`). CI's Linux failures
+> on dca58321 fixed: D-789, D-790, D-791. Next: `[BLD-FFI-5a]` (ODR-162), when the owner says.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and

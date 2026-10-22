@@ -149,7 +149,7 @@ import c "vulkan/vulkan.h" with (
   | incomplete `struct` | `extern type S`, used only behind pointers |
   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
   | `typedef` | a type alias, or a new type with `@ffi(newtype)` |
-  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: Sync`. `@ffi(immutable)` on `static mut` is `E5002`. |
+  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: Sync`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `Sync` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
   | `#define S "text"` | `const S: cstr = c"text"` |
   | function pointer | `extern "C" fn(…) -> R`, `Option[…]` when nullable; another calling convention is `extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
@@ -216,7 +216,9 @@ unsafe overlay c "vulkan/vulkan.h":
   ```text
   overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING ":" NEWLINE INDENT {overlay_item} DEDENT
   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
-                   | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl)
+                   | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl
+                   | overlay_class)
+  overlay_class := "class" IDENT ":" NEWLINE INDENT {fn_header NEWLINE} DEDENT
   overlay_fn    := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
                    ["->" contract {contract}] NEWLINE
   overlay_param := IDENT [":" contract {contract}]
@@ -226,11 +228,13 @@ unsafe overlay c "vulkan/vulkan.h":
   In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one Ember
   type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read (ODR-147). An
   item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
-  ODR-149).
+  ODR-149). An `overlay_class` section restates methods of a C++ class, each as an Ember method line
+  with no body, whose receiver is asserted (`[FFI-40a]`, ODR-160).
 
   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
-  `@ffi(…)` attribute, or a function entry, which asserts the function safe to call (`[FFI-2]`) — is an
+  `@ffi(…)` attribute, a function entry, which asserts the function safe to call (`[FFI-2]`), or a
+  method line — is an
   assertion about foreign code and MUST be declared `unsafe overlay` (`E5067`), the third boundary of
   `[TIER-1]`; an overlay of only `rename` and `hide` items needs no `unsafe`.
 * `[FFI-11]` *(changed in 0.9.9)* **Contract vocabulary.** A pointer contract has five axes;

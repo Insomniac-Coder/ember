@@ -307,7 +307,9 @@ extend Square implements Shape2D:
 * `[STA-1]` *(changed in 0.9.9)* `static NAME: T = e` is one value per program with a stable address.
   A `static` is immutable; mutation goes through a `Sync` interior type (`Atomic`, `Mutex`, `RwLock`,
   `Once`). `T` MUST be `Sync` (`E7002`). `static mut` exists only for foreign interfaces and every
-  access to it requires `unsafe`.
+  access to it requires `unsafe`. A foreign static read only in `unsafe` need not be `Sync`: the
+  programmer answers for sharing it between threads; one read without `unsafe` under
+  `@ffi(immutable)` (`[FFI-10]`) must be (ODR-163).
 * `[STA-3]` *(new in 0.9.9)* A static whose initialiser can be evaluated at compile time is placed in the image with no
   initialisation code. Any other initialiser runs **once**, on first access, exactly once even under
   concurrent first access; the first access blocks until it completes. A panic during initialisation

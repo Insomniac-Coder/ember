@@ -587,8 +587,8 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-39d]` | Annex C | Re-entrant calls from C++ into the same Ember object are expected. … |
 | `[FFI-39e]` | Annex C | A C++ exception never crosses into Ember code, and an Ember panic … |
 | `[FFI-40]` | Annex C | `const` methods import as `self`, non-`const` methods as `mut self`; … |
-| `[FFI-40a]` | Annex C | `const` is not an aliasing guarantee in C++: a `const` method that … |
-| `[FFI-41]` | Annex C | Static member functions import as associated functions and static … |
+| `[FFI-40a]` | Annex C | `const` is not an aliasing guarantee in C++: a `const` method of a … |
+| `[FFI-41]` | Annex C | Static member functions import as associated functions. A static data … |
 | `[FFI-42]` | Annex C | Overloaded operators map to Ember operator interfaces where one … |
 | `[FFI-42a]` | Annex C | Iterating an imported C++ container borrows it mutably for the loop, … |
 | `[FFI-43]` | Annex C | An overlay that marks a function both `noexcept` and throwing, or two … |
@@ -1306,7 +1306,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-26]` | IV | There is no overloading: two functions of one name in one scope are … |
 | `[TYP-27]` | IV | `()` is the value of type `void`; `Ok(())` is the success value of … |
 | `[TYP-28]` | IV | Division. `/` is true division and applies to floats. `/` with two … |
-| `[TYP-29]` | IV | For floats, `//` and `%` are Python's (ODR-021). `a % b` is the exact … |
+| `[TYP-29]` | IV | For floats, `a // b` is `floor(a / b)` and `a % b` is `a - b * … |
 | `[TYP-30]` | IV | Powers. `a  b` with integer `a` and non-negative integer `b` is … |
 | `[TYP-31]` | IV | *(changed in 0.9.10)* Sizes and indices are `int`. Every standard … |
 | `[TYP-32]` | IV | `some I` in a return type means "one concrete type, chosen by the … |

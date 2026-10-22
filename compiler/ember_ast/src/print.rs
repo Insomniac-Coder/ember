@@ -200,6 +200,10 @@ impl Printer {
                             OverlayItemKind::Rename { from, to } => p.line(&format!("Rename {} as {}", from.name, to.name)),
                             OverlayItemKind::Hide(name) => p.line(&format!("Hide {}", name.name)),
                             OverlayItemKind::Extend(_) => p.line("Extend"),
+                            OverlayItemKind::Class { name, methods } => {
+                                let methods: Vec<String> = methods.iter().map(|method| method.name.name.to_string()).collect();
+                                p.line(&format!("Class {} ({})", name.name, methods.join(", ")))
+                            }
                         }
                     }
                 })

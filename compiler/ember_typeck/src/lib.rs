@@ -82,6 +82,9 @@ pub struct ForeignImport {
     /// `[FFI-39]` — each class of the module with a trampoline: whether its C++ class has a default
     /// constructor (`E5058`), and the virtuals its trampoline does not override (`E5056`).
     pub trampolines: Vec<(String, bool, Vec<String>)>,
+    /// `[FFI-41]` (ODR-161) — each foreign static that is a C++ variable, whose symbol is the thunk
+    /// giving its address; for a static data member, the class and member that name it (`Grid.made`).
+    pub variables: Vec<(String, Option<(String, String)>)>,
     /// `[FFI-24d]` — each function whose Ember signature a `noexcept` the header added or removed
     /// changed, by its name (`Owner.name` for a method), with the note naming the cause.
     pub policy_changes: Vec<(String, String)>,
@@ -271,6 +274,12 @@ pub fn check(
         .collect();
     checker.foreign_cpp = modules.iter().map(|m| m.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some())).collect();
     checker.foreign_trampolines = modules.iter().map(|m| m.foreign.as_ref().map(|foreign| foreign.trampolines.clone()).unwrap_or_default()).collect();
+    checker.foreign_variables = modules
+        .iter()
+        .map(|m| m.foreign.iter().flat_map(|foreign| &foreign.variables)
+            .map(|(name, member)| (Symbol::intern(name), member.as_ref().map(|(owner, name)| (Symbol::intern(owner), Symbol::intern(name)))))
+            .collect())
+        .collect();
     checker.foreign_skipped = modules
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
@@ -2189,6 +2198,8 @@ struct ForeignStatic {
     symbol: Symbol,
     immutable: bool,
     is_mut: bool,
+    /// `[FFI-41]` — a C++ variable, reached through its address thunk.
+    thunk: bool,
 }
 
 struct Checker<'a> {
@@ -2389,6 +2400,11 @@ struct Checker<'a> {
     foreign_cpp: Vec<bool>,
     /// `[FFI-39]` — per module, each class with a trampoline (`ForeignImport::trampolines`).
     foreign_trampolines: Vec<Vec<(String, bool, Vec<String>)>>,
+    /// `[FFI-41]` — per module, its C++ variables (`ForeignImport::variables`).
+    foreign_variables: Vec<HashMap<Symbol, Option<(Symbol, Symbol)>>>,
+    /// `[FFI-41]` (ODR-161) — a C++ static data member, `Grid.made`: its class and name, and the
+    /// foreign static that is it.
+    assoc_statics: HashMap<(Ty, Symbol), Symbol>,
     /// `[TCB-1]` — per module: the overlay entries whose `instrumented` grade evidence backs.
     foreign_backed: Vec<HashSet<Symbol>>,
     /// `[CT-2]` (ODR-145) — a `const`'s initialiser is being checked.
@@ -3042,6 +3058,8 @@ impl<'a> Checker<'a> {
             changed_calls: Vec::new(),
             foreign_cpp: Vec::new(),
             foreign_trampolines: Vec::new(),
+            foreign_variables: Vec::new(),
+            assoc_statics: HashMap::new(),
             foreign_backed: Vec::new(),
             const_initializer: false,
             item_spans: HashMap::new(),
@@ -9031,7 +9049,11 @@ impl<'a> Checker<'a> {
                 // the value has to be known here.
                 ast::ItemKind::Static(decl) => {
                     let ty = self.resolve_type(&decl.ty);
-                    if !self.types.is_sync(ty) {
+                    // `[STA-1]` — a static every thread may read without `unsafe` is `Sync`: an Ember
+                    // one, and a foreign one read safely (`@ffi(immutable)`). A foreign static read
+                    // only in `unsafe` (Part XVI's table) is the programmer's to share (the owner's
+                    // ruling of 2026-10-21, ODR-163).
+                    if !self.types.is_sync(ty) && (!decl.is_foreign_decl || ffi_static_immutable(&item.attrs)) {
                         let shown = self.types.display(ty);
                         self.error(codes::E7002, decl.ty.span,
                             format!("{}static type `{shown}` is not Sync",
@@ -9068,7 +9090,14 @@ impl<'a> Checker<'a> {
                                 "foreign static aliases for one C symbol must have the same type and const contract");
                             continue;
                         }
-                        self.foreign_statics.insert(name, ForeignStatic { ty, symbol, immutable, is_mut: decl.is_mut });
+                        let variable = self.foreign_variables.get(self.current_module).and_then(|found| found.get(&decl.name.name)).copied();
+                        self.foreign_statics.insert(name, ForeignStatic { ty, symbol, immutable, is_mut: decl.is_mut, thunk: variable.is_some() });
+                        // `[FFI-41]` — a static data member is its class's: `Grid.made`.
+                        if let Some(Some((owner, member))) = variable
+                            && let Some(&owner) = self.named_types.get(&self.qualified(owner))
+                        {
+                            self.assoc_statics.insert((owner, member), name);
+                        }
                         continue;
                     }
                     let Some(initializer) = decl.value.as_ref() else {
@@ -33705,22 +33734,13 @@ impl<'a> Checker<'a> {
                 }
                 // V.3 — `Vec2.ZERO`, `Self.ZERO`: a constant a type declares; `geometry.Vec2.ZERO`
                 // through the type's module (`[GRM-24]`).
-                let named_owner = if let ast::ExprKind::Path { segments } = &base.kind
-                    && let [segment] = segments.as_slice()
-                    && self.lookup(segment.name).is_none()
+                let named_owner = self.type_named_by(base);
+                // `[FFI-41]` (ODR-161) — a C++ static data member, a global: `Grid.made`.
+                if let Some(Some(owner)) = named_owner
+                    && let Some(&qualified) = self.assoc_statics.get(&(owner, name.name))
                 {
-                    Some(if segment.name.is("Self") {
-                        self.self_ty
-                    } else {
-                        self.named_types.get(&self.resolve_name(segment.name)).copied()
-                    })
-                } else if let ast::ExprKind::Field { base: module, name: type_name } = &base.kind
-                    && let Some(module) = self.namespace_named(module)
-                {
-                    Some(self.named_types.get(&self.qualified_in_module(module, type_name.name)).copied())
-                } else {
-                    None
-                };
+                    return self.foreign_static_use(qualified, span);
+                }
                 if let Some(owner) = named_owner {
                     if let Some(owner) = owner
                         && self.assoc_consts.contains_key(&(owner, name.name))
@@ -38078,7 +38098,7 @@ impl<'a> Checker<'a> {
         let access = Expr {
             ty: reference,
             kind: ExprKind::Builtin {
-                which: Builtin::ForeignStatic { symbol: binding.symbol, ty: binding.ty, immutable: binding.immutable },
+                which: Builtin::ForeignStatic { symbol: binding.symbol, ty: binding.ty, immutable: binding.immutable, thunk: binding.thunk },
                 args: Vec::new(),
             },
             span,
@@ -38086,7 +38106,35 @@ impl<'a> Checker<'a> {
         Expr { ty: binding.ty, kind: ExprKind::Deref(Box::new(access)), span }
     }
 
+    /// V.3 — the type an expression names where a member of a type may follow (`Vec2`, `Self`,
+    /// `geometry.Vec2`): `Some(None)` for a name that is no type, `None` for no name at all.
+    fn type_named_by(&self, base: &ast::Expr) -> Option<Option<Ty>> {
+        if let ast::ExprKind::Path { segments } = &base.kind
+            && let [segment] = segments.as_slice()
+            && self.lookup(segment.name).is_none()
+        {
+            Some(if segment.name.is("Self") {
+                self.self_ty
+            } else {
+                self.named_types.get(&self.resolve_name(segment.name)).copied()
+            })
+        } else if let ast::ExprKind::Field { base: module, name: type_name } = &base.kind
+            && let Some(module) = self.namespace_named(module)
+        {
+            Some(self.named_types.get(&self.qualified_in_module(module, type_name.name)).copied())
+        } else {
+            None
+        }
+    }
+
     fn foreign_static_assignment_target(&self, target: &ast::Expr) -> Option<ForeignStatic> {
+        // `[FFI-41]` — `Grid.made = …`: a C++ static data member.
+        if let ast::ExprKind::Field { base, name } = &target.kind
+            && let Some(Some(owner)) = self.type_named_by(base)
+            && let Some(qualified) = self.assoc_statics.get(&(owner, name.name))
+        {
+            return self.foreign_statics.get(qualified).copied();
+        }
         let qualified = match &target.kind {
             ast::ExprKind::Path { segments } if segments.len() == 1 => {
                 let name = segments[0].name;
@@ -38177,7 +38225,7 @@ impl<'a> Checker<'a> {
                     "ffi" => {
                         fact(attr.span, "an `@ffi(…)` attribute".to_string());
                         if matches!(item.kind, ast::OverlayItemKind::Rename { .. } | ast::OverlayItemKind::Hide(_)
-                            | ast::OverlayItemKind::Extend(_)) {
+                            | ast::OverlayItemKind::Extend(_) | ast::OverlayItemKind::Class { .. }) {
                             self.error(codes::E0104, attr.span, "`@ffi` applies to an overlay's `fn`, `type` or `enum` entry");
                         }
                     }
@@ -38187,6 +38235,13 @@ impl<'a> Checker<'a> {
             }
             if let ast::OverlayItemKind::MacroFn { name, .. } = &item.kind {
                 fact(name.span, format!("the entry for macro `{}`, which states its signature", name.name));
+                continue;
+            }
+            // `[FFI-40a]` (ODR-160) — a method line asserts whether the method changes its object.
+            if let ast::OverlayItemKind::Class { name, methods } = &item.kind {
+                for method in methods {
+                    fact(method.name.span, format!("the method line for `{}.{}`, which states its receiver", name.name, method.name.name));
+                }
                 continue;
             }
             let ast::OverlayItemKind::Fn { name, params, result } = &item.kind else { continue };

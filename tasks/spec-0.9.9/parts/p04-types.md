@@ -136,12 +136,10 @@
   * a zero divisor panics (`division by zero`); `MIN // -1` overflows per `[TYP-8]` (panic by
     default, `MIN` under wrapping, `MAX` under saturation). `MIN.div_trunc(-1)` always panics
     under that method's fixed contract (`[STD-20]`); `MIN.rem_trunc(-1)` is zero.
-* `[TYP-29]` *(new in 0.9.9)* For floats, `//` and `%` are Python's (ODR-021). `a % b` is the
-  exact value of `a - b * floor(a / b)`, rounded once to the float type: it has the sign of `b`, and
-  is computed exactly (as `fmod` is) rather than by evaluating the formula in rounded steps. `a // b`
-  is the floor quotient consistent with it, so `a == (a // b) * b + a % b` to within one rounding:
-  `1.0 // 0.1 == 9.0` and `1.0 % 0.1 == 0.09999999999999995`, because `0.1` is slightly more than a
-  tenth. Zero divisors, infinities and NaN follow IEEE.
+* `[TYP-29]` *(new in 0.9.9)* For floats, `a // b` is `floor(a / b)` and `a % b` is
+  `a - b * floor(a / b)`, each operation rounded to the float type as it is evaluated (ODR-164,
+  reversing ODR-021): `1.0 // 0.1 == 10.0` and `1.0 % 0.1 == 0.0`, since `1.0 / 0.1` rounds to
+  `10.0`. Zero divisors, infinities and NaN follow IEEE.
 * `[TYP-10]` *(changed in 0.9.9)* **Shifts.** `a << n` and `a >> n` accept any integer type for `n`.
   If `n` is negative or not less than the bit width of `a`'s type the shift panics, in every profile.
   Bits shifted out are discarded and are not an overflow. `>>` on a signed type is arithmetic

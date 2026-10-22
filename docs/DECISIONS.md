@@ -5017,6 +5017,34 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-253 — The owner's answers on `[FFI-40a]` and `[FFI-41]` built; the owner's ODR-163 and ODR-164; Linux C++ import fixes
+
+2026-10-21. ODR-160 (`[FFI-40a]`): for a class with a `mutable` member, its own or a base's, the
+importer reads each `const` method's body (the header is parsed again with function bodies, only
+when it has such a class): an assignment, compound assignment, `++`/`--` or address of a field, a
+non-`const` reference bound to one, a non-`const` method called on one, the object or a field handed
+on by non-`const` reference or pointer, a call of the object's own method that may change it, or a
+call it cannot follow gives `mut self`; none gives `self`; no body gives `mut self`. An overlay's
+`class C:` section (`[GRM-35]`'s `overlay_class`) restates a method as an Ember method line whose
+receiver wins, `E5010` when it differs from the import's method, listed by `ember tcb` as an asserted
+fact. ODR-161 (`[FFI-41]`): a static data member, and a namespace variable, is a foreign static whose
+symbol is the thunk giving its address (`ForeignImport::variables`, `Builtin::ForeignStatic { thunk }`);
+`Grid.made` names a member's (`assoc_statics`).
+
+The owner withdrew the delegation on 2026-10-21 and reviewed every ruling made under it
+(`docs/reviews/odr-review-2026-10-21.pdf`): all accepted but ODR-021, and a delegated ODR-163 (leave a
+variable holding a pointer out of an import), rejected before it was committed. The owner's rulings:
+**ODR-163** — a foreign static read only in `unsafe` need not be `Sync` (`[STA-1]`), so a C or C++
+header's variable holding a pointer imports as any other; the checker's `E7002` now applies to an Ember
+static and to a foreign static under `@ffi(immutable)` only, and a C++ `const` variable holding a pointer
+is imported without `@ffi(immutable)`. **ODR-164** — float `//` and `%` are `[TYP-29]`'s formula, each
+step rounded (`1.0 // 0.1 == 10.0`, `1.0 % 0.1 == 0.0`), reversing ODR-021: the runtime's
+`ember_floordiv_f32/f64` and `ember_floorrem_f32/f64` and the compile-time evaluator changed alike.
+
+CI on dca58321 failed on Linux only: D-789 (gcc `-flto` and quoted asm labels), D-790 (`-fPIC` thunks for
+a reload image), D-791 (C++ variables took the C path on Linux), all fixed; the Linux gate here has no
+libclang, so none of the three was seen before the push. `[BLD-FFI-5a]` (ODR-162) is still to build.
+
 ## ADR-252 — Helper N4 merged: the rest of Annex C; the owner's answers on N3 Q3, Q4, Q8
 
 2026-10-21. Helper N4's branch (16 commits, `tasks/90/N4-notes.md`), merged: Ember classes deriving

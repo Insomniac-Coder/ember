@@ -37,6 +37,10 @@ inline int Grid::made = 0;
 inline const double Grid::scale = 0.5;
 
 inline int frames = 60;
+
+// A variable holding a pointer, imported as any other (the owner's ruling of 2026-10-21).
+inline Grid* last_grid = nullptr;
+inline bool has_last_grid() noexcept { return last_grid != nullptr; }
 }  // namespace engine
 
 namespace {

@@ -139,19 +139,30 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 * `[FFI-40]` `const` methods import as `self`, non-`const` methods as `mut self`; `&&`-qualified members
   are skipped (`W5033`). A `T&` parameter imports as `mut T`, `const T&` as a borrowed `T`, and `T&&` as
   `owned T` where the type is movable; a `T&` result is a `ref` borrowing the receiver (`[LT-1]`).
-* `[FFI-40a]` `const` is not an aliasing guarantee in C++: a `const` method that mutates `mutable` state
-  or invalidates iterators must be declared `@ffi(invalidates)`, which gives it `mut self`, and the
-  importer assumes `@ffi(invalidates)` for every `const` method of a type with a `mutable` member unless
-  the overlay says otherwise (an asserted fact).
-* `[FFI-41]` Static member functions import as associated functions and static data members as
-  `extern static`; nested types sit under their outer type's name; namespaces become module paths;
-  entities in anonymous namespaces are skipped (`W5034`).
+* `[FFI-40a]` `const` is not an aliasing guarantee in C++: a `const` method of a class with a `mutable`
+  member, its own or a base's, may change its object. The importer reads the method's body, which the
+  header has: it takes `self` only when the body changes no field — it assigns none (`=`, a compound
+  assignment, `++`, `--`), takes no field's address, binds no non-`const` reference or pointer to one,
+  calls no non-`const` method of one, hands neither the object nor a field to a function by non-`const`
+  reference or pointer, and calls no method of the object that may change it, nor anything it cannot
+  follow — and `mut self` otherwise, or when the header does not have the body (ODR-160). An overlay's
+  `class C:` section restates a method as an Ember method line (`fn lookups(self) -> c_int`), whose
+  receiver wins: an asserted fact, which `ember tcb` lists. A line whose name, parameters or result
+  differ from the import's method is `E5010`.
+* `[FFI-41]` Static member functions import as associated functions. A static data member, and a
+  variable of a namespace, imports as a foreign static (`[FFI-10]`), read and written as a global
+  (`cpp.engine.Grid.made += 1`), in `unsafe` unless it is `const` and holds no pointer, each use going
+  through a thunk that gives its address, since its symbol is mangled or, for an `inline` one, emitted
+  only where C++ uses it (`[FFI-3]`, ODR-161). One holding a pointer imports like any other: it is read
+  and written in `unsafe`, so `[STA-1]` does not ask it to be `Sync` (ODR-163). Nested types sit under
+  their outer type's name; namespaces become module paths; entities in anonymous namespaces are skipped
+  (`W5034`).
 * `[FFI-42]` Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
   `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through); C++ iterators with
   `begin`/`end` become `Iterable`.
 * `[FFI-42a]` Iterating an imported C++ container borrows it mutably for the loop, so any method that
-  could invalidate its iterators — every `mut self` method, including `@ffi(invalidates)` ones — is
-  rejected inside the loop by the ordinary borrow rules.
+  could invalidate its iterators — every `mut self` method, including the `const` ones `[FFI-40a]` gives
+  `mut self` — is rejected inside the loop by the ordinary borrow rules.
 
 ## C.4 Trust and evidence
 

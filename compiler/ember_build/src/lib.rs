@@ -1357,6 +1357,10 @@ pub fn compile_cpp_object(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).arg(format!("-std={standard}")).arg("-c").args(flags);
+            // D-790 — position-independent, for a reloadable image's shared library too (Annex B):
+            // the thunks' `thread_local` record of a caught exception is otherwise reached as an
+            // executable's, which a shared object cannot be linked with.
+            if !cfg!(windows) { command.arg("-fPIC"); }
             command.arg(source).arg("-o").arg(output);
         }
     }

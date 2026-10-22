@@ -232,6 +232,9 @@ pub enum Kind {
     Opaque,
     /// An `extern static`.
     Static,
+    /// `[FFI-41]` — a C++ variable: an `extern static` reached through the thunk giving its address;
+    /// a static data member's by the C name `Outer::name`.
+    Variable,
     /// `[FFI-39]` — a trampoline's Ember class, with what it needs, written at the module's level.
     Class,
 }
@@ -324,6 +327,24 @@ extern "C" fn gather_field(cursor: CXCursor, data: CXClientData) -> CXVisitorRes
     // SAFETY(ffi): `data` is the `Vec` `fields` passes, alive for the visit.
     unsafe { (*(data as *mut Vec<CXCursor>)).push(cursor) };
     CXVisit_Continue
+}
+
+/// `[FFI-10]` — whether a value of `ty` holds a pointer (a reference, a `char*`, a record or array
+/// with one), which is not `Sync`: a C++ `const` variable of such a type is read in `unsafe`, never
+/// through `@ffi(immutable)`, whose safe read needs `Sync` (`[STA-1]`). A function pointer is a
+/// function value, which is `Sync`.
+fn holds_pointer(ty: CXType) -> bool {
+    // SAFETY(ffi): types of a live translation unit.
+    unsafe {
+        let ty = clang_getCanonicalType(ty);
+        match ty.kind {
+            CXType_Pointer => !matches!(clang_getCanonicalType(clang_getPointeeType(ty)).kind, CXType_FunctionProto | CXType_FunctionNoProto),
+            CXType_LValueReference | CXType_RValueReference | CXType_MemberPointer | CXType_BlockPointer => true,
+            CXType_ConstantArray | CXType_IncompleteArray => holds_pointer(clang_getArrayElementType(ty)),
+            CXType_Record => record_fields(ty).into_iter().any(|field| holds_pointer(clang_getCursorType(field))),
+            _ => false,
+        }
+    }
 }
 
 /// `[FFI-17b]` — a record's fields as its type has them: a template specialization's, which its
@@ -473,6 +494,178 @@ fn lifetimebound(param: CXCursor) -> bool {
     }
 }
 
+/// `[FFI-40a]` — whether a class has a `mutable` member, its own or a base's.
+fn has_mutable_member(class: CXCursor) -> bool {
+    children(class).into_iter().any(|child| match kind(child) {
+        // SAFETY(ffi): cursors of a live translation unit.
+        CXCursor_FieldDecl => (unsafe { clang_CXXField_isMutable(child) }) != 0,
+        CXCursor_CXXBaseSpecifier => {
+            // SAFETY(ffi): as above.
+            let base = unsafe { clang_getCursorDefinition(clang_getTypeDeclaration(clang_getCanonicalType(clang_getCursorType(child)))) };
+            // SAFETY(ffi): as above.
+            (unsafe { clang_Cursor_isNull(base) }) == 0 && has_mutable_member(base)
+        }
+        _ => false,
+    })
+}
+
+/// `[FFI-40a]` — whether the header declares a class with a `mutable` member.
+fn mutable_class(cursor: CXCursor, in_header: &dyn Fn(CXCursor) -> bool) -> bool {
+    children(cursor).into_iter().any(|child| match kind(child) {
+        CXCursor_Namespace => mutable_class(child, in_header),
+        CXCursor_StructDecl | CXCursor_ClassDecl if in_header(child) => {
+            has_mutable_member(child) || mutable_class(child, in_header)
+        }
+        _ => false,
+    })
+}
+
+/// The spellings of a cursor's tokens.
+fn tokens_of(cursor: CXCursor) -> Vec<String> {
+    // SAFETY(ffi): a cursor of a live translation unit; the tokens are disposed of before returning.
+    unsafe {
+        let unit = clang_Cursor_getTranslationUnit(cursor);
+        let (mut tokens, mut count) = (std::ptr::null_mut(), 0);
+        clang_tokenize(unit, clang_getCursorExtent(cursor), &mut tokens, &mut count);
+        let out = (0..count as usize).map(|at| text(clang_getTokenSpelling(unit, *tokens.add(at)))).collect();
+        if !tokens.is_null() {
+            clang_disposeTokens(unit, tokens, count);
+        }
+        out
+    }
+}
+
+/// An expression with what only wraps it (an implicit conversion, parentheses) taken away.
+fn unwrapped(mut expr: CXCursor) -> CXCursor {
+    while matches!(kind(expr), CXCursor_UnexposedExpr | CXCursor_ParenExpr) {
+        match children(expr).as_slice() {
+            [inner] => expr = *inner,
+            _ => break,
+        }
+    }
+    expr
+}
+
+/// `[FFI-40a]` — whether an expression names the object a method runs on, or a part of it: `this`,
+/// `*this`, a field (`count`, `this->count`, `stats.hits`, `cells[i]`) or what a field points to.
+fn names_object(expr: CXCursor) -> bool {
+    let expr = unwrapped(expr);
+    match kind(expr) {
+        CXCursor_CXXThisExpr => true,
+        // SAFETY(ffi): a cursor of a live translation unit.
+        CXCursor_MemberRefExpr if kind(unsafe { clang_getCursorReferenced(expr) }) == CXCursor_FieldDecl => {
+            children(expr).first().is_none_or(|base| names_object(*base))
+        }
+        CXCursor_ArraySubscriptExpr | CXCursor_UnaryOperator => children(expr).first().is_some_and(|base| names_object(*base)),
+        _ => false,
+    }
+}
+
+/// `[FFI-40a]` — whether a parameter of type `ty` lets a function change what it is given: a
+/// reference or pointer to something not `const`.
+fn writable_parameter(ty: CXType) -> bool {
+    // SAFETY(ffi): a type of a live translation unit.
+    unsafe {
+        matches!(ty.kind, CXType_LValueReference | CXType_RValueReference | CXType_Pointer)
+            && clang_isConstQualifiedType(clang_getPointeeType(ty)) == 0
+    }
+}
+
+/// `[FFI-40a]` (ODR-160) — whether a `const` method of a class with a `mutable` member may change
+/// its object, read from its body. One the header does not have may. One may when it writes a
+/// field (an assignment, a compound assignment, `++` or `--` of one, its address taken, a
+/// non-`const` reference or pointer bound to it), calls a non-`const` method of a field, hands the
+/// object or a field to a function by non-`const` reference or pointer, or calls a method of the
+/// object (or a `const` one of a field whose class has `mutable` state) that may; and a call the
+/// importer cannot follow may.
+fn changes_object(method: CXCursor, seen: &mut HashSet<String>) -> bool {
+    // SAFETY(ffi): cursors of a live translation unit.
+    let definition = unsafe { clang_getCursorDefinition(method) };
+    // SAFETY(ffi): as above.
+    if unsafe { clang_Cursor_isNull(definition) } != 0 {
+        return true;
+    }
+    // A method being read already: what it writes is found there.
+    if !seen.insert(usr(definition)) {
+        return false;
+    }
+    children(definition).into_iter().filter(|child| kind(*child) == CXCursor_CompoundStmt).any(|body| writes_object(body, seen))
+}
+
+fn writes_object(cursor: CXCursor, seen: &mut HashSet<String>) -> bool {
+    let parts = children(cursor);
+    let found = match kind(cursor) {
+        CXCursor_CompoundAssignOperator => parts.first().is_some_and(|target| names_object(*target)),
+        CXCursor_BinaryOperator => match parts.as_slice() {
+            [target, _] => tokens_of(cursor).get(tokens_of(*target).len()).is_some_and(|operator| operator == "=") && names_object(*target),
+            _ => true,
+        },
+        CXCursor_UnaryOperator => {
+            let spelled = tokens_of(cursor);
+            let changes = |token: Option<&String>| token.is_some_and(|token| matches!(token.as_str(), "++" | "--"));
+            (changes(spelled.first()) || changes(spelled.last()) || spelled.first().is_some_and(|token| token == "&"))
+                && parts.first().is_some_and(|operand| names_object(*operand))
+        }
+        // SAFETY(ffi): a cursor of a live translation unit.
+        CXCursor_VarDecl => writable_parameter(unsafe { clang_getCursorType(cursor) }) && parts.iter().any(|init| names_object(*init)),
+        CXCursor_CallExpr => call_writes_object(cursor, seen),
+        _ => false,
+    };
+    found || parts.into_iter().any(|part| writes_object(part, seen))
+}
+
+fn call_writes_object(call: CXCursor, seen: &mut HashSet<String>) -> bool {
+    // SAFETY(ffi): cursors and types of a live translation unit.
+    unsafe {
+        let callee = clang_getCursorReferenced(call);
+        let arguments: Vec<CXCursor> = (0..clang_Cursor_getNumArguments(call).max(0) as c_uint).map(|at| clang_Cursor_getArgument(call, at)).collect();
+        if clang_Cursor_isNull(callee) != 0 {
+            return children(call).into_iter().any(|part| names_object(part) || kind(unwrapped(part)) == CXCursor_CXXThisExpr);
+        }
+        let mut skip = 0;
+        if kind(callee) == CXCursor_CXXMethod && clang_CXXMethod_isStatic(callee) == 0 {
+            // The object it is called on: `f()` and `this->f()` the method's own, `count.f()` a field.
+            let member = children(call)
+                .into_iter()
+                .map(unwrapped)
+                .find(|part| kind(*part) == CXCursor_MemberRefExpr && clang_equalCursors(clang_getCursorReferenced(*part), callee) != 0);
+            let object = match member {
+                Some(member) => children(member).first().copied(),
+                // An operator's object is its first argument (`cells[i]`).
+                None => {
+                    skip = 1;
+                    arguments.first().copied()
+                }
+            };
+            let own = object.is_none_or(|object| kind(unwrapped(object)) == CXCursor_CXXThisExpr);
+            if own || object.is_some_and(names_object) {
+                if clang_CXXMethod_isConst(callee) == 0 {
+                    return true;
+                }
+                let class = clang_getCursorSemanticParent(callee);
+                if (own || has_mutable_member(class)) && changes_object(callee, seen) {
+                    return true;
+                }
+            }
+        }
+        let signature = clang_getCursorType(callee);
+        let declared = clang_getNumArgTypes(signature).max(0) as usize;
+        arguments.iter().enumerate().skip(skip).any(|(at, argument)| {
+            let mut given = unwrapped(*argument);
+            let address = kind(given) == CXCursor_UnaryOperator && tokens_of(given).first().is_some_and(|token| token == "&");
+            if address {
+                given = children(given).first().copied().unwrap_or(given);
+            }
+            if !names_object(given) && kind(unwrapped(given)) != CXCursor_CXXThisExpr {
+                return false;
+            }
+            let index = at - skip;
+            // Past the declared parameters, a variadic argument may be anything.
+            index >= declared || writable_parameter(clang_getArgType(signature, index as c_uint))
+        })
+    }
+}
+
 /// `[FFI-44]` — the definition of a class's base, when it has exactly one, public and not virtual,
 /// that the header (not the system's library) defines.
 fn single_public_base(class: CXCursor) -> Option<CXCursor> {
@@ -572,7 +765,9 @@ struct Note {
 }
 
 impl Unit {
-    fn parse(main: &Path, contents: &str, args: &[String]) -> Result<Unit, String> {
+    /// `bodies`: keep the function bodies, which only `[FFI-40a]`'s reading of `const` methods
+    /// needs; any other parse skips them.
+    fn parse(main: &Path, contents: &str, args: &[String], bodies: bool) -> Result<Unit, String> {
         let main_c = CString::new(main.to_string_lossy().into_owned()).map_err(|e| e.to_string())?;
         let contents_c = CString::new(contents).map_err(|e| e.to_string())?;
         let args_c: Vec<CString> = args.iter().map(|arg| CString::new(arg.as_str())).collect::<Result<_, _>>().map_err(|e| e.to_string())?;
@@ -592,7 +787,7 @@ impl Unit {
                 argv.len() as c_int,
                 &mut unsaved,
                 1,
-                CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_SkipFunctionBodies,
+                CXTranslationUnit_DetailedPreprocessingRecord | if bodies { 0 } else { CXTranslationUnit_SkipFunctionBodies },
             );
             if tu.is_null() {
                 clang_disposeIndex(index);
@@ -700,7 +895,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
     let main = from_dir.join(format!("{}_import_c.{}", ember_branding::SYMBOL_PREFIX, if config.cpp.is_some() { "cpp" } else { "c" }));
     let args = arguments(config);
     let include = format!("#include \"{}\"\n", config.header.replace('\\', "/"));
-    let unit = Unit::parse(&main, &include, &args)?;
+    let unit = Unit::parse(&main, &include, &args, false)?;
     let errors: Vec<String> = unit
         .notes()
         .into_iter()
@@ -717,6 +912,10 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         let (file, _, system) = location(cursor);
         file == header || !(system || file.is_empty() || Path::new(&file) == main)
     };
+    // `[FFI-40a]` (ODR-160) — a class with a `mutable` member: its `const` methods' bodies are read,
+    // so the header is parsed again with them.
+    let bodies = config.cpp.is_some() && mutable_class(unit.cursor(), &in_header);
+    let unit = if bodies { Unit::parse(&main, &include, &args, true)? } else { unit };
     // `[FFI-42]` — each class with `begin()` and `end()`, whose element type the parse below asks.
     let mut iterables = Vec::new();
     if config.cpp.is_some() {
@@ -765,7 +964,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                 None => return Err(format!("`instantiate` names `{written}`, and `{}` declares no template `{template}` ([FFI-17b])", config.header)),
             }
         }
-        let instantiated = Unit::parse(&main, &source, &args)?;
+        let instantiated = Unit::parse(&main, &source, &args, bodies)?;
         let errors: Vec<String> = instantiated.notes().into_iter().filter(|note| note.error).map(|note| note.text).collect();
         if !errors.is_empty() {
             return Err(format!("the instantiations `instantiate` lists do not compile:\n{}", errors.join("\n")));
@@ -837,7 +1036,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         // Every macro's error reported, however many: each names its own line.
         let mut probe_args = args.clone();
         probe_args.push("-ferror-limit=0".to_string());
-        let unit = Unit::parse(&main, &probe, &probe_args)?;
+        let unit = Unit::parse(&main, &probe, &probe_args, false)?;
         let main_name = main.to_string_lossy().replace('\\', "/");
         let mut reasons: HashMap<usize, String> = HashMap::new();
         for note in unit.notes().into_iter().filter(|note| note.error) {
@@ -886,7 +1085,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
             for (line, (index, _)) in addresses.iter().enumerate() {
                 let _ = writeln!(probe, "static const unsigned long long {prefix}{line} = (unsigned long long)({});", macros[*index].0);
             }
-            let unit = Unit::parse(&main, &probe, &probe_args)?;
+            let unit = Unit::parse(&main, &probe, &probe_args, false)?;
             let mut reasons: HashMap<usize, String> = HashMap::new();
             for note in unit.notes().into_iter().filter(|note| note.error) {
                 if note.file.replace('\\', "/") == main_name && note.line >= 2 {
@@ -1904,7 +2103,7 @@ impl Writer {
             }
             let class_spelled = cpp_spelling(clang_getCursorType(definition));
             let abstract_class = clang_CXXRecord_isAbstract(definition) != 0;
-            let mutable_state = children(definition).into_iter().any(|child| kind(child) == CXCursor_FieldDecl && clang_CXXField_isMutable(child) != 0);
+            let mutable_state = has_mutable_member(definition);
             // `[FFI-39]` — a class with a trampoline: its methods are its Ember class's, its
             // constructors and destructor the trampoline's, its named virtuals the Ember class's
             // virtual methods. One the trampoline cannot be made for is imported as any class.
@@ -2596,9 +2795,11 @@ impl Writer {
                 self.rvalue_members.push(Skipped { name: format!("{owner}.{name}"), reason: "an `&&`-qualified member function, which only a temporary may call".to_string(), at });
                 return None;
             }
+            // `[FFI-40a]` (ODR-160) — a `const` method of a class with a `mutable` member is `self`
+            // only when its body, which the header has, changes no field.
             Some(if clang_CXXMethod_isStatic(method) != 0 {
                 Member::Static
-            } else if clang_CXXMethod_isConst(method) != 0 && !mutable_state {
+            } else if clang_CXXMethod_isConst(method) != 0 && (!mutable_state || !changes_object(method, &mut HashSet::new())) {
                 Member::Method
             } else {
                 Member::MutMethod
@@ -2980,9 +3181,11 @@ impl Writer {
         if !self.seen.insert(format!("var {name}")) {
             return;
         }
-        // `[FFI-3]` — a variable of C++ linkage has a mangled symbol, which Ember never links.
+        // `[FFI-3]` — a variable of a C++ header is reached through its thunk: one of C++ linkage
+        // has a mangled symbol, which Ember never links, and an `inline` one has a symbol only where
+        // C++ code uses it.
         // SAFETY(ffi): a live variable cursor.
-        if self.cpp && unsafe { text(clang_Cursor_getMangling(cursor)) } != name && unsafe { clang_getCursorLinkage(cursor) } != CXLinkage_Internal {
+        if self.cpp && unsafe { clang_getCursorLinkage(cursor) } != CXLinkage_Internal {
             self.cpp_variable(cursor, &name, None);
             return;
         }
@@ -3013,10 +3216,10 @@ impl Writer {
 
     /// `[FFI-41]`, `[FFI-3]` — a C++ variable of C++ linkage: a static data member (of the class
     /// `owner` names) or a namespace's. A `const` one with a constant value is a constant (a
-    /// class's, `Outer.limit`); any other is reached through a thunk that gives its address, since
-    /// its symbol is mangled: `Outer.count() -> *mut T` (`*T` for a `const` one), the form of a
-    /// static member function that returns a `T&`. (An `extern static` of the address would be a
-    /// raw pointer in a static, which is not `Sync`, `E7002`.)
+    /// class's, `Outer.limit`); any other is a foreign static, read and written as a global
+    /// (`Outer.count += 1`, `count`; ODR-161), whose every use goes through a thunk that gives its
+    /// address, since its symbol is mangled. A member's static is the module's private
+    /// `Outer_count`, which the checker gives `Outer.count` to (`ForeignImport::variables`).
     fn cpp_variable(&mut self, cursor: CXCursor, name: &str, owner: Option<&str>) {
         let shown = owner.map_or_else(|| name.to_string(), |owner| format!("{owner}.{name}"));
         // SAFETY(ffi): a live variable cursor.
@@ -3039,16 +3242,23 @@ impl Writer {
                 Ok(mapped) => mapped,
                 Err(reason) => return self.skip(cursor, &shown, reason),
             };
-            if owner.is_none() && !self.claim(name) {
+            let static_name = variable_static(owner, name);
+            if !self.claim(&static_name) {
                 return self.skip(cursor, &shown, "its name is taken by another declaration of the header");
             }
             let thunk = format!("{}_cpp_{}_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.thunks);
             self.thunks += 1;
-            let pointer = format!("{}*", cpp_spelling(ty));
-            let _ = writeln!(self.shim, "extern \"C\" {pointer} {thunk}(void) noexcept {{ return &{}; }}", qualified_name(cursor));
-            let result = CType { ember: format!("*{}{mapped}", if constant { "" } else { "mut " }), pointee: Some((mapped, constant)), char_pointer: false, c: pointer, mode: String::new() };
-            let owner = owner.map(|owner| (owner.to_string(), Member::Static));
-            self.functions.push(Function { name: name.to_string(), params: Vec::new(), result: Some(result), link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone() });
+            let _ = writeln!(self.shim, "extern \"C\" {}* {thunk}(void) noexcept {{ return &{}; }}", cpp_spelling(ty), qualified_name(cursor));
+            // A `const` one is read outside `unsafe` (`@ffi(immutable)`) only when its type is `Sync`;
+            // one holding a pointer is read in `unsafe`, as every other C++ variable is (the owner's
+            // ruling of 2026-10-21, ODR-163).
+            let (contract, mutable) = match (constant, holds_pointer(ty)) {
+                (true, false) => (", immutable", ""),
+                (true, true) => ("", ""),
+                (false, _) => ("", "mut "),
+            };
+            let key = owner.map_or_else(|| name.to_string(), |owner| format!("{owner}::{name}"));
+            self.push(&key, Kind::Variable, format!("@ffi(link_name=\"{thunk}\"{contract})\nstatic {mutable}{static_name}: {mapped}"));
         }
     }
 
@@ -3248,6 +3458,25 @@ fn instance_name(written: &str) -> String {
 }
 
 /// `[FFI-41]` — the namespaces a declaration is in, outermost first.
+/// `[FFI-41]` — the module's static for a C++ variable: its own name, or a member's `Outer_name`.
+fn variable_static(owner: Option<&str>, name: &str) -> String {
+    ident(&owner.map_or_else(|| name.to_string(), |owner| format!("{owner}_{name}")))
+}
+
+/// `[FFI-41]` — the C++ variables of one namespace's module, for the checker: each static, and the
+/// class and member a static data member's is reached by (`Grid.made`).
+fn variables(imported: &Imported, namespace: &[String]) -> Vec<(String, Option<(String, String)>)> {
+    imported
+        .items
+        .iter()
+        .filter(|item| item.kind == Kind::Variable && item.namespace == namespace)
+        .map(|item| match item.name.split_once("::") {
+            Some((owner, name)) => (variable_static(Some(owner), name), Some((ident(owner), ident(name)))),
+            None => (variable_static(None, &item.name), None),
+        })
+        .collect()
+}
+
 fn namespace_of(cursor: CXCursor) -> Vec<String> {
     let mut path = Vec::new();
     // SAFETY(ffi): cursors of a live translation unit.
@@ -3393,7 +3622,7 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
     for (index, (_, _, question)) in questions.iter().enumerate() {
         let _ = writeln!(probe, "constexpr bool {prefix}{index} = ({question});");
     }
-    let probed = Unit::parse(main, &probe, args)?;
+    let probed = Unit::parse(main, &probe, args, false)?;
     for cursor in children(probed.cursor()) {
         if kind(cursor) == CXCursor_VarDecl
             && let Some(index) = spelling(cursor).strip_prefix(&prefix).and_then(|index| index.parse::<usize>().ok())
@@ -3859,7 +4088,7 @@ pub fn load(
     let trampolines = if cpp { trampoline_decls(&overlay_text) } else { Vec::new() };
     let config = Config { trampolines: &trampolines, ..config };
     let mut cached = false;
-    let imported = match import_cached(&config, &overlay_text, &mut cached) {
+    let mut imported = match import_cached(&config, &overlay_text, &mut cached) {
         Ok((imported, _)) => {
             let stage = if cached { format!("import c, from its .{}", ember_branding::BINDING_EXT) } else { "import c, parsed".to_string() };
             crate::mark(&stage, &header);
@@ -3979,6 +4208,14 @@ pub fn load(
             }
         }
     }
+    // `[FFI-40a]` (ODR-160) — a method line's receiver wins over the reading of the body.
+    for function in &mut imported.functions {
+        if let Some((owner, member)) = &mut function.owner
+            && let Some(&mutable) = applied.receivers.get(&(owner.clone(), function.name.clone()))
+        {
+            *member = if mutable { Member::MutMethod } else { Member::Method };
+        }
+    }
     // `[FFI-6b]` — a macro an overlay declares is imported.
     let declared = |name: &str| applied.macros.iter().any(|(function, ..)| function.name == name);
     for skipped in imported.macros.iter().filter(|skipped| !declared(&skipped.name)) {
@@ -4089,6 +4326,7 @@ pub fn load(
             .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
             .collect(),
         policy_changes: changed_signatures(&imported, &applied, "", &shown),
+        variables: variables(&imported, &[]),
     };
     // `[FFI-41]` — each C++ namespace a module under the import's.
     let children = imported
@@ -4118,6 +4356,7 @@ pub fn load(
                     .map(|found| (ident(&found.class), found.default_init, found.unnamed_virtuals.clone()))
                     .collect(),
                 policy_changes: changed_signatures(&imported, &applied, &namespace.join("::"), &foreign.header),
+                variables: variables(&imported, namespace),
                 ..Default::default()
             };
             (child, module, foreign)
@@ -4423,6 +4662,9 @@ struct Applied {
     macros: Vec<(Function, Entry, String)>,
     /// `[FFI-30c]` — which overlay, by its place in the import's list, wrote each entry.
     origins: HashMap<(&'static str, String), usize>,
+    /// `[FFI-40a]` (ODR-160) — each method a `class` section restates, by class and name: whether
+    /// its line takes `mut self`.
+    receivers: HashMap<(String, String), bool>,
 }
 
 /// An overlay's function entry: each parameter's contract words, the result's, and the entry's own
@@ -4744,6 +4986,54 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     applied.hidden.insert(name.name.to_string());
                 }
             }
+            // `[FFI-40a]` (ODR-160) — a method line: the method's signature as the import gives it,
+            // with the receiver, `self` or `mut self`, asserted over the importer's reading of its
+            // body.
+            ast::OverlayItemKind::Class { name, methods } => {
+                for method in methods {
+                    let shown = format!("{}.{}", name.name, method.name.name);
+                    let found = imported.functions.iter().find(|function| {
+                        function.name == method.name.name.as_str()
+                            && function.owner.as_ref().is_some_and(|(owner, member)| owner == name.name.as_str() && matches!(member, Member::Method | Member::MutMethod))
+                    });
+                    let Some(function) = found else {
+                        mismatch(sink, method.name.span, format!("`{header}` declares no method `{shown}`"));
+                        continue;
+                    };
+                    let (mutable, params) = match method.params.split_first() {
+                        Some((first, rest)) if matches!(first.kind, ast::ParamKind::Receiver { ty: None }) && matches!(first.mode, ast::Mode::Borrow | ast::Mode::Mut) => {
+                            (first.mode == ast::Mode::Mut, rest)
+                        }
+                        _ => {
+                            mismatch(sink, method.name.span, format!("the line for `{shown}` takes `self` or `mut self` first"));
+                            continue;
+                        }
+                    };
+                    let tight = |written: &str| written.split_whitespace().collect::<String>();
+                    let declared: Vec<String> = function.params.iter().map(|(param, ty)| wrapper_param(param, ty)).collect();
+                    let written: Vec<String> = params.iter().map(|param| tight(&snippet(param.span))).collect();
+                    let value = method_value(function);
+                    let result = method.ret.as_ref().map(|ty| tight(&snippet(ty.span)));
+                    let result_matches = match (&value, &result) {
+                        (None, None) => true,
+                        (value, Some(result)) => {
+                            value.as_deref().is_some_and(|value| tight(value) == *result) || tight(&format!("Result[{}, CppError]", value.as_deref().unwrap_or("void"))) == *result
+                        }
+                        _ => false,
+                    };
+                    if written != declared.iter().map(|param| tight(param)).collect::<Vec<_>>() || !result_matches || method.is_unsafe || !method.generics.is_empty() {
+                        let arrow = value.map_or(String::new(), |value| format!(" -> {value}"));
+                        let receiver = if mutable { "mut self" } else { "self" };
+                        let line = std::iter::once(receiver.to_string()).chain(declared).collect::<Vec<_>>().join(", ");
+                        mismatch(sink, method.name.span, format!("`{shown}` is `fn {}({line}){arrow}` in `{header}`", method.name.name));
+                        continue;
+                    }
+                    let key = ast::Ident { name: shown.as_str().into(), span: method.name.span };
+                    if take(applied, sink, layer, entry.is_override, "method", &key) {
+                        applied.receivers.insert((name.name.to_string(), method.name.name.to_string()), mutable);
+                    }
+                }
+            }
             // `[FFI-13]` — wrappers written in Ember, over the module's own declarations.
             ast::OverlayItemKind::Extend(_) => {
                 let start = entry.attrs.first().map_or(entry.span, |attr| attr.span).start as usize;
@@ -4917,7 +5207,13 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
         Some((_, members)) => members.push_str(&text),
         None => blocks.push((abi, text)),
     };
-    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Opaque | Kind::Static) && item.namespace == namespace) {
+    for item in imported.items.iter().filter(|item| matches!(item.kind, Kind::Opaque | Kind::Static | Kind::Variable) && item.namespace == namespace) {
+        // `[FFI-41]` — a static data member's static is the module's own: `Outer.name` reaches it.
+        if item.kind == Kind::Variable && item.name.contains("::") {
+            member("C", item.text.lines().map(|line| format!("    {line}
+")).collect());
+            continue;
+        }
         member("C", declare(item, "    "));
         if let Some(alias) = alias(item) {
             body.push_str(&alias);
@@ -5118,6 +5414,17 @@ fn wrapped(ty: &CType) -> bool {
 }
 
 /// `[FFI-40]`, `[FFI-39]` — a wrapper's parameter as Ember code writes it.
+/// `[FFI-40a]` — the value a method's wrapper gives, as `render_wrapper` writes it: a bridge
+/// value's type, a `ref` for a `T&`, else the result's Ember type.
+fn method_value(function: &Function) -> Option<String> {
+    let ty = function.result.as_ref()?;
+    match &ty.pointee {
+        Some((inner, _)) if ty.mode.starts_with("bridge ") => Some(inner.clone()),
+        Some((inner, _)) if ty.mode.starts_with("ref") => Some(format!("ref {}{inner}", if ty.mode.starts_with("ref mut") { "mut " } else { "" })),
+        _ => Some(ty.ember.clone()),
+    }
+}
+
 fn wrapper_param(param: &str, ty: &CType) -> String {
     match &ty.pointee {
         Some((inner, _)) if ty.mode == "owned " => format!("owned {param}: ForeignBox[{inner}]"),
@@ -5775,7 +6082,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 7;
+const EMBIND_VERSION: u64 = 8;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -5855,7 +6162,7 @@ fn read_c_type(value: &Value) -> Option<CType> {
     })
 }
 
-const KINDS: [Kind; 5] = [Kind::Type, Kind::Const, Kind::Opaque, Kind::Static, Kind::Class];
+const KINDS: [Kind; 6] = [Kind::Type, Kind::Const, Kind::Opaque, Kind::Static, Kind::Class, Kind::Variable];
 const ABIS: [&str; 4] = ["C", "system", "fastcall", "vectorcall"];
 
 /// `[FFI-14]` — the `.embind` record: the header's files and their hashes (`[FFI-7]`'s "content"),

@@ -182,7 +182,7 @@ pub struct OverlayItem {
 
 /// `overlay_item := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum"
 /// IDENT NEWLINE | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE |
-/// extend_decl)`.
+/// extend_decl | overlay_class)`.
 #[derive(Clone, Debug)]
 pub enum OverlayItemKind {
     /// `overlay_fn := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
@@ -197,6 +197,10 @@ pub enum OverlayItemKind {
     Rename { from: Ident, to: Ident },
     Hide(Ident),
     Extend(ExtendDecl),
+    /// `[FFI-40a]` (ODR-160) — `overlay_class := "class" IDENT ":" NEWLINE INDENT {fn_signature
+    /// NEWLINE} DEDENT`: methods of a C++ class restated as Ember method lines, whose receiver
+    /// (`self` or `mut self`) is asserted over what the importer reads in their bodies.
+    Class { name: Ident, methods: Vec<FnDecl> },
 }
 
 /// `overlay_param := IDENT [":" contract {contract}]`.

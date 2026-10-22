@@ -532,9 +532,12 @@ fn emit_with(
         // ODR-082 — `@ffi(immutable)` declares the object itself `const`: after
         // a pointer type the qualifier has to follow it (`const char* const`).
         let mut foreign_declarations = emitter.foreign_statics.borrow().iter()
-            .map(|(symbol, (ty, immutable))| {
+            .map(|(symbol, (ty, immutable, thunk))| {
                 let c_ty = emitter.c_type(*ty);
                 let declaration = match (*immutable, c_ty.ends_with('*')) {
+                    // `[FFI-41]` — a C++ variable: the thunk giving its address.
+                    (false, _) if *thunk => format!("extern {c_ty}* {symbol}(void)"),
+                    (true, _) if *thunk => format!("extern const {c_ty}* {symbol}(void)"),
                     (false, _) => format!("extern {c_ty} {symbol}"),
                     (true, false) => format!("extern const {c_ty} {symbol}"),
                     (true, true) => format!("extern {c_ty} const {symbol}"),
@@ -877,7 +880,7 @@ struct Emitter<'a> {
     /// A stored callable value is given to C somewhere (`CastKind::FnToC`).
     gives_values_to_c: bool,
     /// C globals used by a generated body, collected while rendering calls.
-    foreign_statics: std::cell::RefCell<BTreeMap<String, (Ty, bool)>>,
+    foreign_statics: std::cell::RefCell<BTreeMap<String, (Ty, bool, bool)>>,
     /// D-182 — aggregate types whose drop is emitted as an out-of-line
     /// `static` function, in first-request order. An `Array` element or a
     /// `Box` payload drops through one, so a type that owns itself through
@@ -1049,8 +1052,17 @@ pub(crate) fn exact_symbol_prototype(signature: &str, alias: &str, exact: &str) 
 /// `[FFI-49]` — a foreign declaration under `alias`, a C identifier, bound to the linker symbol
 /// `exact` C cannot spell: an assembler label, or MSVC's linker resolving the alias to the symbol.
 fn foreign_symbol_declaration(declaration: &str, alias: &str, exact: &str) -> String {
+    // D-789 — GCC writes its label into the assembly as it is, so a symbol C cannot spell is quoted
+    // for the assembler; one C can spell is not, since `-flto`'s symbol table keeps the quotes as
+    // part of the name, and the link then finds no definition of it.
+    let plain = exact.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') && exact.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    let gcc = if plain {
+        format!("{declaration} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");")
+    } else {
+        format!("{declaration} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\");")
+    };
     format!(
-        "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{alias}={exact}\")\n{declaration};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{declaration} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{declaration} __asm__(\"\\\"\" EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\\\"\");\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
+        "#if defined(_MSC_VER) && !defined(__clang__)\n#pragma comment(linker, \"/ALTERNATENAME:{alias}={exact}\")\n{declaration};\n#else\n#define EMBER_LABEL_TEXT(x) #x\n#define EMBER_LABEL_PREFIX(x) EMBER_LABEL_TEXT(x)\n#if defined(__clang__)\n{declaration} __asm__(EMBER_LABEL_PREFIX(__USER_LABEL_PREFIX__) \"{exact}\");\n#else\n{gcc}\n#endif\n#undef EMBER_LABEL_PREFIX\n#undef EMBER_LABEL_TEXT\n#endif"
     )
 }
 
@@ -8705,8 +8717,11 @@ impl Emitter<'_> {
                     }
                     // `[FFI-10]` — the C global's address, `const` dropped for an
                     // `@ffi(immutable)` one (ODR-082), which Ember only reads.
-                    Builtin::ForeignStatic { symbol, ty, immutable } => {
-                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*ty, *immutable));
+                    Builtin::ForeignStatic { symbol, ty, immutable, thunk } => {
+                        self.foreign_statics.borrow_mut().insert(symbol.to_string(), (*ty, *immutable, *thunk));
+                        if *thunk {
+                            return format!("(({}*){symbol}())", self.c_type(*ty));
+                        }
                         return format!("(({}*)&{symbol})", self.c_type(*ty));
                     }
                     // `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — the runtime's record of foreign

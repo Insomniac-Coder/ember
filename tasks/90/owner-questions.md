@@ -70,10 +70,11 @@ Each has option (a) built; all **OPEN** except 3, 4 and 8, which the owner answe
   `self`. A body it cannot see is `mut self`. The overlay may restate a method in a `class C:` section
   as an ordinary Ember method line (`fn lookups(self) -> int`), which wins (an asserted fact, listed
   by `ember tcb`). Real example: `tests/conformance/FFI-40a`, where `cache.get().lookups()` is then
-  accepted and `lookup()` still needs `get_mut()`. NOT BUILT YET.
+  accepted and `lookup()` still needs `get_mut()`. BUILT 2026-10-21 (ADR-253).
 - **Q4 ANSWERED (FFI-41): (b).** A static data member (and a C++ namespace variable) reads and
   writes like a global, `cpp.engine.Grid.made += 1`; underneath, each use still goes through the
-  address thunk that exists today. NOT BUILT YET.
+  address thunk that exists today. BUILT 2026-10-21 (ADR-253); one holding a pointer is not
+  imported (ODR-163).
 - **Q8 ANSWERED (BLD-FFI-5a): (b).** An object of a `@sync` class may be handed to C++ by an
   `@export` function (FFI-31b gains that exception); the class needs no `@export` of its own, it
   reaches the `--cpp` header through the exported function, with its `pub` methods; C++ sees an
@@ -117,3 +118,39 @@ Each has option (a) built; all **OPEN** except 3, 4 and 8, which the owner answe
 4. `E5015` now also covers a type with no foreign representation (it was one of `E5050`'s two
    meanings, D-745). (a) keep it, and correct its code-table row, which cites `[FFI-31]` (in 0.9.10
    the cdylib runtime rule) where it means `[FFI-5]`/`[FFI-31b]`; (b) a code of its own. **OPEN.**
+
+## The owner's answer of 2026-10-21 on C++ variables outside any class
+
+- **ANSWERED (b):** a C++ variable outside any class (`inline Node* kept_node = nullptr;` in
+  `tests/conformance/FFI-17c/nodes.hpp`) becomes an Ember variable, like a class's `static` member:
+  `cpp.kept_node = node`, `cpp.recorded_events += 1`, every use inside `unsafe:`. NOT BUILT.
+- **NEXT QUESTION, not yet asked:** the "no pointer" rule (`E7002`) refuses an Ember variable holding a
+  pointer, so it breaks a C file's variable (Part XVI), a C++ class's `static` member (question 4) and
+  now these. Whether it stops applying to variables from C/C++ files is the owner's to decide.
+- All 96 ODRs ruled by Claude under the delegation are OPEN pending the owner's review (owner,
+  2026-10-21); ODR-163 is rejected.
+- **ODR-021 REVERSED by the owner (2026-10-21):** "Ember will not give Python's garbage answers for those two
+  operators": float `//` and `%` are not Python's (`1.0 // 0.1` is not 9, `1.0 % 0.1` not
+  0.09999999999999995). They follow the formula `[TYP-29]` wrote, `floor(a / b)` and `a - b * floor(a / b)`,
+  each step rounded as the machine rounds it (`1.0 // 0.1` is 10, `1.0 % 0.1` is 0.0). Integer `//` and `%`
+  are not part of ODR-021. `[PHIL-14]` ("Python spelling, Python meaning") is not the owner's rule (added in
+  0.9.9). BUILT 2026-10-22 as ODR-164 (runtime, compile-time evaluator, `[TYP-29]`'s text).
+
+## The owner's review of Claude's delegated rulings, 2026-10-21
+
+The owner reviewed all 91 rulings Claude made under the delegation (`docs/reviews/odr-review-2026-10-21.pdf`)
+and **accepted all of them except ODR-021 (reversed: decimal `//` and `%` follow `[TYP-29]`'s formula, not
+Python) and ODR-163 (rejected: a variable holding a pointer is not left out of an import).** Accepted
+(89): ODR-016, ODR-022, ODR-023, ODR-024, ODR-025, ODR-026, ODR-027, ODR-028, ODR-029, ODR-030, ODR-031, ODR-032, ODR-033, ODR-034, ODR-035, ODR-036, ODR-037, ODR-039, ODR-040, ODR-041, ODR-042, ODR-043, ODR-044, ODR-045, ODR-046, ODR-047, ODR-048, ODR-065, ODR-070, ODR-071, ODR-072, ODR-073, ODR-074, ODR-075, ODR-076, ODR-077, ODR-078, ODR-079, ODR-080, ODR-081, ODR-082, ODR-083, ODR-084, ODR-089, ODR-090, ODR-091, ODR-092, ODR-093, ODR-095, ODR-096, ODR-097, ODR-098, ODR-101, ODR-102, ODR-103, ODR-104, ODR-105, ODR-106, ODR-107, ODR-108, ODR-109, ODR-110, ODR-111, ODR-112, ODR-132, ODR-133, ODR-134, ODR-135, ODR-136, ODR-137, ODR-138, ODR-139, ODR-140, ODR-141, ODR-142, ODR-143, ODR-144, ODR-145, ODR-146, ODR-147, ODR-148, ODR-149, ODR-150, ODR-151, ODR-152, ODR-155, ODR-157, ODR-158, ODR-159. The delegation itself stays revoked: new spec questions go to the owner.
+
+## The owner's ruling replacing ODR-163, 2026-10-21
+
+- A C++ variable outside any class (`inline Node* kept_node = nullptr;`) becomes an Ember variable
+  (`cpp.kept_node`), read and written inside `unsafe:`, numbers and pointers alike: nothing is left out
+  of an import.
+- The `E7002` "safe to share between threads" check does not apply to such a variable (every use is
+  already inside `unsafe:`). A C++ class's `static` member is exempt already (question 4, (b)).
+- **The same holds for a variable of a C header** (`extern struct Node* kept_node;` with `import c`):
+  imported, used inside `unsafe:`, not refused by `E7002` (owner: "yes").
+- BUILT 2026-10-22 (ADR-253, spec ODR-163 in `0.9.10_Hardened_31`).
+
