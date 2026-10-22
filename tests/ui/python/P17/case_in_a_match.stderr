@@ -1,0 +1,10 @@
+error[E0100]: `case` is Python's; an Ember `match` arm is its pattern
+ --> tests/ui/python/P17/case_in_a_match.em:4:9
+  |
+4 |         case 1:
+  |         ^^^^
+  |
+  = help: remove `case`
+  = note: `pattern:` and a block, or `pattern =>` and an expression [GRM-10]
+
+error: could not compile due to 1 error(s)

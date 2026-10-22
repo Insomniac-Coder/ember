@@ -1,0 +1,9 @@
+error[E0100]: `lambda` is Python's; an Ember lambda is `fn(x) => e`
+ --> tests/ui/python/P13/lambda.em:3:29
+  |
+3 |     doubled = xs.iter().map(lambda x: x * 2).collect[Array[int]]()
+  |                             ^^^^^^
+  |
+  = help: write `fn(…) =>`
+
+error: could not compile due to 1 error(s)

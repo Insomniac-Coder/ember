@@ -1,0 +1,10 @@
+error[E0100]: `raise` is Python's; an Ember function fails by returning `Err`
+ --> tests/ui/python/P12/raise_an_exception.em:3:9
+  |
+3 |         raise ValueError("negative")
+  |         ^^^^^
+  |
+  = help: write `return Err(…)`
+  = note: a function that can fail returns a `Result`; `?` passes a failure on to the caller (Part XIII)
+
+error: could not compile due to 1 error(s)

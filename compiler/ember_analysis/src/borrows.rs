@@ -4549,7 +4549,8 @@ fn check_point(
                 continue;
             }
 
-            let name = place_name(body, types, loan_place);
+            // D-822 (D3) — a place is named in its own quotes, or described (the `for` loop's iterator).
+            let name = quoted_place(body, types, loan_place);
             // A two-phase reservation behaves as shared while its remaining
             // arguments are evaluated, but it is still a mutable borrow for
             // diagnostic identity. If another mutable argument overlaps it,
@@ -4558,23 +4559,23 @@ fn check_point(
             let (code, message) = match (loan.capability.is_mut(), access) {
                 (true, Access::Borrow { mutable: true }) => (
                     codes::E3022,
-                    format!("`{name}` is already mutably borrowed"),
+                    format!("{name} is already mutably borrowed"),
                 ),
                 (_, Access::Borrow { .. }) => (
                     codes::E3021,
-                    format!("`{name}` is borrowed here and mutably borrowed elsewhere"),
+                    format!("{name} is borrowed here and mutably borrowed elsewhere"),
                 ),
                 (true, Access::Read) => (
                     codes::E3021,
-                    format!("`{name}` cannot be read while it is mutably borrowed"),
+                    format!("{name} cannot be read while it is mutably borrowed"),
                 ),
                 (_, Access::Move) => (
                     codes::E3021,
-                    format!("`{name}` cannot be moved while it is borrowed"),
+                    format!("{name} cannot be moved while it is borrowed"),
                 ),
                 _ => (
                     codes::E3021,
-                    format!("`{name}` cannot be written while it is borrowed"),
+                    format!("{name} cannot be written while it is borrowed"),
                 ),
             };
             // `[EXC-3]` — conflicting accesses to a class field through one
@@ -4621,9 +4622,9 @@ fn check_point(
                     Diagnostic::error(
                         codes::E3024,
                         span,
-                        format!("`{name}` would be moved into this value while another of its fields borrows it"),
+                        format!("{name} would be moved into this value while another of its fields borrows it"),
                     )
-                    .primary_label(format!("`{name}` and a view of it would both be fields of this value"))
+                    .primary_label(format!("{name} and a view of it would both be fields of this value"))
                     .help("store an index or a `Handle` into the owner instead of a view of it, or keep the owner outside the value")
                     .note("a field cannot borrow another field of the same value: moving the value would move what the view points into (TYP-15)"),
                 );
@@ -4672,10 +4673,10 @@ fn check_point(
                 let mut diagnostic = Diagnostic::error(
                     codes::E3060,
                     loan.span,
-                    format!("`{name}` does not live long enough"),
+                    format!("{name} does not live long enough"),
                 )
                 .primary_label("this borrow remains live after its source's scope ends")
-                .secondary(span, format!("`{name}` ends its scope here"));
+                .secondary(span, format!("{name} ends its scope here"));
                 if let Some(later) = later {
                     diagnostic = diagnostic.secondary(later, "borrow later used here");
                 }
@@ -4702,21 +4703,21 @@ fn check_point(
             let method_root = if loan_mutable && matches!(access, Access::Borrow { mutable: true })
             {
                 method_autoref_target(body, point, is_method)
-                    .map(|taken| place_name(body, types, &taken))
+                    .map(|taken| quoted_place(body, types, &taken))
             } else {
                 None
             };
             let (code, message) = if loan.arena_scope {
-                (codes::E3096, format!("`{name}` is scoped here"))
+                (codes::E3096, format!("{name} is scoped here"))
             } else if iteration_borrow {
                 (
                     codes::E3020,
-                    format!("cannot mutate `{name}` while it is borrowed by this loop"),
+                    format!("cannot mutate {name} while it is borrowed by this loop"),
                 )
             } else if let Some(taken) = method_root.as_deref() {
                 (
                     codes::E3025,
-                    format!("cannot call a method on `{taken}` while `{name}` is mutably borrowed"),
+                    format!("cannot call a method on {taken} while {name} is mutably borrowed"),
                 )
             } else {
                 (code, message)
@@ -4750,9 +4751,9 @@ fn check_point(
                 .secondary(
                     loan.span,
                     if iteration_borrow {
-                        format!("`{name}` borrowed here for the whole loop")
+                        format!("{name} borrowed here for the whole loop")
                     } else {
-                        format!("{kind}borrow of `{name}` starts here")
+                        format!("{kind}borrow of {name} starts here")
                     },
                 );
             if !iteration_borrow && let Some(later) = later {
@@ -4809,7 +4810,7 @@ fn check_point(
                              shorten its last use or put it in a block of its own"
                         ),
                         (None, _, _, _, _) => format!(
-                            "bind the borrow of `{name}` to a local and finish with it before \
+                            "bind the borrow of {name} to a local and finish with it before \
                              this line, or copy the value out first",
                             name = name
                         ),
@@ -4922,7 +4923,7 @@ fn keeper(
 ) -> (Option<String>, Option<Span>) {
     let mut best: Option<(LocalId, Span)> = None;
     for holder in regions.holders(loan.capability.validity_interval.0) {
-        if body.local(*holder).name.is_none() {
+        if body.local(*holder).name.is_none() || body.for_iterators.contains(holder) {
             continue;
         }
         let Some(spans) = reads.get(holder) else {
@@ -5084,6 +5085,11 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
         let projection = &place.projection[at];
         match projection {
             Projection::Field(i) => {
+                // D-822 (D4) — a standard type's private field (`Map`'s `entries`) is not the
+                // program's: the owner stands for it.
+                if std_private_field(types, ty, *i) {
+                    break;
+                }
                 out = match field_name(types, ty, *i) {
                     Some(name) => format!("{out}.{name}"),
                     None => format!("{out}.{i}"),
@@ -5107,6 +5113,23 @@ fn place_name(body: &Body, types: &TypeTable, place: &Place) -> String {
         at += 1;
     }
     out
+}
+
+/// `[DIA-2]` — a place as a diagnostic names it: its path in quotes, or, for the iterator a `for`
+/// loop desugars to, what it is.
+fn quoted_place(body: &Body, types: &TypeTable, place: &Place) -> String {
+    if body.for_iterators.contains(&place.local) {
+        return "the `for` loop's iterator".to_string();
+    }
+    format!("`{}`", place_name(body, types, place))
+}
+
+/// Whether field `index` of `ty` is a private field of a type the standard library declares.
+fn std_private_field(types: &TypeTable, ty: Ty, index: usize) -> bool {
+    let TyKind::Struct(id) = types.kind(ty) else { return false };
+    let def = types.struct_def(*id);
+    let declared_by_std = def.name.as_str().starts_with("std.") || def.origin.as_ref().is_some_and(|(origin, _)| origin.as_str().starts_with("std."));
+    declared_by_std && def.fields.get(index).is_some_and(|field| field.vis == ember_types::FieldVis::Private)
 }
 
 fn field_name(types: &TypeTable, ty: Ty, index: usize) -> Option<String> {

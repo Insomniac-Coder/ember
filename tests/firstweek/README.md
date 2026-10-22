@@ -9,7 +9,8 @@ specification changes their marks, never their text.
 
 * `shape` — the shape (§XVII.6) of the first error `ember check` reports; `none:<code>` when it is in
   no catalogue, `gap:<code>` when the specification accepts the program and the compiler does not
-  (both block a release); `DIA-21` for a row of `[DIA-21]`'s Python-habit table;
+  (both block a release); `P1`… for a row of `[DIA-21]`'s Python habits (ODR-179), which the
+  diagnostic names (`--json`'s `"shape"`);
 * `codes` — every error code the check reports;
 * `helps` — the chain: `R<n>:<shape>` for each help applied in the `n`th check;
 * `after_helps` — `accepted` when the catalogue's helps alone, applied literally, make it compile.
@@ -22,10 +23,12 @@ helped copy compiles, and the rate below is the one the marks give.
 
 ## The acceptance rate (`[TST-10]`)
 
-Acceptance rate: 0 of 30 as written, 3 of 30 after the helps.
+Acceptance rate: 0 of 30 as written, 23 of 30 after the helps.
 
 A change of either number is a new line here, with its reason; a release that lowers one says why.
 
 | Date | Compiler | As written | After the helps | Why it changed |
 |---|---|---|---|---|
 | 2026-10-22 | `b8c4df20` | 0 of 30 | 3 of 30 | the first marking |
+| 2026-10-22 | `d3e170c6` | 0 of 30 | 21 of 30 | helper V: `[DIA-21]`'s Python habits P1..P30 answered, most with fix-its, the rejections in no catalogue (A1..A10) given shapes, and the helps that did not compile (B1..B6) fixed; the 9 left need a compiler gap closed (G1..G6, ODR-181: helper W, G5 the lead's) or, in 16, a move-only element of a comprehension, which no help of O2's moves |
+| 2026-10-22 | merge of V | 0 of 30 | 23 of 30 | helpers V, W and X together on main: W closed G1..G4, G6 and G7 (string patterns, a temporary's iterator, a stored consumed callable, `m[k].iter_mut()`, tuples `Ord`, a one-statement lambda) and X the iterator half of G5 (`@borrows(self.f)`); the 7 left (01, 04, 05, 08, 10, 16, 23) still need a workaround after the catalogue's helps (their chains in `marks.json`) |

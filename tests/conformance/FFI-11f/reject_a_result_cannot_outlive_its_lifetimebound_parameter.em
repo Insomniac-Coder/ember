@@ -24,7 +24,7 @@ fn last_of_new(mine: ref cpp.Shelf) -> ref c_int:
     match shelf():
         Ok(theirs):
             unsafe:  # SAFETY(ffi): both shelves are live during the call
-                return mine.last_of(theirs.get())    #$ error[E3060]: `*theirs.pointer` does not live long enough
+                return mine.last_of(theirs.get())    #$ error[E3060]: `theirs` does not live long enough
         Err(_):
             panic("no shelf")
 

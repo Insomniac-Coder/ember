@@ -11,19 +11,19 @@ class Hangman:
         self.secret = secret.to_lower()
 
     fn masked(self) -> String:
-        return [c.to_string() if c.to_string() in self.guessed else "_" for c in self.secret].join(" ")
+        return [c if c.to_string() in self.guessed else '_' for c in self.secret].join(" ")
 
     fn guess(self, letter: str) -> String:
-        low = letter.to_lower()
-        if low.len() != 1:
+        new_letter = letter.to_lower()
+        if new_letter.len() != 1:
             return "one letter at a time"
-        if low in self.guessed:
-            return f"you already tried '{low}'"
-        self.guessed.add(low.clone())
-        if low in self.secret:
-            return f"yes, {self.secret.count(low)} of them"
+        if new_letter in self.guessed:
+            return f"you already tried '{new_letter}'"
+        self.guessed.add(new_letter.to_string())
+        if new_letter in self.secret:
+            return f"yes, {self.secret.count(new_letter)} of them"
         self.misses += 1
-        return f"no '{low}'"
+        return f"no '{new_letter}'"
 
     fn won(self) -> bool:
         return all(c.to_string() in self.guessed for c in self.secret)

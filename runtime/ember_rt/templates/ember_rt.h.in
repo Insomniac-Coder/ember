@@ -2428,6 +2428,7 @@ int64_t ember_file_flush(int64_t handle);
 int64_t ember_file_close(int64_t handle);
 int64_t ember_stdin_read_line(ember_vec* out, bool* end);
 int64_t ember_io_error_kind(int64_t code);
+bool ember_char_class(uint32_t c, int64_t which);
 void ember_io_error_message(int64_t code, ember_vec* out);
 /* `[STD-23]` — `std.time`: the monotonic clock in nanoseconds, and a sleep of at least `nanos`. */
 int64_t ember_time_now(void);

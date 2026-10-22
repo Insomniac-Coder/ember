@@ -1,0 +1,10 @@
+error[E2173]: `Shape` is an interface, and the types implementing it are values, not classes
+  --> tests/ui/python/P22/interface_as_a_parameter_type.em:10:16
+   |
+10 | fn describe(s: Shape) -> float:
+   |                ^^^^^
+   |
+   = help: hold such a value behind a pointer: `Box[dyn Shape]` in a field or a collection (`Box(v)` makes one), `ref dyn Shape` for a parameter; or take a type parameter, `[T: Shape]`, and pass the value itself
+   = note: an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `Shape` has its own size, which `dyn Shape` keeps behind a pointer (ODR-182)
+
+error: could not compile due to 1 error(s)

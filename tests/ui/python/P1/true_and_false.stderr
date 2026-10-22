@@ -1,0 +1,9 @@
+error[E1010]: cannot find `False` in this scope: Ember's boolean is `false`
+ --> tests/ui/python/P1/true_and_false.em:2:12
+  |
+2 |     done = False
+  |            ^^^^^
+  |
+  = help: write `false`
+
+error: could not compile due to 1 error(s)

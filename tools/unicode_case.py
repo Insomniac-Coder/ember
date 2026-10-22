@@ -1,5 +1,7 @@
 """The Unicode case-mapping tables of the runtime (`[TXT-10]`'s `to_upper` and
-`to_lower`), generated from Python's own full case mappings.
+`to_lower`), generated from Python's own full case mappings, and the character
+classes of `char`'s `is_alphabetic`, `is_digit` and `is_alphanumeric` (ODR-183),
+as Python's `isalpha`, `isdigit` and `isnumeric` of one character give them.
 
 Writes the section between the two markers in
 `runtime/ember_rt/templates/ember_rt.c.in`; `--check` fails when the section is
@@ -31,12 +33,32 @@ def table(name, pick):
             f'static const size_t {name}_len = sizeof {name} / sizeof {name}[0];\n')
 
 
+def ranges(name, test):
+    """The runs of code points past ASCII for which `test` holds, as first and last pairs: the
+    runtime asks the table only for those, ASCII being decided inline (`std.string`)."""
+    rows, first = [], None
+    for cp in range(0x80, 0x110001):
+        holds = cp <= 0x10FFFF and not 0xD800 <= cp <= 0xDFFF and test(chr(cp))
+        if holds and first is None:
+            first = cp
+        elif not holds and first is not None:
+            rows.append(f'    {{0x{first:X}, 0x{cp - 1:X}}},')
+            first = None
+    return (f'static const ember_char_range {name}[] = {{\n' + '\n'.join(rows) + '\n};\n'
+            f'static const size_t {name}_len = sizeof {name} / sizeof {name}[0];\n')
+
+
 def section():
     return (BEGIN
             + f'/* Unicode {unicodedata.unidata_version}: full case mappings, as Python {sys.version.split()[0]} gives them. */\n'
             + 'typedef struct ember_case_entry { uint32_t cp; uint32_t to[3]; } ember_case_entry;\n'
             + table('ember_upper_table', str.upper)
             + table('ember_lower_table', str.lower)
+            + '/* ODR-183: the characters past ASCII Python calls alphabetic, digits and numeric. */\n'
+            + 'typedef struct ember_char_range { uint32_t first; uint32_t last; } ember_char_range;\n'
+            + ranges('ember_alphabetic_ranges', str.isalpha)
+            + ranges('ember_digit_ranges', str.isdigit)
+            + ranges('ember_numeric_ranges', str.isnumeric)
             + END)
 
 

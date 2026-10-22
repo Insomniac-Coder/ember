@@ -71,5 +71,5 @@ fn main():
         println(f"{till.name} served {till.served}")
     if waits.len() > 0:
         average = sum(waits) as float / waits.len() as float
-        println(f"average wait: {average:.2f} minutes, longest wait: {waits.iter().max()} minutes")
+        println(f"average wait: {average:.2f} minutes, longest wait: {waits.iter().max().unwrap()} minutes")
     println(f"longest queue: {longest_queue}, still waiting at closing time: {queue.len()}")

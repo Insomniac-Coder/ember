@@ -7,9 +7,9 @@
 #$ help: did you mean `counter`?
 #$ error[E1010]: cannot find field `xpso` on `Point`
 #$ help: did you mean `xpos`?
-#$ error[E1010]: `Point` has no method named `length_squard`
+#$ error[E2072]: `Point` has no method named `length_squard`
 #$ help: did you mean `length_squared`?
-#$ error[E1010]: `Point` has no method named `scald`
+#$ error[E2072]: `Point` has no method named `scald`
 #$ not-help: did you mean `scale`?
 #$ error[E1010]: cannot find `sqrt` in this scope
 #$ help: `sqrt` is exported by `std.math`: import it, `from std.math import sqrt`

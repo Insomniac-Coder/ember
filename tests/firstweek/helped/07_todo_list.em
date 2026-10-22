@@ -32,10 +32,10 @@ class TodoList:
     tasks: Array[Task] = []
     next_id: int = 1
 
-    fn add(self, title: str, priority: Priority, owned tags: Array[String] = []) -> int:
+    fn add(self, title: str, priority: Priority, tags: Array[String] = []) -> int:
         id = self.next_id
         self.next_id += 1
-        self.tasks.push(Task(id=id, title=title.to_string(), priority=priority, tags=tags))
+        self.tasks.push(Task(id=id, title=title.to_string(), priority=priority, tags=tags.clone()))
         return id
 
     fn complete(self, id: int) -> bool:
@@ -49,7 +49,7 @@ class TodoList:
         return [t.clone() for t in self.tasks if t.status == Status.Open]
 
     fn with_tag(self, tag: str) -> Array[Task]:
-        return [t.clone() for t in self.tasks if t.tags.iter().any(fn(e) => e == tag)]
+        return [t.clone() for t in self.tasks if tag.to_string() in t.tags]
 
     fn print(self):
         sorted_tasks = self.tasks.clone()

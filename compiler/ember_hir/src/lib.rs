@@ -1336,10 +1336,11 @@ pub enum RuntimeFn {
     IoErrorMessage,
     TimeNow,
     TimeSleep,
+    CharClass,
 }
 
 impl RuntimeFn {
-    pub const ALL: [RuntimeFn; 23] = [
+    pub const ALL: [RuntimeFn; 24] = [
         RuntimeFn::Entropy,
         RuntimeFn::ProcessExit,
         RuntimeFn::ProcessAbort,
@@ -1363,6 +1364,7 @@ impl RuntimeFn {
         RuntimeFn::IoErrorMessage,
         RuntimeFn::TimeNow,
         RuntimeFn::TimeSleep,
+        RuntimeFn::CharClass,
     ];
 
     /// The standard declaration a call names.
@@ -1391,6 +1393,7 @@ impl RuntimeFn {
             RuntimeFn::IoErrorMessage => "std.io.error_message",
             RuntimeFn::TimeNow => "std.time.monotonic_now",
             RuntimeFn::TimeSleep => "std.time.sleep_nanos",
+            RuntimeFn::CharClass => "std.string.char_class",
         }
     }
 
@@ -1420,6 +1423,7 @@ impl RuntimeFn {
             RuntimeFn::IoErrorMessage => "io_error_message",
             RuntimeFn::TimeNow => "time_now",
             RuntimeFn::TimeSleep => "time_sleep",
+            RuntimeFn::CharClass => "char_class",
         }
     }
 
@@ -1451,6 +1455,8 @@ impl RuntimeFn {
             // `[STD-23]`, `[DET-2]` — the monotonic clock is `Nondet`; sleeping waits.
             RuntimeFn::TimeNow => (Effects::NONDET, "the monotonic clock"),
             RuntimeFn::TimeSleep => (Effects::BLOCK, "`time.sleep`"),
+            // ODR-183 — a lookup in constant tables.
+            RuntimeFn::CharClass => (Effects::NONE, ""),
         }
     }
 }

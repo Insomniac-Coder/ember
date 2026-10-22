@@ -1,0 +1,11 @@
+error[E2020]: cannot index `(str, i64)`
+ --> tests/ui/python/P30/index_a_tuple.em:3:13
+  |
+3 |     println(pair[1])
+  |             ^^^^^^^
+  |
+  = help: write `.1`
+  = note: a type is indexed by implementing `Index` [TYP-21]
+  = note: a tuple's fields are `.0`, `.1`, …, each with a type of its own, so a position is written, never computed (IV.3)
+
+error: could not compile due to 1 error(s)

@@ -52,18 +52,16 @@ class Machine:
     fn choose(self, code: str) -> Result[(String, Array[int]), VendError]:
         if code not in self.slots:
             return Err(VendError.UnknownSlot(code.to_string()))
-        slot = ref self.slots[code]
+        slot = self.slots[code].clone()
         if slot.stock == 0:
-            return Err(VendError.SoldOut(slot.product.clone()))
+            return Err(VendError.SoldOut(slot.product))
         if self.inserted < slot.price:
             return Err(VendError.NotEnoughMoney(slot.price, self.inserted))
-        price = slot.price
-        product = slot.product.clone()
-        change = self.make_change(self.inserted - price)?
+        change = self.make_change(self.inserted - slot.price)?
         self.slots[code].stock -= 1
         self.inserted = 0
-        self.sales += price
-        return Ok((product, change))
+        self.sales += slot.price
+        return Ok((slot.product, change))
 
     fn refund(self) -> int:
         amount = self.inserted

@@ -19,7 +19,7 @@ fn parse_readings(text: str) -> Array[Reading]:
         if hour.is_err() or temp.is_err():
             println(f"bad numbers in '{chunk.trim()}'")
             continue
-        readings.push(Reading(day=parts[0].to_string(), hour=hour.unwrap(), celsius=temp.unwrap()))
+        readings.push(Reading(day=(parts[0]).to_string(), hour=hour.unwrap(), celsius=temp.unwrap()))
     return readings
 
 fn mean(xs: Array[float]) -> float:
@@ -54,7 +54,7 @@ fn main():
             days.push(r.day.clone())
         by_day[r.day].push(r.celsius)
     for day in days:
-        values = ref by_day[day]
+        values = by_day[day].clone()
         high = values.iter().max().unwrap()
         println(f"{day}: high {high:5.1f}C / {to_fahrenheit(high):5.1f}F  low {values.iter().min().unwrap():5.1f}C")
 

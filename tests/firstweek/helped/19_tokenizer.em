@@ -12,35 +12,29 @@ struct LexError:
     position: int
     found: String
 
-fn is_digit(c: char) -> bool:
-    return '0' <= c <= '9'
-
-fn is_alpha(c: char) -> bool:
-    return 'a' <= c <= 'z' or 'A' <= c <= 'Z'
-
-fn is_operator(c: char) -> bool:
-    return c in ['+', '-', '*', '/', '^', '=']
+fn is_operator(c: str) -> bool:
+    return c in ["+", "-", "*", "/", "^", "="]
 
 fn tokenize(source: str) -> Result[Array[Token], LexError]:
     tokens: Array[Token] = []
     chars = source.chars().collect[Array[char]]()
     i = 0
-    while i < chars.len():
+    while i < source.len():
         c = chars[i]
         if c == ' ':
             i += 1
-        elif is_digit(c) or c == '.':
+        elif c.is_digit() or c == '.':
             start = i
-            while i < chars.len() and (is_digit(chars[i]) or chars[i] == '.'):
+            while i < source.len() and (chars[i].is_digit() or chars[i] == '.'):
                 i += 1
             text = source[start..i]
-            tokens.push(Token.Number(text.parse[float]().map_err(fn(e) => LexError(position=start, found=text.to_string()))?))
-        elif is_alpha(c) or c == '_':
+            tokens.push(Token.Number(text.parse[float]().map_err(fn(_) => LexError(position=start, found=text.to_string()))?))
+        elif c.is_alphabetic() or c == '_':
             start = i
-            while i < chars.len() and ((is_alpha(chars[i]) or is_digit(chars[i])) or chars[i] == '_'):
+            while i < source.len() and (chars[i].is_alphanumeric() or chars[i] == '_'):
                 i += 1
-            tokens.push(Token.Name(source[start..i].to_string()))
-        elif is_operator(c):
+            tokens.push(Token.Name((source[start..i]).to_string()))
+        elif is_operator(c.to_string()):
             tokens.push(Token.Op(c.to_string()))
             i += 1
         elif c == '(':

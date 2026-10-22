@@ -24,7 +24,7 @@ struct Matrix:
             println(f"[{row.join(" ")} ]")
 
 fn zeros(rows: int, cols: int) -> Matrix:
-    return Matrix(rows=rows, cols=cols, data=[0.0 for _ in 0..rows * cols])
+    return Matrix(rows=rows, cols=cols, data=[0.0 for _ in 0..(rows * cols)])
 
 fn identity(n: int) -> Matrix:
     m = zeros(n, n)

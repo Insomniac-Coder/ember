@@ -1,0 +1,12 @@
+error[E1010]: `self` in a method that does not take it
+ --> tests/ui/python/P14/self_left_out.em:5:9
+  |
+4 |     fn bump():
+  |            - the parameters, without `self`
+5 |         self.count += 1
+  |         ^^^^
+  |
+  = help: take `self`
+  = note: a method takes its receiver as its first parameter, `self`, as Python's does; one without it is an associated function [FN-4]
+
+error: could not compile due to 1 error(s)

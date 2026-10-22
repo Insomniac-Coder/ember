@@ -1,0 +1,11 @@
+error[E2073]: `len` of a string
+ --> tests/ui/python/P4/len_of_a_string.em:3:17
+  |
+3 |     println(len(word))
+  |                 ^^^^
+  |
+  = help: `s.char_count()` for Python's count of characters
+  = help: `s.len()` for the bytes
+  = note: Python counts characters; Ember's `s.len()` counts bytes [STD-26]
+
+error: could not compile due to 1 error(s)

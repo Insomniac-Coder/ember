@@ -20,14 +20,14 @@ class EventBus:
     fn subscribe(self, topic: str, owned handler: fn(Event)):
         if topic not in self.subscribers:
             self.subscribers[topic] = []
-        self.subscribers[topic].push(handler)
+        self.subscribers[topic].push(owned fn(e) => handler(e))
 
     fn publish(self, event: Event):
         topic = topic_of(event)
         if topic not in self.subscribers:
             println(f"(nobody listens to {topic})")
             return
-        for handler in self.subscribers[topic].iter_mut():
+        for handler in self.subscribers.get_mut(topic).unwrap().iter_mut():
             handler(event)
             self.delivered += 1
 

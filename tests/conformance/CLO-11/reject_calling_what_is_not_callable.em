@@ -12,4 +12,4 @@ fn main():
     y = x(4)                #$ error[E2020]: `x` has type `i64`, which cannot be called
     z = (x)(4)              #$ error[E2020]: a value of type `i64` cannot be called
     h = H(n=1)
-    w = h.n(2)              #$ error[E1010]: `H` has no method named `n`
+    w = h.n(2)              #$ error[E2072]: `H` has no method named `n`

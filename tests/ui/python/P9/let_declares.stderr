@@ -1,0 +1,10 @@
+error[E0100]: `let` is not needed: assigning a name declares it
+ --> tests/ui/python/P9/let_declares.em:2:5
+  |
+2 |     let count = 3
+  |     ^^^
+  |
+  = help: remove `let`
+  = note: `x = 5` declares `x` where no `x` is in scope, and assigns it where one is [GRM-4]
+
+error: could not compile due to 1 error(s)

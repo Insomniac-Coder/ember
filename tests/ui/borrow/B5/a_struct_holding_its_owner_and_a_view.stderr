@@ -1,8 +1,8 @@
 error[E3024]: `t` would be moved into this value while another of its fields borrows it
- --> tests/ui/borrow/B5/a_struct_holding_its_owner_and_a_view.em:8:19
+ --> tests/ui/borrow/B5/a_struct_holding_its_owner_and_a_view.em:8:9
   |
 8 |     p = Parsed(t, t[0..5])
-  |                   ^^^^^^^ `t` and a view of it would both be fields of this value
+  |         ^^^^^^^^^^^^^^^^^^ `t` and a view of it would both be fields of this value
   |
   = help: store an index or a `Handle` into the owner instead of a view of it, or keep the owner outside the value
   = note: a field cannot borrow another field of the same value: moving the value would move what the view points into (TYP-15)

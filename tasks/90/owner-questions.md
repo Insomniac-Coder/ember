@@ -47,7 +47,9 @@ owner's to overturn.
 1. `run_parallel` runs its systems one after another: build real parallel runs (and decide when a
    function value or callable parameter is `Send`/`Sync`, and whether components must be), rule
    that running in turn meets "at once", or parallel for literals only. `[ECS-4]` stays unfinished
-   until this is settled. **OPEN.**
+   until this is settled. **ANSWERED 2026-10-22 (a): real parallel runs; a function value is `Send`
+   when everything it captures is `Send` (a plain function captures nothing, so it is); a component
+   must be `Send` to be used by `run_parallel`.** (ODR-218; not built yet.)
 2. `run(system, args…)` without variadic parameters: one argument (a tuple for several, `()` for
    none, built), a separate no-argument form, or a language feature. **Ruled ODR-141: one argument.**
 3. `Not[D]`'s item: `()` (built, a `()` slot in the item tuple) — confirm. **Ruled ODR-141: `()`.**
@@ -99,6 +101,9 @@ Each has option (a) built; all **OPEN** except 3, 4 and 8, which the owner answe
 7. `[FFI-24c]`'s `ember bind --report` reads a header, not a program, so it cannot see `@noalloc` or
    main-thread paths: (a) not built; (b) the report belongs to `ember build --report`; (c) list every
    catching function.
+   **ANSWERED 2026-10-22 by the owner: the list goes in `ember inspect --cost`** (which reads the built
+   program and already prints every C++ call's mode and place): it also marks the catching calls inside
+   `@noalloc` or main-thread code (ODR-220; not built yet).
 8. `[BLD-FFI-5a]` beside `[FFI-31b]`, which keeps class handles out of exported signatures: (a) not
    built; (b) `[FFI-31b]` allows `@sync` handles in exports with the `--cpp` header; (c) a later version.
 9. A defaulted special member C++ makes `noexcept(false)` (`[FFI-24]` lists it as non-throwing):

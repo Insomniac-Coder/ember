@@ -1,0 +1,10 @@
+error[E0008]: a character literal holds one character, and this is a string in single quotes
+ --> tests/ui/python/P24/single_quoted_string.em:2:12
+  |
+2 |     name = 'ada'
+  |            ^^^^^
+  |
+  = help: write `"ada"`
+  = note: Ember writes text in double quotes; `'c'` is one `char` [LEX-22]
+
+error: could not compile due to 1 error(s)

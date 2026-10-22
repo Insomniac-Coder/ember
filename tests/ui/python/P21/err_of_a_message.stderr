@@ -1,0 +1,10 @@
+error[E2020]: expected `AnyError`, found `str`
+ --> tests/ui/python/P21/err_of_a_message.em:3:20
+  |
+3 |         return Err("negative")
+  |                    ^^^^^^^^^^ this is `str`
+  |
+  = help: make the message an error: `AnyError.msg(…)`
+  = note: a function returning `Result[T]` fails with an `AnyError`, which `AnyError.msg` makes of a message (ODR-180) [ERR-9]
+
+error: could not compile due to 1 error(s)

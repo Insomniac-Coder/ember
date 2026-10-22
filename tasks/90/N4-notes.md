@@ -221,6 +221,8 @@ CMake, which it looks for on the path and in Visual Studio's build tools).
    `super.init(5)`, after `count` is set (a C++ virtual the constructor calls cannot reach the Ember
    override in either case: the entries are set after it). (b) Run the C++ constructor first, before
    field defaults, which means `super.init`'s arguments cannot use fields.
+   **ANSWERED 2026-10-22 by the owner: (a), Ember's order** (`[CLS-2]`/`[CLS-11]` for every class; the
+   C++ base is built at `super.init(…)`); `[FFI-39b]`'s wording changes to match (ODR-219).
 2. **`[FFI-42]` beside `[FFI-2]`.** Operators map to interfaces "where one exists", and a header
    function stays unsafe to call until an overlay entry asserts it; an interface's method cannot be
    `unsafe`. (a) built: the interface is implemented when an overlay entry asserts the method by its
@@ -232,6 +234,9 @@ CMake, which it looks for on the path and in Visual Studio's build tools).
    (a) built: a C++ class's single C++ base is automatic (its methods are the derived class's); an
    Ember class deriving from a C++ class needs the overlay entry. (b) Make a trampoline for every
    C++ class with virtuals, with every virtual named.
+   **ANSWERED 2026-10-22 by the owner: (b), no overlay line.** An Ember class may inherit from a C++
+   class with no overlay entry; the compiler takes the methods its trampoline passes on from the
+   class's own `override fn` methods (ODR-221). `@ffi(trampoline, virtuals=[…])` is no longer needed.
 4. **What makes a C++ runtime undeterminable (`E9021`).** (a) built: a project's flags passing a
    response file (`@build.rsp`). (b) Also a project with no runtime switch in its flags (MSVC's
    default would be `/MT`), which would refuse every `[cpp.<project>]` section that sets none.

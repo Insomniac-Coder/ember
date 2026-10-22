@@ -25,4 +25,4 @@ extend[T: Iterator[Item = int]] Holder[T] implements Mark:
 
 fn main():
     h = Holder(x = Words(n = 0))
-    println(h.mark())        #$ error[E1010]: `Holder[Words]` has no method named `mark`
+    println(h.mark())        #$ error[E2072]: `Holder[Words]` has no method named `mark`
