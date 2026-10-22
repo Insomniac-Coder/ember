@@ -906,6 +906,18 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             Builtin::SoA { op, soa } => self.soa_op(op, *soa, args, dest, span),
+            // D-498 — a step whose lead byte, 0x80 or above, is already read (`ascii_runs`).
+            Builtin::StrCharNextWide => {
+                let (words, align) = self.view_words(&args[0])?;
+                let base = self.load(Sc::Ptr, &words, align.min(8));
+                let cursor = self.pointer(&args[1])?;
+                let lead = self.operand(&args[2])?;
+                let lead = match lead {
+                    Val::Imm(Sc::I(bits), value) => Val::Imm(Sc::I(32), self.int_convert(&value, bits, 32, false)),
+                    other => other,
+                };
+                self.call_rt_into("str_char_next_wide_usize", vec![Val::Imm(Sc::Ptr, base), Val::Imm(Sc::Ptr, cursor), lead], dest)
+            }
             // `[FFI-23]` — a class object is pinned in its header (or, with an `on_relocate`
             // callback, recorded with it, `[HR-20]`); a `Box`'s value never moves: `0`.
             Builtin::RetainedPin => {

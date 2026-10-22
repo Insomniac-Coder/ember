@@ -4446,6 +4446,17 @@ fn module_identity(path: &[String]) -> String {
 
 /// Whether the C is for MSVC's `cl`: `--cc`, else the variable `cc_var()`
 /// names, else the compiler the build would find first.
+/// `[CG-LL-1]` — whether the MIR passes that tune code for one C compiler tune it for MSVC: never
+/// when the LLVM backend builds, whose IR is optimised by LLVM, as Clang's C is (`llvm::selected`).
+fn tuned_for_msvc(options: &Options) -> bool {
+    !llvm::is_selected() && c_for_msvc(options)
+}
+
+/// As `tuned_for_msvc`, for gcc.
+fn tuned_for_gcc(options: &Options) -> bool {
+    !llvm::is_selected() && c_for_gcc(options)
+}
+
 fn c_for_msvc(options: &Options) -> bool {
     let requested = options
         .cc
@@ -4855,6 +4866,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // package root until `ember.toml` is read.
     let root_dir = package_source_root(input);
     let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
+    // `[CG-LL-1]` — the backend, known before the MIR passes that tune for its compiler.
+    llvm::mark_selected(llvm::selected(options, nearest_manifest_text(input)?.as_deref())?);
     // `[BLD-6]` — the manifest's link-time optimisation for this profile, else the profile's own.
     ember_build::set_lto(lint_settings.lto[options.profile as usize]);
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
@@ -5314,9 +5327,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // one, which gcc vectorises only then (ADR-098). clang does both where
     // the loop is; for it, and for MSVC's single loops, only a loop over
     // views `assert_disjoint` proved apart moves (`[DSJ-3]`).
-    let kernel_target = if c_for_msvc(&options) {
+    let kernel_target = if tuned_for_msvc(&options) {
         Some(ember_analysis::KernelTarget::Msvc)
-    } else if c_for_gcc(&options) {
+    } else if tuned_for_gcc(&options) {
         Some(ember_analysis::KernelTarget::Gcc)
     } else {
         Some(ember_analysis::KernelTarget::Clang)
@@ -5354,7 +5367,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         // its buffer and length in registers: it cannot see that the runtime's
         // buffer is apart from the list's own header (ADR-099). MSVC keeps such a
         // local in memory: the views-alive benchmark ran 8 times slower with it.
-        if command != "check" && !c_for_msvc(&options) && mir.pass("keeping pushed lists in locals", &mut types, |bodies, types| ember_analysis::keep_pushed_lists_in_locals_all(bodies, types)) > 0 {
+        if command != "check" && !tuned_for_msvc(&options) && mir.pass("keeping pushed lists in locals", &mut types, |bodies, types| ember_analysis::keep_pushed_lists_in_locals_all(bodies, types)) > 0 {
             mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
         }
         // Last, for C: a value a counted loop computes from its counter each
@@ -5363,7 +5376,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         // speed only then; MSVC's vectoriser takes no second running value, so C
         // for MSVC keeps the value computed from the counter (the owner allows C
         // written for each compiler, 2026-09-28).
-        if command != "check" && options.emit.as_deref() != Some("mir") && !c_for_msvc(&options) {
+        if command != "check" && options.emit.as_deref() != Some("mir") && !tuned_for_msvc(&options) {
             mir.pass("reducing induction values", &mut types, |bodies, types| ember_analysis::reduce_induction_values_all(bodies, types, &common));
         }
         // ADR-141 — last, for C: a short list or string a function makes, fills
@@ -6177,17 +6190,17 @@ fn rewrite_calls_checks_and_loops(
     // themselves, and given a generic `larger` already inlined, clang picks
     // the slower unsigned `max` (`cmovbe`) for values it proves non-negative
     // (ADR-081). MSVC's inliner is weaker, so for it every such function.
-    let mut inlined = mir.pass("single-call inlining", types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(options)));
+    let mut inlined = mir.pass("single-call inlining", types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !tuned_for_msvc(options)));
     // D-571 — a call through a value that is a known function calls it, and
     // that function, now called from one place, is inlined there too.
     if mir.pass("calling known callables", types, |bodies, types| ember_analysis::call_known_callables_all(bodies, types)) > 0 {
-        inlined.extend(mir.pass("single-call inlining", types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !c_for_msvc(options))));
+        inlined.extend(mir.pass("single-call inlining", types, |bodies, types| ember_analysis::inline_single_calls_all(bodies, types, !tuned_for_msvc(options))));
         mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
     // ADR-107 — MSVC keeps a struct whose address goes to a function in
     // memory, inlined or not: a `for` loop's step through a standard
     // iterator is inlined and the iterator becomes a plain local.
-    if c_for_msvc(options) {
+    if tuned_for_msvc(options) {
         mir.pass("inlining loop steps", types, |bodies, types| ember_analysis::inline_loop_steps_all(bodies, types));
     }
     // Both passes above change bodies after `[MIR-REG-1]`'s summaries were

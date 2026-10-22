@@ -15,6 +15,18 @@ pub(crate) fn selected(options: &Options, manifest: Option<&str>) -> Result<bool
     }
 }
 
+/// Whether this compilation's backend is LLVM, recorded as it starts (`mark_selected`) for the MIR
+/// passes that tune code for the compiler that optimises it (`tuned_for_msvc`).
+static SELECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn mark_selected(llvm: bool) {
+    SELECTED.store(llvm, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn is_selected() -> bool {
+    SELECTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// What installs Clang and LLD on this host.
 fn clang_remedy() -> &'static str {
     if cfg!(windows) {
