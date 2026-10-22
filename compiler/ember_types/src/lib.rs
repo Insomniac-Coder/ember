@@ -3146,9 +3146,11 @@ impl TypeTable {
             TyKind::ClassInterface(interface) => self.nominal_path(*interface, None),
             TyKind::Opaque(name) => (item_path(name.as_str()).into_owned(), None),
             TyKind::Range(id) => (item_path(self.range_def(*id).name.as_str()).into_owned(), None),
+            // ODR-215 — a built-in type's path is under `std.core`, so a program's own `struct str`
+            // (`[MOD-5]`) never shares a symbol with it.
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str
-            | TyKind::CStr | TyKind::Void => (self.spelling(ty), None),
-            TyKind::Never => ("Never".to_string(), None),
+            | TyKind::CStr | TyKind::Void => (core(&self.spelling(ty)), None),
+            TyKind::Never => (core("Never"), None),
             TyKind::Vec { text: true, .. } => (core("String"), None),
             TyKind::Vec { elem, .. } => (core("Array"), Some(self.arguments_spelling(&[*elem]))),
             TyKind::Span { elem, mutable } => {
@@ -3399,8 +3401,11 @@ pub const COMPILER_GENERICS: [&str; 20] = [
 /// compiler-made generic's bare name (`Option`) is the prelude's `std.core.Option`, and a root
 /// module's type named like one (`root.Box`, D-305) is the root module's `Box`.
 pub fn item_path(name: &str) -> std::borrow::Cow<'_, str> {
+    // D-305, D-860 — the root module's own `Box`, `int`, `float` or `str`, which the checker keys
+    // `root.<name>`: its path is the name, the root package having no component of its own; the
+    // built-in's is under `std.core` (ODR-215), so the two never share a symbol.
     if let Some(own) = name.strip_prefix("root.")
-        && COMPILER_GENERICS.contains(&own)
+        && (COMPILER_GENERICS.contains(&own) || matches!(own, "int" | "float" | "str"))
     {
         return std::borrow::Cow::Borrowed(own);
     }
@@ -3858,6 +3863,56 @@ mod tests {
             open: false,
         });
         assert_eq!(table.enum_unused_discriminant(unsigned_id), None);
+    }
+
+    /// `[MNG-6]` — the canonical spelling of a generic instance's arguments, which `[MNG-1]` hashes:
+    /// a scalar by its keyword, `String`, `Array`, the spans and the compiler's generics under
+    /// `std.core`, tuples, fixed arrays, references and function types as written, a type parameter
+    /// as `$`, its name and its slot.
+    #[test]
+    fn the_canonical_spelling_of_instance_arguments() {
+        let (mut table, _) = TypeTable::new();
+        let i64_ty = table.intern(TyKind::Int(IntTy::I64));
+        let u8_ty = table.intern(TyKind::Uint(UintTy::U8));
+        let str_ty = table.intern(TyKind::Str);
+        let string = table.intern(TyKind::Vec { elem: u8_ty, text: true });
+        let array = table.intern(TyKind::Vec { elem: i64_ty, text: false });
+        let span = table.intern(TyKind::Span { elem: i64_ty, mutable: true });
+        let pair = table.intern(TyKind::Tuple(vec![i64_ty, str_ty]));
+        let bytes = table.intern(TyKind::Array { elem: u8_ty, len: 4 });
+        let bytes_ref = table.intern(TyKind::Ref { mutable: true, inner: bytes });
+        let param = table.intern(TyKind::Param { index: 0, name: Symbol::intern("T") });
+        let function = table.intern(TyKind::Fn {
+            once: false,
+            abi: None,
+            latebound: false,
+            stateless: false,
+            is_unsafe: false,
+            params: vec![FnParam { ty: i64_ty, mode: FnParamMode::Borrow }],
+            ret: i64_ty,
+        });
+        let option = table.add_enum(EnumDef {
+            name: Symbol::intern("Option_i64"),
+            variants: Vec::new(),
+            span: Span::DUMMY,
+            origin: Some((Symbol::intern("Option"), vec![i64_ty])),
+            repr: u8_ty,
+            repr_is_explicit: false,
+            derives_copy: false,
+            has_drop: false,
+            open: false,
+        });
+        let option = table.intern(TyKind::Enum(option));
+        assert_eq!(
+            table.arguments_spelling(&[i64_ty, string, array, span, option]),
+            "[i64, std.core.String, std.core.Array[i64], std.core.MutSpan[i64], std.core.Option[i64]]"
+        );
+        assert_eq!(table.arguments_spelling(&[pair, bytes_ref, param, function]), "[(i64, str), ref mut [u8; 4], $T0, fn(i64) -> i64]");
+        // `[MNG-1]` (ODR-215) — a built-in type's own path is under `std.core`, a scalar's keyword
+        // staying its spelling as an argument.
+        assert_eq!(table.method_symbol(i64_ty, None, "of", None), "em_3std4core3i642of");
+        assert_eq!(table.method_symbol(str_ty, None, "chars", None), "em_3std4core3str5chars");
+        assert_eq!(item_path("root.str"), "str");
     }
 
     #[test]

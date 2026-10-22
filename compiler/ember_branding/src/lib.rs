@@ -122,7 +122,9 @@ fn push_component(out: &mut String, text: &str) {
     use std::fmt::Write;
     debug_assert!(!text.is_empty(), "an empty path component");
     let written = transliterated(text);
-    if !text.is_ascii() {
+    // `[MNG-3]` (ODR-213) — marked whenever transliteration wrote anything: a character beyond
+    // ASCII, or an ASCII `_` that would read as an escape.
+    if matches!(written, std::borrow::Cow::Owned(_)) {
         out.push(TRANSLITERATED_MARK);
     }
     let _ = write!(out, "{}{written}", written.len());
@@ -231,18 +233,31 @@ pub fn generated(tag: &str) -> String {
     format!("{}{tag}", prefix())
 }
 
+/// `[MNG-3]` — whether `rest`, which begins with an ASCII `_`, reads as an escape: `_u`, four or
+/// more hex digits, and `_`.
+fn reads_as_escape(rest: &str) -> bool {
+    let Some(after) = rest.strip_prefix("_u") else { return false };
+    let digits = after.find(|c: char| !c.is_ascii_hexdigit()).unwrap_or(after.len());
+    digits >= 4 && after[digits..].starts_with('_')
+}
+
 /// `[MNG-3]` — a name with each character beyond ASCII written `_uXXXX_`, its code point in hex
-/// (four digits or more): `café` is `caf_u00E9_`.
+/// (four digits or more): `café` is `caf_u00E9_`. ODR-213 — and an ASCII `_` that begins what would
+/// otherwise read as an escape written `_u005F_`, so no two names share a spelling: the ASCII name
+/// `caf_u00E9_` is `caf_u005F_u00E9_`. A name with neither is itself.
 pub fn transliterated(name: &str) -> std::borrow::Cow<'_, str> {
-    if name.is_ascii() {
+    let escaped_underscore = |at: usize| name.as_bytes()[at] == b'_' && reads_as_escape(&name[at..]);
+    if name.is_ascii() && !(0..name.len()).any(escaped_underscore) {
         return std::borrow::Cow::Borrowed(name);
     }
     let mut out = String::with_capacity(name.len() + 8);
-    for c in name.chars() {
-        if c.is_ascii() {
-            out.push(c);
-        } else {
+    for (at, c) in name.char_indices() {
+        if !c.is_ascii() {
             out.push_str(&format!("_u{:04X}_", c as u32));
+        } else if c == '_' && reads_as_escape(&name[at..]) {
+            out.push_str("_u005F_");
+        } else {
+            out.push(c);
         }
     }
     std::borrow::Cow::Owned(out)
@@ -314,8 +329,9 @@ pub fn symbol_path_starts_with(symbol: &str, components: &[&str]) -> bool {
 }
 
 /// A transliterated component's text written back: each `_uXXXX_` as the character it stands for.
-/// `None` unless it is exactly what [`transliterated`] writes for a name beyond ASCII (ODR-202's mark
-/// is on no other component).
+/// `None` unless it is exactly what [`transliterated`] writes for a name it changes (ODR-202's mark
+/// is on no other component): a name beyond ASCII, or one with an ASCII `_` reading as an escape,
+/// which it writes `_u005F_` (ODR-213).
 fn untransliterated(text: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -326,7 +342,7 @@ fn untransliterated(text: &str) -> Option<String> {
         let decoded = (digits >= 4 && after[digits..].starts_with('_'))
             .then(|| u32::from_str_radix(&after[..digits], 16).ok().and_then(char::from_u32))
             .flatten()
-            .filter(|c| !c.is_ascii());
+            .filter(|&c| !c.is_ascii() || c == '_');
         match decoded {
             Some(c) => {
                 out.push(c);
@@ -339,7 +355,7 @@ fn untransliterated(text: &str) -> Option<String> {
         }
     }
     out.push_str(rest);
-    (!out.is_ascii() && transliterated(&out) == text).then_some(out)
+    (out != text && transliterated(&out) == text).then_some(out)
 }
 
 /// `[MNG-2]` — the C name of a function whose `@export` symbol is not a C identifier
@@ -527,10 +543,20 @@ mod tests {
     #[test]
     fn a_name_beyond_ascii_is_transliterated_before_its_length() {
         assert_eq!(item_symbol("café"), "em_u10caf_u00E9_");
-        assert_eq!(item_symbol("caf_u00E9_"), "em_10caf_u00E9_");
         assert_eq!(item_symbol("größe.maß.f"), "em_u17gr_u00F6__u00DF_eu9ma_u00DF_1f");
         assert_eq!(demangle("em_u10caf_u00E9_").map(|d| d.path()), Some("café".to_string()));
-        assert_eq!(demangle("em_10caf_u00E9_").map(|d| d.path()), Some("caf_u00E9_".to_string()));
+        // `[MNG-3]` (ODR-213) — an ASCII `_` that would read as an escape is one, `_u005F_`, and the
+        // component is marked: the ASCII name `caf_u00E9_` and `café` are two symbols, and so are
+        // `é_u00E9_` and `éé`; a `_u` that reads as no escape is itself.
+        assert_eq!(item_symbol("caf_u00E9_"), "em_u16caf_u005F_u00E9_");
+        assert_eq!(demangle("em_u16caf_u005F_u00E9_").map(|d| d.path()), Some("caf_u00E9_".to_string()));
+        assert_ne!(item_symbol("é_u00E9_"), item_symbol("éé"));
+        assert_eq!(item_symbol("é_u00E9_"), "em_u20_u00E9__u005F_u00E9_");
+        assert_eq!(demangle(&item_symbol("é_u00E9_")).map(|d| d.path()), Some("é_u00E9_".to_string()));
+        assert_eq!(item_symbol("a_u0041__u0042_"), "em_u27a_u005F_u0041__u005F_u0042_");
+        assert_eq!(item_symbol("my_url_x_u12_"), "em_13my_url_x_u12_");
+        assert_ne!(c_identifier("caf_u00E9_"), c_identifier("café"));
+        assert_eq!(c_identifier("caf_u00E9_"), "caf_u005F_u00E9_");
         // A mark on what the compiler never marks is no item's: an ASCII text, a lower-case code
         // point, an escape of an ASCII character.
         for near in ["em_u3abc", "em_u10caf_u00e9_", "em_u10caf_u0041_"] {

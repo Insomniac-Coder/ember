@@ -7093,7 +7093,7 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
     let (chars, next) = (ember_branding::item_symbol("std.string.Chars"), ember_branding::item_symbol("std.string.Chars.next"));
     let option_char = ember_branding::instance_symbol("std.core.Option", Some("[char]"));
     assert!(c.stdout.contains(&format!("EMBER_INLINED EMBER_MAYBE_UNUSED {option_char} {next}(")), "`Chars.next` is not forced inline:\n{}", c.stdout);
-    assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {chars} {}(", ember_branding::item_symbol("str.chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
+    assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {chars} {}(", ember_branding::item_symbol("std.core.str.chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
     let attributes = format!("tests/conformance/CG-C-3a/accept_inline_noinline_cold_and_hot.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
         let c = ember(&["build", &attributes, "--emit", "c", "--profile", "development", "--cc", cc], &root);

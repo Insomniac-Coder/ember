@@ -133,3 +133,24 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   under development and release too, and with the C gate under cl and clang-cl),
   `TYP-22/reject_eq_where_an_interface_or_a_box_payload_is_not_eq.em`,
   `TYP-22/reject_noalloc_compares_dyn_boxes_through_their_table.em` (`E4001`).
+
+* **ODR-215, ODR-213 `[MNG-1]`, `[MNG-3]`, `[MNG-6]`.** A built-in type's path is under `std.core`
+  (`TypeTable::type_path`: a scalar, `str`, `cstr`, `void`, `Never`), so `str.chars` is
+  `em_3std4core3str5chars` and `i64.of` `em_3std4core3i642of`; a scalar's spelling as a generic
+  argument stays its keyword (`[MNG-6]`). The root module's own `int`, `float` or `str`, which the
+  checker keys `root.<name>` (D-860), has the name as its path (`item_path`), the root package
+  having no component of its own (`em_3str13is_alphabetic`; it was `em_4root3str…`). `[MNG-3]`:
+  `transliterated` writes an ASCII `_` that begins what would read as an escape (`_u`, four or
+  more hex digits, `_`) as `_u005F_`, a component it changes is marked `u`, and C member names and
+  locals (`c_identifier`) are spelled the same: `caf_u00E9_` is `em_u16caf_u005F_u00E9_` and the C
+  member `caf_u005F_u00E9_`; `demangle` reads it back. Every existing program's names: only those
+  holding a built-in type's methods or an escape-looking ASCII name change; the whole conformance
+  tree passes before and after (behaviour unchanged).
+  Tests: `MNG-1/accept_a_programs_own_str_and_the_built_in_one_are_two_symbols.em`,
+  `MNG-3/accept_a_field_beyond_ascii_and_its_ascii_spelling_are_two_c_members.em` (one struct
+  holding `café` and `caf_u00E9_`, a C member declared twice before), the existing
+  `MNG-3/accept_a_transliterated_name_and_its_ascii_spelling_are_two_symbols.em` re-recorded to
+  the rule, `ember_branding` `a_name_beyond_ascii_is_transliterated_before_its_length`,
+  `ember_types` `the_canonical_spelling_of_instance_arguments` (names `[MNG-6]`, and the
+  built-in paths); `milestones.rs` `inline_header_functions_and_inline_attributes_reach_the_c`
+  names `std.core.str.chars`. `phase-status.json`: `MNG-1`, `MNG-3` removed.
