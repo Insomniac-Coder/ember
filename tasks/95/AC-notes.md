@@ -86,3 +86,15 @@ internal error or panic fails the case):
   accept the first and reject the second at that line (`E3020`–`E3022`, or `E3040` for a move).
 Ran with 10x the cases on five seeds: the compiler agreed with both oracles everywhere (one
 generator error fixed on the way: a variable made from a bare literal is a `str`, `[TXT-9]`).
+
+### `[FFI-5a]`'s layout tests with every supported C compiler (done)
+
+`ember_driver/tests/cdylib.rs` `the_layout_assertions_hold_under_every_supported_c_compiler`: a
+header of padded, nested, packed (`#pragma pack`), over-aligned (`_Alignas`), enum-, `long`-,
+pointer- and bit-field-holding structs, imported, built and run under each supported compiler of
+the host (Windows: MSVC, clang-cl, and Clang where installed; Linux: GCC and Clang; macOS: Clang;
+a missing required one fails the test): the shim asserts every struct, its assertions hold, and
+Ember's sizes are what that compiler's C reports; and the non-Clang-layout probe stops the build
+at its assertion under MSVC and GCC and builds under clang-cl and Clang. Passed here with MSVC,
+clang-cl and Clang, and in WSL (a Linux build of this tree) with GCC and Clang. CI runs it on both
+systems.

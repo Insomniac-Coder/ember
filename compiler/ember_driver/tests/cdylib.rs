@@ -779,6 +779,121 @@ fn import_c_shims_reverify_each_layout_with_the_projects_compiler() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[IMP-11]`, `[FFI-5a]` — the layout tests compiled with every supported C compiler of this
+/// host (Windows: MSVC and clang-cl, and Clang where it is installed; Linux: GCC and Clang;
+/// macOS: Clang). A header of padded, nested, packed, over-aligned, enum-, pointer- and
+/// bit-field-holding structs is imported, built and run with each compiler: its shim's
+/// assertions hold, and Ember's sizes are the ones that compiler's C reports. And the probe of
+/// `import_c_shims_reverify_each_layout_with_the_projects_compiler`, a field only a compiler
+/// other than Clang sees, stops the build at its assertion under each such compiler.
+#[test]
+fn the_layout_assertions_hold_under_every_supported_c_compiler() {
+    quiet_errors();
+    let compilers: &[(&str, bool)] = if cfg!(windows) {
+        &[("msvc", true), ("clang-cl", true), ("clang", false)]
+    } else if cfg!(target_os = "macos") {
+        &[("clang", true)]
+    } else {
+        &[("gcc", true), ("clang", true)]
+    };
+    let dir = scratch();
+    std::fs::write(dir.join("layouts.h"), LAYOUTS_HEADER).unwrap();
+    std::fs::write(dir.join(ember_branding::source_file("main")), LAYOUTS_PROGRAM).unwrap();
+    std::fs::write(dir.join("probe.h"), "typedef struct Probe {\n    int first;\n#ifndef __clang__\n    int second;\n#endif\n} Probe;\n").unwrap();
+    std::fs::write(dir.join(ember_branding::source_file("probe")), "import c \"probe.h\"\n\nfn main():\n    p = c.Probe(first=1)\n    println(p.first)\n").unwrap();
+    let mut tested = Vec::new();
+    for &(cc, required) in compilers {
+        let Ok(toolchain) = Toolchain::detect(Some(cc)) else {
+            assert!(!required, "[IMP-11] `{cc}`, a supported C compiler of this host, is not installed");
+            continue;
+        };
+        let out = format!("out-{cc}");
+        let built = Command::new(EMBER).args(["build", &ember_branding::source_file("main"), "--out-dir", &out])
+            .env(ember_branding::cc_var(), cc).current_dir(&dir).output().expect("ember starts");
+        assert_success(&built, &format!("the layout program with {cc}"));
+        let shim = std::fs::read_to_string(dir.join(&out).join("debug/c/c_h_layouts.shim.c")).expect("the shim is written");
+        for name in ["Small", "Padded", "Nested", "Wire", "Lane", "Mixed", "Tagged", "Pointers", "Flags"] {
+            assert!(shim.contains(&format!("_Static_assert(sizeof(struct {name}) == ")), "{cc}: no size assertion for {name}:\n{shim}");
+        }
+        let exe = dir.join(&out).join("debug/bin").join(format!("main{}", std::env::consts::EXE_SUFFIX));
+        let ran = Command::new(&exe).output().expect("the layout program runs");
+        assert_eq!(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"), "4 2 7 3 4 5 9 1 0 2\ntrue\n",
+            "{cc}: Ember's layout is not the C compiler's");
+        // The probe: Clang's layout, which the shim asserts, against this compiler's own.
+        let probe = Command::new(EMBER).args(["build", &ember_branding::source_file("probe"), "--out-dir", &out])
+            .env(ember_branding::cc_var(), cc).current_dir(&dir).output().expect("ember starts");
+        let clang = match &toolchain {
+            Toolchain::Clang(_) => true,
+            Toolchain::Msvc { cl, .. } => cl.file_stem().is_some_and(|stem| stem.to_string_lossy().eq_ignore_ascii_case("clang-cl")),
+            Toolchain::Gcc(_) => false,
+        };
+        let stderr = String::from_utf8_lossy(&probe.stderr);
+        if clang {
+            assert_success(&probe, &format!("the probe with {cc}, which agrees with Clang"));
+        } else {
+            assert!(!probe.status.success() && stderr.contains("Probe: size"), "{cc}: the shim did not stop the build:\n{stderr}");
+        }
+        tested.push(cc);
+    }
+    assert!(!tested.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const LAYOUTS_HEADER: &str = r#"#ifndef LAYOUTS_H
+#define LAYOUTS_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct Small { char c; } Small;
+typedef struct Padded { uint8_t a; uint64_t b; uint8_t c; } Padded;
+typedef struct Nested { Padded inner; uint16_t tail[3]; Small s; } Nested;
+#pragma pack(push, 1)
+typedef struct Wire { uint8_t kind; uint32_t length; uint16_t port; } Wire;
+#pragma pack(pop)
+typedef struct Lane { _Alignas(16) float values[4]; } Lane;
+typedef struct Mixed { bool on; double d; int32_t i; int64_t big; float f; short s; } Mixed;
+typedef enum Color { RED, GREEN = 5, BLUE } Color;
+typedef struct Tagged { Color color; uint8_t x; long l; unsigned long ul; } Tagged;
+typedef struct Pointers { const char *name; struct Padded *next; int (*callback)(int); } Pointers;
+struct Flags {
+    unsigned char tag;
+    unsigned int ready : 1;
+    unsigned int level : 4;
+    int delta : 5;
+    bool on : 1;
+    unsigned short count;
+    unsigned int : 0;
+    unsigned long long wide : 40;
+};
+
+static inline int layout_agrees(size_t small, size_t padded, size_t nested, size_t wire, size_t lane_align,
+                                size_t mixed, size_t tagged, size_t pointers, size_t flags) {
+    return small == sizeof(Small) && padded == sizeof(Padded) && nested == sizeof(Nested) && wire == sizeof(Wire)
+        && lane_align == _Alignof(Lane) && mixed == sizeof(Mixed) && tagged == sizeof(Tagged)
+        && pointers == sizeof(Pointers) && flags == sizeof(struct Flags);
+}
+#endif
+"#;
+
+const LAYOUTS_PROGRAM: &str = r#"import c "layouts.h"
+from std.mem import size_of, align_of
+
+fn main():
+    p = c.Padded(a=1, b=2, c=3)
+    n = c.Nested(inner=p, tail=[4, 5, 6], s=c.Small(c=7))
+    w = c.Wire(kind=1, length=2, port=3)
+    m = c.Mixed(on=true, d=1.5, i=4, big=5, f=2.5, s=6)
+    t = c.Tagged(color=c.Color.GREEN, x=9, l=10, ul=11)
+    f = c.Flags(tag=1, count=2)
+    println(p.a + p.c, n.inner.b, n.s.c, w.port, m.i, m.big, t.x, f.tag, f.get_level(), f.count)
+    agrees = false
+    unsafe:  # SAFETY(ffi): the function compares sizes
+        agrees = c.layout_agrees(size_of[c.Small](), size_of[c.Padded](), size_of[c.Nested](), size_of[c.Wire](),
+            align_of[c.Lane](), size_of[c.Mixed](), size_of[c.Tagged](), size_of[c.Pointers](), size_of[c.Flags]()) != 0
+    println(agrees)
+"#;
+
 /// `[ABI-4]` — a release notes every protocol whose version changed, and why: each version of the
 /// runtime ABI, the module protocol and the hot-reload protocol, up to the number the runtime's
 /// header carries, has its row in `docs/RELEASE-NOTES.md` with a reason, and no row names a version
