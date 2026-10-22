@@ -279,3 +279,67 @@ now a union with bit-fields and a function with no prototype (its tests are upda
   ignores it. A skip reason's code tag now leads the "parameter `p`:"/"its result:"/"field `f`:"
   context (`tagged`), and the W5002 text drops it. Tests: `FFI-8/accept_atomic_is_std_sync_atomic.em`
   (`atomics.h`), `reject_an_atomic_ember_cannot_hold.em` (`atomic_levels.h`).
+
+## AB7. `[FFI-8]` — `va_list` and variadic calls; `@ffi(newtype)` left as a question
+
+**Built.**
+
+- *`VaList`* (`std.ffi.VaList`, a compiler type `TyKind::VaList` like `c_longdouble`): C's
+  `va_list` as a parameter holds it, emitted as the runtime header's `ember_va_list` — `va_list`
+  itself, except where `va_list` is an array (x86-64 System V), where it is what a parameter of it
+  decays to (`__typeof__(&(*(va_list*)0)[0])`), so a `VaList` is moved and passed as C passes the
+  parameter. It is a view (alive for the call that passed it), not `Copy` and not `Send`/`Sync`;
+  never constructed: `VaList(…)`, `ffi.VaList(…)` are `E5018`. The importer maps `va_list` (by its
+  written name: on Windows it is a `char*`; a function pointer's parameters are read through their
+  written names too) to `owned VaList` — whoever is passed a `va_list` reads it, so it is passed on
+  once (`E3040` on a second use). A callback receiving one declares `owned arguments: VaList`.
+- *Variadic C functions* are imported with `@ffi(variadic)` (a hand declaration writes the same):
+  the prototype ends `...`, a call is `unsafe` (`E5002`, its own message; never a `safe fn`), the
+  declared parameters are checked as any call's, and each further argument must have the type the
+  program gives it and that C passes unchanged — a C `int` or wider integer up to 64 bits, `f64`,
+  `c_longdouble`, a raw pointer, `cstr`, an `extern fn`; an unsuffixed literal, `bool`, the
+  integers narrower than `int` and `f32` (which C's default argument promotions change) are
+  `E5015` with the cast to write. The function is never a value (`E5015`). A contract that keeps
+  what C is passed (`cstr`, `ref T`, `Option[…]`) types the declared parameters (an overlay entry
+  does so for an imported one, which stays `unsafe`); one that needs a wrapper (a count, `out`, a
+  status, a callback) is `E0104`, as a wrapper cannot pass `...` on. A variadic `static inline`
+  function (or a C++ header's inline `extern "C"` one) is still skipped (`[FFI-29c]`), as is C23's
+  `f(...)` and a variadic C++ function; `FFI-20a`'s header and `docs/errors/W5002.md` now show the
+  `static inline` case. `.embind` version 14.
+- Tests: `FFI-8/accept_variadic_calls_and_va_list.em` (`variadic.c`/`.h`, `overlays/variadic.em`:
+  further arguments, `snprintf`/`vsnprintf` by other names, a logger handing its sink a `va_list`
+  the sink passes on), `reject_variadic_calls_are_unsafe_and_typed.em`,
+  `reject_a_va_list_is_never_constructed.em`, `reject_a_va_list_is_passed_on_once.em`. The C of the
+  accept test compiles with gcc 15 in WSL; the FFI-8, FFI-20a, FFI-21 and FFI-39 directories pass in
+  WSL through the harness with the compiler built there (Linux libclang 21, System V's array
+  `va_list`). Two importer fixes that run found: a `va_list` parameter is read by its written name
+  before an array parameter decays (`parameter_type`), and a callback parameter's function type is
+  read through its typedefs rather than canonically, which had imported Clang's builtin
+  `__va_list_tag` as a struct whose layout checks the shim could not compile.
+
+**Error pages** for the codes this work emits: `E5016`, `E5017`, `E5018`, `E5040`, `E5041`
+(`tools/error_pages.py` passes).
+
+**`@ffi(newtype)` — spec question (not built).** `[FFI-8]`'s row says a `typedef` is "a type alias,
+or a new type with `@ffi(newtype)`", and nothing says what the new type is. Options: (1) a one-field
+`@layout(c) @derive(Copy) struct T: pub value: U` — simple, but Win64 passes a one-`double` struct in
+an integer register and a `double` in `xmm0`, so a foreign call would need the field passed, not the
+struct; (2) a nominal type the compiler gives the typedef's representation (as `[RNG-1]`'s range
+types are nominal over theirs), made by `T(x)` and read by `x.value`, emitted as the C type itself:
+no ABI question. Recommendation: (2). Where the entry goes is not in question: an overlay's
+`@ffi(newtype) type fd_t`.
+
+**ODR-221 completed across modules.** The importer now follows a class's base through every module
+of the program (`header_base`): a class of the module, an item imported from another module
+(`from m import Base`, `*`), a module's class (`m.Base`), a type alias of one, and a module's
+re-export of the header (`m.stages.Stage`, `[FFI-30b]`). With that, an override is never left out of
+its trampoline, so `E5056` no longer arises: its emission is removed, its page says it is retired by
+ODR-221 (the spec's code table and the `[FFI-39]` row "overriding a virtual not named in
+`virtuals=[…]`" need the lead's cut); a base the importer still could not follow would be `E0900`
+(no such form is known). Test: `FFI-39/accept_a_class_derives_through_another_module.em`
+(`support/stage_kinds.em`).
+
+**Defect found (not fixed):** two modules that each `import cpp` one header (`import cpp
+"../stages.hpp"` in one, `import cpp "stages.hpp"` in another) both write the module `cpp.h_stages`,
+and every member of its classes is then `E1030` ("already has a method named `tick`"); main's
+compiler does the same. `[FFI-30]` makes them one entity. The re-export form above avoids it.

@@ -3758,7 +3758,7 @@ fn load_package_modules(
             .map(|module| {
                 let file = map.file(module.module.span.file).path.clone();
                 let dir = file.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
-                cimport::program_module(&module.module, &dir)
+                cimport::program_module(&module.module, &dir, &module.path)
             })
             .collect();
         for (module_at, import_at, package) in std::mem::take(&mut deferred) {

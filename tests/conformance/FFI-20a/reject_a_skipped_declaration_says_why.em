@@ -12,6 +12,6 @@ import c "unrepresentable.h"
 
 fn main():
     unsafe:  # SAFETY(ffi): never compiled
-        c.unrepresentable_log(c"%d")  #$ error[E1010]: `unrepresentable_log` was not imported from `unrepresentable.h`: variadic
+        c.unrepresentable_log(c"%d")  #$ error[E1010]: `unrepresentable_log` was not imported from `unrepresentable.h`: a variadic `static inline` function
         x = c.unrepresentable_legacy  #$ error[E1010]: `unrepresentable_legacy` was not imported from `unrepresentable.h`: declared without a prototype
         y = c.unrepresentable_hidden  #$ error[E1010]: `unrepresentable_hidden` was not imported from `unrepresentable.h`: a global with internal linkage

@@ -93,12 +93,22 @@ pub fn trampoline_decls(overlays: &str) -> Vec<TrampolineDecl> {
 }
 
 /// `[FFI-39]` (ODR-221) — a module of the program, as the importer reads it for the classes that
-/// derive from an imported C++ class: its folder, each `import c`/`import cpp` it writes (the
-/// header as written, and the name it binds), and its classes.
+/// derive from an imported C++ class: its folder and path, each `import cpp` it writes (the header
+/// as written, and the name it binds), the names its other imports bind, its type aliases and its
+/// classes.
 #[derive(Clone, Debug, Default)]
 pub struct ProgramModule {
     pub dir: PathBuf,
+    pub path: Vec<String>,
     pub foreign: Vec<(String, String)>,
+    /// `import a.b [as x]`: the name bound (`x`, or `b`) and the module's path.
+    pub modules: Vec<(String, Vec<String>)>,
+    /// `from a.b import X [as Y]`: the name bound, the module's path and the item; and each
+    /// `from a.b import *`'s module path.
+    pub items: Vec<(String, Vec<String>, String)>,
+    pub globs: Vec<Vec<String>>,
+    /// `type X = …` with no generic parameter: the name and the type as written.
+    pub aliases: Vec<(String, Vec<String>)>,
     pub classes: Vec<ProgramClass>,
 }
 
@@ -114,14 +124,39 @@ pub struct ProgramClass {
 
 /// `[FFI-39]` (ODR-221) — the program's modules, read for `load`: what each imports, and the
 /// classes it declares.
-pub fn program_module(module: &ast::Module, dir: &Path) -> ProgramModule {
-    let foreign = module
-        .imports
-        .iter()
-        .filter_map(|import| match &import.kind {
+pub fn program_module(module: &ast::Module, dir: &Path, path: &[String]) -> ProgramModule {
+    let names = |path: &[ast::Ident]| path.iter().map(|segment| segment.name.to_string()).collect::<Vec<_>>();
+    let mut found = ProgramModule { dir: dir.to_path_buf(), path: path.to_vec(), ..ProgramModule::default() };
+    for import in &module.imports {
+        match &import.kind {
             ast::ImportKind::Foreign { language: ast::ForeignLanguage::Cpp, header, alias, .. } => {
-                Some((header.clone(), alias.map_or_else(|| "cpp".to_string(), |alias| alias.name.to_string())))
+                found.foreign.push((header.clone(), alias.map_or_else(|| "cpp".to_string(), |alias| alias.name.to_string())));
             }
+            ast::ImportKind::Foreign { .. } => {}
+            ast::ImportKind::Module { path, alias } => {
+                let bound = alias.map(|alias| alias.name.to_string()).or_else(|| path.last().map(|last| last.name.to_string()));
+                found.modules.extend(bound.map(|bound| (bound, names(path))));
+            }
+            ast::ImportKind::Items { path, items, glob } => {
+                if *glob {
+                    found.globs.push(names(path));
+                }
+                for item in items {
+                    let bound = item.alias.unwrap_or(item.name).name.to_string();
+                    found.items.push((bound, names(path), item.name.name.to_string()));
+                }
+            }
+        }
+    }
+    let written = |ty: &ast::TypeExpr| match &ty.kind {
+        ast::TypeKind::Path { segments, .. } => segments.iter().map(|segment| segment.name.to_string()).collect(),
+        _ => Vec::new(),
+    };
+    found.aliases = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::TypeAlias(alias) if alias.generics.is_empty() => alias.value.as_ref().map(|value| (alias.name.name.to_string(), written(value))),
             _ => None,
         })
         .collect();
@@ -130,10 +165,7 @@ pub fn program_module(module: &ast::Module, dir: &Path) -> ProgramModule {
         .iter()
         .filter_map(|item| match &item.kind {
             ast::ItemKind::Class(decl) => {
-                let base = match decl.base.as_ref().map(|base| &base.kind) {
-                    Some(ast::TypeKind::Path { segments, .. }) => segments.iter().map(|segment| segment.name.to_string()).collect(),
-                    _ => Vec::new(),
-                };
+                let base = decl.base.as_ref().map(&written).unwrap_or_default();
                 let overrides = decl
                     .members
                     .iter()
@@ -147,38 +179,85 @@ pub fn program_module(module: &ast::Module, dir: &Path) -> ProgramModule {
             _ => None,
         })
         .collect();
-    ProgramModule { dir: dir.to_path_buf(), foreign, classes }
+    found.classes = classes;
+    found
+}
+
+/// `[FFI-39]` (ODR-221) — the C++ class of a header (bound in a module by one of `bindings(m)`) a
+/// class of the program derives from: directly (`class Mine(cpp.Layer)`) or through other classes
+/// of the program, each named as its module names it (its own class, an item it imports, a module's
+/// item, or a type alias of one).
+fn header_base(program: &[ProgramModule], bindings: &dyn Fn(usize) -> Vec<String>, module: usize, written: &[String]) -> Option<String> {
+    let (mut module, mut written) = (module, written.to_vec());
+    let module_at = |path: &[String]| program.iter().position(|candidate| candidate.path == path);
+    // Each step names a class of the program, an alias or a header's class; a chain longer than
+    // every class and alias of the program is a cycle.
+    let limit = program.iter().map(|module| module.classes.len() + module.aliases.len()).sum::<usize>() + 1;
+    // A name the header's module is bound to here: an import of it, an item imported from a module
+    // that re-exports it (`pub import cpp "…" as x`).
+    let is_header = |module: usize, bound: &str| {
+        bindings(module).iter().any(|binding| binding == bound)
+            || program[module].items.iter().any(|(written, path, item)| written == bound && module_at(path).is_some_and(|other| bindings(other).contains(item)))
+    };
+    for _ in 0..limit {
+        let here = &program[module];
+        let (owner, name) = match written.as_slice() {
+            [first, .., last] if is_header(module, first) => return Some(last.clone()),
+            // `m.x.Layer`: a module's re-export of the header.
+            [first, second, .., last]
+                if here.modules.iter().find(|(bound, _)| bound == first).and_then(|(_, path)| module_at(path)).is_some_and(|other| is_header(other, second)) =>
+            {
+                return Some(last.clone());
+            }
+            [name] => {
+                if here.classes.iter().any(|class| class.name == *name) || here.aliases.iter().any(|(alias, _)| alias == name) {
+                    (module, name.clone())
+                } else if let Some((_, path, item)) = here.items.iter().find(|(bound, ..)| bound == name) {
+                    (module_at(path)?, item.clone())
+                } else {
+                    let glob = here.globs.iter().filter_map(|path| module_at(path)).find(|&other| {
+                        program[other].classes.iter().any(|class| class.name == *name) || program[other].aliases.iter().any(|(alias, _)| alias == name)
+                    })?;
+                    (glob, name.clone())
+                }
+            }
+            [prefix @ .., name] => {
+                let path = match prefix {
+                    [bound] => here.modules.iter().find(|(written, _)| written == bound).map(|(_, path)| path.clone()).unwrap_or_else(|| prefix.to_vec()),
+                    _ => prefix.to_vec(),
+                };
+                (module_at(&path)?, name.clone())
+            }
+            [] => return None,
+        };
+        let there = &program[owner];
+        written = match there.classes.iter().find(|class| class.name == name) {
+            Some(class) => class.base.clone(),
+            None => there.aliases.iter().find(|(alias, _)| *alias == name)?.1.clone(),
+        };
+        module = owner;
+    }
+    None
 }
 
 /// `[FFI-39]` (ODR-221) — the trampolines the program asks of the C++ header at `header` (as
 /// `from_dir` and the written name find it): for each class of the header an Ember class derives
-/// from, directly (`class Mine(cpp.Layer)`) or through another class of its module, the virtuals
-/// those classes override, which the trampoline passes on. No overlay entry is needed.
+/// from, directly (`class Mine(cpp.Layer)`) or through other classes of the program, in any of its
+/// modules, the virtuals those classes override, which the trampoline passes on. No overlay entry
+/// is needed.
 fn program_trampolines(program: &[ProgramModule], from_dir: &Path, header: &str) -> Vec<TrampolineDecl> {
     let same = |dir: &Path, written: &str| {
         written == header && dir == from_dir
             || std::fs::canonicalize(dir.join(written)).ok().is_some_and(|found| std::fs::canonicalize(from_dir.join(header)).ok() == Some(found))
     };
+    let bindings = |module: usize| -> Vec<String> {
+        let module = &program[module];
+        module.foreign.iter().filter(|(written, _)| same(&module.dir, written)).map(|(_, bound)| bound.clone()).collect()
+    };
     let mut found: Vec<TrampolineDecl> = Vec::new();
-    for module in program {
-        let bindings: Vec<&str> = module.foreign.iter().filter(|(written, _)| same(&module.dir, written)).map(|(_, bound)| bound.as_str()).collect();
-        if bindings.is_empty() {
-            continue;
-        }
-        // Each class's C++ base, through the module's own classes.
-        let base_of = |class: &ProgramClass| -> Option<String> {
-            let mut current = class;
-            for _ in 0..module.classes.len() + 1 {
-                match current.base.as_slice() {
-                    [first, .., last] if bindings.contains(&first.as_str()) => return Some(last.clone()),
-                    [local] => current = module.classes.iter().find(|other| other.name == *local)?,
-                    _ => return None,
-                }
-            }
-            None
-        };
+    for (at_module, module) in program.iter().enumerate() {
         for class in &module.classes {
-            let Some(base) = base_of(class) else { continue };
+            let Some(base) = header_base(program, &bindings, at_module, &class.base) else { continue };
             let at = match found.iter().position(|decl| decl.class == base) {
                 Some(at) => at,
                 None => {
@@ -258,6 +337,8 @@ pub struct Function {
     /// `[FFI-1]` — the effects its declaration gives it: `__attribute__((const))` none, and the
     /// same result for the same arguments; `__attribute__((pure))` none (it only reads memory).
     pub derived: Derived,
+    /// `[FFI-8]` — its parameters end `...`: `@ffi(variadic)`, called only in `unsafe`.
+    pub variadic: bool,
 }
 
 /// `[FFI-1]` — what a C declaration says of a function's effects.
@@ -435,7 +516,7 @@ pub struct Imported {
 /// `[FFI-39]` — a C++ class an Ember class may derive from: its Ember class, the opaque type of
 /// the C++ object it owns, whether the C++ class has a default constructor (`E5058` for a
 /// subclass that declares no `init` otherwise), and the virtuals the trampoline does not override
-/// (`E5056` for a subclass that does).
+/// (none a class of the program overrides, ODR-221).
 #[derive(Clone, Debug, Default)]
 pub struct Trampoline {
     pub class: String,
@@ -900,10 +981,28 @@ fn ident(name: &str) -> String {
 }
 
 /// `[FFI-8]` — the C names whose Ember type is fixed whatever they are defined as.
+/// `[FFI-8]` — whether a type is written `va_list` (through its typedefs): on Windows it is a
+/// `char*`, which only the name tells apart.
+fn written_va_list(mut ty: CXType) -> bool {
+    // SAFETY(ffi): types of a live translation unit.
+    unsafe {
+        loop {
+            match ty.kind {
+                CXType_Typedef if standard_typedef(&text(clang_getTypedefName(ty))) == Some("VaList") => return true,
+                CXType_Typedef => ty = clang_getTypedefDeclUnderlyingType(clang_getTypeDeclaration(ty)),
+                CXType_Elaborated => ty = clang_Type_getNamedType(ty),
+                _ => return false,
+            }
+        }
+    }
+}
+
 fn standard_typedef(name: &str) -> Option<&'static str> {
     Some(match name {
         "size_t" | "__size_t" | "uintptr_t" => "usize",
         "ptrdiff_t" | "__ptrdiff_t" | "intptr_t" | "ssize_t" => "isize",
+        // `[FFI-8]` — `<stdarg.h>`'s, however the target spells it.
+        "va_list" | "__builtin_va_list" | "__gnuc_va_list" | "__va_list" => "VaList",
         _ => return None,
     })
 }
@@ -1781,6 +1880,11 @@ impl Writer {
             // The written type keeps its typedef names; a parameter's own is its canonical one.
             let mut params = Vec::new();
             for index in 0..clang_getNumArgTypes(canonical).max(0) as u32 {
+                // `[FFI-8]` — a `va_list`, which only its written name tells from what it is.
+                if written_va_list(clang_getArgType(ty, index)) {
+                    params.push("owned VaList".to_string());
+                    continue;
+                }
                 params.push(self.parameter_type(clang_getArgType(canonical, index))?);
             }
             let result = clang_getResultType(canonical);
@@ -1791,6 +1895,10 @@ impl Writer {
 
     /// A parameter's type: an array decays to a pointer to its element, as in C.
     fn parameter_type(&mut self, ty: CXType) -> Result<String, String> {
+        // `[FFI-8]` — a `va_list`, which is an array where System V's x86-64 makes it one.
+        if written_va_list(ty) {
+            return Ok("VaList".to_string());
+        }
         // SAFETY(ffi): types of a live translation unit.
         unsafe {
             let canonical = clang_getCanonicalType(ty);
@@ -1830,11 +1938,25 @@ impl Writer {
         let c = type_spelling(ty);
         // `[FFI-21]` — a function pointer's function, for a callback's contract.
         // SAFETY(ffi): types of a live translation unit.
+        // Through typedefs to the pointer, so the function's parameters keep their written names
+        // (`va_list`, `[FFI-8]`).
         let function = unsafe {
-            let canonical = clang_getCanonicalType(ty);
-            if canonical.kind == CXType_Pointer { self.function_type(clang_getPointeeType(canonical)).ok().flatten() } else { None }
+            let mut written = ty;
+            while matches!(written.kind, CXType_Typedef | CXType_Elaborated) {
+                written = if written.kind == CXType_Typedef {
+                    clang_getTypedefDeclUnderlyingType(clang_getTypeDeclaration(written))
+                } else {
+                    clang_Type_getNamedType(written)
+                };
+            }
+            let pointer = if written.kind == CXType_Pointer { written } else { clang_getCanonicalType(ty) };
+            if pointer.kind == CXType_Pointer { self.function_type(clang_getPointeeType(pointer)).ok().flatten() } else { None }
         };
-        let Some(pointee) = pointee else { return Ok(CType { ember, pointee: None, char_pointer: false, c, mode: String::new(), opaque: false, function }) };
+        // `[FFI-8]` — whoever is passed a `va_list` reads it: it is passed on once, moved. (On
+        // Windows it is a `char*`, which no contract word reads through.)
+        let va_list = ember == "VaList";
+        let mode = if va_list { "owned ".to_string() } else { String::new() };
+        let Some(pointee) = pointee.filter(|_| !va_list) else { return Ok(CType { ember, pointee: None, char_pointer: false, c, mode, opaque: false, function }) };
         // SAFETY(ffi): as above.
         let (constant, character) = unsafe {
             let kind = clang_getCanonicalType(pointee).kind;
@@ -2442,8 +2564,10 @@ impl Writer {
             if ty.kind == CXType_FunctionNoProto {
                 return Err("declared without a prototype (`f()` in C before C23 takes any arguments)".to_string());
             }
-            if clang_isFunctionTypeVariadic(ty) != 0 {
-                return Err("variadic (`...`): Ember's variadic foreign calls are not built yet".to_string());
+            // `[FFI-8]` — `...`: called in `unsafe`, each further argument as the program types it.
+            let variadic = clang_isFunctionTypeVariadic(ty) != 0;
+            if variadic && clang_Cursor_getNumArguments(cursor) < 1 {
+                return Err("variadic with no declared parameter (C23's `f(...)`): C has no portable call of it".to_string());
             }
             let abi = convention(clang_getFunctionTypeCallingConv(ty))
                 .ok_or("its calling convention is not one Ember has (`[FFI-9]`)")?;
@@ -2460,6 +2584,9 @@ impl Writer {
             // `[FFI-29a]` — a function with internal linkage is reached through the shim's wrapper, as
             // is a C++ header's `extern "C"` inline one, whose symbol only a C++ file that uses it has.
             let inline_cpp = self.cpp && clang_Cursor_isFunctionInlined(cursor) != 0;
+            if variadic && (clang_getCursorLinkage(cursor) == CXLinkage_Internal || inline_cpp) {
+                return Err("a variadic `static inline` function: a wrapper cannot pass `...` on ([FFI-29c])".to_string());
+            }
             let link_name = (clang_getCursorLinkage(cursor) == CXLinkage_Internal || inline_cpp).then(|| {
                 let wrapper = format!("{}_cshim_{}_{name}", ember_branding::SYMBOL_PREFIX, self.stem);
                 self.wrapper(cursor, &wrapper, name);
@@ -2474,7 +2601,7 @@ impl Writer {
             } else {
                 Derived::Nothing
             };
-            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct, owner: None, out: false, namespace: Vec::new(), derived })
+            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct, owner: None, out: false, namespace: Vec::new(), derived, variadic })
         }
     }
 
@@ -2588,7 +2715,7 @@ impl Writer {
                     item.text = format!("@ffi(destroys({destroys}))\n{}", item.text);
                 }
                 let owner = Some((owner.clone(), Member::Destructor));
-                self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone(), derived: Derived::Nothing });
+                self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone(), derived: Derived::Nothing, variadic: false });
             }
             let mut taken: HashSet<String> = HashSet::new();
             let mut friends = Vec::new();
@@ -2804,6 +2931,7 @@ impl Writer {
                 out: false,
                 namespace: self.writing.clone(),
                 derived: Derived::Nothing,
+                variadic: false,
             });
         }
     }
@@ -2974,7 +3102,7 @@ impl Writer {
 
     /// `[FFI-39]`, `[FFI-17d]` — whether a trampoline can be made for a class: it has a virtual
     /// destructor (`E5059`), is not `final`, each virtual `virtuals` names is one virtual method of
-    /// it (`E5057`), every pure virtual it declares is named (`E5056`), and each named one passes
+    /// it (`E5057`), every pure virtual it declares is passed on, and each passed-on one passes
     /// values a trampoline can pass (`E5031`). Its named virtuals, as the trampoline calls them.
     fn trampoline_check(&mut self, definition: CXCursor, decl: &TrampolineDecl) -> Result<Vec<Slot>, (&'static str, String)> {
         // SAFETY(ffi): cursors and types of a live translation unit.
@@ -3251,6 +3379,7 @@ impl Writer {
                         out: false,
                         namespace: self.writing.clone(),
                         derived: Derived::Nothing,
+                        variadic: false,
                     });
                 }
                 let entry_params: String = slot.params.iter().map(|param| format!(", {}: {}", param.local, param.ty.ember)).collect();
@@ -3375,7 +3504,7 @@ impl Writer {
         unsafe {
             let ty = clang_getCursorType(cursor);
             if clang_isFunctionTypeVariadic(ty) != 0 {
-                return Err("variadic (`...`): Ember's variadic foreign calls are not built yet".to_string());
+                return Err("a variadic C++ function: a thunk cannot pass `...` on ([FFI-8])".to_string());
             }
             let mut params = Vec::new();
             let mut declared = Vec::new();
@@ -3573,7 +3702,7 @@ impl Writer {
             let returned = returned.unwrap_or_else(|| "void".to_string());
             let _ = writeln!(self.shim, "extern \"C\" {returned} {thunk}({declared}) noexcept {{ {body} }}");
             let owner = member.map(|(owner, member, _)| (owner.to_string(), member));
-            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result, namespace: Vec::new(), derived: Derived::Nothing })
+            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result, namespace: Vec::new(), derived: Derived::Nothing, variadic: false })
         }
     }
 
@@ -5007,7 +5136,6 @@ pub fn load(
     // `[FFI-39]` — a class an overlay gives a trampoline that cannot have one.
     for skipped in imported.skipped.iter().filter(|skipped| trampolines.iter().any(|decl| decl.class == skipped.name)) {
         let (code, why) = match skipped.reason.split_once("] ") {
-            Some(("[E5056", why)) => (codes::E5056, why),
             Some(("[E5057", why)) => (codes::E5057, why),
             Some(("[E5059", why)) => (codes::E5059, why),
             Some(("[E5034", why)) => (codes::E5034, why),
@@ -5868,6 +5996,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     out: false,
                     namespace: Vec::new(),
                     derived: Derived::Nothing,
+                    variadic: false,
                 };
                 // A raw pointer states nothing a call can rely on: the call stays unsafe (`[FFI-2]`).
                 let raw = params.iter().map(|(_, ty)| ty).chain(result).any(|ty| matches!(ty.kind, ast::TypeKind::Ptr { .. }));
@@ -6099,6 +6228,8 @@ fn safe_result(ty: &CType, words: &[String]) -> String {
     optional(base)
 }
 
+const VARIADIC: &str = "C reads each further argument as the type its format or count names: the caller matches them ([FFI-8])";
+
 const UNCONTRACTED: &str = "the header states no contract: each pointer's ownership, count, nullability and lifetime are the caller's to keep ([FFI-38])";
 
 /// A function of the `unsafe extern` block: as the header declares it, uncontracted (`[FFI-38]`),
@@ -6146,6 +6277,15 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     if let Some(link) = link {
         arguments.push(format!("link_name=\"{link}\""));
     }
+    // `[FFI-8]` — never safe: C reads its further arguments by what its format or count names. Its
+    // entry's contract still types the parameters C is passed unchanged (`cstr`, `ref T`).
+    let safety = if function.variadic {
+        arguments.insert(0, "variadic".to_string());
+        safe = false;
+        VARIADIC
+    } else {
+        UNCONTRACTED
+    };
     let mut text = String::new();
     match function.derived {
         Derived::Const => text.push_str("    # derived: `__attribute__((const))`, so no effects and the same result for the same arguments [FFI-1]
@@ -6158,7 +6298,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
         let _ = writeln!(text, "    @ffi({})", arguments.join(", "));
     }
     if !safe {
-        let _ = writeln!(text, "    @safety(\"{UNCONTRACTED}\")");
+        let _ = writeln!(text, "    @safety(\"{safety}\")");
     }
     let arrow = result.map_or(String::new(), |result| format!(" -> {result}"));
     let public = if hidden { "" } else { "pub " };
@@ -6364,7 +6504,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let mut used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject"]).filter(|name| words.contains(name)).collect();
+    let mut used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject", "VaList"]).filter(|name| words.contains(name)).collect();
     // `[FFI-21]` — a `retained` callback's call returns a `Retained[ForeignCallback]`.
     if body.contains("callback(retained") {
         used.push("ForeignCallback");
@@ -7441,7 +7581,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 12;
+const EMBIND_VERSION: u64 = 14;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -7572,6 +7712,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
                             ("out".to_string(), Value::Uint(u64::from(function.out))),
                             ("namespace".to_string(), Value::Text(function.namespace.join("::"))),
                             ("derived".to_string(), Value::Uint(function.derived as u64)),
+                            ("variadic".to_string(), Value::Uint(u64::from(function.variadic))),
                             ("owner".to_string(), Value::Array(function.owner.iter().map(|(owner, member)| {
                                 Value::Array(vec![Value::Text(owner.clone()), Value::Uint(MEMBERS.iter().position(|known| known == member).unwrap_or(0) as u64)])
                             }).collect())),
@@ -7684,6 +7825,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
                 out: uint_of(field(entry, "out")?)? == 1,
                 namespace: read_namespace(field(entry, "namespace")?)?,
                 derived: [Derived::Nothing, Derived::Pure, Derived::Const].get(uint_of(field(entry, "derived")?)? as usize).copied()?,
+                variadic: uint_of(field(entry, "variadic")?)? == 1,
                 owner: match array_of(field(entry, "owner")?)? {
                     [] => None,
                     [owner] => Some((text_of(array_of(owner)?.first()?)?, *MEMBERS.get(uint_of(array_of(owner)?.get(1)?)? as usize)?)),

@@ -17,6 +17,15 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>  /* [STD-15]: the generated Array helpers move bytes */
+#include <stdarg.h>
+/* [FFI-8] C's `va_list` as Ember's `VaList` holds it: as a parameter of that type is, so it is
+   passed on as C passes it and moved as a value. Where `va_list` is an array (x86-64 System V) a
+   parameter of it is a pointer to its element. */
+#if defined(__x86_64__) && !defined(_WIN32) && !defined(__CYGWIN__)
+typedef __typeof__(&(*(va_list*)0)[0]) ember_va_list;
+#else
+typedef va_list ember_va_list;
+#endif
 #if defined(__SSE2__) || defined(_M_X64)
 #include <emmintrin.h> /* integer byte reductions; portable scalar fallback below */
 #define EMBER_SSE2_BYTE_SUM 1

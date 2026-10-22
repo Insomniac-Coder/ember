@@ -519,6 +519,9 @@ pub struct Function {
     /// A bodyless declaration in `unsafe extern`: emit a C prototype and
     /// resolve calls against the foreign linker symbol, never a C body.
     pub is_extern_declaration: bool,
+    /// `[FFI-8]` — a variadic C function (`@ffi(variadic)`): its prototype ends `...`, and a call
+    /// passes further arguments after the declared parameters.
+    pub variadic: bool,
     /// ODR-074 and `[FFI-9]`: an Ember wrapper around a differing C signature.
     pub ffi_counted: Option<FfiCounted>,
 }

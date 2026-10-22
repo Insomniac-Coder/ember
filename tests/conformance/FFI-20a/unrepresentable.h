@@ -5,7 +5,7 @@
 union Packed { unsigned low : 4; int whole; };
 static int unrepresentable_hidden = 4;
 
-int unrepresentable_log(const char* format, ...);
+static inline int unrepresentable_log(const char* format, ...) { return format[0]; }
 int unrepresentable_legacy();
 int unrepresentable_number(union Packed n);
 int unrepresentable_packed_low(const union Packed* packed);

@@ -95,7 +95,8 @@ pub struct ForeignImport {
     /// the compiler the project names, if it names one (`[FFI-50]`).
     pub cpp: Option<(String, Option<String>)>,
     /// `[FFI-39]` — each class of the module with a trampoline: whether its C++ class has a default
-    /// constructor (`E5058`), and the virtuals its trampoline does not override (`E5056`).
+    /// constructor (`E5058`), and the virtuals its trampoline does not override (none a class of
+    /// the program overrides, ODR-221).
     pub trampolines: Vec<(String, bool, Vec<String>)>,
     /// `[FFI-41]` (ODR-161) — each foreign static that is a C++ variable, whose symbol is the thunk
     /// giving its address; for a static data member, the class and member that name it (`Grid.made`).
@@ -2371,6 +2372,8 @@ struct Checker<'a> {
     foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
     /// Each foreign function's C symbol (`@ffi(link_name=…)` or its name).
     foreign_symbols: HashMap<DefId, Symbol>,
+    /// `[FFI-8]` — the variadic C functions (`@ffi(variadic)`).
+    foreign_variadic: HashSet<DefId>,
     /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — what an opaque foreign type's declaration says of
     /// its objects, by the type's qualified name.
     foreign_type_contracts: HashMap<Symbol, ForeignTypeContract>,
@@ -3195,6 +3198,7 @@ impl<'a> Checker<'a> {
             foreign_declarations: HashMap::new(),
             foreign_unknown_facts: HashMap::new(),
             foreign_symbols: HashMap::new(),
+            foreign_variadic: HashSet::new(),
             foreign_type_contracts: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
@@ -5200,11 +5204,9 @@ impl<'a> Checker<'a> {
             Some(("[E5061", rest)) => (codes::E5061, rest),
             Some(("[E5055", rest)) => (codes::E5055, rest),
             Some(("[E5034", rest)) => (codes::E5034, rest),
-            Some(("[E5056", rest)) => (codes::E5056, rest),
             Some(("[E5057", rest)) => (codes::E5057, rest),
             Some(("[E5059", rest)) => (codes::E5059, rest),
             Some(("[E5016", rest)) => (codes::E5016, rest),
-            Some(("[E5018", rest)) => (codes::E5018, rest),
             _ => (codes::E1010, why.as_str()),
         };
         let note = if code == codes::E5061 {
@@ -5647,11 +5649,13 @@ impl<'a> Checker<'a> {
                         && !matches!(inherited, Some(ast::Dispatch::Virtual | ast::Dispatch::Override))
                         && let Some(base) = self.cpp_unnamed_virtual(id, method.name.name)
                     {
+                        // ODR-221 — the importer reads every class of the program for the virtuals it
+                        // overrides; one whose base it could not follow is a form not built.
                         let name = method.name.name;
                         self.sink.emit(
-                            Diagnostic::error(codes::E5056, method.name.span, format!("`{name}` overrides a C++ virtual of `{base}` that its trampoline does not override"))
-                                .help(format!("name it in the overlay's entry: `@ffi(trampoline, virtuals=[…, \"{name}\"]) type {base}`"))
-                                .note("the trampoline calls Ember only for the virtuals it names [FFI-39]")
+                            Diagnostic::error(codes::E0900, method.name.span, format!("`{name}` overrides a C++ virtual of `{base}` through a base the importer does not follow: not implemented yet"))
+                                .help("name the base as a class of its module (`m.Base`), an item imported from it, or a type alias of one")
+                                .note("the trampoline passes on the virtuals the program's classes override, read from each class and its base as written [FFI-39]")
                                 .notes_from(self.c_base_note(id)),
                         );
                         continue;
@@ -6867,6 +6871,7 @@ impl<'a> Checker<'a> {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
         }
     }
@@ -7676,6 +7681,7 @@ impl<'a> Checker<'a> {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
         });
         self.comptime_requests.push(ComptimeRequest { key, span, symbol, what, block, quiet: self.comptime_quiet });
@@ -9735,6 +9741,9 @@ impl<'a> Checker<'a> {
                         }
                         let qualified = self.qualified(decl.name.name);
                         self.foreign_symbols.insert(def, Symbol::intern(&foreign_function_symbol(&item.attrs, decl, qualified)));
+                        if ffi_variadic(&item.attrs) {
+                            self.foreign_variadic.insert(def);
+                        }
                     }
                     // `[PAR-2b]`, `[CG-C-3]` — kept for the parallel analysis to read through.
                     if !decl.is_foreign_decl
@@ -19528,6 +19537,16 @@ impl<'a> Checker<'a> {
             let overflow = self.signatures[def.0 as usize].overflow;
             let fp = self.signatures[def.0 as usize].fp;
             let ffi_counted = self.foreign_counted_metadata(def, decl, &item.attrs, &signature_params, self.ret_ty);
+            // `[FFI-8]` — a contract C is passed through unchanged (`cstr`, `ref T`, a nullable one)
+            // is kept by the call itself; one that changes what C is passed needs a wrapper, which
+            // cannot pass `...` on.
+            if ffi_counted.is_some() && self.foreign_variadic.contains(&def) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E0104, decl.name.span, "a variadic C function's contract may not change what C is passed")
+                        .help("keep the parameters C is passed unchanged (`cstr`, `ref T`, `Option[…]`); a count, an `out` parameter, a status or a callback needs a wrapper")
+                        .note("a wrapper cannot pass `...` on [FFI-8]"),
+                );
+            }
             // `extern "C" fn` DEFINES a function a host links against, so its
             // symbol is the name as written — `[MNG-1]`'s module-qualified
             // mangling would make it unfindable, which defeats the point.
@@ -19581,6 +19600,7 @@ impl<'a> Checker<'a> {
                 borrows_used_fields: false,
                 is_abstract: false,
                 is_extern_declaration: decl.is_foreign_decl && ffi_counted.is_none(),
+                variadic: self.foreign_variadic.contains(&def),
                 ffi_counted,
             });
             let symbol = functions.last().expect("just pushed").symbol.clone();
@@ -19861,6 +19881,7 @@ impl<'a> Checker<'a> {
                     borrows_used_fields: false,
                     is_abstract: true,
                     is_extern_declaration: false,
+                    variadic: false,
                     ffi_counted: None,
                 });
             }
@@ -21052,7 +21073,7 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Call { callee, .. } => ffi_contract_word(callee),
             _ => ffi_contract_word(expr),
         };
-        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name"];
+        const FORMS: &[&str] = &["param", "result", "effects", "deterministic", "link_name", "variadic"];
         let (top, inner): (Option<Symbol>, Vec<Symbol>) = match arg {
             ast::AttrArg::Named { name, .. } => (Some(name.name), Vec::new()),
             ast::AttrArg::Expr(value) => {
@@ -21591,7 +21612,13 @@ impl<'a> Checker<'a> {
         if !self.signatures[def.0 as usize].is_unsafe || self.unsafe_context() {
             return;
         }
-        if self.foreign_declarations.contains_key(&def) {
+        if self.foreign_variadic.contains(&def) {
+            self.sink.emit(
+                Diagnostic::error(codes::E5002, span, "a call of a variadic C function requires `unsafe`")
+                    .help("wrap the call in `unsafe:`, as its caller's own assertion that each further argument is what the C function reads")
+                    .note("C reads its further arguments by the types its format or count names, which nothing checks [FFI-8]"),
+            );
+        } else if self.foreign_declarations.contains_key(&def) {
             // `[DIA-18]` — each fact the call lacks, and the line that supplies it.
             let mut diagnostic = Diagnostic::error(codes::E5002, span,
                 "a foreign call without a complete safe contract requires `unsafe`");
@@ -21669,6 +21696,7 @@ impl<'a> Checker<'a> {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: Some(ffi_counted),
         })
     }
@@ -21802,6 +21830,7 @@ impl<'a> Checker<'a> {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
         };
         self.end_body_marks(&function.symbol);
@@ -22158,6 +22187,7 @@ impl<'a> Checker<'a> {
                     borrows_used_fields: false,
                     is_abstract: false,
                     is_extern_declaration: false,
+                    variadic: false,
                     ffi_counted: None,
                 })
             })
@@ -22752,6 +22782,7 @@ impl<'a> Checker<'a> {
             borrows_used_fields: self.borrows_used_fields(owner, decl, def),
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
         };
         self.end_body_marks(&function.symbol);
@@ -36105,6 +36136,17 @@ impl<'a> Checker<'a> {
     }
 
     fn synth_call(&mut self, callee: &ast::Expr, args: &[ast::Arg], expected: Option<Ty>, span: Span) -> Expr {
+        // `[FFI-8]` — C makes a `va_list`; Ember only receives one.
+        if matches!(callee.kind, ast::ExprKind::Path { .. } | ast::ExprKind::Field { .. })
+            && self.associated_type_named(callee).is_some_and(|ty| matches!(self.types.kind(ty), TyKind::VaList))
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E5018, span, "a `VaList` is never constructed")
+                    .help("take one as a parameter of a function C calls, and pass it on to a C function that reads it")
+                    .note("a `va_list` is made by the variadic C function whose arguments it reads, and lives for that call [FFI-8]"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         // `[CLI-20]` — 0.9.8's `std.borrow.with_views2..4` (and `_mut`) were removed in 0.9.9: a
         // callable type gets fresh regions at each call (`[LT-7]`), so `with_views2(a, b, f)` is
         // `f(a, b)`, which the migration writes.
@@ -36904,6 +36946,9 @@ impl<'a> Checker<'a> {
             return self.synth_generic_call(def, name, args, explicit, expected, span);
         }
 
+        if self.foreign_variadic.contains(&def) {
+            return self.synth_variadic_call(def, name, args, span);
+        }
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
         let ret = self.signatures[def.0 as usize].ret;
@@ -39908,6 +39953,15 @@ impl<'a> Checker<'a> {
                             );
                         }
                         match arg {
+                            // `[FFI-8]` — a variadic C function: called only in `unsafe`.
+                            ast::AttrArg::Expr(value) if ffi_contract_word(value).is_some_and(|word| word.is("variadic")) => {
+                                if decl.is_safe {
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E5002, attr.span, "a variadic C function is never a `safe fn`")
+                                            .note("C reads its further arguments by the types its format or count names, which nothing checks, so each call is `unsafe` [FFI-8]"),
+                                    );
+                                }
+                            }
                             // `[EFF-3]` — the effects the foreign function has.
                             ast::AttrArg::Named { name, .. } if name.name.is("effects") => {
                                 if saw_effects {
@@ -40568,6 +40622,14 @@ impl<'a> Checker<'a> {
                 );
                 return Expr { ty: self.common.error, kind: ExprKind::Error, span };
             }
+            if matches!(target_c_alias(qualified.as_str(), self.types.pointer_size()), Some(TyKind::VaList)) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5018, span, "a `VaList` is never constructed")
+                        .help("take one as a parameter of a function C calls, and pass it on to a C function that reads it")
+                        .note("a `va_list` is made by the variadic C function whose arguments it reads, and lives for that call [FFI-8]"),
+                );
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
             self.error(codes::E1010, name_span, format!("cannot find `{qualified}`"));
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
@@ -40581,6 +40643,9 @@ impl<'a> Checker<'a> {
                 format!("`{qualified}` takes no type arguments, found {}", explicit.len()),
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        if self.foreign_variadic.contains(&def) {
+            return self.synth_variadic_call(def, qualified, args, span);
         }
         let signature: Vec<(Ty, Mode)> =
             self.signatures[def.0 as usize].params.iter().map(|(_, t, m, _)| (*t, *m)).collect();
@@ -45657,6 +45722,7 @@ impl<'a> Checker<'a> {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
         })
     }
@@ -45758,6 +45824,7 @@ impl<'a> Checker<'a> {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
         });
         def
@@ -46288,6 +46355,14 @@ impl<'a> Checker<'a> {
     /// The value of function `def` (`[FN-6]`), unless its `@borrows` lends
     /// more than a callable type accounts for (`[LT-7]`).
     fn fn_value_of(&mut self, def: DefId, name: Symbol, span: Span) -> Expr {
+        // `[FFI-8]` — a variadic C function has no function type of Ember's: it is only called.
+        if self.foreign_variadic.contains(&def) {
+            self.sink.emit(
+                Diagnostic::error(codes::E5015, span, format!("`{name}` is a variadic C function: it is called, never taken as a value"))
+                    .note("an Ember function type has a fixed list of parameters [FFI-8]"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
         let signature = &self.signatures[def.0 as usize];
         let params = signature
             .params
@@ -52649,6 +52724,81 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// `[FFI-8]` — a call of a variadic C function, in `unsafe`: its declared parameters as any
+    /// call's, positionally, then each further argument with the type the program gives it (a
+    /// literal's written, `5 as c_int`) and that C passes unchanged: a C `int` or wider integer up to
+    /// 64 bits, `f64`, `c_longdouble`, a raw pointer, `cstr` or an `extern fn`. A type C's default
+    /// argument promotions change (`bool`, the integers narrower than `int`, `f32`) is refused, as is
+    /// any other (`E5015`): `va_arg` would read what was never passed.
+    fn synth_variadic_call(&mut self, def: DefId, callee: Symbol, args: &[ast::Arg], span: Span) -> Expr {
+        self.check_direct_call_safety(def, span);
+        let params = self.signatures[def.0 as usize].params.clone();
+        let ret = self.signatures[def.0 as usize].ret;
+        if args.len() < params.len() {
+            let noun = if params.len() == 1 { "argument" } else { "arguments" };
+            self.error(codes::E2020, span, format!("`{callee}` takes at least {} {noun}, found {}", params.len(), args.len()));
+            return Expr { ty: ret, kind: ExprKind::Error, span };
+        }
+        let mut checked = Vec::with_capacity(args.len());
+        for (index, arg) in args.iter().enumerate() {
+            if let Some(name) = arg.name {
+                self.error(codes::E2020, name.span, "a variadic C function takes positional arguments");
+            }
+            if let Some(&(_, ty, mode, _)) = params.get(index) {
+                checked.push(self.check_argument(&arg.value, ty, mode));
+                continue;
+            }
+            let value = self.synth_committed(&arg.value);
+            if let Some(problem) = self.variadic_argument_problem(&arg.value, value.ty) {
+                self.sink.emit(
+                    Diagnostic::error(codes::E5015, arg.value.span, problem.0)
+                        .help(problem.1)
+                        .note("C reads a further argument with `va_arg` as the type it expects, after its default argument promotions [FFI-8]"),
+                );
+            }
+            checked.push(value);
+        }
+        Expr {
+            ty: ret,
+            kind: ExprKind::Call { callee: def, arg_eval_order: None, default_arg_locals: None, args: checked, latebound: false },
+            span,
+        }
+    }
+
+    /// `[FFI-8]` — why a further argument of a variadic call cannot be passed, and the repair.
+    fn variadic_argument_problem(&self, written: &ast::Expr, ty: Ty) -> Option<(String, String)> {
+        use ember_types::{FloatTy, IntTy, UintTy};
+        let mut literal = written;
+        while let ast::ExprKind::Unary { operand: inner, .. } | ast::ExprKind::Paren(inner) = &literal.kind {
+            literal = inner;
+        }
+        let untyped = matches!(&literal.kind, ast::ExprKind::Lit(ast::Literal::Int { suffix: None, .. } | ast::Literal::Float { suffix: None, .. }));
+        if untyped {
+            return Some(("a literal passed as a further argument has the type it is written with".to_string(),
+                "write its C type: `5 as c_int`, `5 as c_long`, `2.5 as f64`".to_string()));
+        }
+        if ty == self.common.error {
+            return None;
+        }
+        let shown = self.types.display(ty);
+        match self.types.kind(ty) {
+            TyKind::Int(IntTy::I32 | IntTy::I64 | IntTy::Isize) | TyKind::Uint(UintTy::U32 | UintTy::U64 | UintTy::Usize)
+            | TyKind::Float(FloatTy::F64) | TyKind::CLongDouble | TyKind::Ptr { .. } | TyKind::CStr | TyKind::Fn { abi: Some(_), .. } => None,
+            TyKind::Bool | TyKind::Int(IntTy::I8 | IntTy::I16) | TyKind::Uint(UintTy::U8 | UintTy::U16) | TyKind::Char => Some((
+                format!("C promotes a `{shown}` passed as a further argument to `int`"),
+                "pass it as C reads it: `x as c_int` (or `c_uint`)".to_string(),
+            )),
+            TyKind::Float(FloatTy::F32) => Some((
+                "C promotes an `f32` passed as a further argument to `double`".to_string(),
+                "pass it as C reads it: `x as f64`".to_string(),
+            )),
+            _ => Some((
+                format!("a `{shown}` is not passed as a further argument of a variadic C function"),
+                "pass a C integer of `int`'s width or wider (up to 64 bits), `f64`, `c_longdouble`, a raw pointer, `cstr` or an `extern fn`".to_string(),
+            )),
+        }
+    }
+
     /// `[DIA-22]` — a call with the wrong number of arguments, reported at the call with the
     /// callee's declaration as a secondary span.
     fn report_arity(&mut self, def: DefId, shown: String, declared: usize, given: usize, span: Span) {
@@ -57465,6 +57615,14 @@ fn ffi_unsafe_slot_arg(arg: &ast::AttrArg) -> Option<Option<Symbol>> {
 
 /// `[FFI-11]` — whether a declaration's contract leaves its calls `unsafe` on purpose:
 /// `@ffi(unsafe)`, or a slot's `unsafe`.
+/// `[FFI-8]` — `@ffi(variadic)`: a C function whose parameters end `...`.
+fn ffi_variadic(attrs: &[ast::Attribute]) -> bool {
+    attrs.iter()
+        .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
+        .flat_map(|attr| attr.args.iter())
+        .any(|arg| matches!(arg, ast::AttrArg::Expr(expr) if ffi_contract_word(expr).is_some_and(|word| word.is("variadic"))))
+}
+
 fn ffi_left_unsafe(attrs: &[ast::Attribute]) -> bool {
     attrs.iter()
         .filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi"))
@@ -58685,6 +58843,8 @@ fn target_c_alias(name: &str, pointer_size: u64) -> Option<TyKind> {
         "std.ffi.c_wchar" => TyKind::Int(IntTy::I32),
         // `[FFI-8]` — C's `long double`, a type of its own (opaque bytes of the target's layout).
         "std.ffi.c_longdouble" => TyKind::CLongDouble,
+        // `[FFI-8]` — C's `va_list`, as a parameter of it holds it.
+        "std.ffi.VaList" => TyKind::VaList,
         _ => return None,
     })
 }

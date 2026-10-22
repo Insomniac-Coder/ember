@@ -5316,6 +5316,7 @@ mod callable_region_metadata_tests {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
             mut_self: false,
             elided_accesses: Vec::new(),

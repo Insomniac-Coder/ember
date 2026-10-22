@@ -476,6 +476,7 @@ impl<'a> Builder<'a> {
             borrows_used_fields: self.function.borrows_used_fields,
             is_abstract: self.function.is_abstract,
             is_extern_declaration: self.function.is_extern_declaration,
+            variadic: self.function.variadic,
             ffi_counted: self.function.ffi_counted.clone(),
             mut_self: self.class_access.is_some(),
             elided_accesses: Vec::new(),

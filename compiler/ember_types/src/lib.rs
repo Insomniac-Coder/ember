@@ -138,6 +138,10 @@ pub enum TyKind {
     /// alignment, passed and returned as C passes the type (System V's x87 class, Windows' `double`),
     /// with no arithmetic. Only copied, stored and handed to C.
     CLongDouble,
+    /// `[FFI-8]` — C's `va_list` (`std.ffi.VaList`), as a parameter of that type holds it: a value
+    /// C made, only received and passed on (never constructed, `E5018`), a view (it lives as long
+    /// as the call that passed it) and not `Copy` (whoever it is passed to reads it).
+    VaList,
     /// A borrowed pointer to NUL-terminated C bytes, distinct from UTF-8 `str`.
     CStr,
     /// `Span[T]` and `MutSpan[T]` (Part VII §7): pointer plus length, with a
@@ -1438,6 +1442,7 @@ impl TypeTable {
             }),
             // `[FFI-8]` — the target's `long double`, as the C compiler lays it out.
             TyKind::CLongDouble => c_long_double_layout(self.pointer_size),
+            TyKind::VaList => va_list_layout(self.pointer_size),
             TyKind::Void | TyKind::Never => Layout::ZERO,
             // A view: pointer plus length.
             TyKind::Str | TyKind::Span { .. } => Layout {
@@ -1653,6 +1658,8 @@ impl TypeTable {
             // ODR-102 — an owned callable value hides what it captured, so it
             // stays on the thread that made it.
             TyKind::Fn { abi: None, stateless: false, .. } => (false, false),
+            // `[FFI-8]` — read on the thread C passed it to.
+            TyKind::VaList => (false, false),
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
             | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::Str
             | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::Error => (true, true),
@@ -1936,6 +1943,8 @@ impl TypeTable {
             // `[CLO-3]` — an owned callable value owns its captured state,
             // so it moves; only `extern fn` is `Copy` (Part VI's list).
             TyKind::Fn { abi: None, stateless, .. } => *stateless,
+            // `[FFI-8]` — whoever it is passed to reads it, so it is passed on once.
+            TyKind::VaList => false,
             TyKind::Bool
             | TyKind::Char
             | TyKind::Int(_)
@@ -2365,6 +2374,8 @@ impl TypeTable {
             | TyKind::Float(_)
             | TyKind::CLongDouble
             | TyKind::Ptr { .. } => true,
+            // `[FFI-8]` — never constructed (`E5018`).
+            TyKind::VaList => false,
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.is_builtin_zeroable(*elem),
             TyKind::Tuple(items) => items.iter().all(|&item| self.is_builtin_zeroable(item)),
             // The compiler-known `MaybeUninit[T]` wrapper accepts every byte
@@ -2480,8 +2491,8 @@ impl TypeTable {
     /// class fields, statics, containers or across threads (`[TYP-15]`).
     pub fn is_view(&self, ty: Ty) -> bool {
         match self.kind(ty) {
-            // Part IV §1's View category, in full.
-            TyKind::Ref { .. } | TyKind::Str | TyKind::CStr | TyKind::Span { .. } => true,
+            // Part IV §1's View category, in full; and `[FFI-8]`'s `VaList`, alive for its call.
+            TyKind::Ref { .. } | TyKind::Str | TyKind::CStr | TyKind::Span { .. } | TyKind::VaList => true,
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_view(t)),
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.is_view(*elem),
             TyKind::Struct(id) => {
@@ -2527,6 +2538,7 @@ impl TypeTable {
             | TyKind::Uint(_)
             | TyKind::Float(_)
             | TyKind::CLongDouble
+            | TyKind::VaList
             | TyKind::Void
             | TyKind::Ptr { .. } => true,
             TyKind::CStr => true,
@@ -2678,6 +2690,7 @@ impl TypeTable {
     fn render(&self, ty: Ty, user: bool) -> String {
         match self.kind(ty) {
             TyKind::CLongDouble => "c_longdouble".into(),
+            TyKind::VaList => "VaList".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Char => "char".into(),
             TyKind::Int(i) => match i {
@@ -2827,6 +2840,7 @@ impl TypeTable {
     pub fn canonical_name(&self, ty: Ty) -> Result<String, CanonicalTypeError> {
         Ok(match self.kind(ty) {
             TyKind::CLongDouble => "std.ffi.c_longdouble".into(),
+            TyKind::VaList => "std.ffi.VaList".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Char => "char".into(),
             TyKind::Int(kind) => match kind {
@@ -4144,6 +4158,13 @@ mod tests {
 /// cross-compilation yet, `[CLI-…]`): `double` on Windows and Apple's ARM, the x87 80-bit format
 /// padded to 16 bytes on x86-64 System V, IEEE quad on AArch64 and RISC-V Linux, and 12 bytes
 /// aligned to 4 on 32-bit x86 System V.
+/// `[FFI-8]` — C's `va_list` as a parameter holds it: AArch64 Linux's is a 32-byte struct; x86-64
+/// System V's an array, so a parameter is a pointer to its element; every other target's a pointer.
+pub fn va_list_layout(pointer_size: u64) -> Layout {
+    let (size, align) = if cfg!(all(target_arch = "aarch64", not(target_vendor = "apple"), not(windows))) { (32, 8) } else { (pointer_size, pointer_size) };
+    Layout { size, align, field_offsets: Vec::new() }
+}
+
 pub fn c_long_double_layout(pointer_size: u64) -> Layout {
     let (size, align) = if cfg!(windows) || (cfg!(target_vendor = "apple") && cfg!(target_arch = "aarch64")) {
         (8, 8)

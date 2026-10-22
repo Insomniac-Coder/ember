@@ -4721,6 +4721,7 @@ impl Emitter<'_> {
             | TyKind::Uint(_)
             | TyKind::Float(_)
             | TyKind::CLongDouble
+            | TyKind::VaList
             | TyKind::Void
             | TyKind::Never
             | TyKind::Str
@@ -5939,6 +5940,8 @@ impl Emitter<'_> {
             })
             .collect();
         let params = if params.is_empty() { "void".to_string() } else { params.join(", ") };
+        // `[FFI-8]` — a variadic C function's further arguments.
+        let params = if body.variadic { format!("{params}, ...") } else { params };
         let convention = calling_convention(body.abi.as_deref());
         format!("{ret} {convention}{}({params})", body.symbol)
     }
@@ -11330,6 +11333,8 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             // `[FFI-8]` — C's own, so it is passed and returned as C passes it.
             TyKind::CLongDouble => "long double".into(),
+            // `[FFI-8]` — C's `va_list` as a parameter of it holds it (the runtime header's typedef).
+            TyKind::VaList => format!("{RT}va_list"),
             TyKind::Bool => "bool".into(),
             TyKind::Char => "uint32_t".into(),
             TyKind::Int(i) => match i {
@@ -13949,6 +13954,7 @@ mod string_descriptor_view_parts_tests {
             borrows_used_fields: false,
             is_abstract: false,
             is_extern_declaration: false,
+            variadic: false,
             ffi_counted: None,
             mut_self: false,
             elided_accesses: Vec::new(),

@@ -3,7 +3,7 @@
 #$ stdout: 5
 #$ warning[W5002]: `Packed` is imported from `unrepresentable.h` only as an opaque type, usable behind a pointer: a union with bit-fields
 #$ warning[W5002]: `unrepresentable_hidden` is not imported from `unrepresentable.h`: a global with internal linkage
-#$ warning[W5002]: `unrepresentable_log` is not imported from `unrepresentable.h`: variadic (`...`)
+#$ warning[W5002]: `unrepresentable_log` is not imported from `unrepresentable.h`: a variadic `static inline` function
 #$ warning[W5002]: `unrepresentable_legacy` is not imported from `unrepresentable.h`: declared without a prototype
 #$ warning[W5002]: `unrepresentable_number` is not imported from `unrepresentable.h`: parameter `n`: `Packed` by value, which is opaque
 #$ help: to use it, declare it by hand in an `unsafe extern "C":` block

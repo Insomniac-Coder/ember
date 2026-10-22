@@ -161,6 +161,8 @@ pub struct Body {
     pub is_abstract: bool,
     /// See `ember_hir::Function::is_extern_declaration`.
     pub is_extern_declaration: bool,
+    /// See `ember_hir::Function::variadic` (`[FFI-8]`).
+    pub variadic: bool,
     /// ODR-074 and `[FFI-9]`'s mapped C parameters for a hand declaration.
     pub ffi_counted: Option<ember_hir::FfiCounted>,
     /// `[EXC-15]` — a class `mut self` method: its caller holds a write

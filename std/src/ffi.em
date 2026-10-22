@@ -114,6 +114,10 @@ pub type c_wchar = i32
 ## 16 on x86-64 and AArch64 Linux), passed and returned as C passes the type, with no arithmetic.
 ## The compiler gives it its own type; `u8` here only stands in.
 pub type c_longdouble = u8
+## `[FFI-8]` — C's `va_list`, as a parameter of it holds it: a value C made, received by a function
+## C calls and passed on to one that reads it (`vsnprintf`), once; never constructed (`E5018`), a
+## view of the call that passed it. The compiler gives it its own type; `u8` here only stands in.
+pub type VaList = u8
 
 ## `[HR-39]` — the failure a foreign call returns as a value: a C++ exception its thunk caught
 ## (`CppError`), or a C function's status other than its success (`[FFI-16]`'s error types, which
