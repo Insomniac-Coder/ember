@@ -209,10 +209,12 @@ impl Parser<'_> {
             // `[GRM-28]` — `fn name(` declares a local function; `fn(` is a
             // lambda, an expression. A raw name is a name, and `fn not`/`fn is`
             // a declaration whose name `parse_fn` refuses (`E0005`).
-            TokenKind::Keyword(Kw::Fn | Kw::Unsafe)
+            // `[GRM-21]` — `gen fn name(` too: a generator is legal wherever a function is.
+            TokenKind::Keyword(Kw::Fn | Kw::Unsafe) | TokenKind::Ident(_)
                 if self.at_kw(Kw::Fn)
                     && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::Not | Kw::Is))
-                    || self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Fn) =>
+                    || self.at_kw(Kw::Unsafe) && (self.at_kw_at(1, Kw::Fn) || self.at_gen_fn_at(1))
+                    || self.at_gen_fn() && matches!(self.peek_at(2), TokenKind::Ident(_) | TokenKind::RawIdent(_)) =>
             {
                 let decl = self.parse_fn();
                 if decl.body.is_none() {

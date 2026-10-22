@@ -873,7 +873,7 @@ impl Parser<'_> {
         self.at_gen_fn_at(0)
     }
 
-    fn at_gen_fn_at(&self, n: usize) -> bool {
+    pub(crate) fn at_gen_fn_at(&self, n: usize) -> bool {
         matches!(self.peek_at(n), TokenKind::Ident(s) if s.is("gen"))
             && matches!(self.peek_at(n + 1), TokenKind::Keyword(Kw::Fn))
     }
