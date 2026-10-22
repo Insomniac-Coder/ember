@@ -16,6 +16,9 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `min`/`max` and a `T: Ord` bound take them. `cmp` goes to std's `cmp_elements` over two views,
   as `==` goes to `eq_elements`. `TYP-36/accept_arrays_order_lexicographically.em` (three
   profiles; floats by totalOrder inside), `TYP-36/reject_an_array_whose_element_is_not_ord.em`.
+* **D-860 `[MOD-5]`** — a program's own `struct int` (`float`, `str`) is what the name means in
+  its types, constructions and constants (`int.ONE`); literals stay `i64`.
+  `MOD-5/accept_a_programs_int_float_and_str_shadow_the_prelude.em` (three profiles).
 
 ## Not done
 
@@ -28,6 +31,10 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
 
 * `ember_typeck`: `implements` (`Ord` of `Array`/`[T; N]` by the element), `provides_cmp`,
   `synth_cmp_of` (sequences to `cmp_elements`). std: `extend[T: Ord] Span[T]: cmp_elements`.
+* `ember_typeck`: `scalar_in_scope` (the scalar table unless the program declares a type of a
+  shadowable prelude name), used by type positions, `T.CONST` and type names in expressions;
+  `root_qualified` keys the root module's `int`, `float`, `str` as `root.<name>` (as D-305 did
+  for `Box`), so `names_program_type` sees them.
 
 ## Defects found
 

@@ -1378,9 +1378,14 @@ const BUILT_IN_TYPES: [&str; 19] = [
 /// that very name: `Box` would key the compiler's `Box` lookups, share its
 /// instances' names (`Box_i64`, also their C names) and be taken for it by
 /// origin (D-305). That one is `root.Box` instead, which only the root
-/// module's own `Box` resolves to; its diagnostics still say `Box`.
+/// module's own `Box` resolves to; its diagnostics still say `Box`. Likewise
+/// the scalar names a declaration may shadow, `int`, `float` and `str` (D-860).
 fn root_qualified(name: Symbol) -> Symbol {
-    if COMPILER_KNOWN_TYPES.contains(&name.as_str()) { Symbol::intern(&format!("root.{name}")) } else { name }
+    if COMPILER_KNOWN_TYPES.contains(&name.as_str()) || matches!(name.as_str(), "int" | "float" | "str") {
+        Symbol::intern(&format!("root.{name}"))
+    } else {
+        name
+    }
 }
 
 /// G8-4, `[STD-19]` — how a hidden count type is made from two others: a
@@ -4197,7 +4202,7 @@ impl<'a> Checker<'a> {
                     return true;
                 }
                 let name = segments[0].name;
-                self.scalar_named(name.as_str()).is_some()
+                self.scalar_in_scope(name).is_some()
                     || name.is("String")
                     || self.named_types.contains_key(&self.resolve_name(name))
                     || !args.is_empty()
@@ -13869,7 +13874,7 @@ impl<'a> Checker<'a> {
                 if let Some(&ty) = self.type_params.get(&name) {
                     return ty;
                 }
-                if let Some(ty) = self.scalar_named(name.as_str()) {
+                if let Some(ty) = self.scalar_in_scope(name) {
                     return ty;
                 }
                 // `String` is a growable buffer of UTF-8 bytes: `Array[u8]`
@@ -19130,6 +19135,16 @@ impl<'a> Checker<'a> {
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => Some(*elem),
             _ => None,
         }
+    }
+
+    /// `[MOD-5]` (D-860) — a scalar type's name as the program's code reads it: a prelude name
+    /// (`int`, `float`, `str`) that the program declares or imports a type of is that type, as
+    /// D-305 made `Box` and `Cell` (a local declaration shadows a prelude name).
+    fn scalar_in_scope(&self, name: Symbol) -> Option<Ty> {
+        if matches!(name.as_str(), "int" | "float" | "str") && self.names_program_type(name.as_str()) {
+            return None;
+        }
+        self.scalar_named(name.as_str())
     }
 
     fn scalar_named(&self, name: &str) -> Option<Ty> {
@@ -34454,7 +34469,7 @@ impl<'a> Checker<'a> {
                 if let ast::ExprKind::Path { segments } = &base.kind
                     && let [segment] = segments.as_slice()
                     && self.lookup(segment.name).is_none()
-                    && let Some(scalar) = self.scalar_named(segment.name.as_str())
+                    && let Some(scalar) = self.scalar_in_scope(segment.name)
                 {
                     if let Some(constant) = self.scalar_constant(scalar, name.name, span) {
                         return constant;
@@ -40116,7 +40131,7 @@ impl<'a> Checker<'a> {
                 self.type_params
                     .get(&name)
                     .copied()
-                    .or_else(|| self.scalar_named(name.as_str()))
+                    .or_else(|| self.scalar_in_scope(name))
                     .or_else(|| self.named_types.get(&self.resolve_name(name)).copied())
             }
             // G8-4 — `I.Count.of(n)`: a type parameter's associated type, as
