@@ -207,8 +207,8 @@ fn a_noreload_body_change_is_refused_whole() {
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.exit, 0, "{}", run.stderr);
     assert_eq!(run.stdout, "0 1\n2 2\n", "{}", run.stderr);
-    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::item_symbol("fixed"));
-    assert!(run.stderr.contains("refused") && run.stderr.contains(&named), "{}", run.stderr);
+    // `[DIA-23]` — by its Ember path, which the slot's symbol decodes to exactly.
+    assert!(run.stderr.contains("refused") && run.stderr.contains("the body of `@noreload` function `fixed` changed"), "{}", run.stderr);
 }
 
 /// `[HR-15]` — a closure's captured state is followed (ODR-126). A `Mote`'s only reference is the
@@ -1602,8 +1602,8 @@ fn explain_predicts_against_the_running_program() {
     let finished = program.wait().expect("the program ends");
     drop(package);
     assert_ne!(refused.exit, 0, "{}{}", refused.stdout, refused.stderr);
-    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::item_symbol("fixed"));
-    assert!(refused.stdout.contains("the reload would be refused") && refused.stdout.contains(&named), "{}{}", refused.stdout, refused.stderr);
+    let named = "the body of `@noreload` function `fixed` changed";
+    assert!(refused.stdout.contains("the reload would be refused") && refused.stdout.contains(named), "{}{}", refused.stdout, refused.stderr);
     assert_eq!(applies.exit, 0, "{}{}", applies.stdout, applies.stderr);
     assert!(applies.stdout.contains("the reload would apply"), "{}{}", applies.stdout, applies.stderr);
     assert_eq!(reloaded.exit, 0, "{}", reloaded.stderr);
@@ -1614,7 +1614,8 @@ fn explain_predicts_against_the_running_program() {
 /// `[HR-7]` — a function an edit removes keeps its thunk, which would reach a stub; while a value
 /// of the function may be held (here by `main`'s own frame), or while old code that may call it
 /// runs on (the frames live at a checkpoint), the thunk is reachable, so the reload is refused,
-/// naming it.
+/// naming it. `[DIA-23]` — by its Ember path, which the slot's symbol decodes to exactly: a
+/// transliterated name (`[MNG-3]`) as written, an instance with its arguments' hash (`[MNG-1]`).
 #[test]
 fn removing_a_function_whose_address_is_held_is_refused() {
     let v1 = "import std.hot\n\nfn helper(x: int) -> int:\n    return x + 1\n\nfn version() -> int:\n    return 1\n\n\
@@ -1623,8 +1624,7 @@ fn removing_a_function_whose_address_is_held_is_refused() {
     let (run, reloads) = reload_run("reload-removed-held", RELOAD_ALL, v1, &[v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.stdout, "2\n1\n", "{}", run.stderr);
-    let named = format!("`{}` was removed, but its address may be held", ember_branding::item_symbol("helper"));
-    assert!(run.stderr.contains(&named), "{}", run.stderr);
+    assert!(run.stderr.contains("`helper` was removed, but its address may be held"), "{}", run.stderr);
 
     // At a checkpoint the old `main` runs on, and calls it after the checkpoint.
     let v1 = "import std.hot\n\nfn helper(x: int) -> int:\n    return x + 1\n\nfn main():\n    hot.checkpoint()\n    println(helper(1))\n";
@@ -1632,7 +1632,16 @@ fn removing_a_function_whose_address_is_held_is_refused() {
     let (run, reloads) = reload_run("reload-removed-called", RELOAD_ALL, v1, &[v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.stdout, "2\n", "{}", run.stderr);
-    let named = format!("`{}` was removed while frames of the old code, which may call it, are live", ember_branding::item_symbol("helper"));
+    assert!(run.stderr.contains("`helper` was removed while frames of the old code, which may call it, are live"), "{}", run.stderr);
+
+    // A generic function named beyond ASCII: its instance's symbol is `em_u17gr_u00F6__u00DF_eG…`.
+    let v1 = "import std.hot\n\nfn größe[T](x: T) -> T:\n    return x\n\nfn main():\n    hot.checkpoint()\n    println(größe(1))\n";
+    let (run, reloads) = reload_run("reload-removed-instance", RELOAD_ALL, v1, &[v2]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.stdout, "1\n", "{}", run.stderr);
+    let symbol = ember_branding::instance_symbol("größe", Some("[i64]"));
+    let hash = ember_branding::demangle(&symbol).and_then(|found| found.instance).expect("an instance");
+    let named = format!("`größe[#{hash}]` was removed while frames of the old code, which may call it, are live");
     assert!(run.stderr.contains(&named), "{}", run.stderr);
 }
 

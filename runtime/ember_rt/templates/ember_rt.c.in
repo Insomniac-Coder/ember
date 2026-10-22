@@ -10330,6 +10330,126 @@ static struct {
     ember_reload_timings timings;
 } g_rl;
 
+/* -- a slot's Ember path, for a report ([HR-7], [DIA-23]) --------------------- */
+
+#define RL_STRING(x) #x
+#define RL_XSTRING(x) RL_STRING(x)
+
+/* `text` appended to the path `out` holds; false when it does not fit. */
+static bool rl_path_put(char* out, size_t cap, size_t* used, const void* text, size_t len) {
+    if (*used + len >= cap) {
+        return false;
+    }
+    memcpy(out + *used, text, len);
+    *used += len;
+    out[*used] = '\0';
+    return true;
+}
+
+/* A hex digit's value, either case; -1 for any other character. */
+static int rl_hex_digit(int c) {
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+/* A component `[MNG-3]` transliterated, written back: each `_uXXXX_` as its character in UTF-8.
+ * False unless it is exactly what the compiler writes for a name beyond ASCII (a character beyond
+ * ASCII came back, and each escape is its code point in upper-case hex, four digits or as many as
+ * it needs), or when it does not fit. */
+static bool rl_path_untransliterated(const char* text, size_t len, char* out, size_t cap, size_t* used) {
+    bool beyond = false;
+    size_t at = 0;
+    while (at < len) {
+        if (at + 1 < len && text[at] == '_' && text[at + 1] == 'u') {
+            size_t end = at + 2;
+            uint32_t value = 0;
+            bool big = false, upper = true;
+            for (int digit; end < len && (digit = rl_hex_digit((unsigned char)text[end])) >= 0; ++end) {
+                upper = upper && !(text[end] >= 'a' && text[end] <= 'f');
+                value = big ? value : value * 16u + (uint32_t)digit;
+                big = big || value > 0x10FFFFu;
+            }
+            size_t digits = end - (at + 2);
+            if (digits >= 4 && end < len && text[end] == '_' && !big && value > 0x7Fu && (value < 0xD800u || value > 0xDFFFu)) {
+                /* A character, written as the compiler writes no other: not this symbol. */
+                if (!upper || (digits > 4 && text[at + 2] == '0')) {
+                    return false;
+                }
+                unsigned char bytes[4];
+                if (!rl_path_put(out, cap, used, bytes, ember_char_encode_utf8(value, bytes))) {
+                    return false;
+                }
+                beyond = true;
+                at = end + 1;
+                continue;
+            }
+        }
+        if (!rl_path_put(out, cap, used, &text[at], 1)) {
+            return false;
+        }
+        ++at;
+    }
+    return beyond;
+}
+
+/* [HR-7], [CG-C-10] — the Ember path a reload slot's symbol names, for a report: `[MNG-1]`'s length
+ * prefixes say where each component ends, so `em_5fixed` is `fixed` and `em_8geometry4Grid2at`
+ * `geometry.Grid.at`; a component whose length is marked `u` is transliterated ([MNG-3]); an
+ * instance's hash follows `[#`, as `ember demangle` writes it (`max[#3f2a…]`). An export's slot is
+ * its exact symbol ([MNG-2]), and a name that is not exactly an item's, or whose path does not fit
+ * `out`, is shown as it is. A path is never longer than its symbol. Only the reports call it. */
+static const char* rl_path(const char* symbol, uint32_t flags, char* out, size_t cap) {
+    static const char brand[] = RL_XSTRING(EMBER_SYMBOL_PREFIX);
+    /* The mangled prefix: the brand's first two characters, then `_` (`ember_branding`'s). */
+    size_t short_len = brand[1] != '\0' ? 2 : 1;
+    if (symbol == NULL || cap == 0 || (flags & EMBER_RL_FN_EXPORT) != 0 || strncmp(symbol, brand, short_len) != 0
+        || symbol[short_len] != '_') {
+        return symbol;
+    }
+    const char* rest = symbol + short_len + 1;
+    size_t used = 0;
+    out[0] = '\0';
+    size_t components = 0;
+    for (;;) {
+        bool marked = rest[0] == 'u';
+        const char* digits = rest + (marked ? 1 : 0);
+        if (digits[0] < '1' || digits[0] > '9') {
+            break;
+        }
+        size_t length = 0;
+        while (*digits >= '0' && *digits <= '9') {
+            if (length > SIZE_MAX / 10) {
+                return symbol;
+            }
+            length = length * 10 + (size_t)(*digits++ - '0');
+        }
+        if (memchr(digits, '\0', length) != NULL || (components > 0 && !rl_path_put(out, cap, &used, ".", 1))) {
+            return symbol;
+        }
+        bool written = marked ? rl_path_untransliterated(digits, length, out, cap, &used) : rl_path_put(out, cap, &used, digits, length);
+        if (!written) {
+            return symbol;
+        }
+        rest = digits + length;
+        ++components;
+    }
+    if (components == 0) {
+        return symbol;
+    }
+    /* `G` and the first 16 hex digits of the arguments' hash: an instance. */
+    if (rest[0] == 'G') {
+        size_t hex = 0;
+        while (hex < 16 && rl_hex_digit((unsigned char)rest[1 + hex]) >= 0) {
+            ++hex;
+        }
+        if (hex != 16 || !rl_path_put(out, cap, &used, "[#", 2) || !rl_path_put(out, cap, &used, rest + 1, 16)
+            || !rl_path_put(out, cap, &used, "]", 1)) {
+            return symbol;
+        }
+        rest += 17;
+    }
+    return rest[0] == '\0' ? out : symbol;
+}
+
 /* -- stubs for removed functions ([HR-7]) -------------------------------------
  *
  * A thunk whose function an edit removed jumps to one of these, which panics naming it. A stub
@@ -10340,9 +10460,9 @@ static const char* g_rl_stub_names[RL_STUBS];
 static uint32_t g_rl_stub_count;
 
 void ember_reload_removed_called(const char* name) {
-    char message[512];
+    char message[512], path[256];
     int n = snprintf(message, sizeof message, "`%s` was removed by a hot reload and is called [HR-7]",
-                     name != NULL ? name : "a function");
+                     name != NULL ? rl_path(name, 0, path, sizeof path) : "a function");
     ember_loc loc = { "<reload>", 0, 0 };
     ember_panic(message, n > 0 ? (size_t)n : 0, loc);
 }
@@ -12420,38 +12540,40 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
             continue;
         }
         const ember_rl_fn* now = rl_find_fn(next, slot->name);
+        /* A report names the function by its Ember path, an export by its symbol ([DIA-23]). */
+        char path[256];
         if (now == NULL) {
             if ((slot->flags & EMBER_RL_FN_EXPORT) != 0) {
-                rl_report(report, cap, "refused: export `%s` was removed, which changes the module protocol: the host must be rebuilt [HR-21]\n", slot->name);
+                rl_report(report, cap, "refused: export `%s` was removed, which changes the module protocol: the host must be rebuilt [HR-21]\n", rl_path(slot->name, slot->flags, path, sizeof path));
                 refused = true;
             } else if ((slot->flags & EMBER_RL_FN_ADDRESS) != 0) {
-                rl_report(report, cap, "refused: `%s` was removed, but its address may be held, so its thunk stays reachable [HR-7]\n", slot->name);
+                rl_report(report, cap, "refused: `%s` was removed, but its address may be held, so its thunk stays reachable [HR-7]\n", rl_path(slot->name, slot->flags, path, sizeof path));
                 refused = true;
             } else if (checkpoint) {
                 /* The frames live at a checkpoint run the old code on, which may call it. */
-                rl_report(report, cap, "refused: `%s` was removed while frames of the old code, which may call it, are live at this checkpoint [HR-7]\n", slot->name);
+                rl_report(report, cap, "refused: `%s` was removed while frames of the old code, which may call it, are live at this checkpoint [HR-7]\n", rl_path(slot->name, slot->flags, path, sizeof path));
                 refused = true;
             }
             continue;
         }
         if ((now->flags & (EMBER_RL_FN_RELOADABLE | EMBER_RL_FN_NORELOAD)) != (slot->flags & (EMBER_RL_FN_RELOADABLE | EMBER_RL_FN_NORELOAD))) {
-            rl_report(report, cap, "refused: `%s` changed between reloadable and `@noreload`, which needs a restart [HR-10]\n", slot->name);
+            rl_report(report, cap, "refused: `%s` changed between reloadable and `@noreload`, which needs a restart [HR-10]\n", rl_path(slot->name, slot->flags, path, sizeof path));
             refused = true;
             continue;
         }
         if ((slot->flags & EMBER_RL_FN_NORELOAD) != 0) {
             if (now->body_hash != slot->body_hash) {
-                rl_report(report, cap, "refused: the body of `@noreload` function `%s` changed, which needs a restart [HR-10]\n", slot->name);
+                rl_report(report, cap, "refused: the body of `@noreload` function `%s` changed, which needs a restart [HR-10]\n", rl_path(slot->name, slot->flags, path, sizeof path));
                 refused = true;
             }
             continue;
         }
         if (now->signature != slot->signature && (slot->flags & EMBER_RL_FN_EXPORT) != 0) {
-            rl_report(report, cap, "refused: the signature of export `%s` changed, which changes the module protocol: the host must be rebuilt [HR-21]\n", slot->name);
+            rl_report(report, cap, "refused: the signature of export `%s` changed, which changes the module protocol: the host must be rebuilt [HR-21]\n", rl_path(slot->name, slot->flags, path, sizeof path));
             refused = true;
         } else if (now->signature != slot->signature
             && (bodies_only || checkpoint || (slot->flags & EMBER_RL_FN_ADDRESS) != 0 || (now->flags & EMBER_RL_FN_ADDRESS) != 0)) {
-            rl_report(report, cap, "refused: the signature of `%s` changed%s [HR-19]\n", slot->name,
+            rl_report(report, cap, "refused: the signature of `%s` changed%s [HR-19]\n", rl_path(slot->name, slot->flags, path, sizeof path),
                       bodies_only ? ", and `reload = \"bodies\"` admits only body changes"
                       : checkpoint ? " while frames of the old code are live at this checkpoint"
                       : ", and its address may be held with the old one");
