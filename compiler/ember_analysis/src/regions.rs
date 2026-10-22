@@ -969,7 +969,7 @@ impl Regions {
         match rvalue {
             Rvalue::Ref { place, .. } => {
                 let mut fact = self.fact_for_place(state, place);
-                fact.merge(&self.through_facts(state, place));
+                fact.merge(&self.borrow_through_facts(state, place));
                 if let Some(loan) = self.loan_region.get(&point) {
                     fact.roots.insert(*loan);
                 }
@@ -1325,25 +1325,18 @@ impl Regions {
                     let Some(loan) = self.loan_region.get(&point).copied() else {
                         return result;
                     };
+                    // A `ref Pair` has slots rooted at `Deref`: each slot within a selected field
+                    // holds what the place's view there borrows (D-470, `[LT-20]`), not this loan,
+                    // which is of the field's storage and is the reference's own slot's (below).
                     for path in paths {
-                        let source = project_place(place, path);
-                        let mut fact = self.fact_for_place(state, &source);
-                        fact.merge(&self.through_facts(state, &source));
-                        fact.roots.insert(loan);
-                        if self.borrows_own_storage(&source) {
-                            fact.origins.insert(match body.local(source.local).kind {
-                                LocalKind::Arg => Origin::Param(source.local),
-                                _ => Origin::Local(source.local),
-                            });
-                        }
-                        // A `ref Pair` has slots rooted at `Deref`; route the
-                        // selected source field to its corresponding slot
-                        // rather than copying a whole-pair fact to every slot.
-                        let mut target_path = vec![Projection::Deref];
+                        let mut target_path = destination.projection.clone();
+                        target_path.push(Projection::Deref);
                         target_path.extend(path.iter().cloned());
-                        let target = project_place(destination, &target_path);
-                        for destination in self.assigned_place_regions(&target) {
-                            result.insert(destination, fact.clone());
+                        for slot in &self.local_regions[destination.local.0 as usize] {
+                            if path_is_prefix(&target_path, &slot.projection) {
+                                let below = &slot.projection[destination.projection.len() + 1..];
+                                result.insert(slot.region, self.fact_for_place(state, &project_place(place, below)));
+                            }
                         }
                     }
                     // The reference's own slot holds this loan too, as an
@@ -2006,6 +1999,26 @@ impl Regions {
         for slot in &self.local_regions[place.local.0 as usize] {
             if slot.projection.len() < place.projection.len() && path_is_prefix(&slot.projection, &place.projection) {
                 fact.merge(&state[slot.region]);
+            }
+        }
+        fact
+    }
+
+    /// `[BRW-6]` — what a borrow of `place` carries from the references it goes through: each
+    /// one's, from the innermost out, up to and including the first shared one. What lies behind
+    /// a shared reference stays put however the references outside it are used, so they do not
+    /// bound the borrow (an iterator's `ref K`, read through its `owner: ref Map`, is the map's).
+    fn borrow_through_facts(&self, state: &ValueState, place: &Place) -> ValueFact {
+        let mut through: Vec<&ViewRegionSlot> = self.local_regions[place.local.0 as usize]
+            .iter()
+            .filter(|slot| slot.projection.len() < place.projection.len() && path_is_prefix(&slot.projection, &place.projection))
+            .collect();
+        through.sort_by_key(|slot| std::cmp::Reverse(slot.projection.len()));
+        let mut fact = ValueFact::default();
+        for slot in through {
+            fact.merge(&state[slot.region]);
+            if !slot.unique {
+                break;
             }
         }
         fact
