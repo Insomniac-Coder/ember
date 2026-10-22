@@ -217,21 +217,90 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   out before the checker as module-level declarations (ADR-193, `coroutines.rs`): a frame struct
   holding the parameters, its `Iterator` implementation, the body as a method of the frame. A
   local one captures enclosing locals, whose types and needed access (`ref`, `ref mut`) only the
-  checker learns, at the declaration. Every form found needs a new mechanism:
-  (a) lift it to a module-level `gen fn` taking each captured local as a borrowed parameter (`mut`
-  for one it writes), its frame borrowing them as a borrowed parameter's field does: the captures
-  and their modes must be found before checking, syntactically (the enclosing function's names in
-  scope at the declaration, a write by assignment; a method call taking `mut self` cannot be seen),
-  and their types written: `ast::TypeKind::Infer` parameters the checker settles at the
-  declaration, as `settle_coroutine_frame` settles a frame's `ref T` fields;
-  (b) lift it generic over its environment (`gen fn count__local[E](env: E, n: int)`) and check its
-  body per instance with names resolving through `env` as a closure's captures do: a generic
-  generator's body is checked opaquely today (`yield x + i` with `x: T` is `E2040`), so it needs a
-  "checked per instance only" generic, and the frame's borrow of the environment's references
-  carried through the constructor's result;
-  (c) make the frame, its `Iterator` implementation and the body method in the checker at the
-  declaration, where the captures are known: the checker's late registration of a type, an
-  implementation and methods after collection.
-  Recommend (a): the frame's borrowed-parameter path and its settling exist, and a local function's
-  capture by `mut` versus `ref` is what `[CLO-2]` decides; it needs the syntactic capture pass and
-  the settled parameter types. A design of its own (an ADR), so left for the owner.
+  checker learns, at the declaration. In every form the declaration is checked as a closure (its
+  `yield`s as the transform's calls) to find the captures and their access, as `[CLO-2]` decides
+  them, and the frame holds a reference to that environment (`ref` when it only reads, `ref mut`
+  when it writes, so the local is borrowed while a generator of it lives); what differs is how the
+  lifted declaration learns the environment's type:
+  (a) lifted generic over it, `gen fn count__local[E](owned env: E, n: int)`, each call passing
+  `ref count` or `ref mut count` (`E` a reference type, as ODR-240 lends a callable), its body
+  checked for that one instance with free names read through `env` as a closure's captures are:
+  needs a generator whose body is not checked opaquely (one is today: `yield x + i` with `x: T` is
+  `E2040`), only quietly per instance, the declaration's check being the one that reports;
+  (b) lifted with a placeholder environment struct the desugaring declares empty and the checker
+  fills at the declaration (fields, `Copy`), the parameter's mode and the frame's field settled
+  then, as `settle_coroutine_frame` settles a frame's `ref T` fields: a type changed after
+  collection;
+  (c) the frame, its `Iterator` implementation and the body method made by the checker at the
+  declaration: a type, an implementation and methods registered after collection.
+  Recommend (a): no type changes after collection, and the result carrying the borrow of what it
+  is given is the path ODR-240's adapters already take. A design of its own (an ADR), so left for
+  the owner.
+
+## Not done
+
+* A local generator (`[GRM-28]`, above): `E0900`; three designs, (a) recommended.
+* A generic local function calling itself with other type arguments (above): `E2020`.
+* `[THR-8]`, `[CLO-10]`: a value of a written callable type (`fn(A) -> R`) is never `Send`
+  (question 1); the entries in `phase-status.json` say so.
+* D-881: the diagnostic option (a) is not built (a question: which option).
+
+## Compiler changes (besides each item's own above)
+
+* `ember_typeck`: `lend_named_callable` lends to a `once fn` bound; thread facts through the
+  current generics' bounds (`thread_facts`); `check_ecs_system_sendable`, `E7005` in
+  `check_system_conflicts`; `Box` `Eq` and `Box[dyn I]` `eq` table entries (`dyn_eq_instances`);
+  D-876 in `check_lambda_body`; D-878's defaults after every module's `collect_methods`; generic
+  local functions (`check_generic_local_fn`, `synth_generic_local_call`, `generic_local_instance`,
+  `generic_local_named`, `generic_local_value`).
+* `ember_types`: interface parents and `Dyn`'s thread properties, `thread_properties_with`;
+  `dyn_eq` symbols; built-in types' paths under `std.core`.
+* `ember_hir`/`ember_mir`/`ember_analysis`: `Builtin::TypeIsSend`/`TypeIsSync` (pure); the
+  `dyn_eq` instances reachable; a comparison holding a `Box[dyn I]` has every effect; D-877's
+  `plain_function_values`.
+* `ember_codegen_c`, `ember_interp`: a call moving its callee in ends it (D-880);
+  `TypeIsSend`/`TypeIsSync` constants; box and `Box[dyn I]` equality.
+* `ember_branding`: the `_u005F_` escape of an escape-looking ASCII `_`.
+* `ember_driver`: std bodies kept for the `dyn_eq` instances.
+* std: `math` (`try_col`, `try_row`), `ffi` (`CppShared.try_get`), `core` (the `Option`/`Result`
+  methods' lent callables, `dyn_eq`), `sync` (`Once.call_once`), `ecs` (the `run_parallel`
+  rework).
+
+## Defects found (not fixed)
+
+* **The evaluator reads a null storage when two lambda systems capturing one `@sync` object run
+  in one `run_parallel`.** `ECS-4/accept_run_parallel_runs_its_systems_at_once_on_threads.em`
+  with its last two lines written
+  `w.run_parallel([counted, system(owned fn(mut q: Query[Pos]): tally.total.fetch_add(2), "two")])`
+  and `println(tally.total.load(), w.has[Mark](a))` (stdout `7 true`): the C program is right;
+  the evaluator panics `invalid downcast` in `std.ecs.aos_storage` (`world.storages[key]` reads
+  a null handle while `contains_key(key)` is true) at the program's *first* `run_parallel`
+  (`[left, right]`, which runs before the lambdas exist); without that first run it panics at the
+  last one, in `Read[Vel].fetch`. The same with the second lambda over `Query[Mark]`. With one
+  lambda system in that run, or the second capturing nothing (the test as committed), both agree.
+  So something static in the program changes the evaluator's run of code that runs earlier: not
+  a duplicate symbol (the MIR has none), not the callable descriptors (keyed by body and
+  environment type). Not found.
+* Two threads' `println`s with several arguments interleave their pieces (each argument is
+  written on its own): the ECS-4 test records what its systems saw for `main` to print.
+* D-877's precision: one adapter instance runs every lambda of its shape, so one that allocates
+  makes every call of the instance allocate (an instance per lambda: code size; not built).
+
+## Questions for the owner
+
+1. `[THR-8]`, `[CLO-10]` — a value of a written callable type (`fn(A) -> R`: a field, an
+   annotation, a result) hides what it captured, so it is never `Send` and cannot move to a
+   thread. Options: (a) `fn(A) -> R + Send`, the bound form a generic already writes (`F: fn() +
+   Send`), checked where a closure becomes one; (b) leave it (only a closure's own type, or a
+   generic, is `Send`). Recommend (a).
+2. ODR-255 — "a component two systems read must be `Sync`, one a system writes `Send`
+   (`E7004`)": built as `E7004` for not `Send` and `E7005` for not `Sync`, `E7005` being the
+   thread checks' code for `Sync` elsewhere. Is the `E7004` the ruling's for both?
+3. ODR-218 — a component a system `run_parallel` runs adds through its `Commands` must be
+   `Send`; `Commands.add[T]` serves `World.run` too, where any component may be added, so a
+   parallel system's adding one that is not panics before it is queued (tested), rather than a
+   static bound. Options: (a) as built; (b) a `T: Send` bound on `add` everywhere (refuses
+   `World.run` adding a class handle); (c) a parallel system's query hands out a `Commands` type
+   of its own whose `add` requires `Send` (static; a second type in the API). Recommend (c) if the
+   static check is wanted, else (a).
+4. D-881 — options (a)/(b)/(c) above; recommend (a).
