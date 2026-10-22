@@ -2550,6 +2550,44 @@ fn safety_costs_json(
         .filter(|loaded| loaded.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some()))
         .map(|loaded| loaded.module.span.file)
         .collect();
+    // `[FFI-24c]` (ODR-220) — the bodies a `@noalloc` function reaches, and those the main thread
+    // runs (what `main` and an export contracted `threads=main` reach), by direct calls; each with
+    // the function its path starts at. A thread's or a job's function is reached through the
+    // runtime, not a direct call, so it is on no such path.
+    let index: std::collections::HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
+    let reach = |roots: Vec<usize>| -> std::collections::HashMap<usize, usize> {
+        let mut found: std::collections::HashMap<usize, usize> = roots.iter().map(|&root| (root, root)).collect();
+        let mut work = roots;
+        while let Some(at) = work.pop() {
+            let root = found[&at];
+            for block in &bodies[at].blocks {
+                if let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } = &block.terminator
+                    && let Some(&callee) = index.get(symbol.as_str())
+                    && !found.contains_key(&callee)
+                {
+                    found.insert(callee, root);
+                    work.push(callee);
+                }
+            }
+        }
+        found
+    };
+    let noalloc = reach((0..bodies.len()).filter(|&at| bodies[at].contracts.forbidden.contains(ember_hir::Effects::ALLOC)).collect());
+    let main_thread = reach((0..bodies.len()).filter(|&at| {
+        bodies[at].symbol == ember_branding::entry_symbol()
+            || bodies[at].name == "main"
+            || bodies[at].export_thread_policy == ember_mir::ExportThreadPolicy::Main
+    }).collect());
+    let paths = |at: usize| -> String {
+        let mut out = String::new();
+        if let Some(&root) = noalloc.get(&at) {
+            out.push_str(&format!("; on a `@noalloc` path, from `{}`", bodies[root].name));
+        }
+        if let Some(&root) = main_thread.get(&at) {
+            out.push_str(&format!("; on the main thread's path, from `{}`", bodies[root].name));
+        }
+        out
+    };
     let mut costs: Vec<serde_json::Value> = Vec::new();
     let mut add = |row: &str, class: &str, span: ember_span::Span, function: &str, detail: String| {
         costs.push(serde_json::json!({
@@ -2571,7 +2609,9 @@ fn safety_costs_json(
                 && let Some(callee) = by_symbol.get(symbol.as_str())
                 && let Some(mode) = cpp_call_mode(callee, &by_symbol, &cpp_files)
             {
-                add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, a C++ call through its thunk: {mode} [FFI-24c]", callee.name));
+                // ODR-220 — a catching call on a `@noalloc` or main-thread path says so.
+                let on = if mode == "catching" { paths(index) } else { String::new() };
+                add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, a C++ call through its thunk: {mode}{on} [FFI-24c]", callee.name));
                 continue;
             }
             match func {

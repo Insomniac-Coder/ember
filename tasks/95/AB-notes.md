@@ -159,3 +159,16 @@ Tests: `tests/conformance/FFI-1/accept_a_declaration_states_its_effects.em`,
 `tcb_lists_every_foreign_fact_with_its_source_and_grade` (the thread rule lines).
 `FFI-49/reject_unimplemented_ffi_contract.em` took `threads(main)` as its example of a word not
 built; now `handle` on a function is.
+
+## AB4. `[FFI-24c]` (ODR-220, the owner's answer) — catching C++ calls on `@noalloc` and main-thread paths
+
+**Done** (`FFI-24c`'s unfinished entry is gone). `ember inspect --cost`'s row of each catching C++
+call says when it is on a `@noalloc` path or on the main thread's, and where the path starts:
+`catching; on a \`@noalloc\` path, from \`steady\`; on the main thread's path, from \`main\``. A
+`@noalloc` path is what a function contracted `@noalloc` reaches by direct calls (a catching call
+compiles there only under `@assume_noalloc`); the main thread's is what `main` and an export
+contracted `threads=main` reach. A spawned thread's or a job's function is reached through the
+runtime, so it is on neither. `ember bind --report` reads a header and lists none (as ODR-220
+says; nothing to change there). Test: milestone
+`inspect_marks_catching_cpp_calls_on_noalloc_and_main_thread_paths`. Compiler change:
+`safety_costs_json` (`ember_driver/src/main.rs`).

@@ -7910,6 +7910,48 @@ struct Meter { int level; int read() const noexcept { return level; } };
     }
 }
 
+/// `[FFI-24c]` (ODR-220) — `ember inspect --cost` lists the catching C++ calls on a `@noalloc` path
+/// or on the main thread's: each catching call's row says which, and from where the path starts
+/// (a `@noalloc` function, `main`). A call a spawned thread makes is on neither; a call that does
+/// not catch is not marked.
+#[test]
+fn inspect_marks_catching_cpp_calls_on_noalloc_and_main_thread_paths() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-cpp-paths");
+    std::fs::write(dir.join("paths.hpp"), "\
+#pragma once
+#include <stdexcept>
+inline int checked(int x) { if (x < 0) throw std::runtime_error(\"negative\"); return x; }
+inline int quiet(int x) noexcept { return x + 1; }
+").unwrap();
+    let source = dir.join(format!("paths.{SOURCE_EXT}"));
+    std::fs::write(&source, "import std.thread\nimport cpp \"paths.hpp\"\n\n\
+@noalloc\nfn steady(x: int) -> int:\n    unsafe:  # SAFETY: the throw path is taken only for a negative `x`, which `steady` never gets\n        \
+match @assume_noalloc(cpp.checked(x as c_int)):\n            Ok(value):\n                return value as int\n            Err(_):\n                return 0\n\n\
+fn shown(x: c_int) -> c_int:\n    unsafe:  # SAFETY(ffi): a scalar call\n        match cpp.checked(x):\n            Ok(value):\n                return value\n            Err(_):\n                return 0\n\n\
+fn elsewhere() -> c_int:\n    unsafe:  # SAFETY(ffi): a scalar call\n        match cpp.checked(7):\n            Ok(value):\n                return value\n            Err(_):\n                return 0\n\n\
+fn main():\n    println(steady(2), shown(3))\n    unsafe:  # SAFETY(ffi): a scalar call\n        println(cpp.quiet(1))\n    \
+worker = thread.spawn(owned fn() => elsewhere())\n    println(worker.join())\n").unwrap();
+    let source_text = std::fs::read_to_string(&source).unwrap().replace("import std.thread\n", "import std.thread\nfrom std.ffi import c_int\n");
+    std::fs::write(&source, source_text).unwrap();
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}\n{}", build.stdout, build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("paths.safety.json").to_string_lossy().into_owned();
+    let report = ember(&["inspect", &table, "--cost"], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    let rows: Vec<&str> = report.stdout.lines().filter(|line| line.contains("a C++ call through its thunk")).collect();
+    let row = |function: &str, callee: &str| rows.iter().find(|line| line.contains(&format!(".{callee}`")) && line.contains(&format!("  {function}  "))).copied().unwrap_or_else(|| panic!("no row for `{callee}` in `{function}`:\n{}", report.stdout));
+    let steady = row("steady", "checked");
+    assert!(steady.contains("catching; on a `@noalloc` path, from `steady`; on the main thread's path, from `main`"), "{steady}");
+    let shown = row("shown", "checked");
+    assert!(shown.contains("catching; on the main thread's path, from `main`") && !shown.contains("@noalloc"), "{shown}");
+    let elsewhere = row("elsewhere", "checked");
+    assert!(elsewhere.contains("catching [FFI-24c]"), "{elsewhere}");
+    let quiet = row("main", "quiet");
+    assert!(quiet.contains("noexcept (derived) [FFI-24c]"), "{quiet}");
+}
+
 /// `[FFI-24d]` — a header that adds or removes `noexcept` changes the Ember signature: the errors in
 /// dependent code name the header, the declaration and the change as the cause (on every build
 /// until the header changes it back), and `ember bind --report` lists it under API changes
