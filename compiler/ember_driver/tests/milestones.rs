@@ -8077,6 +8077,98 @@ pub fn twice(x: i32) -> i32:
     ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++20").expect("the C++ header compiles");
 }
 
+/// `[BLD-FFI-5a]` (ODR-162) — an export may hand C++ an object of a `@sync` class: the C header
+/// gives the class's handle its count, its end and each `pub` method, and the `--cpp` header a
+/// class of the same name whose copies share the object (retain) and whose last end frees it
+/// (release), with the class's `pub` methods; an export taking or giving one takes or gives the
+/// C++ class. It compiles as C++.
+#[test]
+fn the_cpp_header_gives_a_sync_class_a_shared_handle() {
+    let root = workspace_root();
+    let dir = temporary_directory("cpp-class-header");
+    std::fs::write(dir.join(MANIFEST), "[package]
+name = \"worlds\"
+kind = \"lib\"
+").unwrap();
+    let source = dir.join(format!("lib.{SOURCE_EXT}"));
+    std::fs::write(&source, "from std.sync import Atomic, MemoryOrder
+
+@sync
+pub class World:
+    people: Atomic[i32] = Atomic(0)
+    seed: i32 = 0
+
+    fn init(self, seed: i32):
+        self.seed = seed
+
+    pub fn population(self) -> i32:
+        return self.people.load(MemoryOrder.Acquire)
+
+    pub fn grow(self, by: i32) -> i32:
+        return self.people.fetch_add(by, MemoryOrder.AcqRel) + by
+
+    pub fn named(self, name: str) -> usize:
+        return name.len()
+
+    pub fn label(self) -> String:
+        return \"world\"
+
+@export(\"make_world\")
+pub fn make_world(seed: i32) -> World:
+    return World(seed)
+
+@export(\"population_of\")
+pub fn population_of(world: World) -> i32:
+    return world.population()
+").unwrap();
+    let out = dir.join("out");
+    let built = ember(&["build", &source.to_string_lossy(), "--emit", "header", "--cpp", "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    let lib = out.join("debug").join("lib");
+    let c_header = std::fs::read_to_string(lib.join("worlds.h")).expect("the C header");
+    for declared in [
+        "World* make_world(int32_t _1);",
+        "int32_t population_of(World* _1);",
+        "void worlds_World_retain(World* self);",
+        "void worlds_World_release(World* self);",
+        "int32_t worlds_World_grow(World* self, int32_t by);",
+        "size_t worlds_World_named(World* self, const uint8_t* name, size_t name_len);",
+        "/* not for C: `World.label`: it returns a `String`, which C has no form of */",
+    ] {
+        assert!(c_header.contains(declared), "no `{declared}`:
+{c_header}");
+    }
+    let header = std::fs::read_to_string(lib.join("worlds.hpp")).expect("the C++ header");
+    for declared in [
+        "class World {",
+        "World(const World& other) noexcept : handle_(other.handle_) { if (handle_) ::worlds_World_retain(handle_); }",
+        "~World() { if (handle_) ::worlds_World_release(handle_); }",
+        "inline int32_t World::population() const { return ::worlds_World_population(handle_); }",
+        "inline size_t World::named(std::string_view name) const { return ::worlds_World_named(handle_, reinterpret_cast<const uint8_t*>(name.data()), name.size()); }",
+        "inline World make_world(int32_t seed) { return World(::make_world(seed)); }",
+        "inline int32_t population_of(const World& world) { return ::population_of(world.get()); }",
+    ] {
+        assert!(header.contains(declared), "no `{declared}`:
+{header}");
+    }
+    // A C++ program includes it, copies a handle and calls the methods.
+    let user = dir.join("user.cpp");
+    std::fs::write(&user, "#include \"worlds.hpp\"
+int use() {
+    worlds::World world = worlds::make_world(3);
+    worlds::World copy = world;
+    copy.grow(2);
+            world = copy;
+    return world.population() + static_cast<int>(copy.named(\"abc\")) + worlds::population_of(copy);
+}
+").unwrap();
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    let include = if matches!(toolchain, Toolchain::Msvc { .. }) { format!("/I{}", lib.display()) } else { format!("-I{}", lib.display()) };
+    let object = dir.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "user.obj" } else { "user.o" });
+    ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++17").expect("the C++ header compiles");
+}
+
 /// `[FFI-17f]` — an operation of a C++ bridge type and a bridge value's end are each a call of a
 /// C++ thunk, never inlined: `ember inspect --cost` lists each one as an FFI call.
 #[test]

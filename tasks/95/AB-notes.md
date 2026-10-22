@@ -459,3 +459,36 @@ platforms, re-recorded). Test: `FFI-42/accept_operators_of_a_template_instantiat
    iterating cannot invalidate (never, in general: no); (b) let `Iterable.iter` take the receiver
    mode the implementation declares (a language change); (c) leave `for` finding `iter()` by name
    (as now). Recommendation: (c) until std declares `Iterable`, then (b).
+
+## AB11. `[BLD-FFI-5a]`, `[FFI-31b]` (ODR-162) — a `@sync` class's object handed to C and C++
+
+**Done** (the `BLD-FFI-5a` entry is removed). An `@export` (or `pub extern "C"`) function's
+parameter or result may be an object of a `@sync` class: it crosses as the object's address with
+one strong count (a result gives C its count; a parameter is borrowed). Any other class is `E5015`,
+"the exported result is a `World`, whose class is not `@sync`", help "mark `World` `@sync` to hand
+it to C++" (the rest of `[FFI-31b]` is unchanged). Typeck records each such class and, transitively,
+each `@sync` class its `pub` methods hand on (`class_exports`), with its `pub` `self` methods and
+its bases' (not `init`/`drop`, not generic), by C symbol, in `TypeTable::class_exports`.
+
+The library defines, per class (`codegen_c::class_exports`): `<package>_<Class>_retain` and
+`_release` (`ember_obj_retain`/`ember_obj_release`, atomic for a `@sync` object; the last release
+frees it) and `<package>_<Class>_<method>` for each method whose parameters and result C has a form
+of — a scalar, a raw pointer, `cstr`, an `extern fn`, a C-laid-out value with nothing to drop
+(by value or borrowed by address), another such class's handle, and `str`/`Span`/`MutSpan` as an
+address and a length; a result a value or a handle (a view or an owning value is not, and the C
+header says so in a comment). Each attaches the thread to the runtime first, as an export does, and
+calls the method through the object's method table when it is virtual. The C header declares the
+class as its object's incomplete struct under its name (`typedef struct em_obj_5World World;`, so
+the exports' prototypes read `World*`), and the functions. The `--cpp` header gives each class a
+C++ class of its name in the package's namespace: constructed from a handle it adopts, copy-
+constructible and assignable (retain), movable, its destructor releasing; `get()`; and each method
+(`std::string_view`/`std::span` for a view); an export taking or giving the object takes `const
+World&` or gives `World`. Tests: `BLD-FFI-5a/accept_a_sync_class_object_crosses_an_export.em` (the
+program calls its exports; the C has the definitions; gcc in WSL compiles it),
+`reject_an_object_of_a_class_that_is_not_sync.em`, and the milestone
+`the_cpp_header_gives_a_sync_class_a_shared_handle` (both headers' text; a C++ file using the class
+compiles). A library cannot be linked yet (`kind = "lib"` builds only `--emit header`), so no C++
+program runs one.
+
+Also: an export taking a `VaList` or a `c_longdouble` now gets a header (the runtime header's
+`ember_va_list`; C's `long double`); it was "no supported public C declaration".

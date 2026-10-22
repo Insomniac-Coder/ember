@@ -581,6 +581,14 @@ pub fn check(
         }
         checker.types.add_export_table(table);
     }
+    // `[BLD-FFI-5a]` (ODR-162) — each `@sync` class an export hands to C and C++, with its `pub`
+    // methods by their C symbols.
+    for (class, methods) in checker.class_exports() {
+        let methods = methods.iter()
+            .filter_map(|(name, def)| functions.iter().find(|function| function.def == *def).map(|function| (name.to_string(), function.symbol.clone())))
+            .collect();
+        checker.types.add_class_export(ember_types::ClassExport { class, methods });
+    }
     // `[FFI-30]` (D-744) — each declaration of one C function binds it under a C name of its own,
     // so the C compiler compares none of them: every declaration, and the program's own definition
     // of it, must pass and return what the others do.
@@ -2372,6 +2380,8 @@ struct Checker<'a> {
     foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
     /// Each foreign function's C symbol (`@ffi(link_name=…)` or its name).
     foreign_symbols: HashMap<DefId, Symbol>,
+    /// `[BLD-FFI-5a]` (ODR-162) — the `@sync` classes the exports' signatures hand to C and C++.
+    exported_classes: Vec<ClassId>,
     /// `[FFI-8]` — the variadic C functions (`@ffi(variadic)`).
     foreign_variadic: HashSet<DefId>,
     /// `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — what an opaque foreign type's declaration says of
@@ -3199,6 +3209,7 @@ impl<'a> Checker<'a> {
             foreign_unknown_facts: HashMap::new(),
             foreign_symbols: HashMap::new(),
             foreign_variadic: HashSet::new(),
+            exported_classes: Vec::new(),
             foreign_type_contracts: HashMap::new(),
             signatures: Vec::new(),
             methods: HashMap::new(),
@@ -20065,6 +20076,69 @@ impl<'a> Checker<'a> {
 
     /// `[FFI-31b]` — ownership remains forbidden even behind raw pointers in
     /// an exported C signature. Track visited types through recursive records.
+    /// `[BLD-FFI-5a]` (ODR-162) — whether `ty` is a class handle in an exported signature, which
+    /// crosses by its handle when the class is `@sync` (its counts are atomic, so C++ may copy it on
+    /// any thread) and is refused otherwise, saying what lets it cross.
+    fn exported_class(&mut self, ty: Ty, span: Span, what: &str) -> bool {
+        let TyKind::Class(class) = *self.types.kind(ty) else { return false };
+        if self.types.class_def(class).is_sync {
+            if !self.exported_classes.contains(&class) {
+                self.exported_classes.push(class);
+            }
+        } else {
+            let shown = self.types.display(ty);
+            self.sink.emit(
+                Diagnostic::error(codes::E5015, span, format!("{what} is a `{shown}`, whose class is not `@sync`"))
+                    .help(format!("mark `{shown}` `@sync` to hand it to C++"))
+                    .note("an object crosses to C++ by its handle, which C++ may copy on any thread: only a `@sync` class's counts are atomic [BLD-FFI-5a], [FFI-31b]"),
+            );
+        }
+        true
+    }
+
+    /// `[BLD-FFI-5a]` (ODR-162) — the `@sync` classes the exports hand to C and C++, and those
+    /// their methods hand on, each with its `pub` methods (a `self` method of it or of a base, by
+    /// name; `init` and `drop` are not C++'s to call), the most derived of a name first.
+    fn class_exports(&self) -> Vec<(ClassId, Vec<(Symbol, DefId)>)> {
+        let mut out: Vec<(ClassId, Vec<(Symbol, DefId)>)> = Vec::new();
+        let mut queue: Vec<ClassId> = self.exported_classes.iter().rev().copied().collect();
+        while let Some(class) = queue.pop() {
+            if out.iter().any(|(done, _)| *done == class) {
+                continue;
+            }
+            let mut methods: Vec<(Symbol, DefId)> = Vec::new();
+            let mut current = Some(class);
+            while let Some(owner) = current {
+                let mut found: Vec<(Symbol, DefId)> = self.methods.iter()
+                    .filter(|((ty, _), entry)| matches!(self.types.kind(*ty), TyKind::Class(of) if *of == owner) && entry.from_interface.is_none() && entry.receiver == Mode::Borrow)
+                    .map(|((_, name), entry)| (*name, entry.def))
+                    .collect();
+                found.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+                for (name, def) in found {
+                    if matches!(name.as_str(), "init" | "drop") || methods.iter().any(|(taken, _)| *taken == name) {
+                        continue;
+                    }
+                    if !matches!(self.method_vis.get(&def), Some((ast::VisKind::Public, _))) || !self.signatures[def.0 as usize].generics.is_empty() {
+                        continue;
+                    }
+                    let signature = &self.signatures[def.0 as usize];
+                    for ty in signature.params.iter().map(|(_, ty, _, _)| *ty).chain([signature.ret]) {
+                        if let TyKind::Class(other) = *self.types.kind(ty)
+                            && self.types.class_def(other).is_sync
+                            && !out.iter().any(|(done, _)| *done == other)
+                        {
+                            queue.push(other);
+                        }
+                    }
+                    methods.push((name, def));
+                }
+                current = self.types.class_def(owner).base;
+            }
+            out.push((class, methods));
+        }
+        out
+    }
+
     fn exported_owner_reachable(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         if !seen.insert(ty) {
             return false;
@@ -20336,6 +20410,9 @@ impl<'a> Checker<'a> {
             if callback_params.contains(&name) {
                 continue;
             }
+            if !decl.is_foreign_decl && self.exported_class(ty, span, &format!("exported parameter `{name}`")) {
+                continue;
+            }
             if !decl.is_foreign_decl && self.exported_owner_reachable(ty, &mut HashSet::new()) {
                 self.error(codes::E5015, span,
                     format!("exported parameter `{name}` reaches an owning Ember value"));
@@ -20372,13 +20449,14 @@ impl<'a> Checker<'a> {
                 check(self, ty, span, format!("`{name}` is this parameter"));
             }
         }
-        let owning_result = !decl.is_foreign_decl
+        let class_result = !decl.is_foreign_decl && self.exported_class(ret, decl.name.span, "the exported result");
+        let owning_result = !class_result && !decl.is_foreign_decl
             && self.exported_owner_reachable(ret, &mut HashSet::new());
         if owning_result {
             self.error(codes::E5015, decl.name.span,
                 "exported result reaches an owning Ember value");
         }
-        if ret != self.common.void && !owning_result && !carries_box(self, ret) {
+        if ret != self.common.void && !class_result && !owning_result && !carries_box(self, ret) {
             if decl.is_foreign_decl && decl.is_safe
                 && matches!(result_contract, Some(FfiResultContract::SharedCountStatic { .. }
                     | FfiResultContract::SharedCountFrom { .. }

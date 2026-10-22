@@ -572,10 +572,19 @@ pub struct TypeTable {
     class_reflections: HashMap<ClassId, (Symbol, Ty)>,
     /// `[FFI-26]` — each `@export_table` of the program.
     export_tables: Vec<ExportTable>,
+    class_exports: Vec<ClassExport>,
     /// `[MNG-1]` — each generic instance's name (`Pair_i64`, `Option_i32`, an interface's
     /// `FromIterator_char`), with the generic it instantiates and its arguments: what its symbol is
     /// made from, never its name.
     instance_origins: HashMap<Symbol, (Symbol, Vec<Ty>)>,
+}
+
+/// `[BLD-FFI-5a]` (ODR-162) — a `@sync` class whose objects an export hands to C and C++: the class,
+/// and each `pub` method of it and of its bases (by name and C symbol), which C++ code calls.
+#[derive(Clone, Debug)]
+pub struct ClassExport {
+    pub class: ClassId,
+    pub methods: Vec<(String, String)>,
 }
 
 /// `[FFI-26]` — an `@export_table("Name", protocol=N)`: the struct exported as a constant table of
@@ -704,6 +713,15 @@ impl TypeTable {
         &self.export_tables
     }
 
+    /// `[BLD-FFI-5a]` — a `@sync` class an export hands to C and C++.
+    pub fn add_class_export(&mut self, export: ClassExport) {
+        self.class_exports.push(export);
+    }
+
+    pub fn class_exports(&self) -> &[ClassExport] {
+        &self.class_exports
+    }
+
     pub fn new() -> (TypeTable, CommonTypes) {
         let mut table = TypeTable {
             kinds: Vec::new(),
@@ -728,6 +746,7 @@ impl TypeTable {
             folded_statics: Vec::new(),
             class_reflections: HashMap::new(),
             export_tables: Vec::new(),
+            class_exports: Vec::new(),
             instance_origins: HashMap::new(),
             pointer_size: 8,
         };

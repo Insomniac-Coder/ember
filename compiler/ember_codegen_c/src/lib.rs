@@ -25,6 +25,7 @@ use ember_span::{SourceMap, Symbol};
 use ember_types::{ClassId, EnumId, FloatTy, FnParam, FnParamMode, FpMode, IntTy, LayoutAttrs, Niche, StructId, Ty, TyKind, TypeTable, UintTy};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod class_exports;
 mod frames;
 mod header;
 mod integer_reduction;
@@ -545,6 +546,10 @@ fn emit_with(
     }
     write(&mut emitter);
     check_split_views(&emitter.split_views, &emitter.out);
+    // `[BLD-FFI-5a]` — what C and C++ call of the `@sync` classes the exports hand them.
+    let class_plans = class_exports::plan(&emitter, bodies, package_name);
+    let class_definitions = class_exports::definitions(&emitter, &class_plans);
+    emitter.out.push_str(&class_definitions);
     let header_source = header::render(&emitter, bodies, package_name);
     let visualisers = visualisers::render(&emitter);
     let mut direct_calls = emitter.direct_calls.take();
