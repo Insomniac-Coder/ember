@@ -15,6 +15,10 @@ use ember_span::{Span, Symbol};
 mod const_norm;
 pub use const_norm::{ConstAtom, ConstError, ConstNorm, ConstOp};
 
+/// `[JOB-5]` — the name of the hidden local a `jobs.local_arena()` view is anchored at, which no
+/// program can write (a `·` begins no identifier).
+pub const JOB_ARENA_ANCHOR: &str = "\u{b7}job_arena";
+
 /// An interned type. Equality is identity.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ty(u32);

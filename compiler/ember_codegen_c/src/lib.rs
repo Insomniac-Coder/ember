@@ -9325,6 +9325,13 @@ impl Emitter<'_> {
                             rendered[0], rendered[0], rendered[0]
                         );
                     }
+                    // `[JOB-5]` — a scope of the running job's arena, anchored at the caller's hidden
+                    // local; the runtime panics outside a job.
+                    Builtin::JobLocalArena { scoped } => {
+                        let scoped = self.c_type(*scoped);
+                        let state = format!("{RT}job_local_arena({})", self.location(span));
+                        return format!("({scoped}){{ ({}), {state}, {RT}arena_mark({state}), 0 }}", rendered[0]);
+                    }
                     Builtin::ScopedArenaAlloc { elem } => {
                         let scoped = self.c_type(self.element_of(*arg_ty));
                         let elem_c = self.c_type(*elem);

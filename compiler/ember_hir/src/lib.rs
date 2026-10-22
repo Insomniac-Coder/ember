@@ -2033,6 +2033,10 @@ pub enum Builtin {
     /// parent. The result type is carried explicitly because the same builtin
     /// constructs a scope from both `Arena` and `ScopedArena` parents.
     ArenaScope { scoped: Ty },
+    /// `[JOB-5]` — `jobs.local_arena()`: a scope of the running job's arena, which the job system
+    /// rewinds when the job ends. Its argument is a mutable reference to a hidden local of the
+    /// calling function, the view's anchor, so nothing allocated from it outlives that call.
+    JobLocalArena { scoped: Ty },
     /// `[ARN-1]`, `[ARN-6]` — allocate through a scope. Its element type is
     /// explicit for the same reason as the other arena allocation builtins.
     ScopedArenaAlloc { elem: Ty },
@@ -2277,6 +2281,7 @@ impl Builtin {
             Builtin::ArenaReset => "reset",
             Builtin::FixedArenaReset => "reset",
             Builtin::ArenaScope { .. } => "scope",
+            Builtin::JobLocalArena { .. } => "local_arena",
             Builtin::ArenaArrayWithCapacity { .. } => "with_capacity",
             Builtin::ArenaArrayGet { mutable, .. } => {
                 if mutable { "get_mut" } else { "get" }

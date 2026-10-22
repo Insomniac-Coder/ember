@@ -131,6 +131,15 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
     `ember_driver/tests/package.rs`, `a_binary_package_replaces_the_global_allocator` (a counting
     allocator over C's `malloc`: 50 strings, at least 50 blocks through it; the four refusals).
     `phase-status.json`: `ALC-3` removed.
+* **`[JOB-5]`** — `jobs.local_arena() -> ScopedArena`: a scope of the running job's arena, one
+  per thread (made on first use, `ember_job_local_arena`), which `job_run` rewinds to where it
+  stood when the job began (a thread that helps while waiting runs nested jobs, each rewinding its
+  own). The view is anchored at a hidden local of the calling function (declared where its body
+  begins), so the region rules keep it and its allocations inside that call: returning one is
+  `E3060` ("the job's arena view does not live long enough") with `E3061`, keeping one in a
+  captured variable `E3063`; outside a job it panics. Effects `Alloc` and `Panic`.
+  `JOB-5/accept_a_jobs_local_arena.em` (three profiles: four jobs, a helper taking a second view),
+  `JOB-5/reject_an_allocation_escaping_the_call.em`, `JOB-5/run_fail_a_local_arena_outside_a_job.em`.
 
 ## Added to the job by the coordinator (owner answers, binding)
 
@@ -191,6 +200,11 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `ember_driver`: `inject_global_allocator`, the `[build]` key. `ember_branding`:
   `global_allocator_glue`. `ember_codegen_c`: `cfg.alloc`/`cfg.free` in the entry point.
 * `W2192` moved to the `Types` range, as the lead asked (`numbers_fall_in_their_subsystem_range`).
+* `[JOB-5]`: `ember_hir::Builtin::JobLocalArena`; `ember_typeck` `synth_jobs_local_arena`,
+  `arena_anchors`/`declare_arena_anchors` (functions and lambdas); `ember_types::JOB_ARENA_ANCHOR`
+  (the anchor's name, which diagnostics show as the call); `ember_analysis` (the builtin borrows its
+  argument, as `ArenaScope`; `E3060`'s wording for the anchor; `stores.rs` names it); runtime
+  `ember_job_local_arena` and the rewind in `job_run`; std `jobs.local_arena`.
 
 ## Defects found
 

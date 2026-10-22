@@ -2548,6 +2548,9 @@ struct Checker<'a> {
     /// The declaring module's visibility for each canonical item. This is the
     /// resolver's visibility fact, reused when enumerating qualified N1 names.
     item_visibility: HashMap<Symbol, ast::VisKind>,
+    /// `[JOB-5]` — the hidden locals `jobs.local_arena()` anchored its views at in the body being
+    /// checked, declared where it begins (`declare_arena_anchors`).
+    arena_anchors: Vec<LocalId>,
     /// `[ALC-2]` (ODR-175) — the interfaces declared `unsafe interface`.
     unsafe_interfaces: HashSet<Symbol>,
     /// `[VER-3]` (ODR-174) — each `@deprecated` item by its qualified name, each `@deprecated`
@@ -3229,6 +3232,7 @@ impl<'a> Checker<'a> {
             const_initializer: false,
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
+            arena_anchors: Vec::new(),
             unsafe_interfaces: HashSet::new(),
             deprecated_items: HashMap::new(),
             deprecated_members: HashMap::new(),
@@ -15792,6 +15796,9 @@ impl<'a> Checker<'a> {
         }
         if self.resolve_name(name).is("std.jobs.wait") {
             return Some(self.synth_jobs_wait(args, span));
+        }
+        if self.resolve_name(name).is("std.jobs.local_arena") {
+            return Some(self.synth_jobs_local_arena(args, span));
         }
         // `[HR-33]` — `std.hot.checkpoint()`, the runtime's poll from inside the program.
         if self.resolve_name(name).is("std.hot.checkpoint") {
@@ -45050,6 +45057,7 @@ impl<'a> Checker<'a> {
             std::mem::take(&mut self.callable_value_bindings);
         let outer_ret = self.ret_ty;
         let outer_watch = self.captures.replace(watch);
+        let outer_anchors = std::mem::take(&mut self.arena_anchors);
         self.ret_ty = ret.unwrap_or(self.common.void);
         // A lambda's `return` leaves the lambda, not a class `init` around it;
         // capturing `self` already needed every field (`[CLS-2]`).
@@ -45120,6 +45128,10 @@ impl<'a> Checker<'a> {
             }
         };
 
+        // `[JOB-5]` — the anchors an expression body's `jobs.local_arena()` declared.
+        let mut body = body;
+        self.declare_arena_anchors(&mut body);
+        self.arena_anchors = outer_anchors;
         let mut written = HashSet::new();
         written_in_block(&body, &mut written);
         let keys: Vec<(Span, Option<Symbol>)> = written.into_iter().map(|local| self.known_key(local)).collect();
@@ -48888,6 +48900,38 @@ impl<'a> Checker<'a> {
     /// borrows mutably or captures `Send` (`E7004`); its borrows flow into the scope and last
     /// until the block ends. `deps` orders the job after others of the scope; the borrow rules
     /// treat every job of the scope as running at once all the same.
+    /// `[JOB-5]` — `jobs.local_arena()`: a `ScopedArena` of the running job's arena, anchored at a
+    /// hidden local of the calling function (`arena_anchors`, declared where its body begins), so
+    /// the view and what is allocated from it cannot outlive that call.
+    fn synth_jobs_local_arena(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        if !args.is_empty() {
+            self.error(codes::E2020, span, "`jobs.local_arena` takes no arguments");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let u8_ty = self.common.u8;
+        let name = Symbol::intern(ember_types::JOB_ARENA_ANCHOR);
+        let anchor = self.declare(Some(name), u8_ty, span);
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.remove(&name);
+        }
+        self.arena_anchors.push(anchor);
+        let place = Expr { ty: u8_ty, kind: ExprKind::Local(anchor), span };
+        let reference = self.types.intern(TyKind::Ref { mutable: true, inner: u8_ty });
+        let anchor_ref = Expr { ty: reference, kind: ExprKind::Ref { place: Box::new(place), mutable: true }, span };
+        let scoped = self.scoped_arena_ty();
+        Expr { ty: scoped, kind: ExprKind::Builtin { which: Builtin::JobLocalArena { scoped }, args: vec![anchor_ref] }, span }
+    }
+
+    /// `[JOB-5]` — the anchors `jobs.local_arena()` declared in a body, each set where it begins.
+    fn declare_arena_anchors(&mut self, body: &mut Block) {
+        let anchors = std::mem::take(&mut self.arena_anchors);
+        let u8_ty = self.common.u8;
+        for anchor in anchors.into_iter().rev() {
+            let span = body.span;
+            body.stmts.insert(0, Stmt::Let { local: anchor, init: Some(Expr { ty: u8_ty, kind: ExprKind::Int(0), span }) });
+        }
+    }
+
     fn synth_job_scope_submit(&mut self, receiver: Expr, after: bool, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let wanted = if after { 2 } else { 1 };
@@ -53824,6 +53868,7 @@ impl<'a> Checker<'a> {
     }
 
     fn complete_function_end(&mut self, mut body: Block, name: Span) -> Block {
+        self.declare_arena_anchors(&mut body);
         let ret = self.ret_ty;
         if ret == self.common.void
             || ret == self.common.error

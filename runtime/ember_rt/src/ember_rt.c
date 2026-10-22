@@ -1910,11 +1910,31 @@ static uint32_t job_take_ready(void) {
     return index;
 }
 
+/* [JOB-5] Each thread's job arena, made the first time a job on it asks, and how many jobs are
+ * running on it (a thread that waits for a job runs others meanwhile, `job_help`): a job's
+ * allocations from it are rewound when that job ends. */
+static EMBER_RT_THREAD_LOCAL void* t_job_arena;
+static EMBER_RT_THREAD_LOCAL uint32_t t_job_depth;
+
+void* ember_job_local_arena(ember_loc at) {
+    if (t_job_depth == 0) {
+        static const char message[] = "`jobs.local_arena()` is called outside a job: the arena is the running job's [JOB-5]";
+        ember_panic(message, sizeof message - 1, at);
+    }
+    if (t_job_arena == NULL) {
+        t_job_arena = ember_arena_new(4096);
+    }
+    return t_job_arena;
+}
+
 /* Runs the job in `index` (taken off the queue), then ends it: its state is dropped and freed, its
  * generation moves on, its scope counts it out, and the jobs waiting on it may start. */
 static void job_run(uint32_t index) {
     job_slot* slot = &g_job_slots[index];
     void* state = job_state(slot);
+    /* [JOB-5] What the job allocates from its arena goes when it ends. */
+    void* arena_mark = t_job_arena != NULL ? ember_arena_mark(t_job_arena) : NULL;
+    t_job_depth += 1;
 #if defined(EMBER_RELOAD)
     /* [HR-42] A job is Ember code, on a worker or on a thread that helps while it waits. */
     ember_reload_enter();
@@ -1922,6 +1942,14 @@ static void job_run(uint32_t index) {
     slot->run(state);
     if (slot->drop != NULL) {
         slot->drop(state);
+    }
+    t_job_depth -= 1;
+    if (t_job_arena != NULL) {
+        if (arena_mark != NULL) {
+            ember_arena_rewind(t_job_arena, arena_mark);
+        } else {
+            ember_arena_reset(t_job_arena);
+        }
     }
 #if defined(EMBER_RELOAD)
     ember_reload_leave();

@@ -2568,6 +2568,7 @@ fn legacy_elision(func: &FuncRef, signatures: &HashMap<String, Elision>) -> Elis
                 | Builtin::FixedArenaAlloc { .. }
                 | Builtin::ScopedArenaAlloc { .. }
                 | Builtin::ArenaScope { .. }
+                | Builtin::JobLocalArena { .. }
                 | Builtin::SpanSplitAt { .. }
                 | Builtin::Slice { .. }
                 | Builtin::StrSplitOnce { .. }
@@ -3811,6 +3812,16 @@ fn check_escapes(
                 .secondary(root.span, origin_label)
                 .help(help)
                 .note(note),
+            );
+        } else if root.name.as_deref() == Some(ember_types::JOB_ARENA_ANCHOR) {
+            // `[JOB-5]` — the anchor of a `jobs.local_arena()` view: what is allocated from it
+            // goes when the job ends, so nothing of it outlives the call that asked.
+            sink.emit_classified(
+                Diagnostic::error(codes::E3060, span, "the job's arena view does not live long enough")
+                    .primary_label("this outlives the call that took the job's arena")
+                    .secondary(loan.span, "`jobs.local_arena()` is taken here")
+                    .help("copy the value out of the arena, or allocate it from an arena the caller owns")
+                    .note("what a job allocates from its local arena goes when the job ends [JOB-5]"),
             );
         } else {
             sink.emit_classified(

@@ -1979,6 +1979,9 @@ void ember_arena_reset(void* arena);
 void ember_arena_free(void* arena);
 void* ember_arena_mark(void* arena);
 void ember_arena_rewind(void* arena, void* mark);
+/* [JOB-5] `jobs.local_arena()`: the running job's arena (one per thread, made on first use), which
+ * the job system rewinds when the job ends; outside a job it panics, naming `at`. */
+void* ember_job_local_arena(ember_loc at);
 void* ember_fixed_arena_alloc_copy(
     void* buffer,
     size_t capacity,

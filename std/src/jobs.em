@@ -35,6 +35,12 @@ pub struct JobScope:
 pub fn scope() -> JobScope:
     panic("`jobs.scope` is the compiler's")
 
+## `[JOB-5]` — an arena view for the running job: what it allocates goes when the job ends, and the
+## region rules keep it inside the call that asked (it borrows a hidden local of that call). It
+## panics outside a job.
+pub fn local_arena() -> ScopedArena:
+    panic("`jobs.local_arena` is the compiler's")
+
 ## A job submitted to a scope: what `submit_after` waits on.
 @derive(Copy)
 @view
