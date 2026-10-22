@@ -270,7 +270,13 @@ fn report_float_mode_refused(sink: &mut Sink, bodies: &[ember_mir::Body], error:
     true
 }
 
+/// `[VERIFY-3]` — every callable-region summary derived again from the MIR and compared with the
+/// one installed: a check of the compiler itself, made in its own debug builds (the `ci` profile
+/// every test runs), as the MIR verifier is (`[IMP-11]`). It costs as much as deriving them.
 fn verify_callable_regions_or_panic(bodies: &[ember_mir::Body], types: &TypeTable) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
     let violations = ember_analysis::verify_callable_regions_all(bodies, types);
     if !violations.is_empty() {
         panic!(
@@ -3667,7 +3673,7 @@ fn load_package_modules(
             }
             loaded.push(ember_typeck::LoadedModule {
                 path: path.clone(),
-                module,
+                module: module.into(),
                 package: if package == usize::MAX { None } else { Some(package) },
                 foreign,
             });
@@ -3775,7 +3781,7 @@ fn load_package_modules(
             })
             .collect();
         for (module_at, import_at, package) in std::mem::take(&mut deferred) {
-            let import = &mut loaded[module_at].module.imports[import_at];
+            let import = &mut std::sync::Arc::make_mut(&mut loaded[module_at].module).imports[import_at];
             let importer = map.file(import.span.file).path.clone();
             let package_dir = packages.list.get(package).map(|found| found.dir.clone());
             let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
@@ -4787,7 +4793,7 @@ fn inject_global_allocator(modules: &mut [ember_typeck::LoadedModule], input: &P
             }
         }
     }
-    modules[index].module.items.extend(parsed.items);
+    std::sync::Arc::make_mut(&mut modules[index].module).items.extend(parsed.items);
 }
 
 fn package_source_root(input: &Path) -> PathBuf {
@@ -5135,26 +5141,33 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `[CORO-4]` — each generator's body, checked, becomes its frame's state
     // machine; what borrow checking read of the stubs is made again.
     mir.pass("the coroutine transform", &mut types, |bodies, types| ember_analysis::coroutines::transform(bodies, types));
+    // The passes below place, hoist and remove the dynamic exclusivity checks, which the program's C
+    // carries: what `ember check` reports of them is only `@static_safe`'s verdict (`[EFF-13]`), so
+    // without a `@static_safe` function a check does none of them (no contract forbids an aliasing
+    // check, `[EFF-16]`).
+    let access_checks = command != "check" || mir.bodies().iter().any(|body| body.static_safe);
     // `[HEAP-5]` — borrow checking has established each mutable loan's exact
     // NLL region. Materialize the matching runtime access interval only after
     // that proof, so dynamic exclusivity follows the loan rather than a scope.
-    mir.pass("inserting shared accesses", &mut types, |bodies, types| ember_analysis::insert_shared_accesses_all(bodies, types));
-    // `[EXC-3]`/`[EXC-3a]` — remove only the access intervals for which the
-    // MIR proof establishes a unique, unescaped class handle. All other
-    // intervals remain explicit runtime checks.
-    mir.pass("eliding static accesses", &mut types, |bodies, types| ember_analysis::elide_static_accesses_all(bodies, types));
-    // `[EXC-8]`–`[EXC-14]` — after static-elision proofs have removed their
-    // intervals, conservatively turn a canonical stable class loop into one
-    // checked preheader/postheader interval. Unknown loops remain per-access.
-    mir.pass("hoisting loop accesses", &mut types, |bodies, types| ember_analysis::hoist_loop_accesses_all(bodies, types));
-    // `[EXC-19]` — a `mut self` call to a quiet function is only checked. After
-    // hoisting, which keeps a loop's repeated writes as one checked interval.
-    mir.pass("converting quiet calls", &mut types, |bodies, types| ember_analysis::convert_quiet_calls_all(bodies, types));
-    // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
-    // the checks that nothing held anywhere in the program could make fail.
-    mir.pass("removing never-firing checks", &mut types, |bodies, types| ember_analysis::remove_never_firing_checks_all(bodies, types));
-    // `[DSJ-5]` — an `assert_disjoint` comparison of views known apart is left out.
-    mir.pass("eliding known-disjoint comparisons", &mut types, |bodies, types| ember_analysis::elide_known_disjoint_comparisons_all(bodies, types));
+    if access_checks {
+        mir.pass("inserting shared accesses", &mut types, |bodies, types| ember_analysis::insert_shared_accesses_all(bodies, types));
+        // `[EXC-3]`/`[EXC-3a]` — remove only the access intervals for which the
+        // MIR proof establishes a unique, unescaped class handle. All other
+        // intervals remain explicit runtime checks.
+        mir.pass("eliding static accesses", &mut types, |bodies, types| ember_analysis::elide_static_accesses_all(bodies, types));
+        // `[EXC-8]`–`[EXC-14]` — after static-elision proofs have removed their
+        // intervals, conservatively turn a canonical stable class loop into one
+        // checked preheader/postheader interval. Unknown loops remain per-access.
+        mir.pass("hoisting loop accesses", &mut types, |bodies, types| ember_analysis::hoist_loop_accesses_all(bodies, types));
+        // `[EXC-19]` — a `mut self` call to a quiet function is only checked. After
+        // hoisting, which keeps a loop's repeated writes as one checked interval.
+        mir.pass("converting quiet calls", &mut types, |bodies, types| ember_analysis::convert_quiet_calls_all(bodies, types));
+        // `[EXC-3]`/`[EXC-3a]` — last, once every held interval is final: remove
+        // the checks that nothing held anywhere in the program could make fail.
+        mir.pass("removing never-firing checks", &mut types, |bodies, types| ember_analysis::remove_never_firing_checks_all(bodies, types));
+        // `[DSJ-5]` — an `assert_disjoint` comparison of views known apart is left out.
+        mir.pass("eliding known-disjoint comparisons", &mut types, |bodies, types| ember_analysis::elide_known_disjoint_comparisons_all(bodies, types));
+    }
     // `[EFF-13]` — what is left of the dynamic aliasing checks is the verdict
     // a `@static_safe` function answers for, before inlining mixes callers'
     // and callees' checks.
@@ -5193,9 +5206,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
-    let safety_functions = safety_functions_json(mir.bodies(), &types, &modules, reload_image.as_ref().map(|image| &image.reloadable));
+    // `ember check` writes no side table: neither is made for it.
+    let safety_functions = if command == "check" { String::new() } else {
+        safety_functions_json(mir.bodies(), &types, &modules, reload_image.as_ref().map(|image| &image.reloadable))
+    };
     // `[COST-4]` — the costs the checks do not show, read before inlining folds functions together.
-    let safety_costs = safety_costs_json(mir.bodies(), &types, &modules, &map, &checked.contains_uses);
+    let safety_costs = if command == "check" { String::new() } else {
+        safety_costs_json(mir.bodies(), &types, &modules, &map, &checked.contains_uses)
+    };
     // `[DOC-3]` — the view contracts, read where the checks left the bodies, before inlining.
     if options.doc_report {
         let (standard, _) = standard_parts(mir.bodies(), &modules);

@@ -561,7 +561,7 @@ pub fn inject(
         let mut source = String::new();
         let mut if_default: BTreeMap<String, ember_ast::TypeExpr> = BTreeMap::new();
         let snippet = |span: Span| map.get(span.file).and_then(|file| file.text.get(span.start as usize..span.end as usize)).unwrap_or("").to_string();
-        for item in loaded.module.items.iter_mut() {
+        for item in std::sync::Arc::make_mut(&mut loaded.module).items.iter_mut() {
             let (ident, members, generic) = match &mut item.kind {
                 ember_ast::ItemKind::Struct(decl) => (decl.name.name, &mut decl.members, !decl.generics.is_empty()),
                 ember_ast::ItemKind::Class(decl) => (decl.name.name, &mut decl.members, !decl.generics.is_empty()),
@@ -692,7 +692,7 @@ pub fn inject(
             **value = expr(ember_ast::ExprKind::Call { callee: Box::new(callee), args: Vec::new() });
             additions.if_default.insert(item.span);
         }
-        loaded.module.items.extend(parsed.items);
+        std::sync::Arc::make_mut(&mut loaded.module).items.extend(parsed.items);
     }
     additions
 }

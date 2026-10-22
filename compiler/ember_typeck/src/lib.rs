@@ -47,7 +47,9 @@ use ember_types::{FpMode,
 #[derive(Clone)]
 pub struct LoadedModule {
     pub path: Vec<String>,
-    pub module: ast::Module,
+    /// Shared, so the desugarings that rewrite some modules copy only those (`Arc::make_mut`): the
+    /// rest of a 400-module package is never cloned (`[BUD-*]`, ODR-242).
+    pub module: std::sync::Arc<ast::Module>,
     /// `[MOD-2]` — the package it belongs to among the build's (0 is the root); `None` for the
     /// standard library's.
     pub package: Option<usize>,
@@ -56475,13 +56477,15 @@ fn is_literal_expr(expr: &ast::Expr) -> bool {
 /// namespace. Expand them before any of the multi-module name and signature
 /// passes; retain the declaration marker so no C definition is synthesized.
 fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec<LoadedModule>> {
-    if !modules.iter().any(|loaded| loaded.module.items.iter().any(|item| matches!(item.kind, ast::ItemKind::ExternBlock(_)))) {
+    let wanted = |module: &ast::Module| module.items.iter().any(|item| matches!(item.kind, ast::ItemKind::ExternBlock(_)));
+    if !modules.iter().any(|loaded| wanted(&loaded.module)) {
         return None;
     }
     let mut expanded = modules.to_vec();
-    for loaded in &mut expanded {
+    for loaded in expanded.iter_mut().filter(|loaded| wanted(&loaded.module)) {
+        let module = std::sync::Arc::make_mut(&mut loaded.module);
         let mut items = Vec::new();
-        for item in std::mem::take(&mut loaded.module.items) {
+        for item in std::mem::take(&mut module.items) {
             let ast::ItemKind::ExternBlock(block) = &item.kind else {
                 items.push(item);
                 continue;
@@ -56540,7 +56544,7 @@ fn expand_extern_blocks(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec
                 items.push(declaration);
             }
         }
-        loaded.module.items = items;
+        module.items = items;
     }
     Some(expanded)
 }
@@ -56569,8 +56573,8 @@ fn desugar_where_clauses(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> 
     let written = |members: &[ast::Member]| {
         members.iter().any(|member| matches!(&member.kind, ast::MemberKind::Fn(function) if !function.where_clause.is_empty()))
     };
-    let has_one = modules.iter().any(|loaded| {
-        loaded.module.items.iter().any(|item| match &item.kind {
+    let wanted = |module: &ast::Module| {
+        module.items.iter().any(|item| match &item.kind {
             ast::ItemKind::Fn(decl) => !decl.where_clause.is_empty(),
             ast::ItemKind::Struct(decl) => !decl.where_clause.is_empty() || written(&decl.members),
             ast::ItemKind::Class(decl) => !decl.where_clause.is_empty() || written(&decl.members),
@@ -56578,13 +56582,13 @@ fn desugar_where_clauses(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> 
             ast::ItemKind::Extend(decl) => !decl.where_clause.is_empty() || written(&decl.members),
             _ => false,
         })
-    });
-    if !has_one {
+    };
+    if !modules.iter().any(|loaded| wanted(&loaded.module)) {
         return None;
     }
     let mut out = modules.to_vec();
-    for loaded in &mut out {
-        for item in &mut loaded.module.items {
+    for loaded in out.iter_mut().filter(|loaded| wanted(&loaded.module)) {
+        for item in &mut std::sync::Arc::make_mut(&mut loaded.module).items {
             match &mut item.kind {
                 ast::ItemKind::Fn(decl) => fold(&mut decl.generics, &mut decl.where_clause),
                 ast::ItemKind::Struct(decl) => {
@@ -56611,15 +56615,15 @@ fn desugar_where_clauses(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> 
 }
 
 fn desugar_blanket_extensions(modules: &[LoadedModule]) -> Option<Vec<LoadedModule>> {
-    let has_one = modules.iter().any(|loaded| {
-        loaded.module.items.iter().any(|item| matches!(&item.kind, ast::ItemKind::Extend(decl) if !blanket_params(decl).is_empty()))
-    });
-    if !has_one {
+    let wanted = |module: &ast::Module| {
+        module.items.iter().any(|item| matches!(&item.kind, ast::ItemKind::Extend(decl) if !blanket_params(decl).is_empty()))
+    };
+    if !modules.iter().any(|loaded| wanted(&loaded.module)) {
         return None;
     }
     let mut out = modules.to_vec();
-    for loaded in &mut out {
-        for item in &mut loaded.module.items {
+    for loaded in out.iter_mut().filter(|loaded| wanted(&loaded.module)) {
+        for item in &mut std::sync::Arc::make_mut(&mut loaded.module).items {
             let ast::ItemKind::Extend(decl) = &mut item.kind else { continue };
             let free = blanket_params(decl);
             if free.is_empty() {
