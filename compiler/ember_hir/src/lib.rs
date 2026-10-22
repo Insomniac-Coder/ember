@@ -1577,6 +1577,11 @@ pub enum Builtin {
     /// `[FFI-39]` — in a module `import cpp` wrote: a class object's address
     /// (the argument, a handle), which a trampoline keeps without a count.
     CppObjectAddress,
+    /// `[FFI-39]` (ODR-221) — in a module `import cpp` wrote: whether the
+    /// object's own class (the argument, a handle of `owner` or below it)
+    /// overrides `owner`'s virtual method in `slot`, so that its trampoline
+    /// passes on exactly the virtuals the object's class overrides.
+    CppOverrides { owner: ClassId, slot: usize },
     /// `[FFI-39]` — the handle of the class object at an address a trampoline
     /// kept (the argument): a new count of it, or, with `adopt`, the count C++
     /// held, which must be the object's only one (`[FFI-17d]`).
@@ -2152,6 +2157,7 @@ impl Builtin {
             Builtin::RetainedPin => "retained_pin",
             Builtin::RetainedAddress => "retained_address",
             Builtin::CppObjectAddress => "cpp_object_address",
+            Builtin::CppOverrides { .. } => "cpp_overrides",
             Builtin::CppObjectHandle { .. } => "cpp_object_handle",
             Builtin::CppObjectGive => "cpp_object_give",
             Builtin::CppSpan { .. } => "cpp_span",

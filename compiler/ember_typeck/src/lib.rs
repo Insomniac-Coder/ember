@@ -16231,11 +16231,24 @@ impl<'a> Checker<'a> {
     /// to hold, the object pinned.
     fn synth_cpp_object(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
         let prefix = ember_branding::SYMBOL_PREFIX;
-        let which = ["address", "handle", "adopt", "give", "token_object"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
+        let which = ["address", "handle", "adopt", "give", "token_object", "overrides"].into_iter().position(|word| name.is(&format!("{prefix}_cpp_{word}")))?;
         if !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
             return None;
         }
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        // `[FFI-39]` (ODR-221) — `ember_cpp_overrides[C](self, "name")`: whether the object's own
+        // class overrides `C`'s virtual method `name`.
+        if which == 5 {
+            let ([object, method], [class]) = (args, explicit) else { return Some(error) };
+            let TyKind::Class(owner) = *self.types.kind(*class) else { return Some(error) };
+            let ast::ExprKind::Lit(ast::Literal::Str(method)) = &method.value.kind else { return Some(error) };
+            let slot = self.class_declared_methods.get(&owner).into_iter().flatten()
+                .find(|(declared, _, _)| declared.as_str() == method.as_str())
+                .and_then(|(_, def, _)| self.class_virtual_slots.get(def).copied());
+            let Some(slot) = slot else { return Some(error) };
+            let value = self.check_expr(&object.value, *class);
+            return Some(Expr { ty: self.common.bool_, kind: ExprKind::Builtin { which: Builtin::CppOverrides { owner, slot }, args: vec![value] }, span });
+        }
         let [arg] = args else { return Some(error) };
         let value = self.synth_committed(&arg.value);
         // `[FFI-39c]` — the object a `Retained` token holds (a count of its own).

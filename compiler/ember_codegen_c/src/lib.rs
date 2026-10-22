@@ -9029,6 +9029,21 @@ impl Emitter<'_> {
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
                     Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
+                    // `[FFI-39]` (ODR-221) — the object's class overrides the method when its
+                    // method table's slot is not the owner's own; in a reloadable build, where a
+                    // reload may add an override (`[HR-9a]`), every one is taken as overridden.
+                    Builtin::CppOverrides { owner, slot } => {
+                        if self.reload.is_some() {
+                            return "true".to_string();
+                        }
+                        let own = self.virtual_tables.get(owner).and_then(|slots| slots.get(*slot)).and_then(|method| method.as_ref()).map(|method| method.symbol.clone());
+                        let Some(own) = own else { return "true".to_string() };
+                        let table = self.class_vtable(*owner);
+                        return format!(
+                            "((void (*)(void))(((const struct {table}*)(((const {RT}obj_header*)({}))->ti->vtable))->slot{slot}) != (void (*)(void)){own})",
+                            rendered[0]
+                        );
+                    }
                     Builtin::CppObjectHandle { adopt: false } => {
                         return format!("({RT}obj_retain(({RT}obj_header*)({0})), (void*)({0}))", rendered[0]);
                     }

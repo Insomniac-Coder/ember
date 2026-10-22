@@ -190,13 +190,14 @@ the import). A base that cannot be derived from is refused where the class names
 (`E5059` "`Deep` cannot derive from `Flat` of `panels.hpp`: `Flat` has no virtual destructor…";
 `E5034` for `final`). The trampolines the program asks for are part of the `.embind` key.
 
-*How exact.* The trampoline of a C++ class is one per class (the existing design: the Ember open
-class holds the C++ object), so with several Ember classes of one base it passes on the union of
-their overrides; a class that does not override one of them reaches the C++ implementation through
-its Ember class's virtual method (one Ember call and one thunk more). With one class, or classes
-overriding alike, it is exactly theirs. The refinement, if wanted: the base's `init` gives the
-trampoline a null entry for each virtual the object's own class does not override (a compare of
-its class's method-table slot with the base's), so C++ calls the base implementation directly.
+*Exactly what each class overrides.* The trampoline of a C++ class overrides the union of what the
+program's classes override, and each object passes on exactly what its own class overrides: the
+base's generated `init` gives the trampoline an entry only for a virtual its object's class
+overrides (`ember_cpp_overrides[C](self, "name")`, a new compiler-known builtin of `import cpp`
+modules, `Builtin::CppOverrides`: the class's method-table slot compared with the base's own
+method, one load and compare per virtual when the object is made), and the trampoline calls the
+C++ implementation directly where it has none. In a reloadable build every entry is given (a
+reload may add an override, `[HR-9a]`).
 
 `reject_an_override_of_a_virtual_the_overlay_does_not_name.em` is gone (ODR-221 removes its
 premise: the override is now passed on, `accept_overrides_beyond_an_overlay_entry_are_passed_on.em`);

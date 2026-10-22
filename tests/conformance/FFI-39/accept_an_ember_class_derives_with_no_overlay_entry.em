@@ -5,12 +5,14 @@
 #$ stdout: 159 5
 #$ stdout: 151
 #$ stdout: 90 3
+#$ assert-c: contains("->slot0) != (void (*)(void))")
 # `[FFI-39]`, `[FFI-44]` (ODR-221) — an Ember class derives from a C++ class with no overlay
 # entry: the trampoline the compiler writes passes on the virtuals the program's classes override
 # (`override fn`), read from the classes, and C++ calling one reaches the Ember override. A class
-# that overrides none, or not this one, behaves as the C++ class (the virtual reaches the C++
-# implementation). A C++ class with a pure virtual is an abstract class: each Ember class deriving
-# from it implements it.
+# that overrides none, or not this one, behaves as the C++ class: its object gives the trampoline
+# no entry for it, so C++ calls the C++ implementation directly (each object's trampoline passes on
+# exactly what its own class overrides, read from its method table where it is made). A C++ class
+# with a pure virtual is an abstract class: each Ember class deriving from it implements it.
 
 import cpp "stages.hpp"
 

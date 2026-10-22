@@ -3013,9 +3013,11 @@ impl Writer {
                 let to_ember: String = slot.params.iter().map(|param| format!(", {}", param.to_ember)).collect();
                 let locals: Vec<&str> = slot.params.iter().map(|param| param.local.as_str()).collect();
                 let fallback = if slot.pure { "std::abort();".to_string() } else { format!("return {spelled}::{}({});", slot.name, locals.join(", ")) };
+                // ODR-221 — an object whose Ember class does not override it was given no entry: the
+                // C++ implementation, directly.
                 let _ = writeln!(
                     text,
-                    "    {} {}({}){} noexcept override {{ if ({p}_self != nullptr) return {p}_v{k}({p}_self{to_ember}); {fallback} }}",
+                    "    {} {}({}){} noexcept override {{ if ({p}_self != nullptr && {p}_v{k} != nullptr) return {p}_v{k}({p}_self{to_ember}); {fallback} }}",
                     slot.result_spelled,
                     slot.name,
                     declared.join(", "),
@@ -3094,17 +3096,27 @@ impl Writer {
                 );
                 let construct = format!("{prefix}_raw_{class}_make_{j}");
                 let mut raw_params = vec!["object: *mut u8".to_string(), "deleted: extern \"C\" fn(*mut u8)".to_string()];
-                raw_params.extend(fn_types.iter().enumerate().map(|(k, ty)| format!("v{k}: {ty}")));
+                raw_params.extend(fn_types.iter().enumerate().map(|(k, ty)| format!("v{k}: Option[{ty}]")));
                 raw_params.extend(params.iter().map(|(param, ty, _, _)| if wrapped(ty) { format!("{param}: {}", ty.ember) } else { format!("{}{param}: {}", ty.mode, ty.ember) }));
                 let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
                 let init = if j == init_at { "init".to_string() } else { format!("{prefix}_cpp_init_{j}") };
                 let wrapper_params: Vec<String> = params.iter().map(|(param, ty, _, _)| wrapper_param(param, ty)).collect();
                 let arguments: String = params.iter().map(|(param, ty, _, _)| format!(", {}", wrapper_argument(param, ty))).collect();
                 let receiver = if wrapper_params.is_empty() { "mut self".to_string() } else { format!("mut self, {}", wrapper_params.join(", ")) };
+                // ODR-221 — the entries of the virtuals the object's own class overrides, exactly: a
+                // pure virtual every class implements.
+                let given: String = entries
+                    .iter()
+                    .zip(&slots)
+                    .map(|(entry, slot)| if slot.pure {
+                        format!(", Some({entry})")
+                    } else {
+                        format!(", Some({entry}) if {prefix}_cpp_overrides[{class}](self, \"{}\") else None", ident(&slot.name))
+                    })
+                    .collect();
                 let _ = write!(
                     body,
-                    "\n    pub fn {init}({receiver}):\n        unsafe:  # SAFETY: the C++ constructor takes this function's own arguments, and the object's address, which the trampoline keeps without a count\n            self.{prefix}_cpp_base = {prefix}_cpp_base_{class}(object = {construct}({prefix}_cpp_address(self), {deleted}{}{arguments}))\n",
-                    entries.iter().map(|entry| format!(", {entry}")).collect::<String>()
+                    "\n    pub fn {init}({receiver}):\n        unsafe:  # SAFETY: the C++ constructor takes this function's own arguments, and the object's address, which the trampoline keeps without a count\n            self.{prefix}_cpp_base = {prefix}_cpp_base_{class}(object = {construct}({prefix}_cpp_address(self), {deleted}{given}{arguments}))\n"
                 );
             }
             // The named virtuals: Ember's virtual methods, and the entries the trampoline calls.
