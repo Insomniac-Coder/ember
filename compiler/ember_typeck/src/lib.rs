@@ -69,15 +69,6 @@ pub struct Exported {
     pub is_type: bool,
 }
 
-/// An index that knows of no exports, for a check that offers no import lines.
-pub struct NoExports;
-
-impl ExportIndex for NoExports {
-    fn exporters(&self, _: &str) -> &[Exported] {
-        &[]
-    }
-}
-
 /// `[FFI-6]` — what `import c` found in a header beside the declarations it wrote.
 #[derive(Clone, Debug, Default)]
 pub struct ForeignImport {
