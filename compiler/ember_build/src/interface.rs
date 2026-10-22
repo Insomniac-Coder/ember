@@ -42,7 +42,9 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 12 keys callables by `[MNG-1]`'s injective symbols (`em_3lib3m_x1f`, an instance's
 // ending in its arguments' hash): a schema 11 record names them `em_lib_m_x_f`, which is another
 // symbol, or two callables' one.
-const SCHEMA_VERSION: u32 = 12;
+// Schema 13 marks a transliterated component in its length (`[MNG-3]`, ODR-202: `café` is
+// `u10caf_u00E9_`): a schema 12 record names `café` as the ASCII name `caf_u00E9_` is now named.
+const SCHEMA_VERSION: u32 = 13;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
