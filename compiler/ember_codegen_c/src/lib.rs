@@ -9147,8 +9147,11 @@ impl Emitter<'_> {
                         .collect::<Vec<_>>()
                         .join(", ");
                     // `[CLO-6a]` — a `once fn` value's call ends its state (`_once`); one in a `Box`
-                    // is taken out of the box, which is freed, first.
-                    if *once
+                    // is taken out of the box, which is freed, first. D-880: so does a call that
+                    // consumes its callee (moves it in: an owned callable value given to a `once
+                    // fn` parameter, `[CLO-6]`), whatever its type says, as nothing else ends it.
+                    let once = *once || matches!(callee_operand, Operand::Move(_));
+                    if once
                         && let Some(boxed) = self.operand_type(callee_operand, body)
                         && matches!(*self.types.kind(boxed), TyKind::Struct(id) if self.box_inner_id(id).is_some())
                     {
@@ -9159,7 +9162,7 @@ impl Emitter<'_> {
                             .join(", ");
                         return format!("{helper}({arguments})");
                     }
-                    let entry = if *once { format!("({callee}).d->once") } else { format!("({callee}).native") };
+                    let entry = if once { format!("({callee}).d->once") } else { format!("({callee}).native") };
                     return format!("(({} (*)({parameters}))({entry}))({arguments})",
                         self.c_type(*ret));
                 }

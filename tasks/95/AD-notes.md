@@ -17,3 +17,19 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   * `STD-21/accept_a_matrix_column_or_row_has_a_non_panicking_twin.em` (three profiles),
     `STD-21/run_fail_a_matrix_column_past_the_matrix_names_its_twin.em`,
     `FFI-17a/accept_an_empty_shared_pointer_has_a_non_panicking_get.em` (`gauges.hpp`).
+
+* **D-880 `[CLO-3]`, `[CLO-6]`, `[DRP-1]`** — helper AB's form (an owned callable value given to an
+  `owned f: fn(A) -> R` parameter) drops on `main` as it stands (fixed before this branch). The
+  form still leaking: an owned callable value given to a `once fn` parameter. The call consumes the
+  callee (the MIR moves it in, `consumes_callee`), but its type is the plain `fn` the instance
+  made, so both backends called its `native` entry and nothing ended it. The root: a call whose
+  callee operand is moved ends the value whatever its type says, as a `once fn` call does: the C
+  backend calls the descriptor's `once` entry (call, then drop), and the evaluator ends it after
+  the call. The evaluator also ended a `once` call's state only when the closure's environment
+  parameter was a reference, where C decides by the parameter being `owned` (a closure that moves
+  a capture out takes its state whole); a closure reading captures from a copied environment kept
+  its state un-dropped there. Both now agree.
+  `CLO-3/accept_an_owned_callable_given_to_an_owned_parameter_is_dropped.em` (three profiles: a
+  written `owned fn` parameter, one stored in a struct, a `once fn` parameter called and one never
+  called, an `owned fn` lambda moved into a `once fn` parameter, and a named one lent to a generic
+  parameter, dropped at its scope's end).

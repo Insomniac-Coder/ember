@@ -225,6 +225,9 @@ impl<'a> Interp<'a, '_> {
                             false => self.operand(operand, Some(*ty))?,
                         };
                         let values = self.arguments(func, args, &[])?;
+                        // D-880 — a call that moves its callee in ends it, as a `once fn` call does,
+                        // whatever its type says (the C backend's `_once` entry).
+                        let once = once || matches!(operand, Operand::Move(_));
                         let once = once.then_some(fn_place).flatten().map(|value| (value, temporary));
                         self.call_callable(&callee, fn_place, once, values, Ret::Place(dest.clone(), next))
                     }
@@ -465,17 +468,20 @@ impl<'a> Interp<'a, '_> {
         let body = &self.bodies[index];
         let env_param = body.locals.get(1).map(|local| local.ty);
         let borrowed = env_param.is_some_and(|ty| matches!(self.types.kind(ty), TyKind::Ref { .. } | TyKind::Ptr { .. }));
+        // `[CLO-6a]` — a closure that takes its state whole (its environment parameter `owned`:
+        // it moves a capture out) is given it, and only the allocation holding it is freed; any
+        // other only reads its state (a copy, or through its address) and the state is ended
+        // after the call, as the C backend's `_once` entry does.
+        let takes_whole = body.param_modes.first() == Some(&ParameterMode::Owned);
         let env_argument = if borrowed { state.to_le_bytes().to_vec() } else { self.mem.read(state, env_size)?.to_vec() };
-        // `[CLO-6a]` — a closure that takes its state whole is given it: only the allocation
-        // holding it is freed.
-        if once.is_some() && !borrowed && env_size > 24 {
+        if once.is_some() && takes_whole && env_size > 24 {
             self.mem.free(state)?;
         }
         values.insert(0, env_argument);
         self.enter(index, values, ret)?;
         let after = match (temporary, once) {
             (Some(slot), _) => Some(After::FreeSlot(slot)),
-            (None, Some((value, temporary))) => Some(After::EndOnce { value, borrowed, temporary }),
+            (None, Some((value, temporary))) => Some(After::EndOnce { value, borrowed: !takes_whole, temporary }),
             (None, None) => None,
         };
         if after.is_some() {
