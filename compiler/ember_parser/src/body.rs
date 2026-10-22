@@ -1558,7 +1558,44 @@ impl Parser<'_> {
             // for the rest of it to belong to.
             let colon = self.span();
             self.bump();
+            let start = self.span();
+            // `[GRM-17]` — the one simple statement: `pass`, an assignment
+            // (`total += x`, `seen[x] = true`), a declaration, or an
+            // expression. A `,` ends it, so an assignment has one target and
+            // one value.
+            let statement = |this: &mut Self, kind| {
+                let stmt = Stmt { id: this.next_id(), attrs: Vec::new(), kind, span: start.to(this.prev_span()) };
+                Block { id: this.next_id(), stmts: vec![stmt], span: start.to(this.prev_span()) }
+            };
+            if self.eat_kw(Kw::Pass) {
+                return Lambda { is_owned, params, ret, body: LambdaBody::Block(statement(self, StmtKind::Pass)) };
+            }
             let body = self.parse_expr_no_block();
+            let kind = if let Some(op) = self.augmented_assign_op() {
+                self.bump();
+                Some(StmtKind::Assign { targets: vec![body.clone()], op: Some(op), value: self.parse_expr_no_block() })
+            } else if self.eat_punct(Punct::Eq) {
+                Some(StmtKind::Assign { targets: vec![body.clone()], op: None, value: self.parse_expr_no_block() })
+            } else if self.eat_punct(Punct::Colon) {
+                let pattern = self.expr_to_pattern(body.clone());
+                let ty = Some(self.parse_type());
+                let init = self.eat_punct(Punct::Eq).then(|| self.parse_expr_no_block());
+                Some(StmtKind::Decl { pattern, ty, init })
+            } else {
+                None
+            };
+            let in_place = |this: &Self| {
+                this.at_punct(Punct::Comma)
+                    || this.at_punct(Punct::RParen)
+                    || this.at_punct(Punct::RBracket)
+                    || this.at_punct(Punct::RBrace)
+                    || this.at_eof()
+            };
+            if let Some(kind) = kind
+                && in_place(self)
+            {
+                return Lambda { is_owned, params, ret, body: LambdaBody::Block(statement(self, kind)) };
+            }
             if !self.at_punct(Punct::Comma)
                 && !self.at_punct(Punct::RParen)
                 && !self.at_punct(Punct::RBracket)

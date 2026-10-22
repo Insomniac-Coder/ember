@@ -854,8 +854,10 @@ pub interface Iterator:
             at = at.plus(one)
         return None
 
-    ## `f` on each item, in order.
-    fn for_each(owned self, f: fn(Item)):
+    ## `f` on each item, in order. Taken over as an adapter's callable is (`[STD-19]`), so it is
+    ## called from a place of `for_each`'s own and may write what it captures (`[CLO-2]`):
+    ## `xs.iter().for_each(fn(x): total += x)`.
+    fn for_each[F: fn(Item)](owned self, owned f: F):
         for x in self:
             f(x)
 

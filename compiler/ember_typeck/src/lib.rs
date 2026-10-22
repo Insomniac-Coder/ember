@@ -36612,7 +36612,7 @@ impl<'a> Checker<'a> {
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
+                    let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
@@ -36974,7 +36974,7 @@ impl<'a> Checker<'a> {
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
+                    let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
@@ -51473,6 +51473,17 @@ impl<'a> Checker<'a> {
     /// where the parameter is passed by address (`[BRW-8]`).
     fn pass_argument(&mut self, value: Expr, param_ty: Ty, mode: Mode) -> Expr {
         let by_address = self.types.passed_by_address(param_ty);
+        self.pass_argument_by(value, param_ty, mode, by_address)
+    }
+
+    /// A lambda argument a generic call checked while inferring, passed in its parameter's mode.
+    /// `[FN-2a]`, shape B10 — a lambda written at the call is a value, not the mutable place a
+    /// `mut` parameter borrows, as `check_argument_by` reports for any other value; passing it on
+    /// gave the callee a value where it reads a pointer.
+    fn pass_checked_lambda(&mut self, value: Expr, span: Span, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        if mode == Mode::Mut && value.ty != self.common.error {
+            self.emit_mut_argument_place_error(span);
+        }
         self.pass_argument_by(value, param_ty, mode, by_address)
     }
 
