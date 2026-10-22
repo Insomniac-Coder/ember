@@ -780,6 +780,12 @@ pub interface Iterator:
     fn flat_map[U: IntoIterator, F: fn(Item) -> U](owned self, owned f: F) -> FlatMap[Self, U, F]:
         return FlatMap(self, f, None)
 
+    ## `[GRM-38]` — the compiler's, for a generator expression's later `for` clause: each item
+    ## with each item of the iterator `f` makes of it, as a pair. The item is copied into each
+    ## pair, so it is `Copy` (a reference to an element, a number).
+    fn __nested[U: Iterator, F: fn(Item) -> U](owned self, owned f: F) -> Nested[Self, Item, U, F] where Item: Copy:
+        return Nested(self, f, None, None)
+
     ## The items of each item, one after another, when the items are
     ## iterable themselves.
     fn flatten(owned self) -> Flatten[Self, Item] where Item: IntoIterator:
@@ -829,36 +835,39 @@ pub interface Iterator:
             left = left.less(one)
         return left
 
-    ## `f(... f(f(init, a), b) ..., z)` over the items `a` to `z`.
-    fn fold[B](owned self, init: B, f: fn(B, Item) -> B) -> B:
+    ## `f(... f(f(init, a), b) ..., z)` over the items `a` to `z`. The consumers take their
+    ## callable over, as the adapters and `for_each` do (`[STD-19]`, ODR-210), so it is called from
+    ## a place of the consumer's own and may write what it captures (`[CLO-2]`).
+    fn fold[B, F: fn(B, Item) -> B](owned self, init: B, owned f: F) -> B:
         acc = init
         for x in self:
             acc = f(acc, x)
         return acc
 
     ## Whether `pred` holds for some item; stops at the first.
-    fn any(owned self, pred: fn(Item) -> bool) -> bool:
+    fn any[F: fn(Item) -> bool](owned self, owned pred: F) -> bool:
         for x in self:
             if pred(x):
                 return true
         return false
 
     ## Whether `pred` holds for every item; stops at the first it does not.
-    fn all(owned self, pred: fn(Item) -> bool) -> bool:
+    fn all[F: fn(Item) -> bool](owned self, owned pred: F) -> bool:
         for x in self:
             if not pred(x):
                 return false
         return true
 
-    ## The first item `pred` holds for.
-    fn find(owned self, pred: fn(Item) -> bool) -> Option[Item]:
+    ## The first item `pred` holds for. An item is the iterator's, never `pred`'s (`[LT-1a]`).
+    @borrows(self)
+    fn find[F: fn(Item) -> bool](owned self, owned pred: F) -> Option[Item]:
         for x in self:
             if pred(x):
                 return Some(x)
         return None
 
     ## The index of the first item `pred` holds for.
-    fn position(owned self, pred: fn(Item) -> bool) -> Option[Count]:
+    fn position[F: fn(Item) -> bool](owned self, owned pred: F) -> Option[Count]:
         at = Count.of(0)
         one = Count.of(1)
         for x in self:
@@ -899,7 +908,8 @@ pub interface Iterator:
         return best
 
     ## The item whose `key` is largest; the last of equal ones.
-    fn max_by_key[K: Ord](owned self, key: fn(Item) -> K) -> Option[Item]:
+    @borrows(self)
+    fn max_by_key[K: Ord, F: fn(Item) -> K](owned self, owned key: F) -> Option[Item]:
         best: Option[Item] = None
         best_key: Option[K] = None
         for x in self:
@@ -915,7 +925,8 @@ pub interface Iterator:
         return best
 
     ## The item whose `key` is smallest; the first of equal ones.
-    fn min_by_key[K: Ord](owned self, key: fn(Item) -> K) -> Option[Item]:
+    @borrows(self)
+    fn min_by_key[K: Ord, F: fn(Item) -> K](owned self, owned key: F) -> Option[Item]:
         best: Option[Item] = None
         best_key: Option[K] = None
         for x in self:
@@ -931,7 +942,8 @@ pub interface Iterator:
         return best
 
     ## The largest item by `cmp`; the last of equal ones.
-    fn max_by(owned self, cmp: fn(Item, Item) -> Ordering) -> Option[Item]:
+    @borrows(self)
+    fn max_by[F: fn(Item, Item) -> Ordering](owned self, owned cmp: F) -> Option[Item]:
         best: Option[Item] = None
         for x in self:
             match best:
@@ -943,7 +955,8 @@ pub interface Iterator:
         return best
 
     ## The smallest item by `cmp`; the first of equal ones.
-    fn min_by(owned self, cmp: fn(Item, Item) -> Ordering) -> Option[Item]:
+    @borrows(self)
+    fn min_by[F: fn(Item, Item) -> Ordering](owned self, owned cmp: F) -> Option[Item]:
         best: Option[Item] = None
         for x in self:
             match best:
@@ -955,7 +968,7 @@ pub interface Iterator:
         return best
 
     ## `f(... f(f(a, b), c) ..., z)` over the items; `None` when empty.
-    fn reduce(owned self, f: fn(Item, Item) -> Item) -> Option[Item]:
+    fn reduce[F: fn(Item, Item) -> Item](owned self, owned f: F) -> Option[Item]:
         acc: Option[Item] = None
         for x in self:
             match acc:
@@ -1054,6 +1067,7 @@ extend[I: Iterator] Take[I] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         if self.left <= 0:
             return None
@@ -1078,6 +1092,7 @@ extend[I: Iterator] Skip[I] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         if self.left > 0:
             first = I.Count.of(self.left)
@@ -1105,6 +1120,7 @@ extend[I: Iterator] StepBy[I] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         if self.started:
             left = self.gap
@@ -1131,6 +1147,7 @@ extend[I: Iterator, P: ItemCount] Enumerate[I, P] implements Iterator:
     type Count = I.Count
     type Position = P
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[(P, I.Item)]:
         match self.inner.next():
             Some(x):
@@ -1154,6 +1171,7 @@ extend[I: Iterator, J: Iterator] Zip[I, J] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.a, self.b)
     fn next(mut self) -> Option[(I.Item, J.Item)]:
         match self.a.next():
             Some(x):
@@ -1190,6 +1208,7 @@ extend[I: Iterator, J: Iterator[Item = I.Item]] Chain[I, J] implements Iterator:
     ## And the numbers `enumerate` gives it, which hold both sides'.
     type Position = PositionJoin[I.Position, J.Position]
 
+    @borrows(self.first, self.other)
     fn next(mut self) -> Option[I.Item]:
         if not self.done:
             match self.first.next():
@@ -1225,6 +1244,7 @@ extend[T: Copy, I: Iterator[Item = ref T]] Copied[I, T] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[T]:
         match self.inner.next():
             Some(r):
@@ -1243,6 +1263,7 @@ extend[T: Clone, I: Iterator[Item = ref T]] Cloned[I, T] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[T]:
         match self.inner.next():
             Some(r):
@@ -1264,6 +1285,7 @@ extend[I: Iterator, R, F: fn(I.Item) -> R] Map[I, R, F] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner, self.f)
     fn next(mut self) -> Option[R]:
         match self.inner.next():
             Some(x):
@@ -1280,6 +1302,7 @@ extend[I: Iterator, F: fn(I.Item) -> bool] Filter[I, F] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         while true:
             match self.inner.next():
@@ -1299,6 +1322,7 @@ extend[I: Iterator, R, F: fn(I.Item) -> Option[R]] FilterMap[I, R, F] implements
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner, self.f)
     fn next(mut self) -> Option[R]:
         while true:
             match self.inner.next():
@@ -1322,6 +1346,7 @@ extend[I: Iterator, F: fn(I.Item) -> bool] TakeWhile[I, F] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         if self.done:
             return None
@@ -1344,6 +1369,7 @@ extend[I: Iterator, F: fn(I.Item) -> bool] SkipWhile[I, F] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         if self.started:
             return self.inner.next()
@@ -1366,6 +1392,7 @@ extend[I: Iterator, F: fn(I.Item)] Inspect[I, F] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         match self.inner.next():
             Some(x):
@@ -1404,6 +1431,46 @@ extend[I: Iterator, U: IntoIterator, F: fn(I.Item) -> U] FlatMap[I, U, F] implem
             match self.outer.next():
                 Some(x):
                     self.inner = Some((self.f)(x).into_iter())
+                None:
+                    return None
+        return None
+
+## `[GRM-38]` — a generator expression's later `for` clause, `(e for x in xs for y in f(x))`: for
+## each item `x` of `outer`, the pairs of `x` with each item of the iterator `f` makes of it. The
+## iterator is held in place, so nothing is allocated, and what it iterates it borrows.
+pub struct Nested[I, X, U, F]:
+    outer: I
+    f: F
+    item: Option[X]
+    inner: Option[U]
+
+extend[X, I: Iterator[Item = X], U: Iterator, F: fn(X) -> U] Nested[I, X, U, F] implements Iterator:
+    type Item = (X, U.Item)
+    ## G8-4 — every inner iterator's items together, as `flat_map`'s.
+    type Count = CountProduct[I.Count, U.Count]
+    ## And the numbers `enumerate` gives them.
+    type Position = PositionOf[CountProduct[I.Count, U.Count]]
+
+    @borrows(self.outer, self.f, self.item, self.inner)
+    fn next(mut self) -> Option[(X, U.Item)]:
+        while true:
+            match self.item:
+                Some(x):
+                    match self.inner.as_mut():
+                        Some(it):
+                            match it.next():
+                                Some(y):
+                                    return Some((x, y))
+                                None:
+                                    pass
+                        None:
+                            pass
+                None:
+                    pass
+            match self.outer.next():
+                Some(x):
+                    self.item = Some(x)
+                    self.inner = Some(self.f(x))
                 None:
                     return None
         return None
@@ -1476,7 +1543,7 @@ extend[I: Iterator] Peekable[I]:
         return self.peeked.as_mut()
 
     ## The next item when `pred` holds for it; otherwise it stays.
-    pub fn next_if[F: fn(ref I.Item) -> bool](mut self, pred: F) -> Option[I.Item]:
+    pub fn next_if[F: fn(ref I.Item) -> bool](mut self, owned pred: F) -> Option[I.Item]:
         take = false
         match self.peek():
             Some(x):
@@ -1510,6 +1577,7 @@ extend[I: DoubleEndedIterator] Rev[I] implements Iterator:
     type Count = I.Count
     type Position = I.Position
 
+    @borrows(self.inner)
     fn next(mut self) -> Option[I.Item]:
         return self.inner.next_back()
 
@@ -1517,6 +1585,7 @@ extend[I: DoubleEndedIterator] Rev[I] implements Iterator:
         return self.inner.skip_back(n)
 
 extend[I: DoubleEndedIterator] Rev[I] implements DoubleEndedIterator:
+    @borrows(self.inner)
     fn next_back(mut self) -> Option[I.Item]:
         return self.inner.next()
 
@@ -1541,6 +1610,7 @@ extend[I: ExactSizeIterator] Take[I] implements ExactSizeIterator:
 ## G8-4 — the items after the first `left` are left out from the back at once (`nth_back`), so a
 ## range too long for an `int` to count gives its first items backwards too.
 extend[I: DoubleEndedIterator + ExactSizeIterator] Take[I] implements DoubleEndedIterator:
+    @borrows(self.inner)
     fn next_back(mut self) -> Option[I.Item]:
         if self.left <= 0:
             return None
@@ -1573,6 +1643,7 @@ extend[I: ExactSizeIterator] Skip[I] implements ExactSizeIterator:
         return I.Count.of(0)
 
 extend[I: DoubleEndedIterator + ExactSizeIterator] Skip[I] implements DoubleEndedIterator:
+    @borrows(self.inner)
     fn next_back(mut self) -> Option[I.Item]:
         if not self.inner.len().exceeds(self.left):
             return None
@@ -1603,6 +1674,7 @@ extend[I: ExactSizeIterator] StepBy[I] implements ExactSizeIterator:
         return one.plus(left.less(one).div_by(step))
 
 extend[I: DoubleEndedIterator + ExactSizeIterator] StepBy[I] implements DoubleEndedIterator:
+    @borrows(self.inner)
     fn next_back(mut self) -> Option[I.Item]:
         left = self.inner.len()
         step = self.gap + 1
@@ -1626,6 +1698,7 @@ extend[I: ExactSizeIterator, P: ItemCount] Enumerate[I, P] implements ExactSizeI
 ## The last item left is numbered the next one's number plus the items
 ## between.
 extend[I: DoubleEndedIterator + ExactSizeIterator, P: ItemCount] Enumerate[I, P] implements DoubleEndedIterator:
+    @borrows(self.inner)
     fn next_back(mut self) -> Option[(P, I.Item)]:
         left = self.inner.len()
         match self.inner.next_back():
@@ -1663,6 +1736,7 @@ extend[I: DoubleEndedIterator + ExactSizeIterator, J: DoubleEndedIterator + Exac
 ## The longer is cut to the shorter's length from the back first, so the
 ## pairs are the ones `next` would make.
 extend[I: DoubleEndedIterator + ExactSizeIterator, J: DoubleEndedIterator + ExactSizeIterator] Zip[I, J] implements DoubleEndedIterator:
+    @borrows(self.a, self.b)
     fn next_back(mut self) -> Option[(I.Item, J.Item)]:
         self.even_up()
         match self.a.next_back():
@@ -1691,6 +1765,7 @@ extend[I: ExactSizeIterator, J: ExactSizeIterator[Item = I.Item]] Chain[I, J] im
 ## Backwards the second runs first; the first is not asked once it said
 ## `None` from the front.
 extend[I: DoubleEndedIterator, J: DoubleEndedIterator[Item = I.Item]] Chain[I, J] implements DoubleEndedIterator:
+    @borrows(self.first, self.other)
     fn next_back(mut self) -> Option[I.Item]:
         match self.other.next_back():
             Some(x):
@@ -1714,6 +1789,7 @@ extend[T: Copy, I: ExactSizeIterator[Item = ref T]] Copied[I, T] implements Exac
         return self.inner.len()
 
 extend[T: Copy, I: DoubleEndedIterator[Item = ref T]] Copied[I, T] implements DoubleEndedIterator:
+    @borrows(self.inner)
     fn next_back(mut self) -> Option[T]:
         match self.inner.next_back():
             Some(r):
@@ -1729,6 +1805,7 @@ extend[T: Clone, I: ExactSizeIterator[Item = ref T]] Cloned[I, T] implements Exa
         return self.inner.len()
 
 extend[T: Clone, I: DoubleEndedIterator[Item = ref T]] Cloned[I, T] implements DoubleEndedIterator:
+    @borrows(self.inner)
     fn next_back(mut self) -> Option[T]:
         match self.inner.next_back():
             Some(r):
@@ -2228,7 +2305,7 @@ extend[T] Array[T] implements IntoIterator:
 
 extend[T] Array[T]:
     ## Keeps the elements `keep` is true of, in their order.
-    pub fn retain(mut self, keep: fn(T) -> bool):
+    pub fn retain[F: fn(T) -> bool](mut self, owned keep: F):
         kept = 0
         for i in range(self.len()):
             if keep(self[i]):
@@ -2238,13 +2315,13 @@ extend[T] Array[T]:
 
     ## Sorts by `cmp`, which says how two elements order. Stable: elements
     ## `cmp` finds equal keep their order (ODR-031).
-    pub fn sort_by(mut self, cmp: fn(T, T) -> Ordering):
+    pub fn sort_by[F: fn(T, T) -> Ordering](mut self, owned cmp: F):
         order = stable_order(self, cmp)
         self.apply_order(order)
 
     ## Sorts by `key(x)`, calling `key` once for each element, as Python's
     ## `key=` does. Stable (ODR-031).
-    pub fn sort_by_key[K: Ord](mut self, key: fn(T) -> K):
+    pub fn sort_by_key[K: Ord, F: fn(T) -> K](mut self, owned key: F):
         keys: Array[K] = []
         for i in range(self.len()):
             keys.push(key(self[i]))
@@ -2275,7 +2352,7 @@ extend[T] Array[T]:
 extend[T] SoA[T]:
     ## Keeps the elements `keep` is true of, in their order: one dropped where it stands, one kept
     ## moved down over the first empty slot, so each element is moved at most once.
-    pub fn retain(mut self, keep: fn(SoARef[T]) -> bool):
+    pub fn retain[F: fn(SoARef[T]) -> bool](mut self, owned keep: F):
         kept = 0
         for i in range(self.len()):
             if keep(self[i]):
@@ -2288,7 +2365,7 @@ extend[T] SoA[T]:
 
     ## Sorts the elements by `key` of each, calling it once per element. Stable: elements with
     ## equal keys keep their order.
-    pub fn sort_by_key[K: Ord](mut self, key: fn(SoARef[T]) -> K):
+    pub fn sort_by_key[K: Ord, F: fn(SoARef[T]) -> K](mut self, owned key: F):
         keys: Array[K] = []
         for i in range(self.len()):
             keys.push(key(self[i]))
@@ -2327,6 +2404,20 @@ extend[T: Eq] Span[T]:
             if self[i] != other[i]:
                 return false
         return true
+
+## `[TYP-36]` — the lexicographic order through `T: Ord`: the first elements that differ decide,
+## and a sequence that is the start of the other is the smaller. The checker routes `cmp`, `<`,
+## `sort` and `sorted` of an `Array` or a `[T; N]` here.
+extend[T: Ord] Span[T]:
+    fn cmp_elements(self, other: Span[T]) -> Ordering:
+        n = self.len()
+        if other.len() < n:
+            n = other.len()
+        for i in range(n):
+            order = self[i].cmp(other[i])
+            if order != Ordering.Equal:
+                return order
+        return self.len().cmp(other.len())
 
 extend[T: Eq] Array[T]:
     ## Drops each element equal to the one kept before it, so a sorted array
@@ -2384,7 +2475,7 @@ extend[T: Clone] Array[T]:
     ## `[STD-26]` — `sorted(it, key=f, reverse=r)`: a copy of these elements ordered by `key`, each
     ## element's key computed once, as Python's `key=` does, the largest first when `reverse`.
     ## Stable both ways: elements whose keys are equal keep their order (ODR-031).
-    fn sorted_by_key_if[K: Ord](self, key: fn(T) -> K, reverse: bool) -> Array[T]:
+    fn sorted_by_key_if[K: Ord, F: fn(T) -> K](self, owned key: F, reverse: bool) -> Array[T]:
         keys: Array[K] = []
         for i in range(self.len()):
             keys.push(key(self[i]))
@@ -2402,7 +2493,7 @@ extend[T: Clone] Array[T]:
 ## less. Each pass writes every index once, whatever `cmp` answers, so an
 ## inconsistent order can only permute the elements, never lose or repeat one
 ## (`[HASH-3]`).
-fn stable_order[T](xs: Array[T], cmp: fn(T, T) -> Ordering) -> Array[int]:
+fn stable_order[T, F: fn(T, T) -> Ordering](xs: Array[T], owned cmp: F) -> Array[int]:
     n = xs.len()
     order: Array[int] = []
     merged: Array[int] = []

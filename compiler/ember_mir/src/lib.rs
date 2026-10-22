@@ -1544,6 +1544,16 @@ pub fn reached_bodies(
                 Rvalue::Aggregate { operands, .. } => reached.extend(operands.iter().filter_map(function_value)),
                 Rvalue::Cast { kind, operand, .. } => {
                     reached.extend(function_value(operand));
+                    // `[TYP-22]` (ODR-237) — a table that copies its value reaches the value's clone.
+                    match kind {
+                        CastKind::InterfaceUpcast { concrete, interfaces, .. } if types.dyn_clones(interfaces) => {
+                            clone_dependencies(*concrete, types, clone_of, &mut reached, &mut Default::default());
+                        }
+                        CastKind::ClassInterfaceUpcast { concrete, interface, .. } if types.dyn_clones(&[*interface]) => {
+                            clone_dependencies(*concrete, types, clone_of, &mut reached, &mut Default::default());
+                        }
+                        _ => {}
+                    }
                     if let CastKind::InterfaceUpcast { implementations, .. }
                     | CastKind::ClassInterfaceUpcast { implementations, .. } = kind
                     {
@@ -1557,7 +1567,12 @@ pub fn reached_bodies(
         reached.extend(args.iter().filter_map(function_value));
         match func {
             FuncRef::Direct { symbol, .. } => reached.extend(by_symbol.get(symbol.as_str()).copied()),
-            FuncRef::DynBoxNew { implementations, .. } => reached.extend(table(implementations)),
+            FuncRef::DynBoxNew { implementations, concrete, interfaces, .. } => {
+                reached.extend(table(implementations));
+                if types.dyn_clones(interfaces) {
+                    clone_dependencies(*concrete, types, clone_of, &mut reached, &mut Default::default());
+                }
+            }
             FuncRef::Indirect { operand, .. } => reached.extend(function_value(operand)),
             FuncRef::Builtin { which: Builtin::ArrayClone { elem }, .. } => {
                 clone_dependencies(*elem, types, clone_of, &mut reached, &mut Default::default());
@@ -1603,6 +1618,14 @@ fn clone_dependencies(
                 for field in &variant.fields {
                     clone_dependencies(field.ty, types, clone_of, reached, seen);
                 }
+            }
+        }
+        // ODR-237 — a `Box[T]`'s clone clones the `T` it holds.
+        ember_types::TyKind::Struct(id) => {
+            if let Some(inner) = types.compiler_box_inner(*id)
+                && !matches!(types.kind(inner), ember_types::TyKind::Dyn { .. })
+            {
+                clone_dependencies(inner, types, clone_of, reached, seen);
             }
         }
         _ => {}

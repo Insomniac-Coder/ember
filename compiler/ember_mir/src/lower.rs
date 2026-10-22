@@ -2753,6 +2753,15 @@ impl<'a> Builder<'a> {
                 // their existing borrowed read.
                 let callee_op = if *consumes_callee {
                     match &callee.kind {
+                        // `[CLO-6a]` — a `once fn` in a `Box` is called by taking the box: the
+                        // backend moves the value out of it and frees it before the call.
+                        hir::ExprKind::Deref(pointer)
+                            if matches!(&pointer.kind, hir::ExprKind::Field { base, index: 0 }
+                                if matches!(*self.types.kind(base.ty), TyKind::Struct(id) if self.types.compiler_box_inner(id).is_some())) =>
+                        {
+                            let hir::ExprKind::Field { base, .. } = &pointer.kind else { unreachable!("matched above") };
+                            Operand::Move(self.lower_place(base))
+                        }
                         hir::ExprKind::Local(_)
                         | hir::ExprKind::Field { .. }
                         | hir::ExprKind::Index { .. }

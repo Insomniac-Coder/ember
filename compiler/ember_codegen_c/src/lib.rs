@@ -387,6 +387,7 @@ fn emit_with(
         interface_adapters: BTreeMap::new(),
         class_interface_tables: BTreeMap::new(),
         class_interface_call_interfaces: BTreeSet::new(),
+        clone_identities: BTreeSet::new(),
         interface_caches: BTreeMap::new(),
         folded_tests: BTreeMap::new(),
         fall_into: None,
@@ -478,6 +479,7 @@ fn emit_with(
         },
         mangled_types: std::cell::RefCell::new(BTreeMap::new()),
         array_helpers: std::cell::RefCell::new(Vec::new()),
+        global_allocator: None,
         clone_fns: bodies
             .iter()
             .filter(|body| {
@@ -785,6 +787,9 @@ struct Emitter<'a> {
     /// Interfaces read through a one-word class handle. A marker is needed
     /// even when the concrete adapter table came from another module.
     class_interface_call_interfaces: BTreeSet<String>,
+    /// `[TYP-22]` (ODR-237) — the interface identities whose tables copy their value (an
+    /// interface requires `Clone`): a `clone` entry follows `access`.
+    clone_identities: BTreeSet<String>,
     /// Per-body hidden caches for repeated interface calls through an
     /// unchanged class-interface parameter.
     interface_caches: BTreeMap<InterfaceCacheKey, String>,
@@ -874,6 +879,8 @@ struct Emitter<'a> {
     /// comparison, `pop`, `remove`, `clear`, `sorted`), requested and emitted
     /// like `eq_fns`.
     array_helpers: std::cell::RefCell<Vec<(ArrayHelper, Ty)>>,
+    /// `[ALC-3]` — the C symbols of a binary package's global allocator functions.
+    global_allocator: Option<(String, String)>,
     /// `[OWN-8]` — each type's `clone` function (derived or written), found
     /// among the bodies, and whether it takes its receiver by address.
     clone_fns: BTreeMap<Ty, (String, bool)>,
@@ -957,6 +964,9 @@ enum ArrayHelper {
     Sorted,
     /// `[OWN-8]` — a new buffer holding a clone of each element.
     Clone,
+    /// `[CLO-6a]` — a call through a `once fn` value held in a `Box`, keyed by the `once fn`
+    /// type: the value is moved out, the box freed, and the value's `once` entry called.
+    OnceBoxCall,
 }
 
 #[derive(Clone)]
@@ -1491,6 +1501,10 @@ impl Emitter<'_> {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::generated("main_entry"));
             let named = self.emit_frame_names(bodies, true);
             let coded = self.emit_code_names(bodies);
+            // `[ALC-3]` — the package's global allocator, through the two functions written for it.
+            let (allocate, deallocate) = ember_branding::global_allocator_glue();
+            let glue = |name: &str| bodies.iter().find(|body| body.name.rsplit('.').next() == Some(name)).map(|body| body.symbol.clone());
+            self.global_allocator = glue(&allocate).zip(glue(&deallocate));
             self.emit_entry_point(leak_check, entry, named, coded);
         }
         // `[FFI-26]` — each export table: a constant of its struct holding each field's function,
@@ -1566,6 +1580,14 @@ impl Emitter<'_> {
                             for field in &variant.fields { self.request_clone_dependency(field.ty); }
                         }
                     }
+                    // ODR-237 — a `Box[T]` clones its `T`; a `Box[dyn I]` through its table.
+                    TyKind::Struct(id) => {
+                        if let Some(inner) = self.box_inner_id(*id)
+                            && !matches!(self.types.kind(inner), TyKind::Dyn { .. })
+                        {
+                            self.request_clone_dependency(inner);
+                        }
+                    }
                     _ => unreachable!("only structural types request a clone-parts helper"),
                 }
             }
@@ -1577,6 +1599,7 @@ impl Emitter<'_> {
         match self.types.kind(ty) {
             TyKind::Vec { elem, .. } => { self.array_helper(ArrayHelper::Clone, *elem); }
             TyKind::Tuple(_) | TyKind::Enum(_) => { self.clone_parts_helper(ty); }
+            TyKind::Struct(id) if self.box_inner_id(*id).is_some() => { self.clone_parts_helper(ty); }
             _ => {}
         }
     }
@@ -1597,7 +1620,9 @@ impl Emitter<'_> {
             // (`-Wincompatible-pointer-types-discards-qualifiers`, `[CG-C-1]`).
             let argument = if *by_address { format!("({}*)&({source})", self.c_type(ty)) } else { source.to_string() };
             out.push(format!("{dest} = {symbol}({argument});"));
-        } else if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_)) {
+        } else if matches!(self.types.kind(ty), TyKind::Tuple(_) | TyKind::Enum(_))
+            || matches!(self.types.kind(ty), TyKind::Struct(id) if self.box_inner_id(*id).is_some())
+        {
             let helper = self.clone_parts_helper(ty);
             out.push(format!("{helper}(&({source}), &({dest}));"));
         } else {
@@ -1651,7 +1676,27 @@ impl Emitter<'_> {
                         self.line("    default: EMBER_UNREACHABLE();");
                         self.line("    }");
                     }
-                    _ => unreachable!("CloneParts is requested only for tuples and payload enums"),
+                    // ODR-237 — a new box holding a clone of the value; a `Box[dyn I]`'s through
+                    // the copy entry of its table.
+                    TyKind::Struct(id) if self.box_inner_id(id).is_some() => {
+                        let inner = self.box_inner_id(id).expect("a box");
+                        if matches!(self.types.kind(inner), TyKind::Dyn { .. }) {
+                            let header = ember_branding::generated("dyn_clone_header");
+                            self.line(&format!("    dst->data = ((const struct {header}*)src->vtable)->clone(src->data);"));
+                            self.line("    dst->vtable = src->vtable;");
+                        } else {
+                            let inner_c = self.c_type(inner);
+                            self.line(&format!(
+                                "    *dst = ({inner_c}*){RT}alloc({}, {});",
+                                c_size(&inner_c),
+                                c_align(&inner_c)
+                            ));
+                            let mut lines = Vec::new();
+                            self.clone_part_lines("(**dst)", "(**src)", inner, &mut lines);
+                            for line in lines { self.line(&format!("    {line}")); }
+                        }
+                    }
+                    _ => unreachable!("CloneParts is requested only for tuples, payload enums and boxes"),
                 }
                 self.line("}");
                 self.line("");
@@ -1701,8 +1746,9 @@ impl Emitter<'_> {
             TyKind::Vec { text: true, .. } => format!(
                 "{RT}str_cmp({RT}vec_as_str((const {RT}vec*)a), {RT}vec_as_str((const {RT}vec*)b)) < 0"
             ),
-            // An `Array` is not `Ord` (`[TYP-36]`): the checker sorts no list
-            // of them, and its bytes are not text (D-465).
+            // An `Array` is ordered by std's `cmp_elements` (`[TYP-36]`): the
+            // checker never gives this sort a list of them, and its bytes are
+            // not text (D-465).
             TyKind::Vec { text: false, .. } => unreachable!("an `Array` has no order to sort by"),
             _ => {
                 let c = self.c_type(ty);
@@ -1910,6 +1956,34 @@ impl Emitter<'_> {
                         }
                         body.push("return r;".to_string());
                         (format!("static {RT}vec {symbol}(const void* elems, size_t count)"), body)
+                    }
+                    ArrayHelper::OnceBoxCall => {
+                        let TyKind::Fn { params, ret, .. } = self.types.kind(ty).clone() else {
+                            unreachable!("a `once fn` type")
+                        };
+                        let declarations = std::iter::once("void* _b".to_string())
+                            .chain(params.iter().enumerate().map(|(index, param)| format!("{} _a{index}", self.callable_param_c_type(*param, false))))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let parameters = std::iter::once("void*".to_string())
+                            .chain(params.iter().map(|param| self.callable_param_c_type(*param, false)))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let arguments = std::iter::once("(void*)&_v.w".to_string())
+                            .chain((0..params.len()).map(|index| format!("_a{index}")))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let ret_c = self.c_type(ret);
+                        let call = format!("(({ret_c} (*)({parameters}))_v.d->once)({arguments})");
+                        (
+                            format!("static {ret_c} {symbol}({declarations})"),
+                            vec![
+                                format!("struct {RT}fn_value _v;"),
+                                "memcpy(&_v, _b, sizeof _v);".to_string(),
+                                format!("{RT}free(_b, sizeof _v, _Alignof(struct {RT}fn_value));"),
+                                if self.is_void(ret) { format!("{call};") } else { format!("return {call};") },
+                            ],
+                        )
                     }
                     ArrayHelper::Sorted => {
                         let sort = self.array_helper(ArrayHelper::Sort, ty);
@@ -2656,6 +2730,9 @@ impl Emitter<'_> {
             if self.reload.is_some() {
                 self.line(&format!("    const {RT}rl_field* captures;"));
             }
+            // `[CLO-6a]` — a call through a `once fn` value: the call and the end of the state,
+            // which the call consumes (a closure that moves a capture out takes it whole).
+            self.line("    void (*once)(void);");
             self.line("};");
             self.line(&format!("struct {RT}fn_value {{"));
             self.line("    void (*native)(void);");
@@ -3592,8 +3669,16 @@ impl Emitter<'_> {
                         ret: slot.ret,
                     }))
                     .collect();
+                self.note_dyn_clone(interfaces);
                 self.register_interface_layout(dyn_table_identity(self.types, interfaces), layout);
             }
+        }
+    }
+
+    /// `[TYP-22]` (ODR-237) — a table for `interfaces` copies its value when one requires `Clone`.
+    fn note_dyn_clone(&mut self, interfaces: &[Symbol]) {
+        if self.types.dyn_clones(interfaces) {
+            self.clone_identities.insert(dyn_table_identity(self.types, interfaces));
         }
     }
 
@@ -3639,6 +3724,7 @@ impl Emitter<'_> {
                                 },
                             ..
                         } => {
+                            self.note_dyn_clone(interfaces);
                             self.register_interface_adapter(
                                 *concrete,
                                 dyn_table_identity(self.types, interfaces),
@@ -3675,6 +3761,7 @@ impl Emitter<'_> {
                             ..
                         } => {
                             let identity = dyn_table_identity(self.types, &[*interface]);
+                            self.note_dyn_clone(&[*interface]);
                             self.register_interface_adapter(
                                 *concrete,
                                 identity.clone(),
@@ -3718,6 +3805,7 @@ impl Emitter<'_> {
                     ..
                 } = &block.terminator
                 {
+                    self.note_dyn_clone(interfaces);
                     self.register_interface_adapter(
                         *concrete,
                         dyn_table_identity(self.types, interfaces),
@@ -3834,6 +3922,16 @@ impl Emitter<'_> {
             self.line("    size_t align;");
             self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
             self.line("};");
+            // `[TYP-22]` (ODR-237) — the prefix of a table that copies its value, which a
+            // `Box[dyn I]`'s clone reads.
+            let header = ember_branding::generated("dyn_clone_header");
+            self.line(&format!("struct {header} {{"));
+            self.line("    void (*drop)(void*);");
+            self.line("    size_t size;");
+            self.line("    size_t align;");
+            self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
+            self.line("    void* (*clone)(const void*);");
+            self.line("};");
         }
         let class_handle_interfaces = self
             .class_interface_tables
@@ -3867,6 +3965,9 @@ impl Emitter<'_> {
             // `[EXC-18]` — a class concrete's whole-object access, for a view a
             // `dyn` call returns; NULL for any other concrete (F4).
             self.line(&format!("    void (*access)(void*, int, {RT}loc);"));
+            if self.clone_identities.contains(&interface) {
+                self.line("    void* (*clone)(const void*);");
+            }
             for (slot, method) in methods.into_iter().enumerate() {
                 let Some(method) = method else {
                     self.line(&format!("    void (*slot{slot})(void*);"));
@@ -4093,11 +4194,43 @@ impl Emitter<'_> {
             } else {
                 "NULL".to_string()
             };
+            // `[TYP-22]` (ODR-237) — the copy entry: a clone of the value in a new block (a class
+            // handle's copy is the handle, retained).
+            let clone = self.clone_identities.contains(&adapter.interface).then(|| {
+                let name = format!("{table}_clone");
+                let concrete_c = self.c_type(adapter.concrete);
+                let mut lines = Vec::new();
+                self.line(&format!("static void* {name}(const void* _0) {{"));
+                if class_handle {
+                    self.line(&format!("    {concrete_c} copy;"));
+                    self.clone_part_lines("copy", &format!("(({concrete_c})_0)"), adapter.concrete, &mut lines);
+                    for line in lines {
+                        self.line(&format!("    {line}"));
+                    }
+                    self.line("    return (void*)copy;");
+                } else {
+                    self.line(&format!(
+                        "    {concrete_c}* copy = ({concrete_c}*){RT}alloc({}, {});",
+                        c_size(&concrete_c),
+                        c_align(&concrete_c)
+                    ));
+                    self.clone_part_lines("(*copy)", &format!("(*({concrete_c} const*)_0)"), adapter.concrete, &mut lines);
+                    for line in lines {
+                        self.line(&format!("    {line}"));
+                    }
+                    self.line("    return copy;");
+                }
+                self.line("}");
+                name
+            });
             self.line(&format!("static const struct {table_type} {table} = {{"));
             self.line(&format!("    {drop},"));
             self.line(&format!("    {size},"));
             self.line(&format!("    {align},"));
             self.line(&format!("    {access},"));
+            if let Some(clone) = clone {
+                self.line(&format!("    {clone},"));
+            }
             for (slot, implementation) in adapter.implementations.iter().enumerate() {
                 let value = if implementation.is_some() {
                     format!("{table}_slot{slot}")
@@ -5788,7 +5921,7 @@ impl Emitter<'_> {
                 |adapter| format!("(void (*)(void)){adapter}"));
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
             let captures = if self.reload.is_some() { ", NULL" } else { "" };
-            self.line(&format!("    (void (*)(void)){thunk}, {c_entry}, NULL{captures}"));
+            self.line(&format!("    (void (*)(void)){thunk}, {c_entry}, NULL{captures}, (void (*)(void)){thunk}"));
             self.line("};");
         }
         if !self.native_fn_values.is_empty() { self.line(""); }
@@ -5858,9 +5991,31 @@ impl Emitter<'_> {
             }
             self.line(&format!("    if ({boxed}) {{ {RT}free(_e, sizeof({env_c}), _Alignof({env_c})); }}"));
             self.line("}");
+            // `[CLO-6a]` — the call a `once fn` value makes, which ends its state: a closure that
+            // takes its environment whole (one that moves a capture out) is given it and drops
+            // what it keeps, and only an allocation holding it is freed here; any other is called
+            // as by `native` and then dropped.
+            self.line(&format!("static EMBER_MAYBE_UNUSED {} {descriptor}_once({declarations}) {{", self.c_type(ret)));
+            let forwarded = std::iter::once("_env".to_string())
+                .chain(params.iter().map(|(id, _)| format!("_{id}")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let result = if self.is_void(ret) { String::new() } else { format!("{} _r = ", self.c_type(ret)) };
+            if body.param_modes.first() == Some(&ParameterMode::Owned) {
+                self.line(&find);
+                self.line(&format!("    {result}{closure}({arguments});"));
+                self.line(&format!("    if ({boxed}) {{ {RT}free(_e, sizeof({env_c}), _Alignof({env_c})); }}"));
+            } else {
+                self.line(&format!("    {result}{descriptor}_native({forwarded});"));
+                self.line(&format!("    {descriptor}_drop(_env);"));
+            }
+            if !self.is_void(ret) {
+                self.line("    return _r;");
+            }
+            self.line("}");
             let captures = if self.reload.is_some() { format!(", {}", self.reload_captures(env)) } else { String::new() };
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
-            self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop{captures}"));
+            self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop{captures}, (void (*)(void)){descriptor}_once"));
             self.line("};");
             // `[JOB-1]` — the job's entry and drop, on the state its slot holds as it is.
             if self.job_closures.contains(&closure) {
@@ -8679,6 +8834,7 @@ impl Emitter<'_> {
             // Cast its native field back to this call's exact signature.
             // A C function value remains a raw C function pointer.
             FuncRef::Indirect { operand: callee, ty, .. } => {
+                let callee_operand = callee;
                 let mut rendered = rendered;
                 if let TyKind::Fn { abi: Some(_), params, .. } = self.types.kind(*ty) {
                     for (argument, param) in rendered.iter_mut().zip(params) {
@@ -8686,7 +8842,7 @@ impl Emitter<'_> {
                             *argument = format!("*({argument})");
                         }
                     }
-                } else if let TyKind::Fn { abi: None, params, ret, .. } = self.types.kind(*ty) {
+                } else if let TyKind::Fn { abi: None, params, ret, once, .. } = self.types.kind(*ty) {
                     let parameters = params.iter()
                         .map(|param| self.callable_param_c_type(*param, false))
                         .collect::<Vec<_>>();
@@ -8696,10 +8852,24 @@ impl Emitter<'_> {
                     let parameters = if parameters == "void" { "void*".to_string() }
                         else { format!("void*, {parameters}") };
                     let arguments = std::iter::once(format!("(void*)&({callee}).w"))
-                        .chain(rendered)
+                        .chain(rendered.iter().cloned())
                         .collect::<Vec<_>>()
                         .join(", ");
-                    return format!("(({} (*)({parameters}))(({callee}).native))({arguments})",
+                    // `[CLO-6a]` — a `once fn` value's call ends its state (`_once`); one in a `Box`
+                    // is taken out of the box, which is freed, first.
+                    if *once
+                        && let Some(boxed) = self.operand_type(callee_operand, body)
+                        && matches!(*self.types.kind(boxed), TyKind::Struct(id) if self.box_inner_id(id).is_some())
+                    {
+                        let helper = self.array_helper(ArrayHelper::OnceBoxCall, *ty);
+                        let arguments = std::iter::once(format!("(void*)({callee})"))
+                            .chain(rendered)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return format!("{helper}({arguments})");
+                    }
+                    let entry = if *once { format!("({callee}).d->once") } else { format!("({callee}).native") };
+                    return format!("(({} (*)({parameters}))({entry}))({arguments})",
                         self.c_type(*ret));
                 }
                 format!("({})({})", self.operand(callee, body), rendered.join(", "))
@@ -8775,14 +8945,27 @@ impl Emitter<'_> {
                     Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
                     // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
                     // its own, and needs nothing.
+                    // `[HR-20]` (ODR-194) — with an `on_relocate` callback, a class object is
+                    // recorded with it instead of pinned, and may move; a `Box`'s value never does.
                     Builtin::RetainedPin => {
                         let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(id) if self.box_inner_id(*id).is_some());
-                        return if boxed {
-                            "((void)0)".to_string()
-                        } else {
-                            format!("{RT}obj_pin(({RT}obj_header*)({}))", rendered[0])
+                        if boxed {
+                            return "((uint64_t)0)".to_string();
+                        }
+                        let callback = match args.get(1).and_then(|arg| self.operand_type(arg, body)).map(|ty| self.types.kind(ty).clone()) {
+                            Some(TyKind::Enum(id)) if self.types.option_niche(id).is_none() => {
+                                let ty = self.operand_type(&args[1], body).expect("typed above");
+                                let (some, payload) = self.option_some_parts(ty, &rendered[1]);
+                                format!("(({some}) ? (void (*)(void)){payload} : NULL)")
+                            }
+                            _ => format!("((void (*)(void))({}))", rendered[1]),
                         };
+                        let object = format!("(({RT}obj_header*)({}))", rendered[0]);
+                        return format!(
+                            "({callback} == NULL ? ({RT}obj_pin({object}), (uint64_t)0) : {RT}obj_pin_relocatable({object}, {callback}))"
+                        );
                     }
+                    Builtin::RetainedUnpin => return format!("{RT}obj_unpin_relocatable({})", rendered[0]),
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
                     Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),
@@ -9232,6 +9415,13 @@ impl Emitter<'_> {
                             "({scoped}){{ &(({parent}*){})->token, (({parent}*){})->state, {RT}arena_mark((({parent}*){})->state), 0 }}",
                             rendered[0], rendered[0], rendered[0]
                         );
+                    }
+                    // `[JOB-5]` — a scope of the running job's arena, anchored at the caller's hidden
+                    // local; the runtime panics outside a job.
+                    Builtin::JobLocalArena { scoped } => {
+                        let scoped = self.c_type(*scoped);
+                        let state = format!("{RT}job_local_arena({})", self.location(span));
+                        return format!("({scoped}){{ ({}), {state}, {RT}arena_mark({state}), 0 }}", rendered[0]);
                     }
                     Builtin::ScopedArenaAlloc { elem } => {
                         let scoped = self.c_type(self.element_of(*arg_ty));
@@ -11336,6 +11526,11 @@ impl Emitter<'_> {
         self.line(&format!("    {RT}rt_config cfg = {RT}rt_config_default();"));
         if leak_check {
             self.line("    cfg.flags |= EMBER_RT_DEBUG_OBJECTS;");
+        }
+        // `[ALC-3]` — every allocation the runtime makes goes through the package's allocator.
+        if let Some((allocate, deallocate)) = self.global_allocator.clone() {
+            self.line(&format!("    cfg.alloc = (void* (*)(size_t, size_t)){allocate};"));
+            self.line(&format!("    cfg.free = (void (*)(void*, size_t, size_t)){deallocate};"));
         }
         self.line(&format!("    {RT}rt_set_args(argc, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
@@ -13713,6 +13908,7 @@ mod string_descriptor_view_parts_tests {
             interface_adapters: BTreeMap::new(),
             class_interface_tables: BTreeMap::new(),
             class_interface_call_interfaces: BTreeSet::new(),
+            clone_identities: BTreeSet::new(),
             interface_caches: BTreeMap::new(),
             folded_tests: BTreeMap::new(),
             fall_into: None,
@@ -13739,6 +13935,7 @@ mod string_descriptor_view_parts_tests {
             eq_fns: Default::default(),
             clone_parts_fns: Default::default(),
             array_helpers: Default::default(),
+            global_allocator: None,
             clone_fns: BTreeMap::new(),
             fmt_fns: Default::default(),
             fmt_prints: Default::default(),

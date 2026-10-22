@@ -348,6 +348,43 @@ fn the_manifest_names_the_language() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[ALC-3]` (ODR-175) — a binary package replaces the global allocator with `[build]
+/// global_allocator = "module.NAME"`, naming a `static` whose type implements `std.mem.Allocator`:
+/// every allocation the program makes goes through it (here a counting one wrapping `System()`, the
+/// platform's allocator, ODR-239), the runtime's own included. A static of another type is `E2040`; a library naming one, a module the
+/// package does not have, or a name that is not a static, is `E9001` at the key.
+#[test]
+fn a_binary_package_replaces_the_global_allocator() {
+    let heap = "from std.mem import Allocator, Layout, System\nfrom std.sync import Atomic\n\n\
+                pub struct Counting:\n    pub blocks: Atomic[int]\n\n\
+                pub static COUNTING: Counting = Counting(Atomic(0))\n\n\
+                pub struct Plain:\n    pub n: int\n\npub static PLAIN: Plain = Plain(1)\n\n\
+                # SAFETY: every block is `System`'s, whose promises it keeps; this only counts them.\n\
+                unsafe extend Counting implements Allocator:\n    \
+                fn allocate(self, layout: Layout) -> *mut u8:\n        self.blocks.fetch_add(1)\n        return System().allocate(layout)\n\n    \
+                fn deallocate(self, p: *mut u8, layout: Layout):\n        System().deallocate(p, layout)\n\n    \
+                fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        self.blocks.fetch_add(1)\n        return System().reallocate(p, old, new_size)\n";
+    let main = "import heap\n\nfn main():\n    words: Array[String] = []\n    for i in 0..50:\n        words.push(f\"word {i}\")\n    \
+                println(words.len(), heap.COUNTING.blocks.load() >= 50)\n";
+    let manifest = |kind: &str, named: &str| format!("[package]\nname = \"app\"\nkind = \"{kind}\"\n\n[build]\nglobal_allocator = \"{named}\"\n");
+    let dir = scratch();
+    package(&dir, &manifest("bin", "heap.COUNTING"), &[("heap", heap), ("main", main)]);
+    let ran = ember(&["run"], &dir);
+    assert!(ran.ok, "{}{}", ran.stdout, ran.stderr);
+    assert_eq!(ran.stdout, "50 true\n", "{}", ran.stderr);
+    for (kind, named, expected) in [
+        ("bin", "heap.PLAIN", "does not implement `std.mem.Allocator`"),
+        ("bin", "heap.MISSING", "error[E9001]: `global_allocator` names `heap.MISSING`, which is not a `static` of module `heap`"),
+        ("bin", "nowhere.COUNTING", "error[E9001]: `global_allocator` names module `nowhere`, which the package does not have"),
+        ("lib", "heap.COUNTING", "error[E9001]: `global_allocator` is a binary package's"),
+    ] {
+        package(&dir, &manifest(kind, named), &[("heap", heap), ("main", main), ("lib", "pub fn f() -> int:\n    return 1\n")]);
+        let checked = ember(&["check"], &dir);
+        assert!(!checked.ok && checked.stderr.contains(expected), "{named}: {}", checked.stderr);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `[BLD-FFI-1b]` — with MSVC, the C++ project's runtime switch (and `_DEBUG`,
 /// `_ITERATOR_DEBUG_LEVEL`) is inherited by every translation unit of the target: a project built
 /// with `/MDd` makes a program whose own C uses the debug C runtime too, and none of the release

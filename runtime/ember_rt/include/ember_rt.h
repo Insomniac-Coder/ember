@@ -1312,6 +1312,16 @@ void* ember_alloc(size_t size, size_t align);
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 void ember_free(void* p, size_t size, size_t align);
 void* ember_try_alloc(size_t size, size_t align);
+/* [ALC-2] (ODR-175) — `Global.reallocate`: a block of `new_size` bytes holding the first
+ * `min(old_size, new_size)` of `p`'s, `p` freed; NULL, with `p` left as it was, when there is no
+ * memory. */
+void* ember_try_realloc(void* p, size_t old_size, size_t new_size, size_t align);
+/* [ALC-2] (ODR-239) `std.mem.System`: the platform's allocator, the one the runtime uses when no
+ * global allocator is configured; these never reach a configured one, so a global allocator may
+ * wrap them. Null when there is no memory; a failed reallocation leaves `p` as it was. */
+void* ember_system_alloc(size_t size, size_t align);
+void ember_system_free(void* p, size_t size, size_t align);
+void* ember_system_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 /* IX.1: allocate one uniquely owned value and move its object bytes into the
  * allocation. The compiler remains responsible for source move state and for
  * running the payload destructor before ember_free. */
@@ -1976,6 +1986,9 @@ void ember_arena_reset(void* arena);
 void ember_arena_free(void* arena);
 void* ember_arena_mark(void* arena);
 void ember_arena_rewind(void* arena, void* mark);
+/* [JOB-5] `jobs.local_arena()`: the running job's arena (one per thread, made on first use), which
+ * the job system rewinds when the job ends; outside a job it panics, naming `at`. */
+void* ember_job_local_arena(ember_loc at);
 void* ember_fixed_arena_alloc_copy(
     void* buffer,
     size_t capacity,
@@ -3225,6 +3238,12 @@ EMBER_PANIC_FN void ember_reload_removed_called(const char* name);
 /* `[FFI-23]` — `Retained.pin` of a class object: its header's pinned flag, set for good (an object
  * foreign code may hold is never moved, `[HR-20]`). */
 void ember_obj_pin(ember_obj_header* object);
+/* `[HR-20]` (ODR-194) — `Retained.pin(handle, on_relocate=Some(f))`: the object is not pinned; a
+ * reload that moves it calls `f` (an `extern "C" fn(ObjectPtr[C], ObjectPtr[C])`) with the old and
+ * the new address, after commit publishes the move and before reclaim. Returns the token's number,
+ * which `ember_obj_unpin_relocatable` takes when the token ends (`0` is no token). */
+uint64_t ember_obj_pin_relocatable(ember_obj_header* object, void (*callback)(void));
+void ember_obj_unpin_relocatable(uint64_t id);
 /* `[FFI-17d]` — a foreign `delete` of a class object whose trampoline declares
  * `owner="foreign"`: the count C++ was given becomes a handle again, which must be the object's
  * only one (Ember code that still held one would be left with a deleted C++ object); otherwise

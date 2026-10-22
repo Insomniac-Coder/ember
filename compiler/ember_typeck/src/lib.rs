@@ -1251,6 +1251,9 @@ struct LocalFnSelf {
     /// (and in the capture probes), set for the final check of a body that
     /// captures.
     env: Option<Mode>,
+    /// While its body's captures are being found: whether it captures, and
+    /// so how it is called, is not known yet.
+    probing: bool,
 }
 
 #[derive(Clone)]
@@ -1380,9 +1383,14 @@ const BUILT_IN_TYPES: [&str; 19] = [
 /// that very name: `Box` would key the compiler's `Box` lookups, share its
 /// instances' names (`Box_i64`, also their C names) and be taken for it by
 /// origin (D-305). That one is `root.Box` instead, which only the root
-/// module's own `Box` resolves to; its diagnostics still say `Box`.
+/// module's own `Box` resolves to; its diagnostics still say `Box`. Likewise
+/// the scalar names a declaration may shadow, `int`, `float` and `str` (D-860).
 fn root_qualified(name: Symbol) -> Symbol {
-    if COMPILER_KNOWN_TYPES.contains(&name.as_str()) { Symbol::intern(&format!("root.{name}")) } else { name }
+    if COMPILER_KNOWN_TYPES.contains(&name.as_str()) || matches!(name.as_str(), "int" | "float" | "str") {
+        Symbol::intern(&format!("root.{name}"))
+    } else {
+        name
+    }
 }
 
 /// G8-4, `[STD-19]` — how a hidden count type is made from two others: a
@@ -1449,11 +1457,13 @@ struct GenericParam {
 struct CallableBound {
     params: Vec<FnParam>,
     ret: Ty,
-    /// `[CLO-6]` — "A parameter written `owned f: fn(A) -> R` is a generic
-    /// bounded by `CallableOnce`; `f: fn(A) -> R` and `mut f: fn(A) -> R` are
-    /// bounded by `Callable`." Calling a `CallableOnce` consumes it, so a
-    /// second call is `E3040` under `[OWN-3]` with no analysis of its own.
+    /// `[CLO-6]` — written `once fn(A) -> R`: calling it consumes it, so a second call is
+    /// `E3040` under `[OWN-3]` with no analysis of its own. Only `once fn` is single-call
+    /// (D-850): `owned f: fn(A) -> R` is called any number of times.
     once: bool,
+    /// `[CLO-3]` (ODR-189) — the parameter is taken over (`owned`): an owned callable value in
+    /// its function, which may store it.
+    owned: bool,
     /// `[FN-6b]` — the callable-type boundary fact, distinct from the outer
     /// parameter mode that selects `Callable` versus `CallableOnce`.
     latebound: bool,
@@ -1622,17 +1632,23 @@ fn attribute_names(attr: &ast::Attribute, word: &str) -> bool {
 
 /// `[GRM-38]` — `fn(x) => body` for a comprehension clause binding `pattern`: a name binds the
 /// item directly; any other irrefutable pattern destructures it, `fn($item) => match $item: p => body`.
+/// `[GRM-38]` — the method name of the compiler's call for what a generator expression's later
+/// `for` clause iterates; a `·` begins no identifier, so no program can write it.
+const ITERATOR_OF: &str = "\u{b7}iterator_of";
+
 fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Expr {
     let infer = || ast::TypeExpr { id: ast::NodeId::DUMMY, kind: ast::TypeKind::Infer, span };
-    let param = |name: Symbol| ast::Param {
+    // A name bound as the parameter keeps its written span: each clause function a generator
+    // expression makes binds it again, and it is one binding (`L1001`).
+    let param = |name: ast::Ident| ast::Param {
         id: ast::NodeId::DUMMY,
         mode: ast::Mode::Borrow,
-        kind: ast::ParamKind::Named { name: ast::Ident { name, span }, ty: infer() },
+        kind: ast::ParamKind::Named { name, ty: infer() },
         default: None,
-        span,
+        span: name.span,
     };
     let (name, body) = match &pattern.kind {
-        ast::PatternKind::Bind { name, by_ref: false, mutable: false, sub: None } => (name.name, body),
+        ast::PatternKind::Bind { name, by_ref: false, mutable: false, sub: None } => (*name, body),
         _ => {
             let item = Symbol::intern("$item");
             let scrutinee = ast::Expr {
@@ -1652,7 +1668,7 @@ fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Ex
                 kind: ast::ExprKind::Match { scrutinee: Box::new(scrutinee), arms: vec![arm] },
                 span,
             };
-            (item, matched)
+            (ast::Ident { name: item, span }, matched)
         }
     };
     ast::Expr {
@@ -1915,7 +1931,7 @@ enum TyShape {
     Array(u64),
     Vec(bool),
     Tuple,
-    Fn(Option<Symbol>, bool, bool, bool, Vec<ember_types::FnParamMode>),
+    Fn(Option<Symbol>, bool, bool, bool, bool, Vec<ember_types::FnParamMode>),
     /// Any other type: equal only to itself.
     Leaf(Ty),
 }
@@ -2517,6 +2533,11 @@ struct Checker<'a> {
     /// The declaring module's visibility for each canonical item. This is the
     /// resolver's visibility fact, reused when enumerating qualified N1 names.
     item_visibility: HashMap<Symbol, ast::VisKind>,
+    /// `[JOB-5]` — the hidden locals `jobs.local_arena()` anchored its views at in the body being
+    /// checked, declared where it begins (`declare_arena_anchors`).
+    arena_anchors: Vec<LocalId>,
+    /// `[ALC-2]` (ODR-175) — the interfaces declared `unsafe interface`.
+    unsafe_interfaces: HashSet<Symbol>,
     /// `[VER-3]` (ODR-174) — each `@deprecated` item by its qualified name, each `@deprecated`
     /// member by its span, and each method registered from one by its `DefId`.
     deprecated_items: HashMap<Symbol, Deprecation>,
@@ -2774,6 +2795,15 @@ struct Checker<'a> {
     /// pointer. This table supplies the ownership-aware constructor,
     /// auto-deref and drop semantics without making raw access public.
     boxes: HashMap<StructId, Ty>,
+    /// `[STR-5]` (ODR-237) — the types whose derived `Clone` is being settled, taken as `Clone`
+    /// while their fields are checked, so a recursive one (`Node(Box[Tree])`) derives it.
+    assumed_cloneable: HashSet<Ty>,
+    /// `[GRM-27]` (ODR-236) — the borrowed items of the comprehension clauses being checked, with
+    /// the clause's iterable: kept whole and not `Copy`, one is a move out of the collection.
+    gather_items: Vec<(LocalId, Option<String>)>,
+    /// `[STD-19]` (ODR-240) — the arguments lent to callable parameters while a generic call's
+    /// type arguments were solved, which the call's arguments are then checked as.
+    lent_callable_args: HashSet<Span>,
     /// `[HEAP-3]`–`[HEAP-6]` — every compiler-known `Shared[T]` and its
     /// payload. The public handle is Copy, but copy/drop use the same strong
     /// control-block operations as class handles rather than bitwise pointer
@@ -3127,6 +3157,10 @@ struct Checker<'a> {
     /// lambda in it takes.
     active_fp: FpMode,
     lint_return_intersection: bool,
+    /// ODR-211 — set while an interface default's signature is read again for one implementing
+    /// type: its `@borrows` was checked on the interface, and here applies only where this type
+    /// makes the result and the named parameters views.
+    borrows_in_copy: bool,
     /// `[ATT-6]` — statement attributes already reported, so a generic body
     /// checked once per instance reports each once.
     reported_stmt_attrs: HashSet<Span>,
@@ -3199,6 +3233,8 @@ impl<'a> Checker<'a> {
             const_initializer: false,
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
+            arena_anchors: Vec::new(),
+            unsafe_interfaces: HashSet::new(),
             deprecated_items: HashMap::new(),
             deprecated_members: HashMap::new(),
             method_deprecation: HashMap::new(),
@@ -3310,6 +3346,9 @@ impl<'a> Checker<'a> {
             deferred_override_checks: Vec::new(),
             cells: HashMap::new(),
             boxes: HashMap::new(),
+            assumed_cloneable: HashSet::new(),
+            gather_items: Vec::new(),
+            lent_callable_args: HashSet::new(),
             shareds: HashMap::new(),
             sync_shareds: HashSet::new(),
             with_scope_item: None,
@@ -3425,6 +3464,7 @@ impl<'a> Checker<'a> {
             active_overflow: OverflowPolicy::default(),
             active_fp: FpMode::Strict,
             lint_return_intersection: false,
+            borrows_in_copy: false,
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
             param_defaults: HashMap::new(),
@@ -3512,6 +3552,39 @@ impl<'a> Checker<'a> {
             return None;
         };
 
+        // ODR-211 — a copy for one type: what the interface's check accepted, kept where this
+        // type makes it a view (the result, then each named parameter or field).
+        if self.borrows_in_copy {
+            if !self.types.is_view(ret) {
+                return None;
+            }
+            let quiet = self.sink.mark();
+            let named = self.check_borrows_attribute_in(attr, params, ret);
+            self.sink.rollback(quiet);
+            let kept = named.map(|named| {
+                named
+                    .into_iter()
+                    .filter(|source| {
+                        let ty = params[source.parameter].1;
+                        let ty = match source.field {
+                            Some(field) => self.receiver_fields(ty).and_then(|fields| fields.get(field).map(|(_, ty)| *ty)),
+                            None => Some(ty),
+                        };
+                        ty.is_some_and(|ty| self.types.is_view(ty) || self.is_source_parameter(ty, params[source.parameter].2))
+                    })
+                    .collect()
+            });
+            return kept;
+        }
+        self.check_borrows_attribute_in(attr, params, ret)
+    }
+
+    fn check_borrows_attribute_in(
+        &mut self,
+        attr: &ast::Attribute,
+        params: &[(Symbol, Ty, Mode, Span)],
+        ret: Ty,
+    ) -> Option<Vec<hir::BorrowSource>> {
         if attr.args.is_empty() {
             self.sink.emit(
                 Diagnostic::error(
@@ -3528,7 +3601,9 @@ impl<'a> Checker<'a> {
             return None;
         }
 
-        if !self.types.is_view(ret) {
+        // ODR-211 — a result some instance makes a view (`Option[I.Item]`) is checked in each
+        // instance, as ODR-048 makes a parameter a source per instance.
+        if !self.types.may_be_view(ret) {
             let shown = self.types.display(ret);
             self.sink.emit(
                 Diagnostic::error(
@@ -3627,6 +3702,10 @@ impl<'a> Checker<'a> {
                     if *mode == Mode::Mut
                         || self.is_source_parameter(*ty, *mode)
                         || (*ty == self.common.self_ty && *mode != Mode::Owned) => {}
+                // ODR-211 — a parameter some instance makes a view, in any mode (an `owned self`
+                // iterator's items borrow what it borrows): a source in the instances where it is
+                // one ([LT-1], ODR-048), and nothing is borrowed from it in the others.
+                Some((_, ty, ..)) if !self.types.is_view(*ty) && self.types.may_be_view(*ty) => {}
                 Some((_, ty, mode, span)) if !self.types.is_view(*ty) => {
                     let shown = self.types.display(*ty);
                     let why = if *mode == Mode::Owned {
@@ -3684,14 +3763,15 @@ impl<'a> Checker<'a> {
             );
             return None;
         };
-        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.is_view(*ty)).map(|(name, _)| format!("`self.{name}`")).collect();
+        // ODR-211 — a field some instance makes a view (`inner: I`) counts, checked in each instance.
+        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.may_be_view(*ty)).map(|(name, _)| format!("`self.{name}`")).collect();
         let help = if views.is_empty() {
             format!("{shown} has no view field: name `self` instead (LT-1a)")
         } else {
             format!("the view fields of {shown} are {}", views.join(", "))
         };
         match fields.iter().position(|(name, _)| *name == field) {
-            Some(index) if self.types.is_view(fields[index].1) => Some(index),
+            Some(index) if self.types.may_be_view(fields[index].1) => Some(index),
             Some(index) => {
                 let ty = self.types.display(fields[index].1);
                 self.sink.emit(
@@ -4203,7 +4283,7 @@ impl<'a> Checker<'a> {
                     return true;
                 }
                 let name = segments[0].name;
-                self.scalar_named(name.as_str()).is_some()
+                self.scalar_in_scope(name).is_some()
                     || name.is("String")
                     || self.named_types.contains_key(&self.resolve_name(name))
                     || !args.is_empty()
@@ -4363,9 +4443,13 @@ impl<'a> Checker<'a> {
             declared[at].bindings.extend(found);
         }
         for (at, bound) in callables {
+            // `[CLO-14]`, `[CLO-6]` — `F: once fn(A) -> R` is the parameter form's `once fn`.
+            let once = matches!(bound.kind, ast::TypeKind::Fn { once: true, .. });
+            self.once_fn_parameter = once;
             let resolved = self.resolve_type(bound);
+            self.once_fn_parameter = false;
             if let TyKind::Fn { abi: None, latebound, is_unsafe, params, ret, .. } = self.types.kind(resolved).clone() {
-                declared[at].callable = Some(CallableBound { params, ret, once: false, latebound, is_unsafe });
+                declared[at].callable = Some(CallableBound { params, ret, once, owned: false, latebound, is_unsafe });
             }
         }
         for param in declared.iter_mut().filter(|param| param.projection.is_none()) {
@@ -4490,8 +4574,11 @@ impl<'a> Checker<'a> {
         let bound = CallableBound {
             params: params.clone(),
             ret: *ret,
-            // `[CLO-6]` — the mode already selects the bound.
-            once: mode == ast::Mode::Owned,
+            // `[CLO-6]` (D-850) — only `once fn` is called at most once; an `owned f: fn(A) -> R`
+            // is taken over and called any number of times (the parser makes a `once fn`
+            // parameter `owned`, as its call consumes it).
+            once: matches!(ty.kind, ast::TypeKind::Fn { once: true, .. }),
+            owned: mode == ast::Mode::Owned,
             latebound: *latebound,
             is_unsafe: *is_unsafe,
         };
@@ -4848,6 +4935,12 @@ impl<'a> Checker<'a> {
             self.item_visibility.insert(qualified, item.vis.kind);
             if let Some(deprecation) = self.read_deprecation(&item.attrs) {
                 self.deprecated_items.insert(qualified, deprecation);
+            }
+            // `[ALC-2]` (ODR-175) — known before any implementation is read.
+            if let ast::ItemKind::Interface(decl) = &item.kind
+                && decl.is_unsafe
+            {
+                self.unsafe_interfaces.insert(qualified);
             }
             if let ast::ItemKind::Const(decl) = &item.kind {
                 self.const_values.insert(qualified, (decl.value.clone(), index));
@@ -6977,6 +7070,20 @@ impl<'a> Checker<'a> {
             self.count_op_params.clear();
             let interfaces: Vec<Symbol> =
                 decl.implements.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
+            // `[ALC-2]`, `[TYP-43]` (ODR-175) — implementing an `unsafe interface` is `unsafe`, in a
+            // generic extension as in any.
+            if !decl.is_unsafe {
+                for (entry, name) in decl.implements.iter().zip(&interfaces) {
+                    if self.unsafe_interfaces.contains(name) {
+                        let shown = self.interface_shown(*name);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E3100, entry.span, format!("implementing `{shown}` is `unsafe`: its implementer promises what the compiler cannot check"))
+                                .help(format!("write `unsafe extend … implements {shown}:` with a SAFETY note saying why its promises hold"))
+                                .note("an `unsafe interface` is implemented only in an `unsafe extend` [TYP-43], [ALC-2]"),
+                        );
+                    }
+                }
+            }
             let interface = interfaces.first().copied();
             self.generic_extensions
                 .entry(name)
@@ -7172,7 +7279,7 @@ impl<'a> Checker<'a> {
                 ret: item.decl.ty.clone(),
                 body: ast::LambdaBody::Expr(Box::new(item.decl.value.clone())),
             };
-            let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params: Vec::new(), ret: item.ty });
+            let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: Vec::new(), ret: item.ty });
             let value = self.synth_lambda_fresh(&lambda, Some(expected), item.span, None);
             self.current_module = module;
             let ExprKind::FnValue(def) = value.kind else { continue };
@@ -10241,7 +10348,7 @@ impl<'a> Checker<'a> {
                     if interface.is_none() {
                         self.record_class_virtual_methods(ty, &decl.members);
                     }
-                    self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.collect_implements_in(ty, &decl.implements, &decl.members, item.span, Some(decl.is_unsafe));
                     self.adopt_interface_visibility(ty);
                 }
                 _ => {}
@@ -11268,8 +11375,10 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     self.some_quiet = true;
+                    self.borrows_in_copy = true;
                     let signature =
                         self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span, 0);
+                    self.borrows_in_copy = false;
                     self.some_quiet = false;
                     self.leave_default(scope);
                     self.lint_return_intersection = lint;
@@ -11606,7 +11715,7 @@ impl<'a> Checker<'a> {
     ) -> Vec<(Ty, Symbol, Span)> {
         let previous_module = std::mem::replace(&mut self.current_module, module);
         let implemented_at = self.implemented.len();
-        self.collect_implements(ty, implements, &[], span);
+        self.collect_implements_in(ty, implements, &[], span, None);
         self.current_module = previous_module;
         self.implemented[implemented_at..].to_vec()
     }
@@ -11643,6 +11752,7 @@ impl<'a> Checker<'a> {
             );
             return;
         }
+
         // Interface parameters are in scope throughout the member signatures,
         // just as owner parameters are for a generic struct or enum. They are
         // deliberately allocated before method-local binders so substitution
@@ -12120,6 +12230,23 @@ impl<'a> Checker<'a> {
         Some(instance)
     }
 
+    /// `[TYP-22]` (ODR-237) — whether `interface` requires `Clone`, itself or through a supertrait.
+    fn requires_clone(&self, interface: Symbol) -> bool {
+        let mut pending = vec![interface];
+        let mut seen = HashSet::new();
+        while let Some(next) = pending.pop() {
+            if next.is("std.core.Clone") {
+                return true;
+            }
+            if seen.insert(next)
+                && let Some(def) = self.interfaces.get(&next)
+            {
+                pending.extend(def.supertraits.iter().copied());
+            }
+        }
+        false
+    }
+
     /// Return the precise `[TYP-22]` reason a declared interface cannot be
     /// used as a `dyn` bound. Keeping this check at type formation means the
     /// diagnostic names the offending interface member instead of allowing an
@@ -12162,6 +12289,10 @@ impl<'a> Checker<'a> {
             }
         }
         for parent in &def.supertraits {
+            // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a method.
+            if parent.is("std.core.Clone") {
+                continue;
+            }
             if let Some(reason) = self.dyn_incompatibility_inner(*parent, visiting) {
                 return Some(format!("supertrait `{parent}` is not `dyn`-compatible: {reason}"));
             }
@@ -12312,7 +12443,8 @@ impl<'a> Checker<'a> {
         methods: &mut Vec<(Symbol, DefId, Mode)>,
         visiting: &mut HashSet<Symbol>,
     ) {
-        if !visiting.insert(interface) {
+        // `[TYP-22]` (ODR-237) — a required `Clone` is the table's copy entry, not a slot.
+        if !visiting.insert(interface) || interface.is("std.core.Clone") {
             return;
         }
         let Some(def) = self.interfaces.get(&interface) else { return };
@@ -12331,6 +12463,11 @@ impl<'a> Checker<'a> {
     /// their ordinal but deliberately expose no callable erased signature:
     /// D-156 rejects them before a dynamic call is formed.
     fn dyn_vtable_layout(&mut self, interfaces: &[Symbol]) -> Vec<Option<hir::InterfaceSlot>> {
+        for interface in interfaces {
+            if self.requires_clone(*interface) {
+                self.types.declare_dyn_clone(*interface);
+            }
+        }
         let mut methods = Vec::new();
         let mut visiting = HashSet::new();
         for interface in interfaces {
@@ -12633,8 +12770,20 @@ impl<'a> Checker<'a> {
             })
             .unwrap_or(self.common.void);
         // `[LT-1a]` — the receiver is named as `self`, so a method's attribute
-        // is resolved against the same parameter list the body will see.
-        let borrows = self.check_borrows_attribute(attrs, &params, ret);
+        // is resolved against the same parameter list the body will see. An
+        // interface's method has no receiver type yet (`self_ty` is `None`);
+        // each implementing type's copy puts `self` first
+        // (`register_instantiated_default`), so its attribute is resolved
+        // against that list, with `Self` for the receiver (ODR-211: an
+        // iterator consumer's items borrow what `owned self` borrows).
+        let borrows = match (self_ty, receiver) {
+            (None, Some(mode)) => {
+                let mut with_self = params.clone();
+                with_self.insert(0, (Symbol::intern("self"), self.common.self_ty, mode, span));
+                self.check_borrows_attribute(attrs, &with_self, ret)
+            }
+            _ => self.check_borrows_attribute(attrs, &params, ret),
+        };
         // `[LT-1]` rule 1 takes a borrowed receiver; rule 3 is for the rest.
         if !matches!(receiver, Some(Mode::Borrow | Mode::Mut)) {
             self.lint_rule_3(&params, ret, &borrows, span);
@@ -12949,22 +13098,44 @@ impl<'a> Checker<'a> {
         pending.retain(|(ty, _, explicit)| {
             *explicit || (!self.methods.contains_key(&(*ty, clone)) && !self.has_own_drop(*ty))
         });
-        while let Some(index) = pending.iter().position(|(ty, _, _)| {
-            match self.types.kind(*ty) {
-                TyKind::Struct(id) => {
-                    self.types.struct_def(*id).fields.iter().all(|field| self.is_cloneable(field.ty))
+        // ODR-237 — the types that derive it are the largest set each of whose fields is `Clone`
+        // with the set taken as `Clone`: a recursive type (`Node(Box[Tree])`) derives it, its
+        // clone a function that calls itself.
+        let fields_clone = |checker: &Self, ty: Ty| match checker.types.kind(ty) {
+            TyKind::Struct(id) => checker.types.struct_def(*id).fields.iter().all(|field| checker.is_cloneable(field.ty)),
+            TyKind::Enum(id) => checker
+                .types
+                .enum_def(*id)
+                .variants
+                .iter()
+                .all(|variant| variant.fields.iter().all(|field| checker.is_cloneable(field.ty))),
+            // `[OWN-8]` — class handles clone like ordinary handle copies.
+            // Their fields stay in the same object, so a shallow clone has
+            // no field-wise Clone requirements.
+            TyKind::Class(_) => true,
+            _ => false,
+        };
+        self.assumed_cloneable = pending.iter().map(|(ty, _, _)| *ty).collect();
+        let mut settled = Vec::new();
+        loop {
+            let before = settled.len();
+            let mut index = 0;
+            while index < pending.len() {
+                if fields_clone(self, pending[index].0) {
+                    index += 1;
+                } else {
+                    let refused = pending.swap_remove(index);
+                    self.assumed_cloneable.remove(&refused.0);
+                    settled.push(refused);
                 }
-                TyKind::Enum(id) => self.types.enum_def(*id).variants.iter().all(|variant| {
-                    variant.fields.iter().all(|field| self.is_cloneable(field.ty))
-                }),
-                // `[OWN-8]` — class handles clone like ordinary handle copies.
-                // Their fields stay in the same object, so a shallow clone has
-                // no field-wise Clone requirements.
-                TyKind::Class(_) => true,
-                _ => false,
             }
-        }) {
-            let (ty, span, explicit) = pending.swap_remove(index);
+            if settled.len() == before {
+                break;
+            }
+        }
+        self.assumed_cloneable.clear();
+        let derived = std::mem::replace(&mut pending, settled);
+        for (ty, span, explicit) in derived {
             let signature = Signature { decl: span,
                 params: vec![(Symbol::intern("self"), ty, Mode::Borrow, span)],
                 ret: ty,
@@ -13038,12 +13209,18 @@ impl<'a> Checker<'a> {
                 Some((word, entry.span))
             })
             .collect();
-        if decl.is_unsafe && markers.len() != decl.implements.len() {
+        // `[TYP-43]` (ODR-175) — and an `unsafe interface` (`Allocator`), whose methods it holds.
+        let unsafe_interfaces = decl
+            .implements
+            .iter()
+            .filter(|entry| interface_name(entry).is_some_and(|name| self.unsafe_interfaces.contains(&self.resolve_name(name))))
+            .count();
+        if decl.is_unsafe && markers.len() + unsafe_interfaces != decl.implements.len() {
             let at = decl.implements.first().map_or(decl.target.span, |entry| entry.span);
             self.sink.emit(
-                Diagnostic::error(codes::E2040, at, "`unsafe extend` writes `Send` or `Sync` by hand, and no other interface")
+                Diagnostic::error(codes::E2040, at, "`unsafe extend` writes `Send` or `Sync` by hand, or an `unsafe interface`, and no other interface")
                     .help("implement the other interfaces in an `extend` block of their own")
-                    .note("an interface with methods is checked as written; only a marker needs a promise [ODR-111]"),
+                    .note("an interface with methods is checked as written; only a marker or an `unsafe interface` needs a promise [TYP-43]"),
             );
         }
         if markers.is_empty() {
@@ -13107,12 +13284,35 @@ impl<'a> Checker<'a> {
         members: &[ast::Member],
         span: Span,
     ) {
+        self.collect_implements_in(ty, implements, members, span, Some(false))
+    }
+
+    /// `written_unsafe`: whether the block is an `unsafe extend` (`Some(true)`), a type's header or
+    /// a plain `extend` (`Some(false)`), or an instance of a recipe already checked (`None`).
+    fn collect_implements_in(
+        &mut self,
+        ty: Ty,
+        implements: &[ast::TypeExpr],
+        members: &[ast::Member],
+        span: Span,
+        written_unsafe: Option<bool>,
+    ) {
         for entry in implements {
             let written = match &entry.kind {
                 ast::TypeKind::Path { segments, .. } if segments.len() == 1 => segments[0].name,
                 _ => Symbol::intern("<invalid interface>"),
             };
             let Some(name) = self.resolve_interface_use_for(entry, ty) else { continue };
+            // `[ALC-2]`, `[TYP-43]` (ODR-175) — implementing an `unsafe interface` is `unsafe`.
+            let origin = self.open_interface_origin.get(&name).map_or(name, |(origin, _)| *origin);
+            if written_unsafe == Some(false) && self.unsafe_interfaces.contains(&origin) {
+                let shown = self.interface_shown(name);
+                self.sink.emit(
+                    Diagnostic::error(codes::E3100, entry.span, format!("implementing `{shown}` is `unsafe`: its implementer promises what the compiler cannot check"))
+                        .help(format!("write `unsafe extend … implements {shown}:` with a SAFETY note saying why its promises hold"))
+                        .note("an `unsafe interface` is implemented only in an `unsafe extend` [TYP-43], [ALC-2]"),
+                );
+            }
             // ODR-097, `[TYP-20]` — written in a package that may. A generic
             // recipe's is asked once, where it is declared (the overlap
             // pass), not at each instance it is applied to.
@@ -13485,8 +13685,8 @@ impl<'a> Checker<'a> {
             TyKind::Array { elem, len } => (TyShape::Array(len), vec![elem]),
             TyKind::Vec { elem, text } => (TyShape::Vec(text), vec![elem]),
             TyKind::Tuple(items) => (TyShape::Tuple, items),
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => (
-                TyShape::Fn(abi, latebound, stateless, is_unsafe, params.iter().map(|param| param.mode).collect()),
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => (
+                TyShape::Fn(abi, latebound, stateless, is_unsafe, once, params.iter().map(|param| param.mode).collect()),
                 params.iter().map(|param| param.ty).chain([ret]).collect(),
             ),
             _ => (TyShape::Leaf(ty), Vec::new()),
@@ -13732,14 +13932,12 @@ impl<'a> Checker<'a> {
             // coercion target, which every named function fits and which
             // `[CLO-3]`'s closure parameter is a generic over.
             ast::TypeKind::Fn { abi, latebound, params, ret, once, is_unsafe } => {
-                // `[CLO-6a]` — a `once fn` is built as a parameter's bound; as a value that is
-                // called and so emptied, it is not.
-                if *once && !std::mem::take(&mut self.once_fn_parameter) {
-                    self.error(
-                        codes::E0900,
-                        ty.span,
-                        "a `once fn` value outside a parameter is not implemented yet",
-                    );
+                // `[CLO-6]`, `[CLO-6a]` — a `once fn` parameter is a bound (`callable_param_ty`
+                // reads `once` from what is written); anywhere else it is an owned callable value
+                // called at most once, whose call moves it out of its place.
+                let once_value = *once && !std::mem::take(&mut self.once_fn_parameter);
+                if once_value && abi.is_some() {
+                    self.error(codes::E2020, ty.span, "a C function pointer may be called any number of times: `once` is for an Ember callable");
                     return self.common.error;
                 }
                 if let Some(abi) = abi.as_deref()
@@ -13778,6 +13976,7 @@ impl<'a> Checker<'a> {
                 // ODR-102 — written outside a parameter, `fn(A) -> R` is an
                 // owned callable value; `extern "C" fn` is a C pointer.
                 self.types.intern(TyKind::Fn {
+                    once: once_value,
                     abi: abi.as_ref().map(|abi| Symbol::intern(abi)),
                     latebound: *latebound,
                     stateless: abi.is_some(),
@@ -13896,7 +14095,7 @@ impl<'a> Checker<'a> {
                 if let Some(&ty) = self.type_params.get(&name) {
                     return ty;
                 }
-                if let Some(ty) = self.scalar_named(name.as_str()) {
+                if let Some(ty) = self.scalar_in_scope(name) {
                     return ty;
                 }
                 // `String` is a growable buffer of UTF-8 bytes: `Array[u8]`
@@ -15596,8 +15795,14 @@ impl<'a> Checker<'a> {
         if resolved.is("std.ffi.adopt") {
             return Some(self.synth_foreign_adopt(args, explicit, span));
         }
-        // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`.
-        if resolved.is("std.ffi.retained_pin") && args.len() == 1 {
+        // `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate` record goes.
+        if resolved.is("std.ffi.retained_unpin") && args.len() == 1 {
+            let u64_ty = self.common.u64;
+            let id = self.check_expr(&args[0].value, u64_ty);
+            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedUnpin, args: vec![id] }, span });
+        }
+        // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`, with its `on_relocate`.
+        if resolved.is("std.ffi.retained_pin") && args.len() == 2 {
             let value = self.synth_committed(&args[0].value);
             let pinnable = matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error)
                 || self.box_inner(value.ty).is_some();
@@ -15609,7 +15814,9 @@ impl<'a> Checker<'a> {
                 );
                 return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
             }
-            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value] }, span });
+            let callback = self.synth_committed(&args[1].value);
+            let u64_ty = self.common.u64;
+            return Some(Expr { ty: u64_ty, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value, callback] }, span });
         }
         // `[FFI-17e]` — a C++ container's elements, viewed in place, and a smart pointer's object:
         // `cpp_span(ref owner, pointer, count)`, `cpp_span_mut(ref mut owner, …)` and
@@ -15661,6 +15868,9 @@ impl<'a> Checker<'a> {
         }
         if self.resolve_name(name).is("std.jobs.wait") {
             return Some(self.synth_jobs_wait(args, span));
+        }
+        if self.resolve_name(name).is("std.jobs.local_arena") {
+            return Some(self.synth_jobs_local_arena(args, span));
         }
         // `[HR-33]` — `std.hot.checkpoint()`, the runtime's poll from inside the program.
         if self.resolve_name(name).is("std.hot.checkpoint") {
@@ -16596,7 +16806,7 @@ impl<'a> Checker<'a> {
                     .collect();
                 self.types.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -16605,7 +16815,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 let ret = map(self, ret);
-                self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret })
+                self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
             }
             TyKind::Struct(id) => {
                 if let Some(inner) = self.boxes.get(&id).copied() {
@@ -16732,6 +16942,7 @@ impl<'a> Checker<'a> {
                 .collect(),
             ret: self.substitute_ty(bound.ret, args),
             once: bound.once,
+            owned: bound.owned,
             latebound: bound.latebound,
             is_unsafe: bound.is_unsafe,
         });
@@ -17543,8 +17754,8 @@ impl<'a> Checker<'a> {
             TyKind::Span { elem, mutable } => {
                 format!("{}_{}", if mutable { "MutSpan" } else { "Span" }, self.instance_stem(elem))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
-                let mut out = String::from("fn");
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
+                let mut out = String::from(if once { "oncefn" } else { "fn" });
                 if let Some(abi) = abi {
                     out.push_str("extern");
                     out.push_str(&type_stem(abi.as_str()));
@@ -18676,8 +18887,9 @@ impl<'a> Checker<'a> {
     /// method's, effects are its instances' (`[EFF-2]`), so it is checked where it is written only.
     fn std_contracts(&self, mut contracts: hir::Contracts, span: Span, generic: bool) -> hir::Contracts {
         let module = self.prefixes[self.current_module].as_str();
-        let listed = matches!(module, "std.core" | "std.mem" | "std.math" | "std.math.det" | "std.simd" | "std.arena")
-            || module.starts_with("std.math.");
+        // `[STD-14]` — every allocating function of every module is documented as allocating: the
+        // same contract, so one that allocates undocumented stops every build that loads it.
+        let listed = module == "std" || module.starts_with("std.");
         let generic = generic || self.std_generic_members.contains(&span);
         if listed && !generic && !self.allocation_documented.contains(&span) {
             contracts.forbidden |= hir::Effects::ALLOC;
@@ -19173,6 +19385,16 @@ impl<'a> Checker<'a> {
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => Some(*elem),
             _ => None,
         }
+    }
+
+    /// `[MOD-5]` (D-860) — a scalar type's name as the program's code reads it: a prelude name
+    /// (`int`, `float`, `str`) that the program declares or imports a type of is that type, as
+    /// D-305 made `Box` and `Cell` (a local declaration shadows a prelude name).
+    fn scalar_in_scope(&self, name: Symbol) -> Option<Ty> {
+        if matches!(name.as_str(), "int" | "float" | "str") && self.names_program_type(name.as_str()) {
+            return None;
+        }
+        self.scalar_named(name.as_str())
     }
 
     fn scalar_named(&self, name: &str) -> Option<Ty> {
@@ -21306,7 +21528,13 @@ impl<'a> Checker<'a> {
             fp,
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
-            contracts: self.std_contracts(self.contracts_of(attrs), span, !decl.generics.is_empty()),
+            // A parameter of a written `fn` type is a callable bound: its effects are the argument's,
+            // as a type parameter's are (`[EFF-2]`).
+            contracts: self.std_contracts(
+                self.contracts_of(attrs),
+                span,
+                !decl.generics.is_empty() || takes_callable(decl),
+            ),
             borrows: self.declared_borrows(def),
             sources: self.declared_sources(def),
             is_lambda: false,
@@ -21438,6 +21666,12 @@ impl<'a> Checker<'a> {
     fn is_cloneable(&self, ty: Ty) -> bool {
         self.types.is_copy(ty)
             || self.clone_method(ty).is_some()
+            || self.assumed_cloneable.contains(&ty)
+            // IX.1 (ODR-237) — `Box[T]` when `T` is; `Box[dyn I]` when `I` requires `Clone`.
+            || self.box_inner(ty).is_some_and(|inner| match self.types.kind(inner) {
+                TyKind::Dyn { interfaces } => interfaces.iter().any(|interface| self.requires_clone(*interface)),
+                _ => self.is_cloneable(inner),
+            })
             || matches!(*self.types.kind(ty), TyKind::Vec { elem, .. } if self.is_cloneable(elem))
             || (self.clones_by_parts(ty)
                 && match self.types.kind(ty) {
@@ -21453,11 +21687,13 @@ impl<'a> Checker<'a> {
     }
 
     /// `[STR-5]` — the types the compiler makes rather than declares, whose
-    /// `Clone` it builds part by part at the clone (D-303): tuples and the
-    /// `Option`s and `Result`s.
+    /// `Clone` it builds part by part at the clone (D-303): tuples, the
+    /// `Option`s and `Result`s, and (ODR-237) a `Box`, a new box holding a
+    /// clone of the value.
     fn clones_by_parts(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
             TyKind::Tuple(_) => true,
+            TyKind::Struct(id) if self.boxes.contains_key(id) => true,
             TyKind::Enum(id) => {
                 let name = self.types.enum_def(*id).name;
                 name.as_str().starts_with("Option_") || name.as_str().starts_with("Result_")
@@ -22251,7 +22487,12 @@ impl<'a> Checker<'a> {
             inline: inline_hint(attrs),
             static_safe: has_attribute(attrs, "static_safe"),
             contracts: {
-                let generic = !decl.generics.is_empty() || self.is_generic_instance(owner) || self.types.is_generic(owner);
+                // A parameter of a written `fn` type is a callable bound, whose effects are the
+                // argument's (`[EFF-2]`).
+                let generic = !decl.generics.is_empty()
+                    || takes_callable(decl)
+                    || self.is_generic_instance(owner)
+                    || self.types.is_generic(owner);
                 self.std_contracts(self.contracts_of(attrs), span, generic)
             },
             borrows: self.declared_borrows(def),
@@ -24197,6 +24438,13 @@ impl<'a> Checker<'a> {
                 // Only a place can be assigned; anything else would write a
                 // temporary and drop it, silently (a slice, `xs.as_span()`).
                 if !is_place(&place.kind) && place.ty != self.common.error {
+                    // `[CLO-2]` — on a closure's discovery pass a captured target is a placeholder
+                    // (`resolve_capture`), not a place: the right side still names captures, so it
+                    // is read for them (`seen += k` captured `seen` and missed `k`).
+                    if matches!(place.kind, ExprKind::Error) && self.captures.as_ref().is_some_and(|watch| watch.env.is_none()) {
+                        let _ = self.synth(value);
+                        return;
+                    }
                     let mut diagnostic = Diagnostic::error(codes::E2140, target.span, "assignment target is not a place")
                         .primary_label("this is a value, not somewhere to store one");
                     if matches!(place.kind, ExprKind::Builtin { which: Builtin::Slice { .. }, .. }) {
@@ -25256,6 +25504,16 @@ impl<'a> Checker<'a> {
                 };
             }
             return Expr { ty: ordering, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(decided) }, span };
+        }
+        // `[TYP-36]` (D-854) — a sequence is ordered as its elements are, lexicographically: std's
+        // `cmp_elements` over views of both, as `==` goes to `eq_elements`.
+        if let TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } = *self.types.kind(ty)
+            && !self.methods.contains_key(&(ty, Symbol::intern("cmp")))
+        {
+            let view = self.types.intern(TyKind::Span { elem, mutable: false });
+            let (lhs, rhs) = (self.coerce(lhs, view), self.coerce(rhs, view));
+            self.extend_instance_at_use(view);
+            return self.call_operator("cmp_elements", lhs, rhs, span);
         }
         if !self.sortable(ty) {
             if self.methods.contains_key(&(ty, Symbol::intern("cmp"))) {
@@ -29900,32 +30158,68 @@ impl<'a> Checker<'a> {
             self.error(codes::E0100, span, "a generator expression begins with a `for` clause");
             return error;
         };
-        let source = self.synth_committed(iter);
+        let source = self.synth_comprehension_iterable(iter);
         if source.ty == self.common.error {
             return error;
         }
         let Some(mut pipeline) = self.iterator_of(source, iter.span) else { return error };
-        let conditions = rest.iter().take_while(|clause| matches!(clause, ast::CompClause::If(_))).count();
-        for clause in &rest[..conditions] {
-            let ast::CompClause::If(condition) = clause else { unreachable!("counted above") };
-            let lambda = clause_lambda(pattern, condition.clone(), span);
-            pipeline = self.call_adapter(pipeline, "filter", lambda, span);
+        // The pattern that binds the clauses' names in each item: a later `for` pairs each item
+        // with each of its own (`std.core.Nested`), so its pattern is the pair's.
+        let mut names = pattern.clone();
+        for clause in rest {
+            pipeline = match clause {
+                ast::CompClause::If(condition) => {
+                    let lambda = clause_lambda(&names, condition.clone(), span);
+                    self.call_adapter(pipeline, "filter", lambda, span)
+                }
+                ast::CompClause::For { pattern: next, iter } => {
+                    if let ast::ExprKind::Owned(_) = &iter.kind {
+                        self.error(
+                            codes::E0109,
+                            iter.span,
+                            "a later `for` clause of a generator expression cannot take its collection over: it runs once for each item before it",
+                        );
+                        return error;
+                    }
+                    let iterable = ast::Expr {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::ExprKind::MethodCall {
+                            recv: Box::new(iter.clone()),
+                            name: ast::Ident { name: Symbol::intern(ITERATOR_OF), span: iter.span },
+                            generic_args: Vec::new(),
+                            args: Vec::new(),
+                        },
+                        span: iter.span,
+                    };
+                    let lambda = clause_lambda(&names, iterable, span);
+                    let nested = self.call_adapter(pipeline, "__nested", lambda, span);
+                    // Each item of the clauses before is copied into each pair this one makes.
+                    if let TyKind::Struct(id) = *self.types.kind(nested.ty)
+                        && let Some((_, args)) = self.types.struct_def(id).origin.clone()
+                        && let Some(&item) = args.get(1)
+                        && !self.types.is_copy(item)
+                    {
+                        let shown = self.types.display(item);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E2040, names.span, format!("a later `for` clause pairs each of these items with its own, and a `{shown}` is not `Copy`"))
+                                .help("iterate the collection borrowed, whose items are references")
+                                .note("a generator expression's later `for` runs once for each item of the clauses before it, which it copies [GRM-38]"),
+                        );
+                        return error;
+                    }
+                    names = ast::Pattern {
+                        id: ast::NodeId::DUMMY,
+                        kind: ast::PatternKind::Tuple(vec![names, next.clone()]),
+                        span: next.span,
+                    };
+                    nested
+                }
+            };
             if pipeline.ty == self.common.error {
                 return error;
             }
         }
-        if conditions < rest.len() {
-            // A second `for` is a `flat_map` over generators, whose inner iterators borrow both
-            // their source and the outer clause's names: the region analysis cannot yet give
-            // `FlatMap.next`'s result one source relation for that.
-            self.error(
-                codes::E0900,
-                span,
-                "a generator expression with more than one `for` is not implemented yet as a value",
-            );
-            return error;
-        }
-        let lambda = clause_lambda(pattern, element.clone(), span);
+        let lambda = clause_lambda(&names, element.clone(), span);
         self.call_adapter(pipeline, "map", lambda, span)
     }
 
@@ -30001,6 +30295,23 @@ impl<'a> Checker<'a> {
             return value;
         }
         Expr { ty: value.ty, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(value) }, span }
+    }
+
+    /// `[GRM-15]`, `[GRM-27]` (ODR-236) — a comprehension clause's iterable: `owned xs` takes the
+    /// collection over, checked as the call `xs.into_iter()` is, as a `for` loop's is.
+    fn synth_comprehension_iterable(&mut self, iter: &ast::Expr) -> Expr {
+        let ast::ExprKind::Owned(inner) = &iter.kind else { return self.synth_committed(iter) };
+        let call = ast::Expr {
+            id: iter.id,
+            kind: ast::ExprKind::MethodCall {
+                recv: inner.clone(),
+                name: ast::Ident { name: Symbol::intern("into_iter"), span: iter.span },
+                generic_args: Vec::new(),
+                args: Vec::new(),
+            },
+            span: iter.span,
+        };
+        self.synth_committed(&call)
     }
 
     /// `[CTL-1]` — what a `for` loop over `source` iterates: the value itself when it has
@@ -30097,6 +30408,28 @@ impl<'a> Checker<'a> {
         match clauses.get(index) {
             None => {
                 let value = self.synth_committed(element);
+                // `[GRM-27]` (ODR-236) — a borrowed item kept whole moves out of its collection,
+                // which still owns it: the comprehension takes the collection over, or copies.
+                if let ExprKind::Deref(reference) = &value.kind
+                    && let ExprKind::Local(local) = reference.kind
+                    && let Some((_, iterable)) = self.gather_items.iter().find(|(item, _)| *item == local).cloned()
+                    && !self.types.is_copy(value.ty)
+                {
+                    let inner = value.ty;
+                    let name = self.locals[local.0 as usize].name.map(|name| name.to_string()).unwrap_or_else(|| "it".to_string());
+                    let collection = iterable.unwrap_or_else(|| "xs".to_string());
+                    let mut diagnostic = Diagnostic::error(codes::E3013, element.span, "cannot move a borrowed item into the new collection")
+                        .primary_label("each item is a reference into the collection, which still owns it")
+                        .help(format!(
+                            "take the collection over, `for {name} in owned {collection}`: the items kept move into the new one, the rest are dropped, and `{collection}` cannot be used after"
+                        ))
+                        .note("over a borrowed collection the items are references [GRM-27]");
+                    if self.is_cloneable(inner) {
+                        diagnostic = diagnostic.help(format!("or copy each item, `{name}.clone()`, `{collection}` staying as it was"));
+                    }
+                    self.sink.emit(diagnostic);
+                    return None;
+                }
                 let value = self.read_through(value);
                 if value.ty == self.common.error {
                     return None;
@@ -30212,7 +30545,7 @@ impl<'a> Checker<'a> {
             stmts.push(Stmt::ForRange { local, start, end, inclusive, body: Block { stmts: inner, span }, else_block: None });
             return Some(());
         }
-        let value = self.synth_committed(iter);
+        let value = self.synth_comprehension_iterable(iter);
         if value.ty == self.common.error {
             return None;
         }
@@ -30258,7 +30591,10 @@ impl<'a> Checker<'a> {
         if !simple {
             self.bind_borrowed_loop_pattern(pattern, item, item_ty, &mut body);
         }
-        body.extend(self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span)?);
+        self.gather_items.push((item, written_place(iter)));
+        let inner = self.gather_level(element, clauses, index + 1, gather, acc, loops, element_ty, span);
+        self.gather_items.pop();
+        body.extend(inner?);
         stmts.push(Stmt::ForRange {
             local: at,
             start: Expr { ty: usize_ty, kind: ExprKind::Int(0), span },
@@ -31098,7 +31434,8 @@ impl<'a> Checker<'a> {
     }
 
     /// The items a `for` loop over `value` takes, in a new `Array`: a collection's or a view's
-    /// elements copied (or cloned) out of it, an iterator's as it gives them.
+    /// elements copied (or cloned) out of it, an iterator's as it gives them, references copied or
+    /// cloned (ODR-207).
     fn items_array(&mut self, value: Expr, span: Span) -> Option<Expr> {
         // A collection's or a view's iterator lends its elements: they are copied out, or cloned.
         let lent = match *self.types.kind(value.ty) {
@@ -31112,7 +31449,16 @@ impl<'a> Checker<'a> {
         let method = |name: &str| ast::Ident { name: Symbol::intern(name), span };
         let iterator = match lent {
             Some(owned) => self.synth_method_on(iterator, span, method(owned), &[], &[], None, span),
-            None => iterator,
+            // ODR-207 — an iterator that lends references (`m.keys()`) has them copied out, or
+            // cloned, as a collection's elements are: an `Array` holds no view it does not own
+            // (`[TYP-15]`), so `sorted(m.keys())` is an `Array[K]`, as `sorted(m)` is.
+            None => match self.referenced_item(iterator.ty) {
+                Some(inner) => {
+                    let owned = if self.types.is_copy(inner) { "copied" } else { "cloned" };
+                    self.synth_method_on(iterator, span, method(owned), &[], &[], None, span)
+                }
+                None => iterator,
+            },
         };
         if iterator.ty == self.common.error {
             return None;
@@ -31127,11 +31473,14 @@ impl<'a> Checker<'a> {
     }
 
     /// Whether `cmp` on `ty` is the compiler's (`synth_cmp_of`): the numbers and text, a tuple
-    /// whose elements are all `Ord` (`[TYP-36]`: lexicographic), or a shared reference to one.
+    /// whose elements are all `Ord` or a sequence whose element is (`[TYP-36]`: lexicographic),
+    /// or a shared reference to one.
     fn provides_cmp(&self, ty: Ty) -> bool {
         match *self.types.kind(ty) {
             TyKind::Ref { mutable: false, inner } => self.provides_cmp(inner),
-            TyKind::Tuple(_) => self.implements(ty, Symbol::intern("std.core.Ord")),
+            TyKind::Tuple(_) | TyKind::Vec { text: false, .. } | TyKind::Array { .. } | TyKind::ArrayN { .. } => {
+                self.implements(ty, Symbol::intern("std.core.Ord"))
+            }
             _ => self.sortable(ty),
         }
     }
@@ -33572,14 +33921,14 @@ impl<'a> Checker<'a> {
         // `[FN-6]` (ODR-115) — a function, or a lambda, where an `unsafe` callable type is wanted:
         // the value converts as it would to the safe form, and only its calls change, needing
         // `unsafe`. The other way, an `unsafe fn` to a safe type, is the `E2020` below.
-        if let TyKind::Fn { abi, latebound, stateless, is_unsafe: true, params, ret } = self.types.kind(expected).clone()
+        if let TyKind::Fn { abi, latebound, stateless, is_unsafe: true, once, params, ret } = self.types.kind(expected).clone()
             && !matches!(self.types.kind(expr.ty), TyKind::Fn { is_unsafe: true, .. })
             && let Some(signature) = self.callable_signature_of_value(expr.ty)
             && let TyKind::Fn { params: found, ret: found_ret, .. } = self.types.kind(signature).clone()
             && found == params
             && found_ret == ret
         {
-            let safe = self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe: false, params, ret });
+            let safe = self.types.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe: false, once, params, ret });
             let converted = self.coerce(expr, safe);
             return Expr { ty: expected, ..converted };
         }
@@ -33605,8 +33954,18 @@ impl<'a> Checker<'a> {
         // ODR-102 — a function, or a lambda that captures nothing, is an owned
         // callable value holding no state: the same bits, nothing to drop.
         if let (
-            TyKind::Fn { abi: None, latebound: found_late, stateless: true, is_unsafe: found_unsafe, params: found, ret: found_ret },
-            TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, params: wanted, ret: wanted_ret },
+            TyKind::Fn { abi: None, latebound: found_late, stateless: true, is_unsafe: found_unsafe, params: found, ret: found_ret, .. },
+            TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, params: wanted, ret: wanted_ret, .. },
+        ) = (self.types.kind(expr.ty), self.types.kind(expected))
+            && found_late == wanted_late && found_unsafe == wanted_unsafe && found == wanted && found_ret == wanted_ret
+        {
+            return Expr { ty: expected, ..expr };
+        }
+        // `[CLO-6a]` — an owned callable value is a `once fn` value too, the same bits: what may be
+        // called many times may be called once. Not the other way round.
+        if let (
+            TyKind::Fn { abi: None, latebound: found_late, stateless: false, is_unsafe: found_unsafe, once: false, params: found, ret: found_ret },
+            TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, once: true, params: wanted, ret: wanted_ret },
         ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && found_late == wanted_late && found_unsafe == wanted_unsafe && found == wanted && found_ret == wanted_ret
         {
@@ -33617,10 +33976,13 @@ impl<'a> Checker<'a> {
         // This is the generic body's check, with the parameter opaque; each instance converts its
         // concrete argument as the rules below do (a function or capture-free lambda by its bits,
         // an `owned fn` by `MakeCallable`, a lambda that borrows or moves a capture out refused).
-        if let Some((signature, true)) = self.callable_bound_of(expr.ty)
+        if let Some((signature, bound_once)) = self.callable_bound_of(expr.ty)
+            && self.consumed_callable_parameter(expr.ty)
+            // `[CLO-6a]` — a `once fn` parameter becomes a `once fn` value only.
+            && (!bound_once || matches!(self.types.kind(expected), TyKind::Fn { once: true, .. }))
             && let TyKind::Fn { params: found, ret: found_ret, latebound: found_late, is_unsafe: found_unsafe, .. } =
                 self.types.kind(signature).clone()
-            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe } =
+            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe, .. } =
                 self.types.kind(expected).clone()
             && found == wanted
             && found_ret == wanted_ret
@@ -33663,11 +34025,13 @@ impl<'a> Checker<'a> {
                 );
                 return Expr { ty: expected, kind: ExprKind::Error, span };
             }
-            if once {
+            // `[CLO-6a]` — a `once fn` value takes a closure that moves a capture out.
+            let wanted_once = matches!(self.types.kind(expected), TyKind::Fn { once: true, .. });
+            if once && !wanted_once {
                 self.sink.emit_classified(
                     Diagnostic::error(codes::E3030, span, "closure would move a captured value out")
                         .primary_label("this closure is callable only once")
-                        .help(format!("`{wanted_shown}` may be called many times; take `once fn` where it is called once"))
+                        .help(format!("`{wanted_shown}` may be called many times; write `once {wanted_shown}` where it is called once"))
                         .note("the closure moves a non-`Copy` capture out of its environment [CLO-6]"),
                 );
                 return Expr { ty: expected, kind: ExprKind::Error, span };
@@ -34096,6 +34460,7 @@ impl<'a> Checker<'a> {
                     })
                     .collect();
                 Some(self.types.intern(TyKind::Fn {
+                    once: false,
                     abi: None,
                     latebound: false,
                     stateless: true,
@@ -34654,7 +35019,7 @@ impl<'a> Checker<'a> {
                 if let ast::ExprKind::Path { segments } = &base.kind
                     && let [segment] = segments.as_slice()
                     && self.lookup(segment.name).is_none()
-                    && let Some(scalar) = self.scalar_named(segment.name.as_str())
+                    && let Some(scalar) = self.scalar_in_scope(segment.name)
                 {
                     if let Some(constant) = self.scalar_constant(scalar, name.name, span) {
                         return constant;
@@ -36936,6 +37301,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let value = self.commit(value);
+            let value = self.lend_named_callable(value, param_ty, declared[index].2, &generics, arg.value.span);
             if !self.unify_generic_argument(
                 param_ty,
                 value.ty,
@@ -37142,13 +37508,17 @@ impl<'a> Checker<'a> {
         if unmet {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        self.reject_once_closures_for_callable_bounds(
+        // A closure refused at its argument would be refused again inside the instance
+        // ([DIA-14]).
+        if self.reject_once_closures_for_callable_bounds(
             args,
             &declared_modes,
             &generics,
             &checked_args,
             &slots,
-        );
+        ) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         // Preserve a known capture-free function value through static
         // dispatch. Its body may carry a more precise late-bound result
@@ -37367,6 +37737,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let value = self.commit(value);
+            let value = self.lend_named_callable(value, param_ty, declared[index].2, &generics, arg.value.span);
             if !self.unify_generic_argument(
                 param_ty,
                 value.ty,
@@ -37521,13 +37892,17 @@ impl<'a> Checker<'a> {
         if unmet {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        self.reject_once_closures_for_callable_bounds(
+        // A closure refused at its argument would be refused again inside the instance
+        // ([DIA-14]).
+        if self.reject_once_closures_for_callable_bounds(
             args,
             &declared_modes,
             &generics,
             &checked_args,
             &slots,
-        );
+        ) {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
 
         let instance = if instantiate {
             self.instantiate_method(def, &substitution, name, span)
@@ -37612,7 +37987,8 @@ impl<'a> Checker<'a> {
         generics: &[GenericParam],
         checked_args: &[Option<Expr>],
         slots: &[Option<usize>],
-    ) {
+    ) -> bool {
+        let mut rejected = false;
         for (arg_index, arg) in args.iter().enumerate() {
             let Some(param_index) = slots[arg_index] else { continue };
             let Some(&(param_ty, _)) = declared.get(param_index) else { continue };
@@ -37626,9 +38002,13 @@ impl<'a> Checker<'a> {
             if bound.once {
                 continue;
             }
-            let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
-            if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
-                continue;
+            // `[CLO-6a]` — a `once fn` value is called at most once, as such a closure is.
+            let once_value = matches!(self.types.kind(value.ty), TyKind::Fn { once: true, .. });
+            if !once_value {
+                let TyKind::Struct(id) = *self.types.kind(value.ty) else { continue };
+                if !self.closure_calls.get(&id).is_some_and(|closure| closure.once) {
+                    continue;
+                }
             }
             // A routed method's parameter is not the user's to change.
             let help = match self.routed_method {
@@ -37638,32 +38018,63 @@ impl<'a> Checker<'a> {
                 ),
                 None => "declare the parameter `f: once fn(...) -> ...` when it is called at most once, or use `mem.take` when the capture implements `Default`; clone only as a last resort".to_string(),
             };
-            self.sink.emit_classified(
-                Diagnostic::error(
-                    codes::E3030,
-                    arg.value.span,
-                    "closure would move a captured value out",
-                )
-                .primary_label("this closure is callable only once")
-                .help(help)
-                .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
-            );
+            if once_value {
+                let shown = self.types.display(value.ty);
+                self.sink.emit_classified(
+                    Diagnostic::error(codes::E3030, arg.value.span, format!("a `{shown}` value may be called only once"))
+                        .primary_label("this value is callable only once")
+                        .help("declare the parameter `f: once fn(...) -> ...` when it is called at most once")
+                        .note("a `fn(A) -> R` parameter may be called any number of times [CLO-6]"),
+                );
+            } else {
+                self.sink.emit_classified(
+                    Diagnostic::error(
+                        codes::E3030,
+                        arg.value.span,
+                        "closure would move a captured value out",
+                    )
+                    .primary_label("this closure is callable only once")
+                    .help(help)
+                    .note("the closure moves a non-`Copy` capture out of its environment [CLO-2]"),
+                );
+            }
+            rejected = true;
         }
+        rejected
     }
 
     /// `[GRM-28]` — a local function calling itself: directly while it
     /// captures nothing, else through the environment it was itself given,
     /// as `synth_closure_call` passes one.
     fn synth_local_fn_self_call(&mut self, own: LocalFnSelf, args: &[ast::Arg], span: Span) -> Expr {
-        if own.depth != self.lambda_depth {
-            self.sink.emit(
-                Diagnostic::error(codes::E0900, span, format!("calling `{}` from a closure inside it is not supported yet", own.name))
-                    .note("a local function may call itself from its own body [GRM-28]; a lambda inside it would have to capture it"),
-            );
-            return Expr { ty: self.signatures[own.def.0 as usize].ret, kind: ExprKind::Error, span };
+        // While the local function's captures are being found, a closure inside it is made only
+        // to find its own: the call's arguments are read for theirs, and the call itself, whose
+        // form waits on what the function captures, is a placeholder that is never run (such a
+        // closure is never called).
+        if own.env.is_none() && own.probing && own.depth != self.lambda_depth {
+            for arg in args {
+                let _ = self.synth(&arg.value);
+            }
+            let ret = self.signatures[own.def.0 as usize].ret;
+            let never = self.synth_panic_or_assert("unreachable", &[], span).unwrap_or(Expr { ty: self.common.never, kind: ExprKind::Error, span });
+            return self.coerce(never, ret);
         }
         let Some(mode) = own.env else {
             return self.synth_known_function_call(own.def, args, span, false);
+        };
+        // `[GRM-28]`, `[CLO-2]` — from a closure inside it, the local function is called with its
+        // environment, which that closure captures (`local_fn_env_name`), through every closure
+        // between, as any capture.
+        let env = if own.depth == self.lambda_depth {
+            self.read_local_expecting(LocalId(0), span, None)
+        } else {
+            match self.resolve_capture(local_fn_env_name(own.name), span) {
+                Some(env) => env,
+                None => {
+                    self.error(codes::E1010, span, format!("cannot reach `{}` from here", own.name));
+                    return Expr { ty: self.signatures[own.def.0 as usize].ret, kind: ExprKind::Error, span };
+                }
+            }
         };
         self.check_unsafe_local_call(own.def, span);
         let signature: Vec<(Ty, Mode)> =
@@ -37673,7 +38084,6 @@ impl<'a> Checker<'a> {
             self.report_arity(own.def, format!("`{}`", own.name), signature.len(), args.len(), span);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
-        let env = self.read_local_expecting(LocalId(0), span, None);
         let env = if matches!(self.types.kind(env.ty), TyKind::Ref { .. }) { self.read_through(env) } else { env };
         let environment = match mode {
             Mode::Mut => self.pass_receiver(env, Mode::Mut, span),
@@ -37753,14 +38163,14 @@ impl<'a> Checker<'a> {
         });
         // A stateless `fn` type: the parameter types and the result, with
         // none of the copy-capture a stored callable value would ask for.
-        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params: param_tys, ret });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: param_tys, ret });
         let lambda = ast::Lambda {
             is_owned: false,
             params: decl.params.clone(),
             ret: decl.ret.clone(),
             body: ast::LambdaBody::Block(body.clone()),
         };
-        self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None });
+        self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None, probing: true });
         let unsafe_body = self.in_unsafe || decl.is_unsafe;
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, unsafe_body);
         let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
@@ -37841,6 +38251,13 @@ impl<'a> Checker<'a> {
     /// closure's environment struct, or the caller's own callable passed on).
     /// What is called is the value it refers to.
     fn through_callable_ref(&mut self, value: Expr) -> Expr {
+        // `[CLO-6a]` — a callable value in a `Box` is called through it; a `once fn` there is
+        // moved out of it by the call.
+        if let Some(inner) = self.box_inner(value.ty)
+            && matches!(self.types.kind(inner), TyKind::Fn { abi: None, .. })
+        {
+            return self.read_box_through(value);
+        }
         let TyKind::Ref { inner, .. } = *self.types.kind(value.ty) else { return value };
         let callable = match *self.types.kind(inner) {
             TyKind::Fn { .. } => true,
@@ -37850,10 +38267,64 @@ impl<'a> Checker<'a> {
         if callable { self.read_through(value) } else { value }
     }
 
+    /// Whether `ty` is a callable value's: a function value, a closure, or a parameter bounded by a
+    /// callable type.
+    fn is_callable_value_type(&mut self, ty: Ty) -> bool {
+        match *self.types.kind(ty) {
+            TyKind::Fn { abi: None, .. } => true,
+            TyKind::Struct(id) => self.closure_calls.contains_key(&id),
+            TyKind::Param { .. } => self.callable_bound_of(ty).is_some(),
+            _ => false,
+        }
+    }
+
+    /// `[STD-19]`, `[CLO-3]` (ODR-240) — a named callable given to a parameter whose type is a type
+    /// parameter bounded by a callable type (`owned f: F`, `F: fn(A) -> R`: generic over any
+    /// callable, a reference to one included) is lent to it, `ref mut`: the caller keeps it and may
+    /// pass it again, and the callee may call it with leave to change what it captured, which stays
+    /// lent while the callee's value holding it is used (`[BRW-2]`). A lambda written at the call is
+    /// given, since nothing else can name it; a `Copy` callable (a function) is copied; a `once fn`
+    /// is given, as its call ends it; and an owned callable parameter written as a callable type
+    /// (`owned f: fn(A) -> R`) takes over what it is given (ODR-189). A callable the caller holds
+    /// only shared (a borrowed parameter) is passed on as before (D-257).
+    fn lend_named_callable(&mut self, value: Expr, param_ty: Ty, mode: Mode, generics: &[GenericParam], span: Span) -> Expr {
+        let TyKind::Param { index, .. } = *self.types.kind(param_ty) else { return value };
+        let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.clone()) else { return value };
+        if mode != Mode::Owned || bound.owned || bound.once || !is_place(&value.kind) || value.ty == self.common.error || self.types.is_copy(value.ty) {
+            return value;
+        }
+        if !self.is_callable_value_type(value.ty)
+            || matches!(*self.types.kind(value.ty), TyKind::Fn { once: true, .. })
+            || matches!(*self.types.kind(value.ty), TyKind::Struct(id) if self.closure_calls.get(&id).is_some_and(|closure| closure.once))
+        {
+            return value;
+        }
+        let quiet = self.sink.mark();
+        self.reject_readonly_write_in_mut_argument(&value, span);
+        if !self.is_lent_callable(&value) && !self.reject_write_through_shared_ref(&value, span) {
+            self.reject_borrowed_parameter_write(&value, span, false);
+        }
+        if self.sink.rollback(quiet) {
+            return value;
+        }
+        self.lent_callable_args.insert(span);
+        let ty = self.types.intern(TyKind::Ref { mutable: true, inner: value.ty });
+        let at = value.span;
+        Expr { ty, kind: ExprKind::Ref { place: Box::new(value), mutable: true }, span: at }
+    }
+
+    /// `[CLO-3]` (ODR-189) — whether `ty` is the opaque type of a parameter taken over
+    /// (`owned f: fn(A) -> R`, or `once fn`).
+    fn consumed_callable_parameter(&self, ty: Ty) -> bool {
+        let TyKind::Param { index, .. } = *self.types.kind(ty) else { return false };
+        self.current_generics.get(index as usize).and_then(|param| param.callable.as_ref()).is_some_and(|bound| bound.owned)
+    }
+
     fn callable_bound_of(&mut self, ty: Ty) -> Option<(Ty, bool)> {
         let TyKind::Param { index, .. } = *self.types.kind(ty) else { return None };
         let bound = self.current_generics.get(index as usize)?.callable.clone()?;
         let signature = self.types.intern(TyKind::Fn {
+            once: false,
             abi: None,
             latebound: bound.latebound,
             stateless: true,
@@ -38001,6 +38472,15 @@ impl<'a> Checker<'a> {
         let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.clone())
         else {
             return true;
+        };
+        // ODR-240 — a named callable is lent (`ref mut`): what is called is the callable it refers to.
+        let lent = match *self.types.kind(actual) {
+            TyKind::Ref { mutable: true, inner } => Some(inner),
+            _ => None,
+        };
+        let actual = match lent {
+            Some(inner) if self.is_callable_value_type(inner) => inner,
+            _ => actual,
         };
         // `[FN-6]` (ODR-115) — `unsafe fn(…)` is met by what meets `fn(…)` and by an `unsafe fn`;
         // `fn(…)` is not met by an `unsafe fn`, nor by a parameter bounded `unsafe fn(…)`.
@@ -38163,6 +38643,7 @@ impl<'a> Checker<'a> {
             .collect();
         let ret = self.substitute_ty(bound.ret, &substitution);
         Some(self.types.intern(TyKind::Fn {
+            once: false,
             abi: None,
             latebound: bound.latebound,
             stateless: true,
@@ -38799,10 +39280,17 @@ impl<'a> Checker<'a> {
         // totalOrder) and text, and `Clone` and `Eq` on every type it can
         // clone or compare, a struct's implicit ones included. D-246.
         let provided = match interface.as_str() {
-            // `[TYP-36]` — a tuple is `Ord` lexicographically when every element is.
+            // `[TYP-36]` — a tuple is `Ord` lexicographically when every element is, and an
+            // `Array[T]` or a `[T; N]` when its element is (D-854).
             "std.core.Ord" => {
                 self.sortable(ty)
-                    || matches!(self.types.kind(ty), TyKind::Tuple(items) if items.iter().all(|&item| self.implements(item, interface)))
+                    || match *self.types.kind(ty) {
+                        TyKind::Tuple(ref items) => items.iter().all(|&item| self.implements(item, interface)),
+                        TyKind::Vec { elem, text: false } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
+                            self.implements(elem, interface)
+                        }
+                        _ => false,
+                    }
             }
             "std.core.Clone" => self.is_cloneable(ty),
             "std.core.Eq" => self.has_implicit_eq(ty),
@@ -40323,7 +40811,7 @@ impl<'a> Checker<'a> {
                 self.type_params
                     .get(&name)
                     .copied()
-                    .or_else(|| self.scalar_named(name.as_str()))
+                    .or_else(|| self.scalar_in_scope(name))
                     .or_else(|| self.named_types.get(&self.resolve_name(name)).copied())
             }
             // G8-4 — `I.Count.of(n)`: a type parameter's associated type, as
@@ -41605,6 +42093,15 @@ impl<'a> Checker<'a> {
         args: &[ast::Arg],
         span: Span,
     ) -> Expr {
+        // `[GRM-38]` — what a generator expression's later `for` clause iterates, as a `for` loop
+        // over it would (`iterator_of`): the compiler's own call, which no program can write.
+        if name.name.is(ITERATOR_OF) {
+            let source = self.synth_committed(recv);
+            if source.ty == self.common.error {
+                return source;
+            }
+            return self.iterator_of(source, recv.span).unwrap_or(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+        }
         self.method_receivers.push((recv.clone(), generic_args.to_vec()));
         let call = self.synth_method_call_on(recv, name, generic_args, args, span);
         self.method_receivers.pop();
@@ -42547,6 +43044,16 @@ impl<'a> Checker<'a> {
         let dyn_box = self
             .box_inner(receiver.ty)
             .is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }));
+        // IX.1 (ODR-237) — a `Box`'s own `clone`, a new box holding a clone of the value, comes
+        // before the value's, which auto-deref would find.
+        if self.box_inner(receiver.ty).is_some()
+            && name.name.is("clone")
+            && explicit.is_empty()
+            && args.is_empty()
+            && self.is_cloneable(receiver.ty)
+        {
+            return self.clone_value(receiver);
+        }
         if self.box_inner(receiver.ty).is_some() && !dyn_box {
             if name.name.is("get") {
                 if !explicit.is_empty() {
@@ -42742,8 +43249,10 @@ impl<'a> Checker<'a> {
             && args.is_empty()
             && self.clones_by_parts(referent)
             && self.is_cloneable(referent)
-            && self.lookup_method(referent, name.name).is_none()
+            && (self.box_inner(referent).is_some() || self.lookup_method(referent, name.name).is_none())
         {
+            // IX.1 (ODR-237) — a `Box`'s own `clone`, a new box, comes before its value's, which
+            // auto-deref would find.
             let receiver = self.read_through(receiver);
             return self.clone_value(receiver);
         }
@@ -44260,6 +44769,10 @@ impl<'a> Checker<'a> {
     }
 
     fn is_callable_value(&mut self, ty: Ty) -> bool {
+        // ODR-240 — a callable lent `ref mut` is called through the reference.
+        if let TyKind::Ref { mutable: true, inner } = *self.types.kind(ty) {
+            return self.is_callable_value_type(inner);
+        }
         matches!(self.types.kind(ty), TyKind::Fn { .. })
             || self.callable_bound_of(ty).is_some()
             || matches!(*self.types.kind(ty), TyKind::Struct(id) if self.closure_calls.contains_key(&id))
@@ -44269,6 +44782,12 @@ impl<'a> Checker<'a> {
     /// (`[CLO-11]`) or any expression of callable type (`make()(3)`), by its
     /// type, as a local of that type is called.
     fn call_value(&mut self, value: Expr, args: &[ast::Arg], span: Span) -> Expr {
+        // ODR-240 — a callable lent `ref mut` is called through the reference.
+        let value = if matches!(*self.types.kind(value.ty), TyKind::Ref { mutable: true, .. }) {
+            self.through_callable_ref(value)
+        } else {
+            value
+        };
         if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
             return self.synth_indirect_call(value, args, span, false, false);
         }
@@ -44324,9 +44843,12 @@ impl<'a> Checker<'a> {
         consumes_callee: bool,
         latebound_override: bool,
     ) -> Expr {
-        let TyKind::Fn { latebound, stateless, is_unsafe, params, ret, .. } = self.types.kind(callee.ty).clone() else {
+        let TyKind::Fn { latebound, stateless, is_unsafe, once, params, ret, .. } = self.types.kind(callee.ty).clone() else {
             unreachable!("checked by the caller")
         };
+        // `[CLO-6a]` — calling a `once fn` value moves it out of its place, which the move check
+        // then holds empty: a second call is `E3040`, a call through a borrowed place `E3013`.
+        let consumes_callee = consumes_callee || once;
         // `[UNS-1]`, `[FN-6]` (ODR-115) — the callee is some `unsafe fn`, whose obligation the
         // `unsafe` block takes on.
         if is_unsafe && !self.unsafe_context() {
@@ -44340,7 +44862,7 @@ impl<'a> Checker<'a> {
         // `[CLO-2]` — an owned callable value may write its captured state, so
         // it is called from a mutable place. A callable parameter is lent
         // mutably by its caller (ODR-102).
-        if !stateless && is_place(&callee.kind) {
+        if !stateless && !once && is_place(&callee.kind) {
             if !self.is_lent_callable(&callee) {
                 self.reject_readonly_write(&callee, span);
                 if !self.reject_write_through_shared_ref(&callee, span) {
@@ -44545,12 +45067,20 @@ impl<'a> Checker<'a> {
         // shared borrow; `owned fn` captures by move/copy. The former remains
         // an ordinary loan, while the latter becomes an owned environment
         // field and therefore follows ordinary move/drop checking.
-        let outer: HashMap<Symbol, Ty> = self
+        let mut outer: HashMap<Symbol, Ty> = self
             .scopes
             .iter()
             .flat_map(|scope| scope.iter())
             .map(|(name, local)| (*name, self.locals[local.0 as usize].ty))
             .collect();
+        // `[CLO-2]` — a lambda inside a lambda captures what the enclosing one may: the
+        // enclosing function's locals too, reached through the enclosing lambda's own capture of
+        // them (which that capture then makes).
+        if let Some(watch) = &self.captures {
+            for (name, ty) in &watch.outer {
+                outer.entry(*name).or_insert(*ty);
+            }
+        }
         let owned_loop_borrowed_handles: HashSet<Symbol> = outer
             .keys()
             .filter(|name| {
@@ -44586,6 +45116,11 @@ impl<'a> Checker<'a> {
         // `extern "C" fn` parameter that `[CLO-3]` says accepts "only
         // capture-free closures and named functions".
         if captured.is_empty() {
+            if let Some(own) = self.local_fn_self.last_mut()
+                && reserved == Some(own.def)
+            {
+                own.probing = false;
+            }
             let watch = CaptureWatch {
                 outer,
                 owned_loop_borrowed_handles,
@@ -44599,6 +45134,7 @@ impl<'a> Checker<'a> {
             let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before, reserved);
             let is_unsafe = self.signatures[def.0 as usize].is_unsafe;
             let ty = self.types.intern(TyKind::Fn {
+                once: false,
                 abi: None,
                 latebound: false,
                 stateless: true,
@@ -44780,6 +45316,7 @@ impl<'a> Checker<'a> {
             && reserved == Some(own.def)
         {
             own.env = Some(body_env_mode);
+            own.probing = false;
         }
         let (body, body_ty, locals, _) = self.check_lambda_body(
             lambda,
@@ -44824,9 +45361,15 @@ impl<'a> Checker<'a> {
         // the environment, so the source observes normal move semantics.
         let mut values = Vec::new();
         for (index, (name, ty)) in captured.iter().enumerate() {
-            let Some(local) = self.lookup(*name) else { continue };
-            let source_ty = self.locals[local.0 as usize].ty;
-            let place = Expr { ty: source_ty, kind: ExprKind::Local(local), span };
+            // A name the enclosing lambda captures is reached through its environment.
+            let place = match self.lookup(*name) {
+                Some(local) => Expr { ty: self.locals[local.0 as usize].ty, kind: ExprKind::Local(local), span },
+                None => match self.resolve_capture(*name, span) {
+                    Some(place) => place,
+                    None => continue,
+                },
+            };
+            let source_ty = place.ty;
             if owned {
                 values.push(if source_ty == *ty { place } else { self.read_through(place) });
             } else {
@@ -44875,6 +45418,7 @@ impl<'a> Checker<'a> {
             std::mem::take(&mut self.callable_value_bindings);
         let outer_ret = self.ret_ty;
         let outer_watch = self.captures.replace(watch);
+        let outer_anchors = std::mem::take(&mut self.arena_anchors);
         self.ret_ty = ret.unwrap_or(self.common.void);
         // A lambda's `return` leaves the lambda, not a class `init` around it;
         // capturing `self` already needed every field (`[CLS-2]`).
@@ -44889,6 +45433,17 @@ impl<'a> Checker<'a> {
                 Mode::Borrow | Mode::Owned => ty,
             };
             let local = self.declare(Some(name), local_ty, env_span);
+            // The environment is reached by its id (`resolve_capture`), never by its name: a
+            // capture the program calls `env` is the program's.
+            let own_body = self.local_fn_self.last().filter(|own| own.depth == self.lambda_depth && own.env.is_some()).map(|own| own.name);
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.remove(&name);
+                // `[GRM-28]` — a local function's own environment, under a name no program can
+                // write, so a closure inside it can capture it to call it.
+                if let Some(own) = own_body {
+                    scope.insert(local_fn_env_name(own), local);
+                }
+            }
             if mode == Mode::Borrow {
                 self.borrowed_params.insert(local);
             }
@@ -44934,6 +45489,10 @@ impl<'a> Checker<'a> {
             }
         };
 
+        // `[JOB-5]` — the anchors an expression body's `jobs.local_arena()` declared.
+        let mut body = body;
+        self.declare_arena_anchors(&mut body);
+        self.arena_anchors = outer_anchors;
         let mut written = HashSet::new();
         written_in_block(&body, &mut written);
         let keys: Vec<(Span, Option<Symbol>)> = written.into_iter().map(|local| self.known_key(local)).collect();
@@ -45868,7 +46427,7 @@ impl<'a> Checker<'a> {
             }
             _ => Vec::new(),
         };
-        let ty = self.types.intern(TyKind::Fn { abi: signature.abi, latebound: false, stateless: true, is_unsafe: signature.is_unsafe, params, ret });
+        let ty = self.types.intern(TyKind::Fn { once: false, abi: signature.abi, latebound: false, stateless: true, is_unsafe: signature.is_unsafe, params, ret });
         // D-284 (ODR-048) — an instance may take a parameter by address, as
         // its generic's declaration does, where a callable type of the same
         // parameters takes a copy; the two calls would disagree.
@@ -46672,6 +47231,7 @@ impl<'a> Checker<'a> {
                     return error;
                 }
                 let fn_ty = self.types.intern(TyKind::Fn {
+                    once: false,
                     abi: None,
                     latebound: false,
                     stateless: true,
@@ -47815,7 +48375,7 @@ impl<'a> Checker<'a> {
         let task = match closure {
             Some(_) => f,
             None => {
-                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
+                let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
                 self.coerce(f, callable_ty)
             }
         };
@@ -48300,6 +48860,7 @@ impl<'a> Checker<'a> {
             None => Expr { ty: int, kind: ExprKind::Int(0), span },
         };
         let expected = self.types.intern(TyKind::Fn {
+            once: false,
             abi: None,
             latebound: false,
             stateless: false,
@@ -48417,7 +48978,7 @@ impl<'a> Checker<'a> {
         };
         let lambda = ast::Lambda { is_owned: false, params: vec![param("$a", self), param("$b", self)], ret: None, body: ast::LambdaBody::Expr(Box::new(value)) };
         let param_ty = |ty: Ty| ember_types::FnParam { ty, mode: ember_types::FnParamMode::Borrow };
-        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params: vec![param_ty(result_ty), param_ty(result_ty)], ret: result_ty });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params: vec![param_ty(result_ty), param_ty(result_ty)], ret: result_ty });
         let combiner = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
         match combiner.kind {
             ExprKind::FnValue(def) => Some(def),
@@ -48611,7 +49172,7 @@ impl<'a> Checker<'a> {
             Some(_) => f,
             None => {
                 let void = self.common.void;
-                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
+                let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
                 self.coerce(f, callable_ty)
             }
         };
@@ -48625,7 +49186,7 @@ impl<'a> Checker<'a> {
     /// dropped, as anywhere a `fn()` is wanted), but kept as the closure it is.
     fn synth_job_function(&mut self, expr: &ast::Expr) -> Expr {
         let void = self.common.void;
-        let expected = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
         let value = self.synth_with_expectation(expr, Some(expected));
         self.commit(value)
     }
@@ -48700,6 +49261,38 @@ impl<'a> Checker<'a> {
     /// borrows mutably or captures `Send` (`E7004`); its borrows flow into the scope and last
     /// until the block ends. `deps` orders the job after others of the scope; the borrow rules
     /// treat every job of the scope as running at once all the same.
+    /// `[JOB-5]` — `jobs.local_arena()`: a `ScopedArena` of the running job's arena, anchored at a
+    /// hidden local of the calling function (`arena_anchors`, declared where its body begins), so
+    /// the view and what is allocated from it cannot outlive that call.
+    fn synth_jobs_local_arena(&mut self, args: &[ast::Arg], span: Span) -> Expr {
+        if !args.is_empty() {
+            self.error(codes::E2020, span, "`jobs.local_arena` takes no arguments");
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let u8_ty = self.common.u8;
+        let name = Symbol::intern(ember_types::JOB_ARENA_ANCHOR);
+        let anchor = self.declare(Some(name), u8_ty, span);
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.remove(&name);
+        }
+        self.arena_anchors.push(anchor);
+        let place = Expr { ty: u8_ty, kind: ExprKind::Local(anchor), span };
+        let reference = self.types.intern(TyKind::Ref { mutable: true, inner: u8_ty });
+        let anchor_ref = Expr { ty: reference, kind: ExprKind::Ref { place: Box::new(place), mutable: true }, span };
+        let scoped = self.scoped_arena_ty();
+        Expr { ty: scoped, kind: ExprKind::Builtin { which: Builtin::JobLocalArena { scoped }, args: vec![anchor_ref] }, span }
+    }
+
+    /// `[JOB-5]` — the anchors `jobs.local_arena()` declared in a body, each set where it begins.
+    fn declare_arena_anchors(&mut self, body: &mut Block) {
+        let anchors = std::mem::take(&mut self.arena_anchors);
+        let u8_ty = self.common.u8;
+        for anchor in anchors.into_iter().rev() {
+            let span = body.span;
+            body.stmts.insert(0, Stmt::Let { local: anchor, init: Some(Expr { ty: u8_ty, kind: ExprKind::Int(0), span }) });
+        }
+    }
+
     fn synth_job_scope_submit(&mut self, receiver: Expr, after: bool, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         let wanted = if after { 2 } else { 1 };
@@ -48751,7 +49344,7 @@ impl<'a> Checker<'a> {
             Some(_) => f,
             None => {
                 let void = self.common.void;
-                let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
+                let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret: void });
                 self.coerce(f, callable_ty)
             }
         };
@@ -48863,7 +49456,7 @@ impl<'a> Checker<'a> {
         if refused {
             return error;
         }
-        let callable_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
+        let callable_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: false, is_unsafe: false, params: Vec::new(), ret });
         let callable = self.coerce(f, callable_ty);
         if callable.ty == self.common.error || matches!(callable.kind, ExprKind::Error) {
             return error;
@@ -52507,6 +53100,17 @@ impl<'a> Checker<'a> {
     /// `check_argument` for a parameter whose passing the callee decides
     /// (`param_by_address`, D-284).
     fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        // `[STD-19]` (ODR-240) — a named callable lent to a callable parameter (`lend_named_callable`).
+        if self.lent_callable_args.contains(&arg.span)
+            && let TyKind::Ref { mutable: true, inner } = *self.types.kind(param_ty)
+        {
+            let value = self.check_expr(arg, inner);
+            if !is_place(&value.kind) || value.ty == self.common.error {
+                return value;
+            }
+            let at = value.span;
+            return Expr { ty: param_ty, kind: ExprKind::Ref { place: Box::new(value), mutable: true }, span: at };
+        }
         // ODR-102 — an owned callable value is called from a mutable place
         // (`[CLO-2]`), so one given to a borrowed parameter is lent mutably:
         // the callee may call it, and nothing else reaches it meanwhile.
@@ -53061,7 +53665,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let ret = if place { self.types.intern(TyKind::Ref { mutable: true, inner: ty }) } else { ty };
-        let fn_ty = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, params, ret });
+        let fn_ty = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, params, ret });
         let ident = |name: Symbol| ast::Ident { name, span };
         let lambda = ast::Lambda {
             is_owned: false,
@@ -53632,6 +54236,7 @@ impl<'a> Checker<'a> {
     }
 
     fn complete_function_end(&mut self, mut body: Block, name: Span) -> Block {
+        self.declare_arena_anchors(&mut body);
         let ret = self.ret_ty;
         if ret == self.common.void
             || ret == self.common.error
@@ -56203,6 +56808,23 @@ fn is_compiler_known_struct(name: &str) -> bool {
         || matches!(name, "Arena" | "FixedArena" | "ScopedArena")
 }
 
+/// `[GRM-27]` — how a place an iterable names is written (`xs`, `self.items`), for a help.
+fn written_place(expr: &ast::Expr) -> Option<String> {
+    match &expr.kind {
+        ast::ExprKind::Path { segments } => Some(segments.iter().map(|segment| segment.name.as_str()).collect::<Vec<_>>().join(".")),
+        ast::ExprKind::Field { base, name } => Some(format!("{}.{}", written_place(base)?, name.name)),
+        _ => None,
+    }
+}
+
+/// `[EFF-2]` — whether `decl` has a parameter of a written `fn` type: a callable bound, whose
+/// effects are the argument's, as a type parameter's are.
+fn takes_callable(decl: &ast::FnDecl) -> bool {
+    decl.params.iter().any(|param| {
+        matches!(&param.kind, ast::ParamKind::Named { ty, .. } if matches!(ty.kind, ast::TypeKind::Fn { abi: None, .. }))
+    })
+}
+
 /// `[STR-5]` — what `Clone` a declaration asks for: `Some(true)` when it
 /// writes `@derive(Clone)`, `Some(false)` for a struct's or enum's implicit
 /// request (a class makes none), `None` under `@no_derive(Clone)`.
@@ -57682,8 +58304,15 @@ fn field_vis(kind: ast::VisKind) -> FieldVis {
 /// `[CLO-6]` — this syntax creates the implicit `CallableOnce` bound. The
 /// callable's own `fn(...)` type records its argument modes; the outer
 /// `owned` mode selects consumption of the callee value.
+/// `[GRM-28]` — the hidden name a local function's environment has in its body.
+fn local_fn_env_name(name: Symbol) -> Symbol {
+    Symbol::intern(&format!("\u{b7}env\u{b7}{name}"))
+}
+
+/// `[CLO-6]` (D-850) — a `once fn` parameter, whose call consumes it; an `owned f: fn(A) -> R`
+/// is called any number of times.
 fn is_owned_callable_param(param: &ast::Param) -> bool {
-    param.mode == ast::Mode::Owned && is_callable_param(param)
+    matches!(param.kind, ast::ParamKind::Named { ty: ast::TypeExpr { kind: ast::TypeKind::Fn { once: true, .. }, .. }, .. })
 }
 
 fn is_callable_param(param: &ast::Param) -> bool {

@@ -1337,10 +1337,20 @@ pub enum RuntimeFn {
     TimeNow,
     TimeSleep,
     CharClass,
+    /// `[ALC-2]` (ODR-175) — `std.mem.Global`'s allocation, as the runtime allocates: null when
+    /// there is no memory.
+    GlobalAllocate,
+    GlobalDeallocate,
+    GlobalReallocate,
+    /// `[ALC-2]` (ODR-239) — `std.mem.System`'s: the platform's allocator, which a configured
+    /// global allocator never reaches.
+    SystemAllocate,
+    SystemDeallocate,
+    SystemReallocate,
 }
 
 impl RuntimeFn {
-    pub const ALL: [RuntimeFn; 24] = [
+    pub const ALL: [RuntimeFn; 30] = [
         RuntimeFn::Entropy,
         RuntimeFn::ProcessExit,
         RuntimeFn::ProcessAbort,
@@ -1365,6 +1375,12 @@ impl RuntimeFn {
         RuntimeFn::TimeNow,
         RuntimeFn::TimeSleep,
         RuntimeFn::CharClass,
+        RuntimeFn::GlobalAllocate,
+        RuntimeFn::GlobalDeallocate,
+        RuntimeFn::GlobalReallocate,
+        RuntimeFn::SystemAllocate,
+        RuntimeFn::SystemDeallocate,
+        RuntimeFn::SystemReallocate,
     ];
 
     /// The standard declaration a call names.
@@ -1394,6 +1410,12 @@ impl RuntimeFn {
             RuntimeFn::TimeNow => "std.time.monotonic_now",
             RuntimeFn::TimeSleep => "std.time.sleep_nanos",
             RuntimeFn::CharClass => "std.string.char_class",
+            RuntimeFn::GlobalAllocate => "std.mem.global_allocate",
+            RuntimeFn::GlobalDeallocate => "std.mem.global_deallocate",
+            RuntimeFn::GlobalReallocate => "std.mem.global_reallocate",
+            RuntimeFn::SystemAllocate => "std.mem.system_allocate",
+            RuntimeFn::SystemDeallocate => "std.mem.system_deallocate",
+            RuntimeFn::SystemReallocate => "std.mem.system_reallocate",
         }
     }
 
@@ -1424,6 +1446,12 @@ impl RuntimeFn {
             RuntimeFn::TimeNow => "time_now",
             RuntimeFn::TimeSleep => "time_sleep",
             RuntimeFn::CharClass => "char_class",
+            RuntimeFn::GlobalAllocate => "try_alloc",
+            RuntimeFn::GlobalDeallocate => "free",
+            RuntimeFn::GlobalReallocate => "try_realloc",
+            RuntimeFn::SystemAllocate => "system_alloc",
+            RuntimeFn::SystemDeallocate => "system_free",
+            RuntimeFn::SystemReallocate => "system_realloc",
         }
     }
 
@@ -1457,6 +1485,8 @@ impl RuntimeFn {
             RuntimeFn::TimeSleep => (Effects::BLOCK, "`time.sleep`"),
             // ODR-183 — a lookup in constant tables.
             RuntimeFn::CharClass => (Effects::NONE, ""),
+            RuntimeFn::GlobalAllocate | RuntimeFn::GlobalDeallocate | RuntimeFn::GlobalReallocate => (Effects::ALLOC, "the global allocator"),
+            RuntimeFn::SystemAllocate | RuntimeFn::SystemDeallocate | RuntimeFn::SystemReallocate => (Effects::ALLOC, "the platform's allocator"),
         }
     }
 }
@@ -1497,8 +1527,14 @@ pub enum Builtin {
     /// calls it and drops its result.
     ForeignDestructor { symbol: Symbol, pointee: Ty, ret: Ty, fn_ty: Ty },
     /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
-    /// pinned flag; a `Box` needs none. The argument is the value pinned.
+    /// pinned flag; a `Box` needs none. The arguments are the value pinned and
+    /// its `on_relocate` callback (`[HR-20]`, ODR-194): given one, a class
+    /// object is recorded with it instead of pinned. The result is the
+    /// record's number (`0`: none), which `RetainedUnpin` takes.
     RetainedPin,
+    /// `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate`
+    /// record goes. The argument is the number `RetainedPin` gave.
+    RetainedUnpin,
     /// `[FFI-23]` — the address of the object a class handle or a `Box`
     /// holds, as `*mut u8`.
     RetainedAddress,
@@ -2018,6 +2054,10 @@ pub enum Builtin {
     /// parent. The result type is carried explicitly because the same builtin
     /// constructs a scope from both `Arena` and `ScopedArena` parents.
     ArenaScope { scoped: Ty },
+    /// `[JOB-5]` — `jobs.local_arena()`: a scope of the running job's arena, which the job system
+    /// rewinds when the job ends. Its argument is a mutable reference to a hidden local of the
+    /// calling function, the view's anchor, so nothing allocated from it outlives that call.
+    JobLocalArena { scoped: Ty },
     /// `[ARN-1]`, `[ARN-6]` — allocate through a scope. Its element type is
     /// explicit for the same reason as the other arena allocation builtins.
     ScopedArenaAlloc { elem: Ty },
@@ -2078,6 +2118,7 @@ impl Builtin {
             Builtin::ForeignThread => "ffi_thread",
             Builtin::ForeignDestructor { .. } => "ffi_destructor",
             Builtin::RetainedPin => "retained_pin",
+            Builtin::RetainedUnpin => "retained_unpin",
             Builtin::RetainedAddress => "retained_address",
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppObjectHandle { .. } => "cpp_object_handle",
@@ -2261,6 +2302,7 @@ impl Builtin {
             Builtin::ArenaReset => "reset",
             Builtin::FixedArenaReset => "reset",
             Builtin::ArenaScope { .. } => "scope",
+            Builtin::JobLocalArena { .. } => "local_arena",
             Builtin::ArenaArrayWithCapacity { .. } => "with_capacity",
             Builtin::ArenaArrayGet { mutable, .. } => {
                 if mutable { "get_mut" } else { "get" }

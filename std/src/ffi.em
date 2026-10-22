@@ -17,6 +17,7 @@ pub struct CString:
     bytes: String
 
 extend str:
+    ## It allocates a new `String`.
     pub fn to_cstring(self) -> Result[CString, NulError]:
         match self.find("\0"):
             Some(index):
@@ -27,6 +28,7 @@ extend str:
                 return Ok(CString(bytes))
 
 extend String:
+    ## It allocates a new `String`.
     pub fn to_cstring(self) -> Result[CString, NulError]:
         return self.as_str().to_cstring()
 
@@ -46,6 +48,7 @@ pub struct WideString:
     pub fn as_ptr(self) -> *u16:
         return self.units.as_span().as_ptr()
 
+    ## It allocates a new `Array`.
     pub fn from_units(units: Span[u16]) -> WideString:
         kept: Array[u16] = []
         for unit in units:
@@ -55,6 +58,7 @@ pub struct WideString:
         kept.push(0)
         return WideString(kept)
 
+    ## It allocates a new `String`.
     pub fn to_string(self) -> String:
         out = String()
         units = self.units()
@@ -76,6 +80,7 @@ pub struct WideString:
         return out
 
 extend str:
+    ## It allocates a new `Array`.
     pub fn to_wide(self) -> Result[WideString, NulError]:
         units: Array[u16] = []
         for (at, c) in self.char_indices():
@@ -191,12 +196,21 @@ pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:  # SAFETY: the declaration s
 ## value's type is not known. Compiler-known. Dropping the token releases the object (the class
 ## handle's count, or the box and its value). A parameter contracted `retained` takes a token and
 ## gives C its address (`[FFI-11]`).
+## `[HR-20]` (ODR-194) — `on_relocate`, when given, lets a reload move the class object the token
+## holds: the runtime calls it with the old and the new address right after commit publishes the
+## move and before reclaim, so foreign code can follow it (a `Box`'s value never moves). Without
+## one, the object is pinned and a reload that would move it is refused.
 pub struct Retained[T]:
     value: T
+    ## The runtime's record of `on_relocate` (`0`: none), which the token's end takes out.
+    relocation: u64
 
-    pub fn pin(owned value: T) -> Retained[T]:
-        retained_pin(value)
-        return Retained(value)
+    pub fn pin(owned value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])] = None) -> Retained[T]:
+        relocation = retained_pin(value, on_relocate)
+        return Retained(value, relocation)
+
+    fn drop(mut self):
+        retained_unpin(self.relocation)
 
 ## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
 ## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
@@ -206,9 +220,19 @@ pub struct Retained[T]:
 pub struct ObjectPtr[C]:
     address: *mut u8
 
-## `[FFI-23]` — compiler-known: a class object's pinned flag is set, a `Box` needs nothing, and any
-## other value is refused.
-fn retained_pin[T](value: T):
+extend[C] ObjectPtr[C] implements Eq:
+    ## Equal when they are the address of one object.
+    fn eq(self, other: ObjectPtr[C]) -> bool:
+        return self.address == other.address
+
+## `[FFI-23]` — compiler-known: a class object's pinned flag is set, or with `on_relocate` its
+## record made (`[HR-20]`), a `Box` needs nothing, and any other value is refused. The result is
+## the record's number, `0` for none.
+fn retained_pin[T](value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])]) -> u64:
+    return 0
+
+## `[HR-20]` — compiler-known: a token's `on_relocate` record goes.
+fn retained_unpin(relocation: u64):
     pass
 
 
@@ -300,30 +324,36 @@ pub struct CppString:
     pub fn as_ptr(self) -> *mut u8:
         return self.object
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     pub fn len(self) -> usize:
         size = self.size
         unsafe:  # SAFETY(ffi): the string's own thunk
             return size(self.object)
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     pub fn bytes(self) -> Span[u8]:
         data = self.data
         unsafe:  # SAFETY(ffi): the string's bytes, which the view borrows the string for
             return cpp_span(ref self, data(self.object), self.len())
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     pub fn to_str(self) -> Result[str, Utf8Error]:
         return self.bytes().to_str()
 
+    ## It calls code whose effects are not declared, which may be code that allocates.
     fn drop(mut self):
         destroy = self.destroy
         unsafe:  # SAFETY(ffi): the string's end, once
             destroy(self.object)
 
 extend String implements From[CppString]:
+    ## It allocates a new `String`.
     fn from(owned value: CppString) -> String:
         return cpp_string_copy(value)
 
 ## `[FFI-17a]` — `String.from(c)`: the bytes of a `std::string`, copied, each invalid sequence
 ## becoming U+FFFD. Compiler-known: `String.from` of a `CppString` is this.
+## It allocates a new `String`.
 fn cpp_string_copy(owned value: CppString) -> String:
     bytes = value.bytes()
     out = String()

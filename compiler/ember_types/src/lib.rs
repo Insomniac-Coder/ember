@@ -15,6 +15,10 @@ use ember_span::{Span, Symbol};
 mod const_norm;
 pub use const_norm::{ConstAtom, ConstError, ConstNorm, ConstOp};
 
+/// `[JOB-5]` — the name of the hidden local a `jobs.local_arena()` view is anchored at, which no
+/// program can write (a `·` begins no identifier).
+pub const JOB_ARENA_ANCHOR: &str = "\u{b7}job_arena";
+
 /// An interned type. Equality is identity.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Ty(u32);
@@ -197,7 +201,7 @@ pub enum TyKind {
     /// (`[CLO-3]`): it may hold captured state, so it moves and drops. Both
     /// have one representation, and the first converts to the second.
     /// `is_unsafe` (ODR-115): `unsafe fn(A) -> R`, whose call needs `unsafe`; the same value.
-    Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, params: Vec<FnParam>, ret: Ty },
+    Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, once: bool, params: Vec<FnParam>, ret: Ty },
     /// `[TYP-22]` — an unsized interface value. The interface identities are
     /// retained in declaration order; runtime fat-pointer/vtable lowering is
     /// a later backend slice, so this kind must never acquire a guessed
@@ -562,6 +566,9 @@ pub struct TypeTable {
     /// `FromIterator_char`), with the generic it instantiates and its arguments: what its symbol is
     /// made from, never its name.
     instance_origins: HashMap<Symbol, (Symbol, Vec<Ty>)>,
+    /// `[TYP-22]` (ODR-237) — the interfaces that require `Clone`, of the `dyn` tables formed: each
+    /// such table holds an entry copying its value into a new box.
+    dyn_clone: HashSet<Symbol>,
 }
 
 /// `[FFI-26]` — an `@export_table("Name", protocol=N)`: the struct exported as a constant table of
@@ -706,6 +713,7 @@ impl TypeTable {
             soa_flattened: HashSet::new(),
             layout_attrs: HashMap::new(),
             must_drop_declared: HashSet::new(),
+            dyn_clone: HashSet::new(),
             debug_writers: HashMap::new(),
             manual_markers: Vec::new(),
             coroutine_frames: HashMap::new(),
@@ -934,7 +942,7 @@ impl TypeTable {
                     items.iter().map(|&t| self.substitute_self(t, concrete)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -943,7 +951,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute_self(ret, concrete);
-                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
             }
             _ => ty,
         }
@@ -1010,7 +1018,7 @@ impl TypeTable {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -1019,7 +1027,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute(ret, args);
-                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
             }
             _ => ty,
         }
@@ -1183,11 +1191,12 @@ impl TypeTable {
             // type's identity.  Inference may solve the nested types, but it
             // must never erase `borrow`/`mut`/`owned` on its way there.
             (
-                TyKind::Fn { abi: a_abi, latebound: a_latebound, params: a, ret: a_ret, .. },
-                TyKind::Fn { abi: b_abi, latebound: b_latebound, params: b, ret: b_ret, .. },
+                TyKind::Fn { abi: a_abi, latebound: a_latebound, once: a_once, params: a, ret: a_ret, .. },
+                TyKind::Fn { abi: b_abi, latebound: b_latebound, once: b_once, params: b, ret: b_ret, .. },
             ) if a.len() == b.len()
                     && a_abi == b_abi
                     && a_latebound == b_latebound
+                    && a_once == b_once
                     && a.iter().zip(&b).all(|(left, right)| left.mode == right.mode) =>
             {
                 a.iter()
@@ -2021,6 +2030,17 @@ impl TypeTable {
         self.structs[id.0 as usize].drops_fields = false;
     }
 
+    /// `[TYP-22]` (ODR-237) — record that `interface` requires `Clone`, for its `dyn` tables.
+    pub fn declare_dyn_clone(&mut self, interface: Symbol) {
+        self.dyn_clone.insert(interface);
+    }
+
+    /// `[TYP-22]` (ODR-237) — whether the `dyn` table of `interfaces` copies its value: one of them
+    /// requires `Clone`.
+    pub fn dyn_clones(&self, interfaces: &[Symbol]) -> bool {
+        interfaces.iter().any(|interface| self.dyn_clone.contains(interface))
+    }
+
     /// `[THR-6]` — record a struct's or class's `@must_drop`.
     pub fn declare_must_drop(&mut self, name: Symbol) {
         self.must_drop_declared.insert(name);
@@ -2465,6 +2485,30 @@ impl TypeTable {
         }
     }
 
+    /// `[LT-1a]` (ODR-211) — whether some instance of `ty` is a view: it is one,
+    /// or a type parameter or an associated type stands where
+    /// [`TypeTable::is_view`] looks (`T`, `Option[I.Item]`, `(T, int)`).
+    pub fn may_be_view(&self, ty: Ty) -> bool {
+        self.may_be_view_in(ty, &mut HashSet::new())
+    }
+
+    fn may_be_view_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        match self.kind(ty) {
+            TyKind::Param { .. } | TyKind::Assoc { .. } => true,
+            TyKind::Tuple(items) => items.iter().any(|&t| self.may_be_view_in(t, seen)),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.may_be_view_in(*elem, seen),
+            TyKind::Struct(id) => {
+                self.is_view(ty) || (seen.insert(ty) && self.struct_def(*id).fields.iter().any(|f| self.may_be_view_in(f.ty, seen)))
+            }
+            TyKind::Enum(id) => {
+                self.is_view(ty)
+                    || (seen.insert(ty)
+                        && self.enum_def(*id).variants.iter().any(|v| v.fields.iter().any(|f| self.may_be_view_in(f.ty, seen))))
+            }
+            _ => self.is_view(ty),
+        }
+    }
+
     /// Whether a view reachable in `ty`, as [`TypeTable::is_view`] walks it,
     /// lends mutably: a `ref mut` or a `MutSpan`, or one inside a tuple, a
     /// fixed array, a struct or an enum's payload. A shared `ref` lends
@@ -2751,7 +2795,7 @@ impl TypeTable {
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
             TyKind::ArrayN { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
             TyKind::Const(value) => value.to_string(),
-            TyKind::Fn { abi, latebound, is_unsafe, params, ret, .. } => {
+            TyKind::Fn { abi, latebound, is_unsafe, once, params, ret, .. } => {
                 let inner: Vec<String> = params
                     .iter()
                     .map(|param| {
@@ -2767,7 +2811,8 @@ impl TypeTable {
                 format!(
                     "{}fn({}) -> {}",
                     if let Some(abi) = abi { format!("{is_unsafe}extern \"{abi}\" ") }
-                    else if *latebound { format!("@latebound {is_unsafe}") } else { is_unsafe.to_string() },
+                    else if *latebound { format!("@latebound {is_unsafe}") }
+                    else if *once { format!("{is_unsafe}once ") } else { is_unsafe.to_string() },
                     inner.join(", "),
                     self.render(*ret, user)
                 )
@@ -2871,13 +2916,15 @@ impl TypeTable {
             TyKind::Const(value) => format!("const {value}"),
             TyKind::Vec { text: true, .. } => "String".to_string(),
             TyKind::Vec { elem, .. } => format!("Array[{}]", self.canonical_name(*elem)?),
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 let mut out = if let Some(abi) = abi {
                     format!("extern \"{abi}\" fn(")
                 } else if *latebound {
                     String::from("@latebound fn(")
                 } else if *stateless {
                     String::from("plain fn(")
+                } else if *once {
+                    String::from("once fn(")
                 } else {
                     String::from("fn(")
                 };
@@ -3146,7 +3193,7 @@ impl TypeTable {
                 out.push_str(if *mutable { "*mut " } else { "*" });
                 self.spell(*inner, out);
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
                 if *is_unsafe {
                     out.push_str("unsafe ");
                 }
@@ -3156,6 +3203,8 @@ impl TypeTable {
                     out.push_str("@latebound ");
                 } else if *stateless {
                     out.push_str("plain ");
+                } else if *once {
+                    out.push_str("once ");
                 }
                 out.push_str("fn(");
                 for (index, param) in params.iter().enumerate() {

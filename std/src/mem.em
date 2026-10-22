@@ -67,6 +67,99 @@ pub fn size_of[T]() -> usize:
 pub fn align_of[T]() -> usize:
     return 0
 
+## `[ALC-2]` (ODR-175) — the size and the alignment of a block of memory an `Allocator` gives.
+pub struct Layout:
+    pub size: usize
+    pub align: usize
+
+## `[ALC-2]` (ODR-175) — what gives a program its heap memory. Implementing it is `unsafe`
+## (`unsafe extend T implements Allocator:`): the implementer promises that `allocate` gives memory
+## valid for `layout.size` bytes, aligned to `layout.align` and reached through nothing else, or
+## null when it has none; that `deallocate` is given back only what `allocate` or `reallocate` gave,
+## with the layout it was asked for; and that `reallocate` gives a block of `new_size` bytes holding
+## the first of `p`'s (`p` then given back), or null, leaving `p` as it was. A binary package may
+## make one the global allocator, which every heap type allocates through (`[ALC-3]`).
+pub unsafe interface Allocator:
+    fn allocate(self, layout: Layout) -> *mut u8
+    fn deallocate(self, p: *mut u8, layout: Layout)
+    fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8
+
+## `[ALC-2]` — the runtime's allocator: the one every heap type uses, which is the package's global
+## allocator when it names one (`[build] global_allocator`, `[ALC-3]`) or the functions its
+## embedding host passes to `ember_rt_init` (`[FFI-27]`), and `System` otherwise. A global
+## allocator that delegates to `Global` calls itself until the stack overflows: it wraps `System`
+## (ODR-239).
+pub struct Global:
+    pass
+
+# SAFETY: the runtime's allocator gives valid, aligned, unaliased blocks, or null.
+unsafe extend Global implements Allocator:
+    ## A block the runtime allocates, or null.
+    fn allocate(self, layout: Layout) -> *mut u8:
+        return global_allocate(layout.size, layout.align)
+
+    ## Gives a block back to the runtime, which allocates and frees through one allocator.
+    fn deallocate(self, p: *mut u8, layout: Layout):
+        global_deallocate(p, layout.size, layout.align)
+
+    ## The new block the runtime allocates, the old one given back; or null.
+    fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+        return global_reallocate(p, old.size, new_size, old.align)
+
+## The runtime's: it allocates a block, or gives null when there is no memory.
+fn global_allocate(size: usize, align: usize) -> *mut u8:
+    return null[*mut u8]()
+
+## The runtime's: a block given back, through the allocator that allocates them.
+fn global_deallocate(p: *mut u8, size: usize, align: usize):
+    pass
+
+## The runtime's: it allocates the new block and gives the old one back, or gives null.
+fn global_reallocate(p: *mut u8, old_size: usize, new_size: usize, align: usize) -> *mut u8:
+    return null[*mut u8]()
+
+## `[ALC-2]`, `[ALC-3]` (ODR-239) — the platform's allocator (C's `malloc`, `realloc` and `free`,
+## aligned as asked): the one the runtime uses when no global allocator is named, and the one a
+## global allocator wraps, as a counting or tracing one does, since nothing configured reaches it.
+pub struct System:
+    pass
+
+# SAFETY: the platform's allocator gives valid, aligned, unaliased blocks, or null.
+unsafe extend System implements Allocator:
+    ## A block the platform allocates, or null.
+    fn allocate(self, layout: Layout) -> *mut u8:
+        return system_allocate(layout.size, layout.align)
+
+    ## Gives a block back to the platform's allocator, which allocates and frees them.
+    fn deallocate(self, p: *mut u8, layout: Layout):
+        system_deallocate(p, layout.size, layout.align)
+
+    ## The block grown or shrunk in place, or a new one the platform allocates holding the first
+    ## bytes of `p` (`p` then given back); or null, `p` as it was.
+    fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+        return system_reallocate(p, old.size, new_size, old.align)
+
+## The runtime's: the platform allocates a block, or gives null when there is no memory.
+fn system_allocate(size: usize, align: usize) -> *mut u8:
+    return null[*mut u8]()
+
+## The runtime's: a block given back to the platform's allocator, which allocates them.
+fn system_deallocate(p: *mut u8, size: usize, align: usize):
+    pass
+
+## The runtime's: the platform allocates the grown block, or gives null.
+fn system_reallocate(p: *mut u8, old_size: usize, new_size: usize, align: usize) -> *mut u8:
+    return null[*mut u8]()
+
+## `[ALC-3]` — what a binary package's global allocator is reached through: the C functions the
+## build writes for it call these with the `static` the manifest names, so it must implement
+## `Allocator`.
+fn global_allocate_through[A: Allocator](a: A, size: usize, align: usize) -> *mut u8:
+    return a.allocate(Layout(size, align))
+
+fn global_deallocate_through[A: Allocator](a: A, p: *mut u8, size: usize, align: usize):
+    a.deallocate(p, Layout(size, align))
+
 ## `[LAY-2]` — the byte offset of a field of struct `T`, named as written:
 ## `offset_of[Header](length)`. The compiler reads the name; this declaration
 ## makes the path real.

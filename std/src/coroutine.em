@@ -54,6 +54,7 @@ pub struct Scheduler:
     waiting: Array[Wait]
 
 extend Scheduler:
+    ## It allocates a new `Array`.
     pub fn new() -> Scheduler:
         return Scheduler([], [])
 
@@ -68,6 +69,7 @@ extend Scheduler:
 
     ## One frame, `dt` seconds long: resume each sequence whose wait is over,
     ## and drop each that finishes.
+    ## It calls code whose effects are not declared, which may be code that allocates.
     pub fn update(mut self, dt: float):
         i = 0
         while i < self.running.len():
@@ -82,6 +84,7 @@ extend Scheduler:
             i += 1
 
     ## Whether sequence `i`'s wait is over, counting this frame against it.
+    ## It calls code whose effects are not declared, which may be code that allocates.
     fn due(mut self, i: int, dt: float) -> bool:
         match self.waiting[i]:
             Wait.NextFrame:

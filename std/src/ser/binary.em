@@ -11,6 +11,7 @@ from std.ser import Deserialize, Reader, SerError, Serialize, Writer
 pub struct BinaryWriter:
     out: Array[u8]
 
+    ## It allocates a new `Array`.
     pub fn new() -> BinaryWriter:
         return BinaryWriter([])
 
@@ -18,6 +19,7 @@ pub struct BinaryWriter:
     pub fn bytes(self) -> Span[u8]:
         return self.out.as_span()
 
+    ## It allocates as the `Array` it adds to grows.
     fn varint(mut self, value: u64):
         v = value
         while v >= 128:
@@ -25,6 +27,7 @@ pub struct BinaryWriter:
             v = v // 128
         self.out.push(v as u8)
 
+    ## It allocates as the `Array` it adds to grows.
     fn text(mut self, value: str):
         bytes = value.as_bytes()
         self.varint(len(bytes) as u64)
@@ -32,29 +35,35 @@ pub struct BinaryWriter:
             self.out.push(b)
 
 extend BinaryWriter implements Writer:
+    ## It allocates as the `Array` it adds to grows.
     fn begin_struct(mut self, name: str, version: int) -> Result[void, SerError]:
         self.out.push(6)
         self.varint(version as u64)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn field(mut self, name: str) -> Result[void, SerError]:
         self.out.push(9)
         self.text(name)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn end_struct(mut self) -> Result[void, SerError]:
         self.out.push(7)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn begin_variant(mut self, name: str) -> Result[void, SerError]:
         self.out.push(8)
         self.text(name)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn end_variant(mut self) -> Result[void, SerError]:
         self.out.push(7)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn begin_list(mut self, count: int) -> Result[void, SerError]:
         self.out.push(5)
         self.varint(count as u64)
@@ -63,26 +72,31 @@ extend BinaryWriter implements Writer:
     fn end_list(mut self) -> Result[void, SerError]:
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn write_none(mut self) -> Result[void, SerError]:
         self.out.push(10)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn write_int(mut self, value: i64) -> Result[void, SerError]:
         self.out.push(1)
         zigzag = (value as u64) * 2 if value >= 0 else ((-(value + 1)) as u64) * 2 + 1
         self.varint(zigzag)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn write_float(mut self, value: f64) -> Result[void, SerError]:
         self.out.push(2)
         self.text(f"{value}")
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn write_bool(mut self, value: bool) -> Result[void, SerError]:
         self.out.push(3)
         self.out.push(1 if value else 0)
         return Ok(())
 
+    ## It allocates as the `Array` it adds to grows.
     fn write_str(mut self, value: str) -> Result[void, SerError]:
         self.out.push(4)
         self.text(value)
@@ -95,12 +109,14 @@ pub struct BinaryReader:
     ## For each open list: how many elements are left.
     lists: Array[int]
 
+    ## It allocates a new `Array`.
     pub fn new(bytes: Span[u8]) -> BinaryReader:
         data: Array[u8] = []
         for b in bytes:
             data.push(b)
         return BinaryReader(data, 0, [])
 
+    ## It allocates the error's message when the input is malformed.
     fn malformed(self, what: str) -> SerError:
         return SerError.Malformed(f"{what} at byte {self.at}")
 
@@ -109,12 +125,14 @@ pub struct BinaryReader:
             return self.data[self.at] as int
         return -1
 
+    ## It allocates the error's message when the input is malformed.
     fn expect(mut self, tag: int, what: str) -> Result[void, SerError]:
         if self.peek() != tag:
             return Err(self.malformed(f"expected {what}"))
         self.at += 1
         return Ok(())
 
+    ## It allocates the error's message when the input is malformed.
     fn varint(mut self) -> Result[u64, SerError]:
         value: u64 = 0
         scale: u64 = 1
@@ -129,6 +147,7 @@ pub struct BinaryReader:
             scale = scale * 128
         return Err(self.malformed("a number too long"))
 
+    ## It allocates a new `String`.
     fn text(mut self) -> Result[String, SerError]:
         n = self.varint()? as int
         if self.at + n > len(self.data):
@@ -142,6 +161,7 @@ pub struct BinaryReader:
 
 extend BinaryReader:
     ## A struct's or an enum value's fields, read past, and its end.
+    ## It allocates the error's message when the input is malformed.
     fn skip_fields(mut self) -> Result[void, SerError]:
         while self.peek() == 9:
             self.at += 1
@@ -150,32 +170,39 @@ extend BinaryReader:
         return self.expect(7, "the end of a struct")
 
 extend BinaryReader implements Reader:
+    ## It allocates the error's message when the input is malformed.
     fn begin_struct(mut self) -> Result[int, SerError]:
         self.expect(6, "a struct")?
         return Ok(self.varint()? as int)
 
+    ## It allocates the error's message when the input is malformed.
     fn next_field(mut self) -> Result[Option[String], SerError]:
         if self.peek() == 7:
             return Ok(None)
         self.expect(9, "a field")?
         return Ok(Some(self.text()?))
 
+    ## It allocates the error's message when the input is malformed.
     fn end_struct(mut self) -> Result[void, SerError]:
         return self.expect(7, "the end of a struct")
 
+    ## It allocates the error's message when the input is malformed.
     fn begin_variant(mut self) -> Result[String, SerError]:
         self.expect(8, "an enum value")?
         return self.text()
 
+    ## It allocates the error's message when the input is malformed.
     fn end_variant(mut self) -> Result[void, SerError]:
         return self.expect(7, "the end of an enum value")
 
+    ## It allocates as the `Array` it adds to grows.
     fn begin_list(mut self) -> Result[void, SerError]:
         self.expect(5, "a list")?
         n = self.varint()? as int
         self.lists.push(n)
         return Ok(())
 
+    ## It allocates the error's message when the input is malformed.
     fn next_element(mut self) -> Result[bool, SerError]:
         n = len(self.lists)
         if n == 0:
@@ -192,11 +219,13 @@ extend BinaryReader implements Reader:
             return Ok(true)
         return Ok(false)
 
+    ## It allocates the error's message when the input is malformed.
     fn read_int(mut self) -> Result[i64, SerError]:
         self.expect(1, "an integer")?
         z = self.varint()?
         return Ok((z // 2) as i64 if z % 2 == 0 else -((z // 2) as i64) - 1)
 
+    ## It allocates the error's message when the input is malformed.
     fn read_float(mut self) -> Result[f64, SerError]:
         self.expect(2, "a float")?
         text = self.text()?
@@ -206,6 +235,7 @@ extend BinaryReader implements Reader:
             Err(_):
                 return Err(self.malformed("a float"))
 
+    ## It allocates the error's message when the input is malformed.
     fn read_bool(mut self) -> Result[bool, SerError]:
         self.expect(3, "a bool")?
         if self.at >= len(self.data):
@@ -214,10 +244,12 @@ extend BinaryReader implements Reader:
         self.at += 1
         return Ok(b != 0)
 
+    ## It allocates the error's message when the input is malformed.
     fn read_str(mut self) -> Result[String, SerError]:
         self.expect(4, "text")?
         return self.text()
 
+    ## It allocates a new `String`.
     fn skip_value(mut self) -> Result[void, SerError]:
         tag = self.peek()
         if tag == 1:

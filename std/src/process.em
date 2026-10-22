@@ -12,11 +12,13 @@ pub fn abort() -> !:
 
 ## `[FN-8]` — the command line, the program's name first, decoded as UTF-8 with each invalid
 ## sequence replaced by U+FFFD: what `main`'s `args` holds.
+## It allocates the arguments' text.
 pub fn args() -> Array[String]:
     return args_utf8()
 
 ## `[FN-8]` — the command line's own bytes, nothing replaced. On Windows the command line is
 ## UTF-16, and its bytes are its WTF-8: UTF-8, with a lone surrogate kept as its three bytes.
+## It allocates the arguments' text.
 pub fn args_os() -> Array[Array[u8]]:
     return args_bytes()
 
@@ -28,8 +30,10 @@ fn exit_now(code: int) -> !:
 fn abort_now() -> !:
     panic("the runtime's")
 
+## It allocates a new `Array`.
 fn args_utf8() -> Array[String]:
     return []
 
+## It allocates a new `Array`.
 fn args_bytes() -> Array[Array[u8]]:
     return []

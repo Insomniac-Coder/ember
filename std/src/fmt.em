@@ -23,6 +23,7 @@ pub enum FmtError:
 
 extend Formatter:
     ## Appends `s` to the text being built.
+    ## It allocates as the `String` it writes to grows.
     pub fn write_str(mut self, s: str) -> Result[void, FmtError]:
         self.out.push_str(s)
         return Ok(())

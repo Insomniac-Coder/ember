@@ -183,6 +183,7 @@ extend str implements AsKey[String], ToKey[String]:
     fn is_key(self, key: String) -> bool:
         return self == key
 
+    ## It allocates a new `String`.
     fn to_key(self) -> String:
         return String.from(self)
 
@@ -607,7 +608,7 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
                 Some(ref mut e):
                     return Some(mem.replace(e.value, v))
                 None:
-                    panic("a listed entry was removed")
+                    unreachable()  # `find` gives a listed entry's slot only
         self.push_new(hash, k, v)
         return None
 
@@ -658,7 +659,7 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
             return None
 
     ## Keeps the entries `keep` accepts, in order.
-    pub fn retain(mut self, keep: fn(ref K, ref V) -> bool):
+    pub fn retain[F: fn(ref K, ref V) -> bool](mut self, owned keep: F):
         for i in range(self.entries.len()):
             gone = false
             match self.entries[i]:
@@ -776,7 +777,7 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash + Debug] Map[K, 
                 Some(e):
                     return ref e.value
                 None:
-                    panic("a listed entry was removed")
+                    unreachable()  # `find` gives a listed entry's slot only
         else:
             panic(f"key not found: {q!r}; use .get(k) for an Option")
 
@@ -788,7 +789,7 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: AsKey[K] + Hash + Debug] Map[K, 
                 Some(ref mut e):
                     return ref mut e.value
                 None:
-                    panic("a listed entry was removed")
+                    unreachable()  # `find` gives a listed entry's slot only
         else:
             panic(f"key not found: {q!r}; use .get(k) for an Option")
 
@@ -803,7 +804,7 @@ extend[K: Eq + Hash, V, H: Hasher + Default, Q: ToKey[K] + Hash] Map[K, V, H] im
                     e.value = v
                     return
                 None:
-                    panic("a listed entry was removed")
+                    unreachable()  # `find` gives a listed entry's slot only
         self.push_new(hash, q.to_key(), v)
 
 extend[K: Eq + Hash, V: Copy, H: Hasher + Default] Map[K, V, H]:
@@ -872,9 +873,9 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
             Some(ref mut e):
                 return ref mut e.value
             None:
-                panic("a listed entry was removed")
+                unreachable()  # `find` gives a listed entry's slot only
 
-    pub fn or_insert_with(owned self, make: fn() -> V) -> ref mut V:
+    pub fn or_insert_with[F: fn() -> V](owned self, owned make: F) -> ref mut V:
         at = self.map.find(self.key, self.hash)
         if at >= 0:
             i = self.map.slot_at(at)
@@ -882,7 +883,7 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
                 Some(ref mut e):
                     return ref mut e.value
                 None:
-                    panic("a listed entry was removed")
+                    unreachable()  # `find` gives a listed entry's slot only
         else:
             return self.or_insert(make())
 
@@ -899,7 +900,7 @@ extend[K: Eq + Hash, V: Default, H: Hasher + Default] MapEntry[K, V, H]:
             Some(ref mut e):
                 return ref mut e.value
             None:
-                panic("a listed entry was removed")
+                unreachable()  # `find` gives a listed entry's slot only
 
 ## `m.keys()`, and what `for k in m:` iterates: the keys in insertion order.
 @view
@@ -1044,7 +1045,7 @@ pub struct Set[T: Eq + Hash, H: Hasher + Default = DefaultHasher]:
     pub fn contains[Q: AsKey[T] + Hash](self, q: Q) -> bool:
         return self.map.contains_key(q)
 
-    pub fn retain(mut self, keep: fn(ref T) -> bool):
+    pub fn retain[F: fn(ref T) -> bool](mut self, owned keep: F):
         for i in range(self.map.entries.len()):
             gone = false
             match self.map.entries[i]:
@@ -1391,7 +1392,7 @@ pub struct Pool[T, B: HandleSplit = Split32]:
             Ok(handle):
                 return handle
             Err(_):
-                panic("`Pool.insert`: every slot is retired or live")
+                panic("`Pool.insert`: every slot is retired or live; use .try_insert(value) for a Result")
 
     ## Puts `value` in a free slot and gives its handle, or `Err(CapacityError.Full)` when every slot
     ## is retired or live.
@@ -1448,7 +1449,7 @@ pub struct Pool[T, B: HandleSplit = Split32]:
             Some(ref value):
                 return value
             None:
-                panic("`Pool.get_unchecked`: the slot is empty")
+                panic("`Pool.get_unchecked`: the slot is empty; use .get(h) for an Option")
 
     ## Takes the value `h` refers to out of the pool, or `None` when `h` is stale. Its slot moves to
     ## the next generation, or is retired when its generations are exhausted.
@@ -1473,7 +1474,7 @@ extend[T, B: HandleSplit] Pool[T, B] implements Index[Handle[T, B]]:
             Some(value):
                 return value
             None:
-                panic("stale handle")
+                panic("stale handle; use .get(h) for an Option")
 
 ## `[STD-7]` — up to `N` values of `T` held inline, never on the heap. `push` past `N` returns
 ## `Err(CapacityError.Full)` and changes nothing; `push_or_drop` drops the value instead.
@@ -1770,10 +1771,12 @@ pub struct SmallArray[T, const N: int]:
 pub struct BitSet:
     words: Array[u64]
 
+    ## It allocates a new `Array`.
     pub fn new() -> BitSet:
         return BitSet([])
 
     ## Adds `i`; whether it was absent.
+    ## It allocates as the set grows, and the message of the panic a negative `i` is.
     pub fn insert(mut self, i: int) -> bool:
         if i < 0:
             panic(f"a BitSet holds non-negative integers, not {i}")

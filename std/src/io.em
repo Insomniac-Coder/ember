@@ -20,6 +20,7 @@ pub struct Error:
     pub message: String
 
     ## The failure the C library's code `code` names.
+    ## It allocates a new `String`.
     pub fn from_code(code: int) -> Error:
         kind = match error_kind(code):
             0 => ErrorKind.NotFound
@@ -31,10 +32,12 @@ pub struct Error:
         return Error(kind = kind, code = code, message = message)
 
     ## Data that is not what it should be: text that is not UTF-8, for one.
+    ## It allocates a new `String`.
     pub fn invalid_data(message: str) -> Error:
         return Error(kind = ErrorKind.InvalidData, code = 0, message = message.to_string())
 
 extend Error implements Display:
+    ## It allocates as the `String` it writes to grows.
     fn fmt(self, mut f: Formatter) -> Result[void, FmtError]:
         return f.write_str(self.message)
 
@@ -53,6 +56,7 @@ pub fn stdin() -> Stdin:
 extend Stdin:
     ## One line of input without its line ending; `None` at the end of input, and `Err` when the
     ## line is not UTF-8 or reading failed.
+    ## It allocates a new `Array`.
     pub fn read_line(self) -> Result[Option[String], Error]:
         bytes: Array[u8] = []
         end = false
@@ -78,6 +82,7 @@ pub struct Lines:
 extend Lines implements Iterator:
     type Item = Result[String, Error]
 
+    ## It allocates a new `Array`.
     fn next(mut self) -> Option[Result[String, Error]]:
         match Stdin().read_line():
             Ok(Some(line)):

@@ -26,14 +26,29 @@ use ember_mir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, Term
 
 /// Each instance of a generic function is its own body; a binding its source
 /// never reads is reported once, at its declaration, not once per instance.
+/// `[GRM-38]` — one written binding may be bound in several bodies the compiler
+/// makes of it (each clause function of a generator expression binds the names
+/// of the clauses before it): it is read when any of them reads it.
 pub fn check_all(bodies: &[Body], types: &ember_types::TypeTable, sink: &mut Sink) {
-    let mut reported = HashSet::new();
-    for body in bodies {
-        check(body, types, sink, &mut reported);
+    let reads: Vec<HashSet<LocalId>> = bodies.iter().map(|body| reads(body, types)).collect();
+    let read_anywhere: HashSet<ember_span::Span> = bodies
+        .iter()
+        .zip(&reads)
+        .flat_map(|(body, read)| read.iter().map(|local| body.local(*local).span))
+        .filter(|span| !span.is_dummy())
+        .collect();
+    let mut reported = read_anywhere;
+    for (body, read) in bodies.iter().zip(&reads) {
+        check(body, read, sink, &mut reported);
     }
 }
 
-fn check(body: &Body, types: &ember_types::TypeTable, sink: &mut Sink, reported: &mut HashSet<ember_span::Span>) {
+fn check(body: &Body, read: &HashSet<LocalId>, sink: &mut Sink, reported: &mut HashSet<ember_span::Span>) {
+    report(body, read, sink, reported);
+}
+
+/// The locals `body` reads: an operand, an index, or the base of a projection read anywhere.
+fn reads(body: &Body, types: &ember_types::TypeTable) -> HashSet<LocalId> {
     let mut read = HashSet::new();
     for block in &body.blocks {
         for stmt in &block.stmts {
@@ -105,7 +120,10 @@ fn check(body: &Body, types: &ember_types::TypeTable, sink: &mut Sink, reported:
             Terminator::Goto(_) | Terminator::Return | Terminator::Unreachable => {}
         }
     }
+    read
+}
 
+fn report(body: &Body, read: &HashSet<LocalId>, sink: &mut Sink, reported: &mut HashSet<ember_span::Span>) {
     // Candidates for `L1002`: named user locals that are read somewhere, so a
     // near-miss name plausibly meant one of them.
     let live_names: Vec<&str> = body

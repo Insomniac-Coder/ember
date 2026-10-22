@@ -600,7 +600,8 @@ impl Printer<'_> {
             }
             ast::ItemKind::Interface(decl) => {
                 let params = self.generics(&decl.generics);
-                let mut header = format!("{vis}interface {}{params}", self.name(decl.name));
+                let unsafe_word = if decl.is_unsafe { "unsafe " } else { "" };
+                let mut header = format!("{vis}{unsafe_word}interface {}{params}", self.name(decl.name));
                 if !decl.supertraits.is_empty() {
                     let names: Vec<String> =
                         decl.supertraits.iter().map(|t| self.type_expr(t)).collect();

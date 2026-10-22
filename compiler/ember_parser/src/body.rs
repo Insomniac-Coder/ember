@@ -226,10 +226,12 @@ impl Parser<'_> {
             // `[GRM-28]` — `fn name(` declares a local function; `fn(` is a
             // lambda, an expression. A raw name is a name, and `fn not`/`fn is`
             // a declaration whose name `parse_fn` refuses (`E0005`).
-            TokenKind::Keyword(Kw::Fn | Kw::Unsafe)
+            // `[GRM-21]` — `gen fn name(` too: a generator is legal wherever a function is.
+            TokenKind::Keyword(Kw::Fn | Kw::Unsafe) | TokenKind::Ident(_)
                 if self.at_kw(Kw::Fn)
                     && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::Not | Kw::Is))
-                    || self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Fn) =>
+                    || self.at_kw(Kw::Unsafe) && (self.at_kw_at(1, Kw::Fn) || self.at_gen_fn_at(1))
+                    || self.at_gen_fn() && matches!(self.peek_at(2), TokenKind::Ident(_) | TokenKind::RawIdent(_)) =>
             {
                 let decl = self.parse_fn();
                 if decl.body.is_none() {
@@ -1500,7 +1502,15 @@ impl Parser<'_> {
             if self.eat_kw(Kw::For) {
                 let pattern = self.parse_for_target();
                 self.expect_kw(Kw::In);
-                let iter = self.parse_expr_bp(BP_TERNARY + 1, false);
+                // `[GRM-15]` (ODR-236) — `owned xs` takes the collection over, as a `for` does.
+                let iter = if self.at_kw(Kw::Owned) && !self.at_kw_at(1, Kw::Fn) {
+                    let start = self.span();
+                    self.bump();
+                    let inner = self.parse_expr_bp(BP_TERNARY + 1, false);
+                    Expr { id: self.next_id(), kind: ExprKind::Owned(Box::new(inner)), span: start.to(self.prev_span()) }
+                } else {
+                    self.parse_expr_bp(BP_TERNARY + 1, false)
+                };
                 clauses.push(CompClause::For { pattern, iter });
             } else if self.eat_kw(Kw::If) {
                 clauses.push(CompClause::If(self.parse_expr_bp(BP_TERNARY + 1, false)));
@@ -1599,7 +1609,16 @@ impl Parser<'_> {
         let body = if self.eat_punct(Punct::FatArrow) {
             LambdaBody::Expr(Box::new(self.parse_expr()))
         } else if allow_block_lambda && self.eat_punct(Punct::Colon) {
-            LambdaBody::Block(self.parse_block())
+            if self.at_newline() {
+                LambdaBody::Block(self.parse_block())
+            } else {
+                // `[GRM-17]` (ODR-209) — a `:` body on the lambda's own line is one simple
+                // statement that ends at the statement's newline: `h = fn(x): total += x` is one
+                // statement, so the newline is left for it.
+                let start = self.span();
+                let stmts = self.parse_simple_statement().into_iter().collect();
+                LambdaBody::Block(Block { id: self.next_id(), stmts, span: start.to(self.prev_span()) })
+            }
         } else if !allow_block_lambda && self.at_punct(Punct::Colon) {
             // `[LEX-6a]` — "Inside brackets, a lambda's `:` body is a single
             // `small_stmt`, terminated by the enclosing closing bracket or by

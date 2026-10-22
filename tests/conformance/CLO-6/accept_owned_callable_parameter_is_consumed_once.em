@@ -2,10 +2,9 @@
 #$ rules: CLO-1, CLO-3, CLO-6, OWN-3, TST-19
 #$ stdout: 7
 
-# `[CLO-6]` supplies an implicit `CallableOnce` bound for an `owned fn`
-# parameter. A capturing closure proves this is a static generic callable
-# boundary, not a function-pointer-only special case. The binding is consumed
-# by the indirect call even when its concrete representation is `Copy`.
+# `[CLO-6]` — an `owned fn` parameter is a callable bound like any other (`[CLO-3]`),
+# taken over by the callee. A capturing closure proves this is a static generic callable
+# boundary, not a function-pointer-only special case; it may be called again (D-850).
 
 fn invoke(owned f: fn() -> i32) -> i32:
     return f()

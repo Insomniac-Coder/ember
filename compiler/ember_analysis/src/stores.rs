@@ -396,7 +396,9 @@ fn point_span(body: &Body, point: Point) -> Span {
 }
 
 fn local_name(body: &Body, local: LocalId) -> Option<String> {
-    body.local(local).name.clone().filter(|name| !name.is_empty())
+    // `[JOB-5]` — a `jobs.local_arena()` view's anchor is that call.
+    let name = body.local(local).name.clone().filter(|name| !name.is_empty())?;
+    Some(if name == ember_types::JOB_ARENA_ANCHOR { "jobs.local_arena()".to_string() } else { name })
 }
 
 const OWNED_COPY_HELP: &str = "store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note \
