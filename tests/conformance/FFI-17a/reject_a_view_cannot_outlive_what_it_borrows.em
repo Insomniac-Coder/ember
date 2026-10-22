@@ -8,7 +8,7 @@ import cpp "views.hpp" with (project = "views", overlay = "overlays/views_first.
 
 fn first_word() -> Span[u8]:
     words = cpp.Words.new().unwrap()
-    return words.get().first()    #$ error[E3060]: `*words.pointer` does not live long enough
+    return words.get().first()    #$ error[E3060]: `words` does not live long enough
 
 fn main():
     println(first_word().len())
