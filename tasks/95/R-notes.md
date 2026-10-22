@@ -53,3 +53,11 @@ Rules: DIA-15, CG-C-9, PHIL-1, CG-C-7, VER-3, CG-C-6, CG-C-10, DIA-5, LT-39, SEL
   run-time selection's ended region as B14. Recommendation: (a) — B14's help ("return an owned
   value, or the views as separate results") does not fit a local conditional, and the region is
   known, not uninferable.
+
+## PHIL-1 — done
+- Tests: `tests/conformance/PHIL-1/accept_identical_locals_share_lifetime_whatever_their_use.em`
+  (identical locals used at different times both live to the block's end and drop in reverse
+  order), `accept_identical_declarations_share_storage_and_synchronisation.em` (a struct passed
+  `mut` and one only read are both frame values, no `ember_alloc`; a `@sync` object handed away
+  and one kept local both release atomically, no plain release; checked on the emitted C).
+- No compiler change: storage, lifetime and synchronisation already follow the declared type only.
