@@ -114,5 +114,12 @@ are superseded by the above.
 
 ## Checks run
 
-(Filled in at the end of the session: the whole conformance tree through `annotations.py`, and the
-`ui`, `milestones` and `firstweek` tests.)
+With the `ci` build of this branch:
+
+* `annotations.py` over every `tests/conformance/*` directory (577): `failing 0`.
+* `cargo test --profile ci -p ember_driver --test ui`: 10 passed.
+* `--test milestones`: 171 passed in 531 s (it includes `the_conformance_suite_runs`, so every
+  profile and every `assert-c` of the new cases).
+* `--test firstweek`: passed; "0 of 30 accepted as written, 3 after the helps; 24 meet a rejection
+  in no catalogue or a compiler gap".
+* For the lead: `tools/phase_progress.py --check` was not run; new conformance directory `CTL-5`.
