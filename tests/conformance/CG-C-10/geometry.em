@@ -1,6 +1,6 @@
-# The module of ./run_fail_a_backtrace_names_paths_and_places.em: a method and a function that
-# call it, each frame of the backtrace that test checks.
-
+#$ test: parse-pass
+#$ rules: CG-C-10
+# The module of the cases beside it: a method and a function calling it, frames they check.
 pub struct Grid:
     pub cells: Array[int]
 

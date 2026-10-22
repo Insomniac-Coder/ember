@@ -2625,7 +2625,7 @@ struct Checker<'a> {
     instance_spellings: HashMap<DefId, String>,
     /// `[MNG-1]` — each instance symbol made, with the path and arguments it was made from and
     /// where: a second made from others is `E9040`.
-    instance_symbols: HashMap<String, (InstanceMade, String, String, Span)>,
+    instance_symbols: InstanceSymbols,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
     /// Enums declared with type parameters, by qualified name.
@@ -3234,7 +3234,7 @@ impl<'a> Checker<'a> {
             instances: HashMap::new(),
             generic_of: HashMap::new(),
             instance_spellings: HashMap::new(),
-            instance_symbols: HashMap::new(),
+            instance_symbols: InstanceSymbols::default(),
             generic_structs: HashMap::new(),
             generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
@@ -22713,18 +22713,8 @@ impl<'a> Checker<'a> {
         let symbol = ember_branding::instance_symbol(path, arguments.as_deref());
         if let Some(arguments) = &arguments {
             let shown = shown.unwrap_or_else(|| path.to_string());
-            let from = format!("{path}{arguments}");
-            match self.instance_symbols.get(&symbol) {
-                // Two definitions of one instance (overlapping implementations of one method) are
-                // their own rules' errors (`[TYP-19]`), not two instances.
-                Some((first, first_from, first_shown, first_span)) if *first != made && *first_shown != shown => {
-                    let diagnostic = instance_collision(&symbol, first_shown, *first_span, &shown, span, *first_from == from);
-                    self.sink.emit(diagnostic);
-                }
-                Some(_) => {}
-                None => {
-                    self.instance_symbols.insert(symbol.clone(), (made, from, shown, span));
-                }
+            if let Some(diagnostic) = self.instance_symbols.note(&symbol, made, format!("{path}{arguments}"), shown, span) {
+                self.sink.emit(diagnostic);
             }
         }
         symbol
@@ -54528,6 +54518,60 @@ fn canonical_generic_owner(name: Symbol, parameters: usize) -> String {
 enum InstanceMade {
     Function(DefId),
     Type(Ty),
+}
+
+/// `[MNG-1]` — each instance symbol made: the instance it was made for, what it was made from (its
+/// path and its arguments' spelling), how the instance is written, and where.
+#[derive(Default)]
+struct InstanceSymbols(HashMap<String, (InstanceMade, String, String, Span)>);
+
+impl InstanceSymbols {
+    /// Record that `symbol` was made for `made`, and the `E9040` when another instance has it. Two
+    /// definitions of one instance (overlapping implementations of one method, written alike) are
+    /// their own rules' errors (`[TYP-19]`), not two instances.
+    fn note(&mut self, symbol: &str, made: InstanceMade, from: String, shown: String, span: Span) -> Option<Diagnostic> {
+        match self.0.get(symbol) {
+            Some((first, first_from, first_shown, first_span)) if *first != made && *first_shown != shown => {
+                Some(instance_collision(symbol, first_shown, *first_span, &shown, span, *first_from == from))
+            }
+            Some(_) => None,
+            None => {
+                self.0.insert(symbol.to_string(), (made, from, shown, span));
+                None
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod instance_symbol_tests {
+    use super::*;
+
+    /// `[MNG-1]` — two instances whose arguments' hashes meet have one symbol: `E9040`, naming both,
+    /// with the first as its secondary place. 64-bit hashes cannot be made to meet in a program, so
+    /// the two are given the one symbol a collision would make.
+    #[test]
+    fn two_instances_whose_hashes_meet_are_e9040() {
+        let symbol = ember_branding::instance_symbol("geometry.max", Some("[i64]"));
+        let (first, second) = (Span::new(FileId(1), 10, 20), Span::new(FileId(1), 30, 40));
+        let mut made = InstanceSymbols::default();
+        let one = InstanceMade::Function(DefId(7));
+        assert!(made.note(&symbol, one, "geometry.max[i64]".into(), "geometry.max[i64]".into(), first).is_none());
+        // The same instance again is no collision.
+        assert!(made.note(&symbol, one, "geometry.max[i64]".into(), "geometry.max[i64]".into(), first).is_none());
+        let other = InstanceMade::Function(DefId(9));
+        let diagnostic = made
+            .note(&symbol, other, "geometry.max[geometry.Point]".into(), "geometry.max[geometry.Point]".into(), second)
+            .expect("another instance with the symbol is E9040");
+        assert!(diagnostic.code == Some(codes::E9040), "{}", diagnostic.message);
+        assert_eq!(diagnostic.primary.span, second);
+        assert!(diagnostic.message.contains("`geometry.max[i64]` and `geometry.max[geometry.Point]`"), "{}", diagnostic.message);
+        assert!(diagnostic.message.contains(&symbol), "{}", diagnostic.message);
+        assert!(diagnostic.secondary.iter().any(|label| label.span == first), "the first instance is named where it is made");
+        assert!(diagnostic.helps.iter().any(|help| help.contains("changes the hash")), "{:?}", diagnostic.helps);
+        // A third instance is named against the first.
+        assert!(made.note(&symbol, InstanceMade::Function(DefId(11)), "geometry.max[bool]".into(), "geometry.max[bool]".into(), second).is_some());
+    }
 }
 
 /// `[MNG-1]` — `E9040`: two generic instances, written `first` and `second`, whose symbols are one.
