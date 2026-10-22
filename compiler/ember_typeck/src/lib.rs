@@ -227,6 +227,7 @@ pub fn check(
     debug_assertions: bool,
     comptime_answers: &ComptimeAnswers,
     realtime: Option<hir::Effects>,
+    reload_if_default: &HashSet<Span>,
 ) -> CheckOutput {
     // `[FFI-16]` — a status enum's error type, `struct N(code: E)` implementing `Error`.
     let status_errors = errors::desugar_status_errors(modules);
@@ -265,6 +266,7 @@ pub fn check(
     checker.lint_return_intersection = lint_return_intersection;
     checker.comptime_answers = comptime_answers.clone();
     checker.derive_requests = derive_requests;
+    checker.reload_if_default = reload_if_default.clone();
     checker.realtime_contracts = realtime.unwrap_or(hir::Effects::REALTIME_DEFAULT);
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
     checker.module_packages = modules.iter().map(|m| m.package).collect();
@@ -2904,6 +2906,10 @@ struct Checker<'a> {
     derive_requests: Vec<derives::DeriveRequest>,
     /// `[DRV-1]` — the blocks written for derives a field fell short of, by span: not checked.
     refused_derives: HashSet<Span>,
+    /// `[HR-14]` — the functions a reloadable build wrote to give an added field its type's
+    /// `Default.default()`, by span: one whose return type is not `Default` is not checked or built,
+    /// and the reload refuses the field instead.
+    reload_if_default: HashSet<Span>,
     /// D-261 — an interface instance whose arguments name type parameters
     /// (`AsKey[K]` in a bound), by generic interface and arguments, and back:
     /// a use substitutes the arguments and instantiates again.
@@ -3245,6 +3251,7 @@ impl<'a> Checker<'a> {
             derive_requests: Vec::new(),
             realtime_contracts: hir::Effects::REALTIME_DEFAULT,
             refused_derives: HashSet::new(),
+            reload_if_default: HashSet::new(),
             open_interfaces: HashMap::new(),
             open_interface_origin: HashMap::new(),
             pending_bound_interfaces: Vec::new(),
@@ -6814,6 +6821,10 @@ impl<'a> Checker<'a> {
                 self.self_ty = self_ty;
                 let scalar = entry.folded.as_ref().is_some_and(|folded| folded.is_scalar());
                 if entry.ok && scalar && self.sink.error_count() == errors {
+                    if let Some(folded) = &entry.folded {
+                        let text = folded.to_text(self.types);
+                        self.types.add_folded_static(item.name, text);
+                    }
                     self.expr_consts.insert(item.name, ConstState::Done(entry));
                     progress = true;
                 } else if entry.ok
@@ -18845,6 +18856,11 @@ impl<'a> Checker<'a> {
             }
             let ast::ItemKind::Fn(decl) = &item.kind else { continue };
             let Some(&def) = self.fn_ids.get(&self.qualified(decl.name.name)) else { continue };
+            if self.reload_if_default.contains(&item.span)
+                && !self.implements(self.signatures[def.0 as usize].ret, Symbol::intern("std.core.Default"))
+            {
+                continue;
+            }
             // `[TYP-32]` — a function returning `some I` is checked on its own, before the rest.
             if self.body_filter.map_or(self.fn_some.contains_key(&def), |only| only != def) {
                 continue;

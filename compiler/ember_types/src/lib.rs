@@ -551,6 +551,9 @@ pub struct TypeTable {
     /// evaluator computed, placed in the image as constant data: each name,
     /// type and value (in the evaluator's text).
     constant_statics: Vec<(Symbol, Ty, String)>,
+    /// `[STA-3]`, `[HR-17a]` — each static folded into the code as a scalar constant, with its
+    /// value (in the evaluator's text): a reload compares values, since the code holds no other.
+    folded_statics: Vec<(Symbol, String)>,
     /// `[RFL-2]` — each `@reflect` class's description: its constant static and its type.
     class_reflections: HashMap<ClassId, (Symbol, Ty)>,
     /// `[FFI-26]` — each `@export_table` of the program.
@@ -665,6 +668,15 @@ impl TypeTable {
         &self.constant_statics
     }
 
+    /// `[STA-3]` — a static folded into the code as a scalar constant, with its value.
+    pub fn add_folded_static(&mut self, name: Symbol, value: String) {
+        self.folded_statics.push((name, value));
+    }
+
+    pub fn folded_statics(&self) -> &[(Symbol, String)] {
+        &self.folded_statics
+    }
+
     /// `[FFI-26]` — an exported table of function pointers.
     pub fn add_export_table(&mut self, table: ExportTable) {
         self.export_tables.push(table);
@@ -695,6 +707,7 @@ impl TypeTable {
             coroutine_frames: HashMap::new(),
             next_infer: 0,
             constant_statics: Vec::new(),
+            folded_statics: Vec::new(),
             class_reflections: HashMap::new(),
             export_tables: Vec::new(),
             pointer_size: 8,

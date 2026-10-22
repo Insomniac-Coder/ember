@@ -989,6 +989,7 @@ fn cycle_analysis(
         true,
         &ember_typeck::ComptimeAnswers::new(),
         lint_settings.realtime,
+        &Default::default(),
     );
     if sink.has_errors() {
         report(&sink, &map, &Options::default());
@@ -3078,6 +3079,7 @@ fn migrate_file(input: &Path, write: bool, json: bool) -> Result<ExitCode, Strin
                     true,
                     &ember_typeck::ComptimeAnswers::new(),
                     lints.realtime,
+                    &Default::default(),
                 );
                 // What a compile-time evaluation would answer is not this command's.
                 if !checked.comptime.is_empty() {
@@ -4498,6 +4500,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let mut reports = Vec::new();
     let mut blocked = Vec::new();
     let mut passes = 0;
+    let no_conditional = std::collections::HashSet::new();
     let (mut types, common, checked) = loop {
         passes += 1;
         let (mut types, common) = TypeTable::new();
@@ -4514,6 +4517,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             options.profile == Profile::Debug,
             &answers,
             lint_settings.realtime,
+            reload_additions.as_ref().map_or(&no_conditional, |additions| &additions.if_default),
         );
         if checked.comptime.is_empty() {
             // `[TCB-1]` — under `--require-evidence` a grade claimed without evidence is an error.

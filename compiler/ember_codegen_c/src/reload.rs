@@ -50,6 +50,9 @@ struct FieldShape {
     element_type: String,
     layout: String,
     inner: String,
+    /// `[HR-14]` — for a range type, the function telling whether a value of its representation
+    /// is in its range (`T.checked`'s test).
+    range: String,
 }
 
 impl FieldShape {
@@ -63,14 +66,70 @@ impl FieldShape {
             element_type: String::new(),
             layout: "NULL".to_string(),
             inner: "NULL".to_string(),
+            range: "NULL".to_string(),
         }
     }
 
     /// The row's members after `flags`: what it holds, its elements', and its own tables.
     fn tail(&self) -> String {
         let element_type = if self.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&self.element_type) };
-        format!("{}, {}, {}, {element_type}, {}, {}", self.kind, self.element_kind, self.element_size, self.layout, self.inner)
+        format!("{}, {}, {}, {element_type}, {}, {}, {}", self.kind, self.element_kind, self.element_size, self.layout, self.inner, self.range)
     }
+}
+
+/// `[HR-14]` — the symbol of range type `id`'s test (`emit_range_tests`).
+fn range_test_symbol(id: ember_types::RangeId) -> String {
+    table(&format!("in_range_{}", id.0))
+}
+
+/// `[HR-14]` — the C body of a range type's test over its representation at `value`: `T.checked`'s
+/// decision (`[RNG-3]`), NaN in no range (`[RNG-6]`). `None` for a representation it has no test
+/// for (`f16`), whose change the reload refuses.
+fn range_test_body(kind: &TyKind, def: &ember_types::RangeDef) -> Option<String> {
+    use ember_types::Bound;
+    let upper = if def.inclusive { "<=" } else { "<" };
+    let signed = |v: i128| if v == i128::from(i64::MIN) { "INT64_MIN".to_string() } else { format!("INT64_C({v})") };
+    // A 128-bit value as its two halves, compared high first: the bytes a little-endian `__int128`
+    // has, which is how the runtime lays one out.
+    let wide = |high: &str, lo: i128, hi: i128| {
+        let half = |v: i128| (format!("({high})INT64_C({})", (v >> 64) as i64), format!("UINT64_C({})", v as u64));
+        let ((lo_h, lo_l), (hi_h, hi_l)) = (half(lo), half(hi));
+        let below = if def.inclusive { "<=" } else { "<" };
+        format!(
+            "uint64_t l; {high} h; memcpy(&l, value, 8); memcpy(&h, (const unsigned char*)value + 8, 8);\n    \
+             return (h > {lo_h} || (h == {lo_h} && l >= {lo_l})) && (h < {hi_h} || (h == {hi_h} && l {below} {hi_l}));"
+        )
+    };
+    Some(match (kind, def.lo, def.hi) {
+        (TyKind::Int(IntTy::I128), Bound::Int(lo), Bound::Int(hi)) => wide("int64_t", lo, hi),
+        (TyKind::Uint(UintTy::U128), Bound::Int(lo), Bound::Int(hi)) => wide("uint64_t", lo, hi),
+        (TyKind::Int(IntTy::I8 | IntTy::I16 | IntTy::I32 | IntTy::I64), Bound::Int(lo), Bound::Int(hi)) => {
+            let width = match kind {
+                TyKind::Int(IntTy::I8) => 8,
+                TyKind::Int(IntTy::I16) => 16,
+                TyKind::Int(IntTy::I32) => 32,
+                _ => 64,
+            };
+            format!("int{width}_t n; memcpy(&n, value, sizeof n);\n    int64_t v = n;\n    return v >= {} && v {upper} {};", signed(lo), signed(hi))
+        }
+        (TyKind::Uint(UintTy::U8 | UintTy::U16 | UintTy::U32 | UintTy::U64), Bound::Int(lo), Bound::Int(hi)) => {
+            let width = match kind {
+                TyKind::Uint(UintTy::U8) => 8,
+                TyKind::Uint(UintTy::U16) => 16,
+                TyKind::Uint(UintTy::U32) => 32,
+                _ => 64,
+            };
+            // A lower end of zero is no test: an unsigned value is never below it.
+            let low = if lo <= 0 { String::new() } else { format!("v >= UINT64_C({lo}) && ") };
+            format!("uint{width}_t n; memcpy(&n, value, sizeof n);\n    uint64_t v = n;\n    return {low}v {upper} UINT64_C({hi});")
+        }
+        (TyKind::Float(FloatTy::F32 | FloatTy::F64), Bound::Float(lo), Bound::Float(hi)) => {
+            let float = |v: f64| if v.is_infinite() { (if v < 0.0 { "-HUGE_VAL" } else { "HUGE_VAL" }).to_string() } else { format!("{v:e}") };
+            let c = if matches!(kind, TyKind::Float(FloatTy::F32)) { "float" } else { "double" };
+            format!("{c} n; memcpy(&n, value, sizeof n);\n    double v = n;\n    return v >= {} && v {upper} {};", float(lo), float(hi))
+        }
+        _ => return None,
+    })
 }
 
 /// The suffix of a reloadable body's own symbol; the function's symbol is its thunk's.
@@ -333,6 +392,12 @@ impl Emitter<'_> {
                 let inner = *inner;
                 fnv(&["pointer", &self.types.display(ty), &self.type_schema(inner, seen).to_string()])
             }
+            // `[HR-14]` — a range type's range is in its schema: a value of the old one may lie
+            // outside the new one.
+            TyKind::Range(id) => {
+                let def = self.types.range_def(*id);
+                fnv(&["range", &def.name.to_string(), &self.types.display(def.repr), &format!("{:?}", def.lo), &format!("{:?}", def.hi), if def.inclusive { "..=" } else { ".." }])
+            }
             _ => fnv(&[&self.types.display(ty)]),
         };
         seen.pop();
@@ -385,6 +450,13 @@ impl Emitter<'_> {
         let Some(reload) = self.reload.clone() else { return };
         if self.unit.is_some() {
             return;
+        }
+        // `[HR-14]` — each range type's test, which a field's row names.
+        let ranges: Vec<(ember_types::RangeId, ember_types::RangeDef)> = self.types.ranges().map(|(id, def)| (id, def.clone())).collect();
+        for (id, def) in ranges {
+            if let Some(body) = range_test_body(self.types.kind(def.repr), &def) {
+                self.line(&format!("static inline int {}(const void* value) {{\n    {body}\n}}", range_test_symbol(id)));
+            }
         }
         let address_taken = address_taken_symbols(bodies);
         let mut fns = Vec::new();
@@ -480,6 +552,11 @@ impl Emitter<'_> {
             if stored.iter().any(|(known, _, _)| known == name) {
                 continue;
             }
+            // `[HR-17a]` — a folded static's code holds its value and nothing else: a value that
+            // changed with its initialiser's text unchanged (a function it calls was edited) is a
+            // changed initialiser too, refused unless the static is `@reinit_on_reload`.
+            let value = self.types.folded_statics().iter().find(|(known, _)| known.as_str() == name).map(|(_, value)| value.as_str());
+            let initialiser = &value.map_or(*initialiser, |value| fnv(&[&initialiser.to_string(), value]));
             statics.push(format!(
                 "    {{ {}, 0, 1, UINT64_C(0x{declared:016x}), UINT64_C(0x{initialiser:016x}), {}, NULL, NULL, NULL }},",
                 c_string_literal(name),
@@ -717,6 +794,20 @@ impl Emitter<'_> {
             TyKind::Uint(_) => shape.flags.extend(["EMBER_RL_FIELD_UNSIGNED", "EMBER_RL_FIELD_ZERO"]),
             TyKind::Float(_) => shape.flags.extend(["EMBER_RL_FIELD_FLOAT", "EMBER_RL_FIELD_ZERO"]),
             TyKind::Bool => shape.flags.push("EMBER_RL_FIELD_ZERO"),
+            // `[HR-14]` — a range type is its representation's number with a test of its range,
+            // and never `Default` (`[RNG-8]`).
+            TyKind::Range(id) => {
+                let def = self.types.range_def(*id);
+                let repr = self.types.kind(def.repr);
+                if range_test_body(repr, def).is_some() {
+                    shape.flags.push(match repr {
+                        TyKind::Uint(_) => "EMBER_RL_FIELD_UNSIGNED",
+                        TyKind::Float(_) => "EMBER_RL_FIELD_FLOAT",
+                        _ => "EMBER_RL_FIELD_SIGNED",
+                    });
+                    shape.range = range_test_symbol(*id);
+                }
+            }
             TyKind::Class(_) => shape.kind = "EMBER_RL_KIND_HANDLE",
             TyKind::Vec { text: true, .. } => shape.flags.push("EMBER_RL_FIELD_ZERO"),
             TyKind::Vec { elem, text: false } => {
@@ -1006,15 +1097,14 @@ impl Emitter<'_> {
                 let c_field = member(field);
                 let shape = self.field_shape(*ty, reload);
                 let mut flags = shape.flags.clone();
-                if let Some(function) = reload.defaults.get(&(name.clone(), field.clone())) {
+                // A declared default's function, or `[HR-14]` a `Default` type's, which the checker
+                // built only where the type is `Default`.
+                if let Some(symbol) = reload.defaults.get(&(name.clone(), field.clone())).and_then(|function| self.reload_function_symbol(function)) {
                     flags.push("EMBER_RL_FIELD_DEFAULT");
-                    let symbol = self.reload_function_symbol(function);
-                    if let Some(symbol) = symbol {
-                        let member_type = self.c_member_type(*ty);
-                        cases.push(format!(
-                            "    case {index}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {c_field})) = {symbol}(); break;"
-                        ));
-                    }
+                    let member_type = self.c_member_type(*ty);
+                    cases.push(format!(
+                        "    case {index}u: *({member_type}*)((unsigned char*)object + offsetof({c_type}, {c_field})) = {symbol}(); break;"
+                    ));
                 }
                 let renamed = reload.renamed.get(&(name.clone(), field.clone())).map_or("NULL".to_string(), |old| c_string_literal(old));
                 let flags = if flags.is_empty() { "0".to_string() } else { flags.join(" | ") };

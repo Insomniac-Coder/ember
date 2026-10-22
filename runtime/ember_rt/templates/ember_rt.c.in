@@ -10169,6 +10169,8 @@ static struct {
     rl_table statics;
     rl_table types;
     rl_table identities;
+    /* The manifest of the image applied last: the C++ headers the process was built with ([HR-23]). */
+    const ember_rl_manifest* running;
     ember_reload_timings timings;
 } g_rl;
 
@@ -10620,24 +10622,39 @@ static const ember_rl_field* rl_source_field(const ember_rl_type* old, const emb
     return NULL;
 }
 
+/* What kind of number a field holds: its signed, unsigned or float flag, or 0 for none. */
+static uint32_t rl_number_class(const ember_rl_field* field) {
+    return field->flags & (EMBER_RL_FIELD_SIGNED | EMBER_RL_FIELD_UNSIGNED | EMBER_RL_FIELD_FLOAT);
+}
+
 /* [HR-14] `[TYP-5]`'s lossless widenings: a wider integer of the same signedness or a wider signed
- * one for an unsigned, and `f32` to `f64`. */
+ * one for an unsigned, from at most 64 bits to at most 128, and `f32` to `f64`. */
 static bool rl_widens(const ember_rl_field* from, const ember_rl_field* to) {
     if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
-        return (to->flags & EMBER_RL_FIELD_FLOAT) != 0 && to->size > from->size;
+        return (to->flags & EMBER_RL_FIELD_FLOAT) != 0 && from->size == 4 && to->size == 8;
+    }
+    if (from->size > 8 || to->size > 16 || to->size <= from->size) {
+        return false;
     }
     if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
-        return (to->flags & EMBER_RL_FIELD_SIGNED) != 0 && to->size > from->size;
+        return (to->flags & EMBER_RL_FIELD_SIGNED) != 0;
     }
     if ((from->flags & EMBER_RL_FIELD_UNSIGNED) != 0) {
-        return ((to->flags & EMBER_RL_FIELD_UNSIGNED) != 0 || (to->flags & EMBER_RL_FIELD_SIGNED) != 0) && to->size > from->size
-            && to->size <= 8;
+        return (to->flags & EMBER_RL_FIELD_UNSIGNED) != 0 || (to->flags & EMBER_RL_FIELD_SIGNED) != 0;
     }
     return false;
 }
 
-/* What a new field does with its source, as plan decides it. */
-enum { RL_CARRY = 1, RL_WIDEN, RL_NESTED, RL_VARIANT, RL_DEFAULT, RL_ZERO };
+/* [HR-14] A number reaches a range type, or a range type's value its representation (`[RNG-2]`),
+ * when it is the same number or widens losslessly to it. */
+static bool rl_number_converts(const ember_rl_field* from, const ember_rl_field* to) {
+    uint32_t kind = rl_number_class(from);
+    return kind != 0 && ((kind == rl_number_class(to) && from->size == to->size) || rl_widens(from, to));
+}
+
+/* What a new field does with its source, as plan decides it. `RL_NUMBER` converts a number into a
+ * range type, which plan tests each value of, or out of one. */
+enum { RL_CARRY = 1, RL_WIDEN, RL_NESTED, RL_VARIANT, RL_DEFAULT, RL_ZERO, RL_NUMBER };
 
 static int rl_field_route(const ember_rl_field* to, const ember_rl_field* from) {
     if (from == NULL) {
@@ -10651,6 +10668,9 @@ static int rl_field_route(const ember_rl_field* to, const ember_rl_field* from) 
     }
     if (rl_handle_bits(from, to)) {
         return RL_CARRY;
+    }
+    if ((to->in_range != NULL || from->in_range != NULL) && rl_number_converts(from, to)) {
+        return RL_NUMBER;
     }
     if (rl_widens(from, to)) {
         return RL_WIDEN;
@@ -10691,6 +10711,38 @@ static void rl_write_integer(void* at, uint32_t size, uint64_t bits) {
     case 2: memcpy(at, &u16, 2); break;
     case 4: memcpy(at, &u32, 4); break;
     default: memcpy(at, &bits, 8); break;
+    }
+}
+
+/* Writes the number `from` holds at `src` as `to`'s at `dst`: the same bits, or widened. A
+ * 128-bit integer is the bytes a little-endian `__int128` has: its high half is the sign. */
+static void rl_convert_number(const ember_rl_field* from, const ember_rl_field* to, unsigned char* dst, const unsigned char* src) {
+    if (rl_number_class(from) == rl_number_class(to) && from->size == to->size) {
+        memcpy(dst, src, to->size);
+        return;
+    }
+    if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
+        float narrow;
+        memcpy(&narrow, src, sizeof narrow);
+        double wide = narrow;
+        memcpy(dst, &wide, sizeof wide);
+        return;
+    }
+    uint64_t bits;
+    bool negative = false;
+    if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
+        int64_t value = rl_read_signed(src, from->size);
+        bits = (uint64_t)value;
+        negative = value < 0;
+    } else {
+        bits = rl_read_unsigned(src, from->size);
+    }
+    if (to->size == 16) {
+        uint64_t high = negative ? UINT64_MAX : 0;
+        memcpy(dst, &bits, sizeof bits);
+        memcpy(dst + 8, &high, sizeof high);
+    } else {
+        rl_write_integer(dst, to->size, bits);
     }
 }
 
@@ -10743,6 +10795,32 @@ static const char* rl_removed_variant(const ember_rl_manifest* next, const ember
         if (route == RL_NESTED) {
             const char* found = rl_removed_variant(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name),
                                                    value + from->offset, holder, depth + 1);
+            if (found != NULL) {
+                return found;
+            }
+        }
+    }
+    return NULL;
+}
+
+/* [HR-14] The first field inside `value` (of type `old`, becoming `to`, its struct fields searched
+ * depth-first) that becomes a range type whose test its value fails, as `T.checked` would; NULL
+ * when every one passes. */
+static const ember_rl_field* rl_out_of_range(const ember_rl_manifest* next, const ember_rl_type* old, const ember_rl_type* to,
+                                             const unsigned char* value, int depth) {
+    for (uint32_t index = 0; old != NULL && to != NULL && depth <= 32 && index < to->field_count; ++index) {
+        const ember_rl_field* field = &to->fields[index];
+        const ember_rl_field* from = rl_source_field(old, field);
+        int route = rl_field_route(field, from);
+        if (route == RL_NUMBER && field->in_range != NULL) {
+            unsigned char converted[16];
+            rl_convert_number(from, field, converted, value + from->offset);
+            if (!field->in_range(converted)) {
+                return field;
+            }
+        } else if (route == RL_NESTED) {
+            const ember_rl_field* found = rl_out_of_range(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name),
+                                                          value + from->offset, depth + 1);
             if (found != NULL) {
                 return found;
             }
@@ -10847,16 +10925,9 @@ static void rl_migrate_value(const ember_rl_manifest* next, const ember_rl_type*
             memcpy(there, from_value + from->offset, field->size);
             break;
         case RL_WIDEN:
-            if ((from->flags & EMBER_RL_FIELD_FLOAT) != 0) {
-                float narrow;
-                memcpy(&narrow, from_value + from->offset, sizeof narrow);
-                double wide = narrow;
-                memcpy(there, &wide, sizeof wide);
-            } else if ((from->flags & EMBER_RL_FIELD_SIGNED) != 0) {
-                rl_write_integer(there, field->size, (uint64_t)rl_read_signed(from_value + from->offset, from->size));
-            } else {
-                rl_write_integer(there, field->size, rl_read_unsigned(from_value + from->offset, from->size));
-            }
+        case RL_NUMBER:
+            /* A range type's values were tested in plan ([HR-14]). */
+            rl_convert_number(from, field, there, from_value + from->offset);
             break;
         case RL_NESTED:
             rl_migrate_value(next, rl_old_schema(from->type_name), rl_new_schema(next, field->type_name), there, from_value + from->offset);
@@ -11280,6 +11351,36 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
                   named[k].field->type_name, named[k].variant, named[k].count, named[k].count == 1 ? "" : "s",
                   named[k].field->name, named[k].to->name);
     }
+    /* [HR-14] A field changed to a range type migrates only when every value passes the type's
+     * `checked`; otherwise the reload is refused, naming the field, the type and how many fail. */
+    named_count = 0;
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        const ember_rl_field* failing = move->to->migrate != NULL ? NULL
+            : rl_out_of_range(next, move->from, move->to, (const unsigned char*)move->old, 0);
+        if (failing == NULL) {
+            continue;
+        }
+        fine = false;
+        size_t k = 0;
+        while (k < named_count && !(named[k].to == move->to && named[k].field == failing)) {
+            k += 1;
+        }
+        if (k == named_count && named_count < sizeof named / sizeof named[0]) {
+            named[named_count].to = move->to;
+            named[named_count].field = failing;
+            named[named_count].variant = NULL;
+            named[named_count++].count = 0;
+        }
+        if (k < named_count) {
+            named[k].count += 1;
+        }
+    }
+    for (size_t k = 0; k < named_count; ++k) {
+        rl_report(report, cap, "refused: field `%s` of `%s` became the range type `%s`, and %zu value%s of it fail%s `%s.checked` [HR-14]\n",
+                  named[k].field->name, named[k].to->name, named[k].field->type_name, named[k].count, named[k].count == 1 ? "" : "s",
+                  named[k].count == 1 ? "s" : "", named[k].field->type_name);
+    }
     if (!fine) {
         return false;
     }
@@ -11504,6 +11605,12 @@ static bool rl_static_migrates(const ember_rl_manifest* next, const rl_static* k
     if (handle) {
         return true;
     }
+    /* A static the compiler folds into the code has no storage: each image holds its own
+     * constant, the same value while the initialiser is unchanged ([HR-17a] refuses an edited
+     * one), and the new type's checks ran on it when it was compiled (`[RNG-3]`'s `E2211`). */
+    if (from == NULL && to == NULL) {
+        return true;
+    }
 #if defined(EMBER_RELOAD_INSTANCES)
     if (from != NULL && to != NULL && from->kind == EMBER_RL_KIND_STRUCT && to->kind == EMBER_RL_KIND_STRUCT
         && strcmp(from->type_name, to->type_name) == 0 && !checkpoint) {
@@ -11520,8 +11627,28 @@ static bool rl_static_migrates(const ember_rl_manifest* next, const rl_static* k
                           holder->type_name, variant, edited->name, holder->name);
                 return false;
             }
+            const ember_rl_field* failing = kept->state == 2 ? rl_out_of_range(next, old, now, (const unsigned char*)kept->data, 0) : NULL;
+            if (failing != NULL) {
+                rl_report(report, cap, "refused: field `%s` of static `%s` became the range type `%s`, and its value fails `%s.checked` [HR-14]\n",
+                          failing->name, edited->name, failing->type_name, failing->type_name);
+                return false;
+            }
             return true;
         }
+    }
+    /* [HR-14] A number becoming a range type, or a range type's value its representation, is
+     * converted; into a range type, only a value its `checked` passes. */
+    if (from != NULL && to != NULL && rl_field_route(to, from) == RL_NUMBER && !checkpoint) {
+        if (kept->state == 2 && to->in_range != NULL) {
+            unsigned char converted[16];
+            rl_convert_number(from, to, converted, (const unsigned char*)kept->data);
+            if (!to->in_range(converted)) {
+                rl_report(report, cap, "refused: static `%s` became the range type `%s`, and its value fails `%s.checked` [HR-14]\n",
+                          edited->name, to->type_name, to->type_name);
+                return false;
+            }
+        }
+        return true;
     }
     /* [HR-11a] A unit enum's value keeps its variant, by name; a removed one cannot. */
     if (from != NULL && to != NULL && from->kind == EMBER_RL_KIND_ENUM && to->kind == EMBER_RL_KIND_ENUM
@@ -11561,6 +11688,19 @@ static bool rl_plan(const ember_rl_manifest* next, bool first, bool checkpoint, 
         return true;
     }
     bool bodies_only = next->mode == 3u;
+    /* [HR-23] A C++ header the running image imports that changed (it, or a file it includes) is
+     * refused, naming it: the host was compiled against the old one and must be rebuilt. An
+     * overlay is Ember code, so an edit of it is not a header change. */
+    const ember_rl_manifest* running = g_rl.running;
+    for (uint32_t at = 0; running != NULL && at < next->header_count; ++at) {
+        for (uint32_t was = 0; was < running->header_count; ++was) {
+            if (strcmp(running->headers[was].name, next->headers[at].name) == 0
+                && strcmp(running->headers[was].hash, next->headers[at].hash) != 0) {
+                rl_report(report, cap, "refused: C++ header `%s` changed; the host must be rebuilt against it [HR-23]\n", next->headers[at].name);
+                refused = true;
+            }
+        }
+    }
     /* A reloadable function the edit removed keeps its thunk, now a stub; refused when data may
      * hold the thunk ([HR-7]). */
     for (size_t index = 0; index < g_rl.slots.cap; ++index) {
@@ -11773,8 +11913,26 @@ static bool rl_prepare_statics(const ember_rl_manifest* next, rl_pending* pendin
     for (; at < next->static_count; ++at) {
         const ember_rl_static* edited = &next->statics[at];
         rl_static* kept = (rl_static*)rl_table_get(&g_rl.statics, edited->name);
-        if (kept == NULL || kept->type_schema == edited->type_schema || kept->state != 2 || edited->shape == NULL
-            || (edited->shape->kind != EMBER_RL_KIND_STRUCT && edited->shape->kind != EMBER_RL_KIND_ENUM) || kept->shape == NULL) {
+        if (kept == NULL || kept->type_schema == edited->type_schema || kept->state != 2 || edited->shape == NULL || kept->shape == NULL) {
+            continue;
+        }
+        /* [HR-14] A number into a range type or out of one: converted, its value tested in plan. */
+        if (rl_field_route(edited->shape, kept->shape) == RL_NUMBER) {
+            void* data = rl_aligned_zero(edited->size, edited->align);
+            if (data == NULL) {
+                g_rl_guard = NULL;
+                rl_report(report, cap, "refused: Allocation: out of memory migrating static `%s` [HR-36]\n", kept->name);
+                return false;
+            }
+            rl_convert_number(kept->shape, edited->shape, (unsigned char*)data, (const unsigned char*)kept->data);
+            pending->migrated[pending->migrated_count] = kept;
+            pending->migrated_data[pending->migrated_count] = data;
+            pending->migrated_from[pending->migrated_count] = NULL;
+            pending->migrated_shape[pending->migrated_count++] = edited->shape;
+            next->static_data[at] = data;
+            continue;
+        }
+        if (edited->shape->kind != EMBER_RL_KIND_STRUCT && edited->shape->kind != EMBER_RL_KIND_ENUM) {
             continue;
         }
         const ember_rl_type* old = rl_old_schema(kept->shape->type_name);
@@ -12091,12 +12249,15 @@ static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t comp
 #if defined(EMBER_RELOAD_INSTANCES)
     timings->instances_migrated = rl_reclaim_instances(next);
     for (size_t index = 0; index < pending.migrated_count; ++index) {
-        rl_drop_removed(next, pending.migrated_from[index], rl_new_schema(next, pending.migrated_shape[index]->type_name),
-                        (unsigned char*)pending.migrated_data[index]);
+        if (pending.migrated_from[index] != NULL) {
+            rl_drop_removed(next, pending.migrated_from[index], rl_new_schema(next, pending.migrated_shape[index]->type_name),
+                            (unsigned char*)pending.migrated_data[index]);
+        }
         free(pending.migrated_data[index]);
     }
 #endif
     /* The new image's schemas are the running ones from here: the next reload compares with them. */
+    g_rl.running = next;
     for (uint32_t index = 0; index < next->type_count; ++index) {
         rl_type* type = (rl_type*)rl_table_get(&g_rl.types, next->types[index].name);
         type->schema = &next->types[index];

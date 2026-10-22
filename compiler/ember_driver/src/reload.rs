@@ -389,6 +389,19 @@ pub struct Additions {
     /// This build's schema, by type: each field's name and written type, which the next build's
     /// `Old<Name>` structs are made from.
     pub schema: serde_json::Map<String, serde_json::Value>,
+    /// `[HR-14]` — the functions written to give a field declared without a default its type's
+    /// `Default.default()`, by span: the checker builds one only where the type is `Default`.
+    pub if_default: std::collections::HashSet<Span>,
+}
+
+/// A written type whose `Default` is all zero bytes, which the runtime writes itself
+/// (`EMBER_RL_FIELD_ZERO`): a number, `bool`, `String` or an `Array`.
+fn zero_default(ty: &ember_ast::TypeExpr) -> bool {
+    const ZERO: [&str; 19] = [
+        "int", "uint", "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "isize", "usize", "f32", "f64", "bool",
+        "String", "Array",
+    ];
+    matches!(&ty.kind, ember_ast::TypeKind::Path { segments, .. } if segments.len() == 1 && ZERO.contains(&segments[0].name.as_str()))
 }
 
 /// A name the injected source gives a type's helper: its module-local name, made of the type's.
@@ -476,6 +489,7 @@ pub fn inject(
         }
         let prefix = if loaded.path.is_empty() { String::new() } else { format!("{}.", loaded.path.join(".")) };
         let mut source = String::new();
+        let mut if_default: BTreeMap<String, ember_ast::TypeExpr> = BTreeMap::new();
         let snippet = |span: Span| map.get(span.file).and_then(|file| file.text.get(span.start as usize..span.end as usize)).unwrap_or("").to_string();
         for item in loaded.module.items.iter_mut() {
             let (ident, members, generic) = match &mut item.kind {
@@ -508,6 +522,13 @@ pub fn inject(
                 if let Some(default) = &field.default {
                     let function = helper("__reload_default", ident.as_str(), &field_name);
                     source.push_str(&format!("fn {function}() -> {ty}:\n    return {}\n\n", snippet(default.span)));
+                    additions.defaults.insert((name.clone(), field_name), function);
+                } else if !zero_default(&field.ty) {
+                    // `[HR-14]` — added, its type `Default`: `std.core.default_of[T]()`, written
+                    // below as the derives write it; the checker drops it where `T` is not `Default`.
+                    let function = helper("__reload_default", ident.as_str(), &field_name);
+                    source.push_str(&format!("fn {function}() -> {ty}:\n    return 0\n\n"));
+                    if_default.insert(function.clone(), field.ty.clone());
                     additions.defaults.insert((name.clone(), field_name), function);
                 }
             }
@@ -567,7 +588,23 @@ pub fn inject(
         let file = map.add(PathBuf::from(format!("<reload helpers of {shown}>")), source.clone());
         additions.files.insert(file);
         let lexed = ember_lexer::lex(file, &source, sink);
-        let parsed = ember_parser::parse(file, &source, lexed.tokens, sink);
+        let mut parsed = ember_parser::parse(file, &source, lexed.tokens, sink);
+        for item in &mut parsed.items {
+            let ember_ast::ItemKind::Fn(decl) = &mut item.kind else { continue };
+            let Some(ty) = if_default.get(decl.name.name.as_str()) else { continue };
+            let Some(ember_ast::Stmt { kind: ember_ast::StmtKind::Expr(returned), .. }) = decl.body.as_mut().and_then(|body| body.stmts.first_mut()) else {
+                continue;
+            };
+            let ember_ast::ExprKind::Jump(ember_ast::Jump::Return(Some(value))) = &mut returned.kind else { continue };
+            let span = value.span;
+            let expr = |kind| ember_ast::Expr { id: ember_ast::NodeId::DUMMY, kind, span };
+            let callee = expr(ember_ast::ExprKind::IndexOrInstantiate {
+                base: Box::new(expr(ember_ast::ExprKind::Path { segments: vec![ember_ast::Ident { name: Symbol::intern("std.core.default_of"), span }] })),
+                args: vec![ember_ast::TypeOrExpr::Type(ty.clone())],
+            });
+            **value = expr(ember_ast::ExprKind::Call { callee: Box::new(callee), args: Vec::new() });
+            additions.if_default.insert(item.span);
+        }
         loaded.module.items.extend(parsed.items);
     }
     additions

@@ -2991,7 +2991,9 @@ struct ember_rl_field;
  * type's schema hash, its offset and size, and what it holds. [HR-15] A value no schema names (a
  * tuple, what a `Box` points at, a closure's captured state) is described by the image that made
  * it: `layout` is a `TUPLE`'s own field list, and `inner` an `ARRAY`'s element or a `BOX`'s pointee,
- * so a reload reads it as it was made, whatever the next image calls its types. */
+ * so a reload reads it as it was made, whatever the next image calls its types. [HR-14] A field of a
+ * range type has `in_range`, which tells whether a value of its representation is in its range
+ * (`T.checked`'s test); its flags are its representation's. */
 typedef struct ember_rl_field {
     const char* name;
     const char* renamed_from;
@@ -3006,6 +3008,7 @@ typedef struct ember_rl_field {
     const char* element_type;
     const struct ember_rl_type* layout;
     const struct ember_rl_field* inner;
+    int (*in_range)(const void* value);
 } ember_rl_field;
 
 /* [HR-11] A variant of an enum's schema: its name, `@renamed_from`'s, its discriminant, its

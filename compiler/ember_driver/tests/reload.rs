@@ -325,6 +325,12 @@ fn a_static_initialiser_edit_needs_reinit_on_reload() {
     let reinit = v1.replace("\"old\"", "\"new\"");
     let (run, _) = reload_run("reload-static-reinit", RELOAD_ALL, v1, &[&reinit]);
     assert_eq!(run.stdout, "10 old\n10 new\n", "{}", run.stderr);
+    // A static the compiler folds into the code, whose initialiser's text is unchanged but whose
+    // value changed with the function it calls: the old value cannot be kept, so it is refused too.
+    let called = v1.replace("static LIMIT: int = 10", "fn ten() -> int:\n    return 10\n\nstatic LIMIT: int = ten()");
+    let (run, _) = reload_run("reload-static-folded", RELOAD_ALL, &called, &[&called.replace("return 10", "return 30")]);
+    assert_eq!(run.stdout, "10 old\n10 old\n", "{}", run.stderr);
+    assert!(run.stderr.contains("the initialiser of static `LIMIT` changed"), "{}", run.stderr);
 }
 
 /// `[HR-6a]` — method tables and drop glue stay ordinary code pointers: an object made before the
@@ -602,6 +608,78 @@ fn the_migration_table_by_name() {
     let run = host_run("reload-retyped", PARTICLES, &[&retyped], 2);
     assert!(run.stdout.contains("field `step` of `Particle` changed type from `i64` to `str`; `Particle` can declare `migrate_from`"), "{}", run.stdout);
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+}
+
+/// `[HR-14]` — a field added with no default whose type is `Default` is initialised to
+/// `Default.default()` in every live instance: the type's own implementation, written by hand or
+/// derived, whatever value it gives (here not zero). New instances still take what `init` gives.
+#[test]
+fn a_field_added_whose_type_is_default_takes_its_default() {
+    for (label, mass) in [
+        ("reload-default-written", "struct Mass:\n    w: int\n\nextend Mass implements Default:\n    fn default() -> Mass:\n        return Mass(w = 7)\n\n"),
+        ("reload-default-derived", "@derive(Default)\nstruct Mass:\n    w: int = 7\n\n"),
+    ] {
+        let v2 = PARTICLES
+            .replace("@sync\nclass Particle:\n", &format!("{mass}@sync\nclass Particle:\n"))
+            .replace("    step: int = 1\n", "    step: int = 1\n    mass: Mass\n\n    fn init(self):\n        self.mass = Mass(w = 1)\n")
+            .replace("total += p.x.load()", "total += p.x.load() + p.mass.w");
+        let run = host_run(label, PARTICLES, &[&v2], 3);
+        assert_eq!(run.exit, 0, "{label}: {}\n{}", run.stdout, run.stderr);
+        assert_eq!(run.stdout, "3\napplied, 3 migrated\n27\n30\n", "{label}: {}", run.stderr);
+    }
+}
+
+/// `[HR-14]` — a field changed to a range type migrates only when every live value passes the
+/// type's `checked` (`[RNG-3]`): an `i32` widened into `int in 1..=10` keeps its values; one whose
+/// values fall outside `int in 2..=10` is refused in plan, naming the field, the type and how many
+/// fail, and the old code runs on. A range type's value changed back to its representation is
+/// carried (`[RNG-2]`); a range edited narrower is a change of the field's type, tested the same
+/// way. A static of a number changed to a range type is tested and converted as a field is.
+#[test]
+fn a_field_changed_to_a_range_type_is_tested_by_checked() {
+    let v1 = PARTICLES.replace("step: int = 1", "step: i32 = 1").replace("p.x.fetch_add(p.step)", "p.x.fetch_add(p.step as int)");
+    let ranged_from = |range: &str, default: u32| {
+        PARTICLES
+            .replace("@sync\nclass Particle:\n", &format!("type Step = int in {range}\n\n@sync\nclass Particle:\n"))
+            .replace("step: int = 1", &format!("step: Step = {default}"))
+    };
+    let ranged = |range: &str| ranged_from(range, 5);
+    let run = host_run("reload-range-passes", &v1, &[&ranged("1..=10")], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n6\n9\n", "{}", run.stderr);
+    let run = host_run("reload-range-fails", &v1, &[&ranged("2..=10")], 2);
+    assert!(
+        run.stdout.contains("refused: field `step` of `Particle` became the range type `Step`, and 3 values of it fail `Step.checked`"),
+        "{}",
+        run.stdout
+    );
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+    // Back to the representation: carried.
+    let run = host_run("reload-range-back", &ranged("1..=10"), &[&PARTICLES.replace("step: int = 1", "step: int = 9")], 3);
+    assert_eq!(run.stdout, "15\napplied, 3 migrated\n30\n45\n", "{}", run.stderr);
+    // The range narrowed past the live values: refused.
+    let run = host_run("reload-range-narrowed", &ranged("1..=10"), &[&ranged_from("6..=10", 6)], 2);
+    assert!(run.stdout.contains("and 3 values of it fail `Step.checked`"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("30\n"), "the old code did not run on: {}", run.stdout);
+
+    // A static: `LIMIT` was computed on first access as 7 (`seven()` prints, so it runs then, not
+    // while compiling), which `int in 0..10` holds and `int in 0..5` does not; the new image's own
+    // `seven()` would give 4, but the static keeps its value (`[HR-17]`).
+    let statics = |ty: &str, range: &str| {
+        let seven = if ty == "int" { "fn seven() -> int:\n    println(\"init\")\n    return 7\n" } else { "fn seven() -> Small:\n    println(\"init\")\n    return Small.clamped(7)\n" };
+        format!(
+            "type Small = int in {range}\n\n{seven}\nstatic LIMIT: {ty} = seven()\n\n@export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    \
+             x: int = LIMIT\n    return x + turn\n\nfn main():\n    pass\n"
+        )
+    };
+    let run = host_run("reload-range-static", &statics("int", "0..10"), &[&statics("Small", "0..10")], 2);
+    assert_eq!(run.stdout, "init\n7\napplied, 0 migrated\n8\n", "{}", run.stderr);
+    let run = host_run("reload-range-static-fails", &statics("int", "0..5"), &[&statics("Small", "0..5")], 2);
+    assert!(run.stdout.contains("refused: static `LIMIT` became the range type `Small`, and its value fails `Small.checked`"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("8\n"), "the old code did not run on: {}", run.stdout);
+    // Folded into the code, a constant static has no value to migrate: its new type applies.
+    let folded = |ty: &str| format!("type Small = int in 0..10\n\nstatic LIMIT: {ty} = 7\n\n@export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    x: int = LIMIT\n    return x + turn\n\nfn main():\n    pass\n");
+    let run = host_run("reload-range-folded", &folded("int"), &[&folded("Small")], 2);
+    assert_eq!(run.stdout, "7\napplied, 0 migrated\n8\n", "{}", run.stderr);
 }
 
 /// `[HR-11a]`, `[HR-14]` — an enum value migrates by variant name: reordering the variants
