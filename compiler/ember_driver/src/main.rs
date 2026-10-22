@@ -4636,7 +4636,7 @@ fn inject_global_allocator(modules: &mut [ember_typeck::LoadedModule], input: &P
     if matches!(manifest_string(&text, "package", "kind").as_deref(), Some("lib" | "staticlib" | "cdylib")) {
         sink.emit(
             Diagnostic::error(codes::E9001, location, "`global_allocator` is a binary package's: a library's allocations are its program's")
-                .note("a binary package may replace the global allocator [ALC-3]; an embedding host passes its own to `ember_rt_init` [FFI-27]"),
+                .note(format!("a binary package may replace the global allocator [ALC-3]; an embedding host passes its own to `{}` [FFI-27]", ember_branding::runtime("rt_init"))),
         );
         return;
     }
