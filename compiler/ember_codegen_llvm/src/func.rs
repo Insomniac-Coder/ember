@@ -2748,6 +2748,10 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     if coded > 0 {
         cx.call_rt("stack_names", vec![Val::Imm(Sc::Ptr, "@em_code_names".to_string()), Val::Imm(Sc::I(64), coded.to_string())], None);
     }
+    // `[WK-8]` — the leak check's ownership edges.
+    if options.leak_check {
+        cx.register_edges()?;
+    }
     cx.declare_body(&called)?;
     let sig = body_signature(cx.m, called_body);
     let ret_ty = called_body.return_ty();

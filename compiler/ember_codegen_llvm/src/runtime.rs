@@ -44,8 +44,9 @@ impl CTy {
 /// Parse one C type as the table writes it: `$name` is the runtime's `ember_name`.
 pub fn c_type(text: &'static str) -> CTy {
     let text = text.trim();
-    // A pointer, a function pointer among them (`void (*)(void)`).
-    if text.ends_with('*') || text.contains("(*") {
+    // A pointer, a function pointer among them (`void (*)(void)`), or a function pointer's
+    // typedef.
+    if text.ends_with('*') || text.contains("(*") || text.ends_with("_enumerator") {
         return CTy::Scalar(Scalar::Ptr);
     }
     let int = |bytes, signed| CTy::Scalar(Scalar::Int { bytes, signed });
@@ -361,6 +362,7 @@ pub const FNS: &[RtFn] = &[
     // -- the lifecycle ([RT-2], [FN-8], [FFI-22])
     f("rt_thread_attach", "void", &[]),
     f("rt_check_main_thread", "void", &[]),
+    f("debug_register_type_edges", "void", &["const $type_info*", "$debug_edge_enumerator"]),
     f("rt_static_begin", "int", &["uint32_t*", "const char*"]),
     f("rt_static_end", "void", &["uint32_t*"]),
     // -- arenas ([ARN-1]..[ARN-6], [JOB-5])

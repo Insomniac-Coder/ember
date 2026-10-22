@@ -24,6 +24,7 @@ mod ffi;
 mod fmt;
 mod func;
 mod glue;
+mod leaks;
 mod ranges;
 mod runtime;
 mod simd;
