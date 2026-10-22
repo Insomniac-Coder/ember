@@ -233,3 +233,26 @@ so a merge carries other branches' edits of `main.rs` into it; the `ember` progr
    the type checker to mark the instances a failed body asks for — and its `incomplete` set is
    also what the compile-time evaluator stubs, so it needs a set of its own. Not done; the rule
    stays `unfinished` with this said.
+
+## `[TST-5]` — the scripted debugger session (built, not yet run: no debugger here)
+
+`ember_driver/tests/debugger.rs`: a program is built in the `debug` profile; the host's debugger —
+`cdb` for a Windows program (its PDB: `-lines`, `.lines -e`, `l+t`, a breakpoint on
+`` `count.em:4` ``, `dv`, `p`), `gdb` on Linux (`break count.em:4`, `info line *$pc`,
+`info args`/`info locals`, `continue`, `print sum`, `next`), `lldb` on macOS — stops at an Ember
+file's line, shows the locals by their Ember names (`values`, `sum`, `v`: the C names them so, and
+its `#line`s map lines to the Ember file), `sum` 0 at the first stop and 3 on the second turn, and a
+step stays on the loop's Ember lines. A host with no debugger is reported **debug-unverified**:
+with a waiver recorded in `tests/debugger/waivers.json` (macOS arm64: CI has no macOS runner) it
+passes saying so; without one it fails when `EMBER_DEBUGGER_REQUIRED` is set, which CI now sets
+(`.github/workflows/ci.yml`, which also installs gdb on its Linux runners; the Windows image's
+SDK has cdb), and on a developer's machine it says so and passes.
+
+**Not run anywhere yet**: this machine has no cdb, WSL no gdb, and LLVM's `lldb.exe` here cannot
+start (it needs `python311.dll`). The commands are each debugger's documented ones, but their
+output has not been seen, so the first CI run may need the expected text adjusted. For the owner
+(no downloads by me):
+- Windows: the Debugging Tools for Windows, from the Windows SDK installer (feature "Debugging Tools
+  for Windows"): `winget install --id Microsoft.WindowsSDK.10.0.22621 --override "/features OptionId.WindowsDesktopDebuggers /quiet"`
+- WSL: `sudo apt install gdb`
+The rule stays `unfinished` until the session has passed on Windows and Linux.
