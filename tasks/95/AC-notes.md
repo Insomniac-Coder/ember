@@ -262,7 +262,7 @@ The rule stays `unfinished` until the session has passed on Windows and Linux.
 - **`docs/book/`**: a README and twelve chapters for a newcomer — a first program, values and
   control flow, functions, collections, text, structs/enums/`match`/`Option`, errors, ownership,
   classes, modules and packages, tests and tools, and **coming from Python** (Appendix E's tables
-  and its side-by-side program, each claim a sample). 57 samples; each ```` ```ember ```` one is a
+  and its side-by-side program, each claim a sample). 52 samples; each ```` ```ember ```` one is a
   whole program that `ember test --doc` builds and runs, and **an ```` ```output ```` block right after
   a sample is now checked too** (`test_runner.rs`: `Example::Run { output }`), so the guide cannot
   say a program prints what it does not.
