@@ -172,3 +172,47 @@ runtime, so it is on neither. `ember bind --report` reads a header and lists non
 says; nothing to change there). Test: milestone
 `inspect_marks_catching_cpp_calls_on_noalloc_and_main_thread_paths`. Compiler change:
 `safety_costs_json` (`ember_driver/src/main.rs`).
+
+## AB5. `[FFI-39]`, `[FFI-44]` (ODR-221, the owner's answer) — deriving from a C++ class with no overlay entry
+
+**Done.** An Ember class may derive from a C++ class with no overlay entry. The importer reads
+the program's classes (`cimport::program_module`, `program_trampolines`): every class whose base
+is a class of the header (`class Mine(cpp.Stage)`, or through another class of its module) asks
+the header's class for a trampoline, which passes on the virtuals those classes declare
+`override`. To see them, `load_package_modules` now imports each `import c`/`import cpp` once
+every module of the program is read (the worklist holds the prelude's alone): the generated
+modules still come before the prelude's in the module list, as before (they must: see the defect
+below). An overlay's `@ffi(trampoline, virtuals=[…], owner=…)` entry stays accepted (its names and
+`owner` are merged in); nothing depends on it. Every pure virtual is passed on, and a C++ class
+with one is an Ember `abstract class` whose pure virtuals are bodiless `virtual fn`s, so a class
+deriving from it that does not implement one is the abstract-class error (`E2020`, was `E5056` at
+the import). A base that cannot be derived from is refused where the class names it, saying why
+(`E5059` "`Deep` cannot derive from `Flat` of `panels.hpp`: `Flat` has no virtual destructor…";
+`E5034` for `final`). The trampolines the program asks for are part of the `.embind` key.
+
+*How exact.* The trampoline of a C++ class is one per class (the existing design: the Ember open
+class holds the C++ object), so with several Ember classes of one base it passes on the union of
+their overrides; a class that does not override one of them reaches the C++ implementation through
+its Ember class's virtual method (one Ember call and one thunk more). With one class, or classes
+overriding alike, it is exactly theirs. The refinement, if wanted: the base's `init` gives the
+trampoline a null entry for each virtual the object's own class does not override (a compare of
+its class's method-table slot with the base's), so C++ calls the base implementation directly.
+
+`reject_an_override_of_a_virtual_the_overlay_does_not_name.em` is gone (ODR-221 removes its
+premise: the override is now passed on, `accept_overrides_beyond_an_overlay_entry_are_passed_on.em`);
+`E5056` stays only where the importer could not see a class (a base reached through another
+module's class, or a header the two modules spell differently).
+
+Tests: `tests/conformance/FFI-39/accept_an_ember_class_derives_with_no_overlay_entry.em` (no
+overlay; `stages.hpp`: overrides reaching C++, a class overriding another virtual, one overriding
+none, an abstract C++ class implemented), `accept_overrides_beyond_an_overlay_entry_are_passed_on.em`,
+`reject_a_class_that_does_not_implement_a_pure_virtual.em`, `reject_a_cpp_base_that_cannot_be_derived_from.em`;
+the thunk file compiled with g++ 15 and clang++ 21 in WSL (`-Wall -Wextra -Werror`).
+`FFI-44`'s unfinished entry no longer lists inheritance; `FFI-39b`'s says it is built as ODR-219
+rules (it goes with the next cut).
+
+**Defect found (not fixed, typeck):** checking depends on the order of the module list: with
+`std.ffi` after `std.core` (as the first form of the deferral put it), every program importing a
+header failed with "`std.ffi.CppError` implements `Error` but does not define `source`" — a pass
+over the modules in reverse visits an `extend … implements Error` before `Error`'s default methods
+are known. The importer's modules are kept where they were; the order dependence itself is open.

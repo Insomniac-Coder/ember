@@ -53,6 +53,12 @@ pub struct TrampolineDecl {
     pub class: String,
     pub virtuals: Vec<String>,
     pub foreign: bool,
+    /// ODR-221 — the program's classes ask for it (or for some of its virtuals): a name its
+    /// classes override that is not a virtual of the base is theirs to report, not the import's.
+    pub from_program: bool,
+    /// ODR-221 — the first class of the program deriving from it, and where its base is written:
+    /// a base that cannot be derived from is reported there.
+    pub requested: Option<(String, Span)>,
 }
 
 /// `[FFI-39]` — the `@ffi(trampoline, …)` entries of overlay sources, as written: an attribute line
@@ -77,10 +83,114 @@ pub fn trampoline_decls(overlays: &str) -> Vec<TrampolineDecl> {
                 .and_then(|(_, rest)| rest.split_once('[').and_then(|(_, list)| list.split_once(']')).map(|(list, _)| quoted(list)))
                 .unwrap_or_default();
             let foreign = attribute.split_once("owner").is_some_and(|(_, rest)| quoted(rest).first().is_some_and(|owner| owner == "foreign"));
-            found.push(TrampolineDecl { class: name.to_string(), virtuals, foreign });
+            found.push(TrampolineDecl { class: name.to_string(), virtuals, foreign, from_program: false, requested: None });
         }
         if !line.is_empty() && !line.starts_with('#') {
             attributes.clear();
+        }
+    }
+    found
+}
+
+/// `[FFI-39]` (ODR-221) — a module of the program, as the importer reads it for the classes that
+/// derive from an imported C++ class: its folder, each `import c`/`import cpp` it writes (the
+/// header as written, and the name it binds), and its classes.
+#[derive(Clone, Debug, Default)]
+pub struct ProgramModule {
+    pub dir: PathBuf,
+    pub foreign: Vec<(String, String)>,
+    pub classes: Vec<ProgramClass>,
+}
+
+/// A class of the program: its name, its base as written (`cpp.Layer` is `["cpp", "Layer"]`), and
+/// the methods it declares `override`.
+#[derive(Clone, Debug)]
+pub struct ProgramClass {
+    pub name: String,
+    pub base: Vec<String>,
+    pub base_span: Span,
+    pub overrides: Vec<String>,
+}
+
+/// `[FFI-39]` (ODR-221) — the program's modules, read for `load`: what each imports, and the
+/// classes it declares.
+pub fn program_module(module: &ast::Module, dir: &Path) -> ProgramModule {
+    let foreign = module
+        .imports
+        .iter()
+        .filter_map(|import| match &import.kind {
+            ast::ImportKind::Foreign { language: ast::ForeignLanguage::Cpp, header, alias, .. } => {
+                Some((header.clone(), alias.map_or_else(|| "cpp".to_string(), |alias| alias.name.to_string())))
+            }
+            _ => None,
+        })
+        .collect();
+    let classes = module
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::Class(decl) => {
+                let base = match decl.base.as_ref().map(|base| &base.kind) {
+                    Some(ast::TypeKind::Path { segments, .. }) => segments.iter().map(|segment| segment.name.to_string()).collect(),
+                    _ => Vec::new(),
+                };
+                let overrides = decl
+                    .members
+                    .iter()
+                    .filter_map(|member| match &member.kind {
+                        ast::MemberKind::Fn(function) if function.dispatch == ast::Dispatch::Override => Some(function.name.name.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+                Some(ProgramClass { name: decl.name.name.to_string(), base, base_span: decl.base.as_ref().map_or(decl.name.span, |base| base.span), overrides })
+            }
+            _ => None,
+        })
+        .collect();
+    ProgramModule { dir: dir.to_path_buf(), foreign, classes }
+}
+
+/// `[FFI-39]` (ODR-221) — the trampolines the program asks of the C++ header at `header` (as
+/// `from_dir` and the written name find it): for each class of the header an Ember class derives
+/// from, directly (`class Mine(cpp.Layer)`) or through another class of its module, the virtuals
+/// those classes override, which the trampoline passes on. No overlay entry is needed.
+fn program_trampolines(program: &[ProgramModule], from_dir: &Path, header: &str) -> Vec<TrampolineDecl> {
+    let same = |dir: &Path, written: &str| {
+        written == header && dir == from_dir
+            || std::fs::canonicalize(dir.join(written)).ok().is_some_and(|found| std::fs::canonicalize(from_dir.join(header)).ok() == Some(found))
+    };
+    let mut found: Vec<TrampolineDecl> = Vec::new();
+    for module in program {
+        let bindings: Vec<&str> = module.foreign.iter().filter(|(written, _)| same(&module.dir, written)).map(|(_, bound)| bound.as_str()).collect();
+        if bindings.is_empty() {
+            continue;
+        }
+        // Each class's C++ base, through the module's own classes.
+        let base_of = |class: &ProgramClass| -> Option<String> {
+            let mut current = class;
+            for _ in 0..module.classes.len() + 1 {
+                match current.base.as_slice() {
+                    [first, .., last] if bindings.contains(&first.as_str()) => return Some(last.clone()),
+                    [local] => current = module.classes.iter().find(|other| other.name == *local)?,
+                    _ => return None,
+                }
+            }
+            None
+        };
+        for class in &module.classes {
+            let Some(base) = base_of(class) else { continue };
+            let at = match found.iter().position(|decl| decl.class == base) {
+                Some(at) => at,
+                None => {
+                    found.push(TrampolineDecl { class: base, virtuals: Vec::new(), foreign: false, from_program: true, requested: Some((class.name.clone(), class.base_span)) });
+                    found.len() - 1
+                }
+            };
+            for name in &class.overrides {
+                if !found[at].virtuals.contains(name) {
+                    found[at].virtuals.push(name.clone());
+                }
+            }
         }
     }
     found
@@ -2438,8 +2548,10 @@ impl Writer {
                     }
                     _ => {}
                 }
-                if let Some((decl, _)) = &trampoline {
-                    if kind(child) == CXCursor_Constructor || decl.virtuals.contains(&name) {
+                if let Some((_, slots)) = &trampoline {
+                    // The virtuals the trampoline passes on (each pure one among them) are the
+                    // Ember class's virtual methods.
+                    if kind(child) == CXCursor_Constructor || slots.iter().any(|slot| slot.name == name) {
                         continue;
                     }
                     if kind(child) == CXCursor_CXXMethod && clang_CXXMethod_isVirtual(child) != 0 {
@@ -2790,14 +2902,29 @@ impl Writer {
                 return Err(("E5034", format!("`{spelled}` is `final`: no class derives from it")));
             }
             let methods: Vec<CXCursor> = children(definition).into_iter().filter(|child| kind(*child) == CXCursor_CXXMethod).collect();
+            // ODR-221 — what the program's classes override: a name that is no virtual of the base
+            // is theirs to report (the Ember class has no such virtual to override). Every pure
+            // virtual is passed on: each Ember class deriving from it implements it, as from an
+            // abstract class.
+            let virtual_named = |name: &str| {
+                let found: Vec<&CXCursor> = methods.iter().filter(|method| spelling(**method) == name).collect();
+                matches!(found.as_slice(), [method] if clang_CXXMethod_isVirtual(**method) != 0)
+            };
+            let mut names: Vec<String> = decl.virtuals.iter().filter(|name| !decl.from_program || virtual_named(name)).cloned().collect();
+            for pure in methods.iter().filter(|method| clang_CXXMethod_isPureVirtual(**method) != 0) {
+                let name = spelling(*pure);
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
             let mut slots = Vec::new();
-            for name in &decl.virtuals {
+            for name in &names {
                 let found: Vec<CXCursor> = methods.iter().copied().filter(|method| spelling(*method) == *name).collect();
                 let method = match found.as_slice() {
                     [method] if clang_CXXMethod_isVirtual(*method) != 0 => *method,
                     [] => return Err(("E5057", format!("`virtuals` names `{name}`, and `{spelled}` declares no method `{name}`"))),
                     [_] => return Err(("E5057", format!("`virtuals` names `{name}`, which is not virtual in `{spelled}`"))),
-                    _ => return Err(("E5057", format!("`virtuals` names `{name}`, which `{spelled}` overloads: a trampoline overrides one function of a name"))),
+                    _ => return Err(("E5057", format!("`{name}` is a virtual `{spelled}` overloads: a trampoline overrides one function of a name"))),
                 };
                 let ty = clang_getCursorType(method);
                 let mut params = Vec::new();
@@ -2836,9 +2963,6 @@ impl Writer {
                     result,
                     result_spelled,
                 });
-            }
-            if let Some(pure) = methods.iter().find(|method| clang_CXXMethod_isPureVirtual(**method) != 0 && !decl.virtuals.contains(&spelling(**method))) {
-                return Err(("E5056", format!("`{spelled}::{}` is pure virtual, and `virtuals` does not name it: the trampoline overrides every pure virtual of its base", spelling(*pure))));
             }
             Ok(slots)
         }
@@ -2992,7 +3116,8 @@ impl Writer {
                 let receiver = if wrapper_params.is_empty() { "self".to_string() } else { format!("self, {}", wrapper_params.join(", ")) };
                 let name = ident(&slot.name);
                 if slot.pure {
-                    let _ = write!(body, "\n    pub virtual fn {name}({receiver}){result}:\n        panic(\"`{spelled}::{}` is pure virtual: a class deriving from `{class}` overrides it\")\n", slot.name);
+                    // A pure virtual: each Ember class deriving from the class implements it.
+                    let _ = write!(body, "\n    pub virtual fn {name}({receiver}){result}\n");
                 } else {
                     let helper = format!("{prefix}_cpp_base_{}", slot.name);
                     let _ = write!(
@@ -3074,9 +3199,11 @@ impl Writer {
                 item,
                 "## `[FFI-39]`, `[FFI-17c]` — the C++ object a `{class}` owns, deleted when its Ember fields have been dropped.\nstruct {prefix}_cpp_base_{class}:\n    object: *mut {opaque}\n\n    fn drop(mut self):\n        if not self.object.is_null():\n            unsafe:  # SAFETY: the C++ object this Ember object made, deleted once\n                {destroy}(self.object)\n\n"
             );
+            // A class with a pure virtual is abstract (`[CLS-4]`): what derives from it implements it.
+            let openness = if slots.iter().any(|slot| slot.pure) { "abstract" } else { "open" };
             let _ = write!(
                 item,
-                "## `[FFI-39]` — `{spelled}`, which an Ember class may derive from: its named virtuals are virtual methods.\npub open class {class}:\n    {prefix}_cpp_base: {prefix}_cpp_base_{class} = {prefix}_cpp_base_{class}(object = null[*mut {opaque}]())\n{body}\n"
+                "## `[FFI-39]` — `{spelled}`, which an Ember class may derive from: the virtuals Ember classes override are virtual methods (ODR-221).\npub {openness} class {class}:\n    {prefix}_cpp_base: {prefix}_cpp_base_{class} = {prefix}_cpp_base_{class}(object = null[*mut {opaque}]())\n{body}\n"
             );
             item.push_str(&functions);
             let _ = write!(item, "unsafe extern \"C\":\n{raw}");
@@ -4582,6 +4709,7 @@ pub fn load(
     flags: &[String],
     manifest: Option<&str>,
     known: &mut Known,
+    program: &[ProgramModule],
     map: &mut SourceMap,
     sink: &mut Sink,
 ) -> Option<Loaded> {
@@ -4697,8 +4825,24 @@ pub fn load(
         .map(|(written, _)| std::fs::read_to_string(base.join(written)).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("\n\0\n");
-    // `[FFI-39]` — the classes the overlays give a trampoline.
-    let trampolines = if cpp { trampoline_decls(&overlay_text) } else { Vec::new() };
+    // `[FFI-39]` — the classes that get a trampoline: those the program's classes derive from
+    // (ODR-221), passing on the virtuals they override, and those an overlay entry still names.
+    let mut trampolines = if cpp { program_trampolines(program, &from_dir, &header) } else { Vec::new() };
+    for decl in if cpp { trampoline_decls(&overlay_text) } else { Vec::new() } {
+        match trampolines.iter_mut().find(|found| found.class == decl.class) {
+            Some(found) => {
+                found.foreign |= decl.foreign;
+                found.requested = None;
+                for name in decl.virtuals {
+                    if !found.virtuals.contains(&name) {
+                        found.virtuals.push(name);
+                    }
+                }
+                found.from_program = false;
+            }
+            None => trampolines.push(decl),
+        }
+    }
     let config = Config { trampolines: &trampolines, ..config };
     let mut cached = false;
     let (mut imported, header_hash) = match import_cached(&config, &overlay_text, &mut cached) {
@@ -4757,10 +4901,14 @@ pub fn load(
             Some((_, why)) => (codes::E5031, why),
             None => (codes::E5031, skipped.reason.as_str()),
         };
-        sink.emit(
-            Diagnostic::error(code, span, format!("`{}` from `{shown}` cannot have a trampoline: {why}", skipped.name))
+        // ODR-221 — asked for by a class of the program: said where it derives.
+        let requested = trampolines.iter().find(|decl| decl.class == skipped.name).and_then(|decl| decl.requested.clone());
+        sink.emit(match requested {
+            Some((class, at)) => Diagnostic::error(code, at, format!("`{class}` cannot derive from `{}` of `{shown}`: {why}", skipped.name))
+                .note(format!("declared at {}; a C++ class an Ember class derives from gets a trampoline, a C++ subclass that passes the virtuals Ember overrides on to it [FFI-39]", skipped.at)),
+            None => Diagnostic::error(code, span, format!("`{}` from `{shown}` cannot have a trampoline: {why}", skipped.name))
                 .note(format!("declared at {}; its overlay entry declares `@ffi(trampoline, …)` [FFI-39]", skipped.at)),
-        );
+        });
     }
     for skipped in imported.skipped.iter().filter(|skipped| !skipped.reason.starts_with("[E5055]") && !trampolines.iter().any(|decl| decl.class == skipped.name)) {
         let reason = skipped.reason.split_once("] ").filter(|(tag, _)| tag.starts_with("[E")).map_or(skipped.reason.as_str(), |(_, rest)| rest);
@@ -7525,12 +7673,15 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
         .collect();
     shared.sort();
     // `[FFI-17b]` — the instantiations listed are part of what is imported.
+    // `[FFI-39]` (ODR-221) — the trampolines the program's classes ask for are part of it too.
+    let trampolines: Vec<String> = config.trampolines.iter().map(|decl| format!("{}:{}:{}:{}", decl.class, decl.virtuals.join(","), decl.foreign, decl.from_program)).collect();
     let configuration = format!(
-        "{library}\n{}\n{}\n{}\n{}",
+        "{library}\n{}\n{}\n{}\n{}\n{}",
         arguments(config).join(" "),
         config.header,
         std::path::absolute(config.from_dir).unwrap_or_default().display(),
-        config.instantiate.join("\n")
+        config.instantiate.join("\n"),
+        trampolines.join(";")
     );
     // The compiler itself is part of the key: another build of the importer may write another module.
     let key = ember_build::content_hash(
