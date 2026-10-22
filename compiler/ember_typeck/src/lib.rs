@@ -2815,6 +2815,9 @@ struct Checker<'a> {
     /// `[GRM-27]` (ODR-236) — the borrowed items of the comprehension clauses being checked, with
     /// the clause's iterable: kept whole and not `Copy`, one is a move out of the collection.
     gather_items: Vec<(LocalId, Option<String>)>,
+    /// `[STD-19]` (ODR-240) — the arguments lent to callable parameters while a generic call's
+    /// type arguments were solved, which the call's arguments are then checked as.
+    lent_callable_args: HashSet<Span>,
     /// `[HEAP-3]`–`[HEAP-6]` — every compiler-known `Shared[T]` and its
     /// payload. The public handle is Copy, but copy/drop use the same strong
     /// control-block operations as class handles rather than bitwise pointer
@@ -3356,6 +3359,7 @@ impl<'a> Checker<'a> {
             boxes: HashMap::new(),
             assumed_cloneable: HashSet::new(),
             gather_items: Vec::new(),
+            lent_callable_args: HashSet::new(),
             shareds: HashMap::new(),
             sync_shareds: HashSet::new(),
             with_scope_item: None,
@@ -37203,6 +37207,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let value = self.commit(value);
+            let value = self.lend_named_callable(value, param_ty, declared[index].2, &generics, arg.value.span);
             if !self.unify_generic_argument(
                 param_ty,
                 value.ty,
@@ -37638,6 +37643,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let value = self.commit(value);
+            let value = self.lend_named_callable(value, param_ty, declared[index].2, &generics, arg.value.span);
             if !self.unify_generic_argument(
                 param_ty,
                 value.ty,
@@ -38167,6 +38173,52 @@ impl<'a> Checker<'a> {
         if callable { self.read_through(value) } else { value }
     }
 
+    /// Whether `ty` is a callable value's: a function value, a closure, or a parameter bounded by a
+    /// callable type.
+    fn is_callable_value_type(&mut self, ty: Ty) -> bool {
+        match *self.types.kind(ty) {
+            TyKind::Fn { abi: None, .. } => true,
+            TyKind::Struct(id) => self.closure_calls.contains_key(&id),
+            TyKind::Param { .. } => self.callable_bound_of(ty).is_some(),
+            _ => false,
+        }
+    }
+
+    /// `[STD-19]`, `[CLO-3]` (ODR-240) — a named callable given to a parameter whose type is a type
+    /// parameter bounded by a callable type (`owned f: F`, `F: fn(A) -> R`: generic over any
+    /// callable, a reference to one included) is lent to it, `ref mut`: the caller keeps it and may
+    /// pass it again, and the callee may call it with leave to change what it captured, which stays
+    /// lent while the callee's value holding it is used (`[BRW-2]`). A lambda written at the call is
+    /// given, since nothing else can name it; a `Copy` callable (a function) is copied; a `once fn`
+    /// is given, as its call ends it; and an owned callable parameter written as a callable type
+    /// (`owned f: fn(A) -> R`) takes over what it is given (ODR-189). A callable the caller holds
+    /// only shared (a borrowed parameter) is passed on as before (D-257).
+    fn lend_named_callable(&mut self, value: Expr, param_ty: Ty, mode: Mode, generics: &[GenericParam], span: Span) -> Expr {
+        let TyKind::Param { index, .. } = *self.types.kind(param_ty) else { return value };
+        let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.clone()) else { return value };
+        if mode != Mode::Owned || bound.owned || bound.once || !is_place(&value.kind) || value.ty == self.common.error || self.types.is_copy(value.ty) {
+            return value;
+        }
+        if !self.is_callable_value_type(value.ty)
+            || matches!(*self.types.kind(value.ty), TyKind::Fn { once: true, .. })
+            || matches!(*self.types.kind(value.ty), TyKind::Struct(id) if self.closure_calls.get(&id).is_some_and(|closure| closure.once))
+        {
+            return value;
+        }
+        let quiet = self.sink.mark();
+        self.reject_readonly_write_in_mut_argument(&value, span);
+        if !self.is_lent_callable(&value) && !self.reject_write_through_shared_ref(&value, span) {
+            self.reject_borrowed_parameter_write(&value, span, false);
+        }
+        if self.sink.rollback(quiet) {
+            return value;
+        }
+        self.lent_callable_args.insert(span);
+        let ty = self.types.intern(TyKind::Ref { mutable: true, inner: value.ty });
+        let at = value.span;
+        Expr { ty, kind: ExprKind::Ref { place: Box::new(value), mutable: true }, span: at }
+    }
+
     /// `[CLO-3]` (ODR-189) — whether `ty` is the opaque type of a parameter taken over
     /// (`owned f: fn(A) -> R`, or `once fn`).
     fn consumed_callable_parameter(&self, ty: Ty) -> bool {
@@ -38326,6 +38378,15 @@ impl<'a> Checker<'a> {
         let Some(bound) = generics.get(index as usize).and_then(|param| param.callable.clone())
         else {
             return true;
+        };
+        // ODR-240 — a named callable is lent (`ref mut`): what is called is the callable it refers to.
+        let lent = match *self.types.kind(actual) {
+            TyKind::Ref { mutable: true, inner } => Some(inner),
+            _ => None,
+        };
+        let actual = match lent {
+            Some(inner) if self.is_callable_value_type(inner) => inner,
+            _ => actual,
         };
         // `[FN-6]` (ODR-115) — `unsafe fn(…)` is met by what meets `fn(…)` and by an `unsafe fn`;
         // `fn(…)` is not met by an `unsafe fn`, nor by a parameter bounded `unsafe fn(…)`.
@@ -44600,6 +44661,10 @@ impl<'a> Checker<'a> {
     }
 
     fn is_callable_value(&mut self, ty: Ty) -> bool {
+        // ODR-240 — a callable lent `ref mut` is called through the reference.
+        if let TyKind::Ref { mutable: true, inner } = *self.types.kind(ty) {
+            return self.is_callable_value_type(inner);
+        }
         matches!(self.types.kind(ty), TyKind::Fn { .. })
             || self.callable_bound_of(ty).is_some()
             || matches!(*self.types.kind(ty), TyKind::Struct(id) if self.closure_calls.contains_key(&id))
@@ -44609,6 +44674,12 @@ impl<'a> Checker<'a> {
     /// (`[CLO-11]`) or any expression of callable type (`make()(3)`), by its
     /// type, as a local of that type is called.
     fn call_value(&mut self, value: Expr, args: &[ast::Arg], span: Span) -> Expr {
+        // ODR-240 — a callable lent `ref mut` is called through the reference.
+        let value = if matches!(*self.types.kind(value.ty), TyKind::Ref { mutable: true, .. }) {
+            self.through_callable_ref(value)
+        } else {
+            value
+        };
         if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
             return self.synth_indirect_call(value, args, span, false, false);
         }
@@ -52925,6 +52996,17 @@ impl<'a> Checker<'a> {
     /// `check_argument` for a parameter whose passing the callee decides
     /// (`param_by_address`, D-284).
     fn check_argument_by(&mut self, arg: &ast::Expr, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        // `[STD-19]` (ODR-240) — a named callable lent to a callable parameter (`lend_named_callable`).
+        if self.lent_callable_args.contains(&arg.span)
+            && let TyKind::Ref { mutable: true, inner } = *self.types.kind(param_ty)
+        {
+            let value = self.check_expr(arg, inner);
+            if !is_place(&value.kind) || value.ty == self.common.error {
+                return value;
+            }
+            let at = value.span;
+            return Expr { ty: param_ty, kind: ExprKind::Ref { place: Box::new(value), mutable: true }, span: at };
+        }
         // ODR-102 — an owned callable value is called from a mutable place
         // (`[CLO-2]`), so one given to a borrowed parameter is lent mutably:
         // the callee may call it, and nothing else reaches it meanwhile.

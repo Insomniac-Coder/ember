@@ -659,7 +659,7 @@ pub struct Map[K: Eq + Hash, V, H: Hasher + Default = DefaultHasher]:
             return None
 
     ## Keeps the entries `keep` accepts, in order.
-    pub fn retain(mut self, keep: fn(ref K, ref V) -> bool):
+    pub fn retain[F: fn(ref K, ref V) -> bool](mut self, owned keep: F):
         for i in range(self.entries.len()):
             gone = false
             match self.entries[i]:
@@ -875,7 +875,7 @@ pub struct MapEntry[K: Eq + Hash, V, H: Hasher + Default]:
             None:
                 unreachable()  # `find` gives a listed entry's slot only
 
-    pub fn or_insert_with(owned self, make: fn() -> V) -> ref mut V:
+    pub fn or_insert_with[F: fn() -> V](owned self, owned make: F) -> ref mut V:
         at = self.map.find(self.key, self.hash)
         if at >= 0:
             i = self.map.slot_at(at)
@@ -1045,7 +1045,7 @@ pub struct Set[T: Eq + Hash, H: Hasher + Default = DefaultHasher]:
     pub fn contains[Q: AsKey[T] + Hash](self, q: Q) -> bool:
         return self.map.contains_key(q)
 
-    pub fn retain(mut self, keep: fn(ref T) -> bool):
+    pub fn retain[F: fn(ref T) -> bool](mut self, owned keep: F):
         for i in range(self.map.entries.len()):
             gone = false
             match self.map.entries[i]:

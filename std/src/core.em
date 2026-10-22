@@ -1530,7 +1530,7 @@ extend[I: Iterator] Peekable[I]:
         return self.peeked.as_mut()
 
     ## The next item when `pred` holds for it; otherwise it stays.
-    pub fn next_if[F: fn(ref I.Item) -> bool](mut self, pred: F) -> Option[I.Item]:
+    pub fn next_if[F: fn(ref I.Item) -> bool](mut self, owned pred: F) -> Option[I.Item]:
         take = false
         match self.peek():
             Some(x):
@@ -2292,7 +2292,7 @@ extend[T] Array[T] implements IntoIterator:
 
 extend[T] Array[T]:
     ## Keeps the elements `keep` is true of, in their order.
-    pub fn retain(mut self, keep: fn(T) -> bool):
+    pub fn retain[F: fn(T) -> bool](mut self, owned keep: F):
         kept = 0
         for i in range(self.len()):
             if keep(self[i]):
@@ -2302,13 +2302,13 @@ extend[T] Array[T]:
 
     ## Sorts by `cmp`, which says how two elements order. Stable: elements
     ## `cmp` finds equal keep their order (ODR-031).
-    pub fn sort_by(mut self, cmp: fn(T, T) -> Ordering):
+    pub fn sort_by[F: fn(T, T) -> Ordering](mut self, owned cmp: F):
         order = stable_order(self, cmp)
         self.apply_order(order)
 
     ## Sorts by `key(x)`, calling `key` once for each element, as Python's
     ## `key=` does. Stable (ODR-031).
-    pub fn sort_by_key[K: Ord](mut self, key: fn(T) -> K):
+    pub fn sort_by_key[K: Ord, F: fn(T) -> K](mut self, owned key: F):
         keys: Array[K] = []
         for i in range(self.len()):
             keys.push(key(self[i]))
@@ -2339,7 +2339,7 @@ extend[T] Array[T]:
 extend[T] SoA[T]:
     ## Keeps the elements `keep` is true of, in their order: one dropped where it stands, one kept
     ## moved down over the first empty slot, so each element is moved at most once.
-    pub fn retain(mut self, keep: fn(SoARef[T]) -> bool):
+    pub fn retain[F: fn(SoARef[T]) -> bool](mut self, owned keep: F):
         kept = 0
         for i in range(self.len()):
             if keep(self[i]):
@@ -2352,7 +2352,7 @@ extend[T] SoA[T]:
 
     ## Sorts the elements by `key` of each, calling it once per element. Stable: elements with
     ## equal keys keep their order.
-    pub fn sort_by_key[K: Ord](mut self, key: fn(SoARef[T]) -> K):
+    pub fn sort_by_key[K: Ord, F: fn(SoARef[T]) -> K](mut self, owned key: F):
         keys: Array[K] = []
         for i in range(self.len()):
             keys.push(key(self[i]))
@@ -2462,7 +2462,7 @@ extend[T: Clone] Array[T]:
     ## `[STD-26]` — `sorted(it, key=f, reverse=r)`: a copy of these elements ordered by `key`, each
     ## element's key computed once, as Python's `key=` does, the largest first when `reverse`.
     ## Stable both ways: elements whose keys are equal keep their order (ODR-031).
-    fn sorted_by_key_if[K: Ord](self, key: fn(T) -> K, reverse: bool) -> Array[T]:
+    fn sorted_by_key_if[K: Ord, F: fn(T) -> K](self, owned key: F, reverse: bool) -> Array[T]:
         keys: Array[K] = []
         for i in range(self.len()):
             keys.push(key(self[i]))
@@ -2480,7 +2480,7 @@ extend[T: Clone] Array[T]:
 ## less. Each pass writes every index once, whatever `cmp` answers, so an
 ## inconsistent order can only permute the elements, never lose or repeat one
 ## (`[HASH-3]`).
-fn stable_order[T](xs: Array[T], cmp: fn(T, T) -> Ordering) -> Array[int]:
+fn stable_order[T, F: fn(T, T) -> Ordering](xs: Array[T], owned cmp: F) -> Array[int]:
     n = xs.len()
     order: Array[int] = []
     merged: Array[int] = []

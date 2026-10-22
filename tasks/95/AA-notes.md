@@ -34,12 +34,25 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   * `LT-1a/reject_borrows_names_a_generic_field_but_an_instance_returns_another.em`: `E3062` in
     the `T = str` instance only.
   * `ECS-3/accept_a_query_item_is_kept_across_turns.em` (shown to fail without the attribute).
-* **ODR-210 `[STD-19]`** — the consumers take their callable over (`[F: fn(...)] owned f: F`):
-  `fold`, `any`, `all`, `find`, `position`, `max_by_key`, `min_by_key`, `max_by`, `min_by`,
-  `reduce`. The ones giving an item (`find`, `max_by_key`, `min_by_key`, `max_by`, `min_by`)
-  declare `@borrows(self)` (ODR-211), so an item does not keep the predicate's captures borrowed.
-  `reduce` and `fold` do not: their result may be the callable's. `STD-19/accept_the_consumers_take_their_callable_over.em`
-  (three profiles): each consumer with a lambda that counts its calls.
+* **ODR-240 `[STD-19]`** (the owner's answer; ODR-210, withdrawn, was built first and is redone) —
+  every std function that takes a callable borrows a named callable the caller passes. Each such
+  parameter is `owned f: F` with `F` a type parameter bounded by a callable type: the consumers
+  (`fold`, `any`, `all`, `find`, `position`, `max_by_key`, `min_by_key`, `max_by`, `min_by`,
+  `reduce`, `for_each`), the adapters, and now `retain` (×4), `sort_by`, `sort_by_key` (×2),
+  `or_insert_with`, `next_if` and the internal `stable_order`/`sorted_by_key_if` (they took it
+  borrowed, shared, so a callable changing its captures was `E3023`). The caller decides what `F`
+  is (`lend_named_callable`): a named callable (a place of a closure's or an owned callable
+  value's type) is lent `ref mut`, so `F = ref mut C`, a reference to a callable meeting the
+  callable bound (`unify_generic_argument_shapes`, `is_callable_value`, `call_value`); a lambda
+  written at the call, a `Copy` function and a `once` callable are given. Two exceptions, both by
+  rule: a parameter written as a callable type (`owned f: fn(A) -> R`) takes over what it is given
+  (ODR-189, `CLO-3/accept_a_consumed_callable_parameter_is_stored.em`); and a callable the caller
+  holds only shared (a borrowed parameter) is passed on as before (D-257). The items `find` and
+  the `_by` forms give declare `@borrows(self)` (ODR-211). `STD-19/accept_a_named_callable_is_lent_and_kept.em`
+  (three profiles: a counting `tall` given to `any` twice, `double` to two `map`s, every consumer,
+  `retain` and `sort_by_key` with counting callables read after their last use, an inline-lambda
+  `map` returned from a function as `some Iterator`), `STD-19/reject_reading_what_a_lent_callable_changes_before_its_last_use.em`
+  (`E3021` ×2).
 * **ODR-207 `[STD-26]`** — `sorted` of an iterator that lends references (`m.keys()`) copies or
   clones the items (`items_array`, as a collection's elements are), so `sorted(m.keys())` is an
   `Array[K]` whose items index the map; with `key=`/`reverse=` too.
@@ -160,6 +173,17 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   is listed settled or open, and every listed one still panics); `std_functions_are_noalloc_unless_documented`
   now expects `std.thread` held too.
 
+* **`[GRM-38]`** — a generator expression with later `for` clauses is a value: a lazy iterator,
+  allocating nothing. Each later clause pairs the items of the clauses before it with each item
+  of the iterator its iterable makes (`std.core.Nested`, through the compiler's `Iterator.__nested`;
+  the inner iterator is held in place), the clauses' names bound by the pairs' pattern, and the
+  conditions filter where they stand. A later clause cannot take a collection over (`E0109`), and
+  the items it pairs are copied, so they are `Copy` (`E2040` otherwise; iterating a collection
+  borrowed gives references). `L1001` counts a written binding read in any body the compiler
+  makes of it. `GRM-38/accept_a_generator_expression_with_later_for_clauses.em` (three profiles),
+  `GRM-38/reject_a_later_for_clause_over_owned_or_uncopyable_items.em`. `phase-status.json`:
+  `GRM-38` removed.
+
 ## Added to the job by the coordinator (owner answers, binding)
 
 * ODR-218 `[ECS-4]` — `world.run_parallel([…])` runs systems whose sets do not conflict at once,
@@ -170,6 +194,27 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
 * ODR-237 — `Box[T]` is `Clone` when `T` is (recursive types' derived clone a function);
   `interface Shape: Clone:` requires implementers be `Clone`, and `Box[dyn Shape]` is `Clone`
   through a copy entry in the method table. Not `Eq` for `Box`.
+  **Built.** `b.clone()` on a `Box` is the box's own (before auto-deref's), a new box holding a
+  clone (`CloneParts` of the box: allocate, clone in place); a struct or enum with a `Box` field
+  derives `Clone`, the derived set now the largest one whose fields are `Clone` with the set taken
+  as `Clone` (so `Node(Box[Tree])` derives it, its clone recursive). An interface requiring `Clone`
+  is `dyn`-compatible (the requirement is no slot); its tables (`dyn_clone` in the type table) hold
+  a `clone` entry after `access`, copying the value into a new block (a class handle is retained),
+  which a `Box[dyn I]`'s clone calls through `dyn_clone_header`. Implementing such an interface
+  with a type that is not `Clone` was refused already (`E2040`, naming it).
+  `STR-5/accept_a_box_field_derives_clone_recursive_types_included.em`,
+  `TYP-22/accept_a_box_dyn_of_an_interface_requiring_clone_clones.em` (both three profiles),
+  `TYP-22/reject_clone_where_an_interface_or_a_box_payload_is_not_clone.em`.
+* ODR-236 **built.** A comprehension clause over `owned xs` takes the collection over: checked as
+  `xs.into_iter()` (`synth_comprehension_iterable`), in list, set and map comprehensions and
+  generator expressions; the kept items move, the rest are dropped as the clause passes them, and
+  `xs` is moved (`E3040` after). A borrowed item kept whole is `E3013` at the element, whose helps
+  are both forms written out (`for s in owned shapes`, `s.clone()`, the second only when `Clone`).
+  `GRM-27/accept_a_comprehension_takes_its_list_over_or_copies.em` (three profiles, drops seen),
+  `GRM-27/reject_a_borrowed_item_kept_whole.em`, `GRM-27/reject_a_list_taken_over_is_not_used_after.em`.
+  First week: 07 and 15 now report `E3013` beside their first errors (codes and shapes
+  re-recorded); 16's round-3 step is now the compiler's own help applied literally
+  (`helped/16_shapes_interface.em`: `[s for s in owned shapes if …]`). The rate did not move.
 
 ## Not done
 
@@ -230,6 +275,23 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
 * `[STD-14]`: `std_contracts` holds every `std` module (it held `core`, `mem`, `math`, `simd`,
   `arena`).
 
+* `[GRM-38]`: `ember_typeck::synth_generator` (later clauses), `ITERATOR_OF` (the compiler's
+  method call for what a later clause iterates), `clause_lambda` keeps a bound name's span;
+  `ember_analysis::unused::check_all` (reads across bodies). std: `Iterator.__nested`, `Nested`.
+* ODR-236: `ember_parser::parse_comp_clauses` (`owned` iterable); `ember_typeck`
+  `synth_comprehension_iterable`, `gather_items`, `written_place`.
+* ODR-237: `ember_types` `dyn_clone`/`declare_dyn_clone`/`dyn_clones`; `ember_typeck`
+  `is_cloneable` (boxes, `assumed_cloneable`), `clones_by_parts` (boxes), `requires_clone`,
+  `resolve_derived_clones` (greatest set), `dyn_incompatibility_inner`/`dyn_methods_in_order`
+  (`Clone` no slot), the `Box` `clone` before auto-deref; `ember_mir` reachability (a copying
+  table reaches the value's clone; a box's clone its payload's); `ember_codegen_c`
+  `clone_identities`, the tables' `clone` entry, `dyn_clone_header`, box clone-parts helpers.
+* ODR-240: `ember_typeck` `lend_named_callable`, `lent_callable_args`, `is_callable_value_type`;
+  the callable bound met through `ref mut`; `is_callable_value`/`call_value` through `ref mut`.
+* `[STD-14]` follow-up: `takes_callable` — a function with a written `fn` parameter is held to
+  std's contract per instance, as a generic one is (`std.sync.Once.call_once` was `E4001` in an
+  instance whose lambda allocates).
+
 ## Defects found
 
 * **AA1 — fixed.** A block-bodied lambda that assigns a capture and reads another
@@ -245,6 +307,14 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   compiles. A lambda body's type with nothing expected should be the parameter's, `ref String`.
 * **AA5 — fixed.** `ObjectPtr[C]` had no `==`, though `[FFI-23]` makes two equal when they are
   the address of one object.
+* **AA6 — not fixed.** A call through a capture-free lambda's value held by an adapter
+  (`Filter[I, plain fn(…)]`) is "a call through a function value" with every effect, so `@noalloc`
+  refuses a stored generator expression or any adapter chain the `for` loop does not fuse
+  (`it = (x for x in xs if x > 0)` then `for v in it` in a `@noalloc` function; the same for
+  `(… for x in xs for y in ys)`, which no loop fuses). The adapters' instances are shared by every
+  lambda of one signature, so the call's effects are those of whichever lambda it holds; the fix
+  is the effect analysis following the function a capture-free lambda's value names (or an
+  instance per lambda), not the generator.
 
 ## Questions
 
