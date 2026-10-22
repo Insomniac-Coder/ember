@@ -229,6 +229,8 @@ pub struct ForeignCallback:
     data: *mut u8
     release: extern "C" fn(*mut u8)
 
+    ## It allocates when the callable's own `drop` does: ending it is a call through a C function
+    ## pointer, whose effects nothing declares (`[STD-1]`).
     fn drop(mut self):
         release = self.release
         release(self.data)
@@ -342,6 +344,8 @@ pub struct CppFunction:
     pub fn as_ptr(self) -> *mut u8:
         return self.object
 
+    ## It allocates when the `std::function`'s destructor does: a call into C++ through a function
+    ## pointer, whose effects nothing declares (`[STD-1]`).
     fn drop(mut self):
         destroy = self.destroy
         unsafe:  # SAFETY(ffi): the function's end, once

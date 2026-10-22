@@ -4896,36 +4896,37 @@ fn std_panics_name_their_twins_and_allocations_are_documented() {
     let checked = ember(&["check", &program.to_string_lossy()], &root);
     assert_eq!(checked.exit, 0, "std does not check clean with every module loaded:\n{}", checked.stderr);
 
-    // The panics that name no twin, by file, function and a piece of their message.
+    // The panics that name no twin, by file (its stem), function and a piece of their message.
     const SETTLED: &[(&str, &str, &str, &str)] = &[
-        ("core.em", "of_wide", "does not fit", "integer overflow panics ([ERR-13]); `ItemCount.at_most` saturates"),
-        ("core.em", "to_wide", "is not a count", "a negative number has no count (`ItemCount`)"),
-        ("core.em", "of", "cannot be negative", "a count is not negative (`ItemCount`)"),
-        ("core.em", "to_int", "does not fit an int", "integer overflow panics ([ERR-13])"),
-        ("core.em", "take", "cannot be negative", "ODR-089: a negative count panics when the adapter is made"),
-        ("core.em", "skip", "cannot be negative", "ODR-089"),
-        ("core.em", "step_by", "must be positive", "ODR-089: a step of zero or less"),
-        ("core.em", "nth", "cannot be negative", "ODR-089: a negative index panics when the consumer is called"),
-        ("ecs.em", "run_parallel", "cannot run at once", "[ECS-4]: a conflict panics before any system starts"),
+        ("core", "of_wide", "does not fit", "integer overflow panics ([ERR-13]); `ItemCount.at_most` saturates"),
+        ("core", "to_wide", "is not a count", "a negative number has no count (`ItemCount`)"),
+        ("core", "of", "cannot be negative", "a count is not negative (`ItemCount`)"),
+        ("core", "to_int", "does not fit an int", "integer overflow panics ([ERR-13])"),
+        ("core", "take", "cannot be negative", "ODR-089: a negative count panics when the adapter is made"),
+        ("core", "skip", "cannot be negative", "ODR-089"),
+        ("core", "step_by", "must be positive", "ODR-089: a step of zero or less"),
+        ("core", "nth", "cannot be negative", "ODR-089: a negative index panics when the consumer is called"),
+        ("ecs", "run_parallel", "cannot run at once", "[ECS-4]: a conflict panics before any system starts"),
     ];
     // Open: a caller's bug with no non-panicking twin in std yet (the owner names them).
     const OPEN: &[(&str, &str, &str)] = &[
-        ("core.em", "stepped", "step must not be zero"),
-        ("collections.em", "insert", "non-negative integers"),
-        ("ecs.em", "new", "an entity's index"),
-        ("ecs.em", "add", "added to a live entity"),
-        ("ffi.em", "get", "is empty"),
-        ("mod.em", "col", "has columns"),
-        ("mod.em", "row", "has rows"),
-        ("mod.em", "normalize", "zero quaternion"),
-        ("mod.em", "normalize", "plane with no normal"),
-        ("string.em", "split", "separator is empty"),
+        ("core", "stepped", "step must not be zero"),
+        ("collections", "insert", "non-negative integers"),
+        ("ecs", "new", "an entity's index"),
+        ("ecs", "add", "added to a live entity"),
+        ("ffi", "get", "is empty"),
+        ("mod", "col", "has columns"),
+        ("mod", "row", "has rows"),
+        ("mod", "normalize", "zero quaternion"),
+        ("mod", "normalize", "plane with no normal"),
+        ("string", "split", "separator is empty"),
     ];
     let declared: String = sources.iter().map(|path| std::fs::read_to_string(path).expect("a std file reads")).collect();
     let mut used = vec![0usize; SETTLED.len() + OPEN.len()];
     let mut wrong = Vec::new();
     for path in &sources {
         let file = path.file_name().expect("a name").to_string_lossy().into_owned();
+        let stem = path.file_stem().expect("a stem").to_string_lossy().into_owned();
         let text = std::fs::read_to_string(path).expect("a std file reads");
         let lines: Vec<&str> = text.lines().collect();
         for (at, line) in lines.iter().enumerate() {
@@ -4953,8 +4954,8 @@ fn std_panics_name_their_twins_and_allocations_are_documented() {
                 }
                 continue;
             }
-            let settled = SETTLED.iter().position(|(f, n, piece, _)| *f == file && *n == function && message.contains(piece));
-            let open = OPEN.iter().position(|(f, n, piece)| *f == file && *n == function && message.contains(piece));
+            let settled = SETTLED.iter().position(|(f, n, piece, _)| *f == stem && *n == function && message.contains(piece));
+            let open = OPEN.iter().position(|(f, n, piece)| *f == stem && *n == function && message.contains(piece));
             match (settled, open) {
                 (Some(index), _) => used[index] += 1,
                 (None, Some(index)) => used[SETTLED.len() + index] += 1,

@@ -55,6 +55,8 @@ struct FieldShape {
     range: String,
     /// `[HR-13]` — for a container's element row, the alignment its buffer is allocated with.
     align: String,
+    /// `[HR-13]` — for an `SoA`'s column, where its value sits in a whole element; `0` otherwise.
+    within: String,
 }
 
 impl FieldShape {
@@ -70,6 +72,7 @@ impl FieldShape {
             inner: "NULL".to_string(),
             range: "NULL".to_string(),
             align: "0".to_string(),
+            within: "0".to_string(),
         }
     }
 
@@ -77,8 +80,8 @@ impl FieldShape {
     fn tail(&self) -> String {
         let element_type = if self.element_type.is_empty() { "NULL".to_string() } else { c_string_literal(&self.element_type) };
         format!(
-            "{}, {}, {}, {element_type}, {}, {}, {}, {}",
-            self.kind, self.element_kind, self.element_size, self.layout, self.inner, self.range, self.align
+            "{}, {}, {}, {element_type}, {}, {}, {}, {}, {}",
+            self.kind, self.element_kind, self.element_size, self.layout, self.inner, self.range, self.align, self.within
         )
     }
 }
@@ -1178,15 +1181,15 @@ impl Emitter<'_> {
             let mut shape = self.field_shape(column.ty, reload);
             let column_c = self.c_type(column.ty);
             shape.align = format!("(uint32_t)_Alignof({column_c})");
+            shape.within = format!("(uint32_t)offsetof({element_c}, {})", path.join("."));
             let flags = if shape.flags.is_empty() { "0".to_string() } else { shape.flags.join(" | ") };
             let pointer = member(Symbol::intern(&format!("col_{}", column.name)));
             rows.push(format!(
-                "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({soa_c}, {pointer}), (uint32_t)sizeof({column_c}), {flags}, {}, (uint32_t)offsetof({element_c}, {}) }},",
+                "    {{ {}, NULL, {}, UINT64_C(0x{:016x}), (uint32_t)offsetof({soa_c}, {pointer}), (uint32_t)sizeof({column_c}), {flags}, {} }},",
                 c_string_literal(&format!("col_{}", column.name)),
                 c_string_literal(&shape.type_name),
                 self.type_schema(column.ty, &mut Vec::new()),
                 shape.tail(),
-                path.join("."),
             ));
         }
         for count in ["len", "cap"] {
@@ -1311,7 +1314,7 @@ impl Emitter<'_> {
             (format!("{}u, {}", rows.len(), reference(name, rows)), "0, NULL".to_string())
         };
         self.line(&format!(
-            "static const {RT}rl_type {symbol} = {{ {}, EMBER_RL_TYPE_STRUCT, NULL, 0, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {fields}, {variants}, NULL, NULL, NULL, NULL }};",
+            "static const {RT}rl_type {symbol} = {{ {}, EMBER_RL_TYPE_STRUCT, NULL, 0, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {fields}, {variants}, NULL, NULL, NULL, NULL, 0, NULL }};",
             c_string_literal(&self.types.display(ty)),
             self.type_schema(ty, &mut Vec::new()),
         ));
@@ -1526,7 +1529,7 @@ impl Emitter<'_> {
                 let def = self.types.class_def(id);
                 let base = def.base.map_or("NULL".to_string(), |base| c_string_literal(&self.types.class_def(base).name.to_string()));
                 types.push(format!(
-                    "    {{ {}, EMBER_RL_TYPE_CLASS, {base}, 0, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), UINT64_C(0x{:016x}), &{}, &{}, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field} }},",
+                    "    {{ {}, EMBER_RL_TYPE_CLASS, {base}, 0, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), UINT64_C(0x{:016x}), &{}, &{}, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field}, 0, NULL }},",
                     c_string_literal(&name),
                     self.methods_schema(id),
                     ember_branding::type_info(&mangled),
@@ -1535,7 +1538,7 @@ impl Emitter<'_> {
                 ));
             } else {
                 types.push(format!(
-                    "    {{ {}, EMBER_RL_TYPE_STRUCT, NULL, {layout}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), 0, NULL, NULL, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field}, UINT64_C(0x{:016x}) }},",
+                    "    {{ {}, EMBER_RL_TYPE_STRUCT, NULL, {layout}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), 0, NULL, NULL, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field}, UINT64_C(0x{:016x}), NULL }},",
                     c_string_literal(&name),
                     rows.len(),
                     ty.map_or(0, |ty| self.attributes_hash(ty)),
@@ -1661,7 +1664,7 @@ impl Emitter<'_> {
             }
             let attributes = self.attributes_hash(ty);
             types.push(format!(
-                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, {init}, NULL, NULL, {drop_field}, UINT64_C(0x{attributes:016x}) }},",
+                "    {{ {}, EMBER_RL_TYPE_ENUM, NULL, {}, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}, {}u, {}, {init}, NULL, NULL, {drop_field}, UINT64_C(0x{attributes:016x}), NULL }},",
                 c_string_literal(&name),
                 layout,
                 self.type_schema(ty, &mut Vec::new()),
