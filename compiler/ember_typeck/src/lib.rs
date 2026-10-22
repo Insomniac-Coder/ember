@@ -2548,6 +2548,8 @@ struct Checker<'a> {
     /// The declaring module's visibility for each canonical item. This is the
     /// resolver's visibility fact, reused when enumerating qualified N1 names.
     item_visibility: HashMap<Symbol, ast::VisKind>,
+    /// `[ALC-2]` (ODR-175) — the interfaces declared `unsafe interface`.
+    unsafe_interfaces: HashSet<Symbol>,
     /// `[VER-3]` (ODR-174) — each `@deprecated` item by its qualified name, each `@deprecated`
     /// member by its span, and each method registered from one by its `DefId`.
     deprecated_items: HashMap<Symbol, Deprecation>,
@@ -3227,6 +3229,7 @@ impl<'a> Checker<'a> {
             const_initializer: false,
             item_spans: HashMap::new(),
             item_visibility: HashMap::new(),
+            unsafe_interfaces: HashSet::new(),
             deprecated_items: HashMap::new(),
             deprecated_members: HashMap::new(),
             method_deprecation: HashMap::new(),
@@ -4921,6 +4924,12 @@ impl<'a> Checker<'a> {
             self.item_visibility.insert(qualified, item.vis.kind);
             if let Some(deprecation) = self.read_deprecation(&item.attrs) {
                 self.deprecated_items.insert(qualified, deprecation);
+            }
+            // `[ALC-2]` (ODR-175) — known before any implementation is read.
+            if let ast::ItemKind::Interface(decl) = &item.kind
+                && decl.is_unsafe
+            {
+                self.unsafe_interfaces.insert(qualified);
             }
             if let ast::ItemKind::Const(decl) = &item.kind {
                 self.const_values.insert(qualified, (decl.value.clone(), index));
@@ -7050,6 +7059,20 @@ impl<'a> Checker<'a> {
             self.count_op_params.clear();
             let interfaces: Vec<Symbol> =
                 decl.implements.iter().filter_map(interface_name).map(|name| self.resolve_name(name)).collect();
+            // `[ALC-2]`, `[TYP-43]` (ODR-175) — implementing an `unsafe interface` is `unsafe`, in a
+            // generic extension as in any.
+            if !decl.is_unsafe {
+                for (entry, name) in decl.implements.iter().zip(&interfaces) {
+                    if self.unsafe_interfaces.contains(name) {
+                        let shown = self.interface_shown(*name);
+                        self.sink.emit(
+                            Diagnostic::error(codes::E3100, entry.span, format!("implementing `{shown}` is `unsafe`: its implementer promises what the compiler cannot check"))
+                                .help(format!("write `unsafe extend … implements {shown}:` with a SAFETY note saying why its promises hold"))
+                                .note("an `unsafe interface` is implemented only in an `unsafe extend` [TYP-43], [ALC-2]"),
+                        );
+                    }
+                }
+            }
             let interface = interfaces.first().copied();
             self.generic_extensions
                 .entry(name)
@@ -10314,7 +10337,7 @@ impl<'a> Checker<'a> {
                     if interface.is_none() {
                         self.record_class_virtual_methods(ty, &decl.members);
                     }
-                    self.collect_implements(ty, &decl.implements, &decl.members, item.span);
+                    self.collect_implements_in(ty, &decl.implements, &decl.members, item.span, Some(decl.is_unsafe));
                     self.adopt_interface_visibility(ty);
                 }
                 _ => {}
@@ -11681,7 +11704,7 @@ impl<'a> Checker<'a> {
     ) -> Vec<(Ty, Symbol, Span)> {
         let previous_module = std::mem::replace(&mut self.current_module, module);
         let implemented_at = self.implemented.len();
-        self.collect_implements(ty, implements, &[], span);
+        self.collect_implements_in(ty, implements, &[], span, None);
         self.current_module = previous_module;
         self.implemented[implemented_at..].to_vec()
     }
@@ -11718,6 +11741,7 @@ impl<'a> Checker<'a> {
             );
             return;
         }
+
         // Interface parameters are in scope throughout the member signatures,
         // just as owner parameters are for a generic struct or enum. They are
         // deliberately allocated before method-local binders so substitution
@@ -13116,12 +13140,18 @@ impl<'a> Checker<'a> {
                 Some((word, entry.span))
             })
             .collect();
-        if decl.is_unsafe && markers.len() != decl.implements.len() {
+        // `[TYP-43]` (ODR-175) — and an `unsafe interface` (`Allocator`), whose methods it holds.
+        let unsafe_interfaces = decl
+            .implements
+            .iter()
+            .filter(|entry| interface_name(entry).is_some_and(|name| self.unsafe_interfaces.contains(&self.resolve_name(name))))
+            .count();
+        if decl.is_unsafe && markers.len() + unsafe_interfaces != decl.implements.len() {
             let at = decl.implements.first().map_or(decl.target.span, |entry| entry.span);
             self.sink.emit(
-                Diagnostic::error(codes::E2040, at, "`unsafe extend` writes `Send` or `Sync` by hand, and no other interface")
+                Diagnostic::error(codes::E2040, at, "`unsafe extend` writes `Send` or `Sync` by hand, or an `unsafe interface`, and no other interface")
                     .help("implement the other interfaces in an `extend` block of their own")
-                    .note("an interface with methods is checked as written; only a marker needs a promise [ODR-111]"),
+                    .note("an interface with methods is checked as written; only a marker or an `unsafe interface` needs a promise [TYP-43]"),
             );
         }
         if markers.is_empty() {
@@ -13185,12 +13215,35 @@ impl<'a> Checker<'a> {
         members: &[ast::Member],
         span: Span,
     ) {
+        self.collect_implements_in(ty, implements, members, span, Some(false))
+    }
+
+    /// `written_unsafe`: whether the block is an `unsafe extend` (`Some(true)`), a type's header or
+    /// a plain `extend` (`Some(false)`), or an instance of a recipe already checked (`None`).
+    fn collect_implements_in(
+        &mut self,
+        ty: Ty,
+        implements: &[ast::TypeExpr],
+        members: &[ast::Member],
+        span: Span,
+        written_unsafe: Option<bool>,
+    ) {
         for entry in implements {
             let written = match &entry.kind {
                 ast::TypeKind::Path { segments, .. } if segments.len() == 1 => segments[0].name,
                 _ => Symbol::intern("<invalid interface>"),
             };
             let Some(name) = self.resolve_interface_use_for(entry, ty) else { continue };
+            // `[ALC-2]`, `[TYP-43]` (ODR-175) — implementing an `unsafe interface` is `unsafe`.
+            let origin = self.open_interface_origin.get(&name).map_or(name, |(origin, _)| *origin);
+            if written_unsafe == Some(false) && self.unsafe_interfaces.contains(&origin) {
+                let shown = self.interface_shown(name);
+                self.sink.emit(
+                    Diagnostic::error(codes::E3100, entry.span, format!("implementing `{shown}` is `unsafe`: its implementer promises what the compiler cannot check"))
+                        .help(format!("write `unsafe extend … implements {shown}:` with a SAFETY note saying why its promises hold"))
+                        .note("an `unsafe interface` is implemented only in an `unsafe extend` [TYP-43], [ALC-2]"),
+                );
+            }
             // ODR-097, `[TYP-20]` — written in a package that may. A generic
             // recipe's is asked once, where it is declared (the overlap
             // pass), not at each instance it is applied to.

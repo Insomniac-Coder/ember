@@ -478,6 +478,7 @@ fn emit_with(
         },
         mangled_types: std::cell::RefCell::new(BTreeMap::new()),
         array_helpers: std::cell::RefCell::new(Vec::new()),
+        global_allocator: None,
         clone_fns: bodies
             .iter()
             .filter(|body| {
@@ -874,6 +875,8 @@ struct Emitter<'a> {
     /// comparison, `pop`, `remove`, `clear`, `sorted`), requested and emitted
     /// like `eq_fns`.
     array_helpers: std::cell::RefCell<Vec<(ArrayHelper, Ty)>>,
+    /// `[ALC-3]` — the C symbols of a binary package's global allocator functions.
+    global_allocator: Option<(String, String)>,
     /// `[OWN-8]` — each type's `clone` function (derived or written), found
     /// among the bodies, and whether it takes its receiver by address.
     clone_fns: BTreeMap<Ty, (String, bool)>,
@@ -1494,6 +1497,10 @@ impl Emitter<'_> {
             let entry = bodies.iter().any(|body| body.symbol == ember_branding::generated("main_entry"));
             let named = self.emit_frame_names(bodies, true);
             let coded = self.emit_code_names(bodies);
+            // `[ALC-3]` — the package's global allocator, through the two functions written for it.
+            let (allocate, deallocate) = ember_branding::global_allocator_glue();
+            let glue = |name: &str| bodies.iter().find(|body| body.name.rsplit('.').next() == Some(name)).map(|body| body.symbol.clone());
+            self.global_allocator = glue(&allocate).zip(glue(&deallocate));
             self.emit_entry_point(leak_check, entry, named, coded);
         }
         // `[FFI-26]` — each export table: a constant of its struct holding each field's function,
@@ -11422,6 +11429,11 @@ impl Emitter<'_> {
         if leak_check {
             self.line("    cfg.flags |= EMBER_RT_DEBUG_OBJECTS;");
         }
+        // `[ALC-3]` — every allocation the runtime makes goes through the package's allocator.
+        if let Some((allocate, deallocate)) = self.global_allocator.clone() {
+            self.line(&format!("    cfg.alloc = (void* (*)(size_t, size_t)){allocate};"));
+            self.line(&format!("    cfg.free = (void (*)(void*, size_t, size_t)){deallocate};"));
+        }
         self.line(&format!("    {RT}rt_set_args(argc, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
         self.emit_backtrace_registration(named);
@@ -13824,6 +13836,7 @@ mod string_descriptor_view_parts_tests {
             eq_fns: Default::default(),
             clone_parts_fns: Default::default(),
             array_helpers: Default::default(),
+            global_allocator: None,
             clone_fns: BTreeMap::new(),
             fmt_fns: Default::default(),
             fmt_prints: Default::default(),

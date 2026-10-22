@@ -2750,6 +2750,18 @@ void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
     return fresh;
 }
 
+void* ember_try_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
+    void* fresh = ember_try_alloc(new_size, align);
+    if (fresh == NULL) {
+        return NULL;
+    }
+    if (p != NULL) {
+        memcpy(fresh, p, old_size < new_size ? old_size : new_size);
+        ember_free(p, old_size, align);
+    }
+    return fresh;
+}
+
 void ember_debug_alloc_stats(ember_alloc_stats* out) {
     if (out) {
         *out = g_stats;

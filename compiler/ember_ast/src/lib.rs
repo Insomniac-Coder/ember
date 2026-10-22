@@ -403,6 +403,10 @@ pub struct VariantField {
 
 #[derive(Clone, Debug)]
 pub struct InterfaceDecl {
+    /// `[ALC-2]` (ODR-175) — `unsafe interface`: implementing it is `unsafe`
+    /// (`unsafe extend T implements I:`), its implementer promising what the
+    /// compiler cannot check.
+    pub is_unsafe: bool,
     pub name: Ident,
     pub generics: Vec<GenericParam>,
     /// `interface Ord: Eq` — supertraits (`[IFC-3]`).

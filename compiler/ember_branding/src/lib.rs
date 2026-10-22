@@ -55,6 +55,13 @@ pub const SOURCE_EXT: &str = "em";
 /// `[FFI-*]` — the content-addressed binding cache, without the dot.
 pub const BINDING_EXT: &str = "embind";
 
+/// `[ALC-3]` — the Ember names of the two functions a binary package's global allocator is
+/// reached through, which the driver writes into the module declaring it and the entry point gives
+/// `ember_rt_init` as its allocation functions.
+pub fn global_allocator_glue() -> (String, String) {
+    (format!("__{SYMBOL_PREFIX}_global_allocate"), format!("__{SYMBOL_PREFIX}_global_deallocate"))
+}
+
 /// The header the emitted C includes.
 pub fn runtime_header() -> String {
     format!("{SYMBOL_PREFIX}_rt.h")

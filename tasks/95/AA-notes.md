@@ -112,6 +112,25 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
     (the edit `a_pinned_object_is_never_moved` refuses applies, two moves, two calls, old ≠ new);
     `HR-20/accept_a_token_with_on_relocate.em` (three profiles). `--test reload` 50/50; milestone
     `retained_tokens_let_c_keep_ember_objects` passes. `phase-status.json`: `HR-20` removed.
+* **ODR-175 `[ALC-2]`, `[ALC-3]`** — `std.mem`: `pub struct Layout { size, align }`,
+  `pub unsafe interface Allocator` (`allocate`, `deallocate`, `reallocate`, null on failure) and
+  `Global`, the runtime's (`ember_try_alloc`, `ember_free`, a new `ember_try_realloc`). The grammar
+  takes `unsafe interface`; implementing one is `unsafe`: a plain `extend`, a generic one or a
+  type's header naming it is `E3100`, and `unsafe extend` writes a marker or an `unsafe interface`
+  (`[TYP-43]` as amended; another interface is `E2040`). `[build] global_allocator =
+  "module.NAME"` (a `[MAN-8]` `[build]` key now): the driver writes two `extern "C"` functions
+  into that module, calling the static's `allocate`/`deallocate` through std's
+  `global_allocate_through[A: Allocator]` (so a static of another type is `E2040`), and the entry
+  point gives them to `ember_rt_init` as its allocation functions (`[FFI-27]`'s), so every
+  allocation, the runtime's included, goes through the package's allocator. A library's manifest
+  naming one, a module the package does not have, or a name that is not a static, is `E9001` at
+  the key.
+  * `ALC-2/accept_an_unsafe_extend_implements_allocator.em` (three profiles: `Global` and a
+    counting allocator through one `A: Allocator` function),
+    `ALC-2/reject_implementing_allocator_without_unsafe.em`;
+    `ember_driver/tests/package.rs`, `a_binary_package_replaces_the_global_allocator` (a counting
+    allocator over C's `malloc`: 50 strings, at least 50 blocks through it; the four refusals).
+    `phase-status.json`: `ALC-3` removed.
 
 ## Added to the job by the coordinator (owner answers, binding)
 
@@ -165,6 +184,13 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `rl_relocated`. `ember_hir`: `Builtin::RetainedUnpin`; `RetainedPin` takes the callback and
   gives the record's number. std (`ffi.em`): `Retained.pin`'s `on_relocate`, `Retained.drop`,
   `ObjectPtr`'s `Eq`.
+* `ember_ast`: `InterfaceDecl.is_unsafe`; `ember_parser` (`unsafe interface`); `ember_fmt`.
+  `ember_typeck`: `unsafe_interfaces` (in `declare_names`), `collect_implements_in`
+  (`written_unsafe`), the generic extension's check, `collect_markers`. `ember_hir`: `RuntimeFn`
+  `GlobalAllocate`, `GlobalDeallocate`, `GlobalReallocate`. Runtime: `ember_try_realloc`.
+  `ember_driver`: `inject_global_allocator`, the `[build]` key. `ember_branding`:
+  `global_allocator_glue`. `ember_codegen_c`: `cfg.alloc`/`cfg.free` in the entry point.
+* `W2192` moved to the `Types` range, as the lead asked (`numbers_fall_in_their_subsystem_range`).
 
 ## Defects found
 
@@ -183,3 +209,13 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   the address of one object.
 
 ## Questions
+
+1. **What may a global allocator allocate from?** ODR-175 makes `Global` "the runtime's", and the
+   runtime allocates through the package's global allocator once one is named, so an allocator
+   that delegates to `Global()` (a counting or tracing one) recurses until the stack overflows.
+   Built: `Global` is the runtime's as configured (Rust's `Global`), and the test's allocator gets
+   its memory from C's `malloc`. Options: (a) as built, documented; (b) a `std.mem.System`, the
+   platform's allocator the runtime uses by default, for a global allocator to wrap (Rust's
+   `System`); (c) `Global` is always the platform's, and the configured allocator is reached only
+   through the runtime's own allocations. **Recommend (b)**: a decorating allocator is the common
+   case, and (c) would make `Array[T, Global]` bypass the package's allocator.

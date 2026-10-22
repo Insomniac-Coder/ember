@@ -4608,6 +4608,100 @@ impl ember_typeck::ExportIndex for Exports {
     }
 }
 
+/// `[ALC-3]` (ODR-175) — `[build] global_allocator = "module.NAME"` names a `static` of the binary
+/// package whose type implements `std.mem.Allocator`: the runtime allocates through it. The module
+/// that declares it gets two C functions the entry point gives `ember_rt_init` as its allocation
+/// functions (`[FFI-27]`'s), each calling the static's `allocate` or `deallocate` through std's
+/// `global_allocate_through`, bounded by `Allocator`, so a static of another type is `E2040` there.
+/// A library's manifest naming one, a module the package does not have, or a name that is not a
+/// static of it, is `E9001` at the key.
+fn inject_global_allocator(modules: &mut [ember_typeck::LoadedModule], input: &Path, map: &mut SourceMap, sink: &mut Sink) {
+    let Some(manifest_path) = nearest_manifest_path(input) else { return };
+    let Ok(text) = std::fs::read_to_string(&manifest_path) else { return };
+    let Some(named) = manifest_string(&text, "build", "global_allocator") else { return };
+    let Ok(file) = map.load(&manifest_path) else { return };
+    // The key's line, for the diagnostics.
+    let mut offset = 0usize;
+    let mut location = Span::new(file, 0, 0);
+    let mut section = "";
+    for line in text.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            section = trimmed[1..trimmed.len() - 1].trim();
+        } else if section == "build" && trimmed.split_once('=').is_some_and(|(key, _)| key.trim() == "global_allocator") {
+            location = Span::new(file, offset as u32, (offset + line.len()) as u32);
+        }
+        offset += line.len() + 1;
+    }
+    if matches!(manifest_string(&text, "package", "kind").as_deref(), Some("lib" | "staticlib" | "cdylib")) {
+        sink.emit(
+            Diagnostic::error(codes::E9001, location, "`global_allocator` is a binary package's: a library's allocations are its program's")
+                .note("a binary package may replace the global allocator [ALC-3]; an embedding host passes its own to `ember_rt_init` [FFI-27]"),
+        );
+        return;
+    }
+    let Some((module, name)) = named.rsplit_once('.') else {
+        sink.emit(
+            Diagnostic::error(codes::E9001, location, format!("`global_allocator = \"{named}\"` does not name a module's static"))
+                .help("write `global_allocator = \"module.NAME\"`, naming a `static` whose type implements `std.mem.Allocator` [ALC-3]"),
+        );
+        return;
+    };
+    let entry_stem = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let found = modules.iter().position(|loaded| loaded.path.join(".") == module && loaded.package == Some(0))
+        .or_else(|| (module == entry_stem).then(|| modules.iter().position(|loaded| loaded.path.is_empty())).flatten());
+    let Some(index) = found else {
+        sink.emit(
+            Diagnostic::error(codes::E9001, location, format!("`global_allocator` names module `{module}`, which the package does not have"))
+                .help("name a module of the package and a `static` it declares, `module.NAME` [ALC-3]"),
+        );
+        return;
+    };
+    let declares = modules[index].module.items.iter().any(|item| matches!(&item.kind, ember_ast::ItemKind::Static(decl) if decl.name.name.is(name)));
+    if !declares {
+        sink.emit(
+            Diagnostic::error(codes::E9001, location, format!("`global_allocator` names `{named}`, which is not a `static` of module `{module}`"))
+                .help("declare the allocator a `static` whose type implements `std.mem.Allocator` [ALC-3]"),
+        );
+        return;
+    }
+    let (allocate, deallocate) = ember_branding::global_allocator_glue();
+    let source = format!(
+        "extern \"C\" fn {allocate}(size: usize, align: usize) -> *mut u8:\n    return __allocate_through({name}, size, align)\n\n\
+         extern \"C\" fn {deallocate}(p: *mut u8, size: usize, align: usize):\n    __deallocate_through({name}, p, size, align)\n",
+    );
+    let glue = map.add(PathBuf::from(format!("<the global allocator `{named}`, [build] global_allocator>")), source.clone());
+    let lexed = ember_lexer::lex(glue, &source, sink);
+    let mut parsed = ember_parser::parse(glue, &source, lexed.tokens, sink);
+    // std's helpers, by their full names: the module need not import `std.mem`.
+    fn rename(expr: &mut ember_ast::Expr) {
+        match &mut expr.kind {
+            ember_ast::ExprKind::Call { callee, args } => {
+                if let ember_ast::ExprKind::Path { segments } = &mut callee.kind
+                    && let [segment] = segments.as_mut_slice()
+                    && let Some(rest) = segment.name.as_str().strip_prefix("__")
+                {
+                    segment.name = ember_span::Symbol::intern(&format!("std.mem.global_{rest}"));
+                }
+                for arg in args {
+                    rename(&mut arg.value);
+                }
+            }
+            ember_ast::ExprKind::Jump(ember_ast::Jump::Return(Some(value))) => rename(value),
+            _ => {}
+        }
+    }
+    for item in &mut parsed.items {
+        let ember_ast::ItemKind::Fn(decl) = &mut item.kind else { continue };
+        for stmt in decl.body.iter_mut().flat_map(|body| body.stmts.iter_mut()) {
+            if let ember_ast::StmtKind::Expr(expr) = &mut stmt.kind {
+                rename(expr);
+            }
+        }
+    }
+    modules[index].module.items.extend(parsed.items);
+}
+
 fn package_source_root(input: &Path) -> PathBuf {
     // A bare file name's parent is the empty path: its folder is the working one.
     let fallback = input.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new(".")).to_path_buf();
@@ -4703,6 +4797,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
         reload::inject(&mut modules, &mut map, &mut sink, previous.as_ref())
     });
+    // `[ALC-3]` (ODR-175) — the global allocator the manifest names, which the runtime allocates
+    // through.
+    inject_global_allocator(&mut modules, input, &mut map, &mut sink);
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
@@ -6525,7 +6622,8 @@ fn manifest_section_keys(section: &str) -> Option<Option<&'static [&'static str]
     Some(Some(match section {
         "" => &[],
         "package" => &["name", "version", "language", "kind", "layers", "edition_lints"],
-        "build" => &["entry", "target", "backend", "c_compiler", "runtime", "max_instantiations", "reload"],
+        // `[ALC-3]` (ODR-175) — `global_allocator` too.
+        "build" => &["entry", "target", "backend", "c_compiler", "runtime", "max_instantiations", "reload", "global_allocator"],
         // `[BLD-FFI-1]`: the C compiler and its flags.
         "c" => &["compiler", "flags"],
         "link" => &["libs"],

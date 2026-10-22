@@ -1336,10 +1336,15 @@ pub enum RuntimeFn {
     IoErrorMessage,
     TimeNow,
     TimeSleep,
+    /// `[ALC-2]` (ODR-175) — `std.mem.Global`'s allocation, as the runtime allocates: null when
+    /// there is no memory.
+    GlobalAllocate,
+    GlobalDeallocate,
+    GlobalReallocate,
 }
 
 impl RuntimeFn {
-    pub const ALL: [RuntimeFn; 23] = [
+    pub const ALL: [RuntimeFn; 26] = [
         RuntimeFn::Entropy,
         RuntimeFn::ProcessExit,
         RuntimeFn::ProcessAbort,
@@ -1363,6 +1368,9 @@ impl RuntimeFn {
         RuntimeFn::IoErrorMessage,
         RuntimeFn::TimeNow,
         RuntimeFn::TimeSleep,
+        RuntimeFn::GlobalAllocate,
+        RuntimeFn::GlobalDeallocate,
+        RuntimeFn::GlobalReallocate,
     ];
 
     /// The standard declaration a call names.
@@ -1391,6 +1399,9 @@ impl RuntimeFn {
             RuntimeFn::IoErrorMessage => "std.io.error_message",
             RuntimeFn::TimeNow => "std.time.monotonic_now",
             RuntimeFn::TimeSleep => "std.time.sleep_nanos",
+            RuntimeFn::GlobalAllocate => "std.mem.global_allocate",
+            RuntimeFn::GlobalDeallocate => "std.mem.global_deallocate",
+            RuntimeFn::GlobalReallocate => "std.mem.global_reallocate",
         }
     }
 
@@ -1420,6 +1431,9 @@ impl RuntimeFn {
             RuntimeFn::IoErrorMessage => "io_error_message",
             RuntimeFn::TimeNow => "time_now",
             RuntimeFn::TimeSleep => "time_sleep",
+            RuntimeFn::GlobalAllocate => "try_alloc",
+            RuntimeFn::GlobalDeallocate => "free",
+            RuntimeFn::GlobalReallocate => "try_realloc",
         }
     }
 
@@ -1451,6 +1465,7 @@ impl RuntimeFn {
             // `[STD-23]`, `[DET-2]` — the monotonic clock is `Nondet`; sleeping waits.
             RuntimeFn::TimeNow => (Effects::NONDET, "the monotonic clock"),
             RuntimeFn::TimeSleep => (Effects::BLOCK, "`time.sleep`"),
+            RuntimeFn::GlobalAllocate | RuntimeFn::GlobalDeallocate | RuntimeFn::GlobalReallocate => (Effects::ALLOC, "the global allocator"),
         }
     }
 }

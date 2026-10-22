@@ -366,6 +366,13 @@ impl Parser<'_> {
             self.bump();
             return Some(ItemKind::Overlay(self.parse_overlay(true)));
         }
+        // `[ALC-2]` (ODR-175) — `unsafe interface Allocator:`, one whose implementation is `unsafe`.
+        if self.at_kw(Kw::Unsafe) && self.at_kw_at(1, Kw::Interface) {
+            self.bump();
+            let mut decl = self.parse_interface();
+            decl.is_unsafe = true;
+            return Some(ItemKind::Interface(decl));
+        }
         // ODR-111 — `unsafe extend T implements Send:`, a marker interface written by hand.
         if self.at_kw(Kw::Unsafe) && matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend")) {
             self.bump();
@@ -1177,7 +1184,7 @@ impl Parser<'_> {
         let where_clause = self.parse_where_clause();
         self.expect_punct(Punct::Colon);
         let members = self.parse_type_body();
-        InterfaceDecl { name, generics, supertraits, where_clause, members }
+        InterfaceDecl { is_unsafe: false, name, generics, supertraits, where_clause, members }
     }
 
     fn parse_extend(&mut self) -> ExtendDecl {

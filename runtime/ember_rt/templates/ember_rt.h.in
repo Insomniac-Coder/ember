@@ -1311,6 +1311,10 @@ void* ember_alloc(size_t size, size_t align);
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 void ember_free(void* p, size_t size, size_t align);
 void* ember_try_alloc(size_t size, size_t align);
+/* [ALC-2] (ODR-175) — `Global.reallocate`: a block of `new_size` bytes holding the first
+ * `min(old_size, new_size)` of `p`'s, `p` freed; NULL, with `p` left as it was, when there is no
+ * memory. */
+void* ember_try_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 /* IX.1: allocate one uniquely owned value and move its object bytes into the
  * allocation. The compiler remains responsible for source move state and for
  * running the payload destructor before ember_free. */
