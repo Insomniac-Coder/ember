@@ -6370,7 +6370,20 @@ impl Emitter<'_> {
                 fields.push(format!("{} saved{public_index}", self.c_type(*ty)));
             }
         }
+        // ODR-246 — C's result, written once the registering call returns.
+        if let Some(ty) = Self::ffi_callback_result(callback) {
+            fields.push(format!("{} result", self.c_type(ty)));
+        }
         Some((format!("{}_record", ffi_callback_entry(&body.symbol, index)), fields))
+    }
+
+    /// `[FFI-11]` (ODR-246) — the type of the registering call's result, when `destroys(f)` is
+    /// given it.
+    fn ffi_callback_result(callback: &FfiCallback) -> Option<Ty> {
+        callback.unregister.iter().flat_map(|unregister| &unregister.args).find_map(|arg| match arg {
+            FfiUnregisterArg::Result { ty } => Some(*ty),
+            _ => None,
+        })
     }
 
     /// `[FFI-21]` — the trampoline C calls for callback `index` of wrapper `body`, and for a
@@ -6490,6 +6503,7 @@ impl Emitter<'_> {
             FfiUnregisterArg::Entry => format!("({}){entry}", self.c_type(*ty)),
             FfiUnregisterArg::Data => format!("({})(uintptr_t)_data", self.c_type(*ty)),
             FfiUnregisterArg::Saved { public_index, .. } => format!("_record->saved{public_index}"),
+            FfiUnregisterArg::Result { .. } => "_record->result".to_string(),
         }).collect();
         let parameters: Vec<String> = unregister.params.iter().map(|ty| self.c_type(*ty)).collect();
         let parameters = if parameters.is_empty() { "void".to_string() } else { parameters.join(", ") };
@@ -6514,13 +6528,29 @@ impl Emitter<'_> {
         let (_, local) = body.args().nth(callback.public_index).expect("the callback's parameter");
         let arg = &args[callback.public_index];
         let by_address = matches!(self.types.kind(local.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
-        let (address, value) = if by_address { (arg.clone(), format!("(*{arg})")) } else { (format!("&{arg}"), arg.clone()) };
+        let (mut address, mut value) = if by_address { (arg.clone(), format!("(*{arg})")) } else { (format!("&{arg}"), arg.clone()) };
+        // `[FFI-21]` (ODR-253) — a `nullable` one: whether the caller passed `Some`, and its callable.
+        let some = callback.nullable.map(|option| {
+            let TyKind::Enum(id) = *self.types.kind(option) else { unreachable!("a nullable callback is an `Option`") };
+            let def = self.types.enum_def(id);
+            let (some, discriminant) = def.variants.iter().enumerate().find(|(_, variant)| variant.fields.len() == 1)
+                .map(|(at, variant)| (at, variant.discriminant)).expect("`Option` has `Some`");
+            let payload = self.enum_member(id, &value, some, 0);
+            self.line(&format!("    int _ffi_some{index} = {} == {discriminant};", self.enum_tag(id, &value)));
+            address = format!("&{payload}");
+            value = payload;
+            format!("_ffi_some{index}")
+        });
+        let given = |data: String| match &some {
+            Some(some) => format!("({some} ? {data} : NULL)"),
+            None => data,
+        };
         let creator = callback.threads == ExportThreadPolicy::Creator;
         match self.ffi_callback_record(body, index, callback) {
-            None => self.line(&format!("    void* _ffi_data{index} = (void*){address};")),
+            None => self.line(&format!("    void* _ffi_data{index} = {};", given(format!("(void*){address}")))),
             Some((name, _)) if callback.mode == FfiCallbackMode::Borrowed => {
                 self.line(&format!("    struct {name} _ffi_record{index} = {{ {address}, {RT}ffi_thread() }};"));
-                self.line(&format!("    void* _ffi_data{index} = (void*)&_ffi_record{index};"));
+                self.line(&format!("    void* _ffi_data{index} = {};", given(format!("(void*)&_ffi_record{index}"))));
             }
             Some((name, _)) => {
                 // The callable moves into an allocation of its own: C keeps it past the call.
@@ -6533,8 +6563,23 @@ impl Emitter<'_> {
                         parts.push(args[*public_index].clone());
                     }
                 }
-                self.line(&format!("    struct {name} _ffi_record{index} = {{ {} }};", parts.join(", ")));
-                self.line(&format!("    void* _ffi_data{index} = {RT}box_new_copy(sizeof(struct {name}), _Alignof(struct {name}), &_ffi_record{index});"));
+                // ODR-246 — C's result, written once the call returns.
+                if Self::ffi_callback_result(callback).is_some() {
+                    parts.push("0".to_string());
+                }
+                match &some {
+                    Some(some) => {
+                        self.line(&format!("    void* _ffi_data{index} = NULL;"));
+                        self.line(&format!("    if ({some}) {{"));
+                        self.line(&format!("        struct {name} _ffi_record{index} = {{ {} }};", parts.join(", ")));
+                        self.line(&format!("        _ffi_data{index} = {RT}box_new_copy(sizeof(struct {name}), _Alignof(struct {name}), &_ffi_record{index});"));
+                        self.line("    }");
+                    }
+                    None => {
+                        self.line(&format!("    struct {name} _ffi_record{index} = {{ {} }};", parts.join(", ")));
+                        self.line(&format!("    void* _ffi_data{index} = {RT}box_new_copy(sizeof(struct {name}), _Alignof(struct {name}), &_ffi_record{index});"));
+                    }
+                }
             }
         }
         let unregister = callback.unregister.as_ref()?;
@@ -6543,14 +6588,25 @@ impl Emitter<'_> {
         let TyKind::Struct(record) = *self.types.kind(held) else { unreachable!("a `ForeignCallback` is a struct") };
         let fields: Vec<Ty> = self.types.struct_def(record).fields.iter().map(|field| field.ty).collect();
         // `[HR-20]` — a callback's token has no `on_relocate` record: its `relocation` is `0`.
-        Some(format!(
+        let made = format!(
             "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }}, 0 }}",
             self.c_type(unregister.token),
             self.c_type(held),
             self.c_type(fields[0]),
             self.c_type(fields[1]),
             ffi_callback_entry(&body.symbol, index),
-        ))
+        );
+        Some(match &some {
+            // `None` registered nothing, so there is no token.
+            Some(some) => {
+                let TyKind::Enum(id) = *self.types.kind(unregister.output) else { unreachable!("a nullable callback's token is an `Option`") };
+                let def = self.types.enum_def(id);
+                let none = def.variants.iter().position(|variant| variant.fields.is_empty()).expect("`Option` has `None`");
+                let some_at = def.variants.iter().position(|variant| variant.fields.len() == 1).expect("`Option` has `Some`");
+                format!("({some} ? {} : {})", self.enum_value(id, some_at, &[made]), self.enum_value(id, none, &[]))
+            }
+            None => made,
+        })
     }
 
     fn emit_ffi_counted_wrapper(&mut self, body: &Body, bodies: &[Body]) {
@@ -6572,7 +6628,9 @@ impl Emitter<'_> {
                 // callback's token is an output in the callback's place.
                 FfiAbiParam::Callback { index } => {
                     let callback = &counted.callbacks[*index];
-                    foreign_args.push(format!("({}){}", self.c_type(callback.c_fn), ffi_callback_entry(&body.symbol, *index)));
+                    let entry = format!("({}){}", self.c_type(callback.c_fn), ffi_callback_entry(&body.symbol, *index));
+                    // `[FFI-21]` (ODR-253) — `None` gives C a null pointer.
+                    foreign_args.push(if callback.nullable.is_some() { format!("(_ffi_some{index} ? {entry} : NULL)") } else { entry });
                     if let Some(token) = &tokens[*index] {
                         outs.push(token.clone());
                     }
@@ -6688,6 +6746,14 @@ impl Emitter<'_> {
             let ret = body.return_ty();
             let c_result = counted.outputs.as_ref().map_or(ret, |outputs| outputs.c_result);
             let value = self.emit_ffi_result_value(body, counted, c_result, &call);
+            // `[FFI-11]` (ODR-246) — what `destroys(f)` is given of C's result is kept with the
+            // callable (where the call registered one).
+            for (index, callback) in counted.callbacks.iter().enumerate() {
+                if let (Some(_), Some(value)) = (Self::ffi_callback_result(callback), &value) {
+                    let (name, _) = self.ffi_callback_record(body, index, callback).expect("a retained callback is kept in a record");
+                    self.line(&format!("    if (_ffi_data{index} != NULL) {{ ((struct {name}*)_ffi_data{index})->result = {value}; }}"));
+                }
+            }
             match self.ffi_tuple_of(value.as_deref(), &outs, ret) {
                 Some(made) => self.line(&format!("    return {made};")),
                 None => self.line("    return;"),

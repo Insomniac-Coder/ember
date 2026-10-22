@@ -1939,17 +1939,19 @@ impl Writer {
             }
             let abi = convention(clang_getFunctionTypeCallingConv(canonical))
                 .ok_or("a function pointer of a calling convention Ember does not have (`[FFI-9]`)")?;
-            // The written type keeps its typedef names; a parameter's own is its canonical one.
+            // Each parameter and the result as the prototype writes them, typedef names kept: a
+            // standard one (`intptr_t`, `size_t`) maps as `[FFI-8]` maps it anywhere else.
             let mut params = Vec::new();
             for index in 0..clang_getNumArgTypes(canonical).max(0) as u32 {
+                let written = clang_getArgType(ty, index);
                 // `[FFI-8]` — a `va_list`, which only its written name tells from what it is.
-                if written_va_list(clang_getArgType(ty, index)) {
+                if written_va_list(written) {
                     params.push("owned VaList".to_string());
                     continue;
                 }
-                params.push(self.parameter_type(clang_getArgType(canonical, index))?);
+                params.push(self.parameter_type(written)?);
             }
-            let result = clang_getResultType(canonical);
+            let result = clang_getResultType(ty);
             let arrow = if result.kind == CXType_Void { String::new() } else { format!(" -> {}", self.ty(result, false)?) };
             Ok(Some(format!("extern \"{abi}\" fn({}){arrow}", params.join(", "))))
         }
@@ -6717,10 +6719,20 @@ fn callback_user_data(written: &str) -> Option<String> {
     Some(name.split(|c: char| !(c.is_alphanumeric() || c == '_')).next()?.to_string())
 }
 
+/// `[FFI-21]` (ODR-245) — with `user_data=q@N`, the callback's parameter `N` (1-based) that
+/// receives the user data.
+fn callback_user_data_place(written: &str) -> Option<usize> {
+    let inner = written.trim().strip_prefix("callback(")?;
+    let (_, rest) = inner.split_once("user_data")?;
+    let (_, place) = rest.split_once('@')?;
+    place.trim_start().split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+}
+
 /// `[FFI-21]` — the callable a callback with user data is to its caller: the C function pointer's
-/// type (`extern "C" fn(*mut void, c_int) -> R`) without its one parameter of the user data's type,
-/// a `once fn` for a `once` callback.
-fn callable_of(function: &str, data: &str, once: bool) -> Option<String> {
+/// type (`extern "C" fn(*mut void, c_int) -> R`) without the parameter that receives the user data
+/// (its `place`, 1-based, or else its one parameter of the user data's type), a `once fn` for a
+/// `once` callback.
+fn callable_of(function: &str, data: &str, place: Option<usize>, once: bool) -> Option<String> {
     let (_, rest) = function.split_once("fn(")?;
     let (inside, after) = rest.rsplit_once(')')?;
     let (mut parts, mut depth, mut start) = (Vec::new(), 0, 0);
@@ -6738,7 +6750,10 @@ fn callable_of(function: &str, data: &str, once: bool) -> Option<String> {
     if !inside.trim().is_empty() {
         parts.push(inside[start..].trim().to_string());
     }
-    let slot = parts.iter().position(|part| part == data)?;
+    let slot = match place {
+        Some(place) => place.checked_sub(1).filter(|&slot| parts.get(slot).is_some_and(|part| part == data))?,
+        None => parts.iter().position(|part| part == data)?,
+    };
     parts.remove(slot);
     Some(format!("{}fn({}){after}", if once { "once " } else { "" }, parts.join(", ")))
 }
@@ -7261,9 +7276,17 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                 let callable = contract_words.iter().find(|written| callback_user_data(written).is_some()).and_then(|written| {
                     let data = callback_user_data(written)?;
                     let (_, data_ty) = function.params.iter().find(|(name, _)| name.trim_start_matches("r#") == data)?;
-                    callable_of(ty.function.as_deref()?, &data_ty.ember, written.contains("once"))
+                    let kept = written.contains("once") || written.contains("retained");
+                    let callable = callable_of(ty.function.as_deref()?, &data_ty.ember, callback_user_data_place(written), written.contains("once"))?;
+                    // ODR-253 — a `nullable` one is an `Option` of a callable value, taken over
+                    // where C keeps it.
+                    Some(if has(&contract_words, "nullable") {
+                        format!("{}{param}: Option[{callable}]", if kept { "owned " } else { "" })
+                    } else {
+                        format!("{param}: {callable}")
+                    })
                 });
-                params.push(callable.map_or_else(|| text.clone(), |callable| format!("{param}: {callable}")));
+                params.push(callable.unwrap_or_else(|| text.clone()));
             }
             slots.push((param.clone(), text, contract_words, (!leaves).then(|| param.clone())));
             continue;
@@ -8194,7 +8217,9 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 14;
+/// 15: a function pointer's parameters and result keep their written typedef names (`intptr_t` is
+/// `isize` there too, `[FFI-8]`).
+const EMBIND_VERSION: u64 = 15;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {

@@ -173,6 +173,10 @@ pub struct FfiCallback {
     /// `[FFI-22]`, `[FFI-33b]` — the threads C calls it on: under `main` or
     /// `creator` the debug profile checks each call.
     pub threads: ExportThreadPolicy,
+    /// `[FFI-21]` (ODR-253) — `nullable`: the parameter's `Option` of the
+    /// callable value (`callable` is its payload). `None` gives C a null
+    /// function pointer and null user data, and registers nothing.
+    pub nullable: Option<Ty>,
     /// `[FFI-21]` — for `retained`: the function the token's end calls to
     /// unregister it (`destroys(f)`), and the token's type.
     pub unregister: Option<FfiUnregister>,
@@ -199,16 +203,20 @@ pub struct FfiUnregister {
     /// `f`'s parameter types, one per argument.
     pub params: Vec<Ty>,
     pub token: Ty,
+    /// What the call returns for the callback: the token, or with `nullable`
+    /// an `Option` of it (`None` when the call registered nothing).
+    pub output: Ty,
 }
 
 /// What a parameter of `destroys(f)` is given: the trampoline, the user data,
-/// or what the registering call passed for one of its scalar parameters (kept
-/// with the callable).
+/// what the registering call passed for one of its scalar parameters, or
+/// (ODR-246) the result C returned from it, each kept with the callable.
 #[derive(Debug, Clone)]
 pub enum FfiUnregisterArg {
     Entry,
     Data,
     Saved { public_index: usize, ty: Ty },
+    Result { ty: Ty },
 }
 
 /// `[FFI-11]`, `[FFI-16]` — C's own result type, and with a status the value

@@ -1271,7 +1271,22 @@ impl Parser<'_> {
                 // separator, handled by postfix field access. A `::` is
                 // reported and read as the `.` it should be (the postfix
                 // loop's), so the rest checks as written that way (`[IDE-3]`).
-                ExprKind::Path { segments: vec![self.expect_ident()] }
+                let name = self.expect_ident();
+                // `[FFI-21]` (ODR-245) — `user_data=p@N` inside `@ffi(…)` or an overlay's contract:
+                // one contract word, `p` and the callback parameter `N` that receives it, kept as
+                // the word `p@N`.
+                if self.in_ffi_attribute
+                    && self.at_punct(Punct::At)
+                    && let TokenKind::Lit(Lit::Int { value, suffix: None }) = self.peek_at(1).clone()
+                {
+                    self.bump();
+                    let end = self.span();
+                    self.bump();
+                    let word = Ident { name: format!("{}@{value}", name.name).as_str().into(), span: name.span.to(end) };
+                    ExprKind::Path { segments: vec![word] }
+                } else {
+                    ExprKind::Path { segments: vec![name] }
+                }
             }
             TokenKind::Reserved(reserved) => {
                 let reserved = reserved;
