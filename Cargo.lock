@@ -113,6 +113,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ember_codegen_llvm"
+version = "0.1.0"
+dependencies = [
+ "ember_branding",
+ "ember_mir",
+ "ember_span",
+ "ember_types",
+]
+
+[[package]]
 name = "ember_diag"
 version = "0.1.0"
 dependencies = [
@@ -130,6 +140,7 @@ dependencies = [
  "ember_branding",
  "ember_build",
  "ember_codegen_c",
+ "ember_codegen_llvm",
  "ember_diag",
  "ember_fmt",
  "ember_hir",

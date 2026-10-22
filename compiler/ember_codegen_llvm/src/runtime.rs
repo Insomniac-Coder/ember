@@ -1,0 +1,208 @@
+//! The runtime's entry points the IR calls (`[RT-5]`: every name under `EMBER_SYMBOL_PREFIX`),
+//! each with its C prototype as `ember_rt.h` declares it. The IR passes their arguments by the
+//! platform C ABI (`crate::abi`), so a prototype here must be the header's exactly: the unit test
+//! below reads the header and compares every one.
+
+use crate::abi::{Scalar, Shape};
+
+/// A C type of a runtime prototype.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CTy {
+    Void,
+    Scalar(Scalar),
+    /// One of the runtime's structs, by its name without the prefix (`str`, `loc`).
+    Struct(&'static str),
+}
+
+impl CTy {
+    /// The ABI's view of it; `None` for `void`.
+    pub fn shape(self) -> Option<Shape> {
+        let word = Scalar::Int { bytes: 8, signed: false };
+        let half = Scalar::Int { bytes: 4, signed: false };
+        let agg = |size, align, leaves: &[(u64, Scalar)]| Shape::Aggregate { size, align, leaves: leaves.to_vec(), unaligned: false };
+        Some(match self {
+            CTy::Void => return None,
+            CTy::Scalar(scalar) => Shape::Scalar(scalar),
+            CTy::Struct("str" | "span" | "mutspan") => agg(16, 8, &[(0, Scalar::Ptr), (8, word)]),
+            CTy::Struct("dyn") => agg(16, 8, &[(0, Scalar::Ptr), (8, Scalar::Ptr)]),
+            CTy::Struct("vec") => agg(24, 8, &[(0, Scalar::Ptr), (8, word), (16, word)]),
+            CTy::Struct("loc") => agg(16, 8, &[(0, Scalar::Ptr), (8, half), (12, half)]),
+            CTy::Struct("i128") => Shape::Scalar(Scalar::Int { bytes: 16, signed: true }),
+            CTy::Struct("u128") => Shape::Scalar(Scalar::Int { bytes: 16, signed: false }),
+            CTy::Struct("i256" | "u256") => agg(32, 16, &[(0, word), (8, word), (16, word), (24, word)]),
+            CTy::Struct(other) => unreachable!("no shape for the runtime struct `{other}`"),
+        })
+    }
+}
+
+/// Parse one C type as the table writes it: `$name` is the runtime's `ember_name`.
+pub fn c_type(text: &'static str) -> CTy {
+    let text = text.trim();
+    if text.ends_with('*') {
+        return CTy::Scalar(Scalar::Ptr);
+    }
+    let int = |bytes, signed| CTy::Scalar(Scalar::Int { bytes, signed });
+    match text {
+        "void" => CTy::Void,
+        "bool" => CTy::Scalar(Scalar::Bool),
+        "int8_t" => int(1, true),
+        "int16_t" => int(2, true),
+        "int32_t" | "int" => int(4, true),
+        "int64_t" | "ptrdiff_t" => int(8, true),
+        "uint8_t" => int(1, false),
+        "uint16_t" => int(2, false),
+        "uint32_t" => int(4, false),
+        "uint64_t" | "size_t" | "uintptr_t" => int(8, false),
+        "float" => CTy::Scalar(Scalar::F32),
+        "double" => CTy::Scalar(Scalar::F64),
+        other => match other.strip_prefix('$') {
+            Some(name) => CTy::Struct(name),
+            None => panic!("the runtime table names an unknown C type `{other}`"),
+        },
+    }
+}
+
+/// One entry point: its name without the prefix, its result and parameters as C writes them,
+/// and whether it never returns (a panic: `cold` too, `[CG-C-5]`).
+pub struct RtFn {
+    pub name: &'static str,
+    pub ret: &'static str,
+    pub params: &'static [&'static str],
+    pub noreturn: bool,
+}
+
+const fn f(name: &'static str, ret: &'static str, params: &'static [&'static str]) -> RtFn {
+    RtFn { name, ret, params, noreturn: false }
+}
+
+const fn panic_fn(name: &'static str, params: &'static [&'static str]) -> RtFn {
+    RtFn { name, ret: "void", params, noreturn: true }
+}
+
+pub const FNS: &[RtFn] = &[
+    // -- panics ([RT-4], VI.6)
+    panic_fn("panic", &["const char*", "size_t", "$loc"]),
+    panic_fn("panic_bounds", &["size_t", "size_t", "$loc"]),
+    panic_fn("panic_overflow", &["const char*", "$loc"]),
+    panic_fn("panic_div_zero", &["$loc"]),
+    panic_fn("panic_refcell", &["const char*", "uint32_t", "$loc"]),
+    // -- printing ([STD-9])
+    f("print_str", "void", &["$str"]),
+    f("println_str", "void", &["$str"]),
+    f("eprint_str", "void", &["$str"]),
+    f("eprintln_str", "void", &["$str"]),
+    f("print_i64", "void", &["int64_t"]),
+    f("eprint_i64", "void", &["int64_t"]),
+    f("print_u64", "void", &["uint64_t"]),
+    f("eprint_u64", "void", &["uint64_t"]),
+    f("print_i128", "void", &["$i128"]),
+    f("eprint_i128", "void", &["$i128"]),
+    f("print_u128", "void", &["$u128"]),
+    f("eprint_u128", "void", &["$u128"]),
+    f("print_i256", "void", &["$i256"]),
+    f("eprint_i256", "void", &["$i256"]),
+    f("print_u256", "void", &["$u256"]),
+    f("eprint_u256", "void", &["$u256"]),
+    f("print_f16", "void", &["uint16_t"]),
+    f("eprint_f16", "void", &["uint16_t"]),
+    f("print_f32", "void", &["float"]),
+    f("eprint_f32", "void", &["float"]),
+    f("print_f64", "void", &["double"]),
+    f("eprint_f64", "void", &["double"]),
+    f("print_bool", "void", &["bool"]),
+    f("eprint_bool", "void", &["bool"]),
+    f("print_char", "void", &["uint32_t"]),
+    f("eprint_char", "void", &["uint32_t"]),
+    // -- the lifecycle ([RT-2], [FN-8])
+    f("rt_set_args", "void", &["int", "char**"]),
+    f("rt_init_v3", "int", &["const $rt_config*", "uint32_t"]),
+    f("rt_shutdown", "void", &[]),
+    f("backtrace_names", "void", &["const $frame_name*", "size_t"]),
+    f("backtrace_sites", "void", &["const $call_site*", "size_t"]),
+    f("stack_names", "void", &["const $code_name*", "size_t"]),
+];
+
+pub fn find(name: &str) -> &'static RtFn {
+    FNS.iter()
+        .find(|entry| entry.name == name)
+        .unwrap_or_else(|| panic!("the LLVM backend's runtime table has no `{name}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The header's declaration of `name`, its parameters' types without their names.
+    fn declared(header: &str, name: &str) -> Option<(String, Vec<String>)> {
+        let symbol = ember_branding::runtime(name);
+        // Without comments, and without preprocessor lines.
+        let mut flat = String::new();
+        let mut rest = header;
+        while let Some(start) = rest.find("/*") {
+            flat.push_str(&rest[..start]);
+            rest = rest[start..].find("*/").map_or("", |end| &rest[start + end + 2..]);
+        }
+        flat.push_str(rest);
+        let flat: String = flat
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        for statement in flat.split(';') {
+            let Some(at) = statement.find(&format!("{symbol}(")) else { continue };
+            // What follows the end of a definition before it.
+            let before = statement[..at].rsplit(['{', '}']).next().unwrap_or_default().trim();
+            // A declaration: a type before the name, nothing else.
+            if before.is_empty() || !before.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ' ' || c == '*') {
+                continue;
+            }
+            let ret = before
+                .split_whitespace()
+                .filter(|word| !word.starts_with("EMBER_") && *word != "static" && *word != "inline")
+                .collect::<Vec<_>>()
+                .join(" ");
+            let after = &statement[at + symbol.len() + 1..];
+            let Some(close) = after.rfind(')') else { continue };
+            let params = after[..close]
+                .split(',')
+                .map(str::trim)
+                .filter(|param| !param.is_empty() && *param != "void")
+                .map(|param| {
+                    // Drop the parameter's name: the last word, unless the type ends with `*`.
+                    let param = param.replace(" *", "* ");
+                    match param.rfind(|c: char| c == ' ' || c == '*') {
+                        Some(split) if !param.ends_with('*') => param[..=split].trim().to_string(),
+                        _ => param.trim().to_string(),
+                    }
+                })
+                .collect();
+            return Some((ret, params));
+        }
+        None
+    }
+
+    #[test]
+    fn rt_5_every_prototype_is_the_headers() {
+        let header_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime")
+            .join(format!("{}_rt", ember_branding::SYMBOL_PREFIX))
+            .join("include")
+            .join(ember_branding::runtime_header());
+        let header = std::fs::read_to_string(&header_path).expect("the runtime header");
+        let spell = |text: &str| text.replace('$', ember_branding::RUNTIME_PREFIX);
+        for entry in FNS {
+            let (ret, params) = declared(&header, entry.name)
+                .unwrap_or_else(|| panic!("`{}` is not declared in the runtime header", entry.name));
+            assert_eq!(ret, spell(entry.ret), "the result of `{}`", entry.name);
+            let ours: Vec<String> = entry.params.iter().map(|param| spell(param)).collect();
+            assert_eq!(params, ours, "the parameters of `{}`", entry.name);
+            // Every type the table names parses.
+            let _ = c_type(entry.ret);
+            for param in entry.params {
+                let _ = c_type(param);
+            }
+        }
+        assert!(header.contains("#define EMBER_RUNTIME_ABI 3"), "the runtime ABI the entry point names (`rt_init_v3`)");
+    }
+}

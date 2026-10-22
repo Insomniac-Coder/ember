@@ -8,6 +8,7 @@ mod bench;
 mod cimport;
 mod comptime;
 mod foreign;
+mod llvm;
 mod packages;
 mod reload;
 pub mod session;
@@ -46,8 +47,9 @@ this compiler does not have yet):
                                                    builds the next image of a running program and
                                                    --explain predicts that reload; --build-id prints
                                                    the hash of the build's inputs; --report=engine
-                                                   what the build did to the program (--target and
-                                                   --backend llvm are not built yet)
+                                                   what the build did to the program (--target is
+                                                   not built yet; --backend llvm builds programs
+                                                   through Clang, the C backend stays the default)
     ember check [file.em] [--syntax-only] [--timings]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
@@ -105,7 +107,8 @@ options:
     --emit-optimization-report        list the calls made direct on the whole program's word
     --timings[=json]                  each stage's time, module by module where it runs so
     --syntax-only                     lex and parse only; report E00xx/E01xx
-    --backend c                       the only backend in v1
+    --backend c|llvm                  default: c, or the manifest's `[build] backend`; llvm
+                                      writes LLVM IR (`--emit llvm-ir`) that Clang compiles
     --cc msvc|clang|gcc|clang-cl      override C compiler detection
     --out-dir <dir>                   default: target/; libraries and headers in <profile>/lib/
     --leak-check                      `run` and `test`: report leaked ownership cycles at exit
@@ -491,6 +494,8 @@ struct Options {
     generics_report: bool,
     /// `[DOC-3]` — `ember doc`: check, then print each view contract.
     doc_report: bool,
+    /// `[CG-LL-1]` — `--backend c|llvm`; the manifest's `[build] backend` when absent.
+    backend: Option<String>,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -3371,9 +3376,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
                 let backend = value(&mut index, arg)?;
-                if backend != "c" {
-                    return Err("the only backend in v1 is `c`; LLVM is v2".to_string());
+                if !matches!(backend.as_str(), "c" | "llvm") {
+                    return Err(format!("the backend is `c` or `llvm`, not `{backend}`"));
                 }
+                options.backend = Some(backend);
             }
             "--syntax-only" => options.syntax_only = true,
             "--json" => options.json = true,
@@ -5501,6 +5507,22 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // inlining hints, and the classes no handle copy ever shares.
     if let Some(engine) = engine.as_mut() {
         engine.gather_final(&bodies, &types, &modules, &map);
+    }
+    // `[CG-LL-1]` — the LLVM backend, where the command line or the manifest asks for it.
+    if llvm::selected(options, manifest.as_deref())? {
+        let request = llvm::Build {
+            mir: verified_mir,
+            map: &map,
+            module_name: &module_name,
+            has_main: program.main.is_some() && !library && command != "test",
+            command,
+            library,
+            reload: reload_image.is_some(),
+            bodies: &bodies,
+            input,
+            manifest: manifest.as_deref(),
+        };
+        return llvm::build(request, options, &sink);
     }
     let emitted = ember_codegen_c::emit(
         verified_mir,
