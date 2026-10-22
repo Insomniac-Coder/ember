@@ -350,22 +350,20 @@ fn the_manifest_names_the_language() {
 
 /// `[ALC-3]` (ODR-175) — a binary package replaces the global allocator with `[build]
 /// global_allocator = "module.NAME"`, naming a `static` whose type implements `std.mem.Allocator`:
-/// every allocation the program makes goes through it (here a counting one over C's `malloc`), the
-/// runtime's own included. A static of another type is `E2040`; a library naming one, a module the
+/// every allocation the program makes goes through it (here a counting one wrapping `System()`, the
+/// platform's allocator, ODR-239), the runtime's own included. A static of another type is `E2040`; a library naming one, a module the
 /// package does not have, or a name that is not a static, is `E9001` at the key.
 #[test]
 fn a_binary_package_replaces_the_global_allocator() {
-    let heap = "from std.mem import Allocator, Layout\nfrom std.sync import Atomic\n\n\
-                unsafe extern \"C\":\n    fn malloc(size: usize) -> *mut u8\n    fn free(p: *mut u8)\n\n\
+    let heap = "from std.mem import Allocator, Layout, System\nfrom std.sync import Atomic\n\n\
                 pub struct Counting:\n    pub blocks: Atomic[int]\n\n\
                 pub static COUNTING: Counting = Counting(Atomic(0))\n\n\
                 pub struct Plain:\n    pub n: int\n\npub static PLAIN: Plain = Plain(1)\n\n\
-                # SAFETY: `malloc` gives blocks aligned for any type up to 16 bytes, and larger alignments get null.\n\
+                # SAFETY: every block is `System`'s, whose promises it keeps; this only counts them.\n\
                 unsafe extend Counting implements Allocator:\n    \
-                fn allocate(self, layout: Layout) -> *mut u8:\n        if layout.align > 16:\n            return null[*mut u8]()\n        \
-                self.blocks.fetch_add(1)\n        # SAFETY: `malloc` takes any size.\n        unsafe:\n            return malloc(layout.size)\n\n    \
-                fn deallocate(self, p: *mut u8, layout: Layout):\n        # SAFETY: `p` came from `malloc`.\n        unsafe:\n            free(p)\n\n    \
-                fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        return null[*mut u8]()\n";
+                fn allocate(self, layout: Layout) -> *mut u8:\n        self.blocks.fetch_add(1)\n        return System().allocate(layout)\n\n    \
+                fn deallocate(self, p: *mut u8, layout: Layout):\n        System().deallocate(p, layout)\n\n    \
+                fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:\n        self.blocks.fetch_add(1)\n        return System().reallocate(p, old, new_size)\n";
     let main = "import heap\n\nfn main():\n    words: Array[String] = []\n    for i in 0..50:\n        words.push(f\"word {i}\")\n    \
                 println(words.len(), heap.COUNTING.blocks.load() >= 50)\n";
     let manifest = |kind: &str, named: &str| format!("[package]\nname = \"app\"\nkind = \"{kind}\"\n\n[build]\nglobal_allocator = \"{named}\"\n");

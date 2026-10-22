@@ -1315,6 +1315,12 @@ void* ember_try_alloc(size_t size, size_t align);
  * `min(old_size, new_size)` of `p`'s, `p` freed; NULL, with `p` left as it was, when there is no
  * memory. */
 void* ember_try_realloc(void* p, size_t old_size, size_t new_size, size_t align);
+/* [ALC-2] (ODR-239) `std.mem.System`: the platform's allocator, the one the runtime uses when no
+ * global allocator is configured; these never reach a configured one, so a global allocator may
+ * wrap them. Null when there is no memory; a failed reallocation leaves `p` as it was. */
+void* ember_system_alloc(size_t size, size_t align);
+void ember_system_free(void* p, size_t size, size_t align);
+void* ember_system_realloc(void* p, size_t old_size, size_t new_size, size_t align);
 /* IX.1: allocate one uniquely owned value and move its object bytes into the
  * allocation. The compiler remains responsible for source move state and for
  * running the payload destructor before ember_free. */

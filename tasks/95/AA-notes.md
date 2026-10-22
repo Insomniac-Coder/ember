@@ -131,6 +131,12 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
     `ember_driver/tests/package.rs`, `a_binary_package_replaces_the_global_allocator` (a counting
     allocator over C's `malloc`: 50 strings, at least 50 blocks through it; the four refusals).
     `phase-status.json`: `ALC-3` removed.
+  * ODR-239 (the lead's ruling on question 1, option (b)): `std.mem.System`, the platform's
+    allocator (C's `malloc`, `realloc`, `free`, aligned as asked; runtime `ember_system_alloc`,
+    `_free`, `_realloc`), which no configured allocator reaches, so a global allocator wraps it;
+    `Global` stays the configured one, and its documentation says a global allocator delegating to
+    it recurses. The package test's counting allocator now wraps `System()` (was C's `malloc`);
+    `ALC-2/accept_an_unsafe_extend_implements_allocator.em` round-trips `System()` too.
 * **`[JOB-5]`** — `jobs.local_arena() -> ScopedArena`: a scope of the running job's arena, one
   per thread (made on first use, `ember_job_local_arena`), which `job_run` rewinds to where it
   stood when the job began (a thread that helps while waiting runs nested jobs, each rewinding its
@@ -212,6 +218,8 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `GlobalAllocate`, `GlobalDeallocate`, `GlobalReallocate`. Runtime: `ember_try_realloc`.
   `ember_driver`: `inject_global_allocator`, the `[build]` key. `ember_branding`:
   `global_allocator_glue`. `ember_codegen_c`: `cfg.alloc`/`cfg.free` in the entry point.
+  ODR-239: `ember_hir::RuntimeFn` `SystemAllocate`, `SystemDeallocate`, `SystemReallocate`;
+  runtime `ember_system_alloc`/`_free`/`_realloc`; std `System`.
 * `W2192` moved to the `Types` range, as the lead asked (`numbers_fall_in_their_subsystem_range`).
 * `[JOB-5]`: `ember_hir::Builtin::JobLocalArena`; `ember_typeck` `synth_jobs_local_arena`,
   `arena_anchors`/`declare_arena_anchors` (functions and lambdas); `ember_types::JOB_ARENA_ANCHOR`
@@ -240,15 +248,8 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
 
 ## Questions
 
-1. **What may a global allocator allocate from?** ODR-175 makes `Global` "the runtime's", and the
-   runtime allocates through the package's global allocator once one is named, so an allocator
-   that delegates to `Global()` (a counting or tracing one) recurses until the stack overflows.
-   Built: `Global` is the runtime's as configured (Rust's `Global`), and the test's allocator gets
-   its memory from C's `malloc`. Options: (a) as built, documented; (b) a `std.mem.System`, the
-   platform's allocator the runtime uses by default, for a global allocator to wrap (Rust's
-   `System`); (c) `Global` is always the platform's, and the configured allocator is reached only
-   through the runtime's own allocations. **Recommend (b)**: a decorating allocator is the common
-   case, and (c) would make `Array[T, Global]` bypass the package's allocator.
+1. ~~What may a global allocator allocate from?~~ Ruled ODR-239 (option (b), `std.mem.System`);
+   built.
 2. **The twins `[STD-14]` asks for that std does not have.** A caller's bug panics "and has a
    non-panicking twin"; these have none: `range(...).stepped(0)`, `BitSet.insert` of a negative,
    `Entity.new` out of range, `World.add` to a dead entity, `CppShared.get` of an empty pointer,

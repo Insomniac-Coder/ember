@@ -2790,6 +2790,29 @@ void* ember_try_realloc(void* p, size_t old_size, size_t new_size, size_t align)
     return fresh;
 }
 
+/* [ALC-2] (ODR-239) `std.mem.System`: the platform's allocator, as `raw_alloc` and `raw_free`
+ * use it; a plain block grows in place when it can. */
+void* ember_system_alloc(size_t size, size_t align) {
+    return raw_alloc(size, align);
+}
+
+void ember_system_free(void* p, size_t size, size_t align) {
+    (void)size;
+    raw_free(p, align);
+}
+
+void* ember_system_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
+    if (p != NULL && align <= EMBER_MALLOC_ALIGN) {
+        return realloc(p, new_size == 0 ? 1 : new_size);
+    }
+    void* fresh = raw_alloc(new_size, align);
+    if (fresh != NULL && p != NULL) {
+        memcpy(fresh, p, old_size < new_size ? old_size : new_size);
+        raw_free(p, align);
+    }
+    return fresh;
+}
+
 void ember_debug_alloc_stats(ember_alloc_stats* out) {
     if (out) {
         *out = g_stats;

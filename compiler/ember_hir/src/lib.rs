@@ -1341,10 +1341,15 @@ pub enum RuntimeFn {
     GlobalAllocate,
     GlobalDeallocate,
     GlobalReallocate,
+    /// `[ALC-2]` (ODR-239) — `std.mem.System`'s: the platform's allocator, which a configured
+    /// global allocator never reaches.
+    SystemAllocate,
+    SystemDeallocate,
+    SystemReallocate,
 }
 
 impl RuntimeFn {
-    pub const ALL: [RuntimeFn; 26] = [
+    pub const ALL: [RuntimeFn; 29] = [
         RuntimeFn::Entropy,
         RuntimeFn::ProcessExit,
         RuntimeFn::ProcessAbort,
@@ -1371,6 +1376,9 @@ impl RuntimeFn {
         RuntimeFn::GlobalAllocate,
         RuntimeFn::GlobalDeallocate,
         RuntimeFn::GlobalReallocate,
+        RuntimeFn::SystemAllocate,
+        RuntimeFn::SystemDeallocate,
+        RuntimeFn::SystemReallocate,
     ];
 
     /// The standard declaration a call names.
@@ -1402,6 +1410,9 @@ impl RuntimeFn {
             RuntimeFn::GlobalAllocate => "std.mem.global_allocate",
             RuntimeFn::GlobalDeallocate => "std.mem.global_deallocate",
             RuntimeFn::GlobalReallocate => "std.mem.global_reallocate",
+            RuntimeFn::SystemAllocate => "std.mem.system_allocate",
+            RuntimeFn::SystemDeallocate => "std.mem.system_deallocate",
+            RuntimeFn::SystemReallocate => "std.mem.system_reallocate",
         }
     }
 
@@ -1434,6 +1445,9 @@ impl RuntimeFn {
             RuntimeFn::GlobalAllocate => "try_alloc",
             RuntimeFn::GlobalDeallocate => "free",
             RuntimeFn::GlobalReallocate => "try_realloc",
+            RuntimeFn::SystemAllocate => "system_alloc",
+            RuntimeFn::SystemDeallocate => "system_free",
+            RuntimeFn::SystemReallocate => "system_realloc",
         }
     }
 
@@ -1466,6 +1480,7 @@ impl RuntimeFn {
             RuntimeFn::TimeNow => (Effects::NONDET, "the monotonic clock"),
             RuntimeFn::TimeSleep => (Effects::BLOCK, "`time.sleep`"),
             RuntimeFn::GlobalAllocate | RuntimeFn::GlobalDeallocate | RuntimeFn::GlobalReallocate => (Effects::ALLOC, "the global allocator"),
+            RuntimeFn::SystemAllocate | RuntimeFn::SystemDeallocate | RuntimeFn::SystemReallocate => (Effects::ALLOC, "the platform's allocator"),
         }
     }
 }

@@ -1,15 +1,15 @@
 #$ test: run-pass
 #$ rules: ALC-2, TYP-43, UNS-1
 #$ profiles: debug, development, release
-#$ stdout: true true 3
+#$ stdout: true true true 3
 ## `[ALC-2]` (ODR-175) — `std.mem.Allocator` is an `unsafe interface`: `allocate(self, layout:
 ## Layout) -> *mut u8` (null when there is no memory), `deallocate(self, p, layout)` and
 ## `reallocate(self, p, old, new_size) -> *mut u8`. Implementing it is `unsafe`
 ## (`unsafe extend T implements Allocator:`, `[TYP-43]` as amended), its implementer promising
-## valid, aligned, unaliased memory. `Global` is the runtime's. A generic function bounded by
-## `Allocator` takes either.
+## valid, aligned, unaliased memory. `Global` is the runtime's, `System` the platform's (ODR-239).
+## A generic function bounded by `Allocator` takes any of them.
 
-from std.mem import Allocator, Layout, Global
+from std.mem import Allocator, Layout, Global, System
 from std.sync import Atomic
 
 struct Counting:
@@ -39,4 +39,4 @@ fn round_trip[A: Allocator](a: A) -> bool:
 
 fn main():
     counting = Counting(Atomic(0))
-    println(round_trip(Global()), round_trip(counting), counting.calls.load())
+    println(round_trip(Global()), round_trip(System()), round_trip(counting), counting.calls.load())

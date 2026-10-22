@@ -84,9 +84,11 @@ pub unsafe interface Allocator:
     fn deallocate(self, p: *mut u8, layout: Layout)
     fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8
 
-## `[ALC-2]` — the runtime's allocator: the one every heap type uses unless the package names
-## another (`[build] global_allocator`, `[ALC-3]`) or its embedding host passes its own
-## functions to `ember_rt_init` (`[FFI-27]`).
+## `[ALC-2]` — the runtime's allocator: the one every heap type uses, which is the package's global
+## allocator when it names one (`[build] global_allocator`, `[ALC-3]`) or the functions its
+## embedding host passes to `ember_rt_init` (`[FFI-27]`), and `System` otherwise. A global
+## allocator that delegates to `Global` calls itself until the stack overflows: it wraps `System`
+## (ODR-239).
 pub struct Global:
     pass
 
@@ -114,6 +116,39 @@ fn global_deallocate(p: *mut u8, size: usize, align: usize):
 
 ## The runtime's: it allocates the new block and gives the old one back, or gives null.
 fn global_reallocate(p: *mut u8, old_size: usize, new_size: usize, align: usize) -> *mut u8:
+    return null[*mut u8]()
+
+## `[ALC-2]`, `[ALC-3]` (ODR-239) — the platform's allocator (C's `malloc`, `realloc` and `free`,
+## aligned as asked): the one the runtime uses when no global allocator is named, and the one a
+## global allocator wraps, as a counting or tracing one does, since nothing configured reaches it.
+pub struct System:
+    pass
+
+# SAFETY: the platform's allocator gives valid, aligned, unaliased blocks, or null.
+unsafe extend System implements Allocator:
+    ## A block the platform allocates, or null.
+    fn allocate(self, layout: Layout) -> *mut u8:
+        return system_allocate(layout.size, layout.align)
+
+    ## Gives a block back to the platform's allocator, which allocates and frees them.
+    fn deallocate(self, p: *mut u8, layout: Layout):
+        system_deallocate(p, layout.size, layout.align)
+
+    ## The block grown or shrunk in place, or a new one the platform allocates holding the first
+    ## bytes of `p` (`p` then given back); or null, `p` as it was.
+    fn reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8:
+        return system_reallocate(p, old.size, new_size, old.align)
+
+## The runtime's: the platform allocates a block, or gives null when there is no memory.
+fn system_allocate(size: usize, align: usize) -> *mut u8:
+    return null[*mut u8]()
+
+## The runtime's: a block given back to the platform's allocator, which allocates them.
+fn system_deallocate(p: *mut u8, size: usize, align: usize):
+    pass
+
+## The runtime's: the platform allocates the grown block, or gives null.
+fn system_reallocate(p: *mut u8, old_size: usize, new_size: usize, align: usize) -> *mut u8:
     return null[*mut u8]()
 
 ## `[ALC-3]` — what a binary package's global allocator is reached through: the C functions the
