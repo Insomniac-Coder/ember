@@ -23,6 +23,18 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   the signature); plus the existing table tests. Conformance: `tests/conformance/HR-14/`
   (`accept_payload_field_renamed_from.em`, `reject_attribute_on_payload_field.em`).
 
+* **HR-13** — built and tested. `compiler/ember_driver/tests/reload.rs`,
+  `value_data_migrates_through_its_container`: structs by value in an `Array` a static holds; in an
+  `Array` class instances hold; in a fixed array (in place); in an `Array` of `Array`s; unit enums
+  in an `Array` (reordered: kept by name; a held variant removed: refused, "an element of a
+  container"); payload enums in an `Array`; `SoA` columns (a scalar field added; a column of a
+  package struct grown, migrated depth-first); ECS storage (`AosStorage` and `SoaStorage` of
+  components, reached through a `World`); arena contents (a collection of an arena is a view no
+  class object or static may hold, `E3063`/`E7002`, so a poll never meets one; held by a frame
+  below a checkpoint, the change is refused by `[HR-3b]`). `[HR-13a]` extended: a
+  standard-library class holding the package's types or references now has a schema the package
+  emits.
+
 ## Compiler changes
 
 * HR-23: `cimport.rs` (`import_cached` returns a hash over every file the header included),
@@ -53,6 +65,22 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   reference (`EMBER_RL_LAYOUT_ABI`) and records a hash of a type's layout attributes alone
   (`ember_rl_type.attributes`); plan refuses a changed attribute on such a type whether or not a
   value lives.
+* HR-13: an `Array`'s and a fixed array's schema hash includes its element's (a container of a
+  changed type holds values to migrate). Codegen describes a container's element with a row of its
+  own (`inner`, by `field_shape`, with the buffer's alignment `align`); new field kinds `FIXED`
+  (elements in place) and `SOA` (`layout` describes the `SoA`'s own struct: each column pointer
+  with `within`, where its value sits in a whole element, then `len` and `cap`; the type's new
+  `columns` member is the image's `<SoA>_layout`). The runtime has `RL_ELEMENTS` (each element by
+  its row: plan, removed-variant and range checks, migration into a buffer the transaction arena
+  holds, reclaim of the old buffer) and `RL_COLUMNS` (each `SoA` element gathered into a whole old
+  element, migrated by the element type's schema, scattered into a block the new image lays out;
+  the old block freed by the old image's layout); the reference walk follows `FIXED` and `SOA`
+  values. "Contained" (refused) structs are now only those held where a reload cannot reach (in a
+  tuple, a closure's captures, a type with no schema), found by a walk down from such holders; a
+  raw pointer type that only an `SoA`'s own struct holds no longer makes its pointee "foreign".
+  Classes with a schema: the package's, and standard-library classes holding the package's types,
+  an `SoA` of them, or references. A struct or enum with no schema that holds references is now
+  described to the runtime (followed) instead of opaque.
 * Runtime: the runtime C is generated from `runtime/ember_rt/templates/*.in`
   (`tools/generate_runtime.py`); every runtime change is in the templates, regenerated.
 
@@ -75,6 +103,15 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
    `(self, default)` in `Option.unwrap_or`) made the struct "contained" and its every change
    refused. Only a holder whose values can outlive a call counts now (held by another type, a
    closure's captured state, a static).
+5. `[HR-11a]`/`[HR-13]` an `Array` of unit enums whose variants were reordered kept its old
+   discriminants (the `Array`'s schema hash was its name only, so nothing migrated): wrong
+   variants after the reload. Fixed by element schemas; test `value_data_migrates_through_its_container`.
+6. `[HR-13]` a component in an `SoA` (`SoaStorage`, `SoA[T]`) whose fields changed was neither
+   migrated nor refused (the `SoA`'s struct holds column pointers, which mention no package type):
+   old columns under the new layout. Fixed by `RL_COLUMNS`.
+7. Codegen: `reload_layout_table` named its table before describing its members, so a member's
+   own table could take the same name (`em_rl_layout_0` defined twice) once more types were
+   described. Named after its members now.
 
 ## Defects suspected (not verified)
 
@@ -99,4 +136,7 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
 
 ## Not done yet
 
-HR-1, HR-9, HR-13, HR-20, HR-22, HR-24, HR-39, HR-41, HR-43 — in progress below.
+HR-1, HR-9, HR-20, HR-22, HR-24, HR-39, HR-41, HR-43 — in progress.
+
+One transient failure seen once and not again (four reruns): a reload build in
+`value_data_migrates_through_its_container` exited -1 with no output.

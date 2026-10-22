@@ -495,7 +495,7 @@ fn host_run(label: &str, source: &str, edits: &[&str], frames: u32) -> Run {
     for edit in edits {
         std::fs::write(&file, edit).expect("the edit is writable");
         let reloaded = ember(&["build", "--reload", &file_arg, "--out-dir", &out_arg], &root);
-        assert_eq!(reloaded.exit, 0, "the reload build failed:\n{}", reloaded.stderr);
+        assert_eq!(reloaded.exit, 0, "{label}: the reload build failed:\n{}{}", reloaded.stdout, reloaded.stderr);
     }
     let program = link_host(&package, &out, FRAME_HOST);
     quiet_errors();
@@ -760,6 +760,135 @@ fn an_enum_payload_migrates_by_the_field_rows() {
         .replace("p.spot.unwrap_or(Point()).y", "p.spot.unwrap_or(Point()).y + p.spot.unwrap_or(Point()).z");
     let run = host_run("reload-payload-struct", &spotted, &[&grown], 3);
     assert_eq!(run.stdout, "15\napplied, 3 migrated\n168\n171\n", "{}", run.stderr);
+}
+
+/// The value-data program: `Point`s by value in an `Array` a static holds, each moved on by every
+/// frame.
+const POINTS: &str = "from std.sync import Mutex\n\nstruct Point:\n    x: int = 0\n    step: int = 1\n\n\
+    static PTS: Mutex[Array[Point]] = Mutex([])\n\n\
+    @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with pts = PTS.lock():\n        \
+    if pts.len() == 0:\n            for k in 0..3:\n                pts.push(Point())\n        \
+    for i in 0..pts.len():\n            pts[i].x += pts[i].step\n            total += pts[i].x\n    return total\n\nfn main():\n    pass\n";
+
+/// `[HR-13]` — value-typed data is migrated through its container: `Point`s by value in an `Array`
+/// a static holds take a field added with a default, each element rebuilt into a buffer of the new
+/// size, their state kept; in an `Array` a class's instances hold, likewise; in a fixed array, in
+/// place; in an `Array` of `Array`s, element by element; unit enums in an `Array` keep their
+/// variants by name (`[HR-11a]`), and one whose variant was removed is refused, naming it; enums
+/// with payloads in an `Array` migrate by the field rows (`[HR-14]`).
+#[test]
+fn value_data_migrates_through_its_container() {
+    let grown = |source: &str| source.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n").replace("total += pts[i].x", "total += pts[i].x + pts[i].bonus");
+    let run = host_run("reload-array-static", POINTS, &[&grown(POINTS)], 3);
+    assert_eq!(run.stdout, "3\napplied, 0 migrated\n306\n309\n", "{}", run.stderr);
+
+    // In a class's instances.
+    let marked = PARTICLES
+        .replace("@sync\nclass Particle:\n", "struct Mark:\n    w: int = 1\n\n@sync\nclass Particle:\n    marks: Array[Mark] = [Mark(), Mark()]\n")
+        .replace("total += p.x.load()", "total += p.x.load() + p.marks[0].w + p.marks[1].w");
+    let remarked = marked.replace("    w: int = 1\n", "    w: int = 1\n    z: int = 10\n").replace("p.marks[1].w", "p.marks[1].w + p.marks[1].z");
+    let run = host_run("reload-array-instances", &marked, &[&remarked], 3);
+    assert_eq!(run.stdout, "9\napplied, 3 migrated\n42\n45\n", "{}", run.stderr);
+
+    // A fixed array, in place.
+    let fixed = POINTS
+        .replace("static PTS: Mutex[Array[Point]] = Mutex([])", "struct Pair:\n    two: [Point; 2]\n\nstatic PTS: Mutex[Pair] = Mutex(Pair(two = [Point(), Point()]))")
+        .replace(
+            "        if pts.len() == 0:\n            for k in 0..3:\n                pts.push(Point())\n        for i in 0..pts.len():\n            pts[i].x += pts[i].step\n            total += pts[i].x\n",
+            "        for i in 0..2:\n            pts.two[i].x += pts.two[i].step\n            total += pts.two[i].x\n",
+        );
+    let refixed = fixed.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n").replace("total += pts.two[i].x", "total += pts.two[i].x + pts.two[i].bonus");
+    let run = host_run("reload-array-fixed", &fixed, &[&refixed], 3);
+    assert_eq!(run.stdout, "2\napplied, 0 migrated\n204\n206\n", "{}", run.stderr);
+
+    // An `Array` of `Array`s.
+    let rows = POINTS
+        .replace("Mutex[Array[Point]]", "Mutex[Array[Array[Point]]]")
+        .replace("                pts.push(Point())\n", "                pts.push([Point()])\n")
+        .replace("            pts[i].x += pts[i].step\n            total += pts[i].x\n", "            pts[i][0].x += pts[i][0].step\n            total += pts[i][0].x\n");
+    let rerows = rows.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n").replace("total += pts[i][0].x", "total += pts[i][0].x + pts[i][0].bonus");
+    let run = host_run("reload-array-rows", &rows, &[&rerows], 3);
+    assert_eq!(run.stdout, "3\napplied, 0 migrated\n306\n309\n", "{}", run.stderr);
+
+    // Unit enums: reordered, kept by name; removed while held, refused.
+    let modes = "from std.sync import Mutex\n\nenum Mode:\n    Slow\n    Fast\n\nstatic MODES: Mutex[Array[Mode]] = Mutex([])\n\n\
+                 fn speed(mode: Mode) -> int:\n    match mode:\n        Mode.Slow:\n            return 1\n        Mode.Fast:\n            return 10\n\n\
+                 @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with modes = MODES.lock():\n        \
+                 if modes.len() == 0:\n            modes.push(Mode.Slow)\n            modes.push(Mode.Fast)\n        \
+                 for m in modes:\n            total += speed(m)\n    return total + turn * 100\n\nfn main():\n    pass\n";
+    let reordered = modes
+        .replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Fast\n    Turbo\n    Slow\n")
+        .replace("        Mode.Fast:\n            return 10\n", "        Mode.Fast:\n            return 10\n        Mode.Turbo:\n            return 50\n");
+    let run = host_run("reload-array-modes", modes, &[&reordered], 2);
+    assert_eq!(run.stdout, "11\napplied, 0 migrated\n111\n", "{}", run.stderr);
+    let removed = modes.replace("enum Mode:\n    Slow\n    Fast\n", "enum Mode:\n    Slow\n").replace("            modes.push(Mode.Fast)\n", "").replace("        Mode.Fast:\n            return 10\n", "");
+    let run = host_run("reload-array-modes-removed", modes, &[&removed], 2);
+    assert!(run.stdout.contains("variant `Mode.Fast` was removed while static `MODES` holds it (an element of a container)"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("111\n"), "the old code did not run on: {}", run.stdout);
+
+    // Enums with payloads.
+    let shapes = "from std.sync import Mutex\n\nenum Shape:\n    Dot\n    Circle(r: int)\n\nstatic SHAPES: Mutex[Array[Shape]] = Mutex([])\n\n\
+                  fn size(s: Shape) -> int:\n    match s:\n        Shape.Dot:\n            return 0\n        Shape.Circle(r):\n            return r\n\n\
+                  @export(\"game_frame\")\nextern \"C\" fn frame(turn: i64) -> i64:\n    total: i64 = 0\n    with shapes = SHAPES.lock():\n        \
+                  if shapes.len() == 0:\n            shapes.push(Shape.Circle(4))\n            shapes.push(Shape.Dot)\n        \
+                  for s in shapes:\n            total += size(s)\n    return total + turn * 100\n\nfn main():\n    pass\n";
+    let reshaped = shapes
+        .replace("    Circle(r: int)\n", "    Circle(r: int, scale: i64)\n    Square(side: int)\n")
+        .replace("        Shape.Circle(r):\n            return r\n", "        Shape.Circle(r, scale):\n            return r * 10 + scale\n        Shape.Square(side):\n            return side\n")
+        .replace("Shape.Circle(4)", "Shape.Circle(4, 1)");
+    let run = host_run("reload-array-shapes", shapes, &[&reshaped], 2);
+    assert_eq!(run.stdout, "4\napplied, 0 migrated\n140\n", "{}", run.stderr);
+
+    // `SoA` columns: each element gathered from the old columns, migrated, and scattered into a
+    // block of the new ones.
+    let columns = POINTS
+        .replace("struct Point:\n", "@derive(Copy)\nstruct Point:\n")
+        .replace("static PTS: Mutex[Array[Point]] = Mutex([])", "static PTS: Mutex[SoA[Point]] = Mutex(SoA[Point].with_capacity(0))");
+    let run = host_run("reload-soa-static", &columns, &[&grown(&columns)], 3);
+    assert_eq!(run.stdout, "3\napplied, 0 migrated\n306\n309\n", "{}", run.stderr);
+    // A column of a struct of the package's, migrated depth-first.
+    let nested = columns
+        .replace("@derive(Copy)\nstruct Point:\n", "@derive(Copy)\nstruct Inner:\n    v: int = 2\n\n@derive(Copy)\nstruct Point:\n    inner: Inner = Inner()\n")
+        .replace("total += pts[i].x", "total += pts[i].x + pts[i].inner.v");
+    let renested = nested.replace("    v: int = 2\n", "    v: int = 2\n    w: int = 50\n").replace("pts[i].inner.v", "pts[i].inner.v + pts[i].inner.w");
+    let run = host_run("reload-soa-nested", &nested, &[&renested], 3);
+    assert_eq!(run.stdout, "9\napplied, 0 migrated\n162\n165\n", "{}", run.stderr);
+
+    // ECS storage (`[HR-13a]`): a component's `AosStorage` and an `SoA` component's `SoaStorage`,
+    // standard-library classes whose schemas the package emits, migrate their values.
+    let ecs = "import std.hot\nfrom std.ecs import World, Component, AosStorage, SoaStorage\n\n\
+               @derive(Copy, Component)\nstruct Position:\n    x: int\n\n\
+               @derive(Copy, Component)\n@component(layout=soa)\nstruct Velocity:\n    dx: int\n\n\
+               fn setup(w: World):\n    for k in 0..3:\n        e = w.create()\n        w.add(e, Position(k))\n        w.add(e, Velocity(10))\n\n\
+               fn report(w: World) -> int:\n    total = 0\n    match w.storage[Position]():\n        Some(any):\n            \
+               ps = any as! AosStorage[Position]\n            for p in ps.dense:\n                total += p.x\n        None:\n            pass\n    \
+               match w.storage[Velocity]():\n        Some(any):\n            vs = any as! SoaStorage[Velocity]\n            \
+               for i in 0..vs.dense.len():\n                total += vs.dense[i].dx\n        None:\n            pass\n    return total\n\n\
+               fn main():\n    w = World()\n    setup(w)\n    for i in 0..2:\n        println(report(w))\n        hot.checkpoint()\n";
+    let grown_ecs = ecs
+        .replace("struct Position:\n    x: int\n", "struct Position:\n    x: int\n    y: int = 100\n")
+        .replace("struct Velocity:\n    dx: int\n", "struct Velocity:\n    dx: int\n    dy: int = 1000\n")
+        .replace("total += p.x\n", "total += p.x + p.y\n")
+        .replace("total += vs.dense[i].dx\n", "total += vs.dense[i].dx + vs.dense[i].dy\n");
+    let (run, reloads) = reload_run("reload-ecs-storage", RELOAD_ALL, ecs, &[&grown_ecs]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "33\n3333\n", "{}", run.stderr);
+
+    // Arena contents: an arena's collections are views (`[ARN-5]`), which no class object or
+    // static may hold (`E3063`, `E7002`), so a host's poll never meets one; a frame live below a
+    // checkpoint that holds one still depends on its elements' layout, and the change is refused
+    // (`[HR-3b]`) rather than leave old values under a new layout.
+    let arena = "import std.hot\nfrom std.collections import ArenaArray\n\nstruct Point:\n    x: int = 0\n    step: int = 1\n\n\
+                 fn tick(xs: ArenaArray[Point]) -> int:\n    total = 0\n    for p in xs.iter():\n        total += p.x + p.step\n    return total\n\n\
+                 fn main():\n    arena = Arena.with_capacity(4096)\n    xs: ArenaArray[Point] = ArenaArray[Point].with_capacity(arena, 4)\n    \
+                 for k in 0..3:\n        _pushed = xs.push(Point())\n    for i in 0..2:\n        println(tick(xs))\n        hot.checkpoint()\n";
+    let regrown = arena.replace("    step: int = 1\n", "    step: int = 1\n    bonus: int = 100\n").replace("total += p.x + p.step\n", "total += p.x + p.step + p.bonus\n");
+    let (run, reloads) = reload_run("reload-arena-frame", RELOAD_ALL, arena, &[&regrown]);
+    assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
+    assert_eq!(run.exit, 0, "{}", run.stderr);
+    assert_eq!(run.stdout, "3\n3\n", "the old code did not run on: {}", run.stderr);
+    assert!(run.stderr.contains("changed, and `main`, live below this checkpoint, still uses its old layout"), "{}", run.stderr);
 }
 
 /// `[HR-11a]`, `[HR-14]` — an enum value migrates by variant name: reordering the variants

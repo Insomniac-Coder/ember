@@ -2985,6 +2985,8 @@ struct ember_rl_field;
 #define EMBER_RL_KIND_TUPLE UINT32_C(9)         /* a tuple, or a struct described with it: `layout` */
 #define EMBER_RL_KIND_BOX UINT32_C(10)          /* a `Box`: a pointer to one value `inner` describes, null for `None` */
 #define EMBER_RL_KIND_CALLABLE UINT32_C(11)     /* an owned callable value: its descriptor's `captures` */
+#define EMBER_RL_KIND_FIXED UINT32_C(12)        /* a fixed array: its elements in place, each as `inner` says ([HR-13]) */
+#define EMBER_RL_KIND_SOA UINT32_C(13)          /* an `SoA[T]`: `T` is `element_type`, `layout` its struct's columns ([HR-13]) */
 
 /* [HR-11] A field of a schema: its name, the name `@renamed_from` gives its old self, its type, its
  * type's schema hash, its offset and size, and what it holds. [HR-15] A value no schema names (a
@@ -2992,7 +2994,11 @@ struct ember_rl_field;
  * it: `layout` is a `TUPLE`'s own field list, and `inner` an `ARRAY`'s element or a `BOX`'s pointee,
  * so a reload reads it as it was made, whatever the next image calls its types. [HR-14] A field of a
  * range type has `in_range`, which tells whether a value of its representation is in its range
- * (`T.checked`'s test); its flags are its representation's. */
+ * (`T.checked`'s test); its flags are its representation's. [HR-13] An `ARRAY`'s or a `FIXED`
+ * array's `inner`, when its elements migrate through it, describes one element by its schema, as a
+ * field at offset 0, with `align` the alignment of the buffer that holds them. An `SoA`'s column is
+ * a row of its struct's description: `offset` is where the column's pointer lives, `size` and
+ * `align` its values', and `within` where its value sits in a whole element. */
 typedef struct ember_rl_field {
     const char* name;
     const char* renamed_from;
@@ -3008,6 +3014,8 @@ typedef struct ember_rl_field {
     const struct ember_rl_type* layout;
     const struct ember_rl_field* inner;
     int (*in_range)(const void* value);
+    uint32_t align;
+    uint32_t within;
 } ember_rl_field;
 
 /* [HR-11] A variant of an enum's schema: its name, `@renamed_from`'s, its discriminant, its
@@ -3055,6 +3063,9 @@ typedef struct ember_rl_type {
     /* The hash of its layout attributes alone (`@packed`, `@align`, an enum's representation), 0
      * for none ([HR-14], [LAY-2]). */
     uint64_t attributes;
+    /* For an `SoA`'s struct: the image's layout of its one block for `cap` elements, each column's
+     * start in `at`, returning the block's size ([HR-13]). */
+    size_t (*columns)(size_t cap, size_t* at);
 } ember_rl_type;
 
 /* [HR-3b] (A1, ODR-133) What a checkpoint's frames still use. A function of a reloadable image with

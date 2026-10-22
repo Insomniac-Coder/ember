@@ -497,6 +497,7 @@ fn emit_with(
         reload_interface_ids: std::cell::RefCell::new(BTreeSet::new()),
         reload_shapes: BTreeMap::new(),
         reload_shapes_open: BTreeSet::new(),
+        reload_elements: BTreeMap::new(),
         reload_frame_layouts: BTreeMap::new(),
         reload_old_layouts: BTreeSet::new(),
         rl_sites: BTreeMap::new(),
@@ -924,6 +925,9 @@ struct Emitter<'a> {
     /// themselves.
     reload_shapes: BTreeMap<(Ty, bool), String>,
     reload_shapes_open: BTreeSet<Ty>,
+    /// `[HR-13]` — the rows describing a container's element by its schema, by element type, with
+    /// the row's kind.
+    reload_elements: BTreeMap<Ty, (String, &'static str)>,
     /// `[HR-3b]` (A1) — what each body depends on with its direct callees, what any old body may
     /// (a call through a function value), the current body's call sites by block, and whether the
     /// body being emitted keeps a frame record (`frames.rs`).
@@ -13473,6 +13477,7 @@ mod string_descriptor_view_parts_tests {
             reload_interface_ids: Default::default(),
             reload_shapes: BTreeMap::new(),
             reload_shapes_open: BTreeSet::new(),
+            reload_elements: BTreeMap::new(),
             reload_frame_layouts: BTreeMap::new(),
             reload_old_layouts: BTreeSet::new(),
             rl_sites: BTreeMap::new(),
