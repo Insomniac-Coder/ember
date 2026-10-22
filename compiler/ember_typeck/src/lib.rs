@@ -1249,6 +1249,9 @@ struct LocalFnSelf {
     /// (and in the capture probes), set for the final check of a body that
     /// captures.
     env: Option<Mode>,
+    /// While its body's captures are being found: whether it captures, and
+    /// so how it is called, is not known yet.
+    probing: bool,
 }
 
 #[derive(Clone)]
@@ -37715,15 +37718,34 @@ impl<'a> Checker<'a> {
     /// captures nothing, else through the environment it was itself given,
     /// as `synth_closure_call` passes one.
     fn synth_local_fn_self_call(&mut self, own: LocalFnSelf, args: &[ast::Arg], span: Span) -> Expr {
-        if own.depth != self.lambda_depth {
-            self.sink.emit(
-                Diagnostic::error(codes::E0900, span, format!("calling `{}` from a closure inside it is not supported yet", own.name))
-                    .note("a local function may call itself from its own body [GRM-28]; a lambda inside it would have to capture it"),
-            );
-            return Expr { ty: self.signatures[own.def.0 as usize].ret, kind: ExprKind::Error, span };
+        // While the local function's captures are being found, a closure inside it is made only
+        // to find its own: the call's arguments are read for theirs, and the call itself, whose
+        // form waits on what the function captures, is a placeholder that is never run (such a
+        // closure is never called).
+        if own.env.is_none() && own.probing && own.depth != self.lambda_depth {
+            for arg in args {
+                let _ = self.synth(&arg.value);
+            }
+            let ret = self.signatures[own.def.0 as usize].ret;
+            let never = self.synth_panic_or_assert("unreachable", &[], span).unwrap_or(Expr { ty: self.common.never, kind: ExprKind::Error, span });
+            return self.coerce(never, ret);
         }
         let Some(mode) = own.env else {
             return self.synth_known_function_call(own.def, args, span, false);
+        };
+        // `[GRM-28]`, `[CLO-2]` — from a closure inside it, the local function is called with its
+        // environment, which that closure captures (`local_fn_env_name`), through every closure
+        // between, as any capture.
+        let env = if own.depth == self.lambda_depth {
+            self.read_local_expecting(LocalId(0), span, None)
+        } else {
+            match self.resolve_capture(local_fn_env_name(own.name), span) {
+                Some(env) => env,
+                None => {
+                    self.error(codes::E1010, span, format!("cannot reach `{}` from here", own.name));
+                    return Expr { ty: self.signatures[own.def.0 as usize].ret, kind: ExprKind::Error, span };
+                }
+            }
         };
         self.check_unsafe_local_call(own.def, span);
         let signature: Vec<(Ty, Mode)> =
@@ -37733,7 +37755,6 @@ impl<'a> Checker<'a> {
             self.report_arity(own.def, format!("`{}`", own.name), signature.len(), args.len(), span);
             return Expr { ty: ret, kind: ExprKind::Error, span };
         }
-        let env = self.read_local_expecting(LocalId(0), span, None);
         let env = if matches!(self.types.kind(env.ty), TyKind::Ref { .. }) { self.read_through(env) } else { env };
         let environment = match mode {
             Mode::Mut => self.pass_receiver(env, Mode::Mut, span),
@@ -37820,7 +37841,7 @@ impl<'a> Checker<'a> {
             ret: decl.ret.clone(),
             body: ast::LambdaBody::Block(body.clone()),
         };
-        self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None });
+        self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None, probing: true });
         let unsafe_body = self.in_unsafe || decl.is_unsafe;
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, unsafe_body);
         let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
@@ -44617,12 +44638,20 @@ impl<'a> Checker<'a> {
         // shared borrow; `owned fn` captures by move/copy. The former remains
         // an ordinary loan, while the latter becomes an owned environment
         // field and therefore follows ordinary move/drop checking.
-        let outer: HashMap<Symbol, Ty> = self
+        let mut outer: HashMap<Symbol, Ty> = self
             .scopes
             .iter()
             .flat_map(|scope| scope.iter())
             .map(|(name, local)| (*name, self.locals[local.0 as usize].ty))
             .collect();
+        // `[CLO-2]` — a lambda inside a lambda captures what the enclosing one may: the
+        // enclosing function's locals too, reached through the enclosing lambda's own capture of
+        // them (which that capture then makes).
+        if let Some(watch) = &self.captures {
+            for (name, ty) in &watch.outer {
+                outer.entry(*name).or_insert(*ty);
+            }
+        }
         let owned_loop_borrowed_handles: HashSet<Symbol> = outer
             .keys()
             .filter(|name| {
@@ -44658,6 +44687,11 @@ impl<'a> Checker<'a> {
         // `extern "C" fn` parameter that `[CLO-3]` says accepts "only
         // capture-free closures and named functions".
         if captured.is_empty() {
+            if let Some(own) = self.local_fn_self.last_mut()
+                && reserved == Some(own.def)
+            {
+                own.probing = false;
+            }
             let watch = CaptureWatch {
                 outer,
                 owned_loop_borrowed_handles,
@@ -44853,6 +44887,7 @@ impl<'a> Checker<'a> {
             && reserved == Some(own.def)
         {
             own.env = Some(body_env_mode);
+            own.probing = false;
         }
         let (body, body_ty, locals, _) = self.check_lambda_body(
             lambda,
@@ -44897,9 +44932,15 @@ impl<'a> Checker<'a> {
         // the environment, so the source observes normal move semantics.
         let mut values = Vec::new();
         for (index, (name, ty)) in captured.iter().enumerate() {
-            let Some(local) = self.lookup(*name) else { continue };
-            let source_ty = self.locals[local.0 as usize].ty;
-            let place = Expr { ty: source_ty, kind: ExprKind::Local(local), span };
+            // A name the enclosing lambda captures is reached through its environment.
+            let place = match self.lookup(*name) {
+                Some(local) => Expr { ty: self.locals[local.0 as usize].ty, kind: ExprKind::Local(local), span },
+                None => match self.resolve_capture(*name, span) {
+                    Some(place) => place,
+                    None => continue,
+                },
+            };
+            let source_ty = place.ty;
             if owned {
                 values.push(if source_ty == *ty { place } else { self.read_through(place) });
             } else {
@@ -44962,6 +45003,17 @@ impl<'a> Checker<'a> {
                 Mode::Borrow | Mode::Owned => ty,
             };
             let local = self.declare(Some(name), local_ty, env_span);
+            // The environment is reached by its id (`resolve_capture`), never by its name: a
+            // capture the program calls `env` is the program's.
+            let own_body = self.local_fn_self.last().filter(|own| own.depth == self.lambda_depth && own.env.is_some()).map(|own| own.name);
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.remove(&name);
+                // `[GRM-28]` — a local function's own environment, under a name no program can
+                // write, so a closure inside it can capture it to call it.
+                if let Some(own) = own_body {
+                    scope.insert(local_fn_env_name(own), local);
+                }
+            }
             if mode == Mode::Borrow {
                 self.borrowed_params.insert(local);
             }
@@ -57739,6 +57791,11 @@ fn field_vis(kind: ast::VisKind) -> FieldVis {
 /// `[CLO-6]` — this syntax creates the implicit `CallableOnce` bound. The
 /// callable's own `fn(...)` type records its argument modes; the outer
 /// `owned` mode selects consumption of the callee value.
+/// `[GRM-28]` — the hidden name a local function's environment has in its body.
+fn local_fn_env_name(name: Symbol) -> Symbol {
+    Symbol::intern(&format!("\u{b7}env\u{b7}{name}"))
+}
+
 /// `[CLO-6]` (D-850) — a `once fn` parameter, whose call consumes it; an `owned f: fn(A) -> R`
 /// is called any number of times.
 fn is_owned_callable_param(param: &ast::Param) -> bool {

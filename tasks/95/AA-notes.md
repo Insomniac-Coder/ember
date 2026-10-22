@@ -88,6 +88,17 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `CLO-6a/reject_a_once_fn_value_where_fn_is_wanted.em`. `phase-status.json`: the `CLO-6a`
   entry removed. For the lead: `tools/phase_progress.py --check` now differs from the README
   (not mine to edit).
+* **`[GRM-28]` (part) and `[CLO-2]`** — a closure inside a local function may call it, from any
+  depth: it captures the local function's environment (under a name no program can write) through
+  every closure between; one that captures nothing is called directly. This needed a lambda
+  inside a lambda to capture the enclosing function's locals, which it could not (`E1010`): the
+  enclosing lambda now captures them for it, shared or mutable as the inner one uses them. While
+  a local function's captures are being found, a call to it from a closure inside it is a
+  placeholder never run (those probe closures are emitted and never called).
+  `GRM-28/accept_a_closure_inside_a_local_function_calls_it.em`,
+  `CLO-2/accept_a_lambda_inside_a_lambda_captures_the_functions_locals.em` (three profiles each);
+  `GRM-28/reject_the_local_function_forms_not_built.em` keeps the generic case only.
+  `phase-status.json`: `GRM-28` says what is built.
 
 ## Added to the job by the coordinator (owner answers, binding)
 
@@ -144,5 +155,12 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   (`f = fn(x: int):` / `seen += k`) was `E1010` "cannot find `k`": on the discovery pass the
   target `seen` is a placeholder, the assignment stopped at "not a place" before reading the
   right side, so `k` was never recorded as a capture. Covered by the GRM-17 case above.
+* **AA2 — fixed.** A lambda inside a lambda could not capture a local of the enclosing function
+  (`g = fn(y) => x * y + k` inside `f`: "cannot find `k`").
+* **AA3 — fixed.** A capture named `env` resolved to the closure's own environment parameter
+  (`env = 5; f = fn() => env + 1` was "`+` cannot be applied to `lambda`").
+* **AA4 — not fixed.** `map(fn(w: ref String) => w)` (no result type written) reads the reference
+  through and moves the `String` out of the borrowed parameter (`E3013`); `-> ref String` written
+  compiles. A lambda body's type with nothing expected should be the parameter's, `ref String`.
 
 ## Questions
