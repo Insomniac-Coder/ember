@@ -492,3 +492,24 @@ program runs one.
 
 Also: an export taking a `VaList` or a `c_longdouble` now gets a header (the runtime header's
 `ember_va_list`; C's `long double`); it was "no supported public C declaration".
+
+## AB12. `[FFI-11]`, `[FFI-21]` — a C++ function's callbacks with user data
+
+**Built.** An overlay entry's `callback(borrowed | once | retained, user_data=q)` on a C++
+function's function-pointer parameter works as on a C function's: the importer's wrapper takes the
+callable (`fn(c_int)`, the C function pointer's type without its one parameter of `q`'s type;
+`once fn` for `once`) and leaves `q` out of its signature, and the thunk's declaration carries the
+contract, so the type checker's callback machinery (an instance per callable, a trampoline, no
+allocation for `borrowed`) applies unchanged; an entry's `@ffi(destroys(f))` names the C++
+function's declaration (`<prefix>_raw_f`). Test: `FFI-21/accept_a_cpp_callback_with_user_data.em`
+(`listeners.hpp`, `overlays/listeners.em`: a borrowed lambda and a local function writing the
+caller's locals, a `retained` listener whose token's end unregisters it); passes in WSL too.
+
+**Question (not built): a `nullable` callback with user data.** The callable a caller passes is a
+`[CLO-3]` bound (an implicit generic, monomorphised per callable), and `None` names no callable to
+infer it from. Options: (a) `Option[fn(A) -> R]`, a callable *value* (not a bound): `None` passes C
+null for the pointer and the data, `Some(f)` calls through the value's entry (one indirect call per
+callback, where the bound calls the lambda directly); (b) a rule defaulting an uninferred callable
+bound to "none", so `None` needs no type (a language change); (c) leave it refused (`E0900`) and
+let a header give two functions. Recommendation: (a), the cost being what a nullable callback asks
+for.

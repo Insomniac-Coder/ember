@@ -6684,6 +6684,40 @@ fn safe_parameter(name: &str, ty: &CType, words: &[String]) -> String {
     format!("{name}: {}", optional(base))
 }
 
+/// `[FFI-21]` — the user data a `callback(…, user_data=q)` word names.
+fn callback_user_data(written: &str) -> Option<String> {
+    let inner = written.trim().strip_prefix("callback(")?;
+    let (_, rest) = inner.split_once("user_data")?;
+    let name = rest.trim_start().strip_prefix('=')?.trim_start();
+    Some(name.split(|c: char| !(c.is_alphanumeric() || c == '_')).next()?.to_string())
+}
+
+/// `[FFI-21]` — the callable a callback with user data is to its caller: the C function pointer's
+/// type (`extern "C" fn(*mut void, c_int) -> R`) without its one parameter of the user data's type,
+/// a `once fn` for a `once` callback.
+fn callable_of(function: &str, data: &str, once: bool) -> Option<String> {
+    let (_, rest) = function.split_once("fn(")?;
+    let (inside, after) = rest.rsplit_once(')')?;
+    let (mut parts, mut depth, mut start) = (Vec::new(), 0, 0);
+    for (at, c) in inside.char_indices() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(inside[start..at].trim().to_string());
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    if !inside.trim().is_empty() {
+        parts.push(inside[start..].trim().to_string());
+    }
+    let slot = parts.iter().position(|part| part == data)?;
+    parts.remove(slot);
+    Some(format!("{}fn({}){after}", if once { "once " } else { "" }, parts.join(", ")))
+}
+
 /// `[FFI-11]` — the Ember type a contracted pointer result is: shared unless `exclusive`.
 fn safe_result(ty: &CType, words: &[String]) -> String {
     let has = |wanted: &str| words.iter().any(|written| word(written) == wanted);
@@ -7159,6 +7193,9 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     // A `count(n)` witness, an `out` and an `inout_count`'s count leave the callable signature.
     let words: Vec<Vec<String>> = function.params.iter().enumerate().map(|(index, (_, ty))| slot_words(ty, words_of(index))).collect();
     let witnesses: HashSet<&str> = words.iter().flatten().filter_map(|written| written.strip_prefix("count(").and_then(|rest| rest.strip_suffix(')'))).map(str::trim).collect();
+    // `[FFI-21]` — a callback's user data leaves the callable signature too: the call gives C the
+    // callable's address there.
+    let user_data: HashSet<String> = words.iter().flatten().filter_map(|written| callback_user_data(written)).collect();
     let (mut outs, mut inout) = (Vec::new(), None);
     let mut given = Vec::new();
     for (index, (param, ty)) in function.params.iter().enumerate() {
@@ -7188,9 +7225,20 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             } else if has(&contract_words, "inout_count") {
                 inout = Some(inner.clone());
             }
-            let leaves = contracted && (witnesses.contains(param.trim_start_matches("r#")) || has(&contract_words, "out") || has(&contract_words, "inout_count"));
+            let leaves = contracted
+                && (witnesses.contains(param.trim_start_matches("r#"))
+                    || user_data.contains(param.trim_start_matches("r#"))
+                    || has(&contract_words, "out")
+                    || has(&contract_words, "inout_count"));
             if !leaves {
-                params.push(text.clone());
+                // `[FFI-21]` — a callback with user data: the callable the caller passes, of the
+                // callback's other parameters (the declaration's is the C function pointer).
+                let callable = contract_words.iter().find(|written| callback_user_data(written).is_some()).and_then(|written| {
+                    let data = callback_user_data(written)?;
+                    let (_, data_ty) = function.params.iter().find(|(name, _)| name.trim_start_matches("r#") == data)?;
+                    callable_of(ty.function.as_deref()?, &data_ty.ember, written.contains("once"))
+                });
+                params.push(callable.map_or_else(|| text.clone(), |callable| format!("{param}: {callable}")));
             }
             slots.push((param.clone(), text, contract_words, (!leaves).then(|| param.clone())));
             continue;
@@ -7363,7 +7411,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         if !result_words.is_empty() {
             arguments.push(format!("result({})", result_words.join(", ")));
         }
-        arguments.extend(contract.iter().flat_map(|entry| entry.arguments.iter().cloned()));
+        // `[FFI-21]` — `destroys(f)` names the C++ function's declaration here.
+        arguments.extend(contract.iter().flat_map(|entry| entry.arguments.iter().map(|argument| match argument.trim().strip_prefix("destroys(").and_then(|rest| rest.strip_suffix(')')) {
+            Some(function) => format!("destroys({prefix}_raw_{})", function.trim()),
+            None => argument.clone(),
+        })));
         arguments.extend(link);
         format!("    @ffi({})\n    safe fn {raw_name}({}){arrow}\n", arguments.join(", "), declared.join(", "))
     } else {
