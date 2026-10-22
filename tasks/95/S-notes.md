@@ -395,6 +395,9 @@ specification accepts it. "R2" is the second `ember check`.
 * Break tests: a wrong published rate (5 for 3) → "the rate after the helps fell from 5 to 3 of 30";
   wrong codes and a wrong shape in `marks.json`, and an un-helped `helped/24` → each named.
 * `cargo test --profile ci -p ember_driver --test firstweek`: passes.
+* `cargo test --profile ci -p ember_driver --test milestones the_conformance_suite_runs`, once, with the
+  corpus in place: `test result: ok. 1 passed … finished in 387.52s` — it reads `tests/conformance/`
+  only, so `tests/firstweek/` does not trip it.
 * **For the lead:** with this test in, `python tools/phase_progress.py --check` fails (phase 8 goes
   69 % → 75 %: `[TST-8]`, `[TST-9]`, `[TST-10]` now have a test); without it the check passes. Run
   `--write` when merging — and consider listing `TST-9` under `unfinished` in `docs/phase-status.json`,
