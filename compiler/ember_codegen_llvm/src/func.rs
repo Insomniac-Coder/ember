@@ -1241,6 +1241,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
             (AggregateKind::Tuple, TyKind::Tuple(items)) => {
                 table.layout(ty).field_offsets.into_iter().zip(items.iter().copied()).collect()
             }
+            // A view made of its words: the pointer, the length (and a list's capacity).
+            (AggregateKind::Tuple, TyKind::Span { .. } | TyKind::Str | TyKind::Vec { .. }) => {
+                (0..values.len() as u64).map(|i| (i * 8, self.m.ty.usize_ty)).collect()
+            }
             (AggregateKind::Array, TyKind::Array { elem, .. }) => {
                 let size = self.m.ty.size_align(elem).0;
                 (0..values.len() as u64).map(|i| (i * size, elem)).collect()

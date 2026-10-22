@@ -178,33 +178,39 @@ fn closure_descriptor(m: &mut Module<'_>, closure: &str) -> Result<String> {
     let closure_owned = closure.to_string();
     // The environment's own slot: the block, or a copy of the words (an environment aligned past
     // a pointer is never used in place, D-620), copied back after the call.
-    let find = move |cx: &mut FnCx<'_, '_>| -> (String, bool) {
+    // `state` is the state's pointer: the first parameter, after an `sret` result's.
+    let find = move |cx: &mut FnCx<'_, '_>, state: &str| -> (String, bool) {
         if boxed {
-            (cx.load(Sc::Ptr, "%p0", 8), false)
+            (cx.load(Sc::Ptr, state, 8), false)
         } else if env_align > 8 {
             let local = cx.alloca(env_size, env_align);
-            cx.copy(&local, env_align, "%p0", 8, env_size, false);
+            cx.copy(&local, env_align, state, 8, env_size, false);
             (local, true)
         } else {
-            ("%p0".to_string(), false)
+            (state.to_string(), false)
         }
+    };
+    let state_of = |values: &[Val]| match &values[0] {
+        Val::Imm(_, state) => state.clone(),
+        _ => unreachable!("the state is a pointer"),
     };
     let native = format!("{descriptor}.native");
     define_c_fn(m, &native, "internal ", Some(ret), &params, "", |cx, values, result| {
-        let (env_at, copied) = find(cx);
+        let state = state_of(values);
+        let (env_at, copied) = find(cx, &state);
         let env_value = if by_pointer { Val::Imm(Sc::Ptr, env_at.clone()) } else { env_val(cx, &env_at, env) };
         let mut arguments = vec![env_value];
         arguments.extend(values[1..].iter().cloned());
         let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
         cx.call_body(&closure_owned, arguments, dest)?;
         if copied {
-            cx.copy("%p0", 8, &env_at, env_align, env_size, false);
+            cx.copy(&state, 8, &env_at, env_align, env_size, false);
         }
         Ok(())
     })?;
     let drop = format!("{descriptor}.drop");
     crate::glue::define_glue(m, &drop, &["ptr"], "", |cx| {
-        let (env_at, _) = find(cx);
+        let (env_at, _) = find(cx, "%p0");
         cx.drop_at(&env_at, env_align.min(if boxed { env_align } else { 8 }), env)?;
         if boxed {
             cx.call_rt("free", vec![Val::Imm(Sc::Ptr, env_at), Val::Imm(Sc::I(64), env_size.to_string()), Val::Imm(Sc::I(64), env_align.to_string())], None);
@@ -218,8 +224,9 @@ fn closure_descriptor(m: &mut Module<'_>, closure: &str) -> Result<String> {
     let native_sig = crate::func::c_fn_signature(m, Some(ret), &params);
     define_c_fn(m, &once, "internal ", Some(ret), &params, "", |cx, values, result| {
         let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+        let state = state_of(values);
         if takes_whole {
-            let (env_at, _) = find(cx);
+            let (env_at, _) = find(cx, &state);
             let env_value = env_val(cx, &env_at, env);
             let mut arguments = vec![env_value];
             arguments.extend(values[1..].iter().cloned());
@@ -242,7 +249,7 @@ fn closure_descriptor(m: &mut Module<'_>, closure: &str) -> Result<String> {
                 .collect();
             let size = cx.m.ty.size_align(ret).0;
             cx.lowered_call(&native_name, &native_sig, &sized, dest.map(|(ptr, align)| (ptr, align, size)), "");
-            cx.emit(format!("call void {drop_name}(ptr %p0)"));
+            cx.emit(format!("call void {drop_name}(ptr {state})"));
         }
         Ok(())
     })?;

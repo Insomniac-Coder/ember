@@ -47,7 +47,7 @@ impl<'a> FnCx<'_, 'a> {
     }
 
     /// The element type of an `Array`, through any references (`element_of`).
-    fn element_of(&self, ty: Ty) -> Ty {
+    pub(crate) fn element_of(&self, ty: Ty) -> Ty {
         match self.m.ty.kind(ty) {
             TyKind::Vec { elem, .. } => *elem,
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.element_of(*inner),
@@ -66,7 +66,7 @@ impl<'a> FnCx<'_, 'a> {
 
     /// The address of a view operand's two words: the view itself, or where a reference to one
     /// points.
-    fn view_words(&mut self, operand: &Operand) -> Result<(String, u64)> {
+    pub(crate) fn view_words(&mut self, operand: &Operand) -> Result<(String, u64)> {
         match self.operand(operand)? {
             Val::Mem(ptr, align) => Ok((ptr, align)),
             Val::Imm(Sc::Ptr, ptr) => Ok((ptr, 8)),
@@ -84,7 +84,7 @@ impl<'a> FnCx<'_, 'a> {
     }
 
     /// Write a scalar result to `dest`, converted to its width where the C backend's C converts.
-    fn store_result(&mut self, dest: &Place, value: &str, sc: Sc, signed: bool) -> Result<()> {
+    pub(crate) fn store_result(&mut self, dest: &Place, value: &str, sc: Sc, signed: bool) -> Result<()> {
         let at = self.place(dest)?;
         match (self.m.ty.repr(at.ty), sc) {
             (Repr::Zst, _) => {}
@@ -217,6 +217,12 @@ impl<'a> FnCx<'_, 'a> {
                 values.push(size_word(0));
             }
             return self.call_rt_into(name, values, dest);
+        }
+        if let Some(done) = self.arena_builtin(which, arg_ty, args, dest, span) {
+            return done;
+        }
+        if let Some(done) = self.concurrency_builtin(which, arg_ty, args, dest, span) {
+            return done;
         }
         match which {
             // `parse`'s `Bool` value: the text is `true` or `false`, told apart by its length.
@@ -895,6 +901,163 @@ impl<'a> FnCx<'_, 'a> {
                 Ok(())
             }
             Builtin::SoA { op, soa } => self.soa_op(op, *soa, args, dest, span),
+            // `[FFI-23]` — a class object is pinned in its header (or, with an `on_relocate`
+            // callback, recorded with it, `[HR-20]`); a `Box`'s value never moves: `0`.
+            Builtin::RetainedPin => {
+                if matches!(self.m.ty.kind(arg_ty), TyKind::Struct(_)) {
+                    return self.store_result(dest, "0", Sc::I(64), false);
+                }
+                let object = self.pointer(&args[0])?;
+                let callback = match args.get(1) {
+                    None => "null".to_string(),
+                    Some(argument) => match self.operand_ty(argument).map(|ty| (ty, self.m.ty.kind(ty).clone())) {
+                        Some((ty, TyKind::Enum(id))) if self.m.ty.table.option_niche(id).is_none() => {
+                            let value = self.operand(argument)?;
+                            let (size, align) = self.m.ty.size_align(ty);
+                            let (at, align) = self.spill(&value, size, align);
+                            let place = crate::func::PlaceRef { ptr: at.clone(), ty, variant: None, align };
+                            let (discriminant, bits) = self.discriminant_at(&place)?;
+                            let some = self.m.ty.table.enum_def(id).variants[1].discriminant;
+                            let is_some = self.value(format!("icmp eq i{bits} {discriminant}, {some}"));
+                            let payload_at = self.gep(&at, self.m.ty.table.variant_field_offsets(id)[1][0]);
+                            let payload = self.load(Sc::Ptr, &payload_at, 8);
+                            self.value(format!("select i1 {is_some}, ptr {payload}, ptr null"))
+                        }
+                        _ => self.pointer(argument)?,
+                    },
+                };
+                let id = self.alloca(8, 8);
+                let none = self.value(format!("icmp eq ptr {callback}, null"));
+                let (pin, record, done) = (self.label(), self.label(), self.label());
+                self.emit(format!("br i1 {none}, label %{pin}, label %{record}"));
+                self.start(&pin);
+                self.call_rt("obj_pin", vec![Val::Imm(Sc::Ptr, object.clone())], None);
+                self.emit(format!("store i64 0, ptr {id}, align 8"));
+                self.emit(format!("br label %{done}"));
+                self.start(&record);
+                self.call_rt("obj_pin_relocatable", vec![Val::Imm(Sc::Ptr, object), Val::Imm(Sc::Ptr, callback)], Some((&id, 8)));
+                self.emit(format!("br label %{done}"));
+                self.start(&done);
+                let id = self.load(Sc::I(64), &id, 8);
+                self.store_result(dest, &id, Sc::I(64), false)
+            }
+            Builtin::RetainedUnpin => {
+                let id = self.operand(&args[0])?;
+                self.call_rt("obj_unpin_relocatable", vec![id], None);
+                Ok(())
+            }
+            // The object's address: a handle's or a `Box`'s pointer, a `Box[dyn]`'s data.
+            Builtin::RetainedAddress | Builtin::CppObjectAddress => {
+                let address = self.pointer(&args[0])?;
+                self.store_result(dest, &address, Sc::Ptr, false)
+            }
+            // `[UNS-5]` — through a pointer to a volatile object: each access is made.
+            Builtin::VolatileRead | Builtin::VolatileWrite => {
+                let TyKind::Ptr { inner, .. } = *self.m.ty.kind(arg_ty) else { return unsupported("a volatile access not through a pointer") };
+                let Repr::Scalar(sc) = self.m.ty.repr(inner) else { return unsupported("a volatile access of an aggregate") };
+                let (_, align) = self.m.ty.size_align(inner);
+                let pointer = self.pointer(&args[0])?;
+                if matches!(which, Builtin::VolatileRead) {
+                    let value = self.value(format!("load volatile {}, ptr {pointer}, align {align}", sc.mem()));
+                    let value = if sc == Sc::Bool { self.value(format!("trunc i8 {value} to i1")) } else { value };
+                    return self.store_result(dest, &value, sc, false);
+                }
+                let Val::Imm(_, value) = self.operand(&args[1])? else { return unsupported("a volatile write of an aggregate") };
+                let value = if sc == Sc::Bool { self.value(format!("zext i1 {value} to i8")) } else { value };
+                self.emit(format!("store volatile {} {value}, ptr {pointer}, align {align}", sc.mem()));
+                Ok(())
+            }
+            // `[FFI-8]` — a C union with one field set, the rest of its storage zero.
+            Builtin::UnionLit { .. } => {
+                let ty = self.place_ty(dest);
+                let Some((at, align)) = self.dest_of(dest)? else { return Ok(()) };
+                let (size, _) = self.m.ty.size_align(ty);
+                self.zero(&at, align, size);
+                let value = self.operand(&args[0])?;
+                let field_ty = self.operand_ty(&args[0]);
+                match value {
+                    Val::Imm(sc, value) => self.store_scalar(sc, &value, &at, align),
+                    Val::Mem(from, from_align) => {
+                        let field_size = field_ty.map_or(size, |ty| self.m.ty.size_align(ty).0);
+                        self.copy(&at, align, &from, from_align, field_size, false);
+                    }
+                    Val::Zst => {}
+                }
+                Ok(())
+            }
+            // `[FFI-39]`, `[FFI-17d]` — a C++ object's handle again: retained, or adopted.
+            Builtin::CppObjectHandle { adopt } => {
+                let object = self.pointer(&args[0])?;
+                if *adopt {
+                    let loc = self.loc(span);
+                    return self.call_rt_into("cpp_object_adopt", vec![Val::Imm(Sc::Ptr, object), loc], dest);
+                }
+                self.call_rt("obj_retain", vec![Val::Imm(Sc::Ptr, object.clone())], None);
+                self.store_result(dest, &object, Sc::Ptr, false)
+            }
+            Builtin::CppObjectGive => {
+                let object = self.pointer(&args[0])?;
+                self.call_rt("obj_retain", vec![Val::Imm(Sc::Ptr, object.clone())], None);
+                self.call_rt("obj_pin", vec![Val::Imm(Sc::Ptr, object)], None);
+                Ok(())
+            }
+            // `[FFI-17e]` — a C++ container's elements as a view, a smart pointer's object as a
+            // reference: the owner (argument 0) is what they borrow.
+            Builtin::CppSpan { .. } => {
+                let pointer = self.pointer(&args[1])?;
+                let len = self.word(&args[2])?;
+                let Some((at, align)) = self.dest_of(dest)? else { return Ok(()) };
+                self.emit(format!("store ptr {pointer}, ptr {at}, align {}", align.min(8)));
+                let len_at = self.gep(&at, 8);
+                self.emit(format!("store i64 {len}, ptr {len_at}, align {}", align.min(8)));
+                Ok(())
+            }
+            Builtin::CppPointee => {
+                let pointer = self.pointer(&args[1])?;
+                self.store_result(dest, &pointer, Sc::Ptr, false)
+            }
+            // `[THR-3]` — on the lock word, whose address lowering passes; `[THR-4]` — the lock
+            // taken is reported, with where, for the debug profile's lock order record.
+            Builtin::MutexLock | Builtin::MutexTryLock | Builtin::RwLockAcquire { .. } | Builtin::RwLockTryAcquire { .. } => {
+                let word = self.pointer(&args[0])?;
+                let mut values = vec![Val::Imm(Sc::Ptr, word.clone())];
+                let (entry, tries) = match which {
+                    Builtin::MutexLock => ("mutex_lock", false),
+                    Builtin::MutexTryLock => ("mutex_try_lock", true),
+                    Builtin::RwLockAcquire { write } => {
+                        values.push(Val::Imm(Sc::Bool, write.to_string()));
+                        ("rwlock_acquire", false)
+                    }
+                    Builtin::RwLockTryAcquire { write } => {
+                        values.push(Val::Imm(Sc::Bool, write.to_string()));
+                        ("rwlock_try_acquire", true)
+                    }
+                    _ => unreachable!("matched above"),
+                };
+                let loc = self.loc(span);
+                if !tries {
+                    self.call_rt(entry, values, None);
+                    self.call_rt("lock_order_taken", vec![Val::Imm(Sc::Ptr, word), loc], None);
+                    return Ok(());
+                }
+                let taken = self.alloca(1, 1);
+                self.call_rt(entry, values, Some((&taken, 1)));
+                let taken = self.load(Sc::Bool, &taken, 1);
+                let (record, done) = (self.label(), self.label());
+                self.emit(format!("br i1 {taken}, label %{record}, label %{done}"));
+                self.start(&record);
+                self.call_rt("lock_order_taken", vec![Val::Imm(Sc::Ptr, word), loc], None);
+                self.emit(format!("br label %{done}"));
+                self.start(&done);
+                self.store_result(dest, &taken, Sc::Bool, false)
+            }
+            Builtin::Atomic { op, order } => self.atomic(*op, *order, arg_ty, args, dest, span),
+            // `[STA-3]` — the accessor that runs the initialiser the first time any thread asks.
+            Builtin::LazyStatic { name, init, ty } => {
+                let accessor = crate::statics::lazy_static(self.m, name.as_str(), init.as_str(), *ty)?;
+                let address = self.value(format!("call ptr {accessor}()"));
+                self.store_result(dest, &address, Sc::Ptr, false)
+            }
             // `[FFI-10]` — the C global's address (through its accessor where the shim has one).
             Builtin::ForeignStatic { symbol, thunk, .. } => {
                 let name = crate::global_name(symbol.as_str());

@@ -44,7 +44,8 @@ impl CTy {
 /// Parse one C type as the table writes it: `$name` is the runtime's `ember_name`.
 pub fn c_type(text: &'static str) -> CTy {
     let text = text.trim();
-    if text.ends_with('*') {
+    // A pointer, a function pointer among them (`void (*)(void)`).
+    if text.ends_with('*') || text.contains("(*") {
         return CTy::Scalar(Scalar::Ptr);
     }
     let int = |bytes, signed| CTy::Scalar(Scalar::Int { bytes, signed });
@@ -358,6 +359,76 @@ pub const FNS: &[RtFn] = &[
     // -- the lifecycle ([RT-2], [FN-8], [FFI-22])
     f("rt_thread_attach", "void", &[]),
     f("rt_check_main_thread", "void", &[]),
+    f("rt_static_begin", "int", &["uint32_t*", "const char*"]),
+    f("rt_static_end", "void", &["uint32_t*"]),
+    // -- arenas ([ARN-1]..[ARN-6], [JOB-5])
+    f("arena_new", "void*", &["size_t"]),
+    f("arena_alloc_copy", "void*", &["void*", "size_t", "size_t", "const void*"]),
+    f("arena_alloc_uninit", "void*", &["void*", "size_t", "size_t", "size_t"]),
+    f("arena_alloc_zeroed", "void*", &["void*", "size_t", "size_t", "size_t"]),
+    f("arena_reset", "void", &["void*"]),
+    f("arena_free", "void", &["void*"]),
+    f("arena_mark", "void*", &["void*"]),
+    f("arena_rewind", "void", &["void*", "void*"]),
+    f("job_local_arena", "void*", &["$loc"]),
+    f("fixed_arena_alloc_copy", "void*", &["void*", "size_t", "size_t*", "size_t", "size_t", "const void*"]),
+    // -- locks ([THR-3], [THR-4]): inline in one runtime build, called in another
+    inl("mutex_lock", "void", &["void*"]),
+    inl("mutex_try_lock", "bool", &["void*"]),
+    inl("mutex_unlock", "void", &["void*"]),
+    inl("rwlock_acquire", "void", &["void*", "bool"]),
+    inl("rwlock_try_acquire", "bool", &["void*", "bool"]),
+    inl("rwlock_release", "void", &["void*", "bool"]),
+    inl("lock_order_taken", "void", &["const void*", "$loc"]),
+    inl("lock_order_freed", "void", &["const void*"]),
+    // -- atomics ([THR-14], [THR-9])
+    panic_fn("atomic_order_refused", &["uint8_t", "const char*", "$loc"]),
+    f("atomic_wait32", "void", &["uint32_t*", "uint32_t"]),
+    f("atomic_wake_one", "void", &["uint32_t*"]),
+    f("atomic_wake_all", "void", &["uint32_t*"]),
+    inl("atomic128_cas", "bool", &["volatile void*", "void*", "$u128"]),
+    inl("atomic128_load", "$u128", &["volatile void*"]),
+    inl("atomic128_swap", "$u128", &["volatile void*", "$u128"]),
+    inl("atomic128_store", "void", &["volatile void*", "$u128"]),
+    // -- threads, scopes, jobs and parallel loops ([THR-5], [THR-10], [THR-11], [JOB-1]..[JOB-3], [PAR-1])
+    f("thread_start", "void", &["$thread*", "void (*)($thread*)", "void (*)($thread*)", "uint32_t", "uint32_t", "$loc"]),
+    f("thread_join", "void", &["$thread*"]),
+    f("thread_free", "void", &["$thread*"]),
+    f("thread_detach", "void", &["$thread*"]),
+    f("scope_new", "void*", &[]),
+    f("scope_add", "void", &["void*", "$thread*"]),
+    f("scope_join", "void", &["$thread*"]),
+    f("scope_end", "void", &["void*"]),
+    f(
+        "job_submit",
+        "uint64_t",
+        &["uint32_t*", "void (*)(void*)", "void (*)(void*)", "const void*", "size_t", "size_t", "const void*", "size_t", "size_t", "size_t", "$loc"],
+    ),
+    f("job_wait", "void", &["uint64_t"]),
+    f("job_scope_end", "void", &["uint32_t*"]),
+    f(
+        "parallel_for",
+        "void",
+        &[
+            "int64_t",
+            "int64_t",
+            "int64_t",
+            "void (*)(void*, int64_t, int64_t, void*)",
+            "void (*)(void*, void*, const void*)",
+            "void*",
+            "void*",
+            "size_t",
+            "unsigned char*",
+            "int64_t*",
+            "uint32_t",
+            "$loc",
+        ],
+    ),
+    // -- pinned objects ([FFI-23], [HR-20]) and C++ objects ([FFI-39])
+    f("obj_pin", "void", &["$obj_header*"]),
+    f("obj_pin_relocatable", "uint64_t", &["$obj_header*", "void (*)(void)"]),
+    f("obj_unpin_relocatable", "void", &["uint64_t"]),
+    f("cpp_object_adopt", "$obj_header*", &["$obj_header*", "$loc"]),
     // -- foreign objects and threads ([FFI-36a], [FFI-33b])
     f("ffi_thread", "uint32_t", &[]),
     f("ffi_check_thread", "void", &["uint32_t", "const char*"]),
@@ -427,11 +498,25 @@ mod tests {
                 _ => None,
             });
             let Some(close) = close else { continue };
+            // The parameters: split at the commas outside a function pointer's own list.
+            let mut depth = 0;
             let params = after[..close]
-                .split(',')
+                .split(|c: char| {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => depth -= 1,
+                        _ => {}
+                    }
+                    c == ',' && depth == 0
+                })
                 .map(str::trim)
                 .filter(|param| !param.is_empty() && *param != "void")
                 .map(|param| {
+                    // A function pointer's name is inside its declarator: `void (*callback)(void)`.
+                    if let Some(open) = param.find("(*") {
+                        let close = param[open..].find(')').map_or(param.len(), |at| open + at);
+                        return format!("{}(*{}", &param[..open], &param[close..]).replace("  ", " ");
+                    }
                     // Drop the parameter's name: the last word, unless the type ends with `*`.
                     let param = param.replace(" *", "* ");
                     match param.rfind(|c: char| c == ' ' || c == '*') {

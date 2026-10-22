@@ -13,6 +13,7 @@
 //! The IR is written for LLVM 21 and later (opaque pointers; nothing newer).
 
 pub mod abi;
+mod arenas;
 mod arrays;
 mod builtins;
 mod closures;
@@ -25,6 +26,8 @@ mod glue;
 mod ranges;
 mod runtime;
 mod soa;
+mod statics;
+mod sync;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

@@ -650,15 +650,54 @@ impl<'a> FnCx<'_, 'a> {
         match origin.as_deref() {
             // `[SOA-1]` — its elements' fields, then its block.
             Some("SoA") => return self.soa_drop(ptr, ty),
-            Some("std.sync.MutexGuard" | "std.thread.Scope" | "std.jobs.JobScope" | "std.thread.JoinHandle"
-                | "std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard") => {
-                return unsupported(format!("the drop of `{}`", table.display(ty)));
+            // `[THR-3]` — a lock guard's end releases the lock: the guard points at the lock's
+            // `value`, its first field, so that pointer is the lock's own; the word is its `word`.
+            Some(guard @ ("std.sync.MutexGuard" | "std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard")) => {
+                let lock = if guard == "std.sync.MutexGuard" { "std.sync.Mutex" } else { "std.sync.RwLock" };
+                let Some(lock) = lock_for_guard(table, ty, lock) else { return Ok(()) };
+                let Some(word_at) = crate::arenas::field_offset(self.m, lock, "word") else { return unsupported("a lock without its word") };
+                let object = self.load(Sc::Ptr, ptr, align.min(8));
+                let word = self.gep(&object, word_at);
+                self.call_rt("lock_order_freed", vec![Val::Imm(Sc::Ptr, word.clone())], None);
+                if guard == "std.sync.MutexGuard" {
+                    self.call_rt("mutex_unlock", vec![Val::Imm(Sc::Ptr, word)], None);
+                } else {
+                    let write = (guard == "std.sync.RwLockWriteGuard").to_string();
+                    self.call_rt("rwlock_release", vec![Val::Imm(Sc::Ptr, word), Val::Imm(Sc::Bool, write)], None);
+                }
+                return Ok(());
+            }
+            Some(origin @ ("std.thread.Scope" | "std.jobs.JobScope" | "std.thread.JoinHandle")) => {
+                return self.concurrency_drop(origin, ptr, ty);
             }
             _ => {}
         }
         let name = def.name.as_str();
-        if name == "Arena" || name == "ScopedArena" || name.starts_with("RefMut_") || name.starts_with("Ref_") {
-            return unsupported(format!("the drop of `{}`", table.display(ty)));
+        // `[ARN-1]`, `[ARN-6]`.
+        if name == "Arena" || name == "ScopedArena" {
+            return self.arena_drop(ptr, ty, name == "ScopedArena");
+        }
+        // `[CELL-7]` — a `Ref`/`RefMut` guard's end releases the cell's borrow state: the guard
+        // points at the cell's `value` (its first field, so the cell's own address); a shared
+        // guard counts one reader fewer, a mutable one resets the state to `0`.
+        if (name.starts_with("RefMut_") || name.starts_with("Ref_"))
+            && let Some(cell) = refcell_for_guard(table, ty)
+        {
+            let Some(borrow_at) = crate::arenas::field_offset(self.m, cell, "borrow") else { return unsupported("a `RefCell` without its state") };
+            let TyKind::Struct(cell_id) = *table.kind(cell) else { unreachable!("a cell is a struct") };
+            let borrow_ty = table.struct_def(cell_id).fields.iter().find(|field| field.name.as_str() == "borrow").expect("found above").ty;
+            let crate::types::Repr::Scalar(Sc::I(bits)) = self.m.ty.repr(borrow_ty) else { return unsupported("a `RefCell` state that is not an integer") };
+            let object = self.load(Sc::Ptr, ptr, align.min(8));
+            let state = self.gep(&object, borrow_at);
+            let width = (bits / 8).max(1);
+            if name.starts_with("RefMut_") {
+                self.emit(format!("store i{bits} 0, ptr {state}, align {width}"));
+            } else {
+                let count = self.load(Sc::I(bits), &state, u64::from(width));
+                let less = self.value(format!("sub i{bits} {count}, 1"));
+                self.emit(format!("store i{bits} {less}, ptr {state}, align {width}"));
+            }
+            return Ok(());
         }
         if def.has_drop {
             let symbol = table.method_symbol(ty, None, "drop", None);
@@ -892,6 +931,38 @@ pub(crate) fn shared_type_info(m: &mut Module<'_>, id: ember_types::StructId) ->
         u32::from(sync),
     ));
     Ok(global_name(&symbol))
+}
+
+/// `[THR-3]` — the lock (`std.sync.Mutex` or `std.sync.RwLock`) a guard of `guard`'s type locks:
+/// the lock of the guard's own type arguments.
+fn lock_for_guard(table: &ember_types::TypeTable, guard: Ty, lock: &str) -> Option<Ty> {
+    let TyKind::Struct(id) = *table.kind(guard) else { return None };
+    let (_, args) = table.struct_def(id).origin.as_ref()?;
+    table.all().find_map(|(ty, kind)| match kind {
+        TyKind::Struct(found) => {
+            let (origin, lock_args) = table.struct_def(*found).origin.as_ref()?;
+            (origin.as_str() == lock && lock_args == args).then_some(ty)
+        }
+        _ => None,
+    })
+}
+
+/// `[CELL-7]` — the `RefCell` a `Ref`/`RefMut` guard of `guard`'s type borrows: the cell whose
+/// value the guard's one reference points at.
+fn refcell_for_guard(table: &ember_types::TypeTable, guard: Ty) -> Option<Ty> {
+    let TyKind::Struct(guard_id) = *table.kind(guard) else { return None };
+    let def = table.struct_def(guard_id);
+    if def.fields.len() != 1 {
+        return None;
+    }
+    let TyKind::Ref { inner, .. } = *table.kind(def.fields[0].ty) else { return None };
+    table.all().find_map(|(ty, kind)| match kind {
+        TyKind::Struct(cell) => {
+            let def = table.struct_def(*cell);
+            (def.name.as_str().starts_with("RefCell_") && def.fields.len() == 4 && def.fields[0].ty == inner).then_some(ty)
+        }
+        _ => None,
+    })
 }
 
 pub(crate) fn weak_inner(table: &ember_types::TypeTable, id: ember_types::StructId) -> Option<Ty> {

@@ -391,7 +391,8 @@ fn emit_slot_adapter(
     });
     let implementation = implementation.to_string();
     define_c_fn(m, function, "internal ", Some(ret), &signature, "", |cx, values, result| {
-        let raw = "%p0".to_string();
+        // The receiver: the first parameter, after an `sret` result's.
+        let Val::Imm(_, raw) = values[0].clone() else { unreachable!("the receiver is a pointer") };
         let receiver_value = match (receiver, class.is_some()) {
             // D-218 — a view-returning method takes its class receiver by address.
             (ParameterMode::Borrow, true) if ret_is_view => {
