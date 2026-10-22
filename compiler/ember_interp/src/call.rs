@@ -195,7 +195,7 @@ impl<'a> Interp<'a, '_> {
             }
             FuncRef::Interface { slot, class_handle, interface, .. } => {
                 let values = self.arguments(func, args, &[])?;
-                self.interface_call(values, *slot, *class_handle, *interface, args, Ret::Place(dest.clone(), next), span)
+                self.interface_call(values, *slot, *class_handle, *interface, args, Ret::Place(dest.clone(), next))
             }
             FuncRef::Indirect { operand, ty, .. } => {
                 let callee = self.operand(operand, Some(*ty))?;
@@ -264,8 +264,7 @@ impl<'a> Interp<'a, '_> {
 
     /// `[TYP-22]`, `[OBJ-2]` — a call through an interface's table: the receiver's adapter, which
     /// gives the method the receiver as it takes it (`emit_interface_adapters`).
-    #[allow(clippy::too_many_arguments)]
-    fn interface_call(&mut self, mut values: Vec<Vec<u8>>, slot: usize, class_handle: bool, interface: Symbol, args: &[Operand], ret: Ret, span: Span) -> R<()> {
+    fn interface_call(&mut self, mut values: Vec<Vec<u8>>, slot: usize, class_handle: bool, interface: Symbol, args: &[Operand], ret: Ret) -> R<()> {
         let (data, implementation, concrete) = if class_handle {
             // A one-word class-interface handle, or a `ref mut` to one.
             let body = self.body_now();
@@ -327,8 +326,10 @@ impl<'a> Interp<'a, '_> {
                 data.to_le_bytes().to_vec()
             }
             (ParameterMode::Borrow, false) => self.mem.read(data, self.size(concrete))?.to_vec(),
+            // `[EXC-15]` — the adapter takes the whole object for the call, at no place of the
+            // program's (its `nowhere`).
             (ParameterMode::Mut, true) => {
-                self.object_access(data, true, true, span)?;
+                self.object_access(data, true, true, Span::DUMMY)?;
                 let slot = self.mem.alloc(8, 8)?;
                 self.mem.write_u64(slot, data)?;
                 after = Some(After::EndObjectWrite(slot));

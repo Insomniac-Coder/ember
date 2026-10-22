@@ -12,6 +12,9 @@ use crate::{fault, Interp, Loc, Stop, R};
 
 /// The object header's size (`ember_obj_header`, 64-bit target, no reload).
 pub const HEADER: u64 = 24;
+
+/// Where the runtime's object operations say a panic of theirs is (`object_panic_text`).
+const OBJECT_RUNTIME: &str = "<object-runtime>";
 const STRONG: u64 = 0;
 const WEAK: u64 = 4;
 const ACCESS: u64 = 8;
@@ -166,10 +169,10 @@ impl Interp<'_, '_> {
         let strong = self.mem.read_u32(object + STRONG)?;
         if strong == u32::MAX {
             let name = self.object_name(object)?;
-            return self.panic(&format!("reference count overflow on {name}"), Span::DUMMY);
+            return self.panic_in(OBJECT_RUNTIME, &format!("reference count overflow on {name}"));
         }
         if strong == 0 || self.mem.read_u32(object + FLAGS)? & DEINITIALISING != 0 && strong == 0 {
-            return self.panic("retain of deinitialising or invalid object", Span::DUMMY);
+            return self.panic_in(OBJECT_RUNTIME, "retain of deinitialising or invalid object");
         }
         self.mem.write_u32(object + STRONG, strong + 1)?;
         Ok(())
@@ -181,7 +184,7 @@ impl Interp<'_, '_> {
         }
         let strong = self.mem.read_u32(object + STRONG)?;
         if strong == 0 {
-            return self.panic("release of object with no strong references", Span::DUMMY);
+            return self.panic_in(OBJECT_RUNTIME, "release of object with no strong references");
         }
         self.mem.write_u32(object + STRONG, strong - 1)?;
         if strong == 1 {
@@ -193,7 +196,7 @@ impl Interp<'_, '_> {
     fn deinit(&mut self, object: u64) -> R<()> {
         let flags = self.mem.read_u32(object + FLAGS)?;
         if flags & DEINITIALISING != 0 {
-            return self.panic("recursive object deinitialisation", Span::DUMMY);
+            return self.panic_in(OBJECT_RUNTIME, "recursive object deinitialisation");
         }
         self.mem.write_u32(object + FLAGS, flags | DEINITIALISING)?;
         match self.object_info(object)? {
@@ -215,7 +218,7 @@ impl Interp<'_, '_> {
     fn check_resurrection(&mut self, object: u64) -> R<()> {
         if self.mem.read_u32(object + STRONG)? != 0 {
             let name = self.object_name(object)?;
-            return self.panic(&format!("{name} was resurrected while being destroyed"), Span::DUMMY);
+            return self.panic_in(OBJECT_RUNTIME, &format!("E-panic: object resurrected during drop: {name}"));
         }
         Ok(())
     }
@@ -295,7 +298,7 @@ impl Interp<'_, '_> {
         }
         let weak = self.mem.read_u32(object + WEAK)?;
         if weak == 0 || weak == u32::MAX {
-            return self.panic("retain of invalid weak reference", Span::DUMMY);
+            return self.panic_in(OBJECT_RUNTIME, "retain of invalid weak reference");
         }
         self.mem.write_u32(object + WEAK, weak + 1)?;
         Ok(())
@@ -307,7 +310,7 @@ impl Interp<'_, '_> {
         }
         let weak = self.mem.read_u32(object + WEAK)?;
         if weak == 0 {
-            return self.panic("release of object with no weak references", Span::DUMMY);
+            return self.panic_in(OBJECT_RUNTIME, "release of object with no weak references");
         }
         self.mem.write_u32(object + WEAK, weak - 1)?;
         if weak == 1 && self.mem.read_u32(object + STRONG)? == 0 {

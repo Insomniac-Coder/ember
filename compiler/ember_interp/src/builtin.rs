@@ -64,7 +64,7 @@ impl Interp<'_, '_> {
         }
         let limit = if elem == 0 { i64::MAX as u64 } else { i64::MAX as u64 / elem };
         if want > limit {
-            return self.panic("capacity overflow", Span::DUMMY);
+            return self.panic_in("<array>", "capacity overflow");
         }
         let mut next = if cap < 2 { 4 } else { cap * 2 };
         next = next.min(limit).max(want);
@@ -83,7 +83,7 @@ impl Interp<'_, '_> {
         let len = self.mem.read_u64(vec + 8)?;
         let limit = if elem == 0 { i64::MAX as u64 } else { i64::MAX as u64 / elem };
         if len > limit || additional > limit - len {
-            return self.panic("capacity overflow", Span::DUMMY);
+            return self.panic_in("<array>", "capacity overflow");
         }
         self.vec_reserve(vec, elem, len + additional, align)
     }
@@ -937,7 +937,7 @@ impl Interp<'_, '_> {
                 let view = self.operand(&args[0], None)?;
                 let (ptr, len) = (u64_of(&view[..8]), u64_of(&view[8..16]));
                 if self.system.sinks.len() == 64 {
-                    return self.panic("format_to: more than 64 calls inside one another (a `Display` that calls `format_to` without end?)", Span::DUMMY);
+                    return self.panic_in("<format_to>", "format_to: more than 64 calls inside one another (a `Display` that calls `format_to` without end?)");
                 }
                 // An empty buffer still needs an address no other text has.
                 let base = if len == 0 { self.mem.alloc(1, 1)? } else { ptr };

@@ -10,6 +10,7 @@ mod comptime;
 mod foreign;
 mod packages;
 mod reload;
+pub mod session;
 mod test_runner;
 
 use std::path::{Path, PathBuf};
@@ -126,7 +127,8 @@ inspect options:
 /// committed: a host spends only what a program's nesting uses.
 const COMPILER_STACK: usize = 256 << 20;
 
-fn main() -> ExitCode {
+/// The `ember` command (`src/ember.rs` is the program): the arguments after the program's name.
+pub fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Named as the main thread is, which an internal error's message names.
     let compiler = std::thread::Builder::new()
@@ -4670,9 +4672,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if options.syntax_only {
         return Ok(finish(&sink, &map, options));
     }
-    if sink.has_errors() {
-        return Ok(finish(&sink, &map, options));
-    }
+    // `[IDE-3]` — names and types are checked whatever parsing reported: what did not parse is a
+    // placeholder that satisfies everything, so each error is reported once and the rest checked.
 
     // `[MOD-1]` — follow the imports and load every module they reach. The
     // root module is the file named on the command line; its directory is the
@@ -4714,9 +4715,6 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
         reload::inject(&mut modules, &mut map, &mut sink, previous.as_ref())
     });
-    if sink.has_errors() {
-        return Ok(finish(&sink, &map, options));
-    }
 
     // Check. `[CT-1]` — and check again with what the compile-time evaluator
     // answered, until nothing is left to evaluate; a pass that asks for

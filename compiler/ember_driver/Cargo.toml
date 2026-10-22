@@ -29,6 +29,7 @@ clang-sys = { version = "1.9", features = ["runtime", "clang_9_0"] }
 [lints]
 workspace = true
 
+# The compiler is a library (`src/lib.rs`: what an editor links, `[IDE-4]`) and the `ember` command.
 [[bin]]
 name = "ember"
-path = "src/main.rs"
+path = "src/ember.rs"

@@ -451,7 +451,10 @@ impl<'a, 'io> Interp<'a, 'io> {
         }
         self.tick()?;
         if self.frames.len() >= 100_000 {
-            return self.panic(&format!("stack overflow in {}", body.path.as_deref().unwrap_or(&body.name)), body.span);
+            // `[RT-12]` — what the runtime's guard-page handler writes, and an abort.
+            let _ = self.io.stdout.flush();
+            let _ = writeln!(self.io.stderr, "stack overflow in {}", body.path.as_deref().unwrap_or(&body.name));
+            return Err(Stop::Panic);
         }
         let frame = self.frame_layout(index);
         let base = self.mem.alloc(frame.size.max(1), frame.align)?;

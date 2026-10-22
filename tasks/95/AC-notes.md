@@ -166,3 +166,62 @@ C compiler: the toolchain is not even looked for (a run with `EMBER_CC=no-such-c
    as on a target without SSE, where SSE's are 12-bit estimates: `[SIMD-4]` allows either. I read
    the rule as "the same output for a program whose output is defined", which is what the suite
    checks.
+
+## `[IDE-3]`, `[IDE-4]`, `[IDE-6]` — the compiler for an editor
+
+**`ember_driver` is a library now** (`src/lib.rs`, which was `src/main.rs`, renamed with `git mv`
+so a merge carries other branches' edits of `main.rs` into it; the `ember` program is
+`src/ember.rs`, three lines). **For whoever merges**: a branch that edited `src/main.rs` merges into
+`src/lib.rs` by git's rename detection; a branch that *added* a `mod x;` there does too.
+
+- **`ember_driver::session::Session`** (`[IDE-4]`, `[IDE-6]`): `set_buffer(path, text)` (an
+  editor's unsaved text), `hover(path, Position)`, `complete(path, Position)`, `symbols(path)`,
+  `problems(path)`, `clear()`. Each query checks the file — parsing, the modules it imports, name
+  resolution, type checking, once (a compile-time value is left unevaluated) — unless the last check
+  was of the same text, and answers from that: a local's or field's type, a call's signature, a
+  declaration's head; a value's fields and methods after `.`, the names in scope elsewhere; every
+  declaration with its members. Nothing is lowered, built or run, and no C compiler is looked for.
+  The session holds one check; `clear` or dropping it frees it. (`ember lsp` stays reserved: this
+  is what it would serve.) `ember_hir::visit_block`/`visit_expr` is the walk it finds things with.
+- **`[IDE-3]` — every stage after parsing runs on a file with errors**: `compile` no longer stops
+  after a parse error or a module not found; names and types are checked whatever came before, and
+  what failed is a placeholder that satisfies everything, so each error is reported once:
+  - the lexer closes brackets never closed at the next unindented declaration (`fn name`, `struct`,
+    `class`, `import`, …, which no bracket can hold), with `E0101` at the opener — before, an
+    unclosed `(` swallowed the rest of the file;
+  - the parser makes a placeholder of what it reported: a jump as an operand (`E0107`), a chain with
+    `is`/`in` (`E0102`), a multi-statement closure in brackets (`E0106`); it drops a statement
+    attribute it rejected (`E0104`, `E0108`); `owned` where it may not be (`E0109`) is the value it
+    marks; `a::b` (`E0100`) is read as the `a.b` it should be;
+  - the type checker takes the parser's placeholders silently (an expression, a type, a
+    declaration's pattern), does not report a missing `return` in a body holding a placeholder,
+    checks `if x = e:` (`E2036`) without the `else` it makes unreachable (`W2091`), does not report
+    a missing module again (the loader's `E1060`), and treats the names a failed import binds, and
+    the names a foreign import skipped in the module it wrote, as placeholders.
+  - Every compile-fail test passes unchanged with this.
+- Tests: `ember_driver/tests/editor.rs` — `queries_keep_working_in_a_file_with_errors_of_every_stage`
+  (`[IDE-3]`: an unclosed bracket, an unresolvable name, an untypable `+`: four errors, none
+  following from another; hover, completion and symbols in and around the broken functions),
+  `queries_need_no_code_generation_and_no_c_compiler` (`[IDE-4]`: a program whose compile-time
+  value and build need a C compiler, and with a borrow error `ember check` reports: answered, no
+  file written, no borrow error among the query's problems); `ember_driver/tests/editor_memory.rs`
+  (`[IDE-6]`, a counting allocator: fifty edits and queries do not grow the session; `clear` and
+  dropping it free what it held, to within 4 KB).
+
+### What is not done, and a question (`[IDE-3]`, `[IDE-6]`)
+
+1. **`[IDE-6]` — the identifier interner is the process's**, not the session's
+   (`ember_span::Symbol`: `as_str` gives a `&'static str`, leaked). An editor that types a name a
+   letter at a time interns each prefix once and keeps it: growth by the distinct identifiers the
+   process ever sees, small but without bound. The fix is an interner per session, which needs
+   `Symbol::as_str` to give a borrow tied to the session (as rustc's `Symbol::as_str(&self)` is to
+   its session globals) instead of `&'static str` — every crate's uses of it, a change of its own.
+   Options: (a) that change; (b) an editor process restarts its compiler session's process now and
+   then (no change); (c) intern only names that resolve, typing's partial names held elsewhere.
+   Recommendation: (a), when the language server is built (it is what needs it); until then the
+   rule stays `unfinished` with this said.
+2. **`[IDE-3]` — the stages after type checking** (borrow and effect checks, the lints on MIR) do
+   not run on a program with a type error: `compile` stops after type checking reports one.
+   Running them on the functions that checked needs the others lowered as placeholders (an
+   `unreachable` body: no effect, no borrow) and every MIR pass to accept the error type where a
+   signature holds it. Not done; the rule stays `unfinished` with this said.

@@ -152,7 +152,7 @@ impl Parser<'_> {
                 } else {
                     self.parse_while(Some(label))
                 };
-                self.check_stmt_attrs(&attrs, Some(&kind));
+                let attrs = self.check_stmt_attrs(attrs, Some(&kind));
                 return Some(Stmt { id, attrs, kind, span: start.to(self.prev_span()) });
             }
         }
@@ -226,22 +226,25 @@ impl Parser<'_> {
             }
             _ => {
                 // `[ATT-3]` — an attribute may not precede a simple statement.
-                self.check_stmt_attrs(&attrs, None);
+                self.check_stmt_attrs(attrs, None);
                 let stmt = self.parse_simple_statement()?;
                 self.expect_newline();
                 return Some(stmt);
             }
         };
 
-        self.check_stmt_attrs(&attrs, Some(&kind));
+        let attrs = self.check_stmt_attrs(attrs, Some(&kind));
         Some(Stmt { id, attrs, kind, span: start.to(self.prev_span()) })
     }
 
     /// `[ATT-2]`, `[ATT-3]` — only four attributes are permitted on a
     /// statement, only on a compound one, and three of the four only on a
     /// `for`. `kind` is `None` when the statement turned out to be simple.
-    fn check_stmt_attrs(&mut self, attrs: &[Attribute], kind: Option<&StmtKind>) {
+    /// What it reports is dropped, so nothing after parsing reports it again
+    /// (`[IDE-3]`); the rest is kept.
+    fn check_stmt_attrs(&mut self, attrs: Vec<Attribute>, kind: Option<&StmtKind>) -> Vec<Attribute> {
         const LOOP_ONLY: [&str; 3] = ["simd", "parallel", "unroll"];
+        let mut kept = Vec::new();
         for attr in attrs {
             let name = attr.path.last().map(|s| s.name).unwrap();
             let permitted = LOOP_ONLY.iter().any(|p| name.is(p)) || name.is("allow");
@@ -276,8 +279,11 @@ impl Parser<'_> {
                     )
                     .help("move it onto the `for` statement"),
                 );
+                continue;
             }
+            kept.push(attr);
         }
+        kept
     }
 
     /// A statement that fits on one line and is terminated by `NEWLINE`.
@@ -704,8 +710,13 @@ impl Parser<'_> {
                     )),
                 );
             }
-            // Parsed either way, so one mistake does not cascade.
-            return self.parse_jump(allow_block_lambda);
+            // Parsed either way, so one mistake does not cascade; as an operand it is a placeholder
+            // (`[IDE-3]`), which nothing after parsing reports again.
+            let jump = self.parse_jump(allow_block_lambda);
+            if min_bp > 0 {
+                return Expr { id: jump.id, kind: ExprKind::Error, span: jump.span };
+            }
+            return jump;
         }
 
         if self.at_yield() {
@@ -726,6 +737,8 @@ impl Parser<'_> {
 
         let start = self.span();
         let mut lhs = self.parse_prefix(allow_block_lambda);
+        // `[IDE-3]` — an expression this loop reported is a placeholder once parsed.
+        let mut reported = false;
 
         loop {
             // Postfix: calls, indexing, fields, `?`, `as`.
@@ -766,6 +779,7 @@ impl Parser<'_> {
                 if let Some((next, _, _, _)) = self.infix_op() {
                     if chains(&next) {
                         if identity_or_membership(&op) || identity_or_membership(&next) {
+                            reported = true;
                             let span = self.span();
                             self.report(
                                 Diagnostic::error(
@@ -784,6 +798,7 @@ impl Parser<'_> {
                                     break;
                                 }
                                 if identity_or_membership(&next) {
+                                    reported = true;
                                     let span = self.span();
                                     self.report(Diagnostic::error(
                                         codes::E0102,
@@ -837,6 +852,9 @@ impl Parser<'_> {
                     span,
                 },
             };
+        }
+        if reported {
+            lhs = Expr { id: lhs.id, kind: ExprKind::Error, span: start.to(self.prev_span()) };
         }
 
         // `x if c else y` — the ternary, right-associative and loosest.
@@ -1080,8 +1098,8 @@ impl Parser<'_> {
                          scrutinee; to move a value, pass it to an `owned` parameter",
                     ),
                 );
-                let inner = self.parse_expr_bp(BP_CAST, allow_block_lambda);
-                ExprKind::Owned(Box::new(inner))
+                // `[IDE-3]` — the value it marks, which is checked as written.
+                self.parse_expr_bp(BP_CAST, allow_block_lambda).kind
             }
             TokenKind::Punct(Punct::LParen) => {
                 self.bump();
@@ -1196,15 +1214,11 @@ impl Parser<'_> {
                 }
             }
             TokenKind::Ident(_) | TokenKind::RawIdent(_) => {
-                let mut segments = vec![self.expect_ident()];
                 // `[LEX-21]`, `[GRM-24]` (0.9.9) — `.` is the one path
                 // separator, handled by postfix field access. A `::` is
-                // reported and read as a path, so the rest still resolves.
-                while self.at_punct(Punct::ColonColon) {
-                    self.report_path_colons();
-                    segments.push(self.expect_ident());
-                }
-                ExprKind::Path { segments }
+                // reported and read as the `.` it should be (the postfix
+                // loop's), so the rest checks as written that way (`[IDE-3]`).
+                ExprKind::Path { segments: vec![self.expect_ident()] }
             }
             TokenKind::Reserved(reserved) => {
                 let reserved = reserved;
@@ -1359,6 +1373,11 @@ impl Parser<'_> {
                     }
                     self.expect_punct(Punct::RBracket);
                     ExprKind::IndexOrInstantiate { base: Box::new(expr), args }
+                }
+                TokenKind::Punct(Punct::ColonColon) => {
+                    self.report_path_colons();
+                    let name = self.expect_member_name();
+                    ExprKind::Field { base: Box::new(expr), name }
                 }
                 TokenKind::Punct(Punct::Dot) => {
                     self.bump();
@@ -1624,6 +1643,9 @@ impl Parser<'_> {
                     }
                     self.bump();
                 }
+                // `[IDE-3]` — its body is a placeholder: the statements skipped are not checked
+                // without the ones before them.
+                return Lambda { is_owned, params, ret, body: LambdaBody::Expr(Box::new(Expr { id: self.next_id(), kind: ExprKind::Error, span: colon })) };
             }
             LambdaBody::Expr(Box::new(body))
         } else {
