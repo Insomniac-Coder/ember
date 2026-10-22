@@ -7,7 +7,7 @@ Target 0.9.10_Hardened_33.
 ## T1. D-808 — an overlay's contract words on a C++ function reached through a wrapper
 
 **Done.** An entry that states every fact (no `TODO(…)`, no `unsafe`) now contracts the thunk's own
-declaration, as a C function's is: `render_contracted` (cimport.rs) writes it `safe fn` with
+declaration, as a C function's is: `render_wrapper` (cimport.rs) writes it `safe fn` with
 `@ffi(param(…), result(…))`, so the checker's existing lowering does the work (a `count(n)` witness
 and an `out` leave the callable signature; a `Span` gives the pointer and length, with its length
 checks). What the importer passes itself is a `borrowed one` reference of the same declaration:
@@ -84,9 +84,9 @@ are out of `[FFI-11]`'s `unfinished` entry.
     the C compiler drops). The thunk declares the same type, so C and C++ agree under LTO
     (`-Wlto-type-mismatch` would flag a pointer/integer pair). The thunk prelude includes
     `<cstdint>`.
-  - `render_contracted` (new), `contracts_everything`, `signature_of`; `render_wrapper` dispatches
-    to it; `render` finds a status enum's error type for it; `method_value` gives `ForeignBox[T]`
-    for an opaque class by value.
+  - the contracted form of `render_wrapper` (first as a function of its own, `render_contracted`,
+    then merged into one renderer, T2), `contracts_everything`, `signature_of`; `render` finds a
+    status enum's error type for it.
 - `std/src/ffi.em` — `CppObject`, an `extern type` in `std.ffi`: the C++ object a bridge value
   owns, as a contracted declaration takes it (only behind a reference).
 - `tests/cxx-corpus/nlohmann_json/*.thunks.cpp` — re-recorded for the `ADDRESS` change (6 thunks and

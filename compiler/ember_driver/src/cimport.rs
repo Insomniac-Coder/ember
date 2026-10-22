@@ -6436,7 +6436,7 @@ fn contracts_everything(entry: &Entry) -> bool {
     !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe"))
 }
 
-/// A wrapper's parameters, its receiver first, and its result, as `render_contracted` writes its
+/// A wrapper's parameters, its receiver first, and its result, as `render_wrapper` writes its
 /// line.
 fn signature_of(wrapper: &str) -> Option<(Vec<String>, Option<String>)> {
     let line = wrapper.lines().find(|line| !line.starts_with('@') && !line.starts_with('#'))?;
