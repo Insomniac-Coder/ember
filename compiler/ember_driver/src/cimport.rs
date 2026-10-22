@@ -527,6 +527,10 @@ pub struct Imported {
     pub uses: Vec<Vec<String>>,
     pub entities: Vec<(String, String, String)>,
     pub conflicts: Vec<(String, String, String)>,
+    /// `[FFI-30]` (D-879) — each record an earlier import of the build wrote, which this module
+    /// names by an alias: its members (a C++ class's methods, constructors, operators) are that
+    /// import's, written once.
+    pub adopted: Vec<String>,
     /// `[FFI-6b]` — the function-like macros, for an overlay entry to declare.
     pub macro_functions: Vec<MacroFunction>,
     /// `[FFI-6b]` — each type the module declares, by its Ember name, as C spells it: a macro's
@@ -1536,6 +1540,7 @@ struct Writer {
     uses: Vec<Vec<String>>,
     entities: Vec<(String, String, String)>,
     conflicts: Vec<(String, String, String)>,
+    adopted: Vec<String>,
     items: Vec<Item>,
     shim: String,
     skipped: Vec<Skipped>,
@@ -2547,6 +2552,7 @@ impl Writer {
         }
         let alias = format!("{}_{}.{}", ember_branding::SYMBOL_PREFIX, shared.module.join("_"), shared.name);
         let name = ident(named);
+        self.adopted.push(named.to_string());
         self.push(named, Kind::Type, format!("type {name} = {alias}"));
         self.spelled(cursor, named);
         let record = if shared.layout.starts_with("opaque") { Record::Opaque(name, None) } else { Record::Full(name) };
@@ -4627,6 +4633,7 @@ impl Writer {
             uses: self.uses,
             entities: self.entities,
             conflicts: self.conflicts,
+            adopted: self.adopted,
             macro_functions: self.macro_functions,
             c_types: self.c_types,
             anonymous_namespace: self.anonymous_namespace,
@@ -5480,12 +5487,18 @@ pub fn load(
         Some(stem) => (format!("{stem}.h"), Some(from_dir.join(header))),
         None => (header.clone(), None),
     };
+    // `[FFI-30]` (D-879) — one header imported the same way is one module, however each importer
+    // spells its path (`"stages.hpp"` beside it, `"../stages.hpp"` from a folder below): the files
+    // as found, not as written, make the key. A header only an include path finds stays keyed by
+    // the folder it is looked up from.
+    let found = |path: PathBuf| std::fs::canonicalize(&path).ok().filter(|found| found.is_file());
+    let header_key = found(from_dir.join(&header)).map_or_else(|| format!("{}|{header}", from_dir.display()), |found| found.display().to_string());
+    let resolved = |written: &str| found(base.join(written)).map_or_else(|| written.to_string(), |found| found.display().to_string());
     let key = format!(
-        "{}|{header}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
-        from_dir.display(),
-        options.include_paths,
+        "{header_key}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+        options.include_paths.iter().map(|dir| std::fs::canonicalize(base.join(dir)).map_or_else(|_| dir.clone(), |found| found.display().to_string())).collect::<Vec<_>>(),
         options.defines,
-        options.overlays.iter().map(|(written, _)| written).collect::<Vec<_>>(),
+        options.overlays.iter().map(|(written, _)| resolved(written)).collect::<Vec<_>>(),
         options.implementation,
         project,
         options.instantiate
@@ -5690,6 +5703,21 @@ pub fn load(
                 }
                 overlay_modules.push((overlay_path, parsed, Vec::new()));
             }
+        }
+    }
+    // `[FFI-30]` (D-879) — an entry for a member of a record an earlier import wrote: that
+    // import's entity, whose members it wrote, so the entry states nothing here.
+    for (name, _) in applied.functions.iter() {
+        let named: Vec<&Function> = imported.functions.iter().filter(|function| function.name == *name).collect();
+        if let Some(member) = named.first().filter(|_| named.iter().all(|function| adopted_member(&imported, function)))
+            && let Some((owner, _)) = &member.owner
+            && let Some(shared) = known.shared.values().find(|shared| ident(&shared.name) == *owner || ident(shared.name.rsplit("::").next().unwrap_or(&shared.name)) == *owner)
+        {
+            sink.emit(
+                Diagnostic::error(codes::E5010, span, format!("the overlay's entry for `{owner}.{name}` states nothing: `{owner}` is the entity the import of `{}` as `{}` wrote, members and all", shared.header, shared.module.join(".")))
+                    .help(format!("state the contract in that import's overlay, or import `{shown}` the same way in both places, which makes the two one module"))
+                    .note("two imports of one C++ class are one Ember entity, whose members are written once [FFI-30]"),
+            );
         }
     }
     // `[FFI-40a]` (ODR-160) — a method line's receiver wins over the reading of the body.
@@ -6656,6 +6684,15 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
     }
 }
 
+/// `[FFI-30]` (D-879) — whether `function` is a member (a method, a constructor, an operator) of a
+/// record an earlier import of the build wrote, whose members that import wrote once: written again
+/// here, each would be the entity's a second time.
+fn adopted_member(imported: &Imported, function: &Function) -> bool {
+    function.owner.as_ref().is_some_and(|(owner, _)| imported.adopted.iter().any(|name| {
+        ident(name) == *owner || ident(name.rsplit("::").next().unwrap_or(name)) == *owner
+    }))
+}
+
 /// `[GRM-35]` — an overlay writes a slot's words in any order; a hand declaration's `param(…)` and
 /// `result(…)` read the ownership word first, then the count word, then the rest.
 fn canonical(mut words: Vec<String>) -> Vec<String> {
@@ -6955,7 +6992,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
             (key.trim() == "error").then(|| value.trim().to_string())
         })
     };
-    for function in imported.functions.iter().filter(|function| function.namespace == namespace) {
+    for function in imported.functions.iter().filter(|function| function.namespace == namespace && !adopted_member(imported, function)) {
         let hidden = applied.hidden.contains(&function.name);
         let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
         // `[FFI-24b]` — an asserted `noexcept` keeps the catching thunk, and a throw panics; a
@@ -8234,7 +8271,7 @@ mod cbor {
 use cbor::Value;
 
 /// 15: a function pointer's parameters and result keep their written typedef names (`intptr_t` is
-/// `isize` there too, `[FFI-8]`).
+/// `isize` there too, `[FFI-8]`); the records adopted from an earlier import (D-879).
 const EMBIND_VERSION: u64 = 15;
 
 fn text_of(value: &Value) -> Option<String> {
@@ -8400,6 +8437,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ("uses".to_string(), Value::Array(imported.uses.iter().map(|path| Value::Array(path.iter().map(|segment| Value::Text(segment.clone())).collect())).collect())),
         ("entities".to_string(), Value::Array(imported.entities.iter().map(|(usr, name, layout)| texts(&[usr, name, layout])).collect())),
         ("conflicts".to_string(), Value::Array(imported.conflicts.iter().map(|(name, header, config)| texts(&[name, header, config])).collect())),
+        ("adopted".to_string(), Value::Array(imported.adopted.iter().map(|name| Value::Text(name.clone())).collect())),
         (
             "macro_functions".to_string(),
             Value::Array(
@@ -8525,6 +8563,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         uses: array_of(field(&value, "uses")?)?.iter().map(|path| array_of(path)?.iter().map(text_of).collect::<Option<Vec<_>>>()).collect::<Option<_>>()?,
         entities: triples(field(&value, "entities")?)?,
         conflicts: triples(field(&value, "conflicts")?)?,
+        adopted: array_of(field(&value, "adopted")?)?.iter().map(text_of).collect::<Option<_>>()?,
         macro_functions: array_of(field(&value, "macro_functions")?)?
             .iter()
             .map(|entry| {
