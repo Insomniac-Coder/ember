@@ -972,6 +972,96 @@ fn a_foreign_object_ember_owns_is_carried_across() {
     assert_eq!(run.stdout, "8\nwidget 7 freed\n1\nend\n", "{}", run.stderr);
 }
 
+/// The C++ side of the `migrate_from` tests: a function that throws on a negative argument, and one
+/// declared `noexcept`, whose throw would end the process.
+const SCALES_HPP: &str = "#pragma once\n#include <stdexcept>\n\
+                          inline int checked_scale(int x) { if (x < 0) { throw std::runtime_error(\"negative\"); } return x * 10; }\n\
+                          inline int fast_scale(int x) noexcept { return x * 10; }\n";
+
+/// `PARTICLES`' next image, whose `Particle.migrate_from` builds `speed` with `call`, a C++ call.
+fn scaled_particles(call: &str, attribute: &str) -> String {
+    MIGRATED
+        .replace("from std.hot import ReloadError\n", "from std.hot import ReloadError\nimport cpp \"scales.hpp\"\n")
+        .replace("    fn migrate_from(old: ref OldSelf)", &format!("    {attribute}fn migrate_from(old: ref OldSelf)"))
+        .replace(
+            "return Ok(Particle(old.x.load() * 100, old.step * 10))",
+            &format!("unsafe:  # SAFETY(ffi): a C++ call by value\n            return Ok(Particle(old.x.load(), {call} as int))"),
+        )
+}
+
+/// `[HR-39]` — a foreign call inside `migrate_from` returns its failure as `ReloadError.Foreign`: a
+/// C++ function that may throw returns its throw as a `CppError`, which `?` converts, so a throw
+/// fails prepare (the reload refused, the old code running on) and never ends the process; one
+/// that does not throw migrates. A call to a C++ function called `noexcept`, whose throw would end
+/// the process, is rejected at compile time (`E2225`), there or through a function `migrate_from`
+/// calls. `[HR-43]` — `@allow_reload_terminate` on the `migrate_from` admits it, and `ember tcb`
+/// lists the use.
+#[test]
+fn a_foreign_failure_in_migrate_from_is_foreign() {
+    let files = [("scales.hpp", SCALES_HPP)];
+    // Throws for a negative step: refused, `Foreign`, the process alive.
+    let negative = PARTICLES.replace("step: int = 1", "step: int = -1");
+    let catching = scaled_particles("cpp.checked_scale(old.step as i32)?", "");
+    let run = host_run_with("reload-foreign-throws", &files, &negative, &[&catching], 2);
+    assert_eq!(run.exit, 0, "{}\n{}", run.stdout, run.stderr);
+    assert!(run.stdout.contains("refused: `Particle.migrate_from` returned Foreign(") && run.stdout.contains("negative"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("-6\n"), "the old code did not run on: {}", run.stdout);
+    // Does not throw: migrated, `speed` from C++.
+    let run = host_run_with("reload-foreign-scales", &files, PARTICLES, &[&catching], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n33\n63\n", "{}", run.stderr);
+    // A C function's status other than its success (`[FFI-16]`): `Foreign` too.
+    let with_status = |source: &str| {
+        source.replace(
+            "@sync\nclass Particle:\n",
+            "@repr(i32)\n@non_exhaustive\n@ffi(status=Status, ok=Success, error=StatusError)\nenum Status:\n    Success = 0\n    Busy = 2\n\n\
+             unsafe extern \"C\":\n    @ffi(result(status), link_name=\"check_c\")\n    safe fn check(n: i32) -> Status\n\n\
+             pub extern \"C\" fn check_c(n: i32) -> i32:\n    return 2 if n > 0 else 0\n\n@sync\nclass Particle:\n",
+        )
+    };
+    let status = with_status(MIGRATED)
+        .replace("return Ok(Particle(old.x.load() * 100, old.step * 10))", "check(old.step as i32)?\n        return Ok(Particle(old.x.load(), 1))");
+    let run = host_run("reload-foreign-status", &with_status(PARTICLES), &[&status], 2);
+    assert!(run.stdout.contains("refused: `Particle.migrate_from` returned Foreign(Status.Busy)"), "{}", run.stdout);
+    assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
+
+    // `noexcept`: rejected while compiling, directly or through a function.
+    let root = workspace_root();
+    let direct = scaled_particles("cpp.fast_scale(old.step as i32)", "");
+    let through = direct
+        .replace("cpp.fast_scale(old.step as i32)", "scale(old.step)")
+        .replace("fn main():", "fn scale(step: int) -> i32:\n    unsafe:  # SAFETY(ffi): a C++ call by value\n        return cpp.fast_scale(step as i32)\n\nfn main():");
+    for (label, source, path) in [("reload-noexcept-direct", &direct, ""), ("reload-noexcept-through", &through, " through `scale`")] {
+        let (dir, file) = package(label, RELOAD_ALL, PARTICLES);
+        std::fs::write(dir.join("scales.hpp"), SCALES_HPP).expect("the header is writable");
+        let out = dir.join("target").to_string_lossy().into_owned();
+        let first = ember(&["build", &file.to_string_lossy(), "--out-dir", &out], &root);
+        assert_eq!(first.exit, 0, "{label}: {}", first.stderr);
+        std::fs::write(&file, source).expect("the edit is writable");
+        let built = ember(&["build", "--reload", &file.to_string_lossy(), "--out-dir", &out], &root);
+        drop(dir);
+        assert_ne!(built.exit, 0, "{label}: a `noexcept` C++ call in `migrate_from` was built");
+        assert!(built.stderr.contains("error[E2225]") && built.stderr.contains(&format!("`Particle.migrate_from` may not call `")) && built.stderr.contains(&format!("fast_scale`{path}, a C++ function called noexcept")),
+            "{label}: {}", built.stderr);
+    }
+    // Admitted with `@allow_reload_terminate`, and listed by `ember tcb`.
+    let admitted = scaled_particles("cpp.fast_scale(old.step as i32)", "@allow_reload_terminate\n    ");
+    let run = host_run_with("reload-noexcept-admitted", &files, PARTICLES, &[&admitted], 3);
+    assert_eq!(run.stdout, "3\napplied, 3 migrated\n33\n63\n", "{}", run.stderr);
+    // (`ember tcb` checks the source on its own, with no running program: `OldSelf` is its own.)
+    let (dir, file) = package("reload-noexcept-tcb", RELOAD_ALL, &admitted.replace("old.step", "old.speed"));
+    std::fs::write(dir.join("scales.hpp"), SCALES_HPP).expect("the header is writable");
+    let report = ember(&["tcb", &file.to_string_lossy()], &root);
+    drop(dir);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    assert!(report.stdout.contains("Reload may end the process (1):") && report.stdout.contains("`Particle.migrate_from` is `@allow_reload_terminate`"), "{}", report.stdout);
+    // Anywhere but a `migrate_from`, the attribute is `E0104`.
+    let misplaced = PARTICLES.replace("fn main():", "@allow_reload_terminate\nfn helper() -> int:\n    return 1\n\nfn main():");
+    let (package, file) = package("reload-terminate-misplaced", RELOAD_ALL, &misplaced);
+    let checked = ember(&["check", &file.to_string_lossy()], &root);
+    drop(package);
+    assert!(checked.stderr.contains("error[E0104]") && checked.stderr.contains("`@allow_reload_terminate` applies to a type's `migrate_from`"), "{}", checked.stderr);
+}
+
 /// `[HR-20]` — an object a `Retained` token pins (foreign code may keep its address, `[FFI-23]`)
 /// is never moved: a reload that would move it (its new size does not fit) is refused, naming the
 /// class and how many are pinned, though every reference to it could be found and rewritten (the

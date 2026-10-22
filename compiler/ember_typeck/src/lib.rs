@@ -38430,7 +38430,24 @@ impl<'a> Checker<'a> {
         ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Call { callee: Box::new(callee), args }, span }
     }
 
+    /// `[HR-43]` — `@allow_reload_terminate` states that a migration may end the process, so it is
+    /// written on a type's `migrate_from` and nowhere else.
+    fn check_reload_terminate(&mut self, attrs: &[ast::Attribute], name: Option<Symbol>) {
+        if name.is_some_and(|name| name.is("migrate_from")) {
+            return;
+        }
+        for attr in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("allow_reload_terminate")) {
+            self.sink.emit(
+                Diagnostic::error(codes::E0104, attr.span, "`@allow_reload_terminate` applies to a type's `migrate_from`")
+                    .note("it states that this migration may end the process rather than refuse the reload [HR-43]"),
+            );
+        }
+    }
+
     fn check_item_attributes_of(&mut self, item: &ast::Item, in_extern: bool) {
+        if let ast::ItemKind::Fn(_) = &item.kind {
+            self.check_reload_terminate(&item.attrs, None);
+        }
         if let ast::ItemKind::Overlay(overlay) = &item.kind {
             self.check_attribute_list(&item.attrs, "overlay");
             self.check_overlay(overlay);
@@ -38802,6 +38819,7 @@ impl<'a> Checker<'a> {
         };
         for member in members {
             if let ast::MemberKind::Fn(decl) = &member.kind {
+                self.check_reload_terminate(&member.attrs, Some(decl.name.name));
                 self.check_safety_attribute(&member.attrs, decl.is_unsafe,
                     member.vis.kind != ast::VisKind::Private, member.span);
                 // `[TYP-9]` — a float mode governs the body it is written on.
@@ -54975,8 +54993,8 @@ const ATTRIBUTE_TABLE: &[(&[&str], &[&str], bool)] = &[
     // `[HR-14]` — a field's, a variant's or a payload field's old name, whose value a reload
     // carries over.
     (&["renamed_from"], &["field", "variant", "payload field"], true),
-    // `[HR-43]` — admitting a call that may end the process: C++ calls are not built.
-    (&["allow_reload_terminate"], &["fn"], false),
+    // `[HR-43]` — a `migrate_from` admitting a call that may end the process (`check_reload_terminate`).
+    (&["allow_reload_terminate"], &["fn"], true),
     (&["prelude"], &["module"], false),
 ];
 

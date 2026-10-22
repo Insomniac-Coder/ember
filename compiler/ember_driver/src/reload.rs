@@ -392,6 +392,9 @@ pub struct Additions {
     /// `[HR-14]` — the functions written to give a field declared without a default its type's
     /// `Default.default()`, by span: the checker builds one only where the type is `Default`.
     pub if_default: std::collections::HashSet<Span>,
+    /// `[HR-39]`, `[HR-43]` — each `migrate_from`, by its declaration's span, with its type's name
+    /// and, when it is `@allow_reload_terminate`, the attribute's span.
+    pub migrate_fns: Vec<(Span, String, Option<Span>)>,
 }
 
 /// A written type whose `Default` is all zero bytes, which the runtime writes itself
@@ -467,6 +470,73 @@ fn check_migrate_from_panics(map: &SourceMap, span: Span, sink: &mut Sink) {
                 .help(help.to_string())
                 .note("a reload that cannot migrate a value is refused with a report; it never aborts [HR-35]"),
         );
+    }
+}
+
+/// `[HR-39]` — a `migrate_from` that can reach a C++ function called `noexcept` (derived from its
+/// declaration, called directly, or asserted by an overlay, `[FFI-24]`, `[FFI-24b]`), directly or
+/// through the program's own functions it calls, could end the process with a throw instead of
+/// refusing the reload: `E2225`, naming the function and the path to it, unless the `migrate_from`
+/// is `@allow_reload_terminate` (`[HR-43]`). A C++ function that catches returns its throw as a
+/// `CppError`, which `?` makes `ReloadError.Foreign`.
+pub fn check_migrate_from_terminates(
+    bodies: &[ember_mir::Body],
+    modules: &[ember_typeck::LoadedModule],
+    additions: &Additions,
+    sink: &mut Sink,
+) {
+    let cpp_files: BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some()))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    if cpp_files.is_empty() {
+        return;
+    }
+    let standard: BTreeSet<ember_span::FileId> = modules
+        .iter()
+        .filter(|loaded| loaded.path.first().is_some_and(|first| first == ember_branding::STD_PACKAGE))
+        .map(|loaded| loaded.module.span.file)
+        .collect();
+    let by_symbol: std::collections::HashMap<&str, &ember_mir::Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
+    for (span, type_name, allowed) in &additions.migrate_fns {
+        if allowed.is_some() {
+            continue;
+        }
+        let Some(root) = bodies.iter().find(|body| body.span.file == span.file && body.span.start == span.start) else { continue };
+        // Each body reached, with the call in `migrate_from` it was reached through and the
+        // functions between.
+        let mut queue: std::collections::VecDeque<(&ember_mir::Body, Option<Span>, Vec<String>)> = std::collections::VecDeque::from([(root, None, Vec::new())]);
+        let mut seen: BTreeSet<&str> = BTreeSet::from([root.symbol.as_str()]);
+        let mut reported: BTreeSet<&str> = BTreeSet::new();
+        while let Some((body, through, path)) = queue.pop_front() {
+            for block in &body.blocks {
+                let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } = &block.terminator else { continue };
+                let Some(callee) = by_symbol.get(symbol.as_str()).copied() else { continue };
+                let site = through.unwrap_or(block.terminator_span);
+                if let Some(mode) = crate::cpp_call_mode(callee, &by_symbol, &cpp_files) {
+                    if mode.starts_with("noexcept") && reported.insert(callee.symbol.as_str()) {
+                        let via = if path.is_empty() { String::new() } else { format!(" through `{}`", path.join("` → `")) };
+                        sink.emit(
+                            ember_diag::Diagnostic::error(
+                                ember_diag::codes::E2225,
+                                site,
+                                format!("`{type_name}.migrate_from` may not call `{}`{via}, a C++ function called {mode}: a throw from it ends the process", callee.name),
+                            )
+                            .help("call a function that catches (its throw comes back as a `CppError`, which `?` makes `ReloadError.Foreign`), or mark `migrate_from` `@allow_reload_terminate` to state that this migration may end the process rather than refuse [HR-43]")
+                            .note("a reload that cannot migrate a value is refused with a report; it never aborts [HR-35], [HR-39]"),
+                        );
+                    }
+                    continue;
+                }
+                if standard.contains(&callee.span.file) || cpp_files.contains(&callee.span.file) || !seen.insert(callee.symbol.as_str()) {
+                    continue;
+                }
+                let mut next = path.clone();
+                next.push(callee.name.clone());
+                queue.push_back((callee, Some(site), next));
+            }
+        }
     }
 }
 
@@ -552,6 +622,8 @@ pub fn inject(
                 continue;
             };
             check_migrate_from_panics(map, member.span, sink);
+            let terminate = member.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("allow_reload_terminate")).map(|attr| attr.span);
+            additions.migrate_fns.push((member.span, name.clone(), terminate));
             let ember_ast::MemberKind::Fn(decl) = &mut member.kind else { continue };
             // `Old<Name>` under a helper's name, which no source spells: it is visible only as
             // `migrate_from`'s `OldSelf`, and a type of the package named `Old<Name>` is its own.

@@ -50,6 +50,15 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   pinned object whose references were all enumerable was moved, leaving foreign code's address
   stale (a defect, fixed). Not built: `on_relocate` (spec question 4).
 
+* **HR-39, HR-43** — built and tested. `compiler/ember_driver/tests/reload.rs`,
+  `a_foreign_failure_in_migrate_from_is_foreign`: a C++ function that throws, called with `?` in
+  `migrate_from`, fails prepare with `Foreign(...)` and the old code runs on (no crash); one that
+  does not throw migrates; a C status other than success (`[FFI-16]`) is `Foreign(Status.Busy)`;
+  a `noexcept` C++ call in `migrate_from`, directly or through a function it calls, is `E2225` at
+  the reload build, naming the function and the path; `@allow_reload_terminate` admits it (the
+  reload applies) and `ember tcb` lists it ("Reload may end the process (1)"); the attribute
+  anywhere but a `migrate_from` is `E0104`.
+
 ## Compiler changes
 
 * HR-23: `cimport.rs` (`import_cached` returns a hash over every file the header included),
@@ -96,6 +105,14 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   Classes with a schema: the package's, and standard-library classes holding the package's types,
   an `SoA` of them, or references. A struct or enum with no schema that holds references is now
   described to the runtime (followed) instead of opaque.
+* HR-39/HR-43: `std.ffi.ForeignFailure` (an `Error`), implemented by `CppError` (which now has
+  `Display`, `<type>: <what>`, `Debug` and `Error`) and by every `[FFI-16]` status error the
+  compiler writes (`errors.rs`, where `std.ffi` is in the build); `std.hot` gives `ReloadError`
+  `From[E]` for every `E: ForeignFailure` (`Foreign`, its text the failure's). The driver's
+  `reload::check_migrate_from_terminates` walks each `migrate_from`'s direct calls through the
+  program's functions to C++ calls (`cpp_call_mode`) and refuses a `noexcept` one with `E2225`
+  unless the `migrate_from` is `@allow_reload_terminate` (now built; `E0104` elsewhere).
+  `ember tcb` lists each `@allow_reload_terminate` (text and JSON, `reload_terminate`).
 * Runtime: the runtime C is generated from `runtime/ember_rt/templates/*.in`
   (`tools/generate_runtime.py`); every runtime change is in the templates, regenerated.
 
@@ -127,6 +144,13 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
 7. Codegen: `reload_layout_table` named its table before describing its members, so a member's
    own table could take the same name (`em_rl_layout_0` defined twice) once more types were
    described. Named after its members now.
+8. `[HR-37]`/`[HR-2]` a block allocated in prepare and then grown (`ember_realloc`'s and
+   `try_realloc`'s in-place `realloc` path, e.g. a `String` built in a failing `migrate_from`)
+   stayed in the transaction arena under its old address; a failed prepare then freed it again:
+   heap corruption (`0xC0000374`) instead of a refusal. During a transaction a block now grows by
+   allocate, copy and free, which the arena follows. Test: `a_foreign_failure_in_migrate_from_is_foreign`
+   (its first case crashed the host before the fix).
+9. `[HR-20]` a pinned object whose references were all enumerable was moved (see HR-20 above).
 
 ## Defects suspected (not verified)
 
@@ -172,7 +196,7 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
 
 ## Not done yet
 
-HR-1, HR-9, HR-20, HR-22, HR-24, HR-39, HR-41, HR-43 — in progress.
+HR-1, HR-9, HR-24, HR-41 — in progress.
 
 One transient failure seen once and not again (four reruns): a reload build in
 `value_data_migrates_through_its_container` exited -1 with no output.

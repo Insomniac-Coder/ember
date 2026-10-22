@@ -81,6 +81,7 @@ static void rl_tx_note_alloc(void* p, size_t size, size_t align);
 static void rl_tx_note_free(void* p);
 static void rl_tx_check_budget(size_t size);
 static void rl_panic_guard(const char* msg, size_t len);
+static bool rl_tx_active(void);
 #endif
 #if defined(EMBER_RELOAD_INSTANCES)
 static void rl_tx_note_object(struct ember_obj_header* object);
@@ -2719,9 +2720,15 @@ static bool on_stack(const void* p) {
 
 void* ember_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
     bool frame = p != NULL && on_stack(p);
+    bool tracked = false;
+#if defined(EMBER_RELOAD)
+    /* [HR-37] Prepare's transaction arena holds every block by its address: one that grows
+     * allocates, copies and frees, so the arena follows it (and counts it against its budget). */
+    tracked = rl_tx_active();
+#endif
     /* The default allocator's plain blocks grow in place when they can; the
      * counts move as the allocate-copy-free below would move them. */
-    if (p != NULL && !frame && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+    if (p != NULL && !frame && !tracked && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
         void* grown = realloc(p, new_size == 0 ? 1 : new_size);
         if (grown == NULL) {
             ember_loc loc = { "<allocator>", 0, 0 };
@@ -3722,7 +3729,11 @@ void ember_vec_reserve_aligned(ember_vec* v, size_t elem_size, size_t align, siz
  * default allocator's plain blocks still grow in place when they can. */
 static void* try_realloc(void* p, size_t old_size, size_t new_size, size_t align) {
     bool frame = p != NULL && on_stack(p);
-    if (p != NULL && !frame && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
+    bool tracked = false;
+#if defined(EMBER_RELOAD)
+    tracked = rl_tx_active(); /* [HR-37], as `ember_realloc` */
+#endif
+    if (p != NULL && !frame && !tracked && g_config.alloc == NULL && g_config.free == NULL && align <= EMBER_MALLOC_ALIGN) {
         void* grown = realloc(p, new_size == 0 ? 1 : new_size);
         if (grown == NULL) {
             return NULL;
@@ -10468,6 +10479,10 @@ static bool rl_tx_grow(void** items, size_t* cap, size_t each) {
     *items = moved;
     *cap = grown;
     return true;
+}
+
+static bool rl_tx_active(void) {
+    return g_rl_tx.active;
 }
 
 static void rl_tx_note_alloc(void* p, size_t size, size_t align) {

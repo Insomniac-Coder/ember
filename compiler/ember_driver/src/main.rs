@@ -2284,6 +2284,31 @@ fn print_tcb_report(
         .filter(|decl| request.module.as_ref().is_none_or(|wanted| *wanted == decl.module))
         .collect();
     foreign.sort_by(|a, b| a.module.cmp(&b.module));
+    // `[HR-43]` — every `migrate_from` stating that its migration may end the process
+    // (`@allow_reload_terminate`), which `[HR-39]` would otherwise refuse to build.
+    let mut terminating: Vec<(String, Span, String)> = Vec::new();
+    for loaded in modules.iter().filter(|loaded| !loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE)) {
+        let name = module_name(loaded);
+        if request.module.as_ref().is_some_and(|wanted| *wanted != name) {
+            continue;
+        }
+        for item in &loaded.module.items {
+            let (owner, members) = match &item.kind {
+                ember_ast::ItemKind::Struct(decl) => (decl.name.name, &decl.members),
+                ember_ast::ItemKind::Class(decl) => (decl.name.name, &decl.members),
+                ember_ast::ItemKind::Enum(decl) => (decl.name.name, &decl.members),
+                _ => continue,
+            };
+            for member in members {
+                let ember_ast::MemberKind::Fn(decl) = &member.kind else { continue };
+                if let Some(attr) = member.attrs.iter().find(|attr| attr.path.len() == 1 && attr.path[0].name.is("allow_reload_terminate"))
+                    && decl.name.name.is("migrate_from")
+                {
+                    terminating.push((name.clone(), attr.span, format!("{owner}.migrate_from")));
+                }
+            }
+        }
+    }
     // `[FFI-37c]`, `[TCB-5]`, `[TCB-6]` — what an instrumented test run recorded of the effect facts.
     let evidence = foreign::load_evidence(input);
     if request.json {
@@ -2312,12 +2337,17 @@ fn print_tcb_report(
             .into_iter()
             .map(|(name, text)| (name.to_string(), serde_json::json!(text)))
             .collect();
+        let terminating_json: Vec<serde_json::Value> = terminating
+            .iter()
+            .map(|(module, at, function)| serde_json::json!({ "module": module, "source": map.location(*at), "function": function }))
+            .collect();
         let mut report = serde_json::json!({
             "schema": 1,
             "guaranteed": LANGUAGE_GUARANTEES,
             "categories": categories,
             "unsafe": unsafe_json,
             "foreign": foreign_json,
+            "reload_terminate": terminating_json,
         });
         if request.audit {
             report["effects"] = serde_json::json!(effect_totals(bodies, types, modules)
@@ -2381,6 +2411,10 @@ fn print_tcb_report(
             module = Some(&decl.module);
         }
         foreign::print(decl, map, "    ", evidence.as_ref());
+    }
+    println!("Reload may end the process ({}):", terminating.len());
+    for (module, at, function) in &terminating {
+        println!("  {}  module {module}  `{function}` is `@allow_reload_terminate`: a C++ call it makes may end the process rather than refuse the reload [HR-43]  [asserted]", map.location(*at));
     }
     Ok(())
 }
@@ -4653,6 +4687,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             body.inline.never = true;
         }
         reload::lint_noreload_loops(&bodies, image, &mut sink);
+        if let Some(additions) = &reload_additions {
+            reload::check_migrate_from_terminates(&bodies, &modules, additions, &mut sink);
+        }
     }
     mark("lower", "all modules");
     if cfg!(debug_assertions) {
