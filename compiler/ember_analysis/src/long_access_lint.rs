@@ -126,7 +126,7 @@ fn dynamic_call_in_hierarchy(
             .is_some_and(|receiver| operand_derives_from_access(body, receiver, &access.place)),
         // `[FFI-39d]` — a call into C++, which may call the object's virtuals back through its
         // trampoline.
-        FuncRef::Direct { symbol, .. } => derives_from_cpp(types, access.class) && symbol.starts_with(&ember_branding::mangled("cpp.")),
+        FuncRef::Direct { symbol, .. } => derives_from_cpp(types, access.class) && ember_branding::symbol_path_starts_with(symbol, &["cpp"]),
         _ => false,
     }
 }

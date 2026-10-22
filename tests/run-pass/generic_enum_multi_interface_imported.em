@@ -3,8 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 20
 #$ stdout: 22
-#$ assert-c: contains(em_vt_dyn_generic_enum_multi_interface_imported_support_traits_Read_generic_enum_multi_interface_imported_support_model_Signal_i32)
-#$ assert-c: contains(em_vt_dyn_generic_enum_multi_interface_imported_support_traits_Write_generic_enum_multi_interface_imported_support_model_Signal_i32)
+#$ assert-c: contains(em_vt_dyn_45generic_enum_multi_interface_imported_support6traits4Read_for_45generic_enum_multi_interface_imported_support5model6SignalG2c2a47066b4fc729)
+#$ assert-c: contains(em_vt_dyn_45generic_enum_multi_interface_imported_support6traits5Write_for_45generic_enum_multi_interface_imported_support5model6SignalG2c2a47066b4fc729)
 
 from generic_enum_multi_interface_imported_support.model import Signal
 from generic_enum_multi_interface_imported_support.traits import Read

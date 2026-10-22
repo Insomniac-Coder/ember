@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(em_vt_dyn_Render_Pixel_bool_drop)
+#$ assert-c: contains(em_vt_dyn_6Render_for_5PixelGda5cc12a188c7619_drop)
 #$ assert-c: !contains(ember_box_new_copy)
 
 interface Render:

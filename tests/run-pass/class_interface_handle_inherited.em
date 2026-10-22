@@ -2,7 +2,7 @@
 #$ rules: OBJ-2, DSP-3, IFC-3
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_vt_dyn_Child_Pixel)
+#$ assert-c: contains(em_vt_dyn_5Child_for_5Pixel)
 #$ assert-c-count: contains(ember_itable_lookup) == 1
 
 # A Child class handle exposes the parent-first Child table through its TypeInfo.

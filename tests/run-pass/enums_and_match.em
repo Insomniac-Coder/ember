@@ -1,7 +1,7 @@
 #$ test: run-pass
 #$ rules: ENM-1, ENM-2, ENM-3, TYP-12
 #$ assert-c: contains("switch (")
-#$ assert-c: contains("typedef uint8_t em_Dir")
+#$ assert-c: contains("typedef uint8_t em_3Dir")
 
 enum Dir:
     North

@@ -18,10 +18,10 @@ static int exercise_callbacks(void) {
     int32_t (*inline_fn)(int32_t) = make_inline();
     int32_t (*selected_one)(int32_t) = make_selected(0);
     int32_t (*selected_two)(int32_t) = make_selected(1);
-    int32_t (*pair_fn)(em_Pair) = make_pair();
-    int64_t (*large_fn)(em_Large) = make_large();
-    int32_t (*mut_fn)(em_Pair*) = make_mut();
-    em_Pair (*return_fn)(int32_t) = make_returned();
+    int32_t (*pair_fn)(em_4Pair) = make_pair();
+    int64_t (*large_fn)(em_5Large) = make_large();
+    int32_t (*mut_fn)(em_4Pair*) = make_mut();
+    em_4Pair (*return_fn)(int32_t) = make_returned();
     int32_t (*nested_fn)(int32_t (*)(int32_t), int32_t) = make_nested();
     void (*void_fn)(int32_t) = make_void();
 #define CHECK_CALLBACK(expression, expected, code) do { \
@@ -33,15 +33,15 @@ static int exercise_callbacks(void) {
     CHECK_CALLBACK(inline_fn(40), 43, 2);
     CHECK_CALLBACK(selected_one(41), 42, 3);
     CHECK_CALLBACK(selected_two(41), 43, 4);
-    em_Pair pair = { 19, 23 };
+    em_4Pair pair = { 19, 23 };
     CHECK_CALLBACK(pair_fn(pair), 42, 5);
     if (pair.left != 19 || pair.right != 23) return 6;
-    em_Large large = { 10, 20, 12 };
+    em_5Large large = { 10, 20, 12 };
     CHECK_CALLBACK(large_fn(large), 42, 7);
     CHECK_CALLBACK(mut_fn(&pair), 52, 8);
     if (pair.left != 29) return 9;
     ember_rt_thread_detach();
-    em_Pair returned = return_fn(20);
+    em_4Pair returned = return_fn(20);
     if (!runtime_thread_attached()) return 110;
     if (returned.left != 20 || returned.right != 21) return 10;
     CHECK_CALLBACK(nested_fn(named, 41), 42, 11);

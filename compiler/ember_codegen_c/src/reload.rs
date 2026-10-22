@@ -1200,7 +1200,7 @@ impl Emitter<'_> {
             self.line(row);
         }
         self.line("};");
-        let layout = format!("{}_layout", self.c_named(&self.types.struct_def(id).name.to_string()));
+        let layout = format!("{}_layout", self.c_named(TypeNode::Struct(id)));
         self.line(&format!(
             "static const {RT}rl_type {symbol} = {{ {}, EMBER_RL_TYPE_STRUCT, NULL, 0, (uint32_t)sizeof({soa_c}), (uint32_t)_Alignof({soa_c}), UINT64_C(0x{:016x}), 0, NULL, NULL, {}u, {symbol}_fields, 0, NULL, NULL, NULL, NULL, NULL, 0, {layout} }};",
             c_string_literal(&self.types.display(ty)),
@@ -1393,13 +1393,15 @@ impl Emitter<'_> {
         let mut identities = Vec::new();
         let contained = self.contained_structs(reload);
         let foreign = self.pointed_structs(reload, bodies);
-        // A field's row and, when it has a declared default, its default's case.
-        let mut layouts: Vec<(String, String, Vec<(String, Ty)>, String)> = Vec::new();
+        // A field's row and, when it has a declared default, its default's case; each type with its
+        // mangled form (`[MNG-1]`), which its tables are named by.
+        let mut layouts: Vec<(String, String, String, Vec<(String, Ty)>, String)> = Vec::new();
         let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         for id in classes {
             let def = self.types.class_def(id);
             let name = def.name.to_string();
-            identities.push(format!("&{}", class_identity_symbol(&name)));
+            let mangled = self.mangled_type(TypeNode::Class(id));
+            identities.push(format!("&{}", class_identity_symbol(&mangled)));
             if !self.class_has_schema(id, reload) {
                 continue;
             }
@@ -1407,7 +1409,7 @@ impl Emitter<'_> {
                 .filter_map(|index| self.types.class_field_at(id, index))
                 .map(|field| (field.name.to_string(), field.ty))
                 .collect();
-            layouts.push(("class".to_string(), name.clone(), fields, format!("struct {}", ember_branding::object_struct(&name))));
+            layouts.push(("class".to_string(), name.clone(), mangled.clone(), fields, format!("struct {}", ember_branding::object_struct(&mangled))));
         }
         let structs: Vec<(StructId, String)> = self.types.structs().map(|(id, def)| (id, def.name.to_string())).collect();
         for (id, name) in structs {
@@ -1417,11 +1419,11 @@ impl Emitter<'_> {
             }
             let fields: Vec<(String, Ty)> =
                 self.types.struct_def(id).fields.iter().map(|field| (field.name.to_string(), field.ty)).collect();
-            layouts.push(("struct".to_string(), name, fields, self.c_type(ty)));
+            layouts.push(("struct".to_string(), name, self.mangled_type(TypeNode::Struct(id)), fields, self.c_type(ty)));
         }
-        for (kind, name, fields, c_type) in layouts {
-            let table_name = table(&format!("fields_{}", c_name(&name)));
-            let init_name = table(&format!("init_{}", c_name(&name)));
+        for (kind, name, mangled, fields, c_type) in layouts {
+            let table_name = table(&format!("fields_{mangled}"));
+            let init_name = table(&format!("init_{mangled}"));
             let mut rows = Vec::new();
             let mut cases = Vec::new();
             for (index, (field, ty)) in fields.iter().enumerate() {
@@ -1468,10 +1470,10 @@ impl Emitter<'_> {
                 init_name.clone()
             };
             let fields_ref = if rows.is_empty() { "NULL".to_string() } else { table_name };
-            let migrate = self.reload_migrate_adapter(&name, reload);
+            let migrate = self.reload_migrate_adapter(&name, &mangled, reload);
             let old_type = reload.migrations.get(&name).map_or("NULL".to_string(), |(_, old)| c_string_literal(old));
             // `[HR-2a]` — reclaim drops the fields an edit removed, one by one.
-            let drop_name = table(&format!("drop_{}", c_name(&name)));
+            let drop_name = table(&format!("drop_{mangled}"));
             let mut drops = Vec::new();
             for (index, (field, ty)) in fields.iter().enumerate() {
                 let c_field = member(field);
@@ -1527,8 +1529,8 @@ impl Emitter<'_> {
                     "    {{ {}, EMBER_RL_TYPE_CLASS, {base}, 0, (uint32_t)sizeof({c_type}), (uint32_t)_Alignof({c_type}), UINT64_C(0x{schema:016x}), UINT64_C(0x{:016x}), &{}, &{}, {}u, {fields_ref}, 0, NULL, {init}, {migrate}, {old_type}, {drop_field} }},",
                     c_string_literal(&name),
                     self.methods_schema(id),
-                    ember_branding::type_info(&name),
-                    class_identity_symbol(&name),
+                    ember_branding::type_info(&mangled),
+                    class_identity_symbol(&mangled),
                     rows.len(),
                 ));
             } else {
@@ -1548,10 +1550,11 @@ impl Emitter<'_> {
                 continue;
             }
             let c_type = self.c_type(ty);
+            let mangled = self.mangled_type(TypeNode::Enum(id));
             // `[HR-11]`, `[HR-15]` — a payload enum's schema: its tag as its one field, and each
             // variant's payload fields, which a reload walks for the variant the tag names.
             let payloads = !self.types.enum_is_bare(id) && self.has_schema(ty, reload);
-            let tag_name = table(&format!("tag_{}", c_name(&name)));
+            let tag_name = table(&format!("tag_{mangled}"));
             if payloads {
                 self.line(&format!(
                     "static const {RT}rl_field {tag_name}[1] = {{ {{ \"tag\", NULL, \"tag\", 0, (uint32_t)offsetof({c_type}, tag), (uint32_t)sizeof((({c_type}*)0)->tag), 0, EMBER_RL_KIND_PLAIN, EMBER_RL_KIND_PLAIN, 0, NULL, NULL, NULL }} }};"
@@ -1599,7 +1602,7 @@ impl Emitter<'_> {
                         shape.tail(),
                     ));
                 }
-                let payload_table = table(&format!("payload_{}_{}", c_name(&name), c_name(&variant.name.to_string())));
+                let payload_table = table(&format!("payload_{mangled}_{}", ember_branding::mangled_path(variant.name.as_str())));
                 if !fields.is_empty() {
                     self.line(&format!("static const {RT}rl_field {payload_table}[{}] = {{", fields.len()));
                     for row in &fields {
@@ -1616,7 +1619,7 @@ impl Emitter<'_> {
                     if fields.is_empty() { "NULL".to_string() } else { payload_table },
                 ));
             }
-            let table_name = table(&format!("variants_{}", c_name(&name)));
+            let table_name = table(&format!("variants_{mangled}"));
             if !rows.is_empty() {
                 self.line(&format!("static const {RT}rl_variant {table_name}[{}] = {{", rows.len()));
                 for row in &rows {
@@ -1627,7 +1630,7 @@ impl Emitter<'_> {
             let init = if cases.is_empty() {
                 "NULL".to_string()
             } else {
-                let init_name = table(&format!("init_{}", c_name(&name)));
+                let init_name = table(&format!("init_{mangled}"));
                 self.line(&format!("static void {init_name}(void* object, uint32_t index) {{\n    switch (index) {{"));
                 for case in &cases {
                     self.line(case);
@@ -1638,7 +1641,7 @@ impl Emitter<'_> {
             let drop_field = if drops.is_empty() {
                 "NULL".to_string()
             } else {
-                let drop_name = table(&format!("drop_{}", c_name(&name)));
+                let drop_name = table(&format!("drop_{mangled}"));
                 self.line(&format!("static void {drop_name}(void* object, uint32_t index) {{\n    switch (index) {{"));
                 for (index, lines) in drops {
                     self.line(&format!("    case {index}u: {{"));
@@ -1689,7 +1692,7 @@ impl Emitter<'_> {
     /// the driver's wrapper (`fn(old: ref Old<Name>, report: mut String) -> Option[<Name>]`) calls
     /// `migrate_from` and gives the new value, or `None` with the `ReloadError` written into the
     /// report. 0 is success. "NULL" for a type without `migrate_from`.
-    fn reload_migrate_adapter(&mut self, name: &str, reload: &ReloadImage) -> String {
+    fn reload_migrate_adapter(&mut self, name: &str, mangled: &str, reload: &ReloadImage) -> String {
         let Some((wrapper, _)) = reload.migrations.get(name) else { return "NULL".to_string() };
         let Some((symbol, ret)) = self.reload_function(wrapper) else { return "NULL".to_string() };
         let TyKind::Enum(option) = *self.types.kind(ret) else { return "NULL".to_string() };
@@ -1700,7 +1703,7 @@ impl Emitter<'_> {
         let result = self.c_type(ret);
         let tag = self.enum_tag(option, "result");
         let payload = self.enum_member(option, "result", some, 0);
-        let adapter = table(&format!("migrate_{}", c_name(name)));
+        let adapter = table(&format!("migrate_{mangled}"));
         self.line(&format!("static int {adapter}(void* out, const void* old, char* report, size_t report_size) {{"));
         self.line(&format!("    {RT}vec text = {RT}vec_empty();"));
         self.line(&format!("    {result} result = {symbol}((void*)old, &text);"));
@@ -1724,9 +1727,9 @@ impl Emitter<'_> {
     }
 }
 
-/// A class's identity record across images.
-pub(crate) fn class_identity_symbol(class: &str) -> String {
-    ember_branding::mangled(&format!("tid_{}", class.replace('.', "_")))
+/// A class's identity record across images, by the class's mangled form (`[MNG-1]`).
+pub(crate) fn class_identity_symbol(mangled_class: &str) -> String {
+    format!("{}_{mangled_class}", ember_branding::generated("tid"))
 }
 
 /// A struct the compiler supplies, which no edit changes.

@@ -2,7 +2,7 @@
 #$ rules: TYP-16, CLS-2, CLS-4, OBJ-3, DSP-1, OWN-2, HEAP-3, HEAP-4, HEAP-5, HEAP-6, HEAP-7, WK-11, WK-12, WK-13, WK-14, TST-26
 #$ profiles: debug, development, release
 #$ stdout: 0
-#$ assert-c: contains("static int32_t em_vt_Derived_bool_slot0")
+#$ assert-c: contains("static int32_t em_vt_7DerivedGda5cc12a188c7619_slot0")
 #$ assert-c: contains("->slot0")
 #$ assert-c-count: contains("ember_weak_retain(") == 2
 #$ assert-c: contains("ember_weak_release((ember_obj_header*)weak.value);")

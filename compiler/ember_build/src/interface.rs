@@ -39,7 +39,10 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // Schema 11 adds the facts `[BLD-2]` names beside signatures: each callable's
 // effect set and the body it exports to the inline header (`[CG-C-3b]`), and
 // each visible type's layout. A schema 10 record lacks them.
-const SCHEMA_VERSION: u32 = 11;
+// Schema 12 keys callables by `[MNG-1]`'s injective symbols (`em_3lib3m_x1f`, an instance's
+// ending in its arguments' hash): a schema 11 record names them `em_lib_m_x_f`, which is another
+// symbol, or two callables' one.
+const SCHEMA_VERSION: u32 = 12;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -1445,7 +1448,7 @@ mod tests {
         stale[0]
             .callables
             .insert(
-                ember_branding::mangled("root.f"),
+                ember_branding::item_symbol("root.f"),
             CallableInterfaceContract {
                 signature: signature("Span[i32]"),
                 metadata: Some(metadata(1)),

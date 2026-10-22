@@ -939,7 +939,7 @@ impl Summaries {
         if !seen.insert(ty) || !types.needs_drop(ty) {
             return;
         }
-        let own = |owner: String, writes: &mut Writes| match self.of(&ember_branding::drop_function(&owner)) {
+        let own = |symbol: String, writes: &mut Writes| match self.of(&symbol) {
             Some(drop) => writes.join(drop),
             None => writes.anywhere = true,
         };
@@ -949,7 +949,7 @@ impl Summaries {
                 while let Some(class) = current {
                     let def = types.class_def(class);
                     if def.has_drop {
-                        own(def.name.to_string(), writes);
+                        own(types.class_method_symbol(class, "drop"), writes);
                     }
                     for field in def.fields.clone() {
                         self.drop_writes_into(types, field.ty, writes, seen);
@@ -960,7 +960,7 @@ impl Summaries {
             TyKind::Struct(id) => {
                 let def = types.struct_def(*id);
                 if def.has_drop {
-                    own(types.symbol_name(ty), writes);
+                    own(types.method_symbol(ty, None, "drop", None), writes);
                 }
                 for field in def.fields.clone() {
                     self.drop_writes_into(types, field.ty, writes, seen);
@@ -974,7 +974,7 @@ impl Summaries {
             TyKind::Enum(id) => {
                 let def = types.enum_def(*id);
                 if def.has_drop {
-                    own(types.symbol_name(ty), writes);
+                    own(types.method_symbol(ty, None, "drop", None), writes);
                 }
                 for variant in def.variants.clone() {
                     for field in variant.fields {

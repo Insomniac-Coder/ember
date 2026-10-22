@@ -1,6 +1,6 @@
 #$ test: run-pass
 #$ rules: LT-14, LT-30, LT-31, LT-31a, TST-17
-#$ assert-c-count: contains("int32_t em_left_value(") == 2
+#$ assert-c-count: contains("int32_t em_10left_value(") == 2
 #$ assert-c: !contains("region_slot")
 #$ stdout: 1
 #$ stdout: 3

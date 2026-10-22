@@ -1,8 +1,8 @@
 #$ test: run-pass
 #$ rules: CLS-1, CLS-2, CLS-4, OWN-2
 #$ profiles: debug, development, release
-#$ assert-c: contains(em_Base_init)
-#$ assert-c: contains(em_Derived_init)
+#$ assert-c: contains(em_4Base4init)
+#$ assert-c: contains(em_7Derived4init)
 #$ stdout: 11
 
 fn base_default() -> i32:

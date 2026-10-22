@@ -742,9 +742,9 @@ fn transform_all(bodies: &mut Vec<Body>, types: &mut TypeTable) -> bool {
     for generator in &generators {
         let body = &bodies[generator.body];
         let owner = types.symbol_name(generator.frame_ty);
-        let next_symbol = method_symbol(&owner, "next");
-        let drop_symbol = ember_branding::drop_function(&owner);
-        let result_symbol = method_symbol(&owner, "result");
+        let next_symbol = types.method_symbol(generator.frame_ty, None, "next", None);
+        let drop_symbol = types.method_symbol(generator.frame_ty, None, "drop", None);
+        let result_symbol = types.method_symbol(generator.frame_ty, None, "result", None);
         let (Some(&next_index), Some(&drop_index)) = (index.get(&next_symbol), index.get(&drop_symbol)) else {
             panic!("coroutine transform: the frame `{owner}` has no `next` or `drop` body");
         };
@@ -812,11 +812,6 @@ fn generator_name(types: &TypeTable, frame: StructId) -> String {
     }
 }
 
-/// `[MNG-1]` — a method's C symbol, as the checker makes it.
-fn method_symbol(owner: &str, name: &str) -> String {
-    let owner: String = owner.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    ember_branding::mangled(&format!("{}_{name}", owner.trim_matches('_')))
-}
 
 /// Where everything the frame holds lives.
 struct Layout {

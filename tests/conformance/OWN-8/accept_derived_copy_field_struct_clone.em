@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(em_Pair_clone)
+#$ assert-c: contains(em_4Pair5clone)
 
 @derive(Clone)
 struct Pair:

@@ -585,7 +585,7 @@ mod tests {
     fn body_with(stmts: Vec<Stmt>, terminator_span: Span) -> Body {
         Body {
             name: "t".to_string(),
-            symbol: ember_branding::mangled("t"),
+            symbol: ember_branding::item_symbol("t"),
             is_unsafe: false,
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
@@ -656,7 +656,7 @@ mod tests {
             }, span),
         ];
         body.blocks[0].terminator = Terminator::Call {
-            func: FuncRef::Direct { symbol: ember_branding::mangled("called"), latebound: false },
+            func: FuncRef::Direct { symbol: ember_branding::item_symbol("called"), latebound: false },
             args: vec![Operand::Copy(Place::local(LocalId(3)))],
             dest: Place::local(LocalId(0)),
             next: BasicBlockId(1),
@@ -1837,7 +1837,7 @@ mod view_invariant_tests {
         let span = Span::new(ember_span::FileId(0), 0, 1);
         let body = Body {
             name: "t".to_string(),
-            symbol: ember_branding::mangled("t"),
+            symbol: ember_branding::item_symbol("t"),
             is_unsafe: false,
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
@@ -1990,7 +1990,7 @@ mod interface_upcast_invariant_tests {
         };
         let body = Body {
             name: "upcast".to_string(),
-            symbol: ember_branding::mangled("upcast"),
+            symbol: ember_branding::item_symbol("upcast"),
             is_unsafe: false,
             abi: None,
             overflow: ember_types::OverflowPolicy::Panic,
@@ -2029,7 +2029,7 @@ mod interface_upcast_invariant_tests {
                                     ret: common.i32,
                                 })],
                                 implementations: vec![Some(InterfaceAdapterMethod {
-                                    symbol: ember_branding::mangled("Pixel_render"),
+                                    symbol: ember_branding::item_symbol("Pixel.render"),
                                     receiver,
                                 })],
                             },

@@ -16,4 +16,4 @@ fn main():
     println(0)
 #$ stdout: 0
 #$ 7
-#$ assert-c-order: "em_Resource_drop(&" then "ember_free("
+#$ assert-c-order: "em_8Resource4drop(&" then "ember_free("

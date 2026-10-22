@@ -86,6 +86,9 @@ dependencies = [
 [[package]]
 name = "ember_branding"
 version = "0.1.0"
+dependencies = [
+ "blake3",
+]
 
 [[package]]
 name = "ember_build"
@@ -208,6 +211,7 @@ dependencies = [
 name = "ember_types"
 version = "0.1.0"
 dependencies = [
+ "ember_branding",
  "ember_diag",
  "ember_span",
 ]

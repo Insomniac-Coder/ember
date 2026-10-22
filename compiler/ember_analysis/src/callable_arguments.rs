@@ -72,8 +72,10 @@ pub fn specialize_callable_arguments_all(bodies: &mut Vec<Body>) -> usize {
                 Some(target) => target.clone(),
                 None => {
                     let mut copy = bodies[callee].clone();
-                    let suffix: Vec<String> = known.iter().map(|(k, function)| format!("{k}_{function}")).collect();
-                    copy.symbol = format!("{}__via_{}", bodies[callee].symbol, suffix.join("__"));
+                    // `[MNG-1]` — the copy is an instance of the callee over the functions it
+                    // holds, each spelled by its symbol at its parameter's position.
+                    let held: Vec<String> = known.iter().map(|(k, function)| format!("{k} = {function}")).collect();
+                    copy.symbol = ember_branding::reinstance(&bodies[callee].symbol, &format!("[{}]", held.join(", ")));
                     copy.emit_if_used = false;
                     direct_calls(&mut copy, &known);
                     let target = copy.symbol.clone();

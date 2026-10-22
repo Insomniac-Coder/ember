@@ -4,7 +4,7 @@
 #$ stdout: 42
 #$ stdout: pixel
 #$ stdout: base
-#$ assert-c: contains(em_vt_dyn_Render_Pixel_drop)
+#$ assert-c: contains(em_vt_dyn_6Render_for_5Pixel_drop)
 #$ assert-c: !contains(ember_box_new_copy)
 
 interface Render:

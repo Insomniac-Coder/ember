@@ -7,10 +7,10 @@
 #$ 6
 #$ 2
 #$ 2
-#$ assert-c: contains("(struct em_obj_Local*)ember_obj_new_frame(&_fo")
-#$ assert-c: contains("((struct em_obj_Kept*)ember_obj_new(&em_ti_Kept))")
-#$ assert-c: !contains("(struct em_obj_Kept*)ember_obj_new_frame(")
-#$ assert-c: contains("((struct em_obj_Carried*)ember_obj_new(&em_ti_Carried))")
+#$ assert-c: contains("(struct em_obj_5Local*)ember_obj_new_frame(&_fo")
+#$ assert-c: contains("((struct em_obj_4Kept*)ember_obj_new(&em_ti_4Kept))")
+#$ assert-c: !contains("(struct em_obj_4Kept*)ember_obj_new_frame(")
+#$ assert-c: contains("((struct em_obj_7Carried*)ember_obj_new(&em_ti_7Carried))")
 # `[OPT-1]`: when escape analysis proves that no handle to an object outlives the function that
 # made it, the object is made in that function's frame, with the same header, and its `drop` runs
 # at its last release as it would. This cannot be observed: the output is what the heap gives.

@@ -2,8 +2,8 @@
 #$ rules: CLS-5
 #$ profiles: debug, development
 #$ stdout: 3 3 40
-#$ assert-c: contains(= em_Dog_speak()
-#$ assert-c: !contains(em_vt_dyn_Speak_Dog)
+#$ assert-c: contains(= em_3Dog5speak()
+#$ assert-c: !contains(em_vt_dyn_5Speak_for_3Dog)
 #$ assert-c: contains(->slot0)()
 # `[CLS-5]` — an interface method called on a class is a direct call, both on a receiver of the
 # class's own type and through a generic bound (the instance knows the class); only a `dyn`

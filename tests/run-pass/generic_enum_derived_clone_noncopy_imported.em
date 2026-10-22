@@ -2,8 +2,8 @@
 #$ rules: MOD-1, MOD-2, MOD-3, OWN-8, TYP-16, ENM-1, MONO-1
 #$ profiles: debug, development, release
 #$ stdout: 7
-#$ assert-c: contains(em_generic_enum_derived_clone_noncopy_imported_support_model_Token_clone)
-#$ assert-c: contains(Entry_generic_enum_derived_clone_noncopy_imported_support_model_Token_clone)
+#$ assert-c: contains(em_51generic_enum_derived_clone_noncopy_imported_support5model5Token5clone)
+#$ assert-c: contains(em_51generic_enum_derived_clone_noncopy_imported_support5model5Entry5cloneG63d4d374f4d940dc)
 
 from generic_enum_derived_clone_noncopy_imported_support.model import Entry
 from generic_enum_derived_clone_noncopy_imported_support.model import Token

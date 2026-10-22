@@ -461,7 +461,7 @@ fn an_export_table_is_found_by_name_with_threads_per_entry() {
         let path = library_file(&lib, "game").to_string_lossy().replace('\\', "\\\\");
         // A library's types are named in C under its package's namespace.
         let package_bytes = "game".bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
-        let table_type = format!("{}pkg_{package_bytes}_{}", ember_branding::mangle_prefix(), ember_branding::mangled("GameApi"));
+        let table_type = format!("{}pkg_{package_bytes}_{}", ember_branding::mangle_prefix(), ember_branding::item_symbol("GameApi"));
         assert!(header.contains(&format!("extern const {table_type} GameApi_v3;")) && !header.contains("GameApi_protocol"), "{header}");
         let host = format!(r#"{HOST_PRELUDE}
 #include "game.h"

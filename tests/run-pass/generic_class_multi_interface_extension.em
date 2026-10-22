@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Child em_vt_dyn_Child_Holder_bool)
+#$ assert-c: contains(static const struct em_vt_dyn_5Child em_vt_dyn_5Child_for_6HolderGda5cc12a188c7619)
 
 interface Parent:
     fn parent(self) -> i32:

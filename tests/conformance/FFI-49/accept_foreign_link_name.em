@@ -2,7 +2,7 @@
 #$ rules: FFI-49, FFI-10
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains("extern int32_t em_0x616273_magnitude(")
+#$ assert-c: contains("extern int32_t em_0x616273_9magnitude(")
 
 unsafe extern "C":
     @ffi(link_name="abs")

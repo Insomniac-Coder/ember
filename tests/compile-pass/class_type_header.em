@@ -1,10 +1,10 @@
 #$ test: compile-pass
 #$ rules: CLS-1, CLS-4, OBJ-1, OBJ-2
-#$ assert-c: contains(const ember_type_info em_ti_Entity)
-#$ assert-c: contains(const ember_type_info em_ti_Player)
+#$ assert-c: contains(const ember_type_info em_ti_6Entity)
+#$ assert-c: contains(const ember_type_info em_ti_6Player)
 #$ assert-c: contains("Entity")
 #$ assert-c: contains("Player")
-#$ assert-c: contains(&em_ti_Entity)
+#$ assert-c: contains(&em_ti_6Entity)
 #$ assert-c: contains("ember_retain_plain((ember_obj_header*")
 #$ assert-c: contains("ember_release_plain((ember_obj_header*")
 

@@ -1,7 +1,9 @@
 #$ test: run-pass
 #$ rules: SPN-4, SPN-5, SPN-6, SPN-10, TST-25, TYP-16
-#$ assert-c: contains("SpanIter_i32")
-#$ assert-c: contains("MutSpanChunks_i32")
+#$ assert-c: contains("em_3std11collections8SpanIterG2c2a47066b4fc729")
+#$ assert-c: contains("em_3std11collections13MutSpanChunksG2c2a47066b4fc729")
+# (`[MNG-1]`: `SpanIter[i32]` and `MutSpanChunks[i32]`, an instance's symbol ending with `G` and
+# its arguments' hash, `2c2a47066b4fc729` for `[i32]`.)
 
 from std.collections import SpanIter, MutSpanIter, SpanChunks, MutSpanChunks
 

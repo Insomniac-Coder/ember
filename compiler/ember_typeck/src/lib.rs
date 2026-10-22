@@ -602,6 +602,7 @@ pub fn check(
             }
         }
     }
+    checker.check_type_instance_symbols();
     let mut emitted_symbols = HashMap::<&str, &Function>::new();
     for function in &functions {
         if function.is_extern_declaration {
@@ -2623,6 +2624,12 @@ struct Checker<'a> {
     /// `[LT-1]` (ODR-024) — each instantiation's generic declaration, whose
     /// signature fixes the source parameters.
     generic_of: HashMap<DefId, DefId>,
+    /// `[MNG-1]` — each instantiation's arguments, canonically spelled: the hash in its symbol, and
+    /// what `E9040` names when two instances' hashes meet.
+    instance_spellings: HashMap<DefId, String>,
+    /// `[MNG-1]` — each instance symbol made, with the instance it was made for: another instance
+    /// with it is `E9040`.
+    instance_symbols: InstanceSymbols,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,
     /// Enums declared with type parameters, by qualified name.
@@ -3234,6 +3241,8 @@ impl<'a> Checker<'a> {
             no_lazy_projection: false,
             instances: HashMap::new(),
             generic_of: HashMap::new(),
+            instance_spellings: HashMap::new(),
+            instance_symbols: InstanceSymbols::default(),
             generic_structs: HashMap::new(),
             generic_enums: HashMap::new(),
             generic_classes: HashMap::new(),
@@ -4421,10 +4430,10 @@ impl<'a> Checker<'a> {
                         };
                         let symbol = match &decl.abi {
                             Some(_) if decl.is_foreign_decl && !ffi_count_witnesses(&item.attrs).is_empty() =>
-                                mangle(qualified, false),
+                                mangle(qualified),
                             Some(_) if decl.is_foreign_decl => foreign_function_symbol(&item.attrs, decl, qualified),
                             Some(_) => decl.name.name.to_string(),
-                            None => mangle(qualified, qualified.is("main")),
+                            None => mangle(qualified),
                         };
                         declarations.push(self.callable_declaration(
                             item.span,
@@ -4556,7 +4565,7 @@ impl<'a> Checker<'a> {
             generics.extend(method.generics.clone());
             declarations.push(self.callable_declaration(
                 method.span,
-                member_declaration_symbol(&format!("generic:{qualified}"), method.name),
+                member_declaration_symbol("generic", qualified, method.name),
                 parameters,
                 method.ret,
                 method.borrows.clone(),
@@ -6578,7 +6587,7 @@ impl<'a> Checker<'a> {
             name,
             class_init: false,
             class_init_default_fields: Vec::new(),
-            symbol: method_symbol(&self.types.symbol_name(ty), name),
+            symbol: self.types.method_symbol(ty, None, name.as_str(), None),
             is_unsafe: false,
             abi: None,
             export_thread_policy: hir::ExportThreadPolicy::Any,
@@ -7361,7 +7370,7 @@ impl<'a> Checker<'a> {
         }
         let number = self.comptime_number;
         self.comptime_number += 1;
-        let symbol = format!("{}comptime{number}", ember_branding::mangle_prefix());
+        let symbol = ember_branding::generated(&format!("comptime{number}"));
         let def = DefId(self.signatures.len() as u32);
         let ret = value.ty;
         self.signatures.push(Signature { decl: Span::DUMMY,
@@ -11582,7 +11591,7 @@ impl<'a> Checker<'a> {
                 }
                 self.member_callable_declarations.push(self.callable_declaration(
                     member.span,
-                    member_declaration_symbol(&format!("interface:{name}"), f.name.name),
+                    member_declaration_symbol("interface", name, f.name.name),
                     parameters,
                     signature.ret,
                     signature.borrows.clone(),
@@ -12565,7 +12574,7 @@ impl<'a> Checker<'a> {
                     let signature = &self.signatures[def.0 as usize];
                     self.member_callable_declarations.push(self.callable_declaration(
                         member.span,
-                        method_symbol(&self.types.symbol_name(ty), decl.name.name),
+                        self.types.method_symbol(ty, None, decl.name.name.as_str(), None),
                         self.signature_parameters(signature),
                         signature.ret,
                         signature.borrows.clone(),
@@ -17250,6 +17259,7 @@ impl<'a> Checker<'a> {
             name = Symbol::intern(&format!("{base}_{number}"));
             number += 1;
         }
+        self.types.note_instance(name, Symbol::intern(constructor), args);
         self.instance_names.insert(key.clone(), name);
         self.instance_name_owner.insert(name, key);
         name
@@ -19169,11 +19179,11 @@ impl<'a> Checker<'a> {
                 // `[MNG-2]` — a symbol C cannot spell is named in C by its alias.
                 if c_link_identifier(exported) { exported.to_string() } else { ember_branding::export_alias(exported) }
             } else { match &decl.abi {
-                Some(_) if ffi_counted.is_some() => mangle(name, false),
+                Some(_) if ffi_counted.is_some() => mangle(name),
                 Some(_) if decl.is_foreign_decl => foreign_function_symbol(&item.attrs, decl, name),
                 Some(_) => decl.name.name.to_string(),
                 None if has_attribute(&item.attrs, "export") => decl.name.name.to_string(),
-                None => mangle(name, is_main),
+                None => mangle(name),
             } };
             functions.push(Function {
                 def,
@@ -19459,7 +19469,7 @@ impl<'a> Checker<'a> {
                     name: Symbol::intern("abstract"),
                     class_init: false,
                     class_init_default_fields: Vec::new(),
-                    symbol: method_symbol(&self.types.symbol_name(job.owner), Symbol::intern("abstract")),
+                    symbol: self.types.method_symbol(job.owner, None, "abstract", None),
                     is_unsafe: false,
                     abi: None,
                     export_thread_policy: hir::ExportThreadPolicy::Any,
@@ -19622,8 +19632,7 @@ impl<'a> Checker<'a> {
                 self.emit_concrete_instantiation_diagnostics(concrete);
                 self.type_params.clear();
                 self.current_generics.clear();
-                if let Some(mut function) = function {
-                    function.symbol = format!("{}__{}", function.symbol, instance.0);
+                if let Some(function) = function {
                     out.push(function);
                 }
             }
@@ -21011,7 +21020,10 @@ impl<'a> Checker<'a> {
             name,
             class_init: false,
             class_init_default_fields: Vec::new(),
-            symbol: format!("{}__{}", ember_branding::mangled(name.as_str()), def.0),
+            symbol: {
+                let arguments = self.instance_spellings.get(&def).cloned();
+                self.instance_symbol(&ember_types::item_path(name.as_str()), arguments, InstanceMade::Function(def), span)
+            },
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
             export_thread_policy: if decl.abi.is_some() {
@@ -21369,7 +21381,7 @@ impl<'a> Checker<'a> {
                     name: Symbol::intern("clone"),
                     class_init: false,
                     class_init_default_fields: Vec::new(),
-                    symbol: method_symbol(&self.types.symbol_name(ty), Symbol::intern("clone")),
+                    symbol: self.types.method_symbol(ty, None, "clone", None),
                     is_unsafe: false,
                     abi: None,
                     export_thread_policy: hir::ExportThreadPolicy::Any,
@@ -21957,7 +21969,7 @@ impl<'a> Checker<'a> {
             name,
             class_init: is_class_init,
             class_init_default_fields,
-            symbol: self.method_symbol_for(owner, name, def),
+            symbol: self.method_symbol_for(owner, name, def, span),
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
             export_thread_policy: hir::ExportThreadPolicy::Any,
@@ -22679,8 +22691,10 @@ impl<'a> Checker<'a> {
     /// for a type, or an interface and the type itself do (`[TYP-24]`), each
     /// interface's implementation's symbol also names its interface, or the
     /// symbols would collide.
-    fn method_symbol_for(&self, owner: Ty, name: Symbol, def: DefId) -> String {
-        let owner_name = self.types.symbol_name(owner);
+    /// A generic method's instance's symbol carries its own arguments' spelling too.
+    fn method_symbol_for(&mut self, owner: Ty, name: Symbol, def: DefId, span: Span) -> String {
+        let own = self.instance_spellings.get(&def).cloned();
+        let own = own.as_deref();
         // D-440 — an associated function of several instances (`from_iter`
         // of `FromIterator[char]` and of `FromIterator[String]`) too.
         let offered: Vec<(Symbol, DefId)> = self
@@ -22700,12 +22714,97 @@ impl<'a> Checker<'a> {
             .get(&(owner, name))
             .is_some_and(|entry| entry.from_interface.is_none() && entry.def != def)
             || self.associated.get(&(owner, name)).is_some_and(|entry| entry.from_interface.is_none() && entry.def != def);
-        if (offered.len() > 1 || inherent)
-            && let Some((interface, _)) = offered.iter().find(|(_, offered_def)| *offered_def == def)
-        {
-            return method_symbol(&owner_name, Symbol::intern(&format!("{}_{name}", type_stem(interface.as_str()))));
+        let interface = (offered.len() > 1 || inherent)
+            .then(|| offered.iter().find(|(_, offered_def)| *offered_def == def).map(|(interface, _)| *interface))
+            .flatten();
+        let (path, arguments) = self.types.method_path(owner, interface, name.as_str(), own);
+        self.instance_symbol(&path, arguments, InstanceMade::Method(def, owner, name), span)
+    }
+
+    /// `[MNG-1]` — the symbol of the item at `path`, an instance's when it has `arguments` (their
+    /// canonical spelling): `E9040` when another instance has the same symbol, naming both, which
+    /// would otherwise be one C definition made twice.
+    fn instance_symbol(&mut self, path: &str, arguments: Option<String>, made: InstanceMade, span: Span) -> String {
+        let symbol = ember_branding::instance_symbol(path, arguments.as_deref());
+        if let Some(arguments) = &arguments {
+            let from = format!("{path}{arguments}");
+            if let Some((first, first_from, first_span)) = self.instance_symbols.note(&symbol, made, &from, span) {
+                let (first_shown, shown) = (self.instance_shown(first, &first_from), self.instance_shown(made, &from));
+                self.sink.emit(instance_collision(&symbol, &first_shown, first_span, &shown, span, first_from == from));
+            }
         }
-        method_symbol(&owner_name, name)
+        symbol
+    }
+
+    /// How an instance is written in `E9040`: a function's by its path and arguments, a method's
+    /// by its type and name (`grid[i64].at`), a type's as the user writes it.
+    fn instance_shown(&self, made: InstanceMade, from: &str) -> String {
+        match made {
+            InstanceMade::Function(_) => from.to_string(),
+            InstanceMade::Method(def, owner, name) => {
+                format!("{}.{name}{}", self.types.display(owner), self.instance_spellings.get(&def).map_or("", String::as_str))
+            }
+            InstanceMade::Type(ty) => self.types.display(ty),
+        }
+    }
+
+    /// `[MNG-1]` — every generic type instance's symbol, made from its path and its arguments as
+    /// the C names it (`TypeTable::mangled`), through [`Self::instance_symbol`]: `E9040` for two
+    /// that are one.
+    fn check_type_instance_symbols(&mut self) {
+        let mut made: Vec<(Ty, Span)> = Vec::new();
+        for (id, def) in self.types.structs() {
+            made.extend(self.types.find(&TyKind::Struct(id)).map(|ty| (ty, def.span)));
+        }
+        for (id, def) in self.types.enums() {
+            made.extend(self.types.find(&TyKind::Enum(id)).map(|ty| (ty, def.span)));
+        }
+        for (id, def) in self.types.classes() {
+            made.extend(self.types.find(&TyKind::Class(id)).map(|ty| (ty, def.span)));
+        }
+        for (ty, span) in made {
+            let (path, arguments) = self.types.type_path(ty);
+            if arguments.is_some() {
+                self.instance_symbol(&path, arguments, InstanceMade::Type(ty), span);
+            }
+        }
+    }
+
+    /// `[MNG-1]` — the canonical spelling of an instantiation's arguments: each type's
+    /// (`TypeTable::spelling`), a function given for a callable parameter (`callable_values`)
+    /// after its type (`[fn(i64) -> i64 = add_one]`).
+    fn instance_arguments_spelling(&self, args: &[Ty], callable_values: &[Option<DefId>]) -> String {
+        let mut out = String::from("[");
+        for (index, &arg) in args.iter().enumerate() {
+            if index != 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&self.types.spelling(arg));
+            if let Some(Some(value)) = callable_values.get(index) {
+                out.push_str(" = ");
+                out.push_str(&self.callable_spelling(*value));
+            }
+        }
+        out.push(']');
+        out
+    }
+
+    /// `[MNG-1]` — the canonical spelling of a function given as a generic argument: its path,
+    /// with its own arguments when it is an instance, a method's after its type's spelling.
+    fn callable_spelling(&self, def: DefId) -> String {
+        if let (Some(&generic), Some(spelling)) = (self.generic_of.get(&def), self.instance_spellings.get(&def)) {
+            return format!("{}{spelling}", self.callable_spelling(generic));
+        }
+        if let Some((name, _)) = self.fn_ids.iter().find(|(_, found)| **found == def) {
+            return ember_types::item_path(name.as_str()).into_owned();
+        }
+        let method = self.methods.iter().find(|(_, entry)| entry.def == def).map(|(key, _)| key);
+        if let Some((owner, name)) = method.or_else(|| self.associated.iter().find(|(_, entry)| entry.def == def).map(|(key, _)| key)) {
+            return format!("{}.{name}", self.types.spelling(*owner));
+        }
+        // ponytail: a function no table names (a lambda) is spelled by its definition's number,
+        // unique within the compilation though not across compilations.
+        format!("#{}", def.0)
     }
 
     /// `[TYP-24]` — the interface a bare name refers to, unless a local of
@@ -38265,6 +38364,8 @@ impl<'a> Checker<'a> {
         });
         self.instances.insert(key.clone(), instance);
         self.generic_of.insert(instance, def);
+        let spelling = self.instance_arguments_spelling(&key.args, &key.callable_values);
+        self.instance_spellings.insert(instance, spelling);
         // D-257 — an instance over another generic's own parameters (made
         // while that generic's body is checked opaquely) is a signature only,
         // as D-250 made it for generic types: its body would be checked where
@@ -38324,6 +38425,8 @@ impl<'a> Checker<'a> {
         });
         self.instances.insert(key.clone(), instance);
         self.generic_of.insert(instance, def);
+        let spelling = self.instance_arguments_spelling(&key.args, &[]);
+        self.instance_spellings.insert(instance, spelling);
         // D-257 — as for a generic function's instance: one over another
         // generic's own parameters is a signature only.
         if key.args.iter().any(|&arg| self.types.is_generic(arg)) {
@@ -44469,7 +44572,7 @@ impl<'a> Checker<'a> {
             borrows: None,
             generics: Vec::new(),
         });
-        let symbol = ember_branding::mangled("main_entry");
+        let symbol = ember_branding::generated("main_entry");
         Some(Function {
             def,
             name: Symbol::intern(&symbol),
@@ -44565,7 +44668,7 @@ impl<'a> Checker<'a> {
             Some(def) => self.signatures[def.0 as usize] = signature,
             None => self.signatures.push(signature),
         }
-        let symbol = format!("{}closure{number}", ember_branding::mangle_prefix());
+        let symbol = ember_branding::generated(&format!("closure{number}"));
         if let Some((_, _, closures)) = self.body_marks.last_mut() {
             closures.push(symbol.clone());
         }
@@ -54439,15 +54542,6 @@ fn type_stem(shown: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
-/// `[MNG-1]` — a method's C symbol carries the type it is on, so two types
-/// may both have a `length`.
-fn method_symbol(owner: &str, name: Symbol) -> String {
-    let owner: String = owner
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect();
-    ember_branding::mangled(&format!("{}_{name}", owner.trim_matches('_')))
-}
 
 /// A source-level generic owner has no concrete `Ty` before one of its
 /// instantiations is reached. EMIF still needs a stable receiver identity, so
@@ -54461,13 +54555,118 @@ fn canonical_generic_owner(name: Symbol, parameters: usize) -> String {
     format!("{name}[{arguments}]")
 }
 
+/// `[MNG-1]` — which instance a symbol was made for: two of them with one symbol are `E9040`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum InstanceMade {
+    /// A generic function's instance.
+    Function(DefId),
+    /// A method of an instance (or a generic method's instance): its definition, its type and name.
+    Method(DefId, Ty, Symbol),
+    /// A generic type's instance.
+    Type(Ty),
+}
+
+/// `[MNG-1]` — each instance symbol made: the instance it was made for, what it was made from (its
+/// path and its arguments' spelling), and where.
+#[derive(Default)]
+struct InstanceSymbols(HashMap<String, (InstanceMade, String, Span)>);
+
+impl InstanceSymbols {
+    /// Record that `symbol` was made for `made` from `from`; when another instance has it, that one
+    /// (`E9040`). Two definitions of one method made from the same path and arguments (overlapping
+    /// implementations) are `[TYP-19]`'s error, not two instances.
+    fn note(&mut self, symbol: &str, made: InstanceMade, from: &str, span: Span) -> Option<(InstanceMade, String, Span)> {
+        match self.0.get(symbol) {
+            Some((first, _, _)) if *first == made => None,
+            Some((InstanceMade::Method(..), first_from, _)) if matches!(made, InstanceMade::Method(..)) && first_from == from => None,
+            Some((first, first_from, first_span)) => Some((*first, first_from.clone(), *first_span)),
+            None => {
+                self.0.insert(symbol.to_string(), (made, from.to_string(), span));
+                None
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod instance_symbol_tests {
+    use super::*;
+
+    /// `[MNG-1]` — two instances whose arguments' hashes meet have one symbol: `E9040`, naming both,
+    /// with the first as its secondary place. 64-bit hashes cannot be made to meet in a program, so
+    /// the two are given the one symbol a collision would make.
+    #[test]
+    fn two_instances_whose_hashes_meet_are_e9040() {
+        let symbol = ember_branding::instance_symbol("geometry.max", Some("[i64]"));
+        let (first, second) = (Span::new(FileId(1), 10, 20), Span::new(FileId(1), 30, 40));
+        let mut made = InstanceSymbols::default();
+        let one = InstanceMade::Function(DefId(7));
+        assert!(made.note(&symbol, one, "geometry.max[i64]", first).is_none());
+        // The same instance again is no collision.
+        assert!(made.note(&symbol, one, "geometry.max[i64]", first).is_none());
+        let other = InstanceMade::Function(DefId(9));
+        let (met, met_from, met_span) = made
+            .note(&symbol, other, "geometry.max[geometry.Point]", second)
+            .expect("another instance with the symbol is E9040");
+        assert_eq!((met, met_from.as_str(), met_span), (one, "geometry.max[i64]", first));
+        let diagnostic = instance_collision(&symbol, &met_from, met_span, "geometry.max[geometry.Point]", second, false);
+        assert!(diagnostic.code == Some(codes::E9040), "{}", diagnostic.message);
+        assert_eq!(diagnostic.primary.span, second);
+        assert!(diagnostic.message.contains("`geometry.max[i64]` and `geometry.max[geometry.Point]`"), "{}", diagnostic.message);
+        assert!(diagnostic.message.contains(&symbol), "{}", diagnostic.message);
+        assert!(diagnostic.secondary.iter().any(|label| label.span == first), "the first instance is named where it is made");
+        assert!(diagnostic.helps.iter().any(|help| help.contains("changes the hash")), "{:?}", diagnostic.helps);
+        // A third instance is named against the first.
+        assert!(made.note(&symbol, InstanceMade::Function(DefId(11)), "geometry.max[bool]", second).is_some());
+        // Two definitions of one method made alike are overlapping implementations, not E9040.
+        let method = ember_branding::instance_symbol("Wrap.tag", Some("[i64]"));
+        let (mut table, _) = ember_types::TypeTable::new();
+        let owner = table.intern(TyKind::Bool);
+        let tag = Symbol::intern("tag");
+        assert!(made.note(&method, InstanceMade::Method(DefId(20), owner, tag), "Wrap.tag[i64]", first).is_none());
+        assert!(made.note(&method, InstanceMade::Method(DefId(21), owner, tag), "Wrap.tag[i64]", second).is_none());
+        // A function and a method made alike are two instances (a module and a type of one name).
+        assert!(made.note(&method, InstanceMade::Function(DefId(22)), "Wrap.tag[i64]", second).is_some());
+    }
+}
+
+/// `[MNG-1]` — `E9040`: two generic instances, written `first` and `second`, whose symbols are one.
+/// The instance hash of different arguments meeting is one way; two items of one path (a module
+/// and a type of one name, each with a generic `at`) another (`one_path`).
+fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str, span: Span, one_path: bool) -> Diagnostic {
+    let diagnostic = Diagnostic::error(
+        codes::E9040,
+        span,
+        format!("the generic instances `{first}` and `{second}` hash to one symbol, `{symbol}`"),
+    )
+    .secondary(first_span, format!("`{first}` is made here"))
+    .note(format!(
+        "a generic instance's symbol is its path's, then `{}` and the first {} hex digits of the BLAKE3 hash of its arguments [MNG-1]",
+        ember_branding::INSTANCE_MARK,
+        ember_branding::INSTANCE_HASH_DIGITS
+    ));
+    if one_path {
+        diagnostic
+            .note("both have one path and one list of arguments: a module and a type of one name in one module make their items' paths one")
+            .help("rename the module or the type")
+    } else {
+        diagnostic.help("rename one of the types their arguments name, which changes the hash")
+    }
+}
+
 /// Declaration-only member identities must not collide with generated C
 /// symbols. A generic or interface member can be import-visible without any
 /// body being emitted, and a concrete specialization is not its source
-/// declaration. The branded mangle keeps the artifact key deterministic while
-/// preserving the runtime/C namespace boundary.
-fn member_declaration_symbol(owner: &str, name: Symbol) -> String {
-    ember_branding::mangled(&format!("__ember_declaration_member__{owner}__{name}"))
+/// declaration. A generated name (`kind`, `generic` or `interface`) keyed by
+/// the owner's path and the member's name, each mangled (`[MNG-1]`), keeps the
+/// artifact key deterministic and apart from every item's symbol.
+fn member_declaration_symbol(kind: &str, owner: Symbol, name: Symbol) -> String {
+    format!(
+        "{}_{}_{}",
+        ember_branding::generated(&format!("declared_{kind}_member")),
+        ember_branding::mangled_path(&ember_types::item_path(owner.as_str())),
+        ember_branding::mangled_path(name.as_str())
+    )
 }
 
 /// The name of an interface written in an `implements` list or a supertrait
@@ -56434,16 +56633,11 @@ fn literal_int(expr: &ast::Expr) -> Option<i128> {
     }
 }
 
-/// `[MNG-1]` — `em_<pkg>_<module>_<item>`. Phase 0 compiles one module at a
-/// time with no package graph, so the package and module segments are fixed
-/// until `ember_build` supplies them.
-fn mangle(name: Symbol, is_main: bool) -> String {
-    if is_main {
-        // The C entry point calls this; `[MNG-2]` reserves the plain name.
-        return ember_branding::mangled("main");
-    }
-    // A qualified name carries dots, which C does not allow in an identifier.
-    ember_branding::mangled(name.as_str())
+/// `[MNG-1]` — an item's symbol, from its qualified name: `em_` and each component of its path as
+/// its length and its text (`em_3lib3m_x1f`). The root module's `main`, which the C entry point
+/// calls, is `em_4main` (`ember_branding::entry_symbol`).
+fn mangle(name: Symbol) -> String {
+    ember_branding::item_symbol(&ember_types::item_path(name.as_str()))
 }
 
 /// `[RNG-4]` — the interval an arithmetic operation produces, given its

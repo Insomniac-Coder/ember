@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: [1, 2]
 #$ stdout: 2 3
-#$ assert-c: contains("_up = (struct em_obj_Base*)(*(")
+#$ assert-c: contains("_up = (struct em_obj_4Base*)(*(")
 # D-460 — `view` is declared on `Base` and returns a view of the receiver's
 # field. Called on a local `Derived`, it borrows that local, as a call on a
 # `Base` local does: the view can outlive the statement, and the local cannot

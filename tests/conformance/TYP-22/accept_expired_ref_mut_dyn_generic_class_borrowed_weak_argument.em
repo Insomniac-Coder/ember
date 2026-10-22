@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 0
 #$ stdout: end
-#$ assert-c: contains("em_vt_dyn_Observe_Reader_bool_slot0")
+#$ assert-c: contains("em_vt_dyn_7Observe_for_6ReaderGda5cc12a188c7619_slot0")
 #$ assert-c: contains("ember_object_begin_write")
 #$ assert-c: contains("ember_weak_retain(")
 #$ assert-c: contains("ember_weak_release(")

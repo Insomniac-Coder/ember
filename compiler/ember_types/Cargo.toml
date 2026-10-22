@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 ember_span.workspace = true
 ember_diag.workspace = true
+ember_branding.workspace = true
 
 [lints]
 workspace = true

@@ -1,8 +1,8 @@
 #$ test: compile-pass
 #$ rules: FFI-11, FFI-10
 #$ profiles: debug
-#$ assert-c: contains("typedef int32_t* em_Option_ref_i32;")
-#$ assert-c: contains("extern int32_t em_0x726561645f6f7074696f6e616c_read_optional(")
+#$ assert-c: contains("typedef int32_t* em_3std4core6OptionGacdf02bf7ba2defe;")
+#$ assert-c: contains("extern int32_t em_0x726561645f6f7074696f6e616c_13read_optional(")
 
 unsafe extern "C":
     @ffi(param(value, borrowed, one, nullable))

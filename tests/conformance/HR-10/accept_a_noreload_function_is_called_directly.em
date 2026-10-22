@@ -2,10 +2,10 @@
 #$ rules: HR-10, HR-10a
 #$ profiles: debug, development
 #$ stdout: 12
-#$ assert-c: !contains("em_total__rl")
-#$ assert-c: contains("int64_t em_weigh__rl(int64_t x) {")
-#$ assert-c: contains("em_weigh(")
-#$ assert-c: contains("{ "em_total", NULL, NULL, NULL, 0, UINT64_C(")
+#$ assert-c: !contains("em_5total__rl")
+#$ assert-c: contains("int64_t em_5weigh__rl(int64_t x) {")
+#$ assert-c: contains("em_5weigh(")
+#$ assert-c: contains("{ "em_5total", NULL, NULL, NULL, 0, UINT64_C(")
 #$ assert-c: contains("EMBER_RL_FN_NORELOAD }")
 # In a reloadable build a `@noreload` function has no thunk: it is called directly and may be
 # inlined, and the manifest lists it with its body's hash, so a reload that changes its body is

@@ -2,8 +2,8 @@
 #$ rules: TYP-22, IFC-1, HEAP-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Truth em_vt_dyn_Truth_bool)
-#$ assert-c: contains(em_vt_dyn_Truth_bool_drop)
+#$ assert-c: contains(static const struct em_vt_dyn_5Truth em_vt_dyn_5Truth_for_4bool)
+#$ assert-c: contains(em_vt_dyn_5Truth_for_4bool_drop)
 #$ assert-c: contains(ember_box_new_copy(sizeof(bool), _Alignof(bool), &((bool){true}))
 
 interface Truth:

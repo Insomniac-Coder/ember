@@ -3,10 +3,10 @@
 #$ profiles: debug, development, release
 #$ stdout: 20
 #$ stdout: 22
-#$ assert-c: contains(static const struct em_vt_dyn_Read em_vt_dyn_Read_Signal)
-#$ assert-c: contains(static const struct em_vt_dyn_Write em_vt_dyn_Write_Signal)
-#$ assert-c: contains(em_vt_dyn_Read_Signal_slot0)
-#$ assert-c: contains(em_vt_dyn_Write_Signal_slot0)
+#$ assert-c: contains(static const struct em_vt_dyn_4Read em_vt_dyn_4Read_for_6Signal)
+#$ assert-c: contains(static const struct em_vt_dyn_5Write em_vt_dyn_5Write_for_6Signal)
+#$ assert-c: contains(em_vt_dyn_4Read_for_6Signal_slot0)
+#$ assert-c: contains(em_vt_dyn_5Write_for_6Signal_slot0)
 
 interface Read:
     fn read(self) -> i32

@@ -2,11 +2,11 @@
 #$ rules: CG-C-10
 #$ profiles: debug
 #$ stdout: 9
-#$ assert-c: contains("{"em_support_geometry_Grid_at", "support.geometry.Grid.at", "support/geometry.em", 7u},")
-#$ assert-c: contains("{"em_support_geometry_probe", "support.geometry.probe", "support/geometry.em", 10u},")
-#$ assert-c: contains("{"em_support_geometry_probe", "em_support_geometry_Grid_at", "support/geometry.em", 11u, 17u},")
-#$ assert-c: contains("{"em_support_geometry_probe", "em_support_geometry_Grid_at", "support/geometry.em", 11u, 27u},")
-#$ assert-c: contains("{"em_outer", "em_support_geometry_probe", "accept_frames_are_named_by_path_and_calls_by_place.em", 22u, 30u},")
+#$ assert-c: contains("{"em_7support8geometry4Grid2at", "support.geometry.Grid.at", "support/geometry.em", 7u},")
+#$ assert-c: contains("{"em_7support8geometry5probe", "support.geometry.probe", "support/geometry.em", 10u},")
+#$ assert-c: contains("{"em_7support8geometry5probe", "em_7support8geometry4Grid2at", "support/geometry.em", 11u, 17u},")
+#$ assert-c: contains("{"em_7support8geometry5probe", "em_7support8geometry4Grid2at", "support/geometry.em", 11u, 27u},")
+#$ assert-c: contains("{"em_5outer", "em_7support8geometry5probe", "accept_frames_are_named_by_path_and_calls_by_place.em", 22u, 30u},")
 #$ assert-c: contains("ember_backtrace_sites(em_call_sites, ")
 # `[CG-C-10]`: what a stack trace is printed from. Outside `release` the program names each of its
 # functions by its Ember path, a method by its type's path and its name (`support.geometry.Grid.at`), and

@@ -207,7 +207,7 @@ fn a_noreload_body_change_is_refused_whole() {
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.exit, 0, "{}", run.stderr);
     assert_eq!(run.stdout, "0 1\n2 2\n", "{}", run.stderr);
-    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::mangled("fixed"));
+    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::item_symbol("fixed"));
     assert!(run.stderr.contains("refused") && run.stderr.contains(&named), "{}", run.stderr);
 }
 
@@ -953,7 +953,8 @@ fn a_foreign_object_ember_owns_is_carried_across() {
               return b.widget_id(d.w.as_ptr() as *b.Widget) as int + d.n\n\n\
               fn main():\n    d = Device(b.widget_new(7))\n    for i in 0..2:\n        println(tick(d))\n        hot.checkpoint()\n    \
               println(\"end\")\n";
-    let files = [("widgets.h", WIDGETS_H), ("widgets.c", WIDGETS_C), ("widgets_overlay.em", WIDGETS_OVERLAY)];
+    let overlay = ember_branding::source_file("widgets_overlay");
+    let files = [("widgets.h", WIDGETS_H), ("widgets.c", WIDGETS_C), (overlay.as_str(), WIDGETS_OVERLAY)];
     // `spare` gives way to `bonus`: the instance migrates in place, its box carried.
     let grown = v1.replace("    spare: int = 0\n", "    bonus: int = 100\n").replace("as int + d.n\n", "as int + d.n + d.bonus\n");
     let (run, reloads) = reload_run_with("reload-foreign-carried", RELOAD_ALL, &files, v1, &[&grown]);
@@ -1265,9 +1266,10 @@ fn every_type_has_a_schema() {
     }
     // A field: name, renamed from, type name, type schema hash, offset, size — in declaration order,
     // the base's first.
+    let mote_object = format!("{}*)0)->", ember_branding::object_struct(&ember_branding::mangled_path("Mote")));
     let fields: Vec<Vec<String>> = c.lines()
         .map(str::trim_start)
-        .filter(|line| line.starts_with("{ \"") && line.contains("_Mote*)0)->"))
+        .filter(|line| line.starts_with("{ \"") && line.contains(&mote_object))
         .map(|line| line.trim_start_matches("{ ").split(", ").map(str::to_string).collect())
         .collect();
     let names: Vec<&str> = fields.iter().map(|field| field[0].as_str()).collect();
@@ -1600,7 +1602,7 @@ fn explain_predicts_against_the_running_program() {
     let finished = program.wait().expect("the program ends");
     drop(package);
     assert_ne!(refused.exit, 0, "{}{}", refused.stdout, refused.stderr);
-    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::mangled("fixed"));
+    let named = format!("the body of `@noreload` function `{}` changed", ember_branding::item_symbol("fixed"));
     assert!(refused.stdout.contains("the reload would be refused") && refused.stdout.contains(&named), "{}{}", refused.stdout, refused.stderr);
     assert_eq!(applies.exit, 0, "{}{}", applies.stdout, applies.stderr);
     assert!(applies.stdout.contains("the reload would apply"), "{}{}", applies.stdout, applies.stderr);
@@ -1621,7 +1623,7 @@ fn removing_a_function_whose_address_is_held_is_refused() {
     let (run, reloads) = reload_run("reload-removed-held", RELOAD_ALL, v1, &[v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.stdout, "2\n1\n", "{}", run.stderr);
-    let named = format!("`{}` was removed, but its address may be held", ember_branding::mangled("helper"));
+    let named = format!("`{}` was removed, but its address may be held", ember_branding::item_symbol("helper"));
     assert!(run.stderr.contains(&named), "{}", run.stderr);
 
     // At a checkpoint the old `main` runs on, and calls it after the checkpoint.
@@ -1630,7 +1632,7 @@ fn removing_a_function_whose_address_is_held_is_refused() {
     let (run, reloads) = reload_run("reload-removed-called", RELOAD_ALL, v1, &[v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);
     assert_eq!(run.stdout, "2\n", "{}", run.stderr);
-    let named = format!("`{}` was removed while frames of the old code, which may call it, are live", ember_branding::mangled("helper"));
+    let named = format!("`{}` was removed while frames of the old code, which may call it, are live", ember_branding::item_symbol("helper"));
     assert!(run.stderr.contains(&named), "{}", run.stderr);
 }
 

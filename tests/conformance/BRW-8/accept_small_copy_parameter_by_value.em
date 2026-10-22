@@ -3,8 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 #$ 43
-#$ assert-c: contains(int32_t em_add_by_value(int32_t _1, int32_t _2))
-#$ assert-c: !contains(const int32_t* em_add_by_value)
+#$ assert-c: contains(int32_t em_12add_by_value(int32_t _1, int32_t _2))
+#$ assert-c: !contains(const int32_t* em_12add_by_value)
 
 # `[BRW-8]` permits the ABI to replace a shared borrow of a small `Copy`
 # value with a copy. Ember chooses that representation for `i32`; this is

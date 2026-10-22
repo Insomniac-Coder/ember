@@ -2,7 +2,7 @@
 #$ rules: TYP-16, IFC-1, CLS-4, DSP-2
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(em_Child_bool_value)
+#$ assert-c: contains(em_5Child5valueGda5cc12a188c7619)
 #$ assert-c: contains(->slot0)
 
 open class Base[T]:

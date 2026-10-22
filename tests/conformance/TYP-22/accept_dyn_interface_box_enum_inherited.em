@@ -2,9 +2,9 @@
 #$ rules: TYP-22, IFC-1, HEAP-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Child em_vt_dyn_Child_Signal)
-#$ assert-c: contains(em_vt_dyn_Child_Signal_slot0)
-#$ assert-c: contains(em_vt_dyn_Child_Signal_slot1)
+#$ assert-c: contains(static const struct em_vt_dyn_5Child em_vt_dyn_5Child_for_6Signal)
+#$ assert-c: contains(em_vt_dyn_5Child_for_6Signal_slot0)
+#$ assert-c: contains(em_vt_dyn_5Child_for_6Signal_slot1)
 
 interface Parent:
     fn parent(self) -> i32

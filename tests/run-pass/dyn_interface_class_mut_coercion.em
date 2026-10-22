@@ -2,8 +2,8 @@
 #$ rules: TYP-22, IFC-1, BRW-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Accumulator em_vt_dyn_Accumulator_Counter)
-#$ assert-c: contains(em_Counter_bump(&receiver))
+#$ assert-c: contains(static const struct em_vt_dyn_11Accumulator em_vt_dyn_11Accumulator_for_7Counter)
+#$ assert-c: contains(em_7Counter4bump(&receiver))
 #$ assert-c: !contains(ember_retain)
 
 interface Accumulator:

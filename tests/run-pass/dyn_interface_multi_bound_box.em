@@ -3,8 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 20
 #$ stdout: 22
-#$ assert-c: contains(em_vt_dyn_multi__Left__Right_Pair_slot0)
-#$ assert-c: contains(em_vt_dyn_multi__Left__Right_Pair_slot1)
+#$ assert-c: contains(em_vt_dyn_4Left_5Right_for_4Pair_slot0)
+#$ assert-c: contains(em_vt_dyn_4Left_5Right_for_4Pair_slot1)
 
 interface Left:
     fn left(self) -> i32

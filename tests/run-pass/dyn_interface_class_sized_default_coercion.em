@@ -2,7 +2,7 @@
 #$ rules: TYP-22, IFC-1
 #$ profiles: debug, development, release
 #$ stdout: 42
-#$ assert-c: contains(static const struct em_vt_dyn_Factory em_vt_dyn_Factory_Pixel)
+#$ assert-c: contains(static const struct em_vt_dyn_7Factory em_vt_dyn_7Factory_for_5Pixel)
 #$ assert-c: contains(NULL,)
 
 interface Factory:

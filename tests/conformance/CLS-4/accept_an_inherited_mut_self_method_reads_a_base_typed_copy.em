@@ -2,8 +2,8 @@
 #$ rules: CLS-4, OBJ-1
 #$ profiles: debug, development, release
 #$ stdout: 3
-#$ assert-c: contains("_up = (struct em_obj_Base*)(*(")
-#$ assert-c: !contains("((struct em_obj_Base**)")
+#$ assert-c: contains("_up = (struct em_obj_4Base*)(*(")
+#$ assert-c: !contains("((struct em_obj_4Base**)")
 # D-460 — an inherited `mut self` method is passed the address of a copy of
 # the handle in the base class's type, never the derived handle's own address
 # reinterpreted: reading a `struct Derived*` through a `struct Base*` lvalue is
