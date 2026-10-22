@@ -21004,9 +21004,7 @@ impl<'a> Checker<'a> {
             class_init_default_fields: Vec::new(),
             symbol: {
                 let arguments = self.instance_spellings.get(&def).cloned();
-                let path = ember_types::item_path(name.as_str()).into_owned();
-                let shown = arguments.as_ref().map(|arguments| format!("{path}{arguments}"));
-                self.instance_symbol(&path, arguments, InstanceMade::Function(def), shown, span)
+                self.instance_symbol(&ember_types::item_path(name.as_str()), arguments, InstanceMade::Function(def), span)
             },
             is_unsafe: decl.is_unsafe,
             abi: decl.abi.clone(),
@@ -22702,22 +22700,34 @@ impl<'a> Checker<'a> {
             .then(|| offered.iter().find(|(_, offered_def)| *offered_def == def).map(|(interface, _)| *interface))
             .flatten();
         let (path, arguments) = self.types.method_path(owner, interface, name.as_str(), own);
-        let shown = arguments.is_some().then(|| format!("{}.{name}{}", self.types.display(owner), own.unwrap_or("")));
-        self.instance_symbol(&path, arguments, InstanceMade::Function(def), shown, span)
+        self.instance_symbol(&path, arguments, InstanceMade::Method(def, owner, name), span)
     }
 
     /// `[MNG-1]` — the symbol of the item at `path`, an instance's when it has `arguments` (their
-    /// canonical spelling): `E9040` when another instance (`made`, written `shown`) has the same
-    /// symbol, naming both, which would otherwise be one C definition made twice.
-    fn instance_symbol(&mut self, path: &str, arguments: Option<String>, made: InstanceMade, shown: Option<String>, span: Span) -> String {
+    /// canonical spelling): `E9040` when another instance has the same symbol, naming both, which
+    /// would otherwise be one C definition made twice.
+    fn instance_symbol(&mut self, path: &str, arguments: Option<String>, made: InstanceMade, span: Span) -> String {
         let symbol = ember_branding::instance_symbol(path, arguments.as_deref());
         if let Some(arguments) = &arguments {
-            let shown = shown.unwrap_or_else(|| path.to_string());
-            if let Some(diagnostic) = self.instance_symbols.note(&symbol, made, format!("{path}{arguments}"), shown, span) {
-                self.sink.emit(diagnostic);
+            let from = format!("{path}{arguments}");
+            if let Some((first, first_from, first_span)) = self.instance_symbols.note(&symbol, made, &from, span) {
+                let (first_shown, shown) = (self.instance_shown(first, &first_from), self.instance_shown(made, &from));
+                self.sink.emit(instance_collision(&symbol, &first_shown, first_span, &shown, span, first_from == from));
             }
         }
         symbol
+    }
+
+    /// How an instance is written in `E9040`: a function's by its path and arguments, a method's
+    /// by its type and name (`grid[i64].at`), a type's as the user writes it.
+    fn instance_shown(&self, made: InstanceMade, from: &str) -> String {
+        match made {
+            InstanceMade::Function(_) => from.to_string(),
+            InstanceMade::Method(def, owner, name) => {
+                format!("{}.{name}{}", self.types.display(owner), self.instance_spellings.get(&def).map_or("", String::as_str))
+            }
+            InstanceMade::Type(ty) => self.types.display(ty),
+        }
     }
 
     /// `[MNG-1]` — every generic type instance's symbol, made from its path and its arguments as
@@ -22737,8 +22747,7 @@ impl<'a> Checker<'a> {
         for (ty, span) in made {
             let (path, arguments) = self.types.type_path(ty);
             if arguments.is_some() {
-                let shown = self.types.display(ty);
-                self.instance_symbol(&path, arguments, InstanceMade::Type(ty), Some(shown), span);
+                self.instance_symbol(&path, arguments, InstanceMade::Type(ty), span);
             }
         }
     }
@@ -54507,36 +54516,33 @@ fn canonical_generic_owner(name: Symbol, parameters: usize) -> String {
     format!("{name}[{arguments}]")
 }
 
-/// Declaration-only member identities must not collide with generated C
-/// symbols. A generic or interface member can be import-visible without any
-/// body being emitted, and a concrete specialization is not its source
-/// declaration. A generated name (`kind`, `generic` or `interface`) keyed by
-/// the owner's path and the member's name, each mangled (`[MNG-1]`), keeps the
-/// artifact key deterministic and apart from every item's symbol.
 /// `[MNG-1]` — which instance a symbol was made for: two of them with one symbol are `E9040`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum InstanceMade {
+    /// A generic function's instance.
     Function(DefId),
+    /// A method of an instance (or a generic method's instance): its definition, its type and name.
+    Method(DefId, Ty, Symbol),
+    /// A generic type's instance.
     Type(Ty),
 }
 
 /// `[MNG-1]` — each instance symbol made: the instance it was made for, what it was made from (its
-/// path and its arguments' spelling), how the instance is written, and where.
+/// path and its arguments' spelling), and where.
 #[derive(Default)]
-struct InstanceSymbols(HashMap<String, (InstanceMade, String, String, Span)>);
+struct InstanceSymbols(HashMap<String, (InstanceMade, String, Span)>);
 
 impl InstanceSymbols {
-    /// Record that `symbol` was made for `made`, and the `E9040` when another instance has it. Two
-    /// definitions of one instance (overlapping implementations of one method, written alike) are
-    /// their own rules' errors (`[TYP-19]`), not two instances.
-    fn note(&mut self, symbol: &str, made: InstanceMade, from: String, shown: String, span: Span) -> Option<Diagnostic> {
+    /// Record that `symbol` was made for `made` from `from`; when another instance has it, that one
+    /// (`E9040`). Two definitions of one method made from the same path and arguments (overlapping
+    /// implementations) are `[TYP-19]`'s error, not two instances.
+    fn note(&mut self, symbol: &str, made: InstanceMade, from: &str, span: Span) -> Option<(InstanceMade, String, Span)> {
         match self.0.get(symbol) {
-            Some((first, first_from, first_shown, first_span)) if *first != made && *first_shown != shown => {
-                Some(instance_collision(symbol, first_shown, *first_span, &shown, span, *first_from == from))
-            }
-            Some(_) => None,
+            Some((first, _, _)) if *first == made => None,
+            Some((InstanceMade::Method(..), first_from, _)) if matches!(made, InstanceMade::Method(..)) && first_from == from => None,
+            Some((first, first_from, first_span)) => Some((*first, first_from.clone(), *first_span)),
             None => {
-                self.0.insert(symbol.to_string(), (made, from, shown, span));
+                self.0.insert(symbol.to_string(), (made, from.to_string(), span));
                 None
             }
         }
@@ -54556,13 +54562,15 @@ mod instance_symbol_tests {
         let (first, second) = (Span::new(FileId(1), 10, 20), Span::new(FileId(1), 30, 40));
         let mut made = InstanceSymbols::default();
         let one = InstanceMade::Function(DefId(7));
-        assert!(made.note(&symbol, one, "geometry.max[i64]".into(), "geometry.max[i64]".into(), first).is_none());
+        assert!(made.note(&symbol, one, "geometry.max[i64]", first).is_none());
         // The same instance again is no collision.
-        assert!(made.note(&symbol, one, "geometry.max[i64]".into(), "geometry.max[i64]".into(), first).is_none());
+        assert!(made.note(&symbol, one, "geometry.max[i64]", first).is_none());
         let other = InstanceMade::Function(DefId(9));
-        let diagnostic = made
-            .note(&symbol, other, "geometry.max[geometry.Point]".into(), "geometry.max[geometry.Point]".into(), second)
+        let (met, met_from, met_span) = made
+            .note(&symbol, other, "geometry.max[geometry.Point]", second)
             .expect("another instance with the symbol is E9040");
+        assert_eq!((met, met_from.as_str(), met_span), (one, "geometry.max[i64]", first));
+        let diagnostic = instance_collision(&symbol, &met_from, met_span, "geometry.max[geometry.Point]", second, false);
         assert!(diagnostic.code == Some(codes::E9040), "{}", diagnostic.message);
         assert_eq!(diagnostic.primary.span, second);
         assert!(diagnostic.message.contains("`geometry.max[i64]` and `geometry.max[geometry.Point]`"), "{}", diagnostic.message);
@@ -54570,13 +54578,22 @@ mod instance_symbol_tests {
         assert!(diagnostic.secondary.iter().any(|label| label.span == first), "the first instance is named where it is made");
         assert!(diagnostic.helps.iter().any(|help| help.contains("changes the hash")), "{:?}", diagnostic.helps);
         // A third instance is named against the first.
-        assert!(made.note(&symbol, InstanceMade::Function(DefId(11)), "geometry.max[bool]".into(), "geometry.max[bool]".into(), second).is_some());
+        assert!(made.note(&symbol, InstanceMade::Function(DefId(11)), "geometry.max[bool]", second).is_some());
+        // Two definitions of one method made alike are overlapping implementations, not E9040.
+        let method = ember_branding::instance_symbol("Wrap.tag", Some("[i64]"));
+        let (mut table, _) = ember_types::TypeTable::new();
+        let owner = table.intern(TyKind::Bool);
+        let tag = Symbol::intern("tag");
+        assert!(made.note(&method, InstanceMade::Method(DefId(20), owner, tag), "Wrap.tag[i64]", first).is_none());
+        assert!(made.note(&method, InstanceMade::Method(DefId(21), owner, tag), "Wrap.tag[i64]", second).is_none());
+        // A function and a method made alike are two instances (a module and a type of one name).
+        assert!(made.note(&method, InstanceMade::Function(DefId(22)), "Wrap.tag[i64]", second).is_some());
     }
 }
 
 /// `[MNG-1]` — `E9040`: two generic instances, written `first` and `second`, whose symbols are one.
 /// The instance hash of different arguments meeting is one way; two items of one path (a module
-/// and a type of one name, each with a generic `at`) another.
+/// and a type of one name, each with a generic `at`) another (`one_path`).
 fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str, span: Span, one_path: bool) -> Diagnostic {
     let diagnostic = Diagnostic::error(
         codes::E9040,
@@ -54598,6 +54615,12 @@ fn instance_collision(symbol: &str, first: &str, first_span: Span, second: &str,
     }
 }
 
+/// Declaration-only member identities must not collide with generated C
+/// symbols. A generic or interface member can be import-visible without any
+/// body being emitted, and a concrete specialization is not its source
+/// declaration. A generated name (`kind`, `generic` or `interface`) keyed by
+/// the owner's path and the member's name, each mangled (`[MNG-1]`), keeps the
+/// artifact key deterministic and apart from every item's symbol.
 fn member_declaration_symbol(kind: &str, owner: Symbol, name: Symbol) -> String {
     format!(
         "{}_{}_{}",
