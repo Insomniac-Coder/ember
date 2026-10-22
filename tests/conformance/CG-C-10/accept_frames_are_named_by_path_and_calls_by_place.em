@@ -2,21 +2,21 @@
 #$ rules: CG-C-10
 #$ profiles: debug
 #$ stdout: 9
-#$ assert-c: contains("{"em_geometry_Grid_at", "geometry.Grid.at", "geometry.em", 7u},")
-#$ assert-c: contains("{"em_geometry_probe", "geometry.probe", "geometry.em", 10u},")
-#$ assert-c: contains("{"em_geometry_probe", "em_geometry_Grid_at", "geometry.em", 11u, 17u},")
-#$ assert-c: contains("{"em_geometry_probe", "em_geometry_Grid_at", "geometry.em", 11u, 27u},")
-#$ assert-c: contains("{"em_outer", "em_geometry_probe", "accept_frames_are_named_by_path_and_calls_by_place.em", 22u, 30u},")
+#$ assert-c: contains("{"em_support_geometry_Grid_at", "support.geometry.Grid.at", "support/geometry.em", 7u},")
+#$ assert-c: contains("{"em_support_geometry_probe", "support.geometry.probe", "support/geometry.em", 10u},")
+#$ assert-c: contains("{"em_support_geometry_probe", "em_support_geometry_Grid_at", "support/geometry.em", 11u, 17u},")
+#$ assert-c: contains("{"em_support_geometry_probe", "em_support_geometry_Grid_at", "support/geometry.em", 11u, 27u},")
+#$ assert-c: contains("{"em_outer", "em_support_geometry_probe", "accept_frames_are_named_by_path_and_calls_by_place.em", 22u, 30u},")
 #$ assert-c: contains("ember_backtrace_sites(em_call_sites, ")
 # `[CG-C-10]`: what a stack trace is printed from. Outside `release` the program names each of its
-# functions by its Ember path, a method by its type's path and its name (`geometry.Grid.at`), and
+# functions by its Ember path, a method by its type's path and its name (`support.geometry.Grid.at`), and
 # lists each call one of them makes to another, with where the call is written (`file:line:col`,
 # the column of its last argument, of the call itself when it has none): `probe` calls `Grid.at`
 # twice on line 11, `g.at(i)` and `g.at(0)`, at columns 17 and 27. Each
 # function is called from two places, so none is inlined into its caller. The run-fail case beside
 # this one shows a backtrace printed from these tables.
 
-import geometry
+import support.geometry as geometry
 
 fn outer(g: geometry.Grid, i: int) -> int:
     return geometry.probe(g, i) + geometry.probe(g, 0)

@@ -6,7 +6,7 @@
 #$ assert-c-count: contains("    EMBER_VECTORISE") == 1
 # `[CG-C-6]`: a loop in vectorisable form (`[SIMD-5]`, here proved by `@simd(assert)`, which would
 # be `E4020` otherwise) is preceded by the host compiler's vectorisation pragma, `EMBER_VECTORISE`
-# (`ember_rt.h`: clang's `loop vectorize(enable)`, GCC's `ivdep`, MSVC's `loop(ivdep)`), written
+# (`ember_rt.h`: clang's `loop vectorize(enable)`, GCC's `ivdep`; none for MSVC, ODR-190), written
 # directly before its `for`, in every profile. Its checked multiply is grouped (`[SIMD-7]`), and it
 # is that grouped copy, with no check left in it, that the pragma leads. The program's other loops
 # (pushing, printing) are not in vectorisable form and get no pragma.

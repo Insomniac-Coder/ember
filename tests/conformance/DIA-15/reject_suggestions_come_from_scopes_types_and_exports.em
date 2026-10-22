@@ -1,5 +1,8 @@
 #$ test: compile-fail
 #$ rules: DIA-15, DIA-12
+# (A type is resolved before the bodies, so its error comes first.)
+#$ error[E1010]: cannot find type `Mutex` in this scope
+#$ help: `Mutex` is exported by `std.sync`: import it, `from std.sync import Mutex`
 #$ error[E1010]: cannot find `countr` in this scope
 #$ help: did you mean `counter`?
 #$ error[E1010]: cannot find field `xpso` on `Point`
@@ -10,8 +13,6 @@
 #$ not-help: did you mean `scale`?
 #$ error[E1010]: cannot find `sqrt` in this scope
 #$ help: `sqrt` is exported by `std.math`: import it, `from std.math import sqrt`
-#$ error[E1010]: cannot find type `Mutex` in this scope
-#$ help: `Mutex` is exported by `std.sync`: import it, `from std.sync import Mutex`
 # `[DIA-15]`: every suggestion comes from data the compiler already holds. A misspelt local is
 # matched against the scope tables (`counter`); a misspelt field or method against the receiver's
 # type, its fields and its method table (`xpos`, `length_squared`) — and only the receiver's: `scale`

@@ -83,10 +83,12 @@ this compiler does not have yet):
     ember demangle <file>                          a C stack on standard input, its program's symbols
                                                    written as Ember paths
     ember bind <header> [-I <dir>] [-D <name[=value]>] (--init [--merge] | --report [--overlay <file>]
-                         [--baseline <file> | --write-baseline <file>] | --check <overlay>)
+                         [--baseline <file> | --write-baseline <file>] | --check <overlay>
+                         | --explain <fn> | --emit-embind | --outcomes | --emit-cpp [--out <file>])
+                         [--std <std>] [--flag <flag>] [--instantiate <template-id>]
                                                    a starter overlay, what is skipped or still unsafe,
-                                                   an overlay checked against the header
-                                                   (--explain and --emit-embind are not built yet)
+                                                   an overlay checked against the header, a function's
+                                                   contract, the C++ outcome list and thunks
     ember shader-bind <reflection.json>            Annex D (not built yet)
     ember tcb [--module <m>] [--json] <file.em>    the trusted-base report (Annex C)
     ember toolchain list|install|default           manage installed C toolchains (not built yet)
@@ -5028,6 +5030,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // `ember check` reports what the passes below decide only for an `@simd(assert)` loop
     // (`[SIMD-2]`'s `E4020`): without one, nothing below can say anything, and the check is done.
     if command == "check" && !bodies.iter().any(|body| body.loop_notes.simd.iter().any(|note| note.assert)) {
+        // An error so far (`ember lint`'s `error` lints among them) fails the check, as below.
+        if sink.has_errors() {
+            return Ok(finish(&sink, &map, options));
+        }
         interface_cache.commit().map_err(|error| error.to_string())?;
         report(&sink, &map, options);
         return Ok(ExitCode::SUCCESS);

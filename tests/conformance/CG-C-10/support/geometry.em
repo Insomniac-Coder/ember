@@ -1,4 +1,4 @@
-# The module of ./run_fail_a_backtrace_names_paths_and_places.em: a method and a function that
+# The module of ../run_fail_a_backtrace_names_paths_and_places.em: a method and a function that
 # call it, each frame of the backtrace that test checks.
 
 pub struct Grid:

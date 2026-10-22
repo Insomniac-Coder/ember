@@ -1101,7 +1101,7 @@ fn build_writes_debugger_visualisers_beside_the_program() {
 
 /// `[CG-C-10]` — `ember demangle <file>` copies a C stack (a debugger's, a crash dump's) from
 /// standard input with each C symbol of the program's functions written as its Ember path, a
-/// method's with its type's (`geometry.Grid.at`); a whole identifier only, everything else as it is.
+/// method's with its type's (`support.geometry.Grid.at`); a whole identifier only, everything else as it is.
 #[test]
 fn demangle_writes_a_c_stack_in_ember_paths() {
     let root = workspace_root();
@@ -1109,15 +1109,15 @@ fn demangle_writes_a_c_stack_in_ember_paths() {
     let symbol = ember_branding::mangled;
     let stack = format!(
         "program!{}+0x1a\n{} (g=0x0) at program.c:12\n{} {} {}\n",
-        symbol("geometry.Grid.at"),
-        symbol("geometry.probe"),
+        symbol("support.geometry.Grid.at"),
+        symbol("support.geometry.probe"),
         symbol("outer"),
         symbol("outer_2"),
         symbol("main")
     );
     let shown = ember_with_input(&["demangle", &source], &root, stack.as_bytes());
     assert_eq!(shown.exit, 0, "{}", shown.stderr);
-    assert_eq!(shown.stdout, format!("program!geometry.Grid.at+0x1a\ngeometry.probe (g=0x0) at program.c:12\nouter {} main\n", symbol("outer_2")));
+    assert_eq!(shown.stdout, format!("program!support.geometry.Grid.at+0x1a\nsupport.geometry.probe (g=0x0) at program.c:12\nouter {} main\n", symbol("outer_2")));
 }
 
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
@@ -3838,7 +3838,7 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
-    assert!(msvc.stdout.contains("_bump(&_"), "the call does not take the object's address directly:\n{}", msvc.stdout);
+    assert!(msvc.stdout.contains("_bump(&"), "the call does not take the object's address directly:\n{}", msvc.stdout);
     let total_of = format!("{}(", ember_branding::mangled("total_of"));
     let start = msvc
         .stdout
@@ -6963,15 +6963,16 @@ fn assert_memreplace_span_result_pointer_is_refreshed(c: &str) {
     let replacement_at = lines.iter().enumerate().skip(load_at + 1)
         .find_map(|(index, line)| line.starts_with(&replacement_prefix).then_some(index))
         .unwrap_or_else(|| panic!("MemReplace does not store its replacement:\n{c}"));
-    let pointer = format!("{destination}_ptr");
+    // The result's pointer cache is the local its `.ptr` is read into, whatever it is named.
+    let refresh_suffix = format!("{destination}.ptr;");
+    let (refresh_at, pointer) = lines.iter().enumerate().find_map(|(index, line)| {
+        let (pointer, _) = line.strip_suffix(&refresh_suffix)?.split_once(" = ")?;
+        Some((index, pointer.to_string()))
+    })
+    .unwrap_or_else(|| panic!("MemReplace leaves its result pointer cache uninitialized:\n{c}"));
     let index_marker = format!("{pointer}[");
     let first_index_at = lines.iter().position(|line| line.contains(&index_marker))
         .unwrap_or_else(|| panic!("the result has no dynamic cached-pointer index:\n{c}"));
-    let refresh_prefix = format!("{pointer} = ");
-    let refresh_suffix = format!("{destination}.ptr;");
-    let refresh_at = lines.iter().position(|line|
-        line.starts_with(&refresh_prefix) && line.ends_with(&refresh_suffix))
-        .unwrap_or_else(|| panic!("MemReplace leaves its result pointer cache uninitialized:\n{c}"));
     assert!(load_at < replacement_at && replacement_at < refresh_at && refresh_at < first_index_at,
         "the result pointer cache is not refreshed after the exchange and before indexing:\n{c}");
     // The addressed target cannot retain a duplicate pointer that the exchange

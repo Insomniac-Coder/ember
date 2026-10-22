@@ -634,7 +634,8 @@ fn layout_flags(toolchain: &Toolchain, layout: usize) -> (Option<String>, Option
 /// Link a driver-owned executable whose externally callable C definitions are
 /// known. Linux GCC with a capable linker can remove unreachable sections;
 /// each retained symbol is required to have a definition. Other linkers retain
-/// the ordinary complete program. Ordinary host linking and archives do not
+/// the ordinary program, and every linker keeps the retained symbols, which
+/// link-time optimisation would otherwise drop when nothing calls them. Ordinary host linking and archives do not
 /// opt into this policy. Names must be the emitted C symbols, not source names.
 pub fn compile_and_link_executable_with_roots(
     toolchain: &Toolchain,
@@ -864,11 +865,18 @@ fn compile_and_link_impl(
                 // `[THR-10]` — the runtime starts threads with pthreads.
                 command.arg("-lm").arg("-pthread");
             }
-            if retained_symbols.is_some() && executable_section_gc_supported(toolchain) {
+            // The roots stay though nothing in the program calls them: section removal and
+            // link-time optimisation each drop what is unreferenced.
+            let section_gc = retained_symbols.is_some() && executable_section_gc_supported(toolchain);
+            if section_gc {
                 command.arg("-Xlinker").arg("--gc-sections");
-                for symbol in retained_symbols.unwrap_or_default() {
-                    command.arg("-Xlinker").arg(format!("--require-defined={symbol}"));
-                }
+            }
+            for symbol in retained_symbols.unwrap_or_default() {
+                match (section_gc, cfg!(windows)) {
+                    (true, _) => command.arg("-Xlinker").arg(format!("--require-defined={symbol}")),
+                    (false, true) => command.arg("-Xlinker").arg(format!("/INCLUDE:{symbol}")),
+                    (false, false) => command.args(["-Xlinker", "-u", "-Xlinker", symbol]),
+                };
             }
         }
     }
@@ -901,6 +909,8 @@ fn compile_and_link_impl(
                 command.arg("-fuse-ld=lld");
             }
             command.args(["/link", "/Brepro", "/INCREMENTAL:NO"]).args(lto_link_flags(toolchain, lto));
+            // The roots stay though nothing in the program calls them (`/OPT:REF`, `/LTCG`).
+            command.args(retained_symbols.unwrap_or_default().iter().map(|symbol| format!("/INCLUDE:{symbol}")));
             if request.profile != Profile::Release {
                 command.arg("/PDBALTPATH:%_PDB%");
                 if is_clang_cl(cl) {
@@ -2389,8 +2399,10 @@ int main(int argc, char** argv) {
                 assert!(symbols.status.success());
                 let symbols = String::from_utf8_lossy(&symbols.stdout);
                 let names: Vec<_> = symbols.lines().filter_map(|line| line.split_whitespace().last()).collect();
-                assert!(names.contains(&"retained_c_root"));
-                assert_eq!(names.contains(&"dead_helper"), !uses_gc);
+                // A root stays; what nothing calls goes with section removal or link-time optimisation.
+                let lto = build_lto(&toolchain, profile, Link::Here) != Lto::Off;
+                assert_eq!(names.contains(&"retained_c_root"), uses_gc || !lto, "{} {lto}", profile.name());
+                assert_eq!(names.contains(&"dead_helper"), !uses_gc && !lto, "{} {lto}", profile.name());
                 let elf = Command::new("readelf").args(["-lW"]).arg(&executable).output().unwrap();
                 assert!(elf.status.success());
                 let headers = String::from_utf8_lossy(&elf.stdout);
@@ -2448,7 +2460,10 @@ int main(int argc, char** argv) {
         assert!(listed.status.success());
         let listing = String::from_utf8_lossy(&listed.stdout);
         let names: Vec<_> = listing.lines().filter_map(|line| line.split_whitespace().last()).collect();
-        assert!(names.contains(&"retained_c_root") && names.contains(&"dead_helper"));
+        // The root stays without section removal too; the helper goes only with link-time optimisation.
+        let lto = build_lto(&simulated, Profile::Development, Link::Here) != Lto::Off;
+        assert!(names.contains(&"retained_c_root"), "{listing}");
+        assert_eq!(names.contains(&"dead_helper"), !lto, "{listing}");
     }
 
     /// ADR-118's probe runs GCC and its linker once; the answer is reused

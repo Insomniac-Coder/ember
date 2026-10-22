@@ -448,7 +448,7 @@ fn the_cpp_corpus_binds_as_recorded() {
     let outcomes = read(&entry.join(format!("nlohmann_json.{platform}.outcomes")));
     let thunks = read(&entry.join(format!("nlohmann_json.{platform}.thunks.cpp")));
     let program = corpus.join("program");
-    let (main, api, printed) = (read(&program.join("main.em")), read(&program.join("json_api.hpp")), read(&program.join("expected.txt")));
+    let (main, api, printed) = (read(&program.join(ember_branding::source_file("main"))), read(&program.join("json_api.hpp")), read(&program.join("expected.txt")));
     let dir = scratch();
     for (index, flags) in configurations.iter().enumerate() {
         let shown = flags.join(" ");

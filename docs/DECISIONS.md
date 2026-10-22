@@ -5017,6 +5017,23 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-258 — After merging Q and R: what the full verification found
+
+2026-10-22 (lead). `verify_all.sh` over main after the merges of helpers Q and R. Fixed: D-814 (an
+executable's exported symbols are now kept on every linker: `--require-defined` where GCC's linker
+removes sections, `-u` on other Unix linkers, `/INCLUDE:` with MSVC and on Windows; link-time
+optimisation, on in `development` and `release`, dropped any that nothing in the program calls);
+Q's early stop of `ember check` now fails on an `error` lint; `ember --help` lists every `ember
+bind` mode XVII.1 gives; the Linux gate copies `bench/bigpkg` and the specification parts. Tests
+brought up to the merged compiler, none weakened: five class-construction needles accept a frame
+object (`[OPT-1]`; each still names the class's type information); CG-C-10's module moved to
+`support/`, where a rule directory keeps the modules its cases import; DIA-5's accepting case
+imports `labels.c`, which defines the header's functions, so it links and runs; DIA-15's case lists
+its type error first, as the compiler reports types before bodies; the MemReplace test finds the
+pointer cache by what it is assigned (`[CG-C-7]` names the local). Ruled (ODR-190, under the
+delegation): `[CG-C-6]` gives MSVC no pragma; its `loop(ivdep)` made bench b13_checked 1.17x C,
+against 1.00x without.
+
 ## ADR-257 — Helper R merged: ten rules of the language and its C
 
 2026-10-22 (helper R, `tasks/95/R-notes.md`). Built: `[SEL-2]` (a conversion between `Shared`/`Weak`
