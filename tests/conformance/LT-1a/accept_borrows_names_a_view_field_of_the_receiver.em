@@ -4,11 +4,14 @@
 #$ stdout: a ccc
 #$ stdout: bb
 #$ stdout: ccc
+#$ stdout: bb
+#$ stdout: a
 # `[LT-1a]` (ODR-196) — `@borrows(self.owner)`: the result of `next` borrows what the iterator's
 # `owner` field borrows, the words, not the iterator, and the call's loan on the iterator ends
 # with the call. So an item is kept while `next` is called again, two items are held at once,
 # and an item outlives the iterator it came from. In a plain type's method, a generic type's,
-# and a generic extension's.
+# and a generic extension's; and with a receiver taken `owned` or as a copy, whose field's borrow
+# is the same.
 
 @view
 struct WordIter:
@@ -48,6 +51,19 @@ extend[T] Back[T]:
             return None
         self.at -= 1
         return Some(ref self.owner[self.at])
+
+@view
+struct Holder:
+    owner: ref Array[String]
+    at: int
+
+    @borrows(self.owner)
+    fn take(owned self) -> ref String:
+        return ref self.owner[self.at]
+
+    @borrows(self.owner)
+    fn peek(self) -> ref String:
+        return ref self.owner[self.at]
 
 # The item outlives `it`, a local of this function: it borrows `words`.
 fn first_long(words: ref Array[String]) -> Option[ref String]:
@@ -92,3 +108,5 @@ fn main():
             println(w)
         None:
             pass
+    println(Holder(ref words, 2).take())
+    println(Holder(ref words, 0).peek())
