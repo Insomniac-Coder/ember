@@ -2649,7 +2649,7 @@ fn aggregate_field_projection(kind: AggregateKind, field: usize) -> Vec<Projecti
 /// (blocks each reachable from every other: a strongly connected set, Tarjan's) or one block in no
 /// loop, the groups in the order control reaches them: a group's blocks are reached only from its
 /// own and from earlier groups'.
-fn loop_groups(body: &Body) -> Vec<Vec<usize>> {
+pub(crate) fn loop_groups(body: &Body) -> Vec<Vec<usize>> {
     let count = body.blocks.len();
     let mut groups = Vec::new();
     if count == 0 {

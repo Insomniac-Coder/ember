@@ -1713,6 +1713,11 @@ pub(crate) struct CountedLoop {
 }
 
 pub(crate) fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Option<CountedLoop> {
+    counted_loop_in(body, types, header, &predecessors(body))
+}
+
+/// `counted_loop` with the body's predecessors, made once for every header a pass asks about.
+pub(crate) fn counted_loop_in(body: &Body, types: &TypeTable, header: usize, predecessors: &[Vec<usize>]) -> Option<CountedLoop> {
     let head = body.blocks.get(header)?;
     let Terminator::SwitchInt { discr: Operand::Copy(discr), targets, otherwise } = &head.terminator else {
         return None;
@@ -1734,7 +1739,6 @@ pub(crate) fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Opt
     if !(32..=64).contains(&width) || body.local(limit).ty != counter_ty {
         return None;
     }
-    let predecessors = predecessors(body);
     let entry = otherwise.0 as usize;
     let reach = reachable_from(body, entry, header);
     let back: Vec<usize> = predecessors[header].iter().copied().filter(|p| reach.contains(p)).collect();
@@ -1767,7 +1771,7 @@ pub(crate) fn counted_loop(body: &Body, types: &TypeTable, header: usize) -> Opt
     if increments != 1 || !is_increment || !matches!(step_block.terminator, Terminator::Goto(target) if target.0 as usize == header) {
         return None;
     }
-    let last = last_test(body, &predecessors, header, *step, counter, limit);
+    let last = last_test(body, predecessors, header, *step, counter, limit);
     let mut region: Vec<usize> = region.into_iter().collect();
     region.sort_unstable();
     Some(CountedLoop { header, entry, step: *step, region, counter, limit, inclusive: op == BinOp::Le, last })
@@ -4000,15 +4004,38 @@ pub fn hoist_invariant_views_all(bodies: &mut [Body], types: &TypeTable) -> usiz
 }
 
 fn hoist_views(body: &mut Body, types: &TypeTable, summaries: &Summaries) -> usize {
-    // A view hoisted out of an inner loop stands at the start of the outer
-    // loop's turn, which a later round hoists on.
+    // Moving work keeps every assignment, so what the assignments say holds for the whole pass.
+    let facts = BodyFacts::new(body, types);
     let mut total = 0;
-    for _ in 0..8 {
-        let mut moved = 0;
+    // A nest's loops move one a round, so a nest of depth d settles within 2d rounds.
+    for _ in 0..16 {
+        // Every loop asks its question of the function as the round found it, and the work moves
+        // out of loops that are apart: what moves out of one changes nothing another's question
+        // reads (its own blocks lose the work; the blocks before it, which no loop of the round
+        // holds, gain it). A loop inside or around one whose work moved waits for the next
+        // round, as a view hoisted out of an inner loop stands at the start of the outer loop's
+        // turn, which a later round hoists on. D-811: asked again after every move, the questions
+        // read the whole function once per loop, and the pass grew as the function squared.
+        let mut whole = WholeFunction::new(body);
+        let mut plans: Vec<(CountedLoop, ViewHoist)> = Vec::new();
         for header in 0..body.blocks.len() {
-            if let Some(shape) = counted_loop(body, types, header) {
-                moved += hoist_from(body, types, summaries, &shape);
+            if let Some(shape) = counted_loop_in(body, types, header, &whole.predecessors) {
+                let cycle_writes = whole.cycle_writes(body, header);
+                if let Some(hoist) = plan_hoist(body, types, summaries, &facts, &whole, &cycle_writes, &shape) {
+                    plans.push((shape, hoist));
+                }
             }
+        }
+        // In the order the loops stand, as when each moved its work in turn; of two loops one
+        // inside the other, the second waits for the next round.
+        let mut taken: HashSet<usize> = HashSet::new();
+        let mut moved = 0;
+        for (shape, hoist) in plans {
+            if hoist.inside.iter().any(|block| taken.contains(block)) {
+                continue;
+            }
+            taken.extend(hoist.inside.iter().copied());
+            moved += apply_hoist(body, &shape, hoist);
         }
         total += moved;
         if moved == 0 {
@@ -4016,6 +4043,94 @@ fn hoist_views(body: &mut Body, types: &TypeTable, summaries: &Summaries) -> usi
         }
     }
     total
+}
+
+/// The work a loop's turn begins with that moves before the loop, found by `plan_hoist`.
+struct ViewHoist {
+    items: Vec<Hoisted>,
+    hoisted_locals: HashSet<LocalId>,
+    /// The loop's blocks, its header among them.
+    inside: Vec<usize>,
+}
+
+/// What `hoist_from` asks of the whole function: each block's predecessors, how many blocks read
+/// each local (`visit_places`' reads, and any place under a local), and the strongly connected
+/// set of blocks each block lies in, with what the blocks of each set write.
+struct WholeFunction {
+    predecessors: Vec<Vec<usize>>,
+    readers: Vec<usize>,
+    group_of: Vec<Option<usize>>,
+    group_writes: Vec<Option<HashSet<LocalId>>>,
+    groups: Vec<Vec<usize>>,
+}
+
+impl WholeFunction {
+    fn new(body: &Body) -> WholeFunction {
+        let mut readers = vec![0; body.locals.len()];
+        for block in &body.blocks {
+            for local in block_reads(block) {
+                readers[local.0 as usize] += 1;
+            }
+        }
+        let groups = crate::regions::loop_groups(body);
+        let mut group_of = vec![None; body.blocks.len()];
+        for (group, blocks) in groups.iter().enumerate() {
+            for &block in blocks {
+                group_of[block] = Some(group);
+            }
+        }
+        WholeFunction { predecessors: predecessors(body), readers, group_of, group_writes: vec![None; groups.len()], groups }
+    }
+
+    /// The locals the blocks on a cycle through `header` write, or whose storage they begin or
+    /// end: the blocks both reached from it and reaching it, its strongly connected set.
+    fn cycle_writes(&mut self, body: &Body, header: usize) -> HashSet<LocalId> {
+        let Some(group) = self.group_of[header] else { return cycle_writes_from(body, &self.predecessors, header) };
+        self.group_writes[group].get_or_insert_with(|| writes_of(body, &self.groups[group])).clone()
+    }
+}
+
+/// The locals a block reads (`visit_places`' reads, and any place under a local), each once.
+fn block_reads(block: &BasicBlock) -> HashSet<LocalId> {
+    let mut read = HashSet::new();
+    visit_places(block, &mut |place: &Place, written: bool, _| {
+        if !written || !place.projection.is_empty() {
+            read.insert(place.local);
+        }
+    });
+    read
+}
+
+fn writes_of(body: &Body, blocks: &[usize]) -> HashSet<LocalId> {
+    let mut written = HashSet::new();
+    for &block in blocks {
+        visit_places(&body.blocks[block], &mut |place: &Place, write: bool, _| {
+            if write {
+                written.insert(place.local);
+            }
+        });
+        for stmt in &body.blocks[block].stmts {
+            if let StmtKind::StorageLive(local) | StmtKind::StorageDead(local) = stmt.kind {
+                written.insert(local);
+            }
+        }
+    }
+    written
+}
+
+/// `WholeFunction::cycle_writes` for a header the entry does not reach, walked from it.
+fn cycle_writes_from(body: &Body, predecessors: &[Vec<usize>], header: usize) -> HashSet<LocalId> {
+    let forward: HashSet<usize> = reach_order(body, header, usize::MAX).into_iter().collect();
+    let mut cycle: HashSet<usize> = HashSet::new();
+    let mut work = vec![header];
+    while let Some(block) = work.pop() {
+        for &from in &predecessors[block] {
+            if forward.contains(&from) && cycle.insert(from) {
+                work.push(from);
+            }
+        }
+    }
+    writes_of(body, &cycle.into_iter().collect::<Vec<_>>())
 }
 
 /// Whether `place` lies in its local's own storage: reached through fields
@@ -4050,12 +4165,19 @@ fn deref_of(place: &Place) -> Place {
     Place { local: place.local, projection }
 }
 
-fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: &CountedLoop) -> usize {
-    let facts = BodyFacts::new(body, types);
+fn plan_hoist(
+    body: &Body,
+    types: &TypeTable,
+    summaries: &Summaries,
+    facts: &BodyFacts,
+    whole: &WholeFunction,
+    cycle_writes: &HashSet<LocalId>,
+    shape: &CountedLoop,
+) -> Option<ViewHoist> {
     let mut inside = shape.region.clone();
     inside.push(shape.header);
     let inside_set: HashSet<usize> = inside.iter().copied().collect();
-    let written = loop_writes(body, types, summaries, &facts, &inside);
+    let written = loop_writes(body, types, summaries, facts, &inside);
     // Values each local is given in the loop, and the locals whose storage
     // begins or ends in it.
     let mut writes: HashMap<LocalId, usize> = HashMap::new();
@@ -4094,48 +4216,21 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
             *writes.entry(dest.local).or_default() += 1;
         }
     }
-    // What is read outside the loop.
-    let mut outside: HashSet<LocalId> = HashSet::new();
-    for (index, block) in body.blocks.iter().enumerate() {
-        if inside_set.contains(&index) {
-            continue;
+    // What is read outside the loop: by more blocks than the loop's own.
+    let mut read_inside: HashMap<LocalId, usize> = HashMap::new();
+    for &block in &inside_set {
+        for local in block_reads(&body.blocks[block]) {
+            *read_inside.entry(local).or_default() += 1;
         }
-        visit_places(block, &mut |place: &Place, written: bool, _| {
-            if !written || !place.projection.is_empty() {
-                outside.insert(place.local);
-            }
-        });
     }
-    let predecessors = predecessors(body);
+    let read_outside = |local: LocalId| whole.readers[local.0 as usize] > read_inside.get(&local).copied().unwrap_or(0);
+    let predecessors = &whole.predecessors;
     // A computation from locals alone the C compiler moves itself. Moved
     // here, it would stand in an outer loop's turn before this loop, and a
     // nest with work between its loops is not perfect: MSVC reorders only a
     // perfect nest (`enumerate(start=round)`, 1.5x C). It moves only when
     // it leaves every loop around this one, so when nothing on a cycle
     // through this loop's header changes its inputs.
-    let forward: HashSet<usize> = reach_order(body, shape.header, usize::MAX).into_iter().collect();
-    let mut cycle: HashSet<usize> = HashSet::new();
-    let mut work = vec![shape.header];
-    while let Some(block) = work.pop() {
-        for &from in &predecessors[block] {
-            if forward.contains(&from) && cycle.insert(from) {
-                work.push(from);
-            }
-        }
-    }
-    let mut cycle_writes: HashSet<LocalId> = HashSet::new();
-    for &block in &cycle {
-        visit_places(&body.blocks[block], &mut |place: &Place, written: bool, _| {
-            if written {
-                cycle_writes.insert(place.local);
-            }
-        });
-        for stmt in &body.blocks[block].stmts {
-            if let StmtKind::StorageLive(local) | StmtKind::StorageDead(local) = stmt.kind {
-                cycle_writes.insert(local);
-            }
-        }
-    }
     let mut hoisted_locals: HashSet<LocalId> = HashSet::new();
     let mut items: Vec<Hoisted> = Vec::new();
     // Read so far in the turn: a value read before it is computed keeps its
@@ -4169,7 +4264,7 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
             return true;
         }
         match locate(body, types, &facts.origins, place, 0) {
-            Some(loc) => loc.root != Root::Anywhere && !written.iter().any(|(w, _)| may_alias(w, &loc, &facts)),
+            Some(loc) => loc.root != Root::Anywhere && !written.iter().any(|(w, _)| may_alias(w, &loc, facts)),
             None => false,
         }
     };
@@ -4191,7 +4286,7 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
             && !lent.contains(&place.local)
             && !types.needs_drop(body.local(place.local).ty)
             && !read_so_far.contains(&place.local)
-            && !outside.contains(&place.local)
+            && !read_outside(place.local)
     };
 
     let mut block = shape.entry;
@@ -4291,10 +4386,14 @@ fn hoist_from(body: &mut Body, types: &TypeTable, summaries: &Summaries, shape: 
             _ => break,
         }
     }
-    if items.is_empty() {
-        return 0;
-    }
+    (!items.is_empty()).then_some(ViewHoist { items, hoisted_locals, inside })
+}
 
+/// Moves a loop's planned work before it: into blocks of its own that the loop's entry edges
+/// now reach first. Returns how many computations moved.
+fn apply_hoist(body: &mut Body, shape: &CountedLoop, hoist: ViewHoist) -> usize {
+    let ViewHoist { items, hoisted_locals, inside } = hoist;
+    let inside_set: HashSet<usize> = inside.iter().copied().collect();
     // Before the loop, in the order the turn had them: statements gathered
     // into a block, each call ending one.
     let span = body.blocks[shape.header].terminator_span;
