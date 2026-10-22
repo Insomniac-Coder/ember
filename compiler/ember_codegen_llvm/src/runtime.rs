@@ -357,6 +357,12 @@ pub const FNS: &[RtFn] = &[
     f("debug_field_end", "void", &["const uint32_t*", "bool", "$loc"]),
     // -- the lifecycle ([RT-2], [FN-8], [FFI-22])
     f("rt_thread_attach", "void", &[]),
+    f("rt_check_main_thread", "void", &[]),
+    // -- foreign objects and threads ([FFI-36a], [FFI-33b])
+    f("ffi_thread", "uint32_t", &[]),
+    f("ffi_check_thread", "void", &["uint32_t", "const char*"]),
+    f("ffi_adopt", "void*", &["void*", "$loc"]),
+    f("ffi_release", "void", &["void*", "uint32_t"]),
     f("rt_set_args", "void", &["int", "char**"]),
     f("rt_init_v3", "int", &["const $rt_config*", "uint32_t"]),
     f("rt_shutdown", "void", &[]),

@@ -18,11 +18,13 @@ mod builtins;
 mod closures;
 mod cmp;
 mod dispatch;
+mod ffi;
 mod fmt;
 mod func;
 mod glue;
 mod ranges;
 mod runtime;
+mod soa;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -142,12 +144,20 @@ impl<'a> Module<'a> {
     }
 }
 
-/// An IR identifier: the symbol as written when LLVM reads it so, else quoted.
+/// An IR identifier: the symbol as written when LLVM reads it so, else quoted. `[FFI-49]`,
+/// `[MNG-2]` — a foreign or exported function's alias (`em_0x616273_3abs`) is the symbol it
+/// stands for (`abs`), which IR spells whatever it is.
 pub(crate) fn global_name(symbol: &str) -> String {
+    let symbol = &link_symbol(symbol);
     let plain = !symbol.is_empty()
         && !symbol.starts_with(|c: char| c.is_ascii_digit())
         && symbol.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '$' | '-'));
     if plain { format!("@{symbol}") } else { format!("@\"{}\"", escape(symbol.as_bytes())) }
+}
+
+/// The symbol the linker sees for `symbol`: an alias's exact symbol, else itself.
+pub(crate) fn link_symbol(symbol: &str) -> String {
+    ember_branding::export_alias_symbol(symbol).unwrap_or_else(|| symbol.to_string())
 }
 
 /// Bytes as an IR string body: printable ASCII as itself, everything else `\XX`.
@@ -208,7 +218,8 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
             continue;
         }
         if body.ffi_counted.is_some() {
-            return unsupported("a foreign function's counted wrapper ([FFI-11])");
+            ffi::emit_counted_wrapper(&mut module, body)?;
+            continue;
         }
         func::emit_body(&mut module, body)?;
     }
@@ -217,7 +228,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
     }
     glue::emit_pending(&mut module)?;
     for symbol in &defined {
-        module.decls.remove(*symbol);
+        module.decls.remove(&link_symbol(symbol));
     }
 
     let mut ir = String::new();

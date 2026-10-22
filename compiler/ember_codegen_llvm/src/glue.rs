@@ -648,7 +648,9 @@ impl<'a> FnCx<'_, 'a> {
         }
         let origin = def.origin.as_ref().map(|(origin, _)| origin.as_str().to_string());
         match origin.as_deref() {
-            Some("std.sync.MutexGuard" | "SoA" | "std.thread.Scope" | "std.jobs.JobScope" | "std.thread.JoinHandle"
+            // `[SOA-1]` — its elements' fields, then its block.
+            Some("SoA") => return self.soa_drop(ptr, ty),
+            Some("std.sync.MutexGuard" | "std.thread.Scope" | "std.jobs.JobScope" | "std.thread.JoinHandle"
                 | "std.sync.RwLockReadGuard" | "std.sync.RwLockWriteGuard") => {
                 return unsupported(format!("the drop of `{}`", table.display(ty)));
             }

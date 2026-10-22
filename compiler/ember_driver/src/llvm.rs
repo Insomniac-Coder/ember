@@ -54,6 +54,8 @@ pub(crate) struct Build<'a> {
     pub bodies: &'a [ember_mir::Body],
     pub input: &'a Path,
     pub manifest: Option<&'a str>,
+    /// Each module, an `import c`'s with its shim and C sources.
+    pub modules: &'a [ember_typeck::LoadedModule],
 }
 
 fn profile(profile: Profile) -> ember_codegen_llvm::Profile {
@@ -122,8 +124,29 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         .unwrap_or(runtime_source);
     let exe_name = if cfg!(windows) { format!("{}.exe", request.module_name) } else { request.module_name.to_string() };
     let exe = layout.bin.join(&exe_name);
-    // `[BLD-FFI-3]` — `[link] libs`, in the order written.
-    let libraries: Vec<String> = request.manifest.and_then(|text| super::manifest_list(text, "link", "libs")).unwrap_or_default();
+    // `[BLD-FFI-3]` — `[link] libs`, in the order written, a path the package's.
+    let package_dir = super::nearest_manifest_path(request.input).and_then(|path| path.parent().map(Path::to_path_buf));
+    let mut libraries: Vec<String> = request
+        .manifest
+        .and_then(|text| super::manifest_list(text, "link", "libs"))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|library| match &package_dir {
+            Some(dir) if ember_build::cdylib::is_library_path(&library) && Path::new(&library).is_relative() => {
+                dir.join(&library).to_string_lossy().into_owned()
+            }
+            _ => library,
+        })
+        .collect();
+    // `[FFI-29]`, `[BLD-FFI-1]` — each `import c`'s shim and C sources, compiled by the `[c]`
+    // section's compiler (Clang by default) into objects of their own, then its libraries.
+    let c_toolchain = match request.manifest.and_then(|text| manifest_string(text, "c", "compiler")) {
+        Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+        None => toolchain.clone(),
+    };
+    let (foreign_objects, foreign_libraries) =
+        super::cimport::build_objects(request.modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, false)?;
+    libraries.extend(foreign_libraries);
     // The exports stay though nothing in the program calls them.
     let mut retained: Vec<String> = request
         .bodies
@@ -133,8 +156,8 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         .collect();
     retained.sort();
     retained.dedup();
-    let _ = request.input;
     sources.push(runtime_input);
+    sources.extend(foreign_objects);
     ember_build::compile_and_link_program(
         &toolchain,
         &LinkRequest {

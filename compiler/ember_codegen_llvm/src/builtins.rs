@@ -894,6 +894,38 @@ impl<'a> FnCx<'_, 'a> {
                 self.call_rt(entry.name, values, dest.as_ref().map(|(p, a)| (p.as_str(), *a)));
                 Ok(())
             }
+            Builtin::SoA { op, soa } => self.soa_op(op, *soa, args, dest, span),
+            // `[FFI-10]` — the C global's address (through its accessor where the shim has one).
+            Builtin::ForeignStatic { symbol, thunk, .. } => {
+                let name = crate::global_name(symbol.as_str());
+                let address = if *thunk {
+                    self.m.declare(&crate::link_symbol(symbol.as_str()), || format!("declare ptr {name}()"));
+                    self.value(format!("call ptr {name}()"))
+                } else {
+                    self.m.declare(&crate::link_symbol(symbol.as_str()), || format!("{name} = external global [0 x i8]"));
+                    name
+                };
+                self.store_result(dest, &address, Sc::Ptr, false)
+            }
+            // `[FFI-36a]`, `[FFI-36b]`, `[FFI-33b]` — the runtime's record of foreign objects.
+            Builtin::ForeignAdopt => {
+                let object = self.pointer(&args[0])?;
+                let loc = self.loc(span);
+                self.call_rt_into("ffi_adopt", vec![Val::Imm(Sc::Ptr, object), loc], dest)
+            }
+            Builtin::ForeignRelease => {
+                let object = self.pointer(&args[0])?;
+                let creator = self.operand(&args[1])?;
+                self.call_rt("ffi_release", vec![Val::Imm(Sc::Ptr, object), creator], None);
+                Ok(())
+            }
+            Builtin::ForeignThread => self.call_rt_into("ffi_thread", Vec::new(), dest),
+            // A destructor with a result is called through its `void` thunk.
+            Builtin::ForeignDestructor { symbol, ret, .. } => {
+                let given = self.pointer(&args[0])?;
+                let destructor = if self.m.ty.is_zst(*ret) { given } else { crate::ffi::foreign_destructor(self.m, symbol.as_str(), *ret)? };
+                self.store_result(dest, &destructor, Sc::Ptr, false)
+            }
             other => unsupported(format!("the built-in `{}`", other.name())),
         }
     }

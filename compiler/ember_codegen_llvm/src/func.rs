@@ -62,7 +62,33 @@ fn signature(m: &Module<'_>, ret: Ty, params: impl Iterator<Item = Ty>) -> Signa
 }
 
 pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
-    signature(m, body.return_ty(), body.args().map(|(_, decl)| decl.ty))
+    let values = ffi_value_params(m, body);
+    signature(m, body.return_ty(), body.args().enumerate().map(|(index, (_, decl))| passed_ty(m, &values, index, decl.ty)))
+}
+
+/// `[FFI-10]` — which parameters an exported function takes by value though its body borrows
+/// them: a borrowed C-safe value Ember passes by address is C's `T`, not `const T*` (the C
+/// backend's `ffi_export_value_params`). Empty for any other function.
+pub(crate) fn ffi_value_params(m: &Module<'_>, body: &Body) -> Vec<bool> {
+    if body.abi.is_none() || body.is_extern_declaration {
+        return Vec::new();
+    }
+    let table = m.ty.table;
+    body.args()
+        .enumerate()
+        .map(|(index, (_, decl))| {
+            body.param_modes.get(index) == Some(&ember_mir::ParameterMode::Borrow)
+                && matches!(table.kind(decl.ty), TyKind::Ref { inner, .. } if table.is_ffi_safe(*inner) && table.passed_by_address(*inner))
+        })
+        .collect()
+}
+
+/// The type parameter `index` is passed as: a by-value export parameter's pointee.
+fn passed_ty(m: &Module<'_>, values: &[bool], index: usize, ty: Ty) -> Ty {
+    match m.ty.kind(ty) {
+        TyKind::Ref { inner, .. } if values.get(index) == Some(&true) => *inner,
+        _ => ty,
+    }
 }
 
 /// The type of `place` in `body`.
@@ -106,17 +132,24 @@ pub(crate) fn declare_body_symbol(m: &mut Module<'_>, symbol: &str) -> Result<()
     };
     let sig = body_signature(m, body);
     let name = global_name(symbol);
-    let attrs = fn_attrs(m);
-    m.declare(symbol, || {
+    // A foreign function is the C library's: whether it unwinds is its own.
+    let attrs = if body.is_extern_declaration { "" } else { fn_attrs(m) };
+    let variadic = body.variadic;
+    // By the linker's symbol: a foreign function the runtime's tables also call is declared once.
+    m.declare(&crate::link_symbol(symbol), || {
         let ret = sig.ret.ir();
         let ext = ret_attr(&sig);
-        format!("declare{ext} {ret} {name}({}) {attrs}", ir_params(&sig, false).join(", "))
+        let mut params = ir_params(&sig, false);
+        if variadic {
+            params.push("...".to_string());
+        }
+        format!("declare{ext} {ret} {name}({}) {attrs}", params.join(", "))
     });
     Ok(())
 }
 
 /// The IR parameter list of `sig`, `%p<N>` named when `named`.
-fn ir_params(sig: &Signature, named: bool) -> Vec<String> {
+pub(crate) fn ir_params(sig: &Signature, named: bool) -> Vec<String> {
     let mut out = Vec::new();
     let mut index = 0;
     let mut name = |out: &mut Vec<String>, text: String| {
@@ -153,7 +186,7 @@ fn ret_with_attr(sig: &Signature) -> String {
     }
 }
 
-fn ret_attr(sig: &Signature) -> &'static str {
+pub(crate) fn ret_attr(sig: &Signature) -> &'static str {
     match &sig.ret {
         Return::Direct(parts) if parts.len() == 1 => parts[0].ext.attr(),
         _ => "",
@@ -177,6 +210,18 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     if body.abi.as_deref().is_some_and(|abi| abi != "C") {
         return unsupported(format!("the calling convention `{}`", body.abi.as_deref().unwrap_or_default()));
     }
+    define_body(m, body, |cx| {
+        for (index, block) in body.blocks.iter().enumerate() {
+            cx.start(&format!("bb{index}"));
+            cx.stmts(&block.stmts)?;
+            cx.terminator(&block.terminator, block.terminator_span)?;
+        }
+        Ok(())
+    })
+}
+
+/// The function `body` names, its frame laid out and its code what `build` writes from `bb0`.
+pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl FnOnce(&mut FnCx<'_, 'a>) -> Result<()>) -> Result<()> {
     let sig = body_signature(m, body);
     let mut cx = FnCx {
         m,
@@ -191,11 +236,7 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
         span: ember_span::Span::DUMMY,
     };
     cx.frame()?;
-    for (index, block) in body.blocks.iter().enumerate() {
-        cx.start(&format!("bb{index}"));
-        cx.stmts(&block.stmts)?;
-        cx.terminator(&block.terminator, block.terminator_span)?;
-    }
+    build(&mut cx)?;
     let mut attrs = fn_attrs(cx.m).to_string();
     if body.inline.always {
         attrs.push_str(" alwaysinline");
@@ -396,6 +437,19 @@ impl<'m, 'a> FnCx<'m, 'a> {
         format!("%t{}", self.next)
     }
 
+    /// The result's slot, when it has bytes.
+    pub(crate) fn ret_slot(&self) -> Option<String> {
+        self.addr.first().cloned().flatten()
+    }
+
+    /// A call of the runtime's `name()` in the entry block, before the body.
+    fn prologue_rt(&mut self, name: &str) {
+        let body = std::mem::take(&mut self.out);
+        self.call_rt(name, Vec::new(), None);
+        let call = std::mem::replace(&mut self.out, body);
+        self.prologue.push_str(&call);
+    }
+
     pub(crate) fn label(&mut self) -> String {
         self.next += 1;
         format!("l{}", self.next)
@@ -509,7 +563,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
             param = 1;
         }
         let passes = self.sig.params.clone();
-        for ((local, decl), pass) in body.args().zip(passes) {
+        let values = ffi_value_params(self.m, body);
+        for (position, ((local, decl), pass)) in body.args().zip(passes).enumerate() {
             let index = local.0 as usize;
             match pass {
                 Pass::Ignore => {}
@@ -518,7 +573,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     param += 1;
                 }
                 Pass::Direct(parts) => {
-                    let (size, align) = self.m.ty.size_align(decl.ty);
+                    let (size, align) = self.m.ty.size_align(passed_ty(self.m, &values, position, decl.ty));
                     let slot = self.alloca(size, align);
                     for part in parts {
                         let at = if part.offset == 0 { slot.clone() } else {
@@ -539,6 +594,23 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     }
                     self.addr[index] = Some(slot);
                 }
+            }
+            // The body borrows the value C passed: its reference is the value's address.
+            if values.get(position) == Some(&true)
+                && let Some(value) = self.addr[index].take()
+            {
+                let holder = self.tmp();
+                let _ = writeln!(self.allocas, "  {holder} = alloca ptr, align 8");
+                let _ = writeln!(self.prologue, "  store ptr {value}, ptr {holder}, align 8");
+                self.addr[index] = Some(holder);
+            }
+        }
+        // `[FFI-22]` — a host may call an export on a thread that never ran Ember: it attaches
+        // before the body touches the runtime; `[FFI-33]` — a `main`-thread contract is checked.
+        if body.abi.is_some() {
+            self.prologue_rt("rt_thread_attach");
+            if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
+                self.prologue_rt("rt_check_main_thread");
             }
         }
         // ADR-141 — each list's frame buffer, aligned for any element it may hold.
@@ -1403,7 +1475,9 @@ impl<'m, 'a> FnCx<'m, 'a> {
             }
             Rvalue::Ref { place, .. } => {
                 let ty = self.place_ty(place);
-                if self.m.ty.is_zst(ty) {
+                // A value of no bytes has no slot, but one behind a pointer (an `extern type`'s,
+                // `[FFI-8]`) has the pointer's address.
+                if self.m.ty.is_zst(ty) && !place.projection.iter().any(|projection| matches!(projection, Projection::Deref)) {
                     return Ok(Val::Imm(Sc::Ptr, self.void_place()));
                 }
                 if matches!(self.m.ty.repr(target), Repr::Mem { .. }) {
@@ -1778,7 +1852,12 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Terminator::Unreachable => self.emit("unreachable"),
             Terminator::Return => self.ret()?,
             Terminator::SwitchInt { discr, targets, otherwise } => {
-                let (mut value, mut sc) = self.scalar(discr)?;
+                let (mut value, mut sc) = match self.operand(discr)? {
+                    Val::Imm(sc, value) => (value, sc),
+                    // A wrapper of one pointer (a `Shared` an `upgrade` returned) is tested as it.
+                    Val::Mem(at, align) => (self.load(Sc::Ptr, &at, align.min(8)), Sc::Ptr),
+                    Val::Zst => return unsupported("a switch on a zero-sized value"),
+                };
                 // A pointer is tested as its address.
                 if sc == Sc::Ptr {
                     value = self.value(format!("ptrtoint ptr {value} to i64"));
@@ -1833,7 +1912,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         Ok(())
     }
 
-    fn ret(&mut self) -> Result<()> {
+    pub(crate) fn ret(&mut self) -> Result<()> {
         match self.sig.ret.clone() {
             Return::Void | Return::Sret { .. } => self.emit("ret void"),
             Return::Direct(parts) => {
@@ -1991,8 +2070,14 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let Some(body) = self.m.bodies.get(symbol.as_str()).copied() else {
                     return unsupported(format!("a call to `{symbol}`, which has no body"));
                 };
-                if body.is_extern_declaration {
-                    return unsupported("a foreign call ([FFI-10])");
+                // `[FFI-1]`, `[FFI-11]` — a foreign function whose contract says `threads(main)`:
+                // the debug profile checks that the call is on the main thread.
+                if self.m.profile == crate::Profile::Debug && body.contracts.foreign_threads == Some(ember_mir::ExportThreadPolicy::Main) {
+                    let what = self.m.bytes(format!("`{}`", body.name).as_bytes());
+                    self.call_rt("ffi_check_thread", vec![Val::Imm(Sc::I(32), u32::MAX.to_string()), Val::Imm(Sc::Ptr, what)], None);
+                }
+                if body.variadic {
+                    return self.variadic_call(body, args, dest);
                 }
                 self.retain_owned_copies(args, |index| body.param_modes.get(index) == Some(&ember_mir::ParameterMode::Owned))?;
                 let mut values = Vec::with_capacity(args.len());
@@ -2044,17 +2129,69 @@ impl<'m, 'a> FnCx<'m, 'a> {
         };
         self.declare_body(symbol)?;
         let sig = body_signature(self.m, body);
-        let values: Vec<(Val, u64, u64)> = values
-            .into_iter()
-            .zip(body.args())
-            .map(|(value, (_, decl))| {
-                let (size, align) = self.m.ty.size_align(decl.ty);
-                (value, size, align)
-            })
-            .collect();
+        let by_value = ffi_value_params(self.m, body);
+        let mut lowered = Vec::with_capacity(values.len());
+        for (index, (value, (_, decl))) in values.into_iter().zip(body.args()).enumerate() {
+            let ty = passed_ty(self.m, &by_value, index, decl.ty);
+            let (size, align) = self.m.ty.size_align(ty);
+            // `[FFI-10]` — an export taking a borrowed value by value gets the value.
+            let value = match value {
+                Val::Imm(Sc::Ptr, pointer) if ty != decl.ty => Val::Mem(pointer, align),
+                value => value,
+            };
+            lowered.push((value, size, align));
+        }
+        let values = lowered;
         let (size, _) = self.m.ty.size_align(body.return_ty());
         let dest = dest.map(|(ptr, align)| (ptr, align, size));
         self.lowered_call(&global_name(symbol), &sig, &values, dest, "");
+        Ok(())
+    }
+
+    /// `[FFI-8]` — a call of a variadic C function: its further arguments promoted as C promotes
+    /// them (`float` to `double`, a narrower integer to `int`), each passed by the platform's rule.
+    fn variadic_call(&mut self, body: &Body, args: &[Operand], dest: &Place) -> Result<()> {
+        let symbol = body.symbol.as_str();
+        self.declare_body(symbol)?;
+        let fixed = body_signature(self.m, body);
+        let mut shapes = Vec::with_capacity(args.len());
+        let mut values = Vec::with_capacity(args.len());
+        let params: Vec<Ty> = body.args().map(|(_, decl)| decl.ty).collect();
+        for (index, argument) in args.iter().enumerate() {
+            let value = self.operand(argument)?;
+            if let Some(&ty) = params.get(index) {
+                shapes.push(self.m.ty.shape(ty));
+                values.push(value);
+                continue;
+            }
+            let signed = self.operand_ty(argument).is_some_and(|ty| self.m.ty.is_signed(ty));
+            let (shape, value) = match value {
+                Val::Imm(Sc::F32, value) => (Shape::Scalar(abi::Scalar::F64), Val::Imm(Sc::F64, self.value(format!("fpext float {value} to double")))),
+                Val::Imm(Sc::Bool, value) => (Shape::Scalar(abi::Scalar::Int { bytes: 4, signed: true }), Val::Imm(Sc::I(32), self.value(format!("zext i1 {value} to i32")))),
+                Val::Imm(Sc::I(bits), value) if bits < 32 => {
+                    let wide = self.int_convert(&value, bits, 32, signed);
+                    (Shape::Scalar(abi::Scalar::Int { bytes: 4, signed: true }), Val::Imm(Sc::I(32), wide))
+                }
+                Val::Imm(Sc::Ptr, value) => (Shape::Scalar(abi::Scalar::Ptr), Val::Imm(Sc::Ptr, value)),
+                Val::Imm(Sc::F64, value) => (Shape::Scalar(abi::Scalar::F64), Val::Imm(Sc::F64, value)),
+                Val::Imm(Sc::I(bits), value) => (Shape::Scalar(abi::Scalar::Int { bytes: (bits / 8) as u8, signed }), Val::Imm(Sc::I(bits), value)),
+                value => match self.operand_ty(argument) {
+                    Some(ty) => (self.m.ty.shape(ty), value),
+                    None => return unsupported("a variadic argument of no type"),
+                },
+            };
+            shapes.push(shape);
+            values.push(value);
+        }
+        let ret = (!self.m.ty.is_zst(body.return_ty())).then(|| self.m.ty.shape(body.return_ty()));
+        let sig = abi::classify(self.m.ty.target, ret.as_ref(), &shapes);
+        let mut fixed_params = ir_params(&fixed, false);
+        fixed_params.push("...".to_string());
+        let callee = format!("({}) {}", fixed_params.join(", "), global_name(symbol));
+        let values: Vec<(Val, u64, u64)> = values.into_iter().zip(&shapes).map(|(value, shape)| (value, shape.size(), shape.align())).collect();
+        let size = self.m.ty.size_align(body.return_ty()).0;
+        let dest = self.dest(dest)?;
+        self.lowered_call(&callee, &sig, &values, dest.as_ref().map(|(ptr, align)| (ptr.as_str(), *align, size)), "");
         Ok(())
     }
 

@@ -81,7 +81,7 @@ fn operand_ty(m: &Module<'_>, body: &Body, operand: &Operand) -> Option<Ty> {
 /// `[FN-6a]` — how a callable's parameter crosses: `ref` to a value passed by address and `mut`
 /// (but a `MutSpan`) by pointer, anything else as itself. A C entry (`c_abi`) takes a borrowed
 /// aggregate by value (`[FFI-9]`).
-fn param_of(m: &Module<'_>, param: FnParam, c_abi: bool) -> Param {
+pub(crate) fn param_of(m: &Module<'_>, param: FnParam, c_abi: bool) -> Param {
     match param.mode {
         FnParamMode::Borrow if m.ty.table.passed_by_address(param.ty) && !c_abi => Param::Ptr,
         FnParamMode::Borrow | FnParamMode::Owned => Param::Ty(param.ty),
