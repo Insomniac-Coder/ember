@@ -21,6 +21,7 @@ mod dispatch;
 mod fmt;
 mod func;
 mod glue;
+mod ranges;
 mod runtime;
 mod types;
 

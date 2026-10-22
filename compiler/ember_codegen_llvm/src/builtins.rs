@@ -319,6 +319,45 @@ impl<'a> FnCx<'_, 'a> {
                 self.store_result(dest, &count, Sc::I(64), false)
             }
             Builtin::FloatAbs | Builtin::FloatPow | Builtin::FloatLib(_) => self.float_lib(which, arg_ty, args, dest),
+            // `[RNG-3a]`, `[RNG-10]` — the total operations; `new_unchecked` is the value itself.
+            Builtin::RangeClamped(id) | Builtin::RangeContains(id) => {
+                let value = self.operand(&args[0])?;
+                let result = if matches!(which, Builtin::RangeClamped(_)) { self.range_clamped(*id, value)? } else { self.range_contains(*id, value)? };
+                let Val::Imm(sc, result) = result else { unreachable!("a scalar") };
+                self.store_result(dest, &result, sc, false)
+            }
+            Builtin::RangeNewUnchecked(_) => {
+                let value = self.operand(&args[0])?;
+                let at = self.place(dest)?;
+                let (size, _) = self.m.ty.size_align(at.ty);
+                self.store(&value, &at.ptr, at.align, size, false);
+                Ok(())
+            }
+            // `[FFI-15]` — a C string's bytes up to its NUL, and a `CString`'s own bytes.
+            Builtin::CStrToSpan => {
+                let text = self.pointer(&args[0])?;
+                self.m.declare("strlen", || "declare i64 @strlen(ptr) nounwind".to_string());
+                let len = self.value(format!("call i64 @strlen(ptr {text})"));
+                self.store_view(dest, &text, &len)
+            }
+            Builtin::CStringAsCStr => {
+                let string = self.pointer(&args[0])?;
+                let string_ty = match self.m.ty.kind(arg_ty) {
+                    TyKind::Ref { inner, .. } => *inner,
+                    _ => arg_ty,
+                };
+                let offset = match self.m.ty.kind(string_ty) {
+                    TyKind::Struct(id) => {
+                        let def = self.m.ty.table.struct_def(*id);
+                        let index = def.fields.iter().position(|field| field.name.as_str() == "bytes").unwrap_or(0);
+                        self.m.ty.table.layout(string_ty).field_offsets.get(index).copied().unwrap_or(0)
+                    }
+                    _ => 0,
+                };
+                let bytes_at = self.gep(&string, offset);
+                let bytes = self.load(Sc::Ptr, &bytes_at, 8);
+                self.store_result(dest, &bytes, Sc::Ptr, false)
+            }
             // D-187 — `==`, `!=` and text's orders.
             Builtin::ValueCompare { op } => {
                 let a = self.operand(&args[0])?;

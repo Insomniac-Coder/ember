@@ -1511,8 +1511,20 @@ impl<'m, 'a> FnCx<'m, 'a> {
             BinOp::BitAnd | BinOp::And => self.value(format!("and {ty} {a}, {b}")),
             BinOp::BitOr | BinOp::Or => self.value(format!("or {ty} {a}, {b}")),
             BinOp::BitXor => self.value(format!("xor {ty} {a}, {b}")),
-            BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem if wide && self.m.ty.target == abi::Target::Win64 => {
-                return unsupported("a 128-bit division on Windows");
+            // D-272 — a 128-bit division through the runtime's helper: the instruction would be a
+            // compiler-rt call, which an MSVC link lacks. Floor forms are C's on unsigned values.
+            BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem if wide => {
+                let name = match (op, signed) {
+                    (BinOp::Div, true) => "i128_div",
+                    (BinOp::Rem, true) => "i128_rem",
+                    (BinOp::FloorDiv, true) => "i128_floordiv",
+                    (_, true) => "i128_floorrem",
+                    (BinOp::Div | BinOp::FloorDiv, false) => "u128_div",
+                    (_, false) => "u128_rem",
+                };
+                let slot = self.alloca(16, 16);
+                self.call_rt(name, vec![Val::Imm(sc, a), Val::Imm(sc, b)], Some((&slot, 16)));
+                return Ok(Val::Imm(sc, self.load(sc, &slot, 16)));
             }
             BinOp::Div => self.value(format!("{} {ty} {a}, {b}", if signed { "sdiv" } else { "udiv" })),
             BinOp::Rem => self.value(format!("{} {ty} {a}, {b}", if signed { "srem" } else { "urem" })),
@@ -1576,15 +1588,33 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let (a, sc) = self.scalar(lhs)?;
         let (b, _) = self.scalar(rhs)?;
         let Sc::I(bits) = sc else { return unsupported("checked arithmetic on a non-integer") };
-        if bits > 128 {
-            return unsupported("checked 256-bit arithmetic");
+        // A 256-bit count only adds and subtracts (G8-4).
+        if bits > 128 && !matches!(op, BinOp::Add | BinOp::Sub) {
+            return unsupported("checked 256-bit multiplication or division");
         }
         let ity = sc.ir();
+        // D-272 — the 128-bit forms that would be compiler-rt calls: the runtime's checked helpers.
+        if bits == 128 && matches!(op, BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::FloorDiv | BinOp::FloorRem) && (signed || op == BinOp::Mul) {
+            let name = match (op, signed) {
+                (BinOp::Mul, true) => "ck_mul_i128",
+                (BinOp::Mul, false) => "ck_mul_u128",
+                (BinOp::Div, _) => "ck_div_i128",
+                (BinOp::Rem, _) => "ck_rem_i128",
+                (BinOp::FloorDiv, _) => "ck_floordiv_i128",
+                _ => "ck_floorrem_i128",
+            };
+            let at = self.place(dest)?;
+            let result = self.alloca(16, 16);
+            let flag_slot = self.alloca(1, 1);
+            self.call_rt(name, vec![Val::Imm(sc, a), Val::Imm(sc, b), Val::Imm(Sc::Ptr, result.clone())], Some((&flag_slot, 1)));
+            self.copy(&at.ptr, at.align, &result, 16, 16, false);
+            let flag = self.load(Sc::Bool, &flag_slot, 1);
+            let flag_at = self.place(overflow)?;
+            self.store_scalar(Sc::Bool, &flag, &flag_at.ptr, flag_at.align);
+            return Ok(());
+        }
         let (result, flag) = match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
-                if op == BinOp::Mul && bits == 128 {
-                    return unsupported("a checked 128-bit multiplication");
-                }
                 let name = match op {
                     BinOp::Add => "add",
                     BinOp::Sub => "sub",
@@ -1598,8 +1628,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 (result, flag)
             }
             BinOp::FloorDiv | BinOp::FloorRem | BinOp::Div | BinOp::Rem => {
-                if bits == 128 && self.m.ty.target == abi::Target::Win64 {
-                    return unsupported("a 128-bit division on Windows");
+                if bits == 128 {
+                    // Unsigned: the runtime's helpers, which cannot overflow.
+                    let name = if matches!(op, BinOp::Div | BinOp::FloorDiv) { "u128_div" } else { "u128_rem" };
+                    let slot = self.alloca(16, 16);
+                    self.call_rt(name, vec![Val::Imm(sc, a.clone()), Val::Imm(sc, b.clone())], Some((&slot, 16)));
+                    let quotient = self.load(sc, &slot, 16);
+                    let at = self.place(dest)?;
+                    self.store_scalar(sc, &quotient, &at.ptr, at.align);
+                    let flag_at = self.place(overflow)?;
+                    self.store_scalar(Sc::Bool, "false", &flag_at.ptr, flag_at.align);
+                    return Ok(());
                 }
                 // `MIN // -1` is the one overflow (its remainder is 0); the quotient wraps to MIN.
                 if !signed {
@@ -1673,17 +1712,37 @@ impl<'m, 'a> FnCx<'m, 'a> {
             (Sc::Bool, Sc::I(bits)) => self.value(format!("zext i1 {value} to i{bits}")),
             (Sc::I(from_bits), Sc::Bool) => self.value(format!("icmp ne i{from_bits} {value}, 0")),
             (Sc::I(from_bits), Sc::I(to_bits)) => self.int_convert(&value, from_bits, to_bits, signed),
+            (Sc::I(128), to @ (Sc::F32 | Sc::F64)) => {
+                // D-272 — through the runtime's conversion (compiler-rt's elsewhere).
+                let name = match (signed, to) {
+                    (true, Sc::F64) => "i128_to_f64",
+                    (true, _) => "i128_to_f32",
+                    (false, Sc::F64) => "u128_to_f64",
+                    (false, _) => "u128_to_f32",
+                };
+                let slot = self.alloca(8, 8);
+                self.call_rt(name, vec![Val::Imm(Sc::I(128), value)], Some((&slot, 8)));
+                self.load(to, &slot, 8)
+            }
+            (from @ (Sc::F32 | Sc::F64), Sc::I(128)) => {
+                // `[TYP-6]` — saturating, NaN to 0, through the runtime's conversion.
+                let wide = if from == Sc::F32 { self.value(format!("fpext float {value} to double")) } else { value };
+                let name = if self.m.ty.is_signed(to) { "ftoi_i128" } else { "ftoi_u128" };
+                let slot = self.alloca(16, 16);
+                self.call_rt(name, vec![Val::Imm(Sc::F64, wide)], Some((&slot, 16)));
+                self.load(Sc::I(128), &slot, 16)
+            }
             (Sc::I(from_bits), to @ (Sc::F32 | Sc::F64 | Sc::F80)) => {
-                if from_bits > 64 && self.m.ty.target == abi::Target::Win64 {
-                    return unsupported("a 128-bit integer to float conversion on Windows");
+                if from_bits > 64 {
+                    return unsupported("a 256-bit integer to float conversion");
                 }
                 let instruction = if signed { "sitofp" } else { "uitofp" };
                 self.value(format!("{instruction} i{from_bits} {value} to {}", to.ir()))
             }
             (from @ (Sc::F32 | Sc::F64 | Sc::F80), Sc::I(to_bits)) => {
                 // `[TYP-6]` — saturating, NaN to 0: LLVM's `.sat` conversions exactly.
-                if to_bits > 64 && self.m.ty.target == abi::Target::Win64 {
-                    return unsupported("a float to 128-bit integer conversion on Windows");
+                if to_bits > 64 {
+                    return unsupported("a float to 256-bit integer conversion");
                 }
                 let to_signed = self.m.ty.is_signed(to);
                 let intrinsic = format!("llvm.fpto{}i.sat.i{to_bits}.{}", if to_signed { "s" } else { "u" }, float_suffix(from));

@@ -285,6 +285,25 @@ pub const FNS: &[RtFn] = &[
     f("range_count_u128", "size_t", &["$u128", "$u128", "$u128"]),
     f("range_nth_i128", "$i128", &["$i128", "$i128", "size_t"]),
     f("range_nth_u128", "$u128", &["$u128", "$u128", "size_t"]),
+    // D-272 — the 128-bit operations that would be compiler-rt calls, which an MSVC link lacks.
+    inl("ck_mul_i128", "bool", &["$i128", "$i128", "$i128*"]),
+    inl("ck_mul_u128", "bool", &["$u128", "$u128", "$u128*"]),
+    inl("ck_div_i128", "bool", &["$i128", "$i128", "$i128*"]),
+    inl("ck_rem_i128", "bool", &["$i128", "$i128", "$i128*"]),
+    inl("ck_floordiv_i128", "bool", &["$i128", "$i128", "$i128*"]),
+    inl("ck_floorrem_i128", "bool", &["$i128", "$i128", "$i128*"]),
+    inl("i128_div", "$i128", &["$i128", "$i128"]),
+    inl("i128_rem", "$i128", &["$i128", "$i128"]),
+    inl("i128_floordiv", "$i128", &["$i128", "$i128"]),
+    inl("i128_floorrem", "$i128", &["$i128", "$i128"]),
+    inl("u128_div", "$u128", &["$u128", "$u128"]),
+    inl("u128_rem", "$u128", &["$u128", "$u128"]),
+    inl("i128_to_f64", "double", &["$i128"]),
+    inl("i128_to_f32", "float", &["$i128"]),
+    inl("u128_to_f64", "double", &["$u128"]),
+    inl("u128_to_f32", "float", &["$u128"]),
+    inl("ftoi_i128", "$i128", &["double"]),
+    inl("ftoi_u128", "$u128", &["double"]),
     inl("f16_to_f64", "double", &["uint16_t"]),
     f("f64_to_f16", "uint16_t", &["double"]),
     // -- formatting ([TYP-39], [LEX-19])
@@ -430,8 +449,13 @@ mod tests {
         let header = std::fs::read_to_string(&header_path).expect("the runtime header");
         let spell = |text: &str| text.replace('$', ember_branding::RUNTIME_PREFIX);
         for entry in FNS {
-            let (ret, params) = declared(&header, entry.name)
-                .unwrap_or_else(|| panic!("`{}` is not declared in the runtime header", entry.name));
+            let Some((ret, params)) = declared(&header, entry.name) else {
+                // A function a header macro instantiates (`EMBER_TEXT_CHAR_NEXT(ember_str_char_next,
+                // int64_t)`): its instantiation names it.
+                let instantiation = format!("({},", ember_branding::runtime(entry.name));
+                assert!(entry.inline && header.contains(&instantiation), "`{}` is not declared in the runtime header", entry.name);
+                continue;
+            };
             assert_eq!(ret, spell(entry.ret), "the result of `{}`", entry.name);
             let ours: Vec<String> = entry.params.iter().map(|param| spell(param)).collect();
             assert_eq!(params, ours, "the parameters of `{}`", entry.name);
