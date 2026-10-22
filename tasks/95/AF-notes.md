@@ -79,11 +79,12 @@ conformance tree (1904 run tests) + run-pass + run-fail:
 | 73db2bd8 | 1507 | |
 | 3d2f0c19 → 03497d80 | 1787 | |
 | e2a34cd8 | | 2062 |
-| (this commit) | see below | |
+| 5b9400f2 | 1893 | 2075 |
 
 Causes left at e2a34cd8 (24): hot-reload images 11 (refused: `[HR-*]`), and one each of the
 rest, each fixed since (backtraces, leak cycles, boxed `once fn`, export tables, `system`
-convention, nesting 256 deep, reflection, float range niche, `ArenaSoA`, `dyn` clone).
+convention, nesting 256 deep, reflection, float range niche, `ArenaSoA`, `dyn` clone). At
+5b9400f2 the 11 hot-reload programs are all that fail.
 
 ## Done (each with its tests)
 

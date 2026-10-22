@@ -30,7 +30,7 @@ pub(crate) struct Debug {
 }
 
 impl Debug {
-    pub(crate) fn new(map: &SourceMap, target: Target, module_name: &str, optimized: bool, full: bool) -> Debug {
+    pub(crate) fn new(map: &SourceMap, module_name: &str, optimized: bool, full: bool) -> Debug {
         let mut debug = Debug {
             nodes: Vec::new(),
             unit: 0,
@@ -49,7 +49,6 @@ impl Debug {
         ));
         let types = debug.node("!{null}".to_string());
         debug.subroutine = debug.node(format!("!DISubroutineType(types: !{types})"));
-        let _ = target;
         debug
     }
 

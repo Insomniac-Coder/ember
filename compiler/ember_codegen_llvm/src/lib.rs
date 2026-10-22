@@ -225,7 +225,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
                 (body.return_ty() == owner).then(|| (owner, (body.symbol.clone(), by_address)))
             })
             .collect(),
-        debug: debug::Debug::new(map, options.target, options.module_name, options.profile != Profile::Debug, options.profile == Profile::Debug),
+        debug: debug::Debug::new(map, options.module_name, options.profile != Profile::Debug, options.profile == Profile::Debug),
         inline_bodies: ember_codegen_c::inline_header_symbols(bodies, mir.types()),
         callback_closures: bodies
             .iter()

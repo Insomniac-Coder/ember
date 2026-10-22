@@ -788,10 +788,9 @@ impl<'m, 'a> FnCx<'m, 'a> {
             match self.m.ty.repr(decl.ty) {
                 Repr::Zst => {}
                 Repr::Scalar(sc) => {
-                    let (size, align) = self.m.ty.size_align(decl.ty);
+                    let (_, align) = self.m.ty.size_align(decl.ty);
                     let name = self.tmp();
                     let _ = writeln!(self.allocas, "  {name} = alloca {}, align {}", sc.mem(), align.max(1));
-                    let _ = size;
                     self.addr[index] = Some(name);
                 }
                 Repr::Mem { size, align } => {
@@ -2170,11 +2169,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
         if types.is_f16(from) || types.is_f16(to) {
             return self.half_cast(operand, from, to);
         }
-        let (from_repr, to_repr) = (types.repr(from), types.repr(to));
+        let to_repr = types.repr(to);
         let signed = types.is_signed(from);
         let (value, sc) = self.scalar(operand)?;
         let Repr::Scalar(to_sc) = to_repr else { return unsupported("a cast to a non-scalar") };
-        let _ = from_repr;
         let result = match (sc, to_sc) {
             (a, b) if a == b => value,
             (Sc::Bool, Sc::I(bits)) => self.value(format!("zext i1 {value} to i{bits}")),
@@ -2625,8 +2623,6 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let values: Vec<(Val, u64, u64)> = values.into_iter().zip(&shapes).map(|(value, shape)| (value, shape.size(), shape.align())).collect();
         let size = ret.as_ref().map_or(0, Shape::size);
         let dest = dest.map(|(ptr, align)| (ptr, align, size));
-        let call_attrs = if entry.noreturn { " #0" } else { "" };
-        let _ = call_attrs;
         self.lowered_call(&ir_name, &sig, &values, dest, "");
         if entry.noreturn {
             self.emit("unreachable");
