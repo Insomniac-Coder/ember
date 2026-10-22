@@ -463,6 +463,45 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-165 — A C++ inline namespace in an import — **CLOSED**
+
+    ID:        ODR-165
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_32
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_31.md [FFI-41], [FFI-17b]
+
+**The question.** `[FFI-41]` says namespaces become module paths and says nothing of inline ones. nlohmann/json puts everything in `nlohmann::json_abi_v3_11_3`, an inline namespace: C++ code writes `nlohmann::json`, never the inner name. Read literally, the import made `cpp.nlohmann.json_abi_v3_11_3.json`, and `instantiate = ["nlohmann::basic_json<>"]` found nothing.
+
+**Ruling.** An inline namespace adds nothing to a name, as in C++: its members are the enclosing namespace's (`cpp.nlohmann.json`), and `instantiate` names them so. ADR-254.
+
+---
+
+## ODR-166 — A C++ function that returns a class Ember holds behind a pointer — **CLOSED**
+
+    ID:        ODR-166
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_32
+    Category:  SPEC
+    Location:  Ember_v0.9.10_Hardened_31.md [FFI-32], Annex C's import table
+
+**The question.** A class that is not standard-layout and trivially copyable is "opaque behind a pointer" (`[FFI-32]`), and its constructors give a `ForeignBox[T]`. A function returning one by value (`nlohmann::json parse(…)`) was refused, so a factory, the common shape of a C++ API, could not be called at all.
+
+**Ruling.** Such a result is moved into an object of its own, which a `ForeignBox[T]` owns and frees with the class's destructor, as a constructor's: `fn parse(…) -> Result[ForeignBox[json], CppError]`. An abstract class, or one without a public destructor, stays refused. ADR-254.
+
+---
+
+## ODR-167 — `[CXX-1]`'s "corpus of real headers" — **CLOSED**
+
+    ID:        ODR-167
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_32
+    Category:  PROCESS
+    Location:  Ember_v0.9.10_Hardened_31.md [CXX-1]
+
+**The question.** `[CXX-1]` asks for "a corpus of real headers and at least one third-party header-only library". Only nlohmann/json 3.11.3 is in the repository, downloaded with the owner's approval; any other library is another download.
+
+**Ruling.** nlohmann/json is the corpus for now: a real, widely used header of 24,000 lines, and the third-party library. The corpus (`tests/cxx-corpus`) takes one entry per library; more are added as the owner approves their downloads. ADR-254.
+
+---
+
 ## ODR-164 — Float `//` and `%`: ODR-021 reversed — **CLOSED**
 
     ID:        ODR-164

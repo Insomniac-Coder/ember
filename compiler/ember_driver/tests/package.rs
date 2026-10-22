@@ -411,6 +411,102 @@ fn the_cpp_project_s_link_time_optimisation_reaches_the_program() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `[CXX-1]` — the C++ annex's corpus (`tests/cxx-corpus`): nlohmann/json 3.11.3, a third-party
+/// header-only library, imported whole, with each declaration's outcome recorded (`ember bind
+/// --outcomes`: by value, opaque, behind an overlay, or refused with its diagnostic) and its thunk
+/// file committed, both per platform. In every configuration — the release and debug runtimes,
+/// RTTI on and off — under the C++ compiler the suite runs with (CI runs MSVC, clang-cl, GCC and
+/// Clang), the import gives the recorded outcomes and thunks, and a program using the library
+/// builds and prints what it should. Where the header defines a macro may follow the configuration
+/// (`JSON_HAS_STATIC_RTTI`); what each declaration becomes may not. Two configurations that
+/// disagree in one target are `E9020`, never two bindings: a class whose layout follows RTTI, and
+/// the runtimes.
+#[test]
+fn the_cpp_corpus_binds_as_recorded() {
+    let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/cxx-corpus");
+    let platform = if cfg!(windows) { "windows" } else { "linux" };
+    let probe = ember(&["--version"], &std::env::temp_dir());
+    // cl and clang-cl take MSVC's switches; GCC and Clang theirs (libstdc++'s debug mode is their
+    // debug runtime, and `-U_GLIBCXX_DEBUG` names the release one).
+    let msvc = probe.stdout.lines().any(|line| line.starts_with("C compiler: msvc"));
+    let configurations: [&[&str]; 4] = if msvc {
+        [&["/MD", "/GR"], &["/MDd", "/GR"], &["/MD", "/GR-"], &["/MDd", "/GR-"]]
+    } else {
+        [&["-U_GLIBCXX_DEBUG"], &["-D_GLIBCXX_DEBUG"], &["-U_GLIBCXX_DEBUG", "-fno-rtti"], &["-D_GLIBCXX_DEBUG", "-fno-rtti"]]
+    };
+    let read = |path: &Path| std::fs::read_to_string(path).unwrap_or_else(|error| panic!("cannot read `{}`: {error}", path.display())).replace("\r\n", "\n");
+    // The first line two texts differ on, and how to write the record again when a change is meant.
+    let same = |found: &str, recorded: &str, what: &str| {
+        if let Some((line, (found, recorded))) = found.lines().zip(recorded.lines()).enumerate().find(|(_, (found, recorded))| found != recorded) {
+            panic!("{what}, line {}: `{found}`, recorded `{recorded}` (tests/cxx-corpus/README.md says how to record a meant change)", line + 1);
+        }
+        assert_eq!(found.lines().count(), recorded.lines().count(), "{what}: {} lines, recorded {}", found.lines().count(), recorded.lines().count());
+    };
+    let unplaced = |text: &str| text.lines().map(|line| line.rsplit_once(" (").map_or(line, |(kept, _)| kept).to_string()).collect::<Vec<_>>().join("\n");
+    let entry = corpus.join("nlohmann_json");
+    let third_party = corpus.join("third_party").to_string_lossy().replace('\\', "/");
+    let outcomes = read(&entry.join(format!("nlohmann_json.{platform}.outcomes")));
+    let thunks = read(&entry.join(format!("nlohmann_json.{platform}.thunks.cpp")));
+    let program = corpus.join("program");
+    let (main, api, printed) = (read(&program.join("main.em")), read(&program.join("json_api.hpp")), read(&program.join("expected.txt")));
+    let dir = scratch();
+    for (index, flags) in configurations.iter().enumerate() {
+        let shown = flags.join(" ");
+        let mut bind = vec!["bind", "nlohmann_json.hpp", "-I", &third_party, "--instantiate", "nlohmann::basic_json<>"];
+        for flag in *flags {
+            bind.extend(["--flag", flag]);
+        }
+        let found = ember(&[bind.as_slice(), &["--outcomes"]].concat(), &entry);
+        assert!(found.ok, "`{shown}`: {}", found.stderr);
+        if index == 0 {
+            same(&found.stdout, &outcomes, &format!("the outcomes with `{shown}`"));
+        } else {
+            same(&unplaced(&found.stdout), &unplaced(&outcomes), &format!("the outcomes with `{shown}`"));
+        }
+        let out = dir.join(format!("thunks{index}.cpp")).to_string_lossy().into_owned();
+        let emitted = ember(&[bind.as_slice(), &["--emit-cpp", "--out", &out]].concat(), &entry);
+        assert!(emitted.ok, "`{shown}`: {}", emitted.stderr);
+        same(&read(Path::new(&out)), &thunks, &format!("the thunks with `{shown}`"));
+        // The program, built and run in this configuration.
+        let built = dir.join(format!("program{index}"));
+        let quoted: Vec<String> = flags.iter().map(|flag| format!("\"{flag}\"")).collect();
+        let manifest = format!("[package]\nname = \"corpus\"\nversion = \"0.1.0\"\n\n[cpp.json]\ninclude_paths = [\"{third_party}\"]\nflags = [{}]\n", quoted.join(", "));
+        package(&built, &manifest, &[("main", &main)]);
+        std::fs::write(built.join("src").join("json_api.hpp"), &api).unwrap();
+        let run = ember(&["run"], &built);
+        assert!(run.ok, "`{shown}`: it printed
+{}
+{}", run.stdout, run.stderr.lines().filter(|line| !line.contains("W5001") && !line.contains("W5002")).collect::<Vec<_>>().join("
+"));
+        assert_eq!(run.stdout, printed, "`{shown}`: {}", run.stderr);
+    }
+
+    // Two configurations in one target: a class whose layout follows RTTI…
+    let (with, without) = if msvc { ("/GR", "/GR-") } else { ("-frtti", "-fno-rtti") };
+    let shape = "#pragma once\nstruct shape {\n    int sides;\n#if (defined(_MSC_VER) && defined(_CPPRTTI)) || (!defined(_MSC_VER) && defined(__GXX_RTTI))\n    int tagged;\n#endif\n};\n";
+    let two = dir.join("two");
+    let program = "import cpp \"one.hpp\" with (project = \"with\")\nimport cpp \"two.hpp\" with (project = \"without\") as two\n\nfn main():\n    pass\n";
+    package(&two, &format!("[package]\nname = \"two\"\nversion = \"0.1.0\"\n\n[cpp.with]\nflags = [\"{with}\"]\n\n[cpp.without]\nflags = [\"{without}\"]\n"), &[("main", program)]);
+    std::fs::write(two.join("src").join("shape.hpp"), shape).unwrap();
+    std::fs::write(two.join("src").join("one.hpp"), "#pragma once\n#include \"shape.hpp\"\ninline int first(const shape* s) noexcept { return s->sides; }\n").unwrap();
+    std::fs::write(two.join("src").join("two.hpp"), "#pragma once\n#include \"shape.hpp\"\ninline int second(const shape* s) noexcept { return s->sides; }\n").unwrap();
+    let checked = ember(&["check"], &two);
+    assert!(!checked.ok && checked.stderr.contains("error[E9020]") && checked.stderr.contains("their C++ configurations disagree"), "{}", checked.stderr);
+    // Each configuration as the importer parsed with it: `/GR-` is clang-cl's `-fno-rtti-data`.
+    assert!(checked.stderr.contains(if msvc { "-fno-rtti-data`" } else { "`-fno-rtti`" }), "{}", checked.stderr);
+
+    // …and the corpus itself under two runtimes.
+    let (release, debug) = if msvc { ("/MD", "/MDd") } else { ("-U_GLIBCXX_DEBUG", "-D_GLIBCXX_DEBUG") };
+    let runtimes = dir.join("runtimes");
+    let program = "import cpp \"nlohmann_json.hpp\" with (project = \"release\")\nimport cpp \"nlohmann_json.hpp\" with (project = \"debug\") as debug\n\nfn main():\n    pass\n";
+    let section = |name: &str, flag: &str| format!("[cpp.{name}]\ninclude_paths = [\"{third_party}\"]\nflags = [\"{flag}\"]\n");
+    package(&runtimes, &format!("[package]\nname = \"runtimes\"\nversion = \"0.1.0\"\n\n{}\n{}", section("release", release), section("debug", debug)), &[("main", program)]);
+    std::fs::copy(entry.join("nlohmann_json.hpp"), runtimes.join("src").join("nlohmann_json.hpp")).unwrap();
+    let checked = ember(&["check"], &runtimes);
+    assert!(!checked.ok && checked.stderr.contains("error[E9020]") && checked.stderr.contains(&format!("`{release}`")) && checked.stderr.contains(&format!("`{debug}`")), "{}", checked.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// CMake, from the path or, on Windows, the copy Visual Studio's build tools carry; `None` without.
 fn cmake() -> Option<PathBuf> {
     let works = |program: &Path| Command::new(program).arg("--version").output().is_ok_and(|output| output.status.success());

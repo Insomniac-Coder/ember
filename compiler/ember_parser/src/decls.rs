@@ -113,7 +113,8 @@ impl Parser<'_> {
 
     pub(crate) fn parse_dotted_path(&mut self) -> Vec<Ident> {
         let mut path = vec![self.expect_ident()];
-        while self.at_punct(Punct::Dot) && matches!(self.peek_at(1), TokenKind::Ident(_)) {
+        // `[LEX-14]` — a raw identifier is a segment like any other (`cpp.detail.r#where`).
+        while self.at_punct(Punct::Dot) && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_)) {
             self.bump();
             path.push(self.expect_ident());
         }

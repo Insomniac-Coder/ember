@@ -97,15 +97,21 @@ pub struct Shared {
     pub layout: String,
     pub binding: String,
     pub header: String,
+    /// `[CXX-1]` — whether a C++ import wrote it, and the configuration it parsed with (its
+    /// project's defines and flags as libclang read them).
+    pub cpp: bool,
+    pub config: String,
 }
 
 /// A declaration not imported, with the construct that defeated it and a workaround.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Skipped {
     pub name: String,
     pub reason: String,
     /// `file:line` in the header.
     pub at: String,
+    /// `[FFI-41]` — the C++ namespace it is in, whose module says it was skipped (`[FFI-20a]`).
+    pub namespace: Vec<String>,
 }
 
 /// `[FFI-5]` — Clang's layout of an imported struct, in bytes.
@@ -270,7 +276,7 @@ pub struct Imported {
     /// name and layout), and each one an earlier import wrote with another layout.
     pub uses: Vec<Vec<String>>,
     pub entities: Vec<(String, String, String)>,
-    pub conflicts: Vec<(String, String)>,
+    pub conflicts: Vec<(String, String, String)>,
     /// `[FFI-6b]` — the function-like macros, for an overlay entry to declare.
     pub macro_functions: Vec<MacroFunction>,
     /// `[FFI-6b]` — each type the module declares, by its Ember name, as C spells it: a macro's
@@ -861,8 +867,11 @@ fn arguments(config: &Config) -> Vec<String> {
 
 /// A project's compile flags as libclang parses with them: GCC-style ones as written; MSVC's `/D`,
 /// `/U` and `/I` as their GCC forms; its runtime switch as the macros cl defines for it (`/MDd` is
-/// `_MT`, `_DLL` and `_DEBUG`, which set the C++ standard library's layout, `[BLD-FFI-1b]`); any
-/// other MSVC switch, and a response file, left out, since they change no declaration.
+/// `_MT`, `_DLL` and `_DEBUG`, which set the C++ standard library's layout, `[BLD-FFI-1b]`); and
+/// each other switch that changes what a header declares or how it lays it out, as Clang's own
+/// (`[CXX-1]`: the header binds as cl compiles it): `/GR-` (no RTTI data: no `_CPPRTTI`), `/EHs-c-` (no
+/// exceptions: no `_CPPUNWIND`), `/J` (`char` unsigned) and `/Zp<n>` (packing). Any other MSVC
+/// switch, and a response file, left out, since they change no declaration.
 fn clang_flags(flags: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = flags.iter();
@@ -878,12 +887,40 @@ fn clang_flags(flags: &[String]) -> Vec<String> {
             "MDd" => out.extend(["-D_MT".to_string(), "-D_DLL".to_string(), "-D_DEBUG".to_string()]),
             "MT" => out.push("-D_MT".to_string()),
             "MTd" => out.extend(["-D_MT".to_string(), "-D_DEBUG".to_string()]),
+            "J" => out.push("-funsigned-char".to_string()),
+            // As clang-cl reads it: `/Zp` alone packs to 1.
+            "Zp" => out.push("-fpack-struct=1".to_string()),
+            _ if switch.starts_with("Zp") && switch[2..].parse::<u32>().is_ok() => out.push(format!("-fpack-struct={}", &switch[2..])),
+            // `/EHsc`, `/EHa`: C++ exceptions; `/EHs-c-`: none (the last one written wins, as for cl).
+            _ if switch.starts_with("EH") => {
+                let options = &switch[2..];
+                let on = ['s', 'a'].iter().any(|letter| options.find(*letter).is_some_and(|at| !options[at + 1..].starts_with('-')));
+                out.push(if on { "-fcxx-exceptions" } else { "-fno-cxx-exceptions" }.to_string());
+            }
             "D" | "U" | "I" => out.extend(rest.next().map(|value| format!("-{switch}{value}"))),
             _ if switch.len() > 1 && matches!(&switch[..1], "D" | "U" | "I") => out.push(format!("-{switch}")),
             _ => {}
         }
     }
+    // As clang-cl reads `/GR-` (the last of `/GR` and `/GR-` winning): no RTTI data, so no
+    // `_CPPRTTI`, while `typeid` still compiles. Only Clang's own front end takes that switch.
+    if flags.iter().rev().find(|flag| matches!(flag.as_str(), "/GR" | "/GR-")).is_some_and(|flag| flag == "/GR-") {
+        out.extend(["-Xclang".to_string(), "-fno-rtti-data".to_string()]);
+    }
     out
+}
+
+/// `[CXX-1]` — what of an import's configuration can change a declaration or its layout: its
+/// defines and its flags as libclang parses with them (`clang_flags`), in order.
+fn configuration(config: &Config) -> String {
+    let mut parts: Vec<String> = config.defines.iter().map(|define| format!("-D{define}")).collect();
+    parts.extend(clang_flags(config.flags));
+    parts.join(" ")
+}
+
+/// `configuration` as a diagnostic shows it.
+fn shown_configuration(configuration: &str) -> String {
+    if configuration.is_empty() { "no defines or layout flags".to_string() } else { format!("`{configuration}`") }
 }
 
 /// `[FFI-6]` — parse the header and write its module.
@@ -948,13 +985,20 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                     let _ = writeln!(source, "template class ::{id};\nusing {prefix}_inst_{index} = ::{id};");
                     // Its methods, which Clang shows no visitor of an instantiation: each public one
                     // the template declares once, by its address in the instantiation.
-                    let methods: Vec<String> = children(found)
-                        .into_iter()
+                    let members = children(found);
+                    let methods: Vec<String> = members
+                        .iter()
                         // SAFETY(ffi): cursors of a live translation unit.
-                        .filter(|child| kind(*child) == CXCursor_CXXMethod && unsafe { clang_getCXXAccessSpecifier(*child) } == CX_CXXPublic)
-                        .map(spelling)
+                        .filter(|child| kind(**child) == CXCursor_CXXMethod && unsafe { clang_getCXXAccessSpecifier(**child) } == CX_CXXPublic)
+                        .map(|child| spelling(*child))
                         .collect();
-                    for name in methods.iter().filter(|name| !name.starts_with("operator") && methods.iter().filter(|other| other == name).count() == 1) {
+                    // A name a member template shares is an overload set too (`parse`), which no
+                    // address names.
+                    let overloaded = |name: &String| {
+                        methods.iter().filter(|other| *other == name).count() > 1
+                            || members.iter().any(|child| kind(*child) == CXCursor_FunctionTemplate && spelling(*child) == *name)
+                    };
+                    for name in methods.iter().filter(|name| !name.starts_with("operator") && !overloaded(name)) {
                         let _ = writeln!(source, "constexpr auto {prefix}_inst_{index}_{name} = &::{id}::{name};");
                     }
                 }
@@ -992,6 +1036,18 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         {
             // SAFETY(ffi): a type of a live translation unit.
             writer.elements.insert(spelled.clone(), unsafe { clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor)) });
+        }
+    }
+    // `[FFI-17b]` — a class instantiation's name, wherever the header names the class: any other
+    // specialization of a class template is the template's, which no import names.
+    let instance_prefix = format!("{}_inst_", ember_branding::SYMBOL_PREFIX);
+    for cursor in children(unit.cursor()) {
+        if kind(cursor) == CXCursor_TypeAliasDecl
+            && let Some(index) = spelling(cursor).strip_prefix(&instance_prefix).and_then(|index| index.parse::<usize>().ok())
+        {
+            // SAFETY(ffi): a type of a live translation unit.
+            let class = unsafe { clang_getTypeDeclaration(clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor))) };
+            writer.instances.insert(usr(class), instance_name(&config.instantiate[index]));
         }
     }
     if writer.cpp {
@@ -1076,8 +1132,9 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                     name: name.clone(),
                     reason: "its name is taken by a declaration of the header".to_string(),
                     at: at.clone(),
+                    ..Skipped::default()
                 }),
-                Err(reason) => writer.macro_skipped.push(Skipped { name: name.clone(), reason, at: at.clone() }),
+                Err(reason) => writer.macro_skipped.push(Skipped { name: name.clone(), reason, at: at.clone(), ..Skipped::default() }),
             }
         }
         if !addresses.is_empty() {
@@ -1111,6 +1168,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                         name: name.clone(),
                         reason: "its name is taken by a declaration of the header".to_string(),
                         at: at.clone(),
+                        ..Skipped::default()
                     }),
                     (None, reason) => writer.macro_skipped.push(Skipped {
                         name: name.clone(),
@@ -1119,6 +1177,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                             None => "a pointer whose address Clang does not evaluate to an integer".to_string(),
                         },
                         at: at.clone(),
+                        ..Skipped::default()
                     }),
                 }
             }
@@ -1135,6 +1194,10 @@ enum Record {
     Full(String),
     /// An `extern type`, used only behind pointers; why, when it has a definition.
     Opaque(String, Option<String>),
+    /// Not imported, since another declaration of the header took its name (C keeps struct tags
+    /// apart; a C++ class template's specializations share one): no type is named for it, so no
+    /// use of it can reach the declaration that took the name, and each says why.
+    Unnamed(String),
 }
 
 #[derive(Default)]
@@ -1145,7 +1208,7 @@ struct Writer {
     binding: String,
     uses: Vec<Vec<String>>,
     entities: Vec<(String, String, String)>,
-    conflicts: Vec<(String, String)>,
+    conflicts: Vec<(String, String, String)>,
     items: Vec<Item>,
     shim: String,
     skipped: Vec<Skipped>,
@@ -1196,6 +1259,8 @@ struct Writer {
     /// `[FFI-42]` — for each class with `begin()` and `end()`, as C++ spells it, the type of
     /// `*c.begin()` (`void` where that or `begin() != end()` does not compile).
     elements: HashMap<String, CXType>,
+    /// `[FFI-17b]` — each class instantiation `instantiate=[…]` lists, by its USR: its Ember name.
+    instances: HashMap<String, String>,
 }
 
 /// `[FFI-17a]` — a C++ standard-library type as its bridge type: the Ember type, the C++ type, and
@@ -1220,7 +1285,8 @@ impl Writer {
 
     fn skip(&mut self, cursor: CXCursor, name: &str, reason: impl Into<String>) {
         let at = self.at(cursor);
-        self.skipped.push(Skipped { name: name.to_string(), reason: reason.into(), at });
+        let namespace = if self.cpp { namespace_of(cursor) } else { Vec::new() };
+        self.skipped.push(Skipped { name: name.to_string(), reason: reason.into(), at, namespace });
     }
 
     fn push(&mut self, name: &str, kind: Kind, text: String) {
@@ -1265,13 +1331,20 @@ impl Writer {
                         let name = spelling(child);
                         if !name.is_empty() {
                             let at = self.at(child);
-                            self.anonymous_namespace.push(Skipped { name, reason: "it is in an anonymous namespace, so each C++ file has its own".to_string(), at });
+                            self.anonymous_namespace.push(Skipped {
+                                name,
+                                reason: "it is in an anonymous namespace, so each C++ file has its own".to_string(),
+                                at,
+                                namespace: self.writing.clone(),
+                            });
                         }
                     }
                     return;
                 }
                 let mut inner = self.writing.clone();
-                inner.push(spelling(cursor));
+                if !inline_namespace(cursor) {
+                    inner.push(spelling(cursor));
+                }
                 if !self.namespaces.contains(&inner) {
                     self.namespaces.push(inner.clone());
                 }
@@ -1381,6 +1454,7 @@ impl Writer {
                     }
                     match self.record(declaration, None) {
                         Record::Full(name) | Record::Pending(name) => Ok(self.qualify(name, declaration)),
+                        Record::Unnamed(why) => Err(why),
                         Record::Opaque(name, _) if behind_pointer => Ok(self.qualify(name, declaration)),
                         // `[FFI-32]` — a C++ class held behind a pointer by design, not for want of
                         // a definition.
@@ -1573,7 +1647,9 @@ impl Writer {
             if matches!(named.kind, CXType_Record | CXType_Enum) {
                 let declaration = clang_getTypeDeclaration(named);
                 let anonymous = clang_Cursor_isAnonymous(declaration) != 0;
-                let same = spelling(declaration) == name;
+                // C's `typedef struct Pair Pair`: one name, one scope. A C++ alias of the same name
+                // in another scope (`using value_t = detail::value_t;` in a class) is an alias.
+                let same = spelling(declaration) == name && clang_equalCursors(clang_getCursorSemanticParent(cursor), clang_getCursorSemanticParent(declaration)) != 0;
                 if named.kind == CXType_Record {
                     if anonymous || same {
                         self.record(declaration, Some(name));
@@ -1581,8 +1657,9 @@ impl Writer {
                     }
                     let target = match self.record(declaration, None) {
                         Record::Full(target) | Record::Pending(target) | Record::Opaque(target, _) => target,
+                        Record::Unnamed(why) => return Err(why),
                     };
-                    return Ok(Some(target));
+                    return Ok(Some(self.qualify(target, declaration)));
                 }
                 if anonymous || same {
                     self.enumeration(declaration, Some(name))?;
@@ -1624,7 +1701,25 @@ impl Writer {
         // SAFETY(ffi): cursors and types of a live translation unit.
         unsafe {
             let tag = if self.cpp { nested_name(cursor) } else { spelling(cursor) };
-            let named = typedef_name.map_or(tag.clone(), str::to_string);
+            let mut named = typedef_name.map_or(tag.clone(), str::to_string);
+            // `[FFI-17b]` — a specialization of a class template is imported only as an instantiation
+            // `instantiate=[…]` lists, under its name; any other, written in the header or not, is
+            // the template's (`E5055`), never the template's name for another specialization.
+            if self.cpp && clang_Cursor_isNull(clang_getSpecializedCursorTemplate(cursor)) == 0 {
+                match self.instances.get(&key) {
+                    Some(instance) => named = instance.clone(),
+                    None => {
+                        let why = format!(
+                            "[E5055] `{}`: a specialization of a C++ template that `instantiate=[…]` does not list, and no Ember code, generic or not, instantiates one ([FFI-17b])",
+                            cpp_spelling(clang_getCursorType(cursor))
+                        );
+                        self.skip(cursor, &tag, why.clone());
+                        let record = Record::Unnamed(why);
+                        self.records.insert(key, record.clone());
+                        return record;
+                    }
+                }
+            }
             let name = ident(&named);
             let definition = clang_getCursorDefinition(cursor);
             if clang_Cursor_isNull(definition) != 0 {
@@ -1667,6 +1762,11 @@ impl Writer {
             // A class template's specialization shows its fields only through its type.
             let specialized = self.cpp && clang_Cursor_isNull(clang_getSpecializedCursorTemplate(definition)) == 0;
             let members = if specialized { record_fields(ty) } else { children(definition) };
+            // `[FFI-32]` — a standard-layout class's fields share one access: private or protected
+            // ones are the module's own, as C++ keeps them its class's.
+            let hidden = self.cpp
+                && members.iter().any(|child| kind(*child) == CXCursor_FieldDecl && clang_getCXXAccessSpecifier(*child) != CX_CXXPublic);
+            let visibility = if hidden { "" } else { "pub " };
             for child in members {
                 match kind(child) {
                     CXCursor_PackedAttr => packed = true,
@@ -1719,7 +1819,7 @@ impl Writer {
                             self.anonymous.insert(generated.clone());
                             match self.record(member, Some(&generated)) {
                                 Record::Full(_) => {}
-                                Record::Pending(_) | Record::Opaque(..) => {
+                                Record::Pending(_) | Record::Opaque(..) | Record::Unnamed(_) => {
                                     return self.opaque(cursor, &key, &named, Some(format!("its anonymous member `{generated}` cannot be represented")));
                                 }
                             }
@@ -1733,7 +1833,7 @@ impl Writer {
                         };
                         let field_align = clang_Type_getAlignOf(field_ty).max(1) as u64;
                         natural = natural.max(field_align);
-                        let line = format!("    pub {}: {mapped}\n", ident(&field));
+                        let line = format!("    {visibility}{}: {mapped}\n", ident(&field));
                         layout.push((ident(&field), offset));
                         fields.push(line.clone());
                         let size = clang_Type_getSizeOf(field_ty).max(0) as u64;
@@ -1749,7 +1849,7 @@ impl Writer {
             let c_fields = layout.clone();
             let mut accessors = String::new();
             if !bits.is_empty() {
-                match bit_field_members(&name, &plain, &bits, size, align, packed) {
+                match bit_field_members(&name, &plain, &bits, size, align, packed, visibility) {
                     Ok((lines, members, methods)) => (fields, layout, accessors) = (lines, members, methods),
                     Err(why) => return self.opaque(cursor, &key, &named, Some(why)),
                 }
@@ -1784,7 +1884,9 @@ impl Writer {
             if !self.anonymous.contains(&named) {
                 let _ = writeln!(self.shim, "_Static_assert(sizeof({c_name}) == {size}, \"{named}: size\");");
                 let _ = writeln!(self.shim, "_Static_assert(_Alignof({c_name}) == {align}, \"{named}: alignment\");");
-                for (field, offset) in c_fields.iter().filter(|(field, _)| !field.starts_with("_anon")) {
+                // A private field's offset no code outside its class may name: its size and
+                // alignment above check it, as a standard-layout class lays out its fields as C does.
+                for (field, offset) in c_fields.iter().filter(|(field, _)| !hidden && !field.starts_with("_anon")) {
                     let c_field = field.trim_start_matches("r#");
                     let _ = writeln!(self.shim, "_Static_assert(offsetof({c_name}, {c_field}) == {offset}, \"{named}.{c_field}: offset\");");
                 }
@@ -1799,11 +1901,13 @@ impl Writer {
     /// `[FFI-30]` — a declaration an earlier import of the build wrote with this layout is that
     /// import's entity: here an alias of it. With another layout it is a distinct entity, `E5011`
     /// unless this import binds a name of its own. `any`: an incomplete struct takes any layout.
+    /// `[CXX-1]` — a C++ class two C++ imports lay out two ways is `E9020` whatever binds it: their
+    /// configurations disagree, and one C++ program would hold the class in both layouts.
     fn adopt(&mut self, cursor: CXCursor, key: &str, named: &str, layout: &str, any: bool) -> Option<Record> {
         let shared = self.shared.get(key)?.clone();
         if !any && shared.layout != layout {
-            if shared.binding == self.binding && shared.layout != "opaque" {
-                self.conflicts.push((named.to_string(), shared.header.clone()));
+            if (self.cpp && shared.cpp) || (shared.binding == self.binding && shared.layout != "opaque") {
+                self.conflicts.push((named.to_string(), shared.header.clone(), shared.config.clone()));
             }
             return None;
         }
@@ -1817,7 +1921,7 @@ impl Writer {
         let name = ident(named);
         self.push(named, Kind::Type, format!("type {name} = {alias}"));
         self.spelled(cursor, named);
-        let record = if shared.layout == "opaque" { Record::Opaque(name, None) } else { Record::Full(name) };
+        let record = if shared.layout.starts_with("opaque") { Record::Opaque(name, None) } else { Record::Full(name) };
         self.records.insert(key.to_string(), record.clone());
         Some(record)
     }
@@ -1825,9 +1929,18 @@ impl Writer {
     /// An `extern type`: used only behind pointers. A definition it could not represent is
     /// `W5002`; an incomplete struct is represented exactly.
     fn opaque(&mut self, cursor: CXCursor, key: &str, named: &str, why: Option<String>) -> Record {
-        // An incomplete struct is the entity another import wrote, whatever its layout there.
+        // An incomplete struct is the entity another import wrote, whatever its layout there. A
+        // complete C++ class Ember holds behind a pointer has one size and alignment in a target
+        // (`[CXX-1]`): those are its fingerprint.
+        // SAFETY(ffi): a cursor of a live translation unit.
+        let (size, align) = unsafe {
+            let ty = clang_getCursorType(cursor);
+            (clang_Type_getSizeOf(ty), clang_Type_getAlignOf(ty))
+        };
+        let complete = self.cpp && size > 0;
+        let fingerprint = if complete { format!("opaque {size} {align}") } else { "opaque".to_string() };
         if why.is_none()
-            && let Some(adopted) = self.adopt(cursor, key, named, "", true)
+            && let Some(adopted) = self.adopt(cursor, key, named, &fingerprint, !complete)
         {
             return adopted;
         }
@@ -1838,11 +1951,11 @@ impl Writer {
         self.push(named, Kind::Opaque, format!("type {name}"));
         self.spelled(cursor, named);
         if why.is_none() {
-            self.entities.push((key.to_string(), name.clone(), "opaque".to_string()));
+            self.entities.push((key.to_string(), name.clone(), fingerprint));
         }
         if let Some(why) = &why {
             let at = self.at(cursor);
-            self.opaque.push(Skipped { name: named.to_string(), reason: why.clone(), at });
+            self.opaque.push(Skipped { name: named.to_string(), reason: why.clone(), at, namespace: self.writing.clone() });
         }
         let record = Record::Opaque(name, why);
         self.records.insert(key.to_string(), record.clone());
@@ -1852,7 +1965,7 @@ impl Writer {
     fn opaque_unclaimed(&mut self, cursor: CXCursor, key: &str, named: &str) -> Record {
         let why = "its name is taken by another declaration of the header (C keeps struct tags apart; Ember has one namespace)";
         self.skip(cursor, named, why);
-        let record = Record::Opaque(ident(named), Some(why.to_string()));
+        let record = Record::Unnamed(format!("`{named}`: {why}"));
         self.records.insert(key.to_string(), record.clone());
         record
     }
@@ -2786,13 +2899,47 @@ impl Writer {
     /// `[FFI-40]`, `[FFI-41]` — what a method of the class `owner` is: a static one an associated
     /// function, a `const` one `self` (unless the class has a `mutable` member, `[FFI-40a]`), any
     /// other `mut self`; `None` for an `&&`-qualified one (`W5033`).
+    /// `[FFI-32]` (ODR-166) — the Ember name of the opaque class a by-value C++ value of `ty` is,
+    /// when a `ForeignBox` can own one: a complete class of the header, not the standard library's
+    /// (`[FFI-17a]` bridges those), that is not abstract and whose destructor is public.
+    fn boxed_class(&mut self, ty: CXType) -> Option<String> {
+        if !self.cpp {
+            return None;
+        }
+        // SAFETY(ffi): types and cursors of a live translation unit.
+        unsafe {
+            let canonical = clang_getCanonicalType(ty);
+            if canonical.kind != CXType_Record {
+                return None;
+            }
+            let declaration = clang_getTypeDeclaration(canonical);
+            let definition = clang_getCursorDefinition(declaration);
+            if location(declaration).2 || clang_Cursor_isNull(definition) != 0 || clang_CXXRecord_isAbstract(definition) != 0 {
+                return None;
+            }
+            let destructor = children(definition).into_iter().find(|child| kind(*child) == CXCursor_Destructor);
+            if destructor.is_some_and(|destructor| clang_getCXXAccessSpecifier(destructor) != CX_CXXPublic || clang_getCursorAvailability(destructor) == CXAvailability_NotAvailable) {
+                return None;
+            }
+            match self.record(declaration, None) {
+                Record::Opaque(name, None) => Some(self.qualify(name, declaration)),
+                _ => None,
+            }
+        }
+    }
+
     fn method_member(&mut self, method: CXCursor, owner: &str, mutable_state: bool) -> Option<Member> {
         let name = spelling(method);
         // SAFETY(ffi): a live method cursor.
         unsafe {
             if clang_Type_getCXXRefQualifier(clang_getCursorType(method)) == CXRefQualifier_RValue {
                 let at = self.at(method);
-                self.rvalue_members.push(Skipped { name: format!("{owner}.{name}"), reason: "an `&&`-qualified member function, which only a temporary may call".to_string(), at });
+                self.rvalue_members.push(Skipped {
+                    name: format!("{owner}.{name}"),
+                    reason: "an `&&`-qualified member function, which only a temporary may call".to_string(),
+                    at,
+                    namespace: self.writing.clone(),
+                });
                 return None;
             }
             // `[FFI-40a]` (ODR-160) — a `const` method of a class with a `mutable` member is `self`
@@ -2867,6 +3014,12 @@ impl Writer {
             } else {
                 self.bridge(clang_getCanonicalType(result_ty))
             };
+            // `[FFI-32]` (ODR-166) — an opaque class by value is held as a constructor's object is.
+            let boxed = if member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) || bridged_result.is_some() {
+                None
+            } else {
+                self.boxed_class(result_ty)
+            };
             let (result, returned, call) = match (member, result_ty.kind) {
                 (Some((owner, Member::Constructor, class)), _) => {
                     let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new() };
@@ -2878,6 +3031,13 @@ impl Writer {
                 }
                 (_, CXType_Void) => (None, None, call),
                 _ if discarded => (None, None, call),
+                // `[FFI-32]` (ODR-166) — moved into an object of its own, which the `ForeignBox` the
+                // wrapper adopts it into frees with the class's destructor.
+                _ if let Some(owner) = &boxed => {
+                    let class = cpp_spelling(result_ty);
+                    let ember = CType { ember: format!("*mut {owner}"), pointee: Some((owner.clone(), false)), char_pointer: false, c: format!("{class}*"), mode: "boxed".to_string() };
+                    (Some(ember), Some(format!("{class}*")), format!("new {class}({call})"))
+                }
                 // `[FFI-17a]` — a standard-library value: moved to the heap (or, for a
                 // `std::unique_ptr`, given up) for its bridge type to own.
                 _ if bridged_result.is_some() => {
@@ -2940,6 +3100,7 @@ impl Writer {
                 || (result.is_some()
                     && clang_getCanonicalType(result_ty).kind == CXType_Record
                     && !matches!(member, Some((_, Member::BoxedConstructor, _)))
+                    && boxed.is_none()
                     && !result.as_ref().is_some_and(|ty| ty.mode.starts_with("bridge ")));
             let (returned, call) = match (class_result, returned) {
                 (true, Some(class)) => {
@@ -3086,21 +3247,35 @@ impl Writer {
                     let mutable_state = record_fields(clang_getCursorType(class)).into_iter().any(|field| clang_CXXField_isMutable(field) != 0);
                     // What the import file names no address of: the template's constructors, its
                     // operators and its overloaded methods.
+                    // The template's definition, whose members are listed (`[FFI-20a]`: each one not
+                    // imported is reported), not a forward declaration of it.
                     let pattern = clang_getSpecializedCursorTemplate(class);
+                    let defined = clang_getCursorDefinition(pattern);
+                    let pattern = if clang_Cursor_isNull(defined) == 0 { defined } else { pattern };
                     let declared: Vec<CXCursor> = children(pattern).into_iter().filter(|child| clang_getCXXAccessSpecifier(*child) == CX_CXXPublic).collect();
+                    let template_name = spelling(pattern);
                     for child in &declared {
                         let member = spelling(*child);
+                        // A constructor template is spelled with the class's parameters (`basic_json<ObjectType, …>`).
+                        let constructor = kind(*child) == CXCursor_Constructor
+                            || (kind(*child) == CXCursor_FunctionTemplate && member.split('<').next() == Some(template_name.as_str()));
                         let reason = match kind(*child) {
+                            // `[FFI-17b]` — a member template is a template: only an instantiation names it.
+                            CXCursor_FunctionTemplate => {
+                                "[E5055] a member template of a class template's instantiation: only the explicit instantiations `instantiate=[…]` lists are imported, and no Ember code, generic or not, instantiates one ([FFI-17b])"
+                            }
                             CXCursor_Constructor if clang_CXXConstructor_isCopyConstructor(*child) == 0 && clang_CXXConstructor_isMoveConstructor(*child) == 0 => {
                                 "a constructor of a class template's instantiation: no C++ expression names one to take its types from"
                             }
                             CXCursor_CXXMethod if member.starts_with("operator") => "an operator of a class template's instantiation: the import file names no address of it",
-                            CXCursor_CXXMethod if declared.iter().filter(|other| kind(**other) == CXCursor_CXXMethod && spelling(**other) == member).count() > 1 => {
+                            CXCursor_CXXMethod
+                                if declared.iter().filter(|other| matches!(kind(**other), CXCursor_CXXMethod | CXCursor_FunctionTemplate) && spelling(**other) == member).count() > 1 =>
+                            {
                                 "an overload of a class template's instantiation: its address names no one of them"
                             }
                             _ => continue,
                         };
-                        let shown = if kind(*child) == CXCursor_Constructor { format!("{owner}.new") } else { format!("{owner}.{member}") };
+                        let shown = if constructor { format!("{owner}.new") } else { format!("{owner}.{member}") };
                         self.skip(*child, &shown, reason);
                     }
                     for method in methods.iter().filter_map(|var| referenced_function(*var)) {
@@ -3287,6 +3462,7 @@ impl Writer {
                     name,
                     reason: "a function-like macro: an overlay's `@ffi(macro_fn)` entry declares its signature, and the import's shim wraps it ([FFI-6b])".to_string(),
                     at,
+                    ..Skipped::default()
                 });
                 return;
             }
@@ -3420,7 +3596,14 @@ fn find_template(cursor: CXCursor, wanted: &str) -> Option<CXCursor> {
                     return Some(found);
                 }
             }
-            CXCursor_ClassTemplate | CXCursor_FunctionTemplate if qualified_name(child).trim_start_matches("::") == wanted => return Some(child),
+            // A class template's definition, whose members are listed, not a forward declaration of
+            // it (`nlohmann::basic_json`'s, before its definition).
+            CXCursor_ClassTemplate | CXCursor_FunctionTemplate if qualified_name(child).trim_start_matches("::") == wanted => {
+                // SAFETY(ffi): a cursor of a live translation unit.
+                let definition = unsafe { clang_getCursorDefinition(child) };
+                // SAFETY(ffi): as above.
+                return Some(if unsafe { clang_Cursor_isNull(definition) } == 0 { definition } else { child });
+            }
             _ => {}
         }
     }
@@ -3445,7 +3628,10 @@ fn referenced_function(cursor: CXCursor) -> Option<CXCursor> {
 /// `[FFI-17b]` — an instantiation's Ember name, made of its template-id: `Vec<int>` is `Vec_int`,
 /// `Pair<int, float>` is `Pair_int_float`.
 fn instance_name(written: &str) -> String {
-    let template = written.rsplit("::").next().unwrap_or(written);
+    // The template's name without its namespace, and its arguments whole (`Pair<std::size_t>` is
+    // `Pair_std_size_t`).
+    let (template, arguments) = written.split_once('<').map_or((written, ""), |(template, arguments)| (template, arguments));
+    let template = format!("{}<{arguments}", template.rsplit("::").next().unwrap_or(template));
     let mut name = String::new();
     for c in template.chars() {
         if c.is_ascii_alphanumeric() {
@@ -3482,7 +3668,7 @@ fn namespace_of(cursor: CXCursor) -> Vec<String> {
     // SAFETY(ffi): cursors of a live translation unit.
     let mut parent = unsafe { clang_getCursorSemanticParent(cursor) };
     while !matches!(kind(parent), CXCursor_TranslationUnit | CXCursor_InvalidFile | CXCursor_NoDeclFound | CXCursor_NotImplemented) {
-        if kind(parent) == CXCursor_Namespace {
+        if kind(parent) == CXCursor_Namespace && !inline_namespace(parent) {
             path.push(spelling(parent));
         }
         // SAFETY(ffi): as above.
@@ -3512,9 +3698,85 @@ fn namespace_alias(home: &[String]) -> String {
 }
 
 /// `[FFI-3]` — a C++ type as a thunk spells it: its canonical spelling, every name qualified.
+/// Clang spells an enumerator argument of a template by its enumeration alone
+/// (`external_constructor<value_t::boolean>`), which names nothing at the thunks' file scope: each
+/// specialization with one is spelled again, its enumerator arguments as
+/// `static_cast<::ns::E>(value)`.
 fn cpp_spelling(ty: CXType) -> String {
     // SAFETY(ffi): a type of a live translation unit.
-    type_spelling(unsafe { clang_getCanonicalType(ty) })
+    let canonical = unsafe { clang_getCanonicalType(ty) };
+    let mut spelled = type_spelling(canonical);
+    respell_enumerator_arguments(canonical, &mut spelled);
+    spelled
+}
+
+/// `cpp_spelling`'s respelling, of `ty` (canonical) and of the types it is made of.
+fn respell_enumerator_arguments(ty: CXType, spelled: &mut String) {
+    // SAFETY(ffi): types and cursors of a live translation unit.
+    unsafe {
+        match ty.kind {
+            CXType_Pointer | CXType_LValueReference | CXType_RValueReference => {
+                respell_enumerator_arguments(clang_getCanonicalType(clang_getPointeeType(ty)), spelled);
+            }
+            CXType_ConstantArray | CXType_IncompleteArray => respell_enumerator_arguments(clang_getCanonicalType(clang_getArrayElementType(ty)), spelled),
+            CXType_Record => {
+                let count = clang_Type_getNumTemplateArguments(ty);
+                if count <= 0 {
+                    return;
+                }
+                let declaration = clang_getTypeDeclaration(ty);
+                let template = clang_getSpecializedCursorTemplate(declaration);
+                // A value argument's type is its parameter's, which libclang gives only there.
+                let parameters: Vec<CXCursor> =
+                    children(template).into_iter().filter(|child| matches!(kind(*child), CXCursor_TemplateTypeParameter | CXCursor_NonTypeTemplateParameter | CXCursor_TemplateTemplateParameter)).collect();
+                let (mut enumerator, mut types, mut arguments) = (false, Vec::new(), Vec::new());
+                for index in 0..count as c_uint {
+                    let argument = clang_Type_getTemplateArgumentAsType(ty, index);
+                    if argument.kind != CXType_Invalid {
+                        types.push(clang_getCanonicalType(argument));
+                        arguments.push(cpp_spelling(argument));
+                        continue;
+                    }
+                    let of = parameters.get(index as usize).map_or(clang_getCursorType(clang_getNullCursor()), |parameter| clang_getCanonicalType(clang_getCursorType(*parameter)));
+                    if clang_Cursor_getTemplateArgumentKind(declaration, index) != CXTemplateArgumentKind_Integral || !matches!(of.kind, CXType_Enum | CXType_Bool | CXType_Char_S | CXType_Char_U | CXType_SChar | CXType_UChar | CXType_Short | CXType_UShort | CXType_Int | CXType_UInt | CXType_Long | CXType_ULong | CXType_LongLong | CXType_ULongLong) {
+                        // A declaration, a template, an expression, or a value of a type the template
+                        // leaves to another argument: left as Clang spells it.
+                        arguments.push(String::new());
+                        continue;
+                    }
+                    enumerator |= of.kind == CXType_Enum;
+                    let underlying = if of.kind == CXType_Enum { clang_getCanonicalType(clang_getEnumDeclIntegerType(clang_getTypeDeclaration(of))) } else { of };
+                    let unsigned = matches!(underlying.kind, CXType_Bool | CXType_Char_U | CXType_UChar | CXType_UShort | CXType_UInt | CXType_ULong | CXType_ULongLong);
+                    let value = if unsigned {
+                        clang_Cursor_getTemplateArgumentUnsignedValue(declaration, index).to_string()
+                    } else {
+                        clang_Cursor_getTemplateArgumentValue(declaration, index).to_string()
+                    };
+                    arguments.push(format!("static_cast<::{}>({value})", type_spelling(of)));
+                }
+                if !enumerator || arguments.iter().any(String::is_empty) {
+                    // Only its type arguments can hold a specialization to spell again.
+                    for argument in types {
+                        respell_enumerator_arguments(argument, spelled);
+                    }
+                    return;
+                }
+                // The specialization alone, without the `const` the canonical type may carry.
+                let written = type_spelling(ty);
+                let written = written.trim_start_matches("const ").trim_start_matches("volatile ");
+                let again = format!("{}<{}>", qualified_name(template), arguments.join(", "));
+                *spelled = spelled.replace(written, &again);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `[FFI-41]` (ODR-165) — an inline namespace (`nlohmann::json_abi_v3_11_3`, `std::__1`) adds nothing
+/// to a name: C++ names its members as the enclosing namespace's, and so does the import.
+fn inline_namespace(cursor: CXCursor) -> bool {
+    // SAFETY(ffi): a live cursor.
+    kind(cursor) == CXCursor_Namespace && unsafe { clang_Cursor_isInlineNamespace(cursor) } != 0
 }
 
 /// `[FFI-17]` — a C++ entity's fully qualified name: `::engine::Mesh::size`.
@@ -3523,7 +3785,9 @@ fn qualified_name(cursor: CXCursor) -> String {
     // SAFETY(ffi): cursors of a live translation unit.
     let mut parent = unsafe { clang_getCursorSemanticParent(cursor) };
     while matches!(kind(parent), CXCursor_Namespace | CXCursor_StructDecl | CXCursor_ClassDecl | CXCursor_ClassTemplate | CXCursor_UnionDecl) {
-        parts.push(spelling(parent));
+        if !inline_namespace(parent) {
+            parts.push(spelling(parent));
+        }
         // SAFETY(ffi): as above.
         parent = unsafe { clang_getCursorSemanticParent(parent) };
     }
@@ -3637,7 +3901,10 @@ fn cpp_facts(unit: &Unit, main: &Path, include: &str, args: &[String], in_header
 
 /// `[FFI-3]`, `[FFI-24]` — the start of an `import cpp`'s thunk file: what the thunks use, and
 /// where a caught exception is kept for the Ember side — its type's name (demangled where the C++
-/// library says how, without MSVC's `class `) and its `what()`, per thread.
+/// library says how, without MSVC's `class `) and its `what()`, per thread. `[CXX-1]` — a project
+/// built without RTTI (`/GR-`, `-fno-rtti`) cannot name an exception's own type: there the name is
+/// the most derived standard exception class it is. With MSVC's switches only `_CPPRTTI` says so:
+/// clang-cl's `/GR-` keeps `typeid` (and `__cpp_rtti`) and drops the data it reads.
 fn cpp_prelude(stem: &str) -> String {
     let prefix = ember_branding::SYMBOL_PREFIX;
     format!(
@@ -3648,6 +3915,7 @@ fn cpp_prelude(stem: &str) -> String {
 #include <exception>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include <typeinfo>
 #include <utility>
@@ -3671,7 +3939,16 @@ thread_local std::string caught_type, caught_what;
 }}
 [[maybe_unused]] void caught() noexcept {{
     try {{ throw; }}
+#if (defined(_MSC_VER) && defined(_CPPRTTI)) || (!defined(_MSC_VER) && (defined(__cpp_rtti) || defined(__GXX_RTTI)))
     catch (const std::exception& error) {{ caught_type = type_name(typeid(error).name()); caught_what = error.what(); }}
+#else
+#define {prefix}_CAUGHT(T) catch (const T& error) {{ caught_type = #T; caught_what = error.what(); }}
+    {prefix}_CAUGHT(std::bad_array_new_length) {prefix}_CAUGHT(std::bad_alloc)
+    {prefix}_CAUGHT(std::invalid_argument) {prefix}_CAUGHT(std::domain_error) {prefix}_CAUGHT(std::length_error) {prefix}_CAUGHT(std::out_of_range) {prefix}_CAUGHT(std::logic_error)
+    {prefix}_CAUGHT(std::range_error) {prefix}_CAUGHT(std::overflow_error) {prefix}_CAUGHT(std::underflow_error) {prefix}_CAUGHT(std::runtime_error)
+    {prefix}_CAUGHT(std::exception)
+#undef {prefix}_CAUGHT
+#endif
     catch (...) {{ caught_type = "an exception that is no std::exception"; caught_what.clear(); }}
 }}
 template <class T> [[maybe_unused]] T zero() noexcept {{ union {{ unsigned char bytes[sizeof(T)]; T value; }} none = {{}}; return none.value; }}
@@ -3729,7 +4006,7 @@ struct BitField {
 /// for each bit-field, reading and writing its bits there (little-endian, as C's bit numbering is
 /// on the targets Ember builds for). Returns the field lines, every member's offset and the
 /// `extend` block.
-fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, align: u64, packed: bool) -> Result<(Vec<String>, Vec<(String, u64)>, String), String> {
+fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, align: u64, packed: bool, visibility: &str) -> Result<(Vec<String>, Vec<(String, u64)>, String), String> {
     if cfg!(target_endian = "big") {
         return Err("bit-fields on a big-endian target (their accessors are written for little-endian bit numbering)".to_string());
     }
@@ -3750,7 +4027,7 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
     let (mut lines, mut layout, mut cursor, mut pads) = (Vec::new(), Vec::new(), 0u64, 0);
     let mut pad = |lines: &mut Vec<String>, layout: &mut Vec<(String, u64)>, from: u64, to: u64| {
         let length = to - from;
-        lines.push(format!("    pub _pad{pads}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
+        lines.push(format!("    {visibility}_pad{pads}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
         layout.push((format!("_pad{pads}"), from));
         pads += 1;
     };
@@ -3774,7 +4051,7 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
             None => {
                 let (start, end) = runs[run];
                 let length = end - start;
-                lines.push(format!("    pub _bits{run}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
+                lines.push(format!("    {visibility}_bits{run}: [u8; {length}] = [{}]\n", vec!["0"; length as usize].join(", ")));
                 layout.push((format!("_bits{run}"), start));
                 cursor = end;
             }
@@ -3810,11 +4087,11 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
         };
         let _ = write!(
             methods,
-            "    ## The {width}-bit field `{f}`.\n    pub fn get_{f}(self) -> {ty}:\n        bits: u64 = {}\n        value = (bits >> {shift}) & {mask:#x}\n        return {value}\n\n",
+            "    ## The {width}-bit field `{f}`.\n    {visibility}fn get_{f}(self) -> {ty}:\n        bits: u64 = {}\n        value = (bits >> {shift}) & {mask:#x}\n        return {value}\n\n",
             read.join(" | ")
         );
         let input = if field.boolean { "bits: u64 = 0\n        if value:\n            bits = 1".to_string() } else { "bits: u64 = value as u64".to_string() };
-        let _ = write!(methods, "    ## Writes the {width}-bit field `{f}`: its low {width} bits.\n    pub fn set_{f}(mut self, value: {ty}):\n        {input}\n        bits = (bits & {mask:#x}) << {shift}\n");
+        let _ = write!(methods, "    ## Writes the {width}-bit field `{f}`: its low {width} bits.\n    {visibility}fn set_{f}(mut self, value: {ty}):\n        {input}\n        bits = (bits & {mask:#x}) << {shift}\n");
         for byte in first..=last {
             let j = byte - first;
             let part = ((mask << shift) >> (8 * j)) & 0xff;
@@ -3940,7 +4217,7 @@ pub struct Known {
     shared: HashMap<String, Shared>,
     /// `[BLD-FFI-1b]` — the first import whose flags name the runtime: its header, those flags, and
     /// what they amount to, which every other import's must agree with.
-    runtime: Option<(String, Vec<&'static str>, (&'static str, bool, u8))>,
+    runtime: Option<(String, Vec<&'static str>, Runtime)>,
 }
 
 /// A module `import c` wrote: its path, its declarations, and what else the import found.
@@ -4105,12 +4382,21 @@ pub fn load(
     };
     let shown = imported.header.file_name().map_or(header.clone(), |name| name.to_string_lossy().into_owned());
     // `[FFI-30]` — one C declaration, two layouts, one name: which is meant cannot be told.
-    for (name, other) in &imported.conflicts {
-        sink.emit(
+    // `[CXX-1]` — one C++ class, two layouts: the two configurations disagree, and never bind it
+    // twice.
+    let configured = configuration(&config);
+    for (name, other, its) in &imported.conflicts {
+        let diagnostic = if cpp {
+            Diagnostic::error(codes::E9020, span, format!("`{name}` is laid out one way by the import of `{other}` and another by this import of `{shown}`: their C++ configurations disagree"))
+                .note(format!("`{other}` was parsed with {}, and `{shown}` with {}", shown_configuration(its), shown_configuration(&configured)))
+                .note("one target's C++ is compiled in one configuration: two layouts of one class would be one C++ program holding both [CXX-1], [BLD-FFI-1b]")
+                .help("build the C++ projects with the same defines and layout flags")
+        } else {
             Diagnostic::error(codes::E5011, span, format!("`{name}` is imported from `{shown}` with a layout other than the one `{other}` gave it"))
                 .help("give one import its own alias (`as name`), making its entities distinct")
-                .note("two imports of one C declaration with one layout are one Ember entity [FFI-30]"),
-        );
+                .note("two imports of one C declaration with one layout are one Ember entity [FFI-30]")
+        };
+        sink.emit(diagnostic);
     }
     for (usr, name, layout) in &imported.entities {
         known.shared.entry(usr.clone()).or_insert_with(|| Shared {
@@ -4119,6 +4405,8 @@ pub fn load(
             layout: layout.clone(),
             binding: bound.to_string(),
             header: shown.clone(),
+            cpp,
+            config: configured.clone(),
         });
     }
     // `[FFI-17b]` — a template is not reported: it is imported only as its instantiations, and
@@ -4280,12 +4568,35 @@ pub fn load(
     }
     // `[FFI-24]` — a C++ function whose policy is neither derived nor declared is `E5061` where
     // it is used.
-    let undecided: Vec<(String, String)> = imported
+    let undecided: Vec<Skipped> = imported
         .functions
         .iter()
         .filter(|function| function.policy == Policy::Unknown && applied.functions.get(&function.name).and_then(|entry| entry.policy).is_none())
-        .map(|function| (function.name.clone(), "[E5061] its exception policy cannot be derived from the header (Clang could not evaluate its `noexcept(…)`), and no overlay declares one".to_string()))
+        .map(|function| Skipped {
+            name: function.name.clone(),
+            reason: "[E5061] its exception policy cannot be derived from the header (Clang could not evaluate its `noexcept(…)`), and no overlay declares one".to_string(),
+            namespace: function.namespace.clone(),
+            ..Skipped::default()
+        })
         .collect();
+    // `[FFI-20a]` — what a module of the import (its root's, or a namespace's) did not import, by name.
+    let skipped_in = |namespace: &[String]| -> Vec<(String, String)> {
+        imported
+            .skipped
+            .iter()
+            .chain(&imported.anonymous_namespace)
+            .chain(&undecided)
+            .filter(|skipped| skipped.namespace == namespace)
+            .map(|skipped| (skipped.name.clone(), skipped.reason.clone()))
+            .chain(
+                imported
+                    .macros
+                    .iter()
+                    .filter(|skipped| namespace.is_empty() && !declared(&skipped.name))
+                    .map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))),
+            )
+            .collect()
+    };
     let mut c_flags: Vec<String> = flags.to_vec();
     c_flags.extend(include_paths.iter().map(|dir| format!("-I{}", dir.display())));
     c_flags.extend(options.defines.iter().map(|define| format!("-D{define}")));
@@ -4301,14 +4612,7 @@ pub fn load(
         backed: Vec::new(),
         header: shown.clone(),
         identities,
-        skipped: imported
-            .skipped
-            .iter()
-            .map(|skipped| (skipped.name.clone(), skipped.reason.clone()))
-            .chain(imported.macros.iter().filter(|skipped| !declared(&skipped.name)).map(|skipped| (skipped.name.clone(), format!("a macro, {}", skipped.reason))))
-            .chain(imported.anonymous_namespace.iter().map(|skipped| (skipped.name.clone(), skipped.reason.clone())))
-            .chain(undecided)
-            .collect(),
+        skipped: skipped_in(&[]),
         layouts: imported.layouts.iter().filter(|layout| layout.namespace.is_empty()).map(|layout| (layout.name.clone(), layout.size, layout.align, layout.fields.clone())).collect(),
         shim,
         sources: source.into_iter().collect(),
@@ -4357,6 +4661,7 @@ pub fn load(
                     .collect(),
                 policy_changes: changed_signatures(&imported, &applied, &namespace.join("::"), &foreign.header),
                 variables: variables(&imported, namespace),
+                skipped: skipped_in(namespace),
                 ..Default::default()
             };
             (child, module, foreign)
@@ -4440,7 +4745,8 @@ pub fn inherited_lto(modules: &[ember_typeck::LoadedModule]) -> Option<&'static 
         .filter(|flag| !flag.is_empty())
 }
 
-/// `[BLD-FFI-1b]` — the MSVC runtime-library switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` the build
+/// `[BLD-FFI-1b]` — the MSVC runtime-library switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` (and
+/// libstdc++'s debug mode, `_GLIBCXX_DEBUG`, its debug runtime under GCC and Clang) the build
 /// inherits, byte for byte, from the projects of its imports (a C++ project's flags and defines, or
 /// the `[c]` flags a C import is compiled with); each import agreed with the others when it was
 /// loaded (`runtime_agrees`).
@@ -4459,11 +4765,12 @@ pub fn inherited_runtime(modules: &[ember_typeck::LoadedModule], target: Option<
 
 /// `[BLD-FFI-1b]` — whether an import's flags agree on the runtime with the first import's that
 /// named it (`first`, which the first to name it becomes): every import that names any of the
-/// runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` must name the same, the implied ones
-/// included (`/MDd` defines `_DEBUG`, which makes the iterator debug level 2), or the target's
-/// translation units would disagree (`E9020`). A C++ project whose flags pass a response file,
-/// which may name them, leaves its runtime undetermined (`E9021`).
-fn runtime_agrees(first: &mut Option<(String, Vec<&'static str>, (&'static str, bool, u8))>, flags: &[String], cpp: bool, header: &str, span: Span) -> Result<(), Diagnostic> {
+/// runtime switch, `_DEBUG`, `_ITERATOR_DEBUG_LEVEL` and `_GLIBCXX_DEBUG` must name the same, the
+/// implied ones included (`/MDd` defines `_DEBUG`, which makes the iterator debug level 2), or the
+/// target's translation units would disagree (`E9020`, `[CXX-1]`: two configurations never bind
+/// one standard library two ways). A C++ project whose flags pass a response file, which may name
+/// them, leaves its runtime undetermined (`E9021`).
+fn runtime_agrees(first: &mut Option<(String, Vec<&'static str>, Runtime)>, flags: &[String], cpp: bool, header: &str, span: Span) -> Result<(), Diagnostic> {
     if cpp && let Some(file) = flags.iter().find(|flag| flag.starts_with('@')) {
         return Err(Diagnostic::error(codes::E9021, span, format!("the C++ runtime of `{header}` could not be determined: its project's flags pass the response file `{}`", &file[1..]))
             .note("the MSVC runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL` change the C++ standard library's layout and heap, and the build inherits them byte for byte [BLD-FFI-1b]")
@@ -4478,7 +4785,7 @@ fn runtime_agrees(first: &mut Option<(String, Vec<&'static str>, (&'static str, 
         Some((before, written, was)) if *was != meaning => {
             return Err(Diagnostic::error(codes::E9020, span, format!("the imports of `{before}` and `{header}` disagree on the C++ runtime"))
                 .note(format!("`{before}` is compiled with `{}`, and `{header}` with `{}`", written.join(" "), named.join(" ")))
-                .note("one target's translation units are compiled with one runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which change the C++ standard library's layout [BLD-FFI-1b]")
+                .note("one target's translation units are compiled with one runtime switch, `_DEBUG`, `_ITERATOR_DEBUG_LEVEL` and `_GLIBCXX_DEBUG`, which change the C++ standard library's layout [BLD-FFI-1b]")
                 .help("build the C++ projects with one runtime, and name it in each one's flags"));
         }
         Some(_) => {}
@@ -4486,11 +4793,14 @@ fn runtime_agrees(first: &mut Option<(String, Vec<&'static str>, (&'static str, 
     Ok(())
 }
 
-/// `[BLD-FFI-1b]` — what of the runtime a list of MSVC flags names: the flags as the build passes
-/// them on (`/MDd`, `/D_DEBUG`, `/D_ITERATOR_DEBUG_LEVEL=1`; `-` forms read too, the last switch
-/// winning as it does for cl), and what they amount to: the switch, whether `_DEBUG` is defined, and
-/// the iterator debug level.
-fn runtime_flags(flags: &[String]) -> (Vec<&'static str>, (&'static str, bool, u8)) {
+/// `[BLD-FFI-1b]` — the runtime a project's flags amount to: the MSVC switch, whether `_DEBUG` is
+/// defined, the iterator debug level, and whether libstdc++'s debug mode is on.
+type Runtime = (&'static str, bool, u8, bool);
+
+/// `[BLD-FFI-1b]` — what of the runtime a list of flags names: the flags as the build passes them on
+/// (`/MDd`, `/D_DEBUG`, `/D_ITERATOR_DEBUG_LEVEL=1`, `-D_GLIBCXX_DEBUG`; `-` forms read too, the
+/// last switch winning as it does for cl), and what they amount to (`Runtime`).
+fn runtime_flags(flags: &[String]) -> (Vec<&'static str>, Runtime) {
     const SWITCHES: [&str; 4] = ["/MD", "/MDd", "/MT", "/MTd"];
     const LEVELS: [&str; 3] = ["/D_ITERATOR_DEBUG_LEVEL=0", "/D_ITERATOR_DEBUG_LEVEL=1", "/D_ITERATOR_DEBUG_LEVEL=2"];
     let plain = |flag: &String| flag.replacen('-', "/", 1);
@@ -4505,7 +4815,15 @@ fn runtime_flags(flags: &[String]) -> (Vec<&'static str>, (&'static str, bool, u
     let shown = switch.unwrap_or("/MD");
     let debugging = debug || shown.ends_with('d');
     let iterators = level.and_then(|flag| flag.rsplit('=').next()?.parse().ok()).unwrap_or(if debugging { 2 } else { 0 });
-    (named, (shown, debugging, iterators))
+    // libstdc++'s debug mode: its containers are other classes, laid out otherwise. `-U` names the
+    // release one; the last of the two written wins, as for the compiler.
+    let gnu = flags.iter().rev().map(plain).find_map(|flag| match flag.as_str() {
+        "/D_GLIBCXX_DEBUG" | "/D_GLIBCXX_DEBUG=1" => Some(true),
+        "/U_GLIBCXX_DEBUG" => Some(false),
+        _ => None,
+    });
+    named.extend(gnu.map(|debug| if debug { "-D_GLIBCXX_DEBUG" } else { "-U_GLIBCXX_DEBUG" }));
+    (named, (shown, debugging, iterators, gnu == Some(true)))
 }
 
 /// `[FFI-50]` — one key of a manifest inline table as written: `build_dir` of
@@ -5575,6 +5893,11 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             call = format!("adopt[{owner}]({call})");
             Some(format!("ForeignBox[{owner}]"))
         }
+        // `[FFI-32]` (ODR-166) — and an opaque class a function gives by value, alike.
+        _ if let Some(class) = function.result.as_ref().filter(|ty| ty.mode == "boxed").and_then(|ty| ty.pointee.clone()) => {
+            call = format!("adopt[{}]({call})", class.0);
+            Some(format!("ForeignBox[{}]", class.0))
+        }
         _ => function.result.as_ref().map(|ty| ty.ember.clone()),
         },
     };
@@ -5674,7 +5997,9 @@ fn starter_entry(function: &Function) -> String {
 
 /// `[CLI-5]`, `[CLI-6]`, `[CLI-7]` — `ember bind <header> [-I dir] [-D name[=value]]
 /// (--init [--merge] | --report [--overlay <file>] [--baseline <file> | --write-baseline <file>]
-/// | --check <overlay>)`.
+/// | --check <overlay>)`. `[CXX-1]` — with `--flag <flag>` (a project flag, as `[cpp.<project>]`
+/// `flags` gives it) and `--instantiate <template-id>`, `--outcomes [--overlay <file>]` prints each
+/// declaration's outcome, and `--emit-cpp [--out <file>]` writes the thunk file.
 pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     use std::process::ExitCode;
     let mut header = None;
@@ -5684,6 +6009,10 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
     let (mut explain, mut emit) = (None, false);
     // `[FFI-50]` — `--emit-cpp`: the header is C++, and its thunk file is written for inspection.
     let (mut emit_cpp, mut standard) = (false, "c++17".to_string());
+    // `[FFI-17b]` — `--instantiate <template-id>`, as the import's `instantiate=[…]`.
+    let mut instantiate = Vec::new();
+    // `[CXX-1]` — the project's flags, its corpus's outcomes, and where its thunk file goes.
+    let (mut flags, mut outcomes, mut out) = (Vec::new(), false, None);
     let mut rest = args.iter();
     while let Some(argument) = rest.next() {
         let mut value = |flag: &str| rest.next().cloned().ok_or(format!("`{flag}` needs a value"));
@@ -5701,6 +6030,10 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             "--emit-embind" => emit = true,
             "--emit-cpp" => emit_cpp = true,
             "--std" => standard = value("--std")?,
+            "--instantiate" => instantiate.push(value("--instantiate")?),
+            "--flag" => flags.push(value("--flag")?),
+            "--outcomes" => outcomes = true,
+            "--out" => out = Some(PathBuf::from(value("--out")?)),
             flag if flag.starts_with('-') => return Err(format!("unknown `ember bind` option `{flag}`")),
             file if header.is_none() => header = Some(PathBuf::from(file)),
             extra => return Err(format!("unexpected `ember bind` argument `{extra}`")),
@@ -5717,18 +6050,24 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         from_dir: &dir,
         include_paths: &include_paths,
         defines: &defines,
-        flags: &[],
+        flags: &flags,
         symbol_stem: "bind",
         shared: &shared,
         binding: if cpp { "cpp" } else { "c" },
         cpp: cpp.then_some(standard.as_str()),
-        instantiate: &[],
+        instantiate: &instantiate,
         trampolines: &[],
     };
     let (imported, files) = import_header(&config)?;
     if emit_cpp {
-        let path = dir.join(format!("{}.thunks.cpp", header.file_stem().unwrap_or_default().to_string_lossy()));
-        std::fs::write(&path, &imported.shim).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
+        // The header by its name, as the file beside it includes it: the same file on every machine.
+        let absolute = std::path::absolute(&dir).unwrap_or_else(|_| dir.clone());
+        let mut shim = imported.shim.clone();
+        for written in [absolute.display().to_string(), absolute.display().to_string().replace('\\', "/")] {
+            shim = shim.replace(&format!("{written}{}", if written.contains('\\') { "\\" } else { "/" }), "");
+        }
+        let path = out.unwrap_or_else(|| dir.join(format!("{}.thunks.cpp", header.file_stem().unwrap_or_default().to_string_lossy())));
+        std::fs::write(&path, shim).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
         println!("wrote {}", path.display());
         return Ok(ExitCode::SUCCESS);
     }
@@ -5800,6 +6139,17 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         std::fs::write(&path, text).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
         println!("wrote {}", path.display());
         return Ok(ExitCode::SUCCESS);
+    }
+    if outcomes {
+        // `[CXX-1]` — each declaration's outcome: by value, opaque, behind an overlay, or refused
+        // with the diagnostic the import reports it with.
+        let applied = match &overlay {
+            Some(path) => load_overlay(path, &mut sink)?,
+            None => Applied::default(),
+        };
+        eprint!("{}", sink.render(&map));
+        print!("{}", outcome_lines(&imported, &applied));
+        return Ok(if sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
     if let Some(name) = explain {
         // `[FFI-14]` — a function's contract, each fact with where it comes from.
@@ -5962,7 +6312,64 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         }
         return Ok(if new > 0 || changes > 0 || sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
     }
-    Err("`ember bind` needs `--init`, `--report`, `--check <overlay>`, `--explain <fn>` or `--emit-embind`".to_string())
+    Err("`ember bind` needs `--init`, `--report`, `--outcomes`, `--check <overlay>`, `--explain <fn>`, `--emit-embind` or `--emit-cpp`".to_string())
+}
+
+/// `[CXX-1]` — an import's outcome for each declaration, one line each, in the order the header
+/// declares them: `value` (it crosses by value), `opaque` (a type held behind a pointer), `overlay`
+/// (a function whose pointers' facts only an overlay states: `stated` when the overlay given does)
+/// or `refused <code>` (not imported, with the diagnostic the import reports: `E5055` for a template,
+/// `W5001` for a macro, `W5033`, `W5034`, else `W5002` or the code its reason names).
+fn outcome_lines(imported: &Imported, applied: &Applied) -> String {
+    let mut text = String::new();
+    let path = |namespace: &[String], name: &str| namespace.iter().map(String::as_str).chain([name]).collect::<Vec<_>>().join(".");
+    for item in &imported.items {
+        let (outcome, what) = match item.kind {
+            Kind::Type => ("value", "type"),
+            Kind::Opaque => ("opaque", "type"),
+            Kind::Const => ("value", "const"),
+            Kind::Static | Kind::Variable => ("value", "static"),
+            Kind::Class => ("overlay", "class"),
+        };
+        let _ = writeln!(text, "{outcome:<8} {what:<6} {}", path(&item.namespace, &item.name));
+    }
+    for function in &imported.functions {
+        let name = match &function.owner {
+            Some((owner, _)) => format!("{owner}.{}", function.name),
+            None => function.name.clone(),
+        };
+        let policy = if function.policy == Policy::Direct { "noexcept" } else { "throwing" };
+        let pointers: Vec<&str> = function
+            .params
+            .iter()
+            .filter(|(_, ty)| ty.pointee.is_some())
+            .map(|(param, _)| param.as_str())
+            .chain(function.result.iter().filter(|ty| ty.pointee.is_some() && ty.mode != "boxed").map(|_| "the result"))
+            .collect();
+        let line = if applied.functions.contains_key(&function.name) {
+            format!("overlay  fn     {} ({policy}; stated)", path(&function.namespace, &name))
+        } else if pointers.is_empty() {
+            format!("value    fn     {} ({policy})", path(&function.namespace, &name))
+        } else {
+            format!("overlay  fn     {} ({policy}; unstated: {})", path(&function.namespace, &name), pointers.join(", "))
+        };
+        let _ = writeln!(text, "{line}");
+    }
+    let refused = |code: &str, skipped: &Skipped| format!("refused  {code:<6} {} ({})\n", skipped.name, skipped.at);
+    for skipped in &imported.skipped {
+        let code = skipped.reason.strip_prefix('[').and_then(|rest| rest.split_once(']')).map_or("W5002", |(code, _)| code);
+        text.push_str(&refused(code, skipped));
+    }
+    for skipped in &imported.rvalue_members {
+        text.push_str(&refused("W5033", skipped));
+    }
+    for skipped in &imported.anonymous_namespace {
+        text.push_str(&refused("W5034", skipped));
+    }
+    for skipped in imported.macros.iter().filter(|skipped| !applied.macros.iter().any(|(function, ..)| function.name == skipped.name)) {
+        text.push_str(&refused("W5001", skipped));
+    }
+    text
 }
 
 /// `[FFI-14]` — the `.embind` file: an import's result as versioned CBOR. Only the forms it needs:
@@ -6082,7 +6489,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 8;
+const EMBIND_VERSION: u64 = 9;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -6125,7 +6532,7 @@ fn texts(items: &[&str]) -> Value {
 }
 
 fn skips(list: &[Skipped]) -> Value {
-    Value::Array(list.iter().map(|skip| texts(&[&skip.name, &skip.reason, &skip.at])).collect())
+    Value::Array(list.iter().map(|skip| texts(&[&skip.name, &skip.reason, &skip.at, &skip.namespace.join("::")])).collect())
 }
 
 fn read_skips(value: &Value) -> Option<Vec<Skipped>> {
@@ -6133,7 +6540,7 @@ fn read_skips(value: &Value) -> Option<Vec<Skipped>> {
         .iter()
         .map(|entry| {
             let entry = array_of(entry)?;
-            Some(Skipped { name: text_of(entry.first()?)?, reason: text_of(entry.get(1)?)?, at: text_of(entry.get(2)?)? })
+            Some(Skipped { name: text_of(entry.first()?)?, reason: text_of(entry.get(1)?)?, at: text_of(entry.get(2)?)?, namespace: split_namespace(&text_of(entry.get(3)?)?) })
         })
         .collect()
 }
@@ -6240,7 +6647,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
         ("shim".to_string(), Value::Text(imported.shim.clone())),
         ("uses".to_string(), Value::Array(imported.uses.iter().map(|path| Value::Array(path.iter().map(|segment| Value::Text(segment.clone())).collect())).collect())),
         ("entities".to_string(), Value::Array(imported.entities.iter().map(|(usr, name, layout)| texts(&[usr, name, layout])).collect())),
-        ("conflicts".to_string(), Value::Array(imported.conflicts.iter().map(|(name, header)| texts(&[name, header])).collect())),
+        ("conflicts".to_string(), Value::Array(imported.conflicts.iter().map(|(name, header, config)| texts(&[name, header, config])).collect())),
         (
             "macro_functions".to_string(),
             Value::Array(
@@ -6359,7 +6766,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
         functions,
         uses: array_of(field(&value, "uses")?)?.iter().map(|path| array_of(path)?.iter().map(text_of).collect::<Option<Vec<_>>>()).collect::<Option<_>>()?,
         entities: triples(field(&value, "entities")?)?,
-        conflicts: pairs(field(&value, "conflicts")?)?,
+        conflicts: triples(field(&value, "conflicts")?)?,
         macro_functions: array_of(field(&value, "macro_functions")?)?
             .iter()
             .map(|entry| {
@@ -6408,7 +6815,7 @@ fn import_cached(config: &Config, overlay: &str, cached: &mut bool) -> Result<(I
     let mut shared: Vec<String> = config
         .shared
         .iter()
-        .map(|(usr, shared)| format!("{usr}={}:{}:{}:{}", shared.module.join("."), shared.name, shared.layout, shared.binding))
+        .map(|(usr, shared)| format!("{usr}={}:{}:{}:{}:{}:{}", shared.module.join("."), shared.name, shared.layout, shared.binding, shared.cpp, shared.config))
         .collect();
     shared.sort();
     // `[FFI-17b]` — the instantiations listed are part of what is imported.

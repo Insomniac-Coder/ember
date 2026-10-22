@@ -1356,7 +1356,8 @@ pub fn compile_cpp_object(
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).arg(format!("-std={standard}")).arg("-c").args(flags);
+            command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).arg(format!("-std={standard}")).arg("-c");
+            command.args(inherited_gnu_runtime()).args(flags);
             // D-790 — position-independent, for a reloadable image's shared library too (Annex B):
             // the thunks' `thread_local` record of a caught exception is otherwise reached as an
             // executable's, which a shared object cannot be linked with.
@@ -1605,6 +1606,23 @@ pub fn inherit_gnu_lto(flag: Option<&'static str>) {
 
 fn inherited_gnu_lto() -> Option<&'static str> {
     INHERITED_GNU_LTO.lock().ok().and_then(|inherited| *inherited)
+}
+
+/// `[BLD-FFI-1b]` — the defines that change the C++ standard library's layout under GCC and Clang
+/// (libstdc++'s debug mode, `-D_GLIBCXX_DEBUG`) that the build inherits from the C++ project it
+/// imports, which every C++ translation unit it compiles (each import's thunks) is then compiled
+/// with. Empty for none.
+static INHERITED_GNU_RUNTIME: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+/// `[BLD-FFI-1b]` — inherit a C++ project's layout defines for this build's C++ translation units.
+pub fn inherit_gnu_runtime(flags: Vec<&'static str>) {
+    if let Ok(mut inherited) = INHERITED_GNU_RUNTIME.lock() {
+        *inherited = flags;
+    }
+}
+
+fn inherited_gnu_runtime() -> Vec<&'static str> {
+    INHERITED_GNU_RUNTIME.lock().map(|inherited| inherited.clone()).unwrap_or_default()
 }
 
 /// `[BLD-FFI-1b]` — `/MD`, or the runtime switch the build inherits.

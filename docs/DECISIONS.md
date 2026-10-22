@@ -5017,6 +5017,46 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-254 — `[CXX-1]`: the C++ corpus, and what importing a real library found
+
+2026-10-22. `[CXX-1]` asks for a corpus of real headers and a third-party header-only library, each
+declaration's outcome recorded and its thunks committed and diffed, run under MSVC and Clang with the
+debug and release runtimes and RTTI on and off, and `E9020` where two configurations disagree. Built:
+
+- **The corpus** (`tests/cxx-corpus`): nlohmann/json 3.11.3 (downloaded with the owner's approval,
+  unmodified, MIT), imported whole with `basic_json<>` instantiated. `ember bind --outcomes` prints
+  one line per declaration — `value`, `opaque`, `overlay` (pointer facts only an overlay states),
+  `refused <code>` — and `--emit-cpp --out` the thunk file, the header included by its name; both are
+  committed per platform (`size_t` is `unsigned long long` on Windows, `unsigned long` on Linux) and
+  written again by `tests/cxx-corpus/record.py`. `--flag` parses as a project's flags would.
+- **The test** (`the_cpp_corpus_binds_as_recorded`, `package.rs`): under the suite's C++ compiler
+  (the CI matrix: MSVC, clang-cl, GCC, Clang), in four configurations — `/MD`/`/MDd` or
+  `-U`/`-D_GLIBCXX_DEBUG`, by RTTI on and off — the outcomes and thunks are the recorded ones (where
+  the header defines a macro may follow the configuration, what a declaration becomes may not), and a
+  program using the library (`program/`) builds and prints `expected.txt`. Two configurations in one
+  target are `E9020`: a class whose layout follows RTTI, and the corpus under two runtimes. Verified
+  locally under all four compilers.
+- **`E9020` for a layout**: a C++ class two C++ imports lay out two ways is `E9020`, whatever binds it
+  (an alias made it a second entity before, which its C++ cannot be), naming both configurations as
+  the importer parsed them; an opaque C++ class's size and alignment are now its fingerprint.
+- **The runtime of GCC and Clang**: libstdc++'s debug mode (`_GLIBCXX_DEBUG`, `-U` naming the
+  release one) is part of the runtime every import agrees on, and inherited by each C++ translation
+  unit a GCC or Clang build compiles (`[BLD-FFI-1b]`).
+- **Parsing as the compiler compiles**: MSVC's `/GR-`, `/EH…`, `/J` and `/Zp` reach libclang as
+  Clang's own (`/GR-` as clang-cl reads it: no RTTI data, so no `_CPPRTTI`, through `-Xclang`).
+- **The thunks without RTTI** name a caught exception by the most derived standard exception class
+  it is; only `_CPPRTTI` says RTTI is on with MSVC's switches (clang-cl's `/GR-` keeps `typeid` and
+  drops its data, which faulted at the first caught exception).
+
+Importing a real library found sixteen defects, D-792..D-807, all fixed; D-808 is open (an overlay's
+pointer contracts do not reach a C++ function called through a wrapper: a throwing one or a method).
+The worst was D-799: `nlohmann::json` and `nlohmann::ordered_json`, two classes, were one Ember type.
+
+Three rulings under the restored delegation, for the owner's review: ODR-165 (an inline namespace
+adds nothing to a name), ODR-166 (a function returning an opaque class by value gives a
+`ForeignBox[T]`, as a constructor does) and ODR-167 (the corpus is nlohmann/json until the owner
+approves more downloads).
+
 ## ADR-253 — The owner's answers on `[FFI-40a]` and `[FFI-41]` built; the owner's ODR-163 and ODR-164; Linux C++ import fixes
 
 2026-10-21. ODR-160 (`[FFI-40a]`): for a class with a `mutable` member, its own or a base's, the

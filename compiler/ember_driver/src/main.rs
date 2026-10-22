@@ -5235,17 +5235,20 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     // `[BLD-FFI-1b]` — the C++ projects' runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which
-    // every translation unit of the target is compiled with.
-    if matches!(toolchain, Toolchain::Msvc { .. }) {
-        match cimport::inherited_runtime(&modules, options.cc_flags_target.as_deref().map(|target| (target, target_flags.as_slice()))) {
-            Ok(flags) => ember_build::inherit_msvc_runtime(flags),
-            Err(diagnostic) => {
-                sink.emit(diagnostic);
-                return Ok(finish(&sink, &map, options));
-            }
+    // every translation unit of the target is compiled with; with GCC or Clang, libstdc++'s debug
+    // mode, which each C++ one is.
+    let inherited = match cimport::inherited_runtime(&modules, options.cc_flags_target.as_deref().map(|target| (target, target_flags.as_slice()))) {
+        Ok(flags) => flags,
+        Err(diagnostic) => {
+            sink.emit(diagnostic);
+            return Ok(finish(&sink, &map, options));
         }
+    };
+    if matches!(toolchain, Toolchain::Msvc { .. }) {
+        ember_build::inherit_msvc_runtime(inherited);
     } else {
-        // `[BLD-FFI-4]` — and with GCC or Clang, its link-time optimisation.
+        ember_build::inherit_gnu_runtime(inherited.into_iter().filter(|flag| flag.starts_with("-D_GLIBCXX")).collect());
+        // `[BLD-FFI-4]` — and its link-time optimisation.
         ember_build::inherit_gnu_lto(cimport::inherited_lto(&modules));
     }
     if options.build_id {

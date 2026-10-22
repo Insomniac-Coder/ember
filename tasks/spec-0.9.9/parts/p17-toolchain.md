@@ -26,7 +26,8 @@ ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --determinis
 ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item>   the call chain to that effect
 ember calls --foreign <item>                   every foreign function the item can reach
 ember bind <header> [--init [--merge] | --report [--baseline <file> | --write-baseline]
-                     | --check <overlay> | --explain <fn> | --emit-embind]
+                     | --check <overlay> | --explain <fn> | --emit-embind | --outcomes
+                     | --emit-cpp [--out <file>]] [--flag <flag>] [--instantiate <template-id>]
 ember shader-bind <reflection.json>            Annex D
 ember tcb [--module <m>]                       the trusted-base report (Annex C)
 ember toolchain list|install|default           manage installed C toolchains

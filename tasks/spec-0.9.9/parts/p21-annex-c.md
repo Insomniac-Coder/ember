@@ -70,7 +70,9 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 * `[FFI-32]` A C++ class that is standard-layout and trivially copyable, all of whose members map, is
   imported as a `@layout(c) struct` with `@derive(Copy)` and the same field offsets; an opaque class
   cannot be constructed from Ember except through its imported constructors (`E5032`), and a parameter
-  that maps to nothing is `E5031`.
+  that maps to nothing is `E5031`. A function returning an opaque class by value gives a
+  `ForeignBox[T]`, as a constructor does: the result is moved to an object of its own, freed by the
+  class's destructor; an abstract class, or one without a public destructor, is refused (ODR-166).
 * `[FFI-11f]` A result lifetime derived from `[[clang::lifetimebound]]` imports as an asserted fact:
   the attribute is not enforced by C++, so it never counts as checked.
 * `[FFI-48]` **Unsupported constructs** (`E5034`, naming the row):
@@ -155,8 +157,9 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   through a thunk that gives its address, since its symbol is mangled or, for an `inline` one, emitted
   only where C++ uses it (`[FFI-3]`, ODR-161). One holding a pointer imports like any other: it is read
   and written in `unsafe`, so `[STA-1]` does not ask it to be `Sync` (ODR-163). Nested types sit under
-  their outer type's name; namespaces become module paths; entities in anonymous namespaces are skipped
-  (`W5034`).
+  their outer type's name; namespaces become module paths, an inline one adding nothing to a name, as in
+  C++ (`nlohmann::json_abi_v3_11_3::json` is `cpp.nlohmann.json`, ODR-165); entities in anonymous
+  namespaces are skipped (`W5034`).
 * `[FFI-42]` Overloaded operators map to Ember operator interfaces where one exists (`operator[]` to
   `Index`/`IndexMut`, `operator*`/`->` on a smart-pointer-like type to read-through); C++ iterators with
   `begin`/`end` become `Iterable`.

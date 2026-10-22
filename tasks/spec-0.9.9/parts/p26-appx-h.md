@@ -443,6 +443,9 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-162 | the owner's answer: an `@export` function may hand C++ an object of a `@sync` class, presented by the `--cpp` header as a class of the same name; to be built | `[BLD-FFI-5a]`, `[FFI-31b]` |
 | ODR-163 | the owner's ruling: a foreign static read only in `unsafe` need not be `Sync`; a C or C++ variable holding a pointer imports as any other, used in `unsafe` | `[STA-1]`, `[FFI-41]`, `[FFI-10]` |
 | ODR-164 | the owner's ruling, reversing ODR-021: float `//` is `floor(a / b)` and `%` is `a - b * floor(a / b)`, each step rounded | `[TYP-29]` |
+| ODR-165 | delegated: an inline namespace adds nothing to a C++ name in an import | `[FFI-41]`, `[FFI-17b]` |
+| ODR-166 | delegated: a C++ function returning an opaque class by value gives a `ForeignBox[T]` | `[FFI-32]`, Annex C's import table |
+| ODR-167 | delegated: `[CXX-1]`'s corpus is nlohmann/json until the owner approves more downloads | `[CXX-1]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1175,3 +1178,19 @@ Generated: every rule whose text differs from 0.9.10_Hardened_30.
 | `[FFI-42a]` | changed |
 | `[STA-1]` | changed |
 | `[TYP-29]` | changed |
+
+## H.37 Changes in 0.9.10_Hardened_32 (from 0.9.10_Hardened_31)
+
+**0.9.10_Hardened_32** builds `[CXX-1]`'s corpus (nlohmann/json 3.11.3, `tests/cxx-corpus`) and records three rulings made under the restored delegation, for the owner's review (`docs/DECISIONS.md` ADR-254):
+
+* For `[FFI-41]`: an inline namespace adds nothing to a name, as in C++ (`nlohmann::json_abi_v3_11_3::json` is `cpp.nlohmann.json`), and `instantiate=[…]` names its members so (ODR-165, delegated).
+* For `[FFI-32]` and Annex C's import table: a function returning by value a class Ember holds behind a pointer gives a `ForeignBox[T]` owning a copy moved to the heap, freed by the class's destructor, as a constructor's does; an abstract class, or one without a public destructor, stays refused (ODR-166, delegated).
+* For `[CXX-1]`: the corpus holds nlohmann/json 3.11.3; more real headers are added as the owner approves their downloads (ODR-167, delegated).
+* For `[CLI-6]`'s synopsis: `ember bind` also takes `--outcomes` (each declaration's outcome, `[CXX-1]`), `--emit-cpp [--out <file>]` (`[FFI-50]`), `--flag <flag>` and `--instantiate <template-id>`.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_31.
+
+| Rule | 0.9.10_Hardened_31 → 0.9.10_Hardened_32 |
+|---|---|
+| `[FFI-32]` | changed |
+| `[FFI-41]` | changed |

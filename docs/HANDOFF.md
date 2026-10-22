@@ -10839,6 +10839,15 @@ formal 1/9 count or Phase 2's estimate.
 > `0.9.10_Hardened_31`. The owner withdrew the delegation: every new spec question goes to the owner
 > (all earlier delegated rulings reviewed: `docs/reviews/odr-review-2026-10-21.pdf`). CI's Linux failures
 > on dca58321 fixed: D-789, D-790, D-791. Next: `[BLD-FFI-5a]` (ODR-162), when the owner says.
+> **2026-10-22:** the owner restored the delegation (on condition of elegant, high-performance
+> solutions; `docs/AUTOPILOT.md` §3) and set the last 5%, three helpers in parallel, the machine
+> hibernating on battery. ADR-254: `[CXX-1]` built — `tests/cxx-corpus` (nlohmann/json 3.11.3, its
+> outcomes and thunks recorded per platform; `record.py` writes them again) and
+> `the_cpp_corpus_binds_as_recorded` (four configurations under MSVC, clang-cl, GCC and Clang; `E9020`
+> for a layout two configurations disagree on, and for libstdc++'s debug mode). D-792..D-807 fixed;
+> **D-808 open** (an overlay's pointer contracts do not reach a C++ wrapper: the raw declaration must
+> become a contracted `safe fn`, `failed` and `this` included). ODR-165..167 delegated; cut as
+> `0.9.10_Hardened_32`.
 > ADR-238: helper N's second job merged (ODR-145..149 built, D-742..D-746 and D-756..D-758 fixed;
 > FFI-6a/6b/29/30c and TST-7 done). Two owner questions open in tasks/90/owner-questions.md.
 > D-754 open: CI's gate found `s3_skip_step_take` (gcc 1.30x), `s2_zip_and`, `a06_enum_match` (gcc) and
