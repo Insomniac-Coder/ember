@@ -1547,7 +1547,16 @@ impl Parser<'_> {
         let body = if self.eat_punct(Punct::FatArrow) {
             LambdaBody::Expr(Box::new(self.parse_expr()))
         } else if allow_block_lambda && self.eat_punct(Punct::Colon) {
-            LambdaBody::Block(self.parse_block())
+            if self.at_newline() {
+                LambdaBody::Block(self.parse_block())
+            } else {
+                // `[GRM-17]` (ODR-209) — a `:` body on the lambda's own line is one simple
+                // statement that ends at the statement's newline: `h = fn(x): total += x` is one
+                // statement, so the newline is left for it.
+                let start = self.span();
+                let stmts = self.parse_simple_statement().into_iter().collect();
+                LambdaBody::Block(Block { id: self.next_id(), stmts, span: start.to(self.prev_span()) })
+            }
         } else if !allow_block_lambda && self.at_punct(Punct::Colon) {
             // `[LEX-6a]` — "Inside brackets, a lambda's `:` body is a single
             // `small_stmt`, terminated by the enclosing closing bracket or by

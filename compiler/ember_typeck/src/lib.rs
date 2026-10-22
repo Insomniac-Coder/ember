@@ -24068,6 +24068,13 @@ impl<'a> Checker<'a> {
                 // Only a place can be assigned; anything else would write a
                 // temporary and drop it, silently (a slice, `xs.as_span()`).
                 if !is_place(&place.kind) && place.ty != self.common.error {
+                    // `[CLO-2]` — on a closure's discovery pass a captured target is a placeholder
+                    // (`resolve_capture`), not a place: the right side still names captures, so it
+                    // is read for them (`seen += k` captured `seen` and missed `k`).
+                    if matches!(place.kind, ExprKind::Error) && self.captures.as_ref().is_some_and(|watch| watch.env.is_none()) {
+                        let _ = self.synth(value);
+                        return;
+                    }
                     let mut diagnostic = Diagnostic::error(codes::E2140, target.span, "assignment target is not a place")
                         .primary_label("this is a value, not somewhere to store one");
                     if matches!(place.kind, ExprKind::Builtin { which: Builtin::Slice { .. }, .. }) {
