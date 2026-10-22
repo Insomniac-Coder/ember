@@ -42,6 +42,14 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   program's end by the destructor it was made with); an edit removing the field drops the box in
   reclaim, freeing the widget once.
 
+* **HR-20** — partly built; `unfinished` entry added. Built: an object a `Retained` token pins is
+  never moved: plan refuses a reload that would move one (its new size does not fit, or
+  `migrate_from` builds a new one), naming the class and how many are pinned, even where every
+  reference could be found and rewritten; a change that fits migrates it in place.
+  `compiler/ember_driver/tests/reload.rs`, `a_pinned_object_is_never_moved`. Before this, a
+  pinned object whose references were all enumerable was moved, leaving foreign code's address
+  stale (a defect, fixed). Not built: `on_relocate` (spec question 4).
+
 ## Compiler changes
 
 * HR-23: `cimport.rs` (`import_cached` returns a hash over every file the header included),
@@ -149,6 +157,18 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
    across FFI; a field added to such a type (by value in a C-ABI signature) is refused too, through
    `[HR-21]`'s signature. Recommendation: say so in the row ("layout or fields changed on a type
    used across FFI by value").
+
+4. **HR-20 `on_relocate`.** The target says a token "created with an `on_relocate` callback,
+   which the runtime calls with the new address during commit" lets a pinned object move, but
+   gives no spelling, and `[HR-2]` says commit performs "no allocation, check, callback or other
+   fallible operation". 0.8.5 (docs/spec/part-18) had `Retained.pin(handle, on_relocate:
+   Option[extern "C" fn(*void, *void)])`, called with the old and the new address. Options:
+   (a) restore 0.8.5's spelling and call the callbacks right after commit publishes, before
+   reclaim (commit stays pointer stores; the reload has succeeded, so a callback cannot undo it);
+   (b) call them inside commit and add an exception to `[HR-2]` for a foreign `void` callback;
+   (c) drop `on_relocate`: a pinned object never moves. Recommendation: (a), the foreign side
+   told the new address once the new image is live, with `ObjectPtr[C]` for the class case
+   (`[FFI-23]`, ODR-132) instead of `*void`.
 
 ## Not done yet
 

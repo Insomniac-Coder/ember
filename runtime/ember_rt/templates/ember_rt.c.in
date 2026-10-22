@@ -11862,6 +11862,33 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
     if (!fine) {
         return false;
     }
+    /* [HR-20] An object pinned by a `Retained` token, whose address foreign code may keep, is never
+     * moved: one whose new self does not fit its allocation (or that `migrate_from` builds anew)
+     * is refused, naming its class and how many such instances there are. */
+    for (size_t index = 0; index < g_rl_moves.count; ++index) {
+        rl_move* move = &g_rl_moves.moves[index];
+        if (move->in_place || (move->old->flags & EMBER_OBJ_PINNED) == 0) {
+            continue;
+        }
+        size_t pinned = 0;
+        bool first = true;
+        for (size_t other = 0; other < g_rl_moves.count; ++other) {
+            const rl_move* same = &g_rl_moves.moves[other];
+            if (same->to == move->to && !same->in_place && (same->old->flags & EMBER_OBJ_PINNED) != 0) {
+                first = first && other >= index;
+                pinned += 1;
+            }
+        }
+        if (first) {
+            rl_report(report, cap, "refused: %zu instance%s of `%s` must move (%s), but a `Retained` token foreign code holds pins %s: its address may not change [HR-20]\n",
+                      pinned, pinned == 1 ? "" : "s", move->to->name,
+                      move->to->migrate != NULL ? "`migrate_from` builds a new one" : "the new size does not fit", pinned == 1 ? "it" : "them");
+        }
+        fine = false;
+    }
+    if (!fine) {
+        return false;
+    }
     /* [HR-15a] An instance that moves has every reference to it rewritten, so every one must be
      * found: as many strong references as its count says, and as many weak ones. */
     bool moving = false;
