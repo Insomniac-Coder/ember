@@ -852,6 +852,9 @@ pub enum PatternKind {
     Bind { local: LocalId, sub: Option<Box<Pattern>>, by_ref: Option<bool> },
     /// An integer, `bool` or `char` literal, already narrowed to `ty`.
     Int(i128),
+    /// III.6 — a string literal against text (`str` or `String`): equal when the
+    /// lengths are and then the bytes.
+    Str(String),
     /// One enum variant, with a sub-pattern per payload field in order.
     Variant { enum_id: EnumId, variant: usize, fields: Vec<Pattern> },
     /// A tuple, struct or fixed array: one sub-pattern per element, in order.
@@ -2526,6 +2529,7 @@ fn dump_pattern(
             }
         }
         PatternKind::Int(value) => value.to_string(),
+        PatternKind::Str(text) => format!("{text:?}"),
         PatternKind::Variant { enum_id, variant, fields } => {
             let def = types.enum_def(*enum_id);
             let name = format!("{}.{}", def.name, def.variants[*variant].name);

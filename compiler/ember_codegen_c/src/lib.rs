@@ -1947,7 +1947,7 @@ impl Emitter<'_> {
             return "1".to_string();
         }
         if let Some((a, b)) = self.text_pair(a, b, ty) {
-            return format!("({RT}str_cmp({a}, {b}) == 0)");
+            return format!("{RT}str_eq({a}, {b})");
         }
         if let Some(suffix) = self.wide_int(ty) {
             return format!("{RT}{suffix}_eq({a}, {b})");
@@ -9632,8 +9632,14 @@ impl Emitter<'_> {
                     // comparisons, by bytes) and `==`/`!=` on aggregates.
                     Builtin::ValueCompare { op } => {
                         let (a, b) = (&rendered[0], &rendered[1]);
+                        // Equality is the lengths, then the bytes; only an
+                        // order needs `str_cmp`.
                         if let Some((a, b)) = self.text_pair(a, b, *arg_ty) {
-                            return format!("({RT}str_cmp({a}, {b}) {} 0)", op.spelling());
+                            return match op {
+                                ember_mir::BinOp::Eq => format!("{RT}str_eq({a}, {b})"),
+                                ember_mir::BinOp::Ne => format!("(!{RT}str_eq({a}, {b}))"),
+                                _ => format!("({RT}str_cmp({a}, {b}) {} 0)", op.spelling()),
+                            };
                         }
                         let equal = self.eq_expr(a, b, *arg_ty);
                         return if matches!(op, ember_mir::BinOp::Ne) { format!("(!{equal})") } else { equal };

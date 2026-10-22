@@ -26189,9 +26189,13 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Int(v) => (false, Some(ast::Literal::Int { value: *v, suffix: None })),
             ExprKind::Bool(v) => (false, Some(ast::Literal::Bool(*v))),
+            ExprKind::Str(text) => (false, Some(ast::Literal::Str(text.clone()))),
             _ => (false, None),
         };
-        let typed_alike = value.ty == expected || self.types.is_untyped_literal(value.ty);
+        // A text constant matches either text type, as its literal would.
+        let typed_alike = value.ty == expected
+            || self.types.is_untyped_literal(value.ty)
+            || (self.is_text(value.ty) && self.is_text(expected));
         match magnitude {
             Some(lit) if typed_alike => self.check_literal_pattern(&ast::PatternLit { negative, lit }, expected, span),
             _ => {
@@ -26200,7 +26204,7 @@ impl<'a> Checker<'a> {
                 self.sink.emit(
                     Diagnostic::error(codes::E2020, span, format!("the constant `{}` cannot match a value of type `{wanted}`", name.name))
                         .primary_label(format!("a constant of type `{shown}`"))
-                        .note("a constant in a pattern matches as the integer, `bool` or `char` literal it stands for, of the matched type"),
+                        .note("a constant in a pattern matches as the integer, `bool`, `char` or string literal it stands for, of the matched type"),
                 );
                 error
             }
@@ -26231,6 +26235,11 @@ impl<'a> Checker<'a> {
             }
             ast::Literal::Bool(v) if !pattern.negative && expected == self.common.bool_ => Some(i128::from(*v)),
             ast::Literal::Char(c) if !pattern.negative && expected == self.common.char_ => Some(*c as i128),
+            // III.6 — a string literal matches text by its bytes; a `match` on
+            // text is exhaustive only through a wildcard.
+            ast::Literal::Str(text) if !pattern.negative && self.is_text(expected) => {
+                return hir::Pattern { ty: expected, kind: hir::PatternKind::Str(text.clone()), span };
+            }
             _ => None,
         };
         match value {
@@ -54591,7 +54600,7 @@ fn binds_mut_ref(pattern: &hir::Pattern) -> bool {
         hir::PatternKind::Variant { fields, .. } | hir::PatternKind::Fields(fields) | hir::PatternKind::Or(fields) => {
             fields.iter().any(binds_mut_ref)
         }
-        hir::PatternKind::Wild | hir::PatternKind::Int(_) | hir::PatternKind::Error => false,
+        hir::PatternKind::Wild | hir::PatternKind::Int(_) | hir::PatternKind::Str(_) | hir::PatternKind::Error => false,
     }
 }
 
@@ -57045,7 +57054,7 @@ fn binds_by_mut_ref(pattern: &Pattern) -> bool {
     match &pattern.kind {
         PatternKind::Bind { by_ref, sub, .. } => *by_ref == Some(true) || sub.as_deref().is_some_and(binds_by_mut_ref),
         PatternKind::Variant { fields, .. } | PatternKind::Fields(fields) | PatternKind::Or(fields) => fields.iter().any(binds_by_mut_ref),
-        PatternKind::Wild | PatternKind::Int(_) | PatternKind::Error => false,
+        PatternKind::Wild | PatternKind::Int(_) | PatternKind::Str(_) | PatternKind::Error => false,
     }
 }
 
