@@ -2,7 +2,7 @@
   "01_text_adventure.em": {
     "mark": "rejected", "shape": "none:E0101", "codes": ["E0101"], "after_helps": "rejected",
     "shapes": ["none:E0101"],
-    "helps": ["R1:none:E0101", "R2:gap:E2020", "R2:N3", "R2:N1", "R2:none:E2020", "R3:N3", "R3:none:E2020", "R4:none:E2060", "R5:O2", "R5:O1", "R5:B12", "R6:B3", "R7:O2"]
+    "helps": ["R1:none:E0101", "R2:N3", "R2:N1", "R2:none:E2020", "R3:N3", "R3:none:E2020", "R4:none:E2060", "R5:O2", "R5:O1", "R5:B12", "R6:B3", "R7:O2"]
   },
   "02_csv_summariser.em": {
     "mark": "rejected", "shape": "none:E0101", "codes": ["E0008", "E0101"], "after_helps": "rejected",
@@ -17,7 +17,7 @@
   "04_event_bus.em": {
     "mark": "rejected", "shape": "none:E0100", "codes": ["E0100"], "after_helps": "rejected",
     "shapes": ["none:E0100"],
-    "helps": ["R1:none:E0100", "R2:gap:E2020", "R2:B3", "R3:gap:E3021"]
+    "helps": ["R1:none:E0100", "R2:B3"]
   },
   "05_inventory.em": {
     "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020", "E2040"], "after_helps": "rejected",
@@ -37,7 +37,7 @@
   "08_word_frequencies.em": {
     "mark": "rejected", "shape": "DIA-21", "codes": ["E0100"], "after_helps": "rejected",
     "shapes": ["DIA-21"],
-    "helps": ["R1:DIA-21", "R2:N3", "R2:none:E2020", "R2:N6", "R2:N9", "R3:N3", "R3:none:E2020", "R3:N9", "R4:gap:E2040", "R5:O2", "R5:gap:E3021"]
+    "helps": ["R1:DIA-21", "R2:N3", "R2:none:E2020", "R2:N6", "R2:N9", "R3:N3", "R3:none:E2020", "R3:N9", "R4:O2", "R4:gap:E3021"]
   },
   "09_bank_account.em": {
     "mark": "rejected", "shape": "N1", "codes": ["E1010", "E2020"], "after_helps": "rejected",
@@ -45,14 +45,14 @@
     "helps": ["R1:N1", "R1:none:E2020", "R2:O2"]
   },
   "10_grade_book.em": {
-    "mark": "rejected", "shape": "gap:E2140", "codes": ["E1010", "E2020", "E2140"], "after_helps": "rejected",
-    "shapes": ["gap:E2140", "none:E2020", "N1", "N6"],
-    "helps": ["R1:gap:E2140", "R1:none:E2020", "R1:N1", "R1:N6", "R2:none:E2020", "R3:O2"]
+    "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "shapes": ["none:E2020", "N1", "N6"],
+    "helps": ["R1:none:E2020", "R1:N1", "R1:N6", "R2:none:E2020", "R3:O2"]
   },
   "11_rpn_calculator.em": {
     "mark": "rejected", "shape": "none:E2020", "codes": ["E2020"], "after_helps": "rejected",
-    "shapes": ["none:E2020", "gap:E2020", "N6"],
-    "helps": ["R1:none:E2020", "R1:gap:E2020", "R1:N6"]
+    "shapes": ["none:E2020", "N6"],
+    "helps": ["R1:none:E2020", "R1:N6"]
   },
   "12_tic_tac_toe.em": {
     "mark": "rejected", "shape": "none:E2020", "codes": ["E1010", "E2020"], "after_helps": "rejected",
@@ -111,8 +111,8 @@
   },
   "23_recipe_scaler.em": {
     "mark": "rejected", "shape": "N3", "codes": ["E1010", "E2020"], "after_helps": "rejected",
-    "shapes": ["N3", "none:E2020", "gap:E2020", "N1"],
-    "helps": ["R1:N3", "R1:none:E2020", "R1:gap:E2020", "R1:N1", "R2:none:E2020", "R3:O2"]
+    "shapes": ["N3", "none:E2020", "N1"],
+    "helps": ["R1:N3", "R1:none:E2020", "R1:N1", "R2:none:E2020", "R3:O2"]
   },
   "24_dice_game.em": {
     "mark": "rejected", "shape": "none:E2020", "codes": ["E2020"], "after_helps": "rejected",

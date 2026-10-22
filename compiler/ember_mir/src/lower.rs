@@ -117,7 +117,7 @@ fn is_irrefutable(pattern: &hir::Pattern) -> bool {
         hir::PatternKind::Bind { sub: Some(sub), .. } => is_irrefutable(sub),
         hir::PatternKind::Fields(items) => items.iter().all(is_irrefutable),
         hir::PatternKind::Or(alternatives) => alternatives.iter().any(is_irrefutable),
-        hir::PatternKind::Variant { .. } | hir::PatternKind::Int(_) => false,
+        hir::PatternKind::Variant { .. } | hir::PatternKind::Int(_) | hir::PatternKind::Str(_) => false,
     }
 }
 
@@ -4037,6 +4037,29 @@ impl<'a> Builder<'a> {
                 self.terminate(Terminator::SwitchInt {
                     discr,
                     targets: vec![(*value, ok)],
+                    otherwise: on_fail,
+                });
+                self.current = ok;
+            }
+
+            // III.6 — text against a string literal: `[TYP-37]`'s byte
+            // equality, the lengths first, read in place (no copy, no
+            // allocation).
+            hir::PatternKind::Str(text) => {
+                let equal = self.temp(self.bool_ty, pattern.span);
+                self.push(StmtKind::StorageLive(equal));
+                let compared = self.new_block();
+                self.terminate(Terminator::Call {
+                    func: FuncRef::Builtin { which: hir::Builtin::ValueCompare { op: BinOp::Eq }, arg_ty: pattern.ty },
+                    args: vec![Operand::Copy(place.clone()), Operand::Const(Const::Str(text.clone()))],
+                    dest: Place::local(equal),
+                    next: compared,
+                });
+                self.current = compared;
+                let ok = self.new_block();
+                self.terminate(Terminator::SwitchInt {
+                    discr: Operand::Copy(Place::local(equal)),
+                    targets: vec![(1, ok)],
                     otherwise: on_fail,
                 });
                 self.current = ok;

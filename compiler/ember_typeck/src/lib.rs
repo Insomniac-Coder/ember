@@ -24836,21 +24836,17 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[TYP-37]` — `a.cmp(b) -> Ordering` for the numbers and text, in the
-    /// order `sort` and `min` use: `Less` when `a < b`, `Greater` when
-    /// `b < a`, else `Equal`. A `String` is compared as its `str`, so it is
-    /// borrowed, not moved.
+    /// `[TYP-37]`, `[TYP-36]` — `a.cmp(b) -> Ordering` where the compiler provides the order: the
+    /// numbers and text (`Less` when `a < b`, `Greater` when `b < a`, else `Equal`, as `sort` and
+    /// `min` use), a tuple lexicographically, and a shared reference as what it refers to
+    /// (ODR-181). A `String` is compared as its `str`, so it is borrowed, not moved.
     fn synth_total_cmp(&mut self, receiver: Expr, args: &[ast::Arg], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if args.len() != 1 || args[0].name.is_some() {
             self.error(codes::E2020, span, format!("`cmp` takes 1 argument, found {}", args.len()));
             return error;
         }
-        let Some(ordering) = self.named_types.get(&Symbol::intern("std.core.Ordering")).copied() else {
-            self.error(codes::E1010, span, "cannot find `std.core.Ordering`");
-            return error;
-        };
-        let TyKind::Enum(ordering_id) = *self.types.kind(ordering) else { return error };
+        // Text against `str`, so a literal argument is not made a `String`.
         let receiver = if self.is_text(receiver.ty) {
             let str_ty = self.common.str_;
             self.coerce(receiver, str_ty)
@@ -24859,17 +24855,97 @@ impl<'a> Checker<'a> {
         };
         let ty = receiver.ty;
         let other = self.check_expr(&args[0].value, ty);
+        if other.ty == self.common.error {
+            return error;
+        }
+        self.synth_cmp_of(receiver, other, span)
+    }
+
+    /// `lhs.cmp(rhs)` for two values of one type that is `Ord` (`[TYP-36]`): through a shared
+    /// reference to its referent, by `TotalLess` for the numbers and text, by a written or derived
+    /// `cmp`, and a tuple element by element, the first that differs deciding (each side evaluated
+    /// once, as `synth_eq_of` does for `==`).
+    fn synth_cmp_of(&mut self, lhs: Expr, rhs: Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let Some(ordering) = self.named_types.get(&Symbol::intern("std.core.Ordering")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.core.Ordering`");
+            return error;
+        };
+        let TyKind::Enum(ordering_id) = *self.types.kind(ordering) else { return error };
+        if let TyKind::Ref { mutable: false, .. } = *self.types.kind(lhs.ty) {
+            let (lhs, rhs) = (self.read_through(lhs), self.read_through(rhs));
+            return self.synth_cmp_of(lhs, rhs, span);
+        }
+        let variant = |variant| Expr {
+            ty: ordering,
+            kind: ExprKind::EnumLit { enum_id: ordering_id, variant, fields: vec![] },
+            span,
+        };
+        let ty = lhs.ty;
+        if let TyKind::Tuple(items) = self.types.kind(ty).clone()
+            && !self.methods.contains_key(&(ty, Symbol::intern("cmp")))
+        {
+            let (mut stmts, left) = self.hold(lhs, span);
+            let (right_stmts, right) = self.hold(rhs, span);
+            stmts.extend(right_stmts);
+            // From the last element out: `Equal` when every element is, else the first that is not.
+            let mut decided = variant(1);
+            for (index, item) in items.into_iter().enumerate().rev() {
+                let field = |side: &Held| Expr { ty: item, kind: ExprKind::Field { base: Box::new(side.read(span)), index }, span };
+                let order = self.synth_cmp_of(field(&left), field(&right), span);
+                let local = self.declare(None, ordering, span);
+                let read = Expr { ty: ordering, kind: ExprKind::Local(local), span };
+                let arm = |kind, body| hir::MatchArm {
+                    pattern: hir::Pattern { ty: ordering, kind, span },
+                    guard: None,
+                    body: hir::MatchArmBody::Expr(body),
+                    span,
+                };
+                let chosen = Expr {
+                    ty: ordering,
+                    kind: ExprKind::Match {
+                        scrutinee: Box::new(read.clone()),
+                        arms: vec![
+                            arm(hir::PatternKind::Variant { enum_id: ordering_id, variant: 1, fields: Vec::new() }, decided),
+                            arm(hir::PatternKind::Wild, read),
+                        ],
+                    },
+                    span,
+                };
+                decided = Expr {
+                    ty: ordering,
+                    kind: ExprKind::Block {
+                        block: Block { stmts: vec![Stmt::Let { local, init: Some(order) }], span },
+                        value: Box::new(chosen),
+                    },
+                    span,
+                };
+            }
+            return Expr { ty: ordering, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(decided) }, span };
+        }
+        if !self.sortable(ty) {
+            if self.methods.contains_key(&(ty, Symbol::intern("cmp"))) {
+                return self.call_operator("cmp", lhs, rhs, span);
+            }
+            if ty != self.common.error {
+                let shown = self.types.display(ty);
+                self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `cmp` needs"));
+            }
+            return error;
+        }
+        let (lhs, rhs) = if self.is_text(ty) {
+            let str_ty = self.common.str_;
+            (self.coerce(lhs, str_ty), self.coerce(rhs, str_ty))
+        } else {
+            (lhs, rhs)
+        };
+        let ty = lhs.ty;
         let (a, b) = (self.declare(None, ty, span), self.declare(None, ty, span));
         let bool_ty = self.common.bool_;
         let local = |id| Expr { ty, kind: ExprKind::Local(id), span };
         let less = |x, y| Expr {
             ty: bool_ty,
             kind: ExprKind::Builtin { which: Builtin::TotalLess, args: vec![local(x), local(y)] },
-            span,
-        };
-        let variant = |variant| Expr {
-            ty: ordering,
-            kind: ExprKind::EnumLit { enum_id: ordering_id, variant, fields: vec![] },
             span,
         };
         let arm = |kind, body: Expr| hir::MatchArm {
@@ -24892,7 +24968,7 @@ impl<'a> Checker<'a> {
             ty: ordering,
             kind: ExprKind::Block {
                 block: Block {
-                    stmts: vec![Stmt::Let { local: a, init: Some(receiver) }, Stmt::Let { local: b, init: Some(other) }],
+                    stmts: vec![Stmt::Let { local: a, init: Some(lhs) }, Stmt::Let { local: b, init: Some(rhs) }],
                     span,
                 },
                 value: Box::new(chosen),
@@ -26353,9 +26429,13 @@ impl<'a> Checker<'a> {
             }
             ExprKind::Int(v) => (false, Some(ast::Literal::Int { value: *v, suffix: None })),
             ExprKind::Bool(v) => (false, Some(ast::Literal::Bool(*v))),
+            ExprKind::Str(text) => (false, Some(ast::Literal::Str(text.clone()))),
             _ => (false, None),
         };
-        let typed_alike = value.ty == expected || self.types.is_untyped_literal(value.ty);
+        // A text constant matches either text type, as its literal would.
+        let typed_alike = value.ty == expected
+            || self.types.is_untyped_literal(value.ty)
+            || (self.is_text(value.ty) && self.is_text(expected));
         match magnitude {
             Some(lit) if typed_alike => self.check_literal_pattern(&ast::PatternLit { negative, lit }, expected, span),
             _ => {
@@ -26364,7 +26444,7 @@ impl<'a> Checker<'a> {
                 self.sink.emit(
                     Diagnostic::error(codes::E2020, span, format!("the constant `{}` cannot match a value of type `{wanted}`", name.name))
                         .primary_label(format!("a constant of type `{shown}`"))
-                        .note("a constant in a pattern matches as the integer, `bool` or `char` literal it stands for, of the matched type"),
+                        .note("a constant in a pattern matches as the integer, `bool`, `char` or string literal it stands for, of the matched type"),
                 );
                 error
             }
@@ -26377,6 +26457,11 @@ impl<'a> Checker<'a> {
         expected: Ty,
         span: Span,
     ) -> hir::Pattern {
+        // `[DIA-14]` — a scrutinee that did not check was reported; its
+        // patterns add nothing (it gave "cannot match `<error>`" per arm).
+        if expected == self.common.error {
+            return hir::Pattern { ty: expected, kind: hir::PatternKind::Wild, span };
+        }
         let value = match &pattern.lit {
             ast::Literal::Int { value, .. } if self.types.is_integral(expected) => {
                 let limit = if pattern.negative {
@@ -26395,6 +26480,11 @@ impl<'a> Checker<'a> {
             }
             ast::Literal::Bool(v) if !pattern.negative && expected == self.common.bool_ => Some(i128::from(*v)),
             ast::Literal::Char(c) if !pattern.negative && expected == self.common.char_ => Some(*c as i128),
+            // III.6 — a string literal matches text by its bytes; a `match` on
+            // text is exhaustive only through a wildcard.
+            ast::Literal::Str(text) if !pattern.negative && self.is_text(expected) => {
+                return hir::Pattern { ty: expected, kind: hir::PatternKind::Str(text.clone()), span };
+            }
             _ => None,
         };
         match value {
@@ -30199,11 +30289,9 @@ impl<'a> Checker<'a> {
                 self.scan(receiver, elem, value, name.name.is("contains"), span).unwrap_or(error)
             }
             _ => {
-                // A reference into the array, so the array must be a place.
-                if !is_place(&receiver.kind) {
-                    self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
-                    return error;
-                }
+                // A reference into the array. A temporary array is borrowed
+                // where it is made and lives to the end of its statement
+                // (`[EXP-4]`); the borrow checker rejects a use past that.
                 let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                 let view = self.view_of(receiver, span_ty, false, Builtin::SpanFrom { mutable: false });
                 let index = match name.name.as_str() {
@@ -30688,6 +30776,16 @@ impl<'a> Checker<'a> {
     /// Whether `sort` can order values of `ty` (`[TYP-37]`): scalars and text.
     fn sortable(&self, ty: Ty) -> bool {
         self.totally_ordered(ty) || self.is_text(ty)
+    }
+
+    /// Whether `cmp` on `ty` is the compiler's (`synth_cmp_of`): the numbers and text, a tuple
+    /// whose elements are all `Ord` (`[TYP-36]`: lexicographic), or a shared reference to one.
+    fn provides_cmp(&self, ty: Ty) -> bool {
+        match *self.types.kind(ty) {
+            TyKind::Ref { mutable: false, inner } => self.provides_cmp(inner),
+            TyKind::Tuple(_) => self.implements(ty, Symbol::intern("std.core.Ord")),
+            _ => self.sortable(ty),
+        }
     }
 
     /// `b if b < a else a` in `Ord`'s order (`[TYP-37]`), each evaluated
@@ -33140,6 +33238,23 @@ impl<'a> Checker<'a> {
             TyKind::Fn { abi: None, latebound: wanted_late, stateless: false, is_unsafe: wanted_unsafe, params: wanted, ret: wanted_ret },
         ) = (self.types.kind(expr.ty), self.types.kind(expected))
             && found_late == wanted_late && found_unsafe == wanted_unsafe && found == wanted && found_ret == wanted_ret
+        {
+            return Expr { ty: expected, ..expr };
+        }
+        // `[CLO-3]` (ODR-189) — a consumed callable parameter (`owned f: fn(A) -> R`) is an owned
+        // callable value in its function: it may be stored where one of its signature is wanted.
+        // This is the generic body's check, with the parameter opaque; each instance converts its
+        // concrete argument as the rules below do (a function or capture-free lambda by its bits,
+        // an `owned fn` by `MakeCallable`, a lambda that borrows or moves a capture out refused).
+        if let Some((signature, true)) = self.callable_bound_of(expr.ty)
+            && let TyKind::Fn { params: found, ret: found_ret, latebound: found_late, is_unsafe: found_unsafe, .. } =
+                self.types.kind(signature).clone()
+            && let TyKind::Fn { abi: None, stateless: false, params: wanted, ret: wanted_ret, latebound, is_unsafe } =
+                self.types.kind(expected).clone()
+            && found == wanted
+            && found_ret == wanted_ret
+            && found_late == latebound
+            && found_unsafe == is_unsafe
         {
             return Expr { ty: expected, ..expr };
         }
@@ -36669,7 +36784,7 @@ impl<'a> Checker<'a> {
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
+                    let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
@@ -37031,7 +37146,7 @@ impl<'a> Checker<'a> {
             let by_address = self.param_by_address(instance, declared[index].0, param_ty);
             match reusable.get_mut(index).and_then(|slot| slot.take()).filter(|_| already) {
                 Some(value) => {
-                    let value = self.pass_argument_by(value, param_ty, mode, by_address);
+                    let value = self.pass_checked_lambda(value, arg.value.span, param_ty, mode, by_address);
                     checked.push(value)
                 }
                 None => checked.push(self.check_argument_by(&arg.value, param_ty, mode, by_address)),
@@ -38234,6 +38349,15 @@ impl<'a> Checker<'a> {
                 );
             return implied || self.generic_bounds(index, name).contains(&interface);
         }
+        // ODR-181 — `ref T` implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does.
+        if let TyKind::Ref { mutable: false, inner } = *self.types.kind(ty)
+            && matches!(
+                interface.as_str(),
+                "std.core.Eq" | "std.core.Ord" | "std.collections.Hash" | "std.core.Display" | "std.core.Debug" | "Display" | "Debug"
+            )
+        {
+            return self.implements(inner, interface);
+        }
         // Part IV §8, ODR-111 — a marker is what the type holds says, and what the program wrote by
         // hand (`unsafe extend`), never a recorded implementation alone.
         match interface.as_str() {
@@ -38258,7 +38382,11 @@ impl<'a> Checker<'a> {
         // totalOrder) and text, and `Clone` and `Eq` on every type it can
         // clone or compare, a struct's implicit ones included. D-246.
         let provided = match interface.as_str() {
-            "std.core.Ord" => self.sortable(ty),
+            // `[TYP-36]` — a tuple is `Ord` lexicographically when every element is.
+            "std.core.Ord" => {
+                self.sortable(ty)
+                    || matches!(self.types.kind(ty), TyKind::Tuple(items) if items.iter().all(|&item| self.implements(item, interface)))
+            }
             "std.core.Clone" => self.is_cloneable(ty),
             "std.core.Eq" => self.has_implicit_eq(ty),
             "std.collections.Hash" => self.hashes(ty, &mut HashSet::new()),
@@ -42253,11 +42381,11 @@ impl<'a> Checker<'a> {
         {
             return self.synth_int_method(receiver, name, args, span);
         }
-        // `[TYP-37]` — `a.cmp(b)` on the numbers and text, in `Ord`'s order,
-        // which generic code bounded by `Ord` uses.
+        // `[TYP-37]`, `[TYP-36]` — `a.cmp(b)` where the compiler gives the order (the numbers
+        // and text, tuples, shared references to them), which generic code bounded by `Ord` uses.
         if name.name.is("cmp")
             && explicit.is_empty()
-            && self.sortable(receiver.ty)
+            && self.provides_cmp(receiver.ty)
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
             return self.synth_total_cmp(receiver, args, span);
@@ -45481,6 +45609,9 @@ impl<'a> Checker<'a> {
         which: hir::Builtin,
     ) -> Expr {
         let span = container.span;
+        // `[TYP-21]` — a mutable view of `m[k]` reaches the element through
+        // `IndexMut`, as a `mut` receiver does (`m[k].iter_mut()`).
+        let container = if mutable { self.index_place_for_write(container) } else { container };
         if mutable {
             self.reject_readonly_write(&container, span);
             let through_shared_ref = self.reject_write_through_shared_ref(&container, span);
@@ -51034,15 +51165,11 @@ impl<'a> Checker<'a> {
                     span,
                 }
             }
-        } else if self.viewed_place(&receiver) {
-            receiver
         } else {
-            self.error(
-                codes::E2140,
-                span,
-                "this operation needs a mutable span variable or a view of a mutable place",
-            );
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            // A view of a place, or a view that is itself a temporary
+            // (`make().iter_mut()`, `[EXP-4]`): no caller holds it, so the
+            // iterator takes it as it is.
+            receiver
         };
         let view = self.types.intern(TyKind::Span { elem, mutable });
         Expr {
@@ -51188,10 +51315,9 @@ impl<'a> Checker<'a> {
         if let Some((mutable, method)) = through_view
             && !is_string
         {
-            if !is_place(&receiver.kind) {
-                self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
+            // `[EXP-4]` — a temporary array is viewed where it is made: it
+            // lives to the end of its statement, or of the loop whose
+            // iterable made it (`for x in make().iter()`).
             let view_ty = self.types.intern(TyKind::Span { elem, mutable });
             let view = self.view_of(receiver, view_ty, mutable, Builtin::SpanFrom { mutable });
             return self.synth_span_method(view, recv_span, elem, mutable, method, args, span);
@@ -51544,6 +51670,17 @@ impl<'a> Checker<'a> {
     /// where the parameter is passed by address (`[BRW-8]`).
     fn pass_argument(&mut self, value: Expr, param_ty: Ty, mode: Mode) -> Expr {
         let by_address = self.types.passed_by_address(param_ty);
+        self.pass_argument_by(value, param_ty, mode, by_address)
+    }
+
+    /// A lambda argument a generic call checked while inferring, passed in its parameter's mode.
+    /// `[FN-2a]`, shape B10 — a lambda written at the call is a value, not the mutable place a
+    /// `mut` parameter borrows, as `check_argument_by` reports for any other value; passing it on
+    /// gave the callee a value where it reads a pointer.
+    fn pass_checked_lambda(&mut self, value: Expr, span: Span, param_ty: Ty, mode: Mode, by_address: bool) -> Expr {
+        if mode == Mode::Mut && value.ty != self.common.error {
+            self.emit_mut_argument_place_error(span);
+        }
         self.pass_argument_by(value, param_ty, mode, by_address)
     }
 
@@ -54879,7 +55016,7 @@ fn binds_mut_ref(pattern: &hir::Pattern) -> bool {
         hir::PatternKind::Variant { fields, .. } | hir::PatternKind::Fields(fields) | hir::PatternKind::Or(fields) => {
             fields.iter().any(binds_mut_ref)
         }
-        hir::PatternKind::Wild | hir::PatternKind::Int(_) | hir::PatternKind::Error => false,
+        hir::PatternKind::Wild | hir::PatternKind::Int(_) | hir::PatternKind::Str(_) | hir::PatternKind::Error => false,
     }
 }
 
@@ -57368,7 +57505,7 @@ fn binds_by_mut_ref(pattern: &Pattern) -> bool {
     match &pattern.kind {
         PatternKind::Bind { by_ref, sub, .. } => *by_ref == Some(true) || sub.as_deref().is_some_and(binds_by_mut_ref),
         PatternKind::Variant { fields, .. } | PatternKind::Fields(fields) | PatternKind::Or(fields) => fields.iter().any(binds_by_mut_ref),
-        PatternKind::Wild | PatternKind::Int(_) | PatternKind::Error => false,
+        PatternKind::Wild | PatternKind::Int(_) | PatternKind::Str(_) | PatternKind::Error => false,
     }
 }
 

@@ -5017,6 +5017,24 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-264 — Helper W merged: what the first-week corpus found the compiler refusing
+
+2026-10-22 (helper W, `tasks/95/W-notes.md`). Built, each with conformance cases: string literal
+patterns (D-815: `match` on `str`/`String`, `|` and text constants, `_` or a binding for
+exhaustiveness, `E2090`, a repeated literal `W2091`; each arm compares length then bytes in place,
+and text `==`/`!=` is the runtime header's inline `ember_str_eq`); an `Array` temporary's view
+methods in a `for` (D-816, `[EXP-4]`); a consumed callable parameter stored or returned (D-817,
+ODR-189); `m[k].iter_mut()` through `index_mut` (D-818, `[STD-17]`); tuples `Ord` and a shared
+`ref T` as `T` for `Eq`, `Ord`, `Hash`, `Display`, `Debug` (D-820, ODR-181, one `cmp` builder for
+numbers, text, tuples, references and types with their own); one simple statement in a bracketed
+lambda's `:` body (D-821, `[GRM-17]`), with std's `for_each` taking its callable over. Fixed in
+passing: D-851. The first-week rate does not move (0 and 3 of 30): every program a gap stopped also
+meets a rejection in no catalogue, helper V's. Open: D-850, D-852..D-855. Ruled under the
+delegation: ODR-207..210 (`sorted` over references gives clones; a lambda at a `mut` callable
+parameter is B10; a same-line lambda body ends at the newline; std's callable consumers take the
+callable over). For the owner: how a user's callback registry marks its parameter for `[CLO-15]`
+(`tasks/95/odr-pending.md`).
+
 ## ADR-263 — Helper U merged: `[MNG-1]`'s injective symbols
 
 2026-10-22 (helper U, `tasks/95/U-notes.md`). One scheme makes every symbol: `em_` and each path

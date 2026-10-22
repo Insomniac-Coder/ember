@@ -65,20 +65,13 @@ fn parse_ingredient(line: str) -> Result[Ingredient]:
         return Err(AnyError.from(RecipeError.Format))
     name = parts[0].trim()
     amount = parts[1].trim().parse[float]()?
-    other = parts[2].trim()
-    unit = Unit.Piece
-    if other == "g":
-        unit = Unit.Gram
-    elif other == "ml":
-        unit = Unit.Millilitre
-    elif other == "tsp":
-        unit = Unit.Teaspoon
-    elif other == "tbsp":
-        unit = Unit.Tablespoon
-    elif other == "pc":
-        unit = Unit.Piece
-    else:
-        return Err(AnyError.from(RecipeError.UnknownUnit(name=other.to_string())))
+    unit = match parts[2].trim():
+        "g" => Unit.Gram
+        "ml" => Unit.Millilitre
+        "tsp" => Unit.Teaspoon
+        "tbsp" => Unit.Tablespoon
+        "pc" => Unit.Piece
+        other => return Err(AnyError.from(RecipeError.UnknownUnit(name=other.to_string())))
     return Ok(Ingredient(name=name.to_string(), amount=amount, unit=unit))
 
 const PANCAKES: str = """flour; 250; g

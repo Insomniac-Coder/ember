@@ -38,3 +38,8 @@
 - ODR-204 [MNG-1], [MOD-1] a root package's items have no package component (`em_4main`), as the spec's example; the text says so. U Q4, as built.
 - ODR-205 [MNG-1], [MONO-1] "the canonical spelling of its arguments" is defined in the spec as built (tasks/95/U-notes.md): every compiler spells alike, which link-time deduplication across packages needs. U Q5.
 - ODR-206 [MNG-1] as built: an interface-qualified method's path, a built-in type's methods under its keyword (`em_3i32…`), a structural owner as `std.core.<kind>`, a `[CLO-3]` callable copy as an instance of its callee. U Q6.
+- ODR-207 [STD-*], [TYP-15] `sorted` over an iterator of references gives `Array[T]` of clones (`T: Clone`), as `sorted(m)` does: an `Array` cannot hold non-static views (`E3063`). W Q1.
+- ODR-208 [CLO-*] a lambda given to a `mut` callable parameter is `E3027` (shape B10), as any other value there. W Q3, as built.
+- ODR-209 [GRM-17] a same-line `:` lambda body ends at the statement's newline (`h = fn(x): total += x` parses). W Q4. NOT BUILT.
+- ODR-210 [STD-19] the standard library's consumers that take a callable (`any`, `all`, `find`, …) take it over (`owned`), as `for_each` and the adapters do. W Q5. NOT BUILT.
+- OPEN, for the owner (not ruled): [CLO-15] how a user's function marks a consumed callable parameter whose captured state must carry only the static region (a callback registry), so a lambda written at the call captures by move: (a) inferred from the body storing the parameter where it outlives the call (W's recommendation; but a `pub` function's body would then change what callers may pass, which `[BRW-10]` avoids for methods), or (b) a mark in the signature (a new word). Under ODR-100 (the owner's). W Q2.
