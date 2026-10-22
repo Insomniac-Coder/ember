@@ -2691,6 +2691,18 @@ typedef struct ember_frame_name {
     uint32_t line;
 } ember_frame_name;
 void ember_backtrace_names(const ember_frame_name* names, size_t count);
+/* [CG-C-10] — one call a function of the program makes: the caller's C symbol, the callee's (""
+ * for a call through a value, an interface or a virtual method), and where the call is written.
+ * The compiler emits the table outside `release`; a backtrace names each caller's frame by the
+ * place of its call, `file:line:col`. */
+typedef struct ember_call_site {
+    const char* caller;
+    const char* callee;
+    const char* file;
+    uint32_t line;
+    uint32_t column;
+} ember_call_site;
+void ember_backtrace_sites(const ember_call_site* sites, size_t count);
 /* [RT-12] — each function of the program by its code's address, in every profile: what a stack
  * overflow names. The compiler emits the table and gives it to the runtime before `main` runs. */
 typedef struct ember_code_name {

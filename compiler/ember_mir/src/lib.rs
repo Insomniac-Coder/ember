@@ -148,6 +148,8 @@ pub struct Body {
     pub closure_captures_by_move: bool,
     /// `[DSP-2]` — compiler-only class method identity used to build and
     /// select vtables.  It is not runtime metadata in the Ember value ABI.
+    /// `[CG-C-10]` — the function's Ember path where `name` is not it (a method's: `geo.Grid.at`).
+    pub path: Option<String>,
     pub class_owner: Option<ember_types::ClassId>,
     pub class_virtual_slot: Option<usize>,
     /// See `ember_hir::Function::borrows_used_fields` (`[BRW-10]`).

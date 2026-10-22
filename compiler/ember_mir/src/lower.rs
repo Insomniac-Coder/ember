@@ -470,6 +470,7 @@ impl<'a> Builder<'a> {
             callable_regions: None,
             closure_environment: self.function.closure_environment,
             closure_captures_by_move: self.function.closure_captures_by_move,
+            path: self.function.path.map(|path| path.to_string()),
             class_owner: self.function.class_owner,
             class_virtual_slot: self.function.class_virtual_slot,
             borrows_used_fields: self.function.borrows_used_fields,

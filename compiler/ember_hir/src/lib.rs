@@ -406,6 +406,9 @@ pub struct Function {
     /// `[DSP-2]` — the class that declares this method, when this is a
     /// class method.  Kept as compiler metadata so MIR can select the
     /// runtime vtable without re-discovering the source declaration.
+    /// `[CG-C-10]` — the function's Ember path where `name` is not it: a method's, its type's path
+    /// and its name (`geo.Grid.at`). A backtrace names the function by it.
+    pub path: Option<Symbol>,
     pub class_owner: Option<ClassId>,
     /// `[DSP-2]` — the vtable slot assigned to a virtual or override method.
     /// `None` means ordinary static dispatch.

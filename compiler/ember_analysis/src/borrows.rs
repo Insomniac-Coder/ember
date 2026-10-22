@@ -5197,6 +5197,7 @@ mod callable_region_metadata_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,

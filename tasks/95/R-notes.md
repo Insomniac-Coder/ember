@@ -134,3 +134,42 @@ Rules: DIA-15, CG-C-9, PHIL-1, CG-C-7, VER-3, CG-C-6, CG-C-10, DIA-5, LT-39, SEL
   `register_field_copies` (a plain local is any C identifier now, not only `_N`).
 - Checked: every conformance file's `assert-c*` lines (395 files) against the emitted C; the whole
   conformance tree through `annotations.py` with MSVC and with clang.
+
+## CG-C-10 — done (built)
+- Tests: `tests/conformance/CG-C-10/run_fail_a_backtrace_names_paths_and_places.em` (a backtrace
+  through a method, a module function and two root functions, each frame `path at file:line:col`;
+  MSVC and clang), `accept_frames_are_named_by_path_and_calls_by_place.em` (the tables, on the
+  emitted C, MSVC/clang/gcc), support `geometry.em`; `milestones.rs`
+  `demangle_writes_a_c_stack_in_ember_paths`.
+- What was missing: frames printed the function's declaration line (no column) and a method by its
+  bare name (`at`); there was no `ember demangle`.
+- Compiler:
+  - `ember_hir::Function::path`, `ember_mir::Body::path` (`Option`; set for methods in
+    `ember_typeck`: `geometry.Grid.at`, a derived `clone`'s `T.clone`; lowered in `lower.rs`; `None`
+    at every other constructor) — the function's Ember path where `name` is not it.
+  - `compiler/ember_codegen_c/src/lib.rs` — frame names (and `[RT-12]`'s code names) use the path;
+    `emit_call_sites`: outside `release`, `em_call_sites[]`, each call a program function makes to
+    another (callee `""` when through a value, an interface or a virtual method) with its
+    `file:line:col`; `emit_backtrace_registration` hands both tables to the runtime. And every call
+    statement now gets its own `#line` (`emit_terminator`): calls had none, so the line a debugger
+    or a PDB gave a call was counted on from the statement before (seen: main's call at line 31
+    reported as 37). That is a `[CG-C-8]` defect fixed in passing.
+  - Runtime (`runtime/ember_rt/templates/ember_rt.{h,c}.in`, regenerated): `ember_call_site`,
+    `ember_backtrace_sites`; the backtrace prints the innermost frame at the panic's place, each
+    other at its call of the frame below (`call_site`: a direct call of that callee, else one through
+    a value; of several, the one on the frame's line when Windows' PDB gives it
+    (`SymGetLineFromAddr64`), else the first). `EMBER_RUNTIME_ABI` not bumped: an entry point was
+    added, nothing changed shape (as `ember_stack_names` was added).
+  - `compiler/ember_driver/src/main.rs` — `ember demangle <file>`: checks the program, then copies
+    standard input to standard output with each of its functions' C symbols (and `…__rl` bodies)
+    written as Ember paths, whole identifiers only; listed in `--help`.
+- Ceilings: the column is the call's last argument's (the call's own when it has none): the MIR
+  keeps one span per call terminator, the last argument's, which the move/borrow diagnostics rely
+  on (making it the call's span changed `tests/ui/borrow/O1` for the worse, so it was not done).
+  On Linux there is no line information (no DWARF reader), so of several calls of one callee in one
+  function the first is named. A function inlined (by Ember's inliner or the C compiler) is its
+  caller's frame, as before.
+- Spec observation: `[MNG-1]` specifies length-prefixed, injective symbols (`em_3lib1m3x_f`); the
+  compiler mangles `em_` + the dotted path with `_` (`em_geometry_Grid_at`), which is not injective
+  (no test names MNG-1). `ember demangle` therefore maps symbols through the program (it takes the
+  program's file) rather than decoding them.

@@ -80,6 +80,8 @@ this compiler does not have yet):
     ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <fn> <file>
                                                    the shortest call chain to that effect
     ember calls --foreign <item>                   every foreign function the item can reach
+    ember demangle <file>                          a C stack on standard input, its program's symbols
+                                                   written as Ember paths
     ember bind <header> [-I <dir>] [-D <name[=value]>] (--init [--merge] | --report [--overlay <file>]
                          [--baseline <file> | --write-baseline <file>] | --check <overlay>)
                                                    a starter overlay, what is skipped or still unsafe,
@@ -452,6 +454,9 @@ struct Options {
     foreign_calls: Option<ForeignCalls>,
     /// `[CLI-12]`, `[DET-9]` — `ember why` and `ember inspect --deterministic`.
     effect_report: Option<EffectReport>,
+    /// `[CG-C-10]` — `ember demangle <file>`: check the program, then copy standard input to
+    /// standard output with each of its functions' C symbols written as the function's Ember path.
+    demangle: bool,
     /// `[MONO-2]` — `--report=instantiations`.
     instantiation_report: bool,
     /// `[DIA-8]` — `ember explain --borrow <file>:<line>`: the loans live at that line.
@@ -604,6 +609,13 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "tcb" => tcb(&args[1..]),
         "audit" => audit(&args[1..]),
         "calls" => calls(&args[1..]),
+        // `[CG-C-10]` — a C stack (a debugger's, a crash dump's) in Ember's names.
+        "demangle" => {
+            let [file] = &args[1..] else {
+                return Err(format!("`ember demangle` takes the program whose stack standard input holds: `ember demangle <file.{}>`", ember_branding::SOURCE_EXT));
+            };
+            compile(Path::new(file.as_str()), "check", &Options { demangle: true, ..Options::default() })
+        }
         "bind" => cimport::bind(&args[1..]),
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
@@ -1685,6 +1697,35 @@ fn calls(args: &[String]) -> Result<ExitCode, String> {
     let path = path.ok_or("`ember calls` needs a source file")?;
     let options = Options { foreign_calls: Some(ForeignCalls { json, item }), ..Options::default() };
     compile(&path, "check", &options)
+}
+
+/// `[CG-C-10]` — `text` (a C stack trace) with each C symbol of the program's functions written
+/// as the function's Ember path (`em_geometry_Grid_at` is `geometry.Grid.at`): a whole identifier
+/// only, so `em_geometry_probe` inside `em_geometry_probe2` is left alone. A reloadable function's
+/// body (`…__rl`) is its function's. Everything else is copied as it is.
+fn demangle(text: &str, bodies: &[ember_mir::Body]) -> String {
+    let mut paths: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for body in bodies {
+        let path = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
+        paths.insert(format!("{}__rl", body.symbol), path.clone());
+        paths.insert(body.symbol.clone(), path);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        out.push_str(paths.get(word.as_str()).map_or(word.as_str(), String::as_str));
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
 }
 
 /// `[CLI-12]` — `ember why --alloc|--block|--io|--lock|--sync|--unsafe|--ffi <item> <file>`.
@@ -4944,6 +4985,14 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     if let Some(request) = &options.effect_report {
         report(&sink, &map, options);
         print_effect_report(input, &bodies, &types, &modules, &map, request)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    // `[CG-C-10]` — every function's symbol, before inlining removes any.
+    if options.demangle {
+        report(&sink, &map, options);
+        let mut stack = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut stack).map_err(|error| format!("cannot read standard input: {error}"))?;
+        print!("{}", demangle(&stack, &bodies));
         return Ok(ExitCode::SUCCESS);
     }
     // `[CLI-13]` — the call graph the effects were computed on, before inlining folds it.

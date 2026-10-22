@@ -7622,6 +7622,14 @@ impl Emitter<'_> {
     }
 
     fn emit_terminator(&mut self, terminator: &Terminator, body: &Body, index: usize) {
+        // `[CG-C-8]`, `[CG-C-10]` — a call is a C statement of its own: it gets its Ember line, so
+        // a debugger steps onto it and a backtrace's line information names it, rather than a
+        // line counted on from the statement before.
+        if matches!(terminator, Terminator::Call { .. })
+            && let Some(block) = body.blocks.get(index)
+        {
+            self.emit_line_directive(block.terminator_span);
+        }
         // `[HR-3b]` (A1) — the call this frame is in, for a checkpoint reached below it.
         if self.rl_frame_active
             && let Some(site) = self.frame_site(terminator, body)
@@ -11124,7 +11132,7 @@ impl Emitter<'_> {
             {
                 continue;
             }
-            let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
+            let name = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
             entries.push((body.symbol.clone(), name));
         }
         entries.sort();
@@ -11180,7 +11188,10 @@ impl Emitter<'_> {
         live
     }
 
-    fn emit_frame_names(&mut self, bodies: &[Body], entry_runs_main: bool) -> usize {
+    /// `[RT-4]`, `[CG-C-10]` — outside `release`, each function by its C symbol with its Ember path
+    /// (a method's type and name: `geo.Grid.at`) and where it is declared; and each call it makes
+    /// (`emit_call_sites`). How many of each there are.
+    fn emit_frame_names(&mut self, bodies: &[Body], entry_runs_main: bool) -> (usize, usize) {
         let mut entries: Vec<(String, String, String, u32)> = Vec::new();
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
@@ -11189,7 +11200,7 @@ impl Emitter<'_> {
             let Some(file) = self.map.get(body.span.file) else { continue };
             let line = file.line_col(body.span.start).line;
             let path = self.map.artefact_path(body.span.file);
-            let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
+            let name = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
             // The C entry point is `main`'s frame when the C compiler inlines `main` into it.
             if entry_runs_main && body.symbol == ember_branding::mangled("main") {
                 entries.push(("main".to_string(), name.clone(), path.clone(), line));
@@ -11199,7 +11210,7 @@ impl Emitter<'_> {
         entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         entries.dedup_by(|a, b| a.0 == b.0);
         if entries.is_empty() {
-            return 0;
+            return (0, 0);
         }
         self.line("#if !defined(EMBER_RELEASE)");
         self.line(&format!("static const {RT}frame_name {}frame_names[] = {{", ember_branding::mangle_prefix()));
@@ -11212,8 +11223,74 @@ impl Emitter<'_> {
             ));
         }
         self.line("};");
+        let sites = self.emit_call_sites(bodies, entry_runs_main);
         self.line("#endif");
-        entries.len()
+        (entries.len(), sites)
+    }
+
+    /// `[CG-C-10]` — each call a function of the program makes to one of its own, or through a
+    /// value, an interface or a virtual method (callee `""`): the caller's C symbol, the callee's,
+    /// and where the call is written, `file:line:col`. A backtrace names each caller's frame by its
+    /// call of the frame below. Strings and numbers only, like `frame_names`: no function is kept
+    /// alive by it. A call to a built-in is the runtime's, never a frame of the program's.
+    fn emit_call_sites(&mut self, bodies: &[Body], entry_runs_main: bool) -> usize {
+        let mut sites: Vec<(String, String, String, u32, u32)> = Vec::new();
+        for body in bodies {
+            if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
+                continue;
+            }
+            let mut callers = vec![body.symbol.clone()];
+            if entry_runs_main && body.symbol == ember_branding::mangled("main") {
+                callers.push("main".to_string());
+            }
+            for block in &body.blocks {
+                let Terminator::Call { func, .. } = &block.terminator else { continue };
+                let callee = match func {
+                    FuncRef::Direct { symbol, .. } => symbol.clone(),
+                    FuncRef::Builtin { .. } => continue,
+                    _ => String::new(),
+                };
+                let span = block.terminator_span;
+                if span.is_dummy() {
+                    continue;
+                }
+                let Some(file) = self.map.get(span.file) else { continue };
+                let at = file.line_col(span.start);
+                let path = self.map.artefact_path(span.file);
+                for caller in &callers {
+                    sites.push((caller.clone(), callee.clone(), path.clone(), at.line, at.col));
+                }
+            }
+        }
+        sites.sort();
+        sites.dedup();
+        if sites.is_empty() {
+            return 0;
+        }
+        self.line(&format!("static const {RT}call_site {}call_sites[] = {{", ember_branding::mangle_prefix()));
+        for (caller, callee, path, line, column) in &sites {
+            self.line(&format!(
+                "    {{{}, {}, {}, {line}u, {column}u}},",
+                c_string_literal(caller),
+                c_string_literal(callee),
+                c_string_literal(path)
+            ));
+        }
+        self.line("};");
+        sites.len()
+    }
+
+    /// `[RT-4]`, `[CG-C-10]` — gives the runtime the backtrace's tables, outside `release`.
+    fn emit_backtrace_registration(&mut self, (named, sites): (usize, usize)) {
+        if named == 0 {
+            return;
+        }
+        self.line("#if !defined(EMBER_RELEASE)");
+        self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
+        if sites > 0 {
+            self.line(&format!("    {RT}backtrace_sites({}call_sites, {sites}u);", ember_branding::mangle_prefix()));
+        }
+        self.line("#endif");
     }
 
     /// `[FN-8]` — the C entry point initialises the runtime, calls Ember's
@@ -11222,7 +11299,7 @@ impl Emitter<'_> {
     ///
     /// A `main` that takes `args` or returns a `Result` is called through the
     /// entry the checker writes (`main_entry`), which returns the status.
-    fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: usize, coded: usize) {
+    fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: (usize, usize), coded: usize) {
         // Annex B — a reloadable image's entry is the runtime's to call ([HR-33]).
         if self.reload.is_some() {
             self.line(&format!("static int {}rl_entry(int argc, char** argv) {{", ember_branding::mangle_prefix()));
@@ -11235,11 +11312,7 @@ impl Emitter<'_> {
         }
         self.line(&format!("    {RT}rt_set_args(argc, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
-        if named > 0 {
-            self.line("#if !defined(EMBER_RELEASE)");
-            self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
-            self.line("#endif");
-        }
+        self.emit_backtrace_registration(named);
         // `[RT-12]` — what a stack overflow names, in every profile.
         if coded > 0 {
             self.line(&format!("    {RT}stack_names({}code_names, {coded}u);", ember_branding::mangle_prefix()));
@@ -11312,7 +11385,7 @@ impl Emitter<'_> {
     /// A panic says so on standard error before it aborts (`test_panic_marker`),
     /// and a test that returns says so before the shutdown's leak report
     /// (`test_end_marker`). An unknown number exits with status 2.
-    fn emit_test_entry(&mut self, leak_check: bool, named: usize, coded: usize, tests: &[String]) {
+    fn emit_test_entry(&mut self, leak_check: bool, named: (usize, usize), coded: usize, tests: &[String]) {
         let panicked = test_panic_marker();
         let returned = test_end_marker();
         self.line(&format!("static void {RT}test_on_panic(const char* msg, size_t len) {{"));
@@ -11348,11 +11421,7 @@ impl Emitter<'_> {
         self.line(&format!("    cfg.on_panic = {RT}test_on_panic;"));
         self.line(&format!("    {RT}rt_set_args(1, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
-        if named > 0 {
-            self.line("#if !defined(EMBER_RELEASE)");
-            self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
-            self.line("#endif");
-        }
+        self.emit_backtrace_registration(named);
         // `[RT-12]` — what a stack overflow names, in every profile.
         if coded > 0 {
             self.line(&format!("    {RT}stack_names({}code_names, {coded}u);", ember_branding::mangle_prefix()));
@@ -13582,6 +13651,7 @@ mod string_descriptor_view_parts_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,

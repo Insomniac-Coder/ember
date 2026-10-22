@@ -544,7 +544,7 @@ mod tests {
             emit_if_used: false, borrowed_params: Vec::new(), for_iterators: Vec::new(),
             call_argument_bindings: Vec::new(), callable_regions: None,
             closure_environment: None, closure_captures_by_move: false,
-            class_owner: None, class_virtual_slot: None, borrows_used_fields: false, is_abstract: false,
+            path: None, class_owner: None, class_virtual_slot: None, borrows_used_fields: false, is_abstract: false,
             is_extern_declaration: false, ffi_counted: None, mut_self: false,
             elided_accesses: Vec::new(), hoisted_accesses: Vec::new(),
             uncounted_handles: Vec::new(), removed_checks: Vec::new(), restrict_views: false, stack_buffers: Vec::new(), loop_notes: Default::default(),

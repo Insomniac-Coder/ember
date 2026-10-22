@@ -1045,6 +1045,19 @@ fn explain_prints_the_page_built_into_the_compiler() {
     assert!(value["page"].as_str().is_some_and(|text| text.contains("## Why")), "{}", json.stdout);
 }
 
+/// `[CG-C-10]` — `ember demangle <file>` copies a C stack (a debugger's, a crash dump's) from
+/// standard input with each C symbol of the program's functions written as its Ember path, a
+/// method's with its type's (`geometry.Grid.at`); a whole identifier only, everything else as it is.
+#[test]
+fn demangle_writes_a_c_stack_in_ember_paths() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/CG-C-10/accept_frames_are_named_by_path_and_calls_by_place.{SOURCE_EXT}");
+    let stack = "program!em_geometry_Grid_at+0x1a\nem_geometry_probe (g=0x0) at program.c:12\nem_outer em_outer_2 em_main\n";
+    let shown = ember_with_input(&["demangle", &source], &root, stack.as_bytes());
+    assert_eq!(shown.exit, 0, "{}", shown.stderr);
+    assert_eq!(shown.stdout, "program!geometry.Grid.at+0x1a\ngeometry.probe (g=0x0) at program.c:12\nouter em_outer_2 main\n");
+}
+
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
 /// `--flag` (and `-D`) of the specification's listing, read from the development target itself, is in it.
 #[test]
