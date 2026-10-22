@@ -58,7 +58,11 @@ are out of `[FFI-11]`'s `unfinished` entry.
   `borrowed one` was `E5015`/`E5002` (`ref Ctx` "refers to a type with no foreign
   representation", `mut ctx: Ctx` "incomplete"). Test: `tests/conformance/FFI-11/accept_an_opaque_handle_is_borrowed_as_one.em`
   (with `handles.c`, `handles.h`, `overlays/handles.em`): `ref`, `ref mut`, nullable of each, a
-  result `from(counter)`, no `unsafe`.
+  result `from(counter)`, no `unsafe`. An interpretation for the lead: `[FFI-10]` says a `safe fn`
+  "writes the safe Ember types or `mut` parameter modes produced by those words", and the
+  `[FFI-11]` table's type for `one` with `exclusive` is `ref mut T`; the checker took only `mut p:
+  T`, and now takes `p: ref mut T` too (any referent), which an incomplete type needs.
+- `compiler/ember_typeck/src/lib.rs` — `synth_cpp_span` (T2.1) and `ffi_ordered` (Defects, 1).
 - `compiler/ember_driver/src/cimport.rs`:
   - `CType.opaque` (a data pointer to an incomplete type), set in `c_type`; `safe_parameter` gives
     such a pointer's exclusive `one` as `ref mut T` (an incomplete type takes no parameter mode).
@@ -68,7 +72,7 @@ are out of `[FFI-11]`'s `unfinished` entry.
     writing `nullable borrowed one` (any order but ownership-count-rest) gave `E0900` "this
     `param(…)` contract is not implemented yet": the checker's parsers are positional
     (`ffi_param_contract_arg` and its neighbours), and the importer copied the overlay's order. The
-    importer now canonicalises; hand declarations are still positional (see Defects).
+    importer now canonicalises, and the checker reads the words in any order too (Defects, 1).
   - `slot_words` also derives `borrowed one exclusive` for a C++ `T&` of a type by value (`mut p:
     T`) when the entry writes nothing: a `noexcept` free C++ function with an `int&` and an entry
     was `E5002` before ("safe fn needs an @ffi contract for mutable parameter").
@@ -147,6 +151,13 @@ table of thunks would make every bridge value two words — an improvement for a
 here). It crosses as a result and by `const&`, `&`, `&&` or value like the other bridge types;
 `ember inspect --cost` lists its operations (`[FFI-17f]`, `bridge_type` in main.rs). Test:
 `accept_a_weak_pointer_observes_a_shared_one.em` (`library.hpp` gains `watch`).
+
+Also: `ember bind --init`'s starter entry asks a view result only `TODO(lifetime)`, and nothing of
+what the importer passes itself (`starter_entry`); an entry with a `TODO` word is not refused for a
+missing lifetime. `out` and `status` words on a C++ method are tested in
+`FFI-17/accept_out_and_status_words_reach_a_wrapped_method.em` (`statuses.hpp`,
+`overlays/statuses.em`: `Result[c_int, SplitError]`, and `(c_int, c_int, c_int)` in a `Result`).
+Each new thunk file was compiled in WSL with g++ 15 and clang++ 21, `-Wall -Wextra -Werror`.
 
 Tests (T2.1–T2.3): `tests/conformance/FFI-17a/views.hpp` (C++20: the directory's `ember.toml`
 `[cpp.views] standard = "c++20"`), `accept_views_and_optional_values_cross_safely.em` (contracted:
