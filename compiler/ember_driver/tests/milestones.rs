@@ -1045,6 +1045,81 @@ fn explain_prints_the_page_built_into_the_compiler() {
     assert!(value["page"].as_str().is_some_and(|text| text.contains("## Why")), "{}", json.stdout);
 }
 
+/// `[CG-C-9]` — the build writes debugger visualisers beside the program, which show its values as
+/// Ember values: a `.natvis` (Visual Studio, WinDbg; the Windows link also puts it in the program
+/// database), GDB's auto-loaded `<program>-gdb.py` and an LLDB script. An enum (`Option`, `Result`)
+/// as its variant and payload, a struct and a class object by their fields (the object header left
+/// out), a `str` and a `String` as text, and an `Array` field as its elements, of their type.
+#[test]
+fn build_writes_debugger_visualisers_beside_the_program() {
+    let root = workspace_root();
+    let dir = temporary_directory("visualisers");
+    let source = dir.join(format!("shapes.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "enum Shape:\n    Circle(r: f64)\n    Empty\n\nstruct Bag:\n    items: Array[int]\n    label: String\n    shape: Shape\n\n\
+         class Node:\n    value: int\n\nfn first(b: Bag) -> Option[int]:\n    if b.items.len() > 0:\n        return Some(b.items[0])\n    return None\n\n\
+         fn main():\n    b = Bag([1, 2], \"hi\", Shape.Circle(1.0))\n    n = Node(3)\n    t: str = \"text\"\n    println(first(b), n.value, t, b.label)\n",
+    )
+    .expect("write the program");
+    let out = dir.join("out");
+    let built = ember(&["build", &source.to_string_lossy(), "--profile", "debug", "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    let bin = out.join("debug").join("bin");
+    let program = if cfg!(windows) { "shapes.exe" } else { "shapes" };
+    let read = |name: &str| std::fs::read_to_string(bin.join(name)).unwrap_or_else(|error| panic!("{name} beside the program: {error}"));
+    let natvis = read("shapes.natvis");
+    let shape = ember_branding::mangled("Shape");
+    let bag = ember_branding::mangled("Bag");
+    let node = ember_branding::object_struct("Node");
+    let runtime = ember_branding::RUNTIME_PREFIX;
+    for wanted in [
+        "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\">".to_string(),
+        format!("<Type Name=\"{shape}\">"),
+        "<DisplayString Condition=\"tag == 0\">Circle(r: {payload.Circle.r})</DisplayString>".to_string(),
+        "<DisplayString Condition=\"tag == 1\">Empty</DisplayString>".to_string(),
+        format!("<Type Name=\"{bag}\">"),
+        "<DisplayString>Bag {{ items: [{items.len}], label: {(char*)label.ptr,[label.len]s8}, shape: {shape} }}</DisplayString>".to_string(),
+        "<ValuePointer>(int64_t*)items.ptr</ValuePointer>".to_string(),
+        format!("<Type Name=\"{node}\">"),
+        "<DisplayString>Node {{ value: {value} }}</DisplayString>".to_string(),
+        format!("<Type Name=\"{runtime}str\">"),
+        "<StringView>(char*)ptr,[len]s8</StringView>".to_string(),
+        "<DisplayString Condition=\"tag == 1\">Some({payload.Some._0})</DisplayString>".to_string(),
+    ] {
+        assert!(natvis.contains(&wanted), "the .natvis lacks {wanted}:\n{natvis}");
+    }
+    assert!(!natvis.contains("_header"), "an object's header is shown:\n{natvis}");
+    let described = format!("\"{shape}\": {{\"kind\": \"enum\", \"name\": \"Shape\", \"variants\": {{0: (\"Circle\", [(\"r\", \"payload.Circle.r\", (\"value\",))]), 1: (\"Empty\", [])}}}}");
+    let items = "(\"items\", \"items\", (\"elements\", \"int64_t\"))";
+    for (name, script) in [(format!("{program}-gdb.py"), read(&format!("{program}-gdb.py"))), ("shapes.lldb.py".to_string(), read("shapes.lldb.py"))] {
+        assert!(script.contains(&described) && script.contains(items), "{name} does not describe the program's types:\n{script}");
+    }
+    assert!(read(&format!("{program}-gdb.py")).contains("pretty_printers"), "the GDB script registers no printer");
+    assert!(read("shapes.lldb.py").contains("def __lldb_init_module(debugger, internal_dict):"), "the LLDB script cannot be imported");
+}
+
+/// `[CG-C-10]` — `ember demangle <file>` copies a C stack (a debugger's, a crash dump's) from
+/// standard input with each C symbol of the program's functions written as its Ember path, a
+/// method's with its type's (`geometry.Grid.at`); a whole identifier only, everything else as it is.
+#[test]
+fn demangle_writes_a_c_stack_in_ember_paths() {
+    let root = workspace_root();
+    let source = format!("tests/conformance/CG-C-10/accept_frames_are_named_by_path_and_calls_by_place.{SOURCE_EXT}");
+    let symbol = ember_branding::mangled;
+    let stack = format!(
+        "program!{}+0x1a\n{} (g=0x0) at program.c:12\n{} {} {}\n",
+        symbol("geometry.Grid.at"),
+        symbol("geometry.probe"),
+        symbol("outer"),
+        symbol("outer_2"),
+        symbol("main")
+    );
+    let shown = ember_with_input(&["demangle", &source], &root, stack.as_bytes());
+    assert_eq!(shown.exit, 0, "{}", shown.stderr);
+    assert_eq!(shown.stdout, format!("program!geometry.Grid.at+0x1a\ngeometry.probe (g=0x0) at program.c:12\nouter {} main\n", symbol("outer_2")));
+}
+
 /// `[CLI-15]` — `ember --help` lists every command and flag of XVII.1: each `ember <command>` and each
 /// `--flag` (and `-D`) of the specification's listing, read from the development target itself, is in it.
 #[test]
@@ -3697,7 +3772,7 @@ fn wrapping_arithmetic_is_unsigned_in_c() {
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
     for wrapped in [
-        "(int64_t)((uint64_t)(_1) * (uint64_t)(6364136223846793005LL))",
+        "(int64_t)((uint64_t)(i) * (uint64_t)(6364136223846793005LL))",
         "(int32_t)((uint32_t)(",
         "(int16_t)((uint32_t)(",
         "(int64_t)((uint64_t)(0LL) - (uint64_t)(",
@@ -6704,9 +6779,10 @@ fn aggregates_and_views_are_written_field_by_field() {
     );
     assert!(next.contains("(_0).tag = 0;") && !next.contains("memset(") && !next.contains(".tag = 1, .payload"), "`None` or `Some` is a literal:\n{next}");
     let lines = c_definition(&c.stdout, &format!("{}_Lines_next", ember_branding::mangled("std_string")));
-    assert!(lines.contains("((*_1).rest).ptr = ") && lines.contains("((*_1).rest).len = "), "the slice is a literal:\n{lines}");
+    // `[CG-C-7]` — the receiver is `self` in the C, as in the source.
+    assert!(lines.contains("((*self).rest).ptr = ") && lines.contains("((*self).rest).len = "), "the slice is a literal:\n{lines}");
     assert!(lines.contains("(_0).ptr = NULL;") && !lines.contains("{ .ptr = NULL"), "`None` of a view is a literal:\n{lines}");
-    assert!(lines.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, written by fields, is copied whole:\n{lines}");
+    assert!(lines.contains("(rest).ptr = ((*self).rest).ptr;"), "the rest, written by fields, is copied whole:\n{lines}");
     let counted = format!("tests/conformance/CTL-1/accept_a_view_iterator_loop_is_counted.{SOURCE_EXT}");
     let c = ember(&["build", &counted, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
@@ -6716,7 +6792,7 @@ fn aggregates_and_views_are_written_field_by_field() {
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let words = c_definition(&c.stdout, &format!("{}_SplitWhitespace_next", ember_branding::mangled("std_string")));
-    assert!(words.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
+    assert!(words.contains("(rest).ptr = ((*self).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
     assert_eq!(register_field_copies(words), 0, "a register local is copied by its fields:\n{words}");
 }
 
@@ -6725,8 +6801,10 @@ fn register_field_copies(c: &str) -> usize {
     c.lines()
         .map(str::trim)
         .filter(|line| {
-            line.strip_prefix("(_").and_then(|rest| rest.split_once(").ptr = (_")).is_some_and(|(_, source)| {
-                source.strip_suffix(").ptr;").is_some_and(|local| !local.is_empty() && local.chars().all(|c| c.is_ascii_digit()))
+            // `[CG-C-7]` — a local is `_N`, or its Ember name: a plain C identifier either way.
+            let local = |name: &str| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            line.strip_prefix('(').and_then(|rest| rest.split_once(").ptr = (")).is_some_and(|(target, source)| {
+                local(target) && source.strip_suffix(").ptr;").is_some_and(local)
             })
         })
         .count()

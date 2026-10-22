@@ -1,9 +1,9 @@
 #$ test: run-pass
 #$ rules: MONO-5, MONO-7, MONO-8, MONO-9
 #$ profiles: debug, development, release
-#$ assert-c-count: contains("(ember_dyn _1, int64_t _2)") == 2
-#$ assert-c: contains("->slot0)(_1.data)")
-#$ assert-c: contains("->slot1)(_1.data)")
+#$ assert-c-count: contains("(ember_dyn x, int64_t count) {") == 1
+#$ assert-c: contains("->slot0)(x.data)")
+#$ assert-c: contains("->slot1)(x.data)")
 #$ stdout: 4.0 4 1
 #$ stdout: 3.0 0 1
 #$ stdout: 4.0 4 1

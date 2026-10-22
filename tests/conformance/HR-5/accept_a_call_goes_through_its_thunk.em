@@ -6,11 +6,11 @@
 #$ 7
 #$ assert-c: contains("int64_t em_add_one(int64_t _1) {")
 #$ assert-c: contains("return ((int64_t (*)(int64_t))em_rl_targets[")
-#$ assert-c: contains("int64_t em_add_one__rl(int64_t _1) {")
+#$ assert-c: contains("int64_t em_add_one__rl(int64_t x) {")
 #$ assert-c: contains("em_add_one(11LL)")
 #$ assert-c: !contains("static inline EMBER_MAYBE_UNUSED int64_t em_add_one")
 #$ assert-c: contains("((const struct ember_native_fn_descriptor*)em_rl_descriptors[")
-#$ assert-c: contains("->ti->vtable))->slot0)(_1)")
+#$ assert-c: contains("->ti->vtable))->slot0)(s)")
 #$ assert-c: contains("EMBER_RL_MANIFEST const ember_rl_manifest em_reload_manifest = {")
 #$ assert-c: contains("EMBER_RELOAD_MAGIC, EMBER_RELOAD_PROTOCOL,")
 #$ assert-c: contains("{ "em_add_one", (void (*)(void))em_add_one__rl, (void (*)(void))em_add_one,")

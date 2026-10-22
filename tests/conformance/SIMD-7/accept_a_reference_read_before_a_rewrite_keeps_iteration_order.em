@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: -1 67 155
 #$ assert-c: !contains(" << ")
-#$ assert-c-count: contains("; ++_") == 3
+#$ assert-c-count: contains("; ++i") == 3
 # Reading an element through a shared reference and then rewriting it is
 # the same access as the direct indexed read. The group saves its elements
 # before running, and the second reference reads the first write's result.

@@ -29,6 +29,9 @@ mod frames;
 mod header;
 mod integer_reduction;
 mod reload;
+mod visualisers;
+
+pub use visualisers::Visualisers;
 
 pub use reload::{ReloadImage, manifest_symbol};
 
@@ -55,6 +58,8 @@ pub struct Output {
     /// foreign function (its name) and each call site the program makes to one (the function's
     /// index and the place).
     pub ffi_instrument: Option<FfiInstrumentOutput>,
+    /// `[CG-C-9]` — the program's debugger visualisers, which the build writes beside it.
+    pub visualisers: Visualisers,
 }
 
 /// `[FFI-37]`, `[FFI-37b]` — what an instrumented test binary counts.
@@ -567,6 +572,7 @@ fn emit_with(
     write(&mut emitter);
     check_split_views(&emitter.split_views, &emitter.out);
     let header_source = header::render(&emitter, bodies, package_name);
+    let visualisers = visualisers::render(&emitter);
     let mut direct_calls = emitter.direct_calls.take();
     let mut relaxed_units = Vec::new();
     for mode in modes {
@@ -621,6 +627,7 @@ fn emit_with(
         header_source,
         safety_json: safety_json(bodies, map),
         ffi_instrument,
+        visualisers,
     }
 }
 
@@ -4843,7 +4850,8 @@ impl Emitter<'_> {
         (def.declaring_module == usize::MAX
             && def.name.as_str().starts_with("Cell_")
             && def.fields.len() == 1)
-            .then_some(def.fields[0].ty)
+            // Lazily: `then_some` would index a struct with no fields.
+            .then(|| def.fields[0].ty)
     }
 
     fn shared_type_info_symbol(&self, id: StructId) -> String {
@@ -6337,6 +6345,8 @@ impl Emitter<'_> {
         // `[HR-3b]` (A1) — what a checkpoint's frames of this body still use, described beside it.
         let frame_info = if self.frames_on() { Some(self.emit_frame_info(body)) } else { None };
         self.rl_frame_active = false;
+        // `[CG-C-7]` — where this function's C starts: once written, its locals take their names.
+        let start = self.out.len();
         self.line(&format!("{linkage}{signature} {{"));
         if self.comptime.is_some() {
             self.line(&format!("    EMBER_CT_ENTER({});", c_string_literal(&body.name)));
@@ -6389,6 +6399,8 @@ impl Emitter<'_> {
             let ty = body.locals[counted.counter.0 as usize].ty;
             self.types.is_integral(ty) && self.wide_int(ty).is_none()
         });
+        // `[CG-C-6]` — the loops in vectorisable form, which get the vectorisation pragma.
+        let vectorised = ember_analysis::loops_in_vectorisable_form(body, self.types, for_loops.keys().copied());
         let mut hidden_tests: BTreeSet<usize> = for_loops.values().map(|l| l.test.0 as usize).collect();
         self.folded_tests = folded_tests(body, &for_loops, self.types);
         hidden_tests.extend(self.folded_tests.keys().copied());
@@ -6484,6 +6496,13 @@ impl Emitter<'_> {
         for buffer in &body.stack_buffers {
             self.line(&format!("    uint64_t _sb{}[8];", buffer.local.0));
         }
+        // `[OPT-1]` — a class object made in the frame: its own C struct, header and all.
+        for local in &body.frame_objects {
+            if let TyKind::Class(class) = self.types.kind(body.locals[local.0 as usize].ty) {
+                let object = ember_branding::object_struct(&self.types.class_def(*class).name.to_string());
+                self.line(&format!("    struct {object} _fo{};", local.0));
+            }
+        }
         if body.locals.iter().any(|d| d.kind != LocalKind::Arg && !self.is_void(d.ty)) {
             self.line("");
         }
@@ -6566,7 +6585,7 @@ impl Emitter<'_> {
                 }
             }
             if let Some(counted) = for_loops.get(&index) {
-                self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice), &address_taken);
+                self.emit_for_loop(counted, body, scoped.get(&index).map_or(&[], Vec::as_slice), &address_taken, vectorised.contains(&index));
                 continue;
             }
             self.emit_block_stmts(&block.stmts, body);
@@ -6577,6 +6596,7 @@ impl Emitter<'_> {
         self.line("");
         self.interface_caches.clear();
         self.rl_frame_active = false;
+        name_locals(&mut self.out, start, body);
     }
 
     fn emit_block_stmts(&mut self, stmts: &[Stmt], body: &Body) {
@@ -6605,7 +6625,7 @@ impl Emitter<'_> {
     /// whose counter steps by one in its header; clang takes any loop. The
     /// body's blocks follow one another with no jump, their checks and calls
     /// inline.
-    fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize], address_taken: &BTreeSet<LocalId>) {
+    fn emit_for_loop(&mut self, counted: &ForLoop, body: &Body, locals: &[usize], address_taken: &BTreeSet<LocalId>, vectorise: bool) {
         // A function-wide scalar the loop sets (a running total) is copied
         // into a block-local of the same name for the loop and back after
         // it: MSVC does not unroll a loop setting a function-wide variable.
@@ -6688,6 +6708,9 @@ impl Emitter<'_> {
                 // the counter has not passed the limit, their difference as
                 // `uint64_t` is exact for every integer type the header takes.
                 let more = if counted.inclusive { ">=" } else { ">" };
+                if vectorise {
+                    self.line("    EMBER_VECTORISE");
+                }
                 self.line(&format!(
                     "    for (; _{counter} {test} _{limit} && (uint64_t)_{limit} - (uint64_t)_{counter} {more} {}u; ) {{",
                     turns - 1
@@ -6699,6 +6722,9 @@ impl Emitter<'_> {
                     self.line(&format!("    ++_{counter};"));
                 }
                 self.line("    }");
+            }
+            if vectorise {
+                self.line("    EMBER_VECTORISE");
             }
             self.line(&format!("    for (; _{counter} {test} _{limit}; ++_{counter}) {{"));
             self.emit_for_body(counted, body, locals);
@@ -7611,6 +7637,14 @@ impl Emitter<'_> {
     }
 
     fn emit_terminator(&mut self, terminator: &Terminator, body: &Body, index: usize) {
+        // `[CG-C-8]`, `[CG-C-10]` — a call is a C statement of its own: it gets its Ember line, so
+        // a debugger steps onto it and a backtrace's line information names it, rather than a
+        // line counted on from the statement before.
+        if matches!(terminator, Terminator::Call { .. })
+            && let Some(block) = body.blocks.get(index)
+        {
+            self.emit_line_directive(block.terminator_span);
+        }
         // `[HR-3b]` (A1) — the call this frame is in, for a checkpoint reached below it.
         if self.rl_frame_active
             && let Some(site) = self.frame_site(terminator, body)
@@ -7844,6 +7878,19 @@ impl Emitter<'_> {
                 self.emit_next(next.0 as usize, index);
             }
             Terminator::Call { func, args, dest, next } => {
+                // `[OPT-1]` — a class object made in the frame (`frame_objects.rs`): its storage,
+                // with the same header the heap's would have.
+                if let FuncRef::Builtin { which: Builtin::ClassNew { class_id, .. }, arg_ty } = func
+                    && dest.projection.is_empty()
+                    && body.frame_objects.contains(&dest.local)
+                {
+                    let class_ty = self.c_type(*arg_ty);
+                    let type_info = ember_branding::type_info(&self.types.class_def(*class_id).name.to_string());
+                    let target = self.place_in(dest, body);
+                    self.line(&format!("    {target} = (({class_ty}){RT}obj_new_frame(&_fo{}, &{type_info}));", dest.local.0));
+                    self.emit_next(next.0 as usize, index);
+                    return;
+                }
                 if let FuncRef::Builtin { which: Builtin::StrSplitOnce { none, some }, .. } = func {
                     self.emit_str_split_once(dest, args, *none, *some, body, index);
                     self.emit_next(next.0 as usize, index);
@@ -11121,7 +11168,7 @@ impl Emitter<'_> {
             {
                 continue;
             }
-            let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
+            let name = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
             entries.push((body.symbol.clone(), name));
         }
         entries.sort();
@@ -11177,7 +11224,10 @@ impl Emitter<'_> {
         live
     }
 
-    fn emit_frame_names(&mut self, bodies: &[Body], entry_runs_main: bool) -> usize {
+    /// `[RT-4]`, `[CG-C-10]` — outside `release`, each function by its C symbol with its Ember path
+    /// (a method's type and name: `geo.Grid.at`) and where it is declared; and each call it makes
+    /// (`emit_call_sites`). How many of each there are.
+    fn emit_frame_names(&mut self, bodies: &[Body], entry_runs_main: bool) -> (usize, usize) {
         let mut entries: Vec<(String, String, String, u32)> = Vec::new();
         for body in bodies {
             if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
@@ -11186,7 +11236,7 @@ impl Emitter<'_> {
             let Some(file) = self.map.get(body.span.file) else { continue };
             let line = file.line_col(body.span.start).line;
             let path = self.map.artefact_path(body.span.file);
-            let name = if body.is_lambda { "a lambda".to_string() } else { body.name.clone() };
+            let name = if body.is_lambda { "a lambda".to_string() } else { body.path.clone().unwrap_or_else(|| body.name.clone()) };
             // The C entry point is `main`'s frame when the C compiler inlines `main` into it.
             if entry_runs_main && body.symbol == ember_branding::mangled("main") {
                 entries.push(("main".to_string(), name.clone(), path.clone(), line));
@@ -11196,7 +11246,7 @@ impl Emitter<'_> {
         entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         entries.dedup_by(|a, b| a.0 == b.0);
         if entries.is_empty() {
-            return 0;
+            return (0, 0);
         }
         self.line("#if !defined(EMBER_RELEASE)");
         self.line(&format!("static const {RT}frame_name {}frame_names[] = {{", ember_branding::mangle_prefix()));
@@ -11209,8 +11259,74 @@ impl Emitter<'_> {
             ));
         }
         self.line("};");
+        let sites = self.emit_call_sites(bodies, entry_runs_main);
         self.line("#endif");
-        entries.len()
+        (entries.len(), sites)
+    }
+
+    /// `[CG-C-10]` — each call a function of the program makes to one of its own, or through a
+    /// value, an interface or a virtual method (callee `""`): the caller's C symbol, the callee's,
+    /// and where the call is written, `file:line:col`. A backtrace names each caller's frame by its
+    /// call of the frame below. Strings and numbers only, like `frame_names`: no function is kept
+    /// alive by it. A call to a built-in is the runtime's, never a frame of the program's.
+    fn emit_call_sites(&mut self, bodies: &[Body], entry_runs_main: bool) -> usize {
+        let mut sites: Vec<(String, String, String, u32, u32)> = Vec::new();
+        for body in bodies {
+            if body.is_abstract || body.is_extern_declaration || body.blocks.is_empty() || body.span.is_dummy() {
+                continue;
+            }
+            let mut callers = vec![body.symbol.clone()];
+            if entry_runs_main && body.symbol == ember_branding::mangled("main") {
+                callers.push("main".to_string());
+            }
+            for block in &body.blocks {
+                let Terminator::Call { func, .. } = &block.terminator else { continue };
+                let callee = match func {
+                    FuncRef::Direct { symbol, .. } => symbol.clone(),
+                    FuncRef::Builtin { .. } => continue,
+                    _ => String::new(),
+                };
+                let span = block.terminator_span;
+                if span.is_dummy() {
+                    continue;
+                }
+                let Some(file) = self.map.get(span.file) else { continue };
+                let at = file.line_col(span.start);
+                let path = self.map.artefact_path(span.file);
+                for caller in &callers {
+                    sites.push((caller.clone(), callee.clone(), path.clone(), at.line, at.col));
+                }
+            }
+        }
+        sites.sort();
+        sites.dedup();
+        if sites.is_empty() {
+            return 0;
+        }
+        self.line(&format!("static const {RT}call_site {}call_sites[] = {{", ember_branding::mangle_prefix()));
+        for (caller, callee, path, line, column) in &sites {
+            self.line(&format!(
+                "    {{{}, {}, {}, {line}u, {column}u}},",
+                c_string_literal(caller),
+                c_string_literal(callee),
+                c_string_literal(path)
+            ));
+        }
+        self.line("};");
+        sites.len()
+    }
+
+    /// `[RT-4]`, `[CG-C-10]` — gives the runtime the backtrace's tables, outside `release`.
+    fn emit_backtrace_registration(&mut self, (named, sites): (usize, usize)) {
+        if named == 0 {
+            return;
+        }
+        self.line("#if !defined(EMBER_RELEASE)");
+        self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
+        if sites > 0 {
+            self.line(&format!("    {RT}backtrace_sites({}call_sites, {sites}u);", ember_branding::mangle_prefix()));
+        }
+        self.line("#endif");
     }
 
     /// `[FN-8]` — the C entry point initialises the runtime, calls Ember's
@@ -11219,7 +11335,7 @@ impl Emitter<'_> {
     ///
     /// A `main` that takes `args` or returns a `Result` is called through the
     /// entry the checker writes (`main_entry`), which returns the status.
-    fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: usize, coded: usize) {
+    fn emit_entry_point(&mut self, leak_check: bool, entry: bool, named: (usize, usize), coded: usize) {
         // Annex B — a reloadable image's entry is the runtime's to call ([HR-33]).
         if self.reload.is_some() {
             self.line(&format!("static int {}rl_entry(int argc, char** argv) {{", ember_branding::mangle_prefix()));
@@ -11232,11 +11348,7 @@ impl Emitter<'_> {
         }
         self.line(&format!("    {RT}rt_set_args(argc, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
-        if named > 0 {
-            self.line("#if !defined(EMBER_RELEASE)");
-            self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
-            self.line("#endif");
-        }
+        self.emit_backtrace_registration(named);
         // `[RT-12]` — what a stack overflow names, in every profile.
         if coded > 0 {
             self.line(&format!("    {RT}stack_names({}code_names, {coded}u);", ember_branding::mangle_prefix()));
@@ -11309,7 +11421,7 @@ impl Emitter<'_> {
     /// A panic says so on standard error before it aborts (`test_panic_marker`),
     /// and a test that returns says so before the shutdown's leak report
     /// (`test_end_marker`). An unknown number exits with status 2.
-    fn emit_test_entry(&mut self, leak_check: bool, named: usize, coded: usize, tests: &[String]) {
+    fn emit_test_entry(&mut self, leak_check: bool, named: (usize, usize), coded: usize, tests: &[String]) {
         let panicked = test_panic_marker();
         let returned = test_end_marker();
         self.line(&format!("static void {RT}test_on_panic(const char* msg, size_t len) {{"));
@@ -11345,11 +11457,7 @@ impl Emitter<'_> {
         self.line(&format!("    cfg.on_panic = {RT}test_on_panic;"));
         self.line(&format!("    {RT}rt_set_args(1, argv);"));
         self.line(&format!("    {RT}rt_init(&cfg);"));
-        if named > 0 {
-            self.line("#if !defined(EMBER_RELEASE)");
-            self.line(&format!("    {RT}backtrace_names({}frame_names, {named}u);", ember_branding::mangle_prefix()));
-            self.line("#endif");
-        }
+        self.emit_backtrace_registration(named);
         // `[RT-12]` — what a stack overflow names, in every profile.
         if coded > 0 {
             self.line(&format!("    {RT}stack_names({}code_names, {coded}u);", ember_branding::mangle_prefix()));
@@ -13201,21 +13309,202 @@ const DYN_BEGIN_WRITE: u8 = 2;
 const DYN_END_WRITE: u8 = 3;
 
 /// `[EXC-19]` — the C member holding a class field's access word.
+/// The names C reserves that an Ember name may be: a keyword, or an object-like macro of the
+/// headers generated code includes.
+const C_RESERVED: &[&str] = &[
+    "EOF", "INFINITY", "NAN", "NULL", "alignas", "alignof", "auto", "bool", "break", "case", "char",
+    "const", "constexpr", "continue", "default", "do", "double", "else", "enum", "errno", "extern",
+    "false", "float", "for", "goto", "if", "inline", "int", "long", "nullptr", "register",
+    "restrict", "return", "short", "signed", "sizeof", "static", "static_assert", "stderr", "stdin",
+    "stdout", "struct", "switch", "thread_local", "true", "typedef", "typeof", "typeof_unqual",
+    "union", "unsigned", "void", "volatile", "while",
+];
+
+/// `[CG-C-7]` — beyond `C_RESERVED`, the names of the standard headers' macros a local could be
+/// written as, which would replace it (function-like ones replace only a name followed by `(`,
+/// which a local never is, but a name is refused whichever kind it is).
+const C_MACRO_NAMES: &[&str] = &[
+    "asm", "assert", "complex", "imaginary", "noreturn", "offsetof", "math_errhandling", "isnan", "isinf",
+    "isfinite", "isnormal", "signbit", "fpclassify", "isgreater", "isgreaterequal", "isless", "islessequal",
+    "islessgreater", "isunordered", "va_start", "va_end", "va_arg", "va_copy", "setjmp", "longjmp",
+    "kill_dependency", "unreachable",
+];
+
+/// The C identifiers of `text`, outside its comments and its string and character literals.
+fn c_identifiers(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        while at < bytes.len() {
+            let c = bytes[at];
+            if c == b'/' && bytes.get(at + 1) == Some(&b'*') {
+                at = text[at + 2..].find("*/").map_or(bytes.len(), |end| at + 2 + end + 2);
+            } else if c == b'/' && bytes.get(at + 1) == Some(&b'/') {
+                at = text[at..].find('\n').map_or(bytes.len(), |end| at + end);
+            } else if c == b'"' || c == b'\'' {
+                at += 1;
+                while at < bytes.len() && bytes[at] != c {
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                at += 1;
+            } else if c.is_ascii_digit() {
+                // A number, suffixes and all (`1ULL`, `0x1fp3`, `1e10`).
+                while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_' || bytes[at] == b'.') {
+                    at += 1;
+                }
+            } else if c.is_ascii_alphabetic() || c == b'_' {
+                let start = at;
+                while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                    at += 1;
+                }
+                return Some((start, &text[start..at]));
+            } else {
+                at += 1;
+            }
+        }
+        None
+    })
+}
+
+/// `[CG-C-7]` — each macro `ember_rt.h` and `ember_simd.h` define, with the identifiers its body
+/// uses (its parameters aside, and members): such a macro, expanded inside a function, would reach a
+/// local of one of these names instead of what it means.
+fn runtime_header_macros() -> &'static std::collections::HashMap<&'static str, Vec<&'static str>> {
+    static MACROS: std::sync::OnceLock<std::collections::HashMap<&'static str, Vec<&'static str>>> = std::sync::OnceLock::new();
+    MACROS.get_or_init(|| {
+        let mut macros = std::collections::HashMap::new();
+        for text in [
+            include_str!(concat!("../../../runtime/", ember_branding::symbol_prefix!(), "_rt/include/", ember_branding::symbol_prefix!(), "_rt.h")),
+            include_str!(concat!("../../../runtime/", ember_branding::symbol_prefix!(), "_rt/include/", ember_branding::symbol_prefix!(), "_simd.h")),
+        ] {
+            let mut lines = text.lines();
+            while let Some(line) = lines.next() {
+                let Some(rest) = line.trim_start().strip_prefix('#') else { continue };
+                let Some(definition) = rest.trim_start().strip_prefix("define") else { continue };
+                // The directive's last line is the first not continued with a backslash.
+                let mut end = line;
+                while end.trim_end().ends_with('\\') {
+                    let Some(next) = lines.next() else { break };
+                    end = next;
+                }
+                let start = definition.as_ptr() as usize - text.as_ptr() as usize;
+                let stop = end.as_ptr() as usize - text.as_ptr() as usize + end.len();
+                let directive = text[start..stop].trim_start();
+                let name_end = directive.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(directive.len());
+                let (name, after) = directive.split_at(name_end);
+                let (parameters, body): (Vec<&str>, &str) = match after.strip_prefix('(') {
+                    Some(list) => {
+                        let close = list.find(')').unwrap_or(list.len());
+                        (c_identifiers(&list[..close]).map(|(_, name)| name).collect(), &list[(close + 1).min(list.len())..])
+                    }
+                    None => (Vec::new(), after),
+                };
+                let uses = c_identifiers(body)
+                    .filter(|(at, name)| !parameters.contains(name) && !follows_member_access(body, *at))
+                    .map(|(_, name)| name)
+                    .collect();
+                macros.insert(name, uses);
+            }
+        }
+        macros
+    })
+}
+
+/// Whether the identifier at `at` in `text` is a member (`a.x`, `p->x`, `.x = …`).
+fn follows_member_access(text: &str, at: usize) -> bool {
+    let before = text[..at].trim_end();
+    before.ends_with('.') || before.ends_with("->")
+}
+
+/// `_N`, the name every local is written with until `name_locals` gives it its own.
+fn local_index(identifier: &str) -> Option<usize> {
+    let digits = identifier.strip_prefix('_')?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && (digits == "0" || !digits.starts_with('0')))
+        .then(|| digits.parse().ok())
+        .flatten()
+}
+
+/// `[CG-C-7]` — locals keep their Ember names in the C, so a debugger shows them. A function's C
+/// is written with each local as `_N`; this gives each local the program named its Ember name
+/// (transliterated as `[MNG-3]` says) in the text from `start`: the parameters in its header, the
+/// declarations, every use. A member access or designator `._N`/`->_N` is a field, never a local.
+/// The name is refused, and the local is `<name>_<N>`, where C or the function could read it as
+/// something else: a keyword or a standard macro, a name in the runtime's prefix, an identifier the
+/// function itself uses (a function it calls, a type, a foreign name) or the runtime header does,
+/// or another local's. A name that is no C identifier, or starts with `_` (the compiler's own and
+/// discarded ones), keeps `_N`.
+fn name_locals(out: &mut String, start: usize, body: &Body) {
+    let text = &out[start..];
+    // A member (`a.x`, `p->x`, `.x = …`) is no name of the function's: only the others are, with
+    // what each runtime macro the function uses expands to.
+    let mut used: std::collections::HashSet<&str> =
+        c_identifiers(text).filter(|(at, name)| local_index(name).is_none() && !follows_member_access(text, *at)).map(|(_, name)| name).collect();
+    let macros = runtime_header_macros();
+    let mut expanding: Vec<&str> = used.iter().copied().filter(|name| macros.contains_key(name)).collect();
+    while let Some(name) = expanding.pop() {
+        for &inner in &macros[name] {
+            if used.insert(inner) && macros.contains_key(inner) {
+                expanding.push(inner);
+            }
+        }
+    }
+    let prefixes = [ember_branding::mangle_prefix(), ember_branding::RUNTIME_PREFIX.to_string(), ember_branding::RUNTIME_PREFIX.to_uppercase()];
+    let written: std::collections::HashSet<String> =
+        body.locals.iter().filter_map(|decl| decl.name.as_ref().map(|name| ember_branding::c_identifier(name.as_str()))).collect();
+    let free = |name: &str, taken: &std::collections::HashSet<String>| !used.contains(name) && !taken.contains(name);
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut names: Vec<Option<String>> = vec![None; body.locals.len()];
+    for (index, decl) in body.locals.iter().enumerate() {
+        let Some(written_as) = decl.name.as_ref() else { continue };
+        let name = ember_branding::c_identifier(written_as.as_str());
+        if !name.starts_with(|c: char| c.is_ascii_alphabetic()) || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            continue;
+        }
+        let refused = C_RESERVED.contains(&name.as_str())
+            || C_MACRO_NAMES.contains(&name.as_str())
+            || name.starts_with("atomic_")
+            || name.starts_with("memory_order_")
+            // An upper-case name is how C spells a macro.
+            || name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            || prefixes.iter().any(|prefix| name.starts_with(prefix.as_str()));
+        let plain = (!refused && free(&name, &taken)).then(|| name.clone());
+        // The suffixed form is taken by no Ember name: none ends in `_<its own index>` of another.
+        let chosen = plain.or_else(|| {
+            let suffixed = format!("{name}_{index}");
+            (free(&suffixed, &taken) && !written.contains(&suffixed)).then_some(suffixed)
+        });
+        if let Some(chosen) = chosen {
+            taken.insert(chosen.clone());
+            names[index] = Some(chosen);
+        }
+    }
+    if names.iter().all(Option::is_none) {
+        return;
+    }
+    let mut renamed = String::with_capacity(text.len() + text.len() / 8);
+    let mut copied = 0;
+    for (at, identifier) in c_identifiers(text) {
+        let Some(index) = local_index(identifier) else { continue };
+        let Some(Some(name)) = names.get(index) else { continue };
+        if follows_member_access(text, at) {
+            continue;
+        }
+        renamed.push_str(&text[copied..at]);
+        renamed.push_str(name);
+        copied = at + identifier.len();
+    }
+    renamed.push_str(&text[copied..]);
+    out.truncate(start);
+    out.push_str(&renamed);
+}
+
 /// D-775 — an Ember field or variant name as a C member: transliterated as `[MNG-3]` says
 /// (`größe` is `gr_u00F6__u00DF_e`), and a name C reserves, a keyword or an object-like macro of the
 /// headers generated code includes (`default`, `inline`, `errno`), written `em_kw_<name>`. What a
 /// program prints names the field as written.
 fn member(name: impl std::fmt::Display) -> String {
-    const RESERVED: &[&str] = &[
-        "EOF", "INFINITY", "NAN", "NULL", "alignas", "alignof", "auto", "bool", "break", "case", "char",
-        "const", "constexpr", "continue", "default", "do", "double", "else", "enum", "errno", "extern",
-        "false", "float", "for", "goto", "if", "inline", "int", "long", "nullptr", "register",
-        "restrict", "return", "short", "signed", "sizeof", "static", "static_assert", "stderr", "stdin",
-        "stdout", "struct", "switch", "thread_local", "true", "typedef", "typeof", "typeof_unqual",
-        "union", "unsigned", "void", "volatile", "while",
-    ];
     let name = name.to_string();
-    match RESERVED.contains(&name.as_str()) {
+    match C_RESERVED.contains(&name.as_str()) {
         true => format!("{}kw_{name}", ember_branding::mangle_prefix()),
         false => ember_branding::c_identifier(&name),
     }
@@ -13398,6 +13687,7 @@ mod string_descriptor_view_parts_tests {
             callable_regions: None,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,
@@ -13410,7 +13700,7 @@ mod string_descriptor_view_parts_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(), loop_notes: Default::default(),
+            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(),
         }
     }
 

@@ -912,6 +912,11 @@ fn compile_and_link_impl(
             if request.profile == Profile::Development {
                 command.args(["/OPT:REF", "/OPT:ICF"]);
             }
+            // `[CG-C-9]` — the program's visualisers in its program database, where the debugger
+            // finds them. After the cache's key: the file is the C's, and its place is the build's.
+            if let Some(natvis) = natvis_beside(request) {
+                command.arg(format!("/NATVIS:{}", natvis.display()));
+            }
             command.args(layout_link.iter());
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
@@ -927,6 +932,10 @@ fn compile_and_link_impl(
             if cfg!(windows) && request.profile == Profile::Development {
                 command.args(["-Wl,/OPT:REF", "-Wl,/OPT:ICF"]);
             }
+            // `[CG-C-9]` — as for MSVC.
+            if cfg!(windows) && let Some(natvis) = natvis_beside(request) {
+                command.arg(format!("-Wl,/NATVIS:{}", natvis.display()));
+            }
         }
     }
     let started = std::time::SystemTime::now();
@@ -935,6 +944,13 @@ fn compile_and_link_impl(
         cached.store(request, &compiled, started);
     }
     Ok(())
+}
+
+/// `[CG-C-9]` — the visualiser file the build wrote beside the program (`<program>.natvis`), for a
+/// build with a program database (every profile but `release`).
+fn natvis_beside(request: &LinkRequest) -> Option<PathBuf> {
+    let natvis = request.output.with_extension("natvis");
+    (request.profile != Profile::Release && natvis.is_file()).then_some(natvis)
 }
 
 /// The global cache's linked programs, unless the variable
@@ -988,6 +1004,11 @@ impl CachedProgram {
         }
         for name in PROGRAM_VARIABLES {
             key.part(variable(command, name).unwrap_or_default().as_encoded_bytes());
+        }
+        // `[CG-C-9]` — the visualisers the link puts in the program database, by their content.
+        if let Some(natvis) = natvis_beside(request) {
+            key.part(b"natvis");
+            key.part(&std::fs::read(natvis).ok()?);
         }
         for include in request.include_dirs {
             let mut names: Vec<_> = std::fs::read_dir(include).ok()?

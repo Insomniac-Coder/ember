@@ -4,7 +4,7 @@
 #$ stdout: 7
 #$ 42
 #$ 42
-#$ assert-c: contains("(*((em_Cell_i32*)_1)).value = ")
+#$ assert-c: contains("(*((em_Cell_i32*)cell)).value = ")
 #$ assert-c: !contains("ember_cell")
 
 # `replace` is a shared Cell operation: it transfers the previous payload to

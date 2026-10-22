@@ -3059,6 +3059,28 @@ ember_obj_header* ember_obj_new(const ember_type_info* ti) {
     return object;
 }
 
+ember_obj_header* ember_obj_new_frame(void* storage, const ember_type_info* ti) {
+    if (storage == NULL || ti == NULL || ti->size < sizeof(ember_obj_header)
+        || ti->align < _Alignof(ember_obj_header)
+        || (ti->align & (ti->align - 1)) != 0
+        || ((uintptr_t)storage & (ti->align - 1)) != 0) {
+        object_panic_text("invalid class type information");
+    }
+    ember_obj_header* object = (ember_obj_header*)storage;
+    memset(object, 0, ti->size);
+    object->strong = 1;
+    object->weak = 1;
+    object->ti = ti;
+    object->flags = EMBER_OBJ_FRAME;
+#ifdef EMBER_RT_DEBUG_ACCESS
+    if ((ti->flags & EMBER_TI_SYNC) == 0) {
+        object->flags |= (thread_number() & 0xFFFFu) << EMBER_OBJ_CREATOR_SHIFT;
+    }
+#endif
+    debug_track_object(object);
+    return object;
+}
+
 ember_obj_header* ember_obj_new_copy(
     const ember_type_info* ti, size_t payload_align, size_t payload_size, const void* value) {
     if (payload_align == 0 || (payload_align & (payload_align - 1)) != 0
@@ -3174,6 +3196,10 @@ void ember_weak_release(ember_obj_header* object) {
     if (previous == 1 && object_load_strong(object) == 0) {
         const ember_type_info* ti = object->ti;
         debug_untrack_object(object);
+        /* [OPT-1] An object in its function's frame is the frame's to free. */
+        if ((object_load_flags(object) & EMBER_OBJ_FRAME) != 0) {
+            return;
+        }
 #if defined(EMBER_RELOAD_INSTANCES)
         rl_live_remove(object);
 #endif
@@ -7610,6 +7636,42 @@ int ember_str_cmp(ember_str a, ember_str b) {
 static const ember_frame_name* g_frame_names;
 static size_t g_frame_name_count;
 
+static const ember_call_site* g_call_sites;
+static size_t g_call_site_count;
+/* [CG-C-10] — where the panic is: the innermost frame's place. */
+static ember_loc g_panic_at;
+
+void ember_backtrace_sites(const ember_call_site* sites, size_t count) {
+    g_call_sites = sites;
+    g_call_site_count = count;
+}
+
+/* [CG-C-10] — where `caller` called `callee` (NULL when the frame below is not the program's): a
+ * direct call of it, else a call through a value; of several, the one on `line` when the platform
+ * named the line (0 when it cannot), else the first. */
+static const ember_call_site* call_site(const char* caller, const char* callee, uint32_t line) {
+    for (int indirect = 0; indirect < 2; ++indirect) {
+        const ember_call_site* first = NULL;
+        for (size_t i = 0; i < g_call_site_count; ++i) {
+            const ember_call_site* site = &g_call_sites[i];
+            bool callee_matches = indirect ? site->callee[0] == '\0' : callee != NULL && strcmp(site->callee, callee) == 0;
+            if (!callee_matches || strcmp(site->caller, caller) != 0) {
+                continue;
+            }
+            if (line == 0 || site->line == line) {
+                return site;
+            }
+            if (first == NULL) {
+                first = site;
+            }
+        }
+        if (first != NULL) {
+            return first;
+        }
+    }
+    return NULL;
+}
+
 void ember_backtrace_names(const ember_frame_name* names, size_t count) {
     g_frame_names = names;
     g_frame_name_count = count;
@@ -7635,7 +7697,12 @@ static const ember_frame_name* frame_name(const char* symbol) {
 }
 
 /* Print the frame of `symbol` when it is the program's own; whether it was `main`'s, the last. */
-static bool backtrace_frame(const char* symbol, unsigned* printed) {
+/* Print the frame of `symbol` when it is the program's own; whether it was `main`'s, the last.
+ * [CG-C-10]: each frame by its Ember path and where it is: the innermost by the panic's place, each
+ * other by its call of the frame below it (`below`, the last printed one's symbol), on `line` when
+ * the platform's line information gave one (0 otherwise); the function's own line when no call is
+ * known. */
+static bool backtrace_frame(const char* symbol, unsigned* printed, const char** below, uint32_t line) {
     const ember_frame_name* entry = frame_name(symbol);
     if (entry == NULL) {
         return false;
@@ -7643,7 +7710,15 @@ static bool backtrace_frame(const char* symbol, unsigned* printed) {
     if (*printed == 0) {
         fputs("backtrace:\n", stderr);
     }
-    fprintf(stderr, "  %u: %s at %s:%u\n", *printed, entry->name, entry->file, entry->line);
+    const ember_call_site* site = *printed == 0 ? NULL : call_site(entry->symbol, *below, line);
+    if (*printed == 0 && g_panic_at.file != NULL) {
+        fprintf(stderr, "  %u: %s at %s:%u:%u\n", *printed, entry->name, g_panic_at.file, g_panic_at.line, g_panic_at.column);
+    } else if (site != NULL) {
+        fprintf(stderr, "  %u: %s at %s:%u:%u\n", *printed, entry->name, site->file, site->line, site->column);
+    } else {
+        fprintf(stderr, "  %u: %s at %s:%u\n", *printed, entry->name, entry->file, line != 0 ? line : entry->line);
+    }
+    *below = entry->symbol;
     *printed += 1;
     return strcmp(entry->name, "main") == 0;
 }
@@ -7653,6 +7728,7 @@ static bool backtrace_frame(const char* symbol, unsigned* printed) {
 typedef DWORD (WINAPI* sym_set_options_fn)(DWORD);
 typedef BOOL (WINAPI* sym_initialize_fn)(HANDLE, PCSTR, BOOL);
 typedef BOOL (WINAPI* sym_from_addr_fn)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+typedef BOOL (WINAPI* sym_line_from_addr_fn)(HANDLE, DWORD64, PDWORD, PIMAGEHLP_LINE64);
 
 void ember_backtrace_print(void) {
     if (g_frame_name_count == 0) {
@@ -7665,6 +7741,8 @@ void ember_backtrace_print(void) {
     FARPROC set_options_proc = dbghelp ? GetProcAddress(dbghelp, "SymSetOptions") : NULL;
     FARPROC initialize_proc = dbghelp ? GetProcAddress(dbghelp, "SymInitialize") : NULL;
     FARPROC from_addr_proc = dbghelp ? GetProcAddress(dbghelp, "SymFromAddr") : NULL;
+    /* [CG-C-10] — a frame's line, which picks its call among several of one callee. */
+    FARPROC line_proc = dbghelp ? GetProcAddress(dbghelp, "SymGetLineFromAddr64") : NULL;
     if (set_options_proc == NULL || initialize_proc == NULL || from_addr_proc == NULL) {
         fputs("note: no backtrace: dbghelp.dll is not available\n", stderr);
         return;
@@ -7675,8 +7753,13 @@ void ember_backtrace_print(void) {
     memcpy(&set_options, &set_options_proc, sizeof set_options);
     memcpy(&initialize, &initialize_proc, sizeof initialize);
     memcpy(&from_addr, &from_addr_proc, sizeof from_addr);
+    sym_line_from_addr_fn line_from_addr = NULL;
+    if (line_proc != NULL) {
+        memcpy(&line_from_addr, &line_proc, sizeof line_from_addr);
+    }
     HANDLE process = GetCurrentProcess();
-    set_options(0x00000002u /* SYMOPT_UNDNAME */ | 0x00000004u /* SYMOPT_DEFERRED_LOADS */);
+    set_options(0x00000002u /* SYMOPT_UNDNAME */ | 0x00000004u /* SYMOPT_DEFERRED_LOADS */
+                | 0x00000010u /* SYMOPT_LOAD_LINES */);
     /* The PDB is looked for where it was linked, then here: the program's own folder, where a
      * program copied or served from the build cache has it beside it. */
     char folder[MAX_PATH];
@@ -7694,14 +7777,24 @@ void ember_backtrace_print(void) {
         char bytes[sizeof(SYMBOL_INFO) + 256];
     } symbol;
     unsigned printed = 0;
+    const char* below = NULL;
     for (USHORT i = 0; i < count; ++i) {
         memset(&symbol, 0, sizeof symbol);
         symbol.info.SizeOfStruct = sizeof(SYMBOL_INFO);
         symbol.info.MaxNameLen = 255;
         DWORD64 displacement = 0;
         /* A return address may be the first byte after its call: look one byte back. */
-        if (from_addr(process, (DWORD64)(uintptr_t)frames[i] - 1, &displacement, &symbol.info)
-            && backtrace_frame(symbol.info.Name, &printed)) {
+        DWORD64 address = (DWORD64)(uintptr_t)frames[i] - 1;
+        if (!from_addr(process, address, &displacement, &symbol.info)) {
+            continue;
+        }
+        /* The line the program's `#line`s gave the call, from the PDB. */
+        IMAGEHLP_LINE64 place;
+        memset(&place, 0, sizeof place);
+        place.SizeOfStruct = sizeof place;
+        DWORD column = 0;
+        uint32_t line = line_from_addr != NULL && line_from_addr(process, address, &column, &place) ? (uint32_t)place.LineNumber : 0u;
+        if (backtrace_frame(symbol.info.Name, &printed, &below, line)) {
             break;
         }
     }
@@ -7789,6 +7882,7 @@ void ember_backtrace_print(void) {
         }
     }
     unsigned printed = 0;
+    const char* below = NULL;
     for (unsigned f = 0; found && f < frames.count; ++f) {
         uintptr_t ip = frames.ips[f] - 1;
         const char* symbol = NULL;
@@ -7800,7 +7894,9 @@ void ember_backtrace_print(void) {
                 break;
             }
         }
-        if (symbol != NULL && backtrace_frame(symbol, &printed)) {
+        /* ponytail: no line on Linux (it would need the DWARF line table), so of several calls of
+         * one callee in one function the first is named. */
+        if (symbol != NULL && backtrace_frame(symbol, &printed, &below, 0)) {
             break;
         }
     }
@@ -7830,6 +7926,7 @@ static EMBER_NORETURN void panic_with(const char* msg, size_t len, ember_loc loc
     }
     fwrite(msg, 1, len, stderr);
     fputc('\n', stderr);
+    g_panic_at = loc;
     ember_backtrace_print();
     if (g_config.on_panic) {
         g_config.on_panic(msg, len);

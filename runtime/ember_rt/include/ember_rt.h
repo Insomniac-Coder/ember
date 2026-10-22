@@ -140,6 +140,22 @@ static EMBER_INLINE uint64_t ember_sum_bytes(const void* raw, size_t len, bool s
 #define EMBER_HOT
 #endif
 
+/* `[CG-C-6]` — the host compiler's vectorisation pragma, written before each
+ * loop Ember proved in vectorisable form (`[SIMD-5]`). Clang's asks for
+ * vectorisation; GCC's and MSVC's (their only loop vectorisation pragmas)
+ * state that iterations carry no dependency through memory, which
+ * vectorisable form proves: every written view is disjoint from the others
+ * the loop reads (`[SIMD-3]`) and accessed at one offset from the counter. */
+#if defined(__clang__)
+#define EMBER_VECTORISE _Pragma("clang loop vectorize(enable)")
+#elif defined(__GNUC__)
+#define EMBER_VECTORISE _Pragma("GCC ivdep")
+#elif defined(_MSC_VER)
+#define EMBER_VECTORISE __pragma(loop(ivdep))
+#else
+#define EMBER_VECTORISE
+#endif
+
 /* [SIMD-7] A group of iterations with several overflow checks ORs each
  * check's overflow word (its top bit set on overflow), shifted down by
  * EMBER_OVERFLOW_SHIFT, into the group's flag, and tests the flag shifted
@@ -1381,6 +1397,9 @@ struct ember_type_info {
  * before user or field drop glue runs. */
 #define EMBER_OBJ_DEINITIALISING UINT32_C(1)
 #define EMBER_OBJ_PINNED UINT32_C(2)
+/* [OPT-1] The object is in its function's frame (`ember_obj_new_frame`): its last release frees
+ * nothing. */
+#define EMBER_OBJ_FRAME UINT32_C(4)
 
 typedef struct ember_obj_header {
     uint32_t strong;
@@ -1429,6 +1448,10 @@ static inline void* ember_obj_payload(ember_obj_header* object, size_t payload_a
 /* Allocate a zeroed object header with one strong and one implicit weak
  * reference. Class fields are initialized by generated constructor code. */
 ember_obj_header* ember_obj_new(const ember_type_info* ti);
+/* [OPT-1] An object made in its function's frame, at `storage` (the class's own C struct there),
+ * with the header `ember_obj_new` gives: the compiler proved that no handle to it outlives the
+ * function, so its last release runs its `drop` and frees nothing. */
+ember_obj_header* ember_obj_new_frame(void* storage, const ember_type_info* ti);
 ember_obj_header* ember_obj_new_copy(
     const ember_type_info* ti, size_t payload_align, size_t payload_size, const void* value);
 
@@ -2685,6 +2708,18 @@ typedef struct ember_frame_name {
     uint32_t line;
 } ember_frame_name;
 void ember_backtrace_names(const ember_frame_name* names, size_t count);
+/* [CG-C-10] — one call a function of the program makes: the caller's C symbol, the callee's (""
+ * for a call through a value, an interface or a virtual method), and where the call is written.
+ * The compiler emits the table outside `release`; a backtrace names each caller's frame by the
+ * place of its call, `file:line:col`. */
+typedef struct ember_call_site {
+    const char* caller;
+    const char* callee;
+    const char* file;
+    uint32_t line;
+    uint32_t column;
+} ember_call_site;
+void ember_backtrace_sites(const ember_call_site* sites, size_t count);
 /* [RT-12] — each function of the program by its code's address, in every profile: what a stack
  * overflow names. The compiler emits the table and gives it to the runtime before `main` runs. */
 typedef struct ember_code_name {

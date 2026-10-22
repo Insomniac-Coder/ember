@@ -3,13 +3,15 @@
 #$ profiles: debug, development, release
 #$ stdout: shared
 #$ stdout: handle
-#$ assert-c: contains(ember_obj_new(&em_ti_Handle))
+#$ assert-c: contains(&em_ti_Handle))
 #$ assert-c: contains(ember_obj_new_copy)
 #$ assert-c: contains(ember_release((ember_obj_header*)
 
 # `[DRP-6]` distinguishes the two counted owners from the existing Box probe.
 # The copied Shared value releases its payload only at the final strong release;
-# the class handle then releases its own object at scope exit.
+# the class handle then releases its own object at scope exit. (The object is the runtime's to
+# make, `ember_obj_new`, or in `main`'s frame, `ember_obj_new_frame`, as `[OPT-1]` permits: either
+# way its last release, at scope exit, runs its `drop`.)
 
 class Handle:
     fn drop(mut self):

@@ -5017,6 +5017,31 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-257 — Helper R merged: ten rules of the language and its C
+
+2026-10-22 (helper R, `tasks/95/R-notes.md`). Built: `[SEL-2]` (a conversion between `Shared`/`Weak`
+and `CppShared`/`CppWeak` is `E5065`, coercion and `as` alike; its page written); `[DIA-15]` (the
+nearest method's name, and an import line as a fix-it from an index of exported names the driver
+builds only when a name is not found); `[CG-C-6]` (`EMBER_VECTORISE` — clang `vectorize(enable)`,
+`ivdep` for GCC and MSVC — before every C `for` loop `[SIMD-5]` proves in vectorisable form);
+`[DIA-5]` (an FFI error names the header and the C declaration as written; the `.embind` format,
+with ADR-254's changes, is now version 10); `[CG-C-7]` (C locals keep their Ember names); `[CG-C-10]`
+(backtraces print Ember paths and `file:line:col` from a call-site table; `ember demangle`);
+`[CG-C-9]` (`.natvis`, GDB and LLDB scripts beside the program, the natvis in the PDB); `[OPT-1]`
+(`frame_objects.rs`: a class object no handle of which outlives its function is made in its frame,
+`ember_obj_new_frame`; not in a function that can recurse, a reloadable build, an object over 256
+bytes of fields, or a class whose `drop` lets `self` escape). Tested only, already so: `[LT-39]`,
+`[PHIL-1]`. D-812 and D-813 fixed. Not built: `[VER-3]` and `[ALC-2]`, ruled now under the
+delegation (ODR-174: `W2192` "use of a deprecated item"; ODR-175: `unsafe interface Allocator`
+with `allocate`, `deallocate`, `reallocate` over `Layout`, `Global` the runtime's, `[TYP-43]` letting
+an `unsafe extend` implement an `unsafe interface`). Also ruled: ODR-176 (`[LT-39]`'s ended region
+is a loan conflict, `E3021`), ODR-177 (`[CLS-1]`, `[OBJ-4]` hold "except as `[OPT-1]` permits"; an
+embedding host's allocator count is not behaviour), ODR-178 (`[CG-C-9]`: with Visual Studio a
+collection held directly in a local shows its length only, since CodeView keeps no typedef; a C
+struct per collection instance is the fix, with the backend's next rework, and `[CG-C-9]` stays
+unfinished until then). CG-C-6 and OPT-1 change the generated C: the laptop benchmark runs before
+the push.
+
 ## ADR-256 — Helper Q merged: `[ABI-4]`, `[ABI-5]`, `[BLD-6]`, `[BLD-10]`; D-811
 
 2026-10-22 (helper Q, `tasks/95/Q-notes.md`). `[ABI-4]`: `docs/RELEASE-NOTES.md` notes every

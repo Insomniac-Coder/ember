@@ -24,6 +24,7 @@
     "families": {"CG-LL": "the LLVM backend (v2)", "GPU": "the GPU host model (v0.6)"}
   },
   "unfinished": {
+    "CG-C-9": "built: `.natvis` (in the PDB too), GDB and LLDB scripts showing `Option`, `Result`, enums, strings, collections, class handles; not built: with Visual Studio a collection held directly in a local shows its length only (CodeView keeps no typedef): a C struct per collection instance, with the backend's next rework (ODR-178, tasks/95/R-notes.md)",
     "_what": "Rules a test names but that are not fulfilled: each with what is missing and where that is recorded. Remove an entry only when the rule is fulfilled.",
     "BEN-6": "the thresholds are built (`ember bench --compare`, ADR-233); not built: exact allocation counts on `@noalloc` paths, a direct FFI call executing C's instructions, counted-object code against a C++ intrusive count",
     "FFI-8": "`import c` maps scalars, pointers, function pointers, arrays, structs (`@packed`, `@align`, bit-fields through `get_`/`set_`, anonymous struct members read through), incomplete structs, enums, typedefs, globals and string macros; not built: unions and anonymous unions (imported opaque), accessors of enum-typed bit-fields, flexible array members, `_Atomic`, `va_list` and variadic calls, `long double` (`c_longdouble`), `volatile` and `@ffi(newtype)` (tasks/90/N-notes.md D-N4)",

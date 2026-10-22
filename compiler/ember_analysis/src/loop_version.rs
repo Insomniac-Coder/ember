@@ -1965,6 +1965,22 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
     (count, in_form)
 }
 
+/// `[CG-C-6]`, `[SIMD-5]` — of the counted loops headed by `headers`, those in vectorisable form
+/// as the body stands: every clause met and no check left in the loop (its overflow checks, if it
+/// had any, were grouped into a copy that has none). Read from the final body, so it names the loops
+/// the backend writes, whatever earlier passes copied or renumbered.
+pub fn loops_in_vectorisable_form(body: &Body, types: &TypeTable, headers: impl IntoIterator<Item = usize>) -> HashSet<usize> {
+    let mut facts = None;
+    headers
+        .into_iter()
+        .filter(|&header| {
+            let Some(shape) = counted_loop(body, types, header) else { return false };
+            let facts = facts.get_or_insert_with(|| BodyFacts::new(body, types));
+            vectorisable(body, types, facts, &shape).is_ok_and(|(checks, _)| checks.is_empty())
+        })
+        .collect()
+}
+
 /// `[SIMD-2]` — the verdict on one copy of a loop, for each `@simd` loop
 /// whose counter it has. A loop's copies (`[OPT-2]`'s checked and unchecked
 /// ones, or a loop picked by its range's width) count by the best of them: in

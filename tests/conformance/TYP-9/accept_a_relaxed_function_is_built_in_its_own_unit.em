@@ -5,12 +5,12 @@
 #$ assert-c: contains("/* module: accept_a_relaxed_function_is_built_in_its_own_unit, its `fastmath` functions ([CG-C-11]) */")
 #$ assert-c: contains("#pragma STDC FP_CONTRACT ON")
 #$ assert-c: contains("#pragma fp_contract(on)")
-#$ assert-c-count: contains("double em_fused(double _1, double _2, double _3) {") == 1
-#$ assert-c-count: contains("double em_total(ember_vec* _1, ember_vec* _2) {") == 1
+#$ assert-c-count: contains("double em_fused(double a, double b, double c) {") == 1
+#$ assert-c-count: contains("double em_total(ember_vec* xs, ember_vec* shapes) {") == 1
 #$ assert-c-count: contains("const uint8_t em_interface_id_Area = UINT8_C(0);") == 1
 #$ assert-c-count: contains("extern const uint8_t em_interface_id_Area;") == 2
-#$ assert-c-order: "its `contract` functions" then "double em_fused(double _1, double _2, double _3) {"
-#$ assert-c-order: "its `fastmath` functions" then "double em_total(ember_vec* _1, ember_vec* _2) {"
+#$ assert-c-order: "its `contract` functions" then "double em_fused(double a, double b, double c) {"
+#$ assert-c-order: "its `fastmath` functions" then "double em_total(ember_vec* xs, ember_vec* shapes) {"
 #$ assert-c-order: "its `fastmath` functions" then "1.25e0"
 #$ stdout: 7.0 7.0
 #$ stdout: 5.25 true 3

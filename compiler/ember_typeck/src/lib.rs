@@ -34,7 +34,7 @@ use ember_hir::{
     BinOp, Block, Builtin, DefId, DestructureBinding, DisjointMode, Expr, ExprKind, Function, LocalDecl,
     LocalId, MatchArm, MatchArmBody, Mode, Param, Pattern, PatternKind, Program, Stmt, UnOp,
 };
-use ember_span::{Span, Symbol};
+use ember_span::{FileId, Span, Symbol};
 use ember_types::{FpMode, 
     Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
     OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
@@ -52,6 +52,21 @@ pub struct LoadedModule {
     pub package: Option<usize>,
     /// `[FFI-6]` — a module `import c` wrote from a header: what else the import found.
     pub foreign: Option<ForeignImport>,
+}
+
+/// `[DIA-12]` N2, `[DIA-15]` — the index of names other modules export, in which a name a module
+/// cannot find is looked up so that the diagnostic can offer the import line. The build supplies it
+/// from the modules' declarations, never by type checking them.
+pub trait ExportIndex {
+    /// Every module that exports `name` to the program being checked.
+    fn exporters(&self, name: &str) -> &[Exported];
+}
+
+/// One exporter of a name: its module's path (`std.math`) and whether the item is a type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Exported {
+    pub module: String,
+    pub is_type: bool,
 }
 
 /// `[FFI-6]` — what `import c` found in a header beside the declarations it wrote.
@@ -88,6 +103,9 @@ pub struct ForeignImport {
     /// `[FFI-24d]` — each function whose Ember signature a `noexcept` the header added or removed
     /// changed, by its name (`Owner.name` for a method), with the note naming the cause.
     pub policy_changes: Vec<(String, String)>,
+    /// `[DIA-5]` — each declaration of the header, by a name the module binds it to: its text as
+    /// the header writes it, and `file:line`. An import's overlay modules carry their import's.
+    pub declarations: Vec<(String, String, String)>,
 }
 
 /// The semantically resolved declaration surface a build artifact may expose
@@ -225,6 +243,7 @@ pub fn check(
     debug_assertions: bool,
     comptime_answers: &ComptimeAnswers,
     realtime: Option<hir::Effects>,
+    exports: &dyn ExportIndex,
 ) -> CheckOutput {
     // `[FFI-16]` — a status enum's error type, `struct N(code: E)` implementing `Error`.
     let status_errors = errors::desugar_status_errors(modules);
@@ -265,6 +284,17 @@ pub fn check(
     checker.derive_requests = derive_requests;
     checker.realtime_contracts = realtime.unwrap_or(hir::Effects::REALTIME_DEFAULT);
     checker.prefixes = modules.iter().map(|m| m.path.join(".")).collect();
+    checker.exports = Some(exports);
+    // `[DIA-12]` N2 — where each module's import line goes: after its last import, or at the top
+    // of its file.
+    checker.import_insertions = modules
+        .iter()
+        .map(|m| match (m.module.imports.last(), m.module.items.first()) {
+            (Some(last), _) => Some((Span::new(last.span.file, last.span.end, last.span.end), true)),
+            (None, Some(first)) if first.span.file != FileId::DUMMY => Some((Span::new(first.span.file, 0, 0), false)),
+            _ => None,
+        })
+        .collect();
     checker.module_packages = modules.iter().map(|m| m.package).collect();
     checker.visible = vec![HashMap::new(); modules.len()];
     checker.ambiguous_globs = vec![HashMap::new(); modules.len()];
@@ -280,6 +310,7 @@ pub fn check(
             .map(|(name, member)| (Symbol::intern(name), member.as_ref().map(|(owner, name)| (Symbol::intern(owner), Symbol::intern(name)))))
             .collect())
         .collect();
+    checker.c_declared = modules.iter().map(|m| m.foreign.as_ref().map(|foreign| foreign.declarations.clone()).unwrap_or_default()).collect();
     checker.foreign_skipped = modules
         .iter()
         .map(|m| m.foreign.as_ref().map(|foreign| (foreign.header.clone(), foreign.skipped.iter().map(|(name, why)| (Symbol::intern(name), why.clone())).collect())))
@@ -287,6 +318,9 @@ pub fn check(
     for loaded in modules {
         if let Some(foreign) = loaded.foreign.as_ref().filter(|foreign| !foreign.policy_changes.is_empty()) {
             checker.changed_declarations.extend(changed_declarations(&loaded.module, &foreign.policy_changes));
+        }
+        if let Some(foreign) = loaded.foreign.as_ref().filter(|foreign| !foreign.declarations.is_empty()) {
+            checker.c_declarations.extend(c_declarations(&loaded.module, &foreign.declarations));
         }
     }
     checker.namespaces = vec![HashMap::new(); modules.len()];
@@ -581,6 +615,7 @@ pub fn check(
         }
     }
     checker.note_changed_declarations();
+    checker.note_c_declarations();
     checker.report_unneeded_unsafe();
     let callable_declarations = checker.callable_declarations(modules);
     // `[CT-1]` — the functions computing what is still to be evaluated go to
@@ -1230,6 +1265,59 @@ struct Signature {
     /// `[DIA-22]` — the function's name where it is declared, the secondary span of a diagnostic
     /// its signature causes at a call; `Span::DUMMY` for one the compiler made.
     decl: Span,
+}
+
+/// Whether `inner` lies within `outer`, in one file.
+fn span_within(inner: Span, outer: Span) -> bool {
+    inner.file == outer.file && outer.start <= inner.start && inner.end <= outer.end
+}
+
+/// `[DIA-5]` — the declarations of a module `import c` wrote (or of an overlay for one) that the
+/// header declared, by the spans of their items (an overlay's, of its entries), each with its text
+/// as the header writes it and `file:line`.
+fn c_declarations(module: &ast::Module, declared: &[(String, String, String)]) -> Vec<(Span, String, String)> {
+    let mut out = Vec::new();
+    let mut add = |name: &str, span: Span| {
+        if let Some((_, text, at)) = declared.iter().rev().find(|(declared, ..)| declared == name) {
+            out.push((span, text.clone(), at.clone()));
+        }
+    };
+    fn named(item: &ast::Item) -> Option<Symbol> {
+        item_name(item)
+    }
+    for item in &module.items {
+        match &item.kind {
+            ast::ItemKind::ExternBlock(block) => {
+                for inner in &block.items {
+                    if let Some(name) = named(inner) {
+                        add(name.as_str(), inner.span);
+                    }
+                }
+            }
+            ast::ItemKind::ExternClass(class) => add(class.name.name.as_str(), item.span),
+            ast::ItemKind::Overlay(overlay) => {
+                for entry in &overlay.items {
+                    let name = match &entry.kind {
+                        ast::OverlayItemKind::Fn { name, .. }
+                        | ast::OverlayItemKind::MacroFn { name, .. }
+                        | ast::OverlayItemKind::Type(name)
+                        | ast::OverlayItemKind::Enum(name)
+                        | ast::OverlayItemKind::Hide(name)
+                        | ast::OverlayItemKind::Rename { from: name, .. }
+                        | ast::OverlayItemKind::Class { name, .. } => name.name,
+                        ast::OverlayItemKind::Extend(_) => continue,
+                    };
+                    add(name.as_str(), entry.span);
+                }
+            }
+            _ => {
+                if let Some(name) = named(item) {
+                    add(name.as_str(), item.span);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// `[FFI-24d]` — the declarations of a module `import cpp` wrote whose names `changes` lists (a
@@ -2206,6 +2294,9 @@ struct Checker<'a> {
     types: &'a mut TypeTable,
     common: &'a CommonTypes,
     sink: &'a mut Sink,
+    /// `[DIA-12]` N2 — the names other modules export, and where each module's import line goes.
+    exports: Option<&'a dyn ExportIndex>,
+    import_insertions: Vec<Option<(Span, bool)>>,
     struct_ids: HashMap<Symbol, StructId>,
     class_ids: HashMap<Symbol, ClassId>,
     enum_ids: HashMap<Symbol, EnumId>,
@@ -2222,6 +2313,13 @@ struct Checker<'a> {
     /// (the call, and the patterns a `match` on it tests), for the errors there to carry the note.
     changed_declarations: HashMap<Span, String>,
     changed_calls: Vec<(Span, String)>,
+    /// `[DIA-5]` — each declaration a header gave a module (or an overlay entry stating one): its
+    /// span, its text as the header writes it, and `file:line`; and each call of a foreign
+    /// function, with its declaration's name span.
+    c_declarations: Vec<(Span, String, String)>,
+    foreign_calls: Vec<(Span, Span)>,
+    /// `[DIA-5]` — per module, the header's declarations by name, skipped ones included.
+    c_declared: Vec<Vec<(String, String, String)>>,
     /// `[DIA-18]` — for a foreign declaration not asserted safe to call, each fact a safe call
     /// still lacks and the declaration line that would supply it.
     foreign_unknown_facts: HashMap<DefId, ForeignUnknownFacts>,
@@ -3016,6 +3114,8 @@ impl<'a> Checker<'a> {
             types,
             common,
             sink,
+            exports: None,
+            import_insertions: Vec::new(),
             struct_ids: HashMap::new(),
             class_ids: HashMap::new(),
             enum_ids: HashMap::new(),
@@ -3056,6 +3156,9 @@ impl<'a> Checker<'a> {
             foreign_skipped: Vec::new(),
             changed_declarations: HashMap::new(),
             changed_calls: Vec::new(),
+            c_declarations: Vec::new(),
+            foreign_calls: Vec::new(),
+            c_declared: Vec::new(),
             foreign_cpp: Vec::new(),
             foreign_trampolines: Vec::new(),
             foreign_variables: Vec::new(),
@@ -4850,7 +4953,11 @@ impl<'a> Checker<'a> {
         } else {
             "the import skipped it, and said so at the import (W5002, W5001) [FFI-20a]"
         };
-        let diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}")).note(note);
+        let mut diagnostic = Diagnostic::error(code, span, format!("`{name}` was not imported from `{header}`: {why}")).note(note);
+        // `[DIA-5]` — the C declaration it skipped.
+        if let Some((_, text, at)) = self.c_declared.get(module).and_then(|declared| declared.iter().rev().find(|(declared, ..)| declared == name.as_str())) {
+            diagnostic = diagnostic.note(format!("declared in the header at {at}: `{text}` [DIA-5]"));
+        }
         self.sink.emit(diagnostic);
         true
     }
@@ -5049,7 +5156,8 @@ impl<'a> Checker<'a> {
                         format!("class `{}` declares no `init`, and its C++ base `{shown}` has no default constructor", decl.name.name),
                     )
                     .help("declare `fn init(self, …)` calling `super.init(…)` with the arguments of one of its constructors")
-                    .note("`super.init(…)` selects the C++ base constructor by arity and argument types [FFI-39b]"),
+                    .note("`super.init(…)` selects the C++ base constructor by arity and argument types [FFI-39b]")
+                    .notes_from(self.c_base_note(id)),
                 );
             }
             if !declares_init {
@@ -5277,7 +5385,8 @@ impl<'a> Checker<'a> {
                         self.sink.emit(
                             Diagnostic::error(codes::E5056, method.name.span, format!("`{name}` overrides a C++ virtual of `{base}` that its trampoline does not override"))
                                 .help(format!("name it in the overlay's entry: `@ffi(trampoline, virtuals=[…, \"{name}\"]) type {base}`"))
-                                .note("the trampoline calls Ember only for the virtuals it names [FFI-39]"),
+                                .note("the trampoline calls Ember only for the virtuals it names [FFI-39]")
+                                .notes_from(self.c_base_note(id)),
                         );
                         continue;
                     }
@@ -6480,6 +6589,7 @@ impl<'a> Checker<'a> {
             emit_if_used: true,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,
@@ -7282,6 +7392,7 @@ impl<'a> Checker<'a> {
             emit_if_used: false,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,
@@ -19079,6 +19190,7 @@ impl<'a> Checker<'a> {
                 emit_if_used: false,
                 closure_environment: None,
                 closure_captures_by_move: false,
+                path: None,
                 class_owner: None,
                 class_virtual_slot: None,
                 borrows_used_fields: false,
@@ -19349,6 +19461,7 @@ impl<'a> Checker<'a> {
                     emit_if_used: false,
                     closure_environment: None,
                     closure_captures_by_move: false,
+                    path: None,
                     class_owner: Some(class_owner),
                     class_virtual_slot: self.class_virtual_slots.get(&job.def).copied(),
                     borrows_used_fields: false,
@@ -20704,7 +20817,59 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `[DIA-5]` — each FFI error about a declaration a header gave (at it, at an overlay entry for
+    /// it, at a call of it, or with one of its parameters as a secondary span) names the header and
+    /// the C declaration: its text as the header writes it, and where.
+    fn note_c_declarations(&mut self) {
+        if self.c_declarations.is_empty() {
+            return;
+        }
+        let calls = std::mem::take(&mut self.foreign_calls);
+        for mut diagnostic in self.sink.take() {
+            let ffi = diagnostic.code.is_some_and(|code| code.subsystem == ember_diag::codes::Subsystem::Ffi);
+            if diagnostic.severity == ember_diag::Severity::Error && ffi && !diagnostic.notes.iter().any(|note| note.ends_with("[DIA-5]")) {
+                let primary = diagnostic.primary.span;
+                let note = calls
+                    .iter()
+                    .filter(|(call, _)| span_within(primary, *call) || span_within(*call, primary))
+                    .map(|(_, declaration)| *declaration)
+                    .chain(std::iter::once(primary))
+                    .chain(diagnostic.secondary.iter().map(|label| label.span))
+                    .find_map(|span| self.c_declaration_note(span));
+                if let Some(note) = note {
+                    diagnostic = diagnostic.note(note);
+                }
+            }
+            self.sink.emit(diagnostic);
+        }
+    }
+
+    /// `[DIA-5]` — the note naming the header's declaration that `span` lies in, if one does.
+    fn c_declaration_note(&self, span: Span) -> Option<String> {
+        self.c_declarations
+            .iter()
+            .find(|(declaration, ..)| span_within(span, *declaration))
+            .map(|(_, text, at)| format!("declared in the header at {at}: `{text}` [DIA-5]"))
+    }
+
+    /// `[DIA-5]` — the note naming the C++ class a class derives from, its nearest base a header
+    /// declared.
+    fn c_base_note(&self, class: ClassId) -> Option<String> {
+        let mut base = self.types.class_def(class).base;
+        while let Some(id) = base {
+            if let Some(note) = self.c_declaration_note(self.types.class_def(id).span) {
+                return Some(note);
+            }
+            base = self.types.class_def(id).base;
+        }
+        None
+    }
+
     fn check_direct_call_safety(&mut self, def: DefId, span: Span) {
+        // `[DIA-5]` — an error at the call names the C declaration.
+        if self.foreign_declarations.contains_key(&def) && !self.c_declarations.is_empty() {
+            self.foreign_calls.push((span, self.signatures[def.0 as usize].decl));
+        }
         // `[FFI-24d]` — a call of a C++ function whose header changed its `noexcept`.
         if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
             self.changed_calls.push((span, note.clone()));
@@ -20850,6 +21015,7 @@ impl<'a> Checker<'a> {
             emit_if_used: false,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,
@@ -21205,6 +21371,7 @@ impl<'a> Checker<'a> {
                     emit_if_used: !explicit,
                     closure_environment: None,
                     closure_captures_by_move: false,
+                    path: Some(Symbol::intern(&format!("{}.clone", self.types.display(ty)))),
                     class_owner,
                     class_virtual_slot: None,
                     borrows_used_fields: false,
@@ -21795,6 +21962,7 @@ impl<'a> Checker<'a> {
             emit_if_used: false,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: Some(Symbol::intern(&format!("{}.{name}", self.types.display(owner)))),
             class_owner: match self.types.kind(owner) {
                 TyKind::Class(id) => Some(*id),
                 _ => None,
@@ -22873,6 +23041,34 @@ impl<'a> Checker<'a> {
             diagnostic =
                 diagnostic.suggest(format!("did you mean `{candidate}`?"), use_span, candidate);
         }
+        self.add_import_suggestions(diagnostic, written, false)
+    }
+
+    /// `[DIA-12]` N2, `[DIA-15]` — a name this module cannot find that other modules export: the
+    /// import line for each (at most three, by module path), as a fix-it placed after the module's
+    /// imports. Read from the index of exported names (`ExportIndex`); of the right kind for the
+    /// position (`[DIA-24]`): only types where a type is expected.
+    fn add_import_suggestions(&self, mut diagnostic: Diagnostic, written: Symbol, values: bool) -> Diagnostic {
+        let Some(exports) = self.exports else { return diagnostic };
+        let current = self.prefixes.get(self.current_module).map_or("", String::as_str);
+        let mut modules: Vec<&str> = exports
+            .exporters(written.as_str())
+            .iter()
+            .filter(|exported| (values || exported.is_type) && exported.module != current)
+            .map(|exported| exported.module.as_str())
+            .collect();
+        modules.sort_unstable();
+        modules.dedup();
+        let insertion = self.import_insertions.get(self.current_module).copied().flatten();
+        for module in modules.into_iter().take(3) {
+            let line = format!("from {module} import {written}");
+            let message = format!("`{written}` is exported by `{module}`: import it, `{line}`");
+            diagnostic = match insertion {
+                Some((at, true)) => diagnostic.suggest(message, at, format!("\n{line}")),
+                Some((at, false)) => diagnostic.suggest(message, at, format!("{line}\n")),
+                None => diagnostic.help(message),
+            };
+        }
         diagnostic
     }
 
@@ -22933,6 +23129,38 @@ impl<'a> Checker<'a> {
             },
             _ => {}
         }
+        name_suggestions::rank(written.as_str(), use_span, candidates)
+    }
+
+    /// `[DIA-12]` N3, `[DIA-15]` — the nearest methods of `ty` (and of a class's bases) to a name
+    /// it has no method for, from the method table type checking already built, ranked as `[DIA-24]`
+    /// ranks names. A private or package method this module cannot call is not offered.
+    fn method_name_suggestions(&self, ty: Ty, written: Symbol, use_span: Span) -> Vec<String> {
+        let mut owners = vec![ty];
+        while let TyKind::Class(id) = *self.types.kind(*owners.last().expect("one owner"))
+            && let Some(base) = self.types.class_def(id).base
+            && let Some(base_ty) = self.class_ty(base)
+        {
+            owners.push(base_ty);
+        }
+        let candidates = self.methods.iter().filter(|((owner, _), _)| owners.contains(owner)).filter_map(|(&(owner, method), entry)| {
+            if let Some(&(vis, module)) = self.method_vis.get(&entry.def) {
+                let visible = match vis {
+                    ast::VisKind::Private => module == self.current_module,
+                    ast::VisKind::Package => self.same_package(module, self.current_module),
+                    _ => true,
+                };
+                if !visible {
+                    return None;
+                }
+            }
+            let declaration = self.signatures.get(entry.def.0 as usize).map_or(Span::DUMMY, |signature| signature.decl);
+            Some(name_suggestions::Candidate {
+                name: method.as_str().to_owned(),
+                declaration,
+                canonical_name: format!("{}.{method}", self.types.display(owner)),
+            })
+        });
         name_suggestions::rank(written.as_str(), use_span, candidates)
     }
 
@@ -33042,6 +33270,18 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
+        // `[SEL-2]`, `[WK-14]` — Ember's counted handles and C++'s smart pointers never convert
+        // into each other, in either direction: they keep different counts.
+        if let Some(mut diagnostic) = self.counted_family_mismatch(expr.ty, expected, span) {
+            if let Some((argument, param, declared)) = self.argument_of
+                && argument == span
+                && declared != Span::DUMMY
+            {
+                diagnostic = diagnostic.secondary(declared, format!("parameter `{param}` is declared `{wanted}` here"));
+            }
+            self.sink.emit(diagnostic);
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         let mut diagnostic =
             Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`"))
                 .primary_label(format!("this is `{found}`"));
@@ -33700,6 +33940,7 @@ impl<'a> Checker<'a> {
                         candidate,
                     );
                 }
+                let diagnostic = self.add_import_suggestions(diagnostic, name, true);
                 self.sink.emit(diagnostic);
                 Expr { ty: self.common.error, kind: ExprKind::Error, span }
             }
@@ -34628,6 +34869,9 @@ impl<'a> Checker<'a> {
                         let address = Expr { ty: usize, kind: ExprKind::Cast { expr: Box::new(inner), to: usize }, span };
                         return Expr { ty: to, kind: ExprKind::Cast { expr: Box::new(address), to }, span };
                     }
+                } else if let Some(diagnostic) = self.counted_family_mismatch(inner.ty, to, span) {
+                    self.sink.emit(diagnostic);
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 } else if !char_cast && !reference_pointer_cast
                     && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
                     let from = self.types.display(inner.ty);
@@ -35622,6 +35866,7 @@ impl<'a> Checker<'a> {
                         candidate,
                     );
                 }
+                diagnostic = self.add_import_suggestions(diagnostic, name, true);
             } else {
                 let namespace = namespace.expect("a qualified call has a namespace prefix");
                 let source_prefix = segments[..segments.len() - 1]
@@ -42651,6 +42896,9 @@ impl<'a> Checker<'a> {
                 name.span,
                 format!("`{shown}` has no method named `{}`", name.name),
             );
+            for candidate in self.method_name_suggestions(receiver.ty, name.name, name.span) {
+                diagnostic = diagnostic.suggest(format!("did you mean `{candidate}`?"), name.span, candidate);
+            }
             diagnostic = self.note_unmet_extension_bound(diagnostic, receiver.ty, name.name);
             // ODR-091 — `rev` is an iterator's only where it can run backwards.
             if name.name.is("rev") && self.lookup_method(receiver.ty, Symbol::intern("next")).is_some() {
@@ -44208,6 +44456,7 @@ impl<'a> Checker<'a> {
             emit_if_used: false,
             closure_environment: None,
             closure_captures_by_move: false,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,
@@ -44306,6 +44555,7 @@ impl<'a> Checker<'a> {
             emit_if_used: false,
             closure_environment,
             closure_captures_by_move,
+            path: None,
             class_owner: None,
             class_virtual_slot: None,
             borrows_used_fields: false,
@@ -45801,6 +46051,41 @@ impl<'a> Checker<'a> {
     }
 
     /// `[THR-3]` — the payload type, if this is the `std.sync` lock type `origin` of one.
+    /// `[SEL-2]` — whose count a smart-pointer type uses: `Some(false)` for Ember's `Shared`,
+    /// `SyncShared` and `Weak`, `Some(true)` for C++'s `std.ffi.CppShared` and `std.ffi.CppWeak`.
+    fn counted_family(&self, ty: Ty) -> Option<bool> {
+        let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
+        match &self.types.struct_def(id).origin {
+            Some((name, args)) if args.len() == 1 => match name.as_str() {
+                "Shared" | "SyncShared" | "Weak" => Some(false),
+                "std.ffi.CppShared" | "std.ffi.CppWeak" => Some(true),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// `[SEL-2]`, `[WK-14]` — `E5065` when `found` and `wanted` are counted handles of the two
+    /// families: Ember's and C++'s never convert into each other, implicitly or with `as`.
+    fn counted_family_mismatch(&self, found: Ty, wanted: Ty, span: Span) -> Option<Diagnostic> {
+        let (found_cpp, wanted_cpp) = (self.counted_family(found)?, self.counted_family(wanted)?);
+        if found_cpp == wanted_cpp {
+            return None;
+        }
+        let (found, wanted) = (self.types.display(found), self.types.display(wanted));
+        let (counted_here, cpp_side) = if found_cpp { (&wanted, &found) } else { (&found, &wanted) };
+        Some(
+            Diagnostic::error(
+                codes::E5065,
+                span,
+                format!("`{found}` does not convert to `{wanted}`: Ember's and C++'s reference counts are different counts"),
+            )
+            .primary_label(format!("this is `{found}`"))
+            .note(format!("`{counted_here}` is counted by Ember and `{cpp_side}` by C++; a conversion would leave each count believing it owns the object, and both would free it [SEL-2]"))
+            .help("keep each object on its own side: an Ember value in a `Shared`, a `std::shared_ptr` C++ made in a `CppShared`, and share the object itself through a reference or a C++ call"),
+        )
+    }
+
     fn lock_inner(&self, ty: Ty, origin: &str) -> Option<Ty> {
         let TyKind::Struct(id) = *self.types.kind(ty) else { return None };
         match &self.types.struct_def(id).origin {
