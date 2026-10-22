@@ -40,10 +40,10 @@ fn main():
         bar = "#".repeat(n)
         println(f"{i + 1:>2}. {word:<10} {n:>3} {bar}")
 
-    longest: String = ""
+    longest = ""
     for word in counts.keys():
         if word.len() > longest.len():
-            longest = word.clone()
+            longest = word
     println(f"longest word: {longest}")
 
     once = [w.clone() for w, n in counts.items() if n == 1]

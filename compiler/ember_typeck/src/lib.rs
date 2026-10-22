@@ -119,7 +119,7 @@ pub struct CallableDeclaration {
     pub symbol: String,
     pub parameters: Vec<CallableDeclarationParameter>,
     pub result: Ty,
-    pub borrows: Option<Vec<usize>>,
+    pub borrows: Option<Vec<hir::BorrowSource>>,
     pub generics: Vec<CallableDeclarationGeneric>,
     pub is_unsafe: bool,
     pub abi: Option<String>,
@@ -1260,10 +1260,11 @@ struct Signature {
     overflow: OverflowPolicy,
     /// `[TYP-9]` — `@fastmath` or `@fp(contract)` at the declaration.
     fp: FpMode,
-    /// `[LT-1a]` — the parameter positions `@borrows(…)` names, when it is
+    /// `[LT-1a]` — the parameter positions `@borrows(…)` names (a receiver's
+    /// view field by index, ODR-196), when it is
     /// written. Part of the public contract (`[VER-2]`), so it travels with
     /// the signature rather than being re-read from the attributes later.
-    borrows: Option<Vec<usize>>,
+    borrows: Option<Vec<hir::BorrowSource>>,
     /// `[TYP-16]` — the generic parameters this function declares, with the
     /// interfaces bounding each (`[TYP-17]`). Empty for an ordinary function.
     generics: Vec<GenericParam>,
@@ -1978,7 +1979,7 @@ struct GenericMethod {
     /// indices follow the owning generic type's parameters while this recipe
     /// is stored, then are rebased to zero when the owner is instantiated.
     generics: Vec<GenericParam>,
-    borrows: Option<Vec<usize>>,
+    borrows: Option<Vec<hir::BorrowSource>>,
     overflow: OverflowPolicy,
     fp: FpMode,
     /// Module, item and member index of the declaration.
@@ -3026,6 +3027,10 @@ struct Checker<'a> {
     /// D-278 — the generic type whose methods are being collected, with its
     /// own parameters: `W[T]` inside `W`'s methods is their `Self`.
     collecting_generic: Option<(Symbol, Vec<Ty>)>,
+    /// `[LT-1a]` (ODR-196) — the generic struct whose methods (or
+    /// extension's) are being collected, with its fields by name and type, for
+    /// `@borrows(self.f)` while the receiver is `Self`.
+    recipe_fields: Option<(Symbol, Vec<(Symbol, Ty)>)>,
     /// D-279 — every generic struct not collected yet, by name, with its
     /// module and item index: one named by an earlier declaration's field or
     /// method is collected on demand.
@@ -3368,6 +3373,7 @@ impl<'a> Checker<'a> {
             open_interface_origin: HashMap::new(),
             pending_bound_interfaces: Vec::new(),
             collecting_generic: None,
+            recipe_fields: None,
             pending_generic_structs: HashMap::new(),
             pending_generic_classes: HashMap::new(),
             generic_forward: HashMap::new(),
@@ -3454,7 +3460,7 @@ impl<'a> Checker<'a> {
     /// typo in it is worth catching loudly.
     /// `[LT-1b]` — the opt-in `L3014`: rule 3 ties the result to more than one
     /// source parameter, which `@borrows` can narrow.
-    fn lint_rule_3(&mut self, params: &[(Symbol, Ty, Mode, Span)], ret: Ty, borrows: &Option<Vec<usize>>, span: Span) {
+    fn lint_rule_3(&mut self, params: &[(Symbol, Ty, Mode, Span)], ret: Ty, borrows: &Option<Vec<hir::BorrowSource>>, span: Span) {
         if !self.lint_return_intersection || borrows.is_some() || !self.types.is_view(ret) {
             return;
         }
@@ -3479,7 +3485,7 @@ impl<'a> Checker<'a> {
         attrs: &[ast::Attribute],
         params: &[(Symbol, Ty, Mode, Span)],
         ret: Ty,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<Vec<hir::BorrowSource>> {
         let Some(attr) = attrs
             .iter()
             .find(|a| a.path.len() == 1 && a.path[0].name.is("borrows"))
@@ -3524,7 +3530,7 @@ impl<'a> Checker<'a> {
             .map(|(name, _, _, _)| name.to_string())
             .collect();
 
-        let mut named_positions = Vec::new();
+        let mut named_sources = Vec::new();
         for arg in &attr.args {
             let (named, arg_span) = match arg {
                 ast::AttrArg::Expr(expr) => match &expr.kind {
@@ -3533,6 +3539,14 @@ impl<'a> Checker<'a> {
                     }
                     // `[LT-1a]` — "`self` names the receiver" (D-282).
                     ast::ExprKind::SelfExpr => (Symbol::intern("self"), expr.span),
+                    // `[LT-1a]` (ODR-196) — `self.f`: what the receiver's view
+                    // field borrows, not the receiver.
+                    ast::ExprKind::Field { base, name } if matches!(base.kind, ast::ExprKind::SelfExpr) => {
+                        if let Some(field) = self.receiver_view_field(params, name.name, expr.span) {
+                            named_sources.push(hir::BorrowSource { parameter: 0, field: Some(field) });
+                        }
+                        continue;
+                    }
                     _ => {
                         self.sink.emit(
                             Diagnostic::error(
@@ -3560,7 +3574,7 @@ impl<'a> Checker<'a> {
                 }
             };
             if let Some(position) = params.iter().position(|(name, _, _, _)| *name == named) {
-                named_positions.push(position);
+                named_sources.push(hir::BorrowSource::whole(position));
             }
             match params.iter().find(|(name, _, _, _)| *name == named) {
                 None => {
@@ -3617,7 +3631,78 @@ impl<'a> Checker<'a> {
                 Some(_) => {}
             }
         }
-        Some(named_positions)
+        // One canonical list: by parameter, and a parameter named whole
+        // already holds everything its fields borrow.
+        named_sources.sort();
+        named_sources.dedup();
+        let whole: Vec<usize> = named_sources.iter().filter(|source| source.field.is_none()).map(|source| source.parameter).collect();
+        named_sources.retain(|source| source.field.is_none() || !whole.contains(&source.parameter));
+        Some(named_sources)
+    }
+
+    /// `[LT-1a]` (ODR-196) — `@borrows(self.f)`: the index of `f`, a view
+    /// field of the receiver's type (a field whose type is a reference or
+    /// view); `E2031` when there is no receiver, or `f` is not one.
+    fn receiver_view_field(&mut self, params: &[(Symbol, Ty, Mode, Span)], field: Symbol, span: Span) -> Option<usize> {
+        let Some(&(_, receiver, _, _)) = params.first().filter(|(name, ..)| name.is("self")) else {
+            self.sink.emit(
+                Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but this function has no receiver"))
+                    .primary_label("`self.f` names a field of the receiver")
+                    .help("name a parameter the result borrows (LT-1a)"),
+            );
+            return None;
+        };
+        let shown = match &self.recipe_fields {
+            Some((recipe, _)) if receiver == self.common.self_ty => format!("`{}`", recipe.as_str().rsplit('.').next().unwrap_or(recipe.as_str())),
+            _ if receiver == self.common.self_ty => "the receiver's type".to_string(),
+            _ => format!("`{}`", self.types.display(receiver)),
+        };
+        let Some(fields) = self.receiver_fields(receiver) else {
+            self.sink.emit(
+                Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but {shown} is not a struct"))
+                    .primary_label("`self.f` names a view field of a struct receiver")
+                    .help("name `self`, or another parameter the result borrows (LT-1a)"),
+            );
+            return None;
+        };
+        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.is_view(*ty)).map(|(name, _)| format!("`self.{name}`")).collect();
+        let help = if views.is_empty() {
+            format!("{shown} has no view field: name `self` instead (LT-1a)")
+        } else {
+            format!("the view fields of {shown} are {}", views.join(", "))
+        };
+        match fields.iter().position(|(name, _)| *name == field) {
+            Some(index) if self.types.is_view(fields[index].1) => Some(index),
+            Some(index) => {
+                let ty = self.types.display(fields[index].1);
+                self.sink.emit(
+                    Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, which is not a view field"))
+                        .primary_label(format!("`{field}` is `{ty}`, which borrows nothing"))
+                        .help(help),
+                );
+                None
+            }
+            None => {
+                self.sink.emit(
+                    Diagnostic::error(codes::E2031, span, format!("`@borrows` names `self.{field}`, but {shown} has no field `{field}`"))
+                        .help(help),
+                );
+                None
+            }
+        }
+    }
+
+    /// The fields of a method's receiver type, by name and type: a struct's,
+    /// or, while a generic type's methods are collected and the receiver is
+    /// still `Self`, its recipe's (`recipe_fields`).
+    fn receiver_fields(&self, receiver: Ty) -> Option<Vec<(Symbol, Ty)>> {
+        if receiver == self.common.self_ty {
+            return self.recipe_fields.as_ref().map(|(_, fields)| fields.clone());
+        }
+        match self.types.kind(receiver) {
+            TyKind::Struct(id) => Some(self.types.struct_def(*id).fields.iter().map(|field| (field.name, field.ty)).collect()),
+            _ => None,
+        }
     }
 
     /// `[TYP-15]` with `[LT-3]` — "a view-typed value MUST NOT be stored in a
@@ -4607,7 +4692,7 @@ impl<'a> Checker<'a> {
         symbol: String,
         parameters: Vec<CallableDeclarationParameter>,
         result: Ty,
-        borrows: Option<Vec<usize>>,
+        borrows: Option<Vec<hir::BorrowSource>>,
         generics: &[GenericParam],
         is_unsafe: bool,
         abi: Option<String>,
@@ -5742,11 +5827,13 @@ impl<'a> Checker<'a> {
         let saved_module = std::mem::replace(&mut self.current_module, module);
         let saved_params = std::mem::take(&mut self.type_params);
         let saved_collecting = self.collecting_generic.take();
+        let saved_fields = self.recipe_fields.take();
         let saved_self = self.self_ty.take();
         self.collect_generic_class(item_index, &item);
         self.current_module = saved_module;
         self.type_params = saved_params;
         self.collecting_generic = saved_collecting;
+        self.recipe_fields = saved_fields;
         self.self_ty = saved_self;
     }
 
@@ -5755,11 +5842,13 @@ impl<'a> Checker<'a> {
         let saved_module = std::mem::replace(&mut self.current_module, module);
         let saved_params = std::mem::take(&mut self.type_params);
         let saved_collecting = self.collecting_generic.take();
+        let saved_fields = self.recipe_fields.take();
         let saved_self = self.self_ty.take();
         self.collect_generic_struct(item_index, &item);
         self.current_module = saved_module;
         self.type_params = saved_params;
         self.collecting_generic = saved_collecting;
+        self.recipe_fields = saved_fields;
         self.self_ty = saved_self;
     }
 
@@ -5855,9 +5944,10 @@ impl<'a> Checker<'a> {
                     }
                     _ => None,
                 })
-                .collect();
+                .collect::<Vec<FieldDef>>();
             let own: Vec<Ty> = params.iter().filter_map(|param| self.type_params.get(param).copied()).collect();
             self.collecting_generic = Some((name, own));
+            self.recipe_fields = Some((name, fields.iter().map(|field| (field.name, field.ty)).collect()));
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
@@ -5893,6 +5983,7 @@ impl<'a> Checker<'a> {
                 });
             }
             self.collecting_generic = None;
+            self.recipe_fields = None;
             self.type_params.clear();
             self.projection_params = saved_projections;
             if has_derive(&item.attrs, "Hash") {
@@ -6724,6 +6815,7 @@ impl<'a> Checker<'a> {
                 self.declare_target_projections(name, &target_args, &mut params, decl.target.span);
                 self.declare_count_ops(decl, &mut params);
             }
+            self.recipe_fields = self.generic_structs.get(&name).map(|recipe| (name, recipe.fields.iter().map(|field| (field.name, field.ty)).collect()));
             let mut methods = Vec::new();
             for (member_index, member) in decl.members.iter().enumerate() {
                 let ast::MemberKind::Fn(fn_decl) = &member.kind else { continue };
@@ -6753,6 +6845,7 @@ impl<'a> Checker<'a> {
                     span: member.span,
                 });
             }
+            self.recipe_fields = None;
             let mut assoc = Vec::new();
             for member in &decl.members {
                 if let ast::MemberKind::TypeAlias(alias) = &member.kind
@@ -9439,7 +9532,7 @@ impl<'a> Checker<'a> {
                                 | FfiResultContract::NullableSharedCountFrom { source: name, .. }
                                 | FfiResultContract::ExclusiveCountFrom { source: name, .. }
                                 | FfiResultContract::NullableExclusiveCountFrom { source: name, .. }) =>
-                                params.iter().position(|(param, _, _, _)| *param == name).map(|index| vec![index]),
+                                params.iter().position(|(param, _, _, _)| *param == name).map(|index| vec![hir::BorrowSource::whole(index)]),
                             None => None,
                         };
                         from.or(explicit_borrows)
@@ -40391,7 +40484,7 @@ impl<'a> Checker<'a> {
     /// entry holding `k`, and its callers keep `k`'s source borrowed for it;
     /// `get(q) -> Option[ref V]` does not name `q`'s type and borrows only
     /// `self`.
-    fn declared_borrows(&self, def: DefId) -> Option<Vec<usize>> {
+    fn declared_borrows(&self, def: DefId) -> Option<Vec<hir::BorrowSource>> {
         let signature = &self.signatures[def.0 as usize];
         if signature.borrows.is_some() {
             return signature.borrows.clone();
@@ -40419,7 +40512,7 @@ impl<'a> Checker<'a> {
         if joined.is_empty() {
             return None;
         }
-        Some(std::iter::once(0).chain(joined).collect())
+        Some(std::iter::once(0).chain(joined).map(hir::BorrowSource::whole).collect())
     }
 
     /// A borrowed parameter's local: `ref T` where `def` passes it by address
@@ -45428,7 +45521,7 @@ impl<'a> Checker<'a> {
         let beyond: Vec<Symbol> = match &signature.borrows {
             Some(named) if self.types.is_view(ret) => {
                 let sources = self.sources_of(&signature.params);
-                named.iter().filter(|index| !sources.contains(index)).map(|index| signature.params[*index].0).collect()
+                named.iter().filter(|source| !sources.contains(&source.parameter)).map(|source| signature.params[source.parameter].0).collect()
             }
             _ => Vec::new(),
         };

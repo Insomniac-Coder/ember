@@ -5017,6 +5017,20 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-265 — Helper X merged: `@borrows(self.f)`, the iterator half of D-819
+
+2026-10-22 (helper X, `tasks/95/X-notes.md`). ODR-196 built: `@borrows(self.f)` names a view field of
+the receiver; the result borrows what `f` borrows and the call's loan on the receiver ends with the
+call; `E2031` for no receiver, a receiver that is no struct, a missing field or one that is no view
+(the help lists the view fields); the body check is `E3062` when the result borrows anything else
+of `self`, a result read through a `ref mut` field among them. The interface artifact records each
+`@borrows` source as a parameter and an optional field (schema 13). The standard library's
+`MapKeys`, `MapValues`, `MapItems`, `SetIter`, `FixedArrayIter` (`self.owner`) and `Lines`,
+`Split`, `SplitWhitespace` (`self.rest`, so a part no longer borrows the separator) declare it on
+`next`; `MapValuesMut`, whose owner is `ref mut`, cannot. So `for k in m:` and `m.keys()` yield
+what borrows the map, and a key kept across turns or after the loop compiles (D-819 fixed). Fixed
+in passing: D-857, D-858. Open: D-856 (iterator adapters), ruled ODR-211. Ruled: ODR-212.
+
 ## ADR-264 — Helper W merged: what the first-week corpus found the compiler refusing
 
 2026-10-22 (helper W, `tasks/95/W-notes.md`). Built, each with conformance cases: string literal

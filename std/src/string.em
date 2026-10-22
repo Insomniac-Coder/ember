@@ -130,6 +130,7 @@ extend Lines implements Iterator:
 
     ## The text is copied out of the field first, so a line borrows the
     ## text, not this iterator.
+    @borrows(self.rest)
     fn next(mut self) -> Option[str]:
         rest = self.rest
         if rest.len() == 0:
@@ -154,6 +155,7 @@ pub struct Split:
 extend Split implements Iterator:
     type Item = str
 
+    @borrows(self.rest)
     fn next(mut self) -> Option[str]:
         if self.done:
             return None
@@ -173,6 +175,7 @@ pub struct SplitWhitespace:
 extend SplitWhitespace implements Iterator:
     type Item = str
 
+    @borrows(self.rest)
     fn next(mut self) -> Option[str]:
         rest = self.rest
         n = rest.len()
