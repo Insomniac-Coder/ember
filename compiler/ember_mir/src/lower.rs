@@ -6535,7 +6535,13 @@ impl<'a> Builder<'a> {
                 };
                 Rvalue::Ref { place, mutable: *mutable }
             }
-            _ => Rvalue::Use(self.lower_operand(expr)),
+            _ => {
+                // D-822 (D5) — the assignment is at the value it reads (`self.slots[code]`), not at
+                // the last part of it lowered (the index `code`).
+                let operand = self.lower_operand(expr);
+                self.at(expr.span);
+                Rvalue::Use(operand)
+            }
         }
     }
 

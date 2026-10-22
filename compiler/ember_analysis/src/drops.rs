@@ -986,7 +986,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(codes::E3012, span, "cannot move out of a class field")
                     .primary_label("moved out here")
                     .note("the object keeps the field, and every handle to it can still reach it [EXP-6]")
-                    .help("clone it, or leave a value in its place with `mem.take` or `mem.replace`"),
+                    .help("borrow it, `ref` (`ref mut` to change it in the object); leave a value in its place with `mem.take` or `mem.replace`; or clone it"),
             );
             errors += 1;
             return;
@@ -1011,7 +1011,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(codes::E3011, span, "cannot move out of an element")
                     .primary_label("moved out here")
                     .note("the container still holds the element and drops it with the rest [EXP-6]")
-                    .help("clone it, or take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`"),
+                    .help("borrow it, `ref xs[i]` (`ref mut` to change it in place); take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`; or clone it"),
             );
             errors += 1;
             return;
@@ -1036,7 +1036,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(codes::E3013, span, "cannot move out of a reference")
                     .primary_label("moved out here")
                     .note("moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it")
-                    .help("move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; to leave the owner's value as it is, copy it: `.clone()`"),
+                    .help("borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is"),
             );
             errors += 1;
         } else if borrowed {
@@ -1049,7 +1049,7 @@ fn check_borrowed_moves(body: &Body, types: &TypeTable, sink: &mut Sink) -> usiz
                 Diagnostic::error(codes::E3013, span, "cannot move out of a borrowed parameter")
                     .primary_label("moved out here")
                     .note(note)
-                    .help("the caller keeps its value: copy what is moved, `.clone()`; or take the parameter `owned`, or `mut` and move it out with `mem.take`, `mem.replace` or `swap`, leaving a value behind"),
+                    .help("the caller keeps its value: borrow it, `ref`, or copy what is moved, `.clone()`; or take the parameter `owned`, or `mut` and move it out with `mem.take`, `mem.replace` or `swap`, leaving a value behind"),
             );
             errors += 1;
         }
