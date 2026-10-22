@@ -15593,7 +15593,40 @@ impl<'a> Checker<'a> {
             );
             return error;
         };
-        let qualified = self.qualified_in_module(contract.module, destroys.name);
+        self.foreign_box_of(pointer, pointee, destroys, contract.module, contract.creator, span)
+    }
+
+    /// `[FFI-17a]` — `ember_cpp_adopt_deleted[T](h, f)`, in a module `import cpp` wrote: the
+    /// `ForeignBox[T]` of the object a `std::unique_ptr<T, D>` gave up, freed by `f`, a thunk of
+    /// the module that hands it to the deleter `D`.
+    fn synth_cpp_adopt_deleted(&mut self, name: Symbol, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Option<Expr> {
+        if !name.is(&format!("{}_cpp_adopt_deleted", ember_branding::SYMBOL_PREFIX)) || !self.foreign_cpp.get(self.current_module).copied().unwrap_or(false) {
+            return None;
+        }
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let ([pointee], [object, deleter]) = (explicit, args) else { return Some(error) };
+        let ast::ExprKind::Path { segments } = &deleter.value.kind else { return Some(error) };
+        let [destroys] = segments.as_slice() else { return Some(error) };
+        if !self.unsafe_context() {
+            self.error(codes::E3100, span, "adopting a foreign object requires an `unsafe` block");
+        }
+        let expected = self.types.intern(TyKind::Ptr { mutable: true, inner: *pointee });
+        let pointer = self.check_expr(&object.value, expected);
+        // The class's own thread rule (`[FFI-33b]`), as `adopt` keeps it.
+        let creator = match *self.types.kind(*pointee) {
+            TyKind::Opaque(name) => self.foreign_type_contracts.get(&name).is_some_and(|contract| contract.creator),
+            _ => false,
+        };
+        Some(self.foreign_box_of(pointer, *pointee, *destroys, self.current_module, creator, span))
+    }
+
+    /// `[FFI-36a]` — the `ForeignBox[T]` owning the foreign object at `pointer`, freed by `destroys`
+    /// (a foreign function of `module` taking one `*mut T`), bound to the thread that made it when
+    /// `creator`.
+    fn foreign_box_of(&mut self, pointer: Expr, pointee: Ty, destroys: ast::Ident, module: usize, creator: bool, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let shown = self.types.display(pointee);
+        let qualified = self.qualified_in_module(module, destroys.name);
         let destructor = self.fn_ids.get(&qualified).copied()
             .and_then(|def| self.foreign_symbols.get(&def).map(|symbol| (def, *symbol)));
         let Some((def, symbol)) = destructor else {
@@ -15627,7 +15660,7 @@ impl<'a> Checker<'a> {
             },
             span,
         };
-        let creator = if contract.creator {
+        let creator = if creator {
             Expr { ty: creator_ty, kind: ExprKind::Builtin { which: Builtin::ForeignThread, args: Vec::new() }, span }
         } else {
             Expr { ty: creator_ty, kind: ExprKind::Int(0), span }
@@ -15674,6 +15707,9 @@ impl<'a> Checker<'a> {
         }
         if resolved.is("std.ffi.adopt") {
             return Some(self.synth_foreign_adopt(args, explicit, span));
+        }
+        if let Some(built) = self.synth_cpp_adopt_deleted(name, args, explicit, span) {
+            return Some(built);
         }
         // `[UNS-5]` — `std.mem`'s volatile accesses, which `Volatile[*T]` makes.
         if resolved.is("std.mem.volatile_read") || resolved.is("std.mem.volatile_write") {

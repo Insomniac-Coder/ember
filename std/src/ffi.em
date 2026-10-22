@@ -301,6 +301,28 @@ extend[T: Copy] CppVector[T]:
             out.push(item)
         return out
 
+## `[FFI-17a]` — a C++ `std::function` Ember owns, which it does not call: what a result of one is
+## with no overlay entry. Its end deletes it (a call into C++). With the entry's
+## `@ffi(std_function)` the result is an `owned fn(A…) -> R` instead, whose capture this is
+## (ODR-199). Not `Copy`, `Send` or `Sync`.
+pub struct CppFunction:
+    object: *mut u8
+    destroy: unsafe extern "C" fn(*mut u8)
+
+    ## `[FFI-17a]` — the `std::function` at `object`, with its thunk: what `import cpp` makes of one.
+    @safety("`object` is a live `std::function` nothing else owns, and `destroy` deletes it")
+    pub unsafe fn from_thunks(object: *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppFunction:  # SAFETY: the caller keeps the obligation
+        return CppFunction(object, destroy)
+
+    ## The `std::function` itself, for a call into C++.
+    pub fn as_ptr(self) -> *mut u8:
+        return self.object
+
+    fn drop(mut self):
+        destroy = self.destroy
+        unsafe:  # SAFETY(ffi): the function's end, once
+            destroy(self.object)
+
 ## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::string` Ember owns: its bytes in place. `bytes()` views
 ## them and `to_str()` views them as text when they are UTF-8 (`[TXT-2]`), each borrowing the
 ## string; `String.from(c)` copies them, each invalid sequence becoming U+FFFD. Its end deletes it

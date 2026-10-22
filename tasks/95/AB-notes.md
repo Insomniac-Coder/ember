@@ -370,3 +370,49 @@ Tests: `FFI-48/reject_a_cpp20_module_is_not_read.em` (`modular.hpp`),
 `reject_unsupported_cpp_constructs.em` (`unsupported.hpp`, `nttp.hpp` as the C++20 project `nttp`
 of the directory's new `ember.toml`); they pass on Windows and in WSL. The C++ corpus records are
 unchanged on both platforms.
+
+## AB9. `[FFI-17a]` — fixed spans (ODR-200), `std::unique_ptr` with its own deleter, `std::function` (ODR-199)
+
+- *`std::span<T, N>`* (ODR-200): a parameter is `ref [T; N]` (`ref mut [T; N]` for a span of `T`,
+  not `const T`), passed as its elements' address, from which the thunk makes the span; a result is
+  the elements' address the thunk gives, which the entry's lifetime word (`-> from(self)`, as a
+  view's) makes a `ref [T; N]` borrowing what it names (`result(borrowed, fixed(N), from(…))`), and
+  with no entry a raw pointer. An entry for one without a lifetime word is `E5002`, as for a view.
+  Test: `FFI-17a/accept_fixed_spans_cross_as_arrays.em` (`fixed.hpp`, `overlays/fixed.em`).
+- *`std::unique_ptr<T, D>`*: its `ForeignBox[T]` frees the object through the deleter — a thunk
+  that makes a `std::unique_ptr<T, D>` of the object and ends it, so `D{}` frees it; the box is made
+  by a new compiler-known form of `import cpp` modules, `ember_cpp_adopt_deleted[T](h, f)` (typeck
+  `synth_cpp_adopt_deleted`; `adopt`'s body is now `foreign_box_of`, shared). A deleter that holds
+  state (a function pointer, a class with members) is refused, saying why: a `ForeignBox` keeps
+  only its object's address. **Question** (not ruled): keeping such a deleter would need a field
+  beside every box's address (a cost for every `ForeignBox`) or a bridge type of its own; refusing
+  it is what is built. Test: `FFI-17a/accept_a_unique_ptr_with_its_own_deleter.em` (`deleters.hpp`).
+- *`std::function<R(A…)>`* (ODR-199): a result is, with no entry, a `CppFunction` (`std.ffi`: an
+  owned object, deleted at its end, not called — the table's "opaque owned object"); with the
+  entry's `@ffi(std_function)` it is an Ember callable `fn(A…) -> R` owning it: a helper of the
+  module (`<ops>_callable`) returns `owned fn(a0, …) => <ops>_invoke(holder, a0, …)`, the lambda
+  capturing the `CppFunction`, each call one thunk call (no copy), the target deleted with the
+  value. Parameters and the result must map by value; one by reference is refused. An exception
+  its target throws is reported and the program stops (`crossed`, `[FFI-39e]`): an Ember call has
+  no `Result` for it. `@ffi(std_function)` on a function whose result is no `std::function` is
+  `E5010`. As a parameter a `std::function` stays `E5030`. `signature=…` is not needed (the
+  signature is read from the type) and not accepted. Test:
+  `FFI-17a/accept_a_std_function_crosses_as_a_callable.em` (`functions.hpp`, `overlays/functions.em`).
+
+**Defect found (not fixed, not FFI):** an owned callable passed to an `owned` parameter is never
+dropped — its captures' `drop` never runs:
+
+    struct Noisy:
+        value: i32
+        fn drop(mut self):
+            println("dropped")
+    fn make() -> fn(i32) -> i32:
+        noisy = Noisy(1)
+        return owned fn(x: i32) -> i32 => x + noisy.value
+    fn call_once(owned f: fn(i32) -> i32, x: i32) -> i32:
+        return f(x)
+    fn main():
+        f = make()
+        println("called", call_once(f, 40))   # prints `called 41`; `dropped` never
+
+(A local owning the callable drops it at its scope's end, as it should.)

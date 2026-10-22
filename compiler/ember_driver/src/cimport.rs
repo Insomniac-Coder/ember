@@ -2968,7 +2968,7 @@ impl Writer {
         unsafe {
             let ty = clang_getCanonicalType(ty);
             let name = std_template(ty)?;
-            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "weak_ptr" | "unique_ptr") {
+            if !matches!(name.as_str(), "vector" | "basic_string" | "shared_ptr" | "weak_ptr" | "unique_ptr" | "function") {
                 return None;
             }
             let declaration = clang_getTypeDeclaration(ty);
@@ -2993,11 +2993,27 @@ impl Writer {
                     "[E5034] `{spelled}`: an allocator-parameterised container: the allocator is part of the type and opaque; expose a span, or keep it native ([FFI-48])"
                 )));
             }
-            // `[FFI-17a]` — a `std::unique_ptr` with a deleter of its own is not built: its
-            // `ForeignBox` frees the object with the class's destructor.
-            if name == "unique_ptr" && !defaulted(1, "default_delete") {
-                return Some(Err(format!("`{spelled}`: a `std::unique_ptr` with a deleter of its own (only `std::default_delete` is built) [FFI-17a]")));
-            }
+            // `[FFI-17a]` — a `std::unique_ptr` with a deleter of its own: its `ForeignBox` frees the
+            // object through the deleter, which a stateless one is wherever it is made. One that
+            // holds state (a function pointer, a class with members) would need its state kept
+            // beside the object, which a `ForeignBox` does not hold.
+            let deleter = if name == "unique_ptr" && !defaulted(1, "default_delete") {
+                let deleter = clang_getCanonicalType(clang_Type_getTemplateArgumentAsType(ty, 1));
+                let definition = clang_getCursorDefinition(clang_getTypeDeclaration(deleter));
+                let stateless = deleter.kind == CXType_Record
+                    && clang_Cursor_isNull(definition) == 0
+                    && clang_Type_getSizeOf(deleter) == 1
+                    && !children(definition).into_iter().any(|member| kind(member) == CXCursor_FieldDecl);
+                if !stateless {
+                    return Some(Err(format!(
+                        "`{spelled}`: a deleter that holds state (`{}`): a `ForeignBox` keeps only its object's address; free it in C++, or give it a stateless deleter [FFI-17a]",
+                        cpp_spelling(deleter)
+                    )));
+                }
+                true
+            } else {
+                false
+            };
             let argument = clang_Type_getTemplateArgumentAsType(ty, 0);
             let prefix = ember_branding::SYMBOL_PREFIX;
             let ops = format!("{prefix}_cpp_{}_bridge_{}", self.stem, self.bridges.len());
@@ -3007,6 +3023,73 @@ impl Writer {
                 let _ = writeln!(decls, "    @ffi(link_name=\"{ops}_{suffix}\")\n    fn {ops}_{suffix}{signature}");
             };
             let bridge = match name.as_str() {
+                // `[FFI-17a]` (ODR-199) — `std::function<R(A…)>`: an owned `CppFunction`, or, with
+                // its function's entry's `@ffi(std_function)`, an `owned fn(A…) -> R` capturing it.
+                "function" => {
+                    let signature = clang_getCanonicalType(argument);
+                    if signature.kind != CXType_FunctionProto || clang_isFunctionTypeVariadic(signature) != 0 {
+                        return Some(Err(format!("`{spelled}`: a `std::function` of a signature with no Ember function type ([FFI-17a])")));
+                    }
+                    let (mut params, mut declared, mut passed, mut forwarded) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                    for index in 0..clang_getNumArgTypes(signature).max(0) as u32 {
+                        let param = clang_getArgType(argument, index);
+                        if matches!(param.kind, CXType_LValueReference | CXType_RValueReference) {
+                            return Some(Err(format!("`{spelled}`: a parameter by reference (`{}`): a `std::function` crosses when its parameters cross by value ([FFI-17a])", cpp_spelling(param))));
+                        }
+                        let mapped = match self.ty(param, false) {
+                            Ok(mapped) => mapped,
+                            Err(reason) => return Some(Err(format!("`{spelled}`: its parameter `{}` does not map by value ({reason}) [FFI-17a]", cpp_spelling(param)))),
+                        };
+                        params.push(format!("a{index}: {mapped}"));
+                        declared.push(mapped);
+                        passed.push(format!("{} a{index}", cpp_spelling(param)));
+                        forwarded.push(format!("a{index}"));
+                    }
+                    let result = clang_getResultType(argument);
+                    let mapped = if clang_getCanonicalType(result).kind == CXType_Void {
+                        None
+                    } else {
+                        match self.ty(result, false) {
+                            Ok(mapped) => Some(mapped),
+                            Err(reason) => return Some(Err(format!("`{spelled}`: its result does not map by value ({reason}) [FFI-17a]"))),
+                        }
+                    };
+                    let returned = mapped.as_ref().map_or(String::new(), |mapped| format!(" -> {mapped}"));
+                    let c_result = if mapped.is_some() { cpp_spelling(result) } else { "void".to_string() };
+                    let comma = |items: &[String]| items.iter().map(|item| format!(", {item}")).collect::<String>();
+                    // An exception its target throws has nowhere to go in an Ember call: it is reported
+                    // and the program stops, naming it ([FFI-39e]).
+                    let _ = writeln!(
+                        self.shim,
+                        "extern \"C\" {c_result} {ops}_call(void* f{}) noexcept {{ try {{ return (*static_cast<{spelled}*>(f))({}); }} catch (...) {{ crossed(\"std::function\"); }} }}\n\
+                         extern \"C\" void {ops}_destroy(void* f) noexcept {{ delete static_cast<{spelled}*>(f); }}",
+                        comma(&passed),
+                        forwarded.join(", ")
+                    );
+                    declare(&mut decls, "call", &format!("(object: *mut u8{}){returned}", comma(&params)));
+                    declare(&mut decls, "destroy", "(object: *mut u8)");
+                    let callable = format!("fn({}){returned}", declared.join(", "));
+                    self.push(
+                        &format!("{ops}_callable"),
+                        Kind::Class,
+                        format!(
+                            "## `[FFI-17a]` (ODR-199) — `{spelled}` as an Ember callable: its call is the thunk's, its capture the `std::function`, deleted with it.\n\
+                             fn {ops}_callable(owned holder: CppFunction) -> {callable}:\n    return owned fn({}){returned} => {ops}_invoke(holder{})\n\n\
+                             fn {ops}_invoke(holder: ref CppFunction{}){returned}:\n    unsafe:  # SAFETY(ffi): the holder owns a live `{spelled}` of this signature\n        {}{ops}_call(holder.as_ptr(){})\n",
+                            params.join(", "),
+                            comma(&forwarded),
+                            comma(&params),
+                            if mapped.is_some() { "return " } else { "" },
+                            comma(&forwarded)
+                        ),
+                    );
+                    Bridge {
+                        ember: "CppFunction".to_string(),
+                        spelled: spelled.clone(),
+                        make: format!("function {ops} {callable}"),
+                        unique: None,
+                    }
+                }
                 "vector" => {
                     if argument.kind == CXType_Bool {
                         return Some(Err(format!("`{spelled}`: a `std::vector<bool>` stores bits, which no view of its elements can show ([FFI-17a])")));
@@ -3113,9 +3196,21 @@ impl Writer {
                         Ok(_) => return Some(Err(format!("`{spelled}`: a `std::unique_ptr` crosses as a `ForeignBox` of a class Ember holds behind a pointer ([FFI-17a])"))),
                         Err(reason) => return Some(Err(format!("`{spelled}`: the type it owns does not map ({reason}) [FFI-17a]"))),
                     };
-                    let bridge = Bridge { ember: format!("ForeignBox[{mapped}]"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@ as *mut {mapped})"), unique: Some(mapped) };
-                    self.bridges.insert(key, bridge.clone());
-                    return Some(Ok(bridge));
+                    if !deleter {
+                        let bridge = Bridge { ember: format!("ForeignBox[{mapped}]"), spelled: spelled.clone(), make: format!("adopt[{mapped}](@ as *mut {mapped})"), unique: Some(mapped) };
+                        self.bridges.insert(key, bridge.clone());
+                        return Some(Ok(bridge));
+                    }
+                    // The deleter's thunk: a `std::unique_ptr<T, D>` made of the object ends, so
+                    // `D{}` frees it.
+                    let _ = writeln!(self.shim, "extern \"C\" void {ops}_delete({element}* object) noexcept {{ {spelled} owner(object); }}");
+                    declare(&mut decls, "delete", &format!("(object: *mut {mapped})"));
+                    Bridge {
+                        ember: format!("ForeignBox[{mapped}]"),
+                        spelled: spelled.clone(),
+                        make: format!("{prefix}_cpp_adopt_deleted[{mapped}](@ as *mut {mapped}, {ops}_delete)"),
+                        unique: Some(mapped),
+                    }
                 }
             };
             self.push(&ops, Kind::Class, format!("## `[FFI-17a]` — the thunks of `{spelled}`.\nunsafe extern \"C\":\n{decls}"));
@@ -3619,7 +3714,10 @@ impl Writer {
                 }
                 _ if let Some(found) = &viewed => {
                     let (ember, element) = found.clone().map_err(|reason| tagged(None, "its result", &reason))?;
-                    if ember.mode == "optional" {
+                    if ember.mode.starts_with("fixed ") {
+                        let made = format!("[&] {{ auto view = {call}; return view.data(); }}()");
+                        (Some(ember), Some(format!("{element}*")), made)
+                    } else if ember.mode == "optional" {
                         let made = format!(
                             "[&] {{ auto optional = {call}; if (optional) {{ ::new (static_cast<void*>(value)) {element}(*optional); return true; }} std::memset(static_cast<void*>(value), 0, sizeof *value); return false; }}()"
                         );
@@ -3639,7 +3737,9 @@ impl Writer {
                             (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(({call}).release())"))
                         }
                         None => {
-                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode: format!("bridge {}", bridge.make), opaque: false, function: None };
+                            // ODR-199 — a `std::function`'s mode is its own (`function <ops> <type>`).
+                            let mode = if bridge.make.starts_with("function ") { bridge.make.clone() } else { format!("bridge {}", bridge.make) };
+                            let ember = CType { ember: "usize".to_string(), pointee: Some((bridge.ember.clone(), false)), char_pointer: false, c: ADDRESS.to_string(), mode, opaque: false, function: None };
                             (Some(ember), Some(ADDRESS.to_string()), format!("reinterpret_cast<{ADDRESS}>(new {}({call}))", bridge.spelled))
                         }
                     }
@@ -3693,7 +3793,7 @@ impl Writer {
                     && !matches!(member, Some((_, Member::BoxedConstructor, _)))
                     && boxed.is_none()
                     && viewed.is_none()
-                    && !result.as_ref().is_some_and(|ty| ty.mode.starts_with("bridge ")));
+                    && !result.as_ref().is_some_and(|ty| ty.mode.starts_with("bridge ") || ty.mode.starts_with("function ")));
             let (returned, call) = match (class_result, returned) {
                 (true, Some(class)) => {
                     declared.push(format!("{class}* out"));
@@ -3753,6 +3853,13 @@ impl Writer {
                     Err(format!("`{spelled}`: only a view of `char` crosses, as `Span[u8]` ([FFI-17a])"))
                 }),
                 "span" => Some(match self.ty(argument, false) {
+                    // ODR-200 — `std::span<T, N>`: a `ref [T; N]`, from the elements' address alone.
+                    Ok(mapped) if let Some(extent) = span_extent(canonical) => {
+                        let constant = clang_isConstQualifiedType(argument) != 0;
+                        let pointer = format!("*{}{mapped}", if constant { "" } else { "mut " });
+                        let mode = format!("fixed {}{extent}", if constant { "" } else { "mut " });
+                        Ok((made(&pointer, (mapped, constant), &format!("{}*", cpp_spelling(argument)), &mode), cpp_spelling(argument)))
+                    }
                     Ok(mapped) => {
                         let constant = clang_isConstQualifiedType(argument) != 0;
                         Ok((made("usize", (mapped, constant), ADDRESS, if constant { "view" } else { "view mut" }), cpp_spelling(argument)))
@@ -3800,11 +3907,14 @@ impl Writer {
                         }
                         ("const char".to_string(), "u8".to_string(), true)
                     } else {
-                        // `std::span<T, N>`: its length is part of its type, which a `Span` has not.
-                        let declaration = clang_getTypeDeclaration(canonical);
-                        let extent = clang_Cursor_getTemplateArgumentUnsignedValue(declaration, 1);
-                        if clang_Cursor_getNumTemplateArguments(declaration) > 1 && extent != u64::MAX && extent != u64::from(u32::MAX) {
-                            return Err(format!("`{spelled}`: a span of fixed extent (a `std::span<T>` of any length crosses as a `Span`) [FFI-17a]"));
+                        // ODR-200 — `std::span<T, N>`: its length is part of its type, so it is a
+                        // `ref [T; N]`, passed as its elements' address.
+                        if let Some(extent) = span_extent(canonical) {
+                            let mapped = by_value(self, "its element")?;
+                            let constant = clang_isConstQualifiedType(argument) != 0;
+                            let mode = format!("fixed {}{extent} ", if constant { "" } else { "mut " });
+                            let ember = made(format!("*{}{mapped}", if constant { "" } else { "mut " }), (mapped, constant), &mode);
+                            return Ok(Some((ember, format!("{}* {name}", cpp_spelling(argument)), format!("{spelled}({name}, {extent})"))));
                         }
                         let mapped = by_value(self, "its element")?;
                         (cpp_spelling(argument), mapped, clang_isConstQualifiedType(argument) != 0)
@@ -4304,6 +4414,27 @@ impl Writer {
 
 /// `[FFI-17b]` — the template a template-id names, by its qualified name (`engine::Vec`), if the
 /// header declares one: a class template's cursor kind or a function template's.
+/// ODR-200 — the extent of a `std::span<T, N>` of fixed extent; `None` for a span of any length.
+fn span_extent(canonical: CXType) -> Option<u64> {
+    // SAFETY(ffi): a type of a live translation unit.
+    unsafe {
+        let declaration = clang_getTypeDeclaration(canonical);
+        let extent = clang_Cursor_getTemplateArgumentUnsignedValue(declaration, 1);
+        (clang_Cursor_getNumTemplateArguments(declaration) > 1 && extent != u64::MAX && extent != u64::from(u32::MAX)).then_some(extent)
+    }
+}
+
+/// ODR-200 — a fixed span's mode (`fixed [mut ]N`) as its extent and the array a reference to it
+/// names (`[T; N]`, `mut [T; N]`).
+fn fixed_array(mode: &str, inner: &str) -> (String, String) {
+    let rest = mode.trim().trim_start_matches("fixed ");
+    let (mutable, extent) = match rest.strip_prefix("mut ") {
+        Some(extent) => ("mut ", extent),
+        None => ("", rest),
+    };
+    (extent.to_string(), format!("{mutable}[{inner}; {extent}]"))
+}
+
 /// `[FFI-48]` — the line of a C++ header that declares or imports a C++20 module (`export module
 /// m;`, `module;`, `import m;`, `import <h>;`), if one does.
 fn module_line(header: &Path) -> Option<String> {
@@ -5835,6 +5966,9 @@ struct Entry {
     params: Vec<Vec<String>>,
     result: Vec<String>,
     arguments: Vec<String>,
+    /// `[FFI-17a]` (ODR-199) — `@ffi(std_function)`: the function's `std::function` result is an
+    /// Ember `owned fn(A…) -> R`.
+    std_function: bool,
     /// `[FFI-24b]`, `[FFI-43]` — a C++ function's exception policy, as the entry declares it:
     /// `@ffi(noexcept)` asserts it non-throwing, `@ffi(noexcept=false)` declares it throwing.
     policy: Option<Policy>,
@@ -5994,6 +6128,13 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     let written: String = written.chars().filter(|c| !c.is_whitespace()).collect();
                     matches!(written.as_str(), "noexcept" | "noexcept=true" | "noexcept=false")
                 });
+                // ODR-199 — `@ffi(std_function)`, on a function whose result is a `std::function`.
+                let (std_function, arguments): (Vec<String>, Vec<String>) = arguments.into_iter().partition(|written| written.trim() == "std_function");
+                let std_function = !std_function.is_empty();
+                if std_function && !function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("function ")) {
+                    mismatch(sink, name.span, format!("`{}` returns no `std::function` (`@ffi(std_function)` makes one an Ember callable)", name.name));
+                    continue;
+                }
                 let asserts = declared.iter().any(|written| !written.ends_with("false"));
                 let throws = declared.iter().any(|written| written.ends_with("false"));
                 if asserts && throws {
@@ -6021,7 +6162,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 // An entry that leaves a fact unknown (`TODO(…)`, `unsafe`) asserts nothing yet.
                 let unknown = params.iter().flat_map(|param| &param.contract).chain(result).any(|written| matches!(word(&snippet(written.span)), "TODO" | "unsafe"));
                 let lifetime = unknown || result.iter().any(|written| word(&snippet(written.span)) == "from");
-                if function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view")) && !lifetime {
+                if function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view") || ty.mode.starts_with("fixed ")) && !lifetime {
                     sink.emit(
                         Diagnostic::error(codes::E5002, name.span, format!("`{}` returns a view (a `std::string_view` or a `std::span`), whose lifetime only its entry states", name.name))
                             .help(format!("write what the view borrows: `fn {}(…) -> from(self)`, `from(<parameter>)` or `from(static)`", name.name))
@@ -6038,6 +6179,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                         params: params.iter().map(|param| param.contract.iter().map(|word| snippet(word.span)).collect()).collect(),
                         result: result.iter().map(|word| snippet(word.span)).collect(),
                         arguments,
+                        std_function,
                         policy,
                     },
                 );
@@ -6105,6 +6247,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     params: vec![Vec::new(); params.len()],
                     result: if raw { vec!["unsafe".to_string()] } else { Vec::new() },
                     arguments: arguments(),
+                    std_function: false,
                     policy: None,
                 };
                 match applied.macros.iter_mut().find(|(earlier, ..)| earlier.name == found.name) {
@@ -6605,7 +6748,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     }
     // `std.ffi`'s names the module's text uses: its C aliases (`[FFI-8]`) and `ForeignBox`.
     let words: HashSet<&str> = body.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
-    let mut used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject", "VaList"]).filter(|name| words.contains(name)).collect();
+    let mut used: Vec<&str> = C_ALIASES.iter().map(|(ember, _)| *ember).chain(["ForeignBox", "CppError", "adopt", "Retained", "CppVector", "CppString", "CppShared", "CppWeak", "CppObject", "CppFunction", "VaList"]).filter(|name| words.contains(name)).collect();
     // `[FFI-21]` — a `retained` callback's call returns a `Retained[ForeignCallback]`.
     if body.contains("callback(retained") {
         used.push("ForeignCallback");
@@ -6820,6 +6963,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             "view mut " => format!("{param}: MutSpan[{inner}]"),
             "optional " => format!("{param}: Option[{inner}]"),
             "unique " => format!("owned {param}: ForeignBox[{inner}]"),
+            fixed if fixed.starts_with("fixed ") => format!("{param}: ref {}", fixed_array(fixed, &inner).1),
             _ => wrapper_param(param, &ty),
         });
         // `[FFI-17a]` — a view is its pointer and its length: a `Span` the declaration counts, or a
@@ -6861,6 +7005,17 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                     "        pass".to_string(),
                 ]);
                 (format!("{param}: {}", ty.ember), Vec::new(), at)
+            }
+            // ODR-200 — a `std::span<T, N>`: the array's address.
+            (fixed, true) if fixed.starts_with("fixed ") => {
+                let (extent, array) = fixed_array(fixed, &inner);
+                let words = ["borrowed".to_string(), format!("fixed({extent})")].into_iter().chain(array.starts_with("mut ").then(|| "exclusive".to_string())).collect();
+                (format!("{param}: ref {array}"), words, param.clone())
+            }
+            (fixed, false) if fixed.starts_with("fixed ") => {
+                let mutable = fixed_array(fixed, &inner).1.starts_with("mut ");
+                let pointer = format!("*{}{inner}", if mutable { "mut " } else { "" });
+                (format!("{param}: {pointer}"), Vec::new(), format!("ref_to_ptr({}{param}) as {pointer}", if mutable { "ref mut " } else { "ref " }))
             }
             // `[FFI-17a]` — a `std::unique_ptr<T>` parameter: the box is given up (`owned`).
             ("unique ", true) => (format!("owned {param}: ForeignBox[{inner}]"), vec!["owned".to_string(), "one".to_string()], param.clone()),
@@ -6910,6 +7065,8 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     // address of an object the caller comes to own, a view's data, whether an optional has a value.
     let from_self = |written: &String| if written.replace(' ', "") == "from(self)" { format!("from({self_name})") } else { written.clone() };
     let user_words: Vec<String> = contract.map_or(Vec::new(), |entry| canonical(entry.result.iter().filter(|written| word(written) != "unsafe").cloned().collect()));
+    // ODR-199 — the entry makes a `std::function` result an Ember callable.
+    let std_function = contract.is_some_and(|entry| entry.std_function);
     // `[FFI-11]` — the region a result borrows, as the entry's `from(…)` names it.
     let lifetime = user_words.iter().find_map(|written| written.strip_prefix("from(").and_then(|rest| rest.strip_suffix(')'))).map(|from| from.trim().to_string());
     let (result, result_words, borrows) = match &function.result {
@@ -6936,6 +7093,15 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         }
         // A view's lifetime is the entry's word (`[FFI-17a]`, `[FFI-11]`).
         Some(ty) if ty.mode.starts_with("view") => (Some(ty.ember.clone()), Vec::new(), lifetime.clone().filter(|from| from != "static")),
+        // ODR-200 — a `std::span<T, N>`: a `ref [T; N]` borrowing what the entry names; with no
+        // entry, its elements' address.
+        Some(ty) if ty.mode.starts_with("fixed ") && contracted => {
+            let (extent, array) = fixed_array(&ty.mode, &pointee);
+            let mut words = vec!["borrowed".to_string(), format!("fixed({extent})")];
+            words.extend(array.starts_with("mut ").then(|| "exclusive".to_string()));
+            words.extend(user_words.iter().filter(|written| word(written) == "from").map(from_self));
+            (Some(format!("ref {array}")), words, lifetime.clone().filter(|from| from != "static"))
+        }
         Some(ty) => (Some(ty.ember.clone()), Vec::new(), None),
     };
     let declared: Vec<&str> = slots.iter().map(|(_, text, _, _)| text.as_str()).collect();
@@ -6973,6 +7139,17 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             (Some(Member::BoxedConstructor), _) => (Some(format!("adopt[{owner}]({} as *mut {owner})", given_or("0"))), Some(format!("ForeignBox[{owner}]")), true),
             (_, "boxed") => (Some(format!("adopt[{pointee}]({} as *mut {pointee})", given_or("0"))), Some(format!("ForeignBox[{pointee}]")), true),
             (_, made) if made.starts_with("bridge ") => (Some(made.trim_start_matches("bridge ").replace('@', &given_or("0"))), Some(pointee.clone()), true),
+            // ODR-199 — a `std::function`: the object, owned; with `@ffi(std_function)`, the callable
+            // capturing it.
+            (_, made) if made.starts_with("function ") => {
+                let (ops, callable) = made.trim_start_matches("function ").split_once(' ').unwrap_or_default();
+                let object = format!("CppFunction.from_thunks({} as *mut u8, {ops}_destroy)", given_or("0"));
+                if std_function {
+                    (Some(format!("{ops}_callable({object})")), Some(callable.to_string()), true)
+                } else {
+                    (Some(object), Some("CppFunction".to_string()), true)
+                }
+            }
             (_, made) if made.starts_with("view") => {
                 let (span, mutable) = if made == "view mut" { ("MutSpan", true) } else { ("Span", false) };
                 let constant = if mutable { "mut " } else { "" };
@@ -7104,7 +7281,7 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             if result_mode.starts_with("view") {
                 let lives = lifetime.as_deref().filter(|from| *from != "static").map_or("for the program's whole run".to_string(), |from| format!("as long as `{from}`"));
                 reasons.push(format!("the view the thunk gives lives {lives}, as the overlay's entry asserts [FFI-17a]"));
-            } else if result_mode == "boxed" || result_mode.starts_with("bridge ") || member == Some(Member::BoxedConstructor) {
+            } else if result_mode == "boxed" || result_mode.starts_with("bridge ") || result_mode.starts_with("function ") || member == Some(Member::BoxedConstructor) {
                 reasons.push("the object the thunk gives is a new one, which nothing else owns".to_string());
             }
             format!("# SAFETY: {}", reasons.join("; "))
@@ -7535,7 +7712,7 @@ fn outcome_lines(imported: &Imported, applied: &Applied) -> String {
             .iter()
             // `[FFI-17a]` — a view, an optional value and a `std::unique_ptr` state their facts; a view
             // result its lifetime only in an overlay.
-            .filter(|(_, ty)| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "view " | "view mut " | "optional " | "unique "))
+            .filter(|(_, ty)| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "view " | "view mut " | "optional " | "unique ") && !ty.mode.starts_with("fixed "))
             .map(|(param, _)| param.as_str())
             .chain(function.result.iter().filter(|ty| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "boxed" | "optional")).map(|_| "the result"))
             .collect();
