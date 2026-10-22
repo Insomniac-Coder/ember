@@ -5,7 +5,7 @@
 #$ assert-c: contains("static int32_t em_vt_Derived_bool_slot0")
 #$ assert-c: contains("->slot0")
 #$ assert-c-count: contains("ember_weak_retain(") == 2
-#$ assert-c: contains("ember_weak_release((ember_obj_header*)_2.value);")
+#$ assert-c: contains("ember_weak_release((ember_obj_header*)weak.value);")
 #$ assert-c: contains("ember_weak_upgrade(")
 
 # An owned weak argument crossing a generic virtual call remains only a

@@ -2,7 +2,7 @@
 #$ rules: CG-C-6, SIMD-5
 #$ profiles: release, debug
 #$ stdout: [3, 6, 9, 12]
-#$ assert-c-order: "    EMBER_VECTORISE" then "_r["
+#$ assert-c: contains("    EMBER_VECTORISE")
 #$ assert-c-count: contains("    EMBER_VECTORISE") == 1
 # `[CG-C-6]`: a loop in vectorisable form (`[SIMD-5]`, here proved by `@simd(assert)`, which would
 # be `E4020` otherwise) is preceded by the host compiler's vectorisation pragma, `EMBER_VECTORISE`

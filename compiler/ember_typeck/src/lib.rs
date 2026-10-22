@@ -46061,7 +46061,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let (found, wanted) = (self.types.display(found), self.types.display(wanted));
-        let (ember_side, cpp_side) = if found_cpp { (&wanted, &found) } else { (&found, &wanted) };
+        let (counted_here, cpp_side) = if found_cpp { (&wanted, &found) } else { (&found, &wanted) };
         Some(
             Diagnostic::error(
                 codes::E5065,
@@ -46069,7 +46069,7 @@ impl<'a> Checker<'a> {
                 format!("`{found}` does not convert to `{wanted}`: Ember's and C++'s reference counts are different counts"),
             )
             .primary_label(format!("this is `{found}`"))
-            .note(format!("`{ember_side}` is counted by Ember and `{cpp_side}` by C++; a conversion would leave each count believing it owns the object, and both would free it [SEL-2]"))
+            .note(format!("`{counted_here}` is counted by Ember and `{cpp_side}` by C++; a conversion would leave each count believing it owns the object, and both would free it [SEL-2]"))
             .help("keep each object on its own side: an Ember value in a `Shared`, a `std::shared_ptr` C++ made in a `CppShared`, and share the object itself through a reference or a C++ call"),
         )
     }

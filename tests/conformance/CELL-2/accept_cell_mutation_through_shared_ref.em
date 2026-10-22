@@ -2,7 +2,7 @@
 #$ rules: CELL-1, CELL-2, TYP-14
 #$ profiles: debug, development, release
 #$ stdout: 43
-#$ assert-c: contains("(*((em_Cell_i32*)_1)).value = ")
+#$ assert-c: contains("(*((em_Cell_i32*)cell)).value = ")
 #$ assert-c: !contains("ember_cell")
 
 # Cell's explicit interior-mutation API remains available through `ref Cell`.

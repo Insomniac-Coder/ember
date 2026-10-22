@@ -3697,7 +3697,7 @@ fn wrapping_arithmetic_is_unsigned_in_c() {
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
     for wrapped in [
-        "(int64_t)((uint64_t)(_1) * (uint64_t)(6364136223846793005LL))",
+        "(int64_t)((uint64_t)(i) * (uint64_t)(6364136223846793005LL))",
         "(int32_t)((uint32_t)(",
         "(int16_t)((uint32_t)(",
         "(int64_t)((uint64_t)(0LL) - (uint64_t)(",
@@ -6652,9 +6652,10 @@ fn aggregates_and_views_are_written_field_by_field() {
     );
     assert!(next.contains("(_0).tag = 0;") && !next.contains("memset(") && !next.contains(".tag = 1, .payload"), "`None` or `Some` is a literal:\n{next}");
     let lines = c_definition(&c.stdout, &format!("{}_Lines_next", ember_branding::mangled("std_string")));
-    assert!(lines.contains("((*_1).rest).ptr = ") && lines.contains("((*_1).rest).len = "), "the slice is a literal:\n{lines}");
+    // `[CG-C-7]` — the receiver is `self` in the C, as in the source.
+    assert!(lines.contains("((*self).rest).ptr = ") && lines.contains("((*self).rest).len = "), "the slice is a literal:\n{lines}");
     assert!(lines.contains("(_0).ptr = NULL;") && !lines.contains("{ .ptr = NULL"), "`None` of a view is a literal:\n{lines}");
-    assert!(lines.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, written by fields, is copied whole:\n{lines}");
+    assert!(lines.contains("(rest).ptr = ((*self).rest).ptr;"), "the rest, written by fields, is copied whole:\n{lines}");
     let counted = format!("tests/conformance/CTL-1/accept_a_view_iterator_loop_is_counted.{SOURCE_EXT}");
     let c = ember(&["build", &counted, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
@@ -6664,7 +6665,7 @@ fn aggregates_and_views_are_written_field_by_field() {
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let words = c_definition(&c.stdout, &format!("{}_SplitWhitespace_next", ember_branding::mangled("std_string")));
-    assert!(words.contains("(_2).ptr = ((*_1).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
+    assert!(words.contains("(rest).ptr = ((*self).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
     assert_eq!(register_field_copies(words), 0, "a register local is copied by its fields:\n{words}");
 }
 
@@ -6673,8 +6674,10 @@ fn register_field_copies(c: &str) -> usize {
     c.lines()
         .map(str::trim)
         .filter(|line| {
-            line.strip_prefix("(_").and_then(|rest| rest.split_once(").ptr = (_")).is_some_and(|(_, source)| {
-                source.strip_suffix(").ptr;").is_some_and(|local| !local.is_empty() && local.chars().all(|c| c.is_ascii_digit()))
+            // `[CG-C-7]` — a local is `_N`, or its Ember name: a plain C identifier either way.
+            let local = |name: &str| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            line.strip_prefix('(').and_then(|rest| rest.split_once(").ptr = (")).is_some_and(|(target, source)| {
+                local(target) && source.strip_suffix(").ptr;").is_some_and(local)
             })
         })
         .count()

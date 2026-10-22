@@ -6337,6 +6337,8 @@ impl Emitter<'_> {
         // `[HR-3b]` (A1) — what a checkpoint's frames of this body still use, described beside it.
         let frame_info = if self.frames_on() { Some(self.emit_frame_info(body)) } else { None };
         self.rl_frame_active = false;
+        // `[CG-C-7]` — where this function's C starts: once written, its locals take their names.
+        let start = self.out.len();
         self.line(&format!("{linkage}{signature} {{"));
         if self.comptime.is_some() {
             self.line(&format!("    EMBER_CT_ENTER({});", c_string_literal(&body.name)));
@@ -6579,6 +6581,7 @@ impl Emitter<'_> {
         self.line("");
         self.interface_caches.clear();
         self.rl_frame_active = false;
+        name_locals(&mut self.out, start, body);
     }
 
     fn emit_block_stmts(&mut self, stmts: &[Stmt], body: &Body) {
@@ -13201,21 +13204,202 @@ const DYN_BEGIN_WRITE: u8 = 2;
 const DYN_END_WRITE: u8 = 3;
 
 /// `[EXC-19]` — the C member holding a class field's access word.
+/// The names C reserves that an Ember name may be: a keyword, or an object-like macro of the
+/// headers generated code includes.
+const C_RESERVED: &[&str] = &[
+    "EOF", "INFINITY", "NAN", "NULL", "alignas", "alignof", "auto", "bool", "break", "case", "char",
+    "const", "constexpr", "continue", "default", "do", "double", "else", "enum", "errno", "extern",
+    "false", "float", "for", "goto", "if", "inline", "int", "long", "nullptr", "register",
+    "restrict", "return", "short", "signed", "sizeof", "static", "static_assert", "stderr", "stdin",
+    "stdout", "struct", "switch", "thread_local", "true", "typedef", "typeof", "typeof_unqual",
+    "union", "unsigned", "void", "volatile", "while",
+];
+
+/// `[CG-C-7]` — beyond `C_RESERVED`, the names of the standard headers' macros a local could be
+/// written as, which would replace it (function-like ones replace only a name followed by `(`,
+/// which a local never is, but a name is refused whichever kind it is).
+const C_MACRO_NAMES: &[&str] = &[
+    "asm", "assert", "complex", "imaginary", "noreturn", "offsetof", "math_errhandling", "isnan", "isinf",
+    "isfinite", "isnormal", "signbit", "fpclassify", "isgreater", "isgreaterequal", "isless", "islessequal",
+    "islessgreater", "isunordered", "va_start", "va_end", "va_arg", "va_copy", "setjmp", "longjmp",
+    "kill_dependency", "unreachable",
+];
+
+/// The C identifiers of `text`, outside its comments and its string and character literals.
+fn c_identifiers(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        while at < bytes.len() {
+            let c = bytes[at];
+            if c == b'/' && bytes.get(at + 1) == Some(&b'*') {
+                at = text[at + 2..].find("*/").map_or(bytes.len(), |end| at + 2 + end + 2);
+            } else if c == b'/' && bytes.get(at + 1) == Some(&b'/') {
+                at = text[at..].find('\n').map_or(bytes.len(), |end| at + end);
+            } else if c == b'"' || c == b'\'' {
+                at += 1;
+                while at < bytes.len() && bytes[at] != c {
+                    at += if bytes[at] == b'\\' { 2 } else { 1 };
+                }
+                at += 1;
+            } else if c.is_ascii_digit() {
+                // A number, suffixes and all (`1ULL`, `0x1fp3`, `1e10`).
+                while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_' || bytes[at] == b'.') {
+                    at += 1;
+                }
+            } else if c.is_ascii_alphabetic() || c == b'_' {
+                let start = at;
+                while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                    at += 1;
+                }
+                return Some((start, &text[start..at]));
+            } else {
+                at += 1;
+            }
+        }
+        None
+    })
+}
+
+/// `[CG-C-7]` — each macro `ember_rt.h` and `ember_simd.h` define, with the identifiers its body
+/// uses (its parameters aside, and members): such a macro, expanded inside a function, would reach a
+/// local of one of these names instead of what it means.
+fn runtime_header_macros() -> &'static std::collections::HashMap<&'static str, Vec<&'static str>> {
+    static MACROS: std::sync::OnceLock<std::collections::HashMap<&'static str, Vec<&'static str>>> = std::sync::OnceLock::new();
+    MACROS.get_or_init(|| {
+        let mut macros = std::collections::HashMap::new();
+        for text in [
+            include_str!(concat!("../../../runtime/", ember_branding::symbol_prefix!(), "_rt/include/", ember_branding::symbol_prefix!(), "_rt.h")),
+            include_str!(concat!("../../../runtime/", ember_branding::symbol_prefix!(), "_rt/include/", ember_branding::symbol_prefix!(), "_simd.h")),
+        ] {
+            let mut lines = text.lines();
+            while let Some(line) = lines.next() {
+                let Some(rest) = line.trim_start().strip_prefix('#') else { continue };
+                let Some(definition) = rest.trim_start().strip_prefix("define") else { continue };
+                // The directive's last line is the first not continued with a backslash.
+                let mut end = line;
+                while end.trim_end().ends_with('\\') {
+                    let Some(next) = lines.next() else { break };
+                    end = next;
+                }
+                let start = definition.as_ptr() as usize - text.as_ptr() as usize;
+                let stop = end.as_ptr() as usize - text.as_ptr() as usize + end.len();
+                let directive = text[start..stop].trim_start();
+                let name_end = directive.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(directive.len());
+                let (name, after) = directive.split_at(name_end);
+                let (parameters, body): (Vec<&str>, &str) = match after.strip_prefix('(') {
+                    Some(list) => {
+                        let close = list.find(')').unwrap_or(list.len());
+                        (c_identifiers(&list[..close]).map(|(_, name)| name).collect(), &list[(close + 1).min(list.len())..])
+                    }
+                    None => (Vec::new(), after),
+                };
+                let uses = c_identifiers(body)
+                    .filter(|(at, name)| !parameters.contains(name) && !follows_member_access(body, *at))
+                    .map(|(_, name)| name)
+                    .collect();
+                macros.insert(name, uses);
+            }
+        }
+        macros
+    })
+}
+
+/// Whether the identifier at `at` in `text` is a member (`a.x`, `p->x`, `.x = …`).
+fn follows_member_access(text: &str, at: usize) -> bool {
+    let before = text[..at].trim_end();
+    before.ends_with('.') || before.ends_with("->")
+}
+
+/// `_N`, the name every local is written with until `name_locals` gives it its own.
+fn local_index(identifier: &str) -> Option<usize> {
+    let digits = identifier.strip_prefix('_')?;
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && (digits == "0" || !digits.starts_with('0')))
+        .then(|| digits.parse().ok())
+        .flatten()
+}
+
+/// `[CG-C-7]` — locals keep their Ember names in the C, so a debugger shows them. A function's C
+/// is written with each local as `_N`; this gives each local the program named its Ember name
+/// (transliterated as `[MNG-3]` says) in the text from `start`: the parameters in its header, the
+/// declarations, every use. A member access or designator `._N`/`->_N` is a field, never a local.
+/// The name is refused, and the local is `<name>_<N>`, where C or the function could read it as
+/// something else: a keyword or a standard macro, a name in the runtime's prefix, an identifier the
+/// function itself uses (a function it calls, a type, a foreign name) or the runtime header does,
+/// or another local's. A name that is no C identifier, or starts with `_` (the compiler's own and
+/// discarded ones), keeps `_N`.
+fn name_locals(out: &mut String, start: usize, body: &Body) {
+    let text = &out[start..];
+    // A member (`a.x`, `p->x`, `.x = …`) is no name of the function's: only the others are, with
+    // what each runtime macro the function uses expands to.
+    let mut used: std::collections::HashSet<&str> =
+        c_identifiers(text).filter(|(at, name)| local_index(name).is_none() && !follows_member_access(text, *at)).map(|(_, name)| name).collect();
+    let macros = runtime_header_macros();
+    let mut expanding: Vec<&str> = used.iter().copied().filter(|name| macros.contains_key(name)).collect();
+    while let Some(name) = expanding.pop() {
+        for &inner in &macros[name] {
+            if used.insert(inner) && macros.contains_key(inner) {
+                expanding.push(inner);
+            }
+        }
+    }
+    let prefixes = [ember_branding::mangle_prefix(), ember_branding::RUNTIME_PREFIX.to_string(), ember_branding::RUNTIME_PREFIX.to_uppercase()];
+    let written: std::collections::HashSet<String> =
+        body.locals.iter().filter_map(|decl| decl.name.as_ref().map(|name| ember_branding::c_identifier(name.as_str()))).collect();
+    let free = |name: &str, taken: &std::collections::HashSet<String>| !used.contains(name) && !taken.contains(name);
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut names: Vec<Option<String>> = vec![None; body.locals.len()];
+    for (index, decl) in body.locals.iter().enumerate() {
+        let Some(written_as) = decl.name.as_ref() else { continue };
+        let name = ember_branding::c_identifier(written_as.as_str());
+        if !name.starts_with(|c: char| c.is_ascii_alphabetic()) || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            continue;
+        }
+        let refused = C_RESERVED.contains(&name.as_str())
+            || C_MACRO_NAMES.contains(&name.as_str())
+            || name.starts_with("atomic_")
+            || name.starts_with("memory_order_")
+            // An upper-case name is how C spells a macro.
+            || name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            || prefixes.iter().any(|prefix| name.starts_with(prefix.as_str()));
+        let plain = (!refused && free(&name, &taken)).then(|| name.clone());
+        // The suffixed form is taken by no Ember name: none ends in `_<its own index>` of another.
+        let chosen = plain.or_else(|| {
+            let suffixed = format!("{name}_{index}");
+            (free(&suffixed, &taken) && !written.contains(&suffixed)).then_some(suffixed)
+        });
+        if let Some(chosen) = chosen {
+            taken.insert(chosen.clone());
+            names[index] = Some(chosen);
+        }
+    }
+    if names.iter().all(Option::is_none) {
+        return;
+    }
+    let mut renamed = String::with_capacity(text.len() + text.len() / 8);
+    let mut copied = 0;
+    for (at, identifier) in c_identifiers(text) {
+        let Some(index) = local_index(identifier) else { continue };
+        let Some(Some(name)) = names.get(index) else { continue };
+        if follows_member_access(text, at) {
+            continue;
+        }
+        renamed.push_str(&text[copied..at]);
+        renamed.push_str(name);
+        copied = at + identifier.len();
+    }
+    renamed.push_str(&text[copied..]);
+    out.truncate(start);
+    out.push_str(&renamed);
+}
+
 /// D-775 — an Ember field or variant name as a C member: transliterated as `[MNG-3]` says
 /// (`größe` is `gr_u00F6__u00DF_e`), and a name C reserves, a keyword or an object-like macro of the
 /// headers generated code includes (`default`, `inline`, `errno`), written `em_kw_<name>`. What a
 /// program prints names the field as written.
 fn member(name: impl std::fmt::Display) -> String {
-    const RESERVED: &[&str] = &[
-        "EOF", "INFINITY", "NAN", "NULL", "alignas", "alignof", "auto", "bool", "break", "case", "char",
-        "const", "constexpr", "continue", "default", "do", "double", "else", "enum", "errno", "extern",
-        "false", "float", "for", "goto", "if", "inline", "int", "long", "nullptr", "register",
-        "restrict", "return", "short", "signed", "sizeof", "static", "static_assert", "stderr", "stdin",
-        "stdout", "struct", "switch", "thread_local", "true", "typedef", "typeof", "typeof_unqual",
-        "union", "unsigned", "void", "volatile", "while",
-    ];
     let name = name.to_string();
-    match RESERVED.contains(&name.as_str()) {
+    match C_RESERVED.contains(&name.as_str()) {
         true => format!("{}kw_{name}", ember_branding::mangle_prefix()),
         false => ember_branding::c_identifier(&name),
     }

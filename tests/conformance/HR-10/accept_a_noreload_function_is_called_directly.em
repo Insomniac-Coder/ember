@@ -3,7 +3,7 @@
 #$ profiles: debug, development
 #$ stdout: 12
 #$ assert-c: !contains("em_total__rl")
-#$ assert-c: contains("int64_t em_weigh__rl(int64_t _1) {")
+#$ assert-c: contains("int64_t em_weigh__rl(int64_t x) {")
 #$ assert-c: contains("em_weigh(")
 #$ assert-c: contains("{ "em_total", NULL, NULL, NULL, 0, UINT64_C(")
 #$ assert-c: contains("EMBER_RL_FN_NORELOAD }")

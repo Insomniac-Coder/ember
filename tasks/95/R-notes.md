@@ -109,3 +109,28 @@ Rules: DIA-15, CG-C-9, PHIL-1, CG-C-7, VER-3, CG-C-6, CG-C-10, DIA-5, LT-39, SEL
   through the class); add them when a member-level FFI error needs its own line.
 - Baselines: `tools/rule_index_baseline.json` still lists `E5065` under codes without pages and
   without tests; both now exist (`--write-baseline` after merging drops them).
+
+## CG-C-7 — done (built)
+- Test: `tests/conformance/CG-C-7/accept_locals_keep_their_ember_names_in_the_c.em` (a parameter, a
+  local, a transliterated non-ASCII name, a C keyword and a name the function's C uses suffixed,
+  two locals of one name; debug and release; checked on the emitted C).
+- Compiler: every local was `_N` in the C, its Ember name only in a comment, so debuggers showed
+  `_12`. `compiler/ember_codegen_c/src/lib.rs` — `name_locals`: once a function's C is written
+  (`emit_body`), each local the program named is renamed in that text from `_N` to its Ember name
+  (`[MNG-3]`-transliterated): parameters, declarations, uses. Members and designators (`._N`,
+  `->_N`) are fields and stay. The plain name is refused, and the local is `<name>_<N>`, when C
+  would read it as something else: a keyword or a standard-header macro (`C_RESERVED`, shared with
+  `member`, plus `C_MACRO_NAMES`), an all-upper-case name (C's macro spelling), the runtime's
+  prefixes, an identifier the function's own C uses (a function it calls, a type, a foreign name),
+  any identifier a runtime macro the function uses expands to (`runtime_header_macros`, read from
+  `ember_rt.h`/`ember_simd.h` at compile time, transitively), or another local's name. Names that
+  are no C identifier or start with `_` (the compiler's own) keep `_N`. Prototypes keep `_N`
+  (their parameter names mean nothing to C). A view parameter Windows passes as two words keeps
+  `_N_p`/`_N_n` and is rebuilt under its name at entry.
+- Tests updated to the names (their needles named `_1`, `_2`…; each now names the same local):
+  `CELL-1` (2), `CELL-2`, `EXP-6`, `HR-10`, `HR-25` (2), `HR-5` (2), `MONO-7`, `OWN-8`, `RNG-4`,
+  `SIMD-7` (6, `; ++_` -> `; ++i`), `TYP-16` (4), `TYP-9`; `milestones.rs`
+  `wrapping_arithmetic_is_unsigned_in_c`, `aggregates_and_views_are_written_field_by_field`, and
+  `register_field_copies` (a plain local is any C identifier now, not only `_N`).
+- Checked: every conformance file's `assert-c*` lines (395 files) against the emitted C; the whole
+  conformance tree through `annotations.py` with MSVC and with clang.

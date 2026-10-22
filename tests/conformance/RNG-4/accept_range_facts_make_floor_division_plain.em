@@ -8,8 +8,8 @@
 #$ assert-c-count: contains("ember_panic_div_zero(") == 0
 #$ assert-c-count: contains("ember_ck_floordiv_i64(") == 0
 #$ assert-c-count: contains("ember_ck_floorrem_i64(") == 0
-#$ assert-c-count: contains("_1 >> 2LL;") == 1
-#$ assert-c-count: contains("_1 & 7LL;") == 1
+#$ assert-c-count: contains("x >> 2LL;") == 1
+#$ assert-c-count: contains("x & 7LL;") == 1
 #$ assert-c-count: contains(">> 63LL;") == 2
 #$ assert-c-count: contains("ember_floordiv_i64(") == 1
 #$ assert-c-count: contains("ember_floorrem_i64(") == 1

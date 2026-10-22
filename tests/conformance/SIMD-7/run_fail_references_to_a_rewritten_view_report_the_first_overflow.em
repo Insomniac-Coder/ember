@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ panics: integer overflow in `-`
 #$ assert-c: !contains(" << ")
-#$ assert-c-count: contains("; ++_") == 3
+#$ assert-c-count: contains("; ++i") == 3
 # The second operation overflows at iteration 5, before the first operation
 # overflows at iteration 9. Saving and rerunning a group must account for
 # shared references as reads of the view, and restore its original values.
