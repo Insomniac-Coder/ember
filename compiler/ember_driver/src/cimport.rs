@@ -2505,6 +2505,13 @@ impl Writer {
                     return;
                 }
             };
+            // The iterator is the class's, named as a member's static is (`Outer_name`): `Bag_iter`,
+            // whose symbol `[MNG-1]` keeps apart from the method `Bag.iter`'s.
+            let walker = format!("{owner}_iter");
+            if !self.claim(&walker) {
+                self.skip(begin, &name, format!("its iterator's name `{walker}` is taken by another declaration of the header ([FFI-42])"));
+                return;
+            }
             let prefix = ember_branding::SYMBOL_PREFIX;
             let ops = format!("{prefix}_cpp_{}_iter_{}", self.stem, self.thunks);
             self.thunks += 1;
@@ -2515,7 +2522,6 @@ impl Writer {
                  extern \"C\" void* {ops}_next(void* range) noexcept {{ try {{ auto* walk = static_cast<{ops}_range*>(range); if (walk->at == walk->end) return nullptr; auto* item = std::addressof(*walk->at); ++walk->at; return const_cast<void*>(static_cast<const void*>(item)); }} catch (...) {{ crossed(\"the iterator of {spelled}\"); }} }}\n\
                  extern \"C\" void {ops}_end(void* range) noexcept {{ delete static_cast<{ops}_range*>(range); }}"
             );
-            let walker = format!("{owner}_cpp_iter");
             self.push(
                 &walker,
                 Kind::Class,
