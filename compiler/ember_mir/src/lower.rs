@@ -6505,15 +6505,15 @@ impl<'a> Builder<'a> {
             // convert.
             hir::ExprKind::EraseRange(inner) => Rvalue::Use(self.lower_operand(inner)),
             hir::ExprKind::StructLit { struct_id, fields } => {
-                let operands = fields.iter().map(|f| self.lower_operand_kept(f)).collect();
+                let operands = self.lower_aggregate_operands(fields, expr.span);
                 Rvalue::Aggregate { kind: AggregateKind::Struct(*struct_id), operands }
             }
             hir::ExprKind::TupleLit(items) => {
-                let operands = items.iter().map(|e| self.lower_operand_kept(e)).collect();
+                let operands = self.lower_aggregate_operands(items, expr.span);
                 Rvalue::Aggregate { kind: AggregateKind::Tuple, operands }
             }
             hir::ExprKind::ArrayLit(items) => {
-                let operands = items.iter().map(|e| self.lower_operand_kept(e)).collect();
+                let operands = self.lower_aggregate_operands(items, expr.span);
                 Rvalue::Aggregate { kind: AggregateKind::Array, operands }
             }
             hir::ExprKind::ArrayRepeat { value, count } => {
@@ -6521,7 +6521,7 @@ impl<'a> Builder<'a> {
                 Rvalue::Repeat { value, count: *count }
             }
             hir::ExprKind::EnumLit { enum_id, variant, fields } => {
-                let operands = fields.iter().map(|f| self.lower_operand_kept(f)).collect();
+                let operands = self.lower_aggregate_operands(fields, expr.span);
                 Rvalue::Aggregate { kind: AggregateKind::Enum(*enum_id, *variant), operands }
             }
             hir::ExprKind::Ref { place, mutable } => {
@@ -6537,6 +6537,26 @@ impl<'a> Builder<'a> {
             }
             _ => Rvalue::Use(self.lower_operand(expr)),
         }
+    }
+
+    /// The operands of an aggregate, in order. D-822 (D5) — the statement that builds it is at the
+    /// first value moved out of a place (`self.title` of `R(title=self.title, n=1)`), where a move
+    /// a diagnostic reports happens, else at the aggregate: not at the last operand, which may be
+    /// a field's default in its declaration.
+    fn lower_aggregate_operands(&mut self, items: &'a [hir::Expr], span: ember_span::Span) -> Vec<Operand> {
+        let mut moved_at = None;
+        let operands = items
+            .iter()
+            .map(|item| {
+                let operand = self.lower_operand_kept(item);
+                if moved_at.is_none() && matches!(&operand, Operand::Move(place) if !place.projection.is_empty()) {
+                    moved_at = Some(item.span);
+                }
+                operand
+            })
+            .collect();
+        self.at(moved_at.unwrap_or(span));
+        operands
     }
 
     /// An operand of `==`: ODR-102 compares two owned callable values where

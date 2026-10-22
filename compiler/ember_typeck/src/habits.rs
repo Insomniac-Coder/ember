@@ -196,6 +196,33 @@ impl Checker<'_> {
         Some(suggestion(diagnostic, format!("write `{}{suffix}`", if iterator { "it" } else { "xs" }), receiver_edits(span, arg, &suffix)))
     }
 
+    /// `[DIA-14]` — whether `ty` is an error or holds one (`Array[<error>]`, `(<error>, int)`): a
+    /// type a failed expression gave, about which nothing more is reported. Asked on failing paths.
+    pub(crate) fn mentions_error(&self, ty: Ty) -> bool {
+        if ty == self.common.error {
+            return true;
+        }
+        match self.types.kind(ty) {
+            TyKind::Vec { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Span { elem, .. } => self.mentions_error(*elem),
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.mentions_error(*inner),
+            TyKind::Tuple(items) => items.iter().any(|&item| self.mentions_error(item)),
+            TyKind::Struct(id) => self.types.struct_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error(arg))),
+            TyKind::Enum(id) => self.types.enum_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error(arg))),
+            _ => false,
+        }
+    }
+
+    /// `[DIA-21]` P22 — the interfaces named as types before the implementations were known, asked
+    /// now: each one implemented by values only is reported where it was named.
+    pub(crate) fn report_early_interface_types(&mut self) {
+        for (interface, span) in std::mem::take(&mut self.early_interface_types) {
+            if let Some(diagnostic) = self.interface_of_values(interface, span) {
+                self.values_only_interfaces.insert(interface);
+                self.sink.emit(diagnostic);
+            }
+        }
+    }
+
     /// The generic type `ty` is an instance of, by its qualified name (`std.collections.Map`).
     fn origin_of(&self, ty: Ty) -> Option<Symbol> {
         match *self.types.kind(ty) {
@@ -209,8 +236,14 @@ impl Checker<'_> {
     /// take, where Ember spells the meaning with another method (Appendix E): `xs.sort(key=f)` is
     /// `xs.sort_by_key(f)`, `m.get(k, d)` is `m.get_or(k, d)`, `s.split()` is
     /// `s.split_whitespace()`. Each shape is an arity error in Ember, so a program that compiles
-    /// never matches one.
-    pub(crate) fn python_call_shape(&self, receiver: &Expr, name: ast::Ident, args: &[ast::Arg]) -> Option<Diagnostic> {
+    /// never matches one. `Some(None)`: the shape, on a receiver whose type holds an error, about
+    /// which nothing more is said (`[DIA-14]`).
+    pub(crate) fn python_call_shape(&self, receiver: &Expr, name: ast::Ident, args: &[ast::Arg]) -> Option<Option<Diagnostic>> {
+        let answer = self.python_call_shape_of(receiver, name, args)?;
+        Some((!self.mentions_error(receiver.ty)).then_some(answer))
+    }
+
+    fn python_call_shape_of(&self, receiver: &Expr, name: ast::Ident, args: &[ast::Arg]) -> Option<Diagnostic> {
         let ty = receiver.ty;
         let shown = self.types.display(ty);
         let rename = |ember: &str, why: &str| {
@@ -221,7 +254,7 @@ impl Checker<'_> {
                 .suggest(format!("write `{ember}`"), name.span, ember)
         };
         match name.name.as_str() {
-            "sort" if matches!(self.types.kind(ty), TyKind::Vec { text: false, .. }) => {
+            "sort" if matches!(self.types.kind(ty), TyKind::Vec { text: false, .. }) || self.mentions_error(ty) => {
                 let key = args.iter().find(|arg| arg.name.is_some_and(|n| n.name.is("key")))?;
                 if args.len() != 1 {
                     return Some(
@@ -239,7 +272,7 @@ impl Checker<'_> {
                 Some(diagnostic)
             }
             "get" if args.len() == 2 && args.iter().all(|arg| arg.name.is_none()) => {
-                (self.origin_of(ty)?.as_str() == "std.collections.Map")
+                (self.origin_of(ty)?.as_str() == "std.collections.Map" || self.mentions_error(ty))
                     .then(|| rename("get_or", "Python's `d.get(k, default)` is `m.get_or(k, default)`; `m.get(k)` gives an `Option`"))
             }
             "split" if args.is_empty() && self.is_text(ty) => {
@@ -487,6 +520,41 @@ impl Checker<'_> {
         }
     }
 
+    /// `[DIA-12]` N9 (D-822 D8) — the help for a type missing a bound: the derive that writes it,
+    /// for a type the program declares (with the module where an `extend` may be written instead,
+    /// `[TYP-20]`); for a `char` where text is the key (`[DIA-21]` P27), its text.
+    pub(crate) fn bound_help(&self, diagnostic: Diagnostic, ty: Ty, bound: Symbol) -> Diagnostic {
+        let (origin, args) = match self.open_interface_origin.get(&bound) {
+            Some((origin, args)) => (*origin, args.clone()),
+            None => (bound, Vec::new()),
+        };
+        let interface = origin.as_str().rsplit('.').next().unwrap_or_default().to_string();
+        if matches!(self.types.kind(ty), TyKind::Char)
+            && interface == "AsKey"
+            && args.first().is_some_and(|&key| self.is_text(key))
+        {
+            return diagnostic
+                .habit(Habit::P27)
+                .help("look the key up by its text: `c.to_string()`")
+                .note("a `char` is one character and the keys are text; Python has only text [TXT-10]");
+        }
+        const DERIVABLE: [&str; 6] = ["Eq", "Hash", "Ord", "Clone", "Debug", "Default"];
+        // A struct the program declares (not a generic's instance, not the standard library's).
+        let declared = match *self.types.kind(ty) {
+            TyKind::Struct(id) => {
+                let def = self.types.struct_def(id);
+                def.origin.is_none() && self.prefixes.get(def.declaring_module).is_some_and(|prefix| prefix != "std" && !prefix.starts_with("std."))
+            }
+            _ => false,
+        };
+        let shown = self.types.display(ty);
+        if declared && DERIVABLE.contains(&interface.as_str()) {
+            return diagnostic
+                .help(format!("derive it, `@derive({interface})` on `{shown}`, or write `extend {shown} implements {interface}` in `{shown}`'s module [TYP-20]"));
+        }
+        diagnostic
+    }
+
     /// `[DIA-21]` P22 (ODR-182) — an interface's name in a type position is a class handle typed by
     /// it (IV.1, `[OBJ-2]`); when the types implementing it are values (structs, enums) and none is a
     /// class, a place of any of them is written another way, which the help names.
@@ -546,11 +614,6 @@ impl Checker<'_> {
             return self.interface_of_values_diagnostic(interface, diagnostic);
         }
         let number = |ty: Ty| self.types.is_numeric(ty);
-        if let ExprKind::Local(id) = expr.kind
-            && self.literal_locals.contains_key(&id)
-        {
-            return diagnostic;
-        }
         if number(found) && number(expected) && !(self.whole(found) && self.whole(expected)) {
             let wanted = self.types.display(expected);
             let what = match (self.types.is_float(found), self.types.is_float(expected)) {

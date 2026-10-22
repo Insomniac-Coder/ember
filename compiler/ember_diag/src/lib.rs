@@ -219,6 +219,13 @@ impl Sink {
         self.diagnostics.push(d);
     }
 
+    /// Each diagnostic `diagnostics` holds (none, or one an `Option` gives).
+    pub fn emit_all(&mut self, diagnostics: impl IntoIterator<Item = Diagnostic>) {
+        for diagnostic in diagnostics {
+            self.emit(diagnostic);
+        }
+    }
+
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }

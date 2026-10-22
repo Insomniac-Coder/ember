@@ -462,6 +462,7 @@ pub fn check(
     // `K: Hash` needs `String`'s); it is offered each one again. One whose
     // hidden arguments those implementations answer is filled in then.
     checker.implementations_known = true;
+    checker.report_early_interface_types();
     checker.extend_early_instances();
     checker.complete_early_instances();
     checker.class_methods_recorded = true;
@@ -2707,6 +2708,11 @@ struct Checker<'a> {
     /// from a generic tuple extension over its elements' implementations) is named, and filled
     /// in once they can (`complete_early_instances`).
     implementations_known: bool,
+    /// `[DIA-21]` P22 — each interface named as a type before the implementations were known,
+    /// with where; and the interfaces reported as implemented by values only, whose uses then say
+    /// nothing more (`[DIA-14]`).
+    early_interface_types: Vec<(Symbol, Span)>,
+    values_only_interfaces: HashSet<Symbol>,
     /// Whether every interface is collected (`collect_interfaces`): before then, a hidden
     /// parameter's bounds may still be unknown (`close_projection_bounds`).
     interfaces_collected: bool,
@@ -3241,6 +3247,8 @@ impl<'a> Checker<'a> {
             struct_hidden: HashMap::new(),
             concrete_instances: HashMap::new(),
             implementations_known: false,
+            early_interface_types: Vec::new(),
+            values_only_interfaces: HashSet::new(),
             interfaces_collected: false,
             early_instances: Vec::new(),
             ecs_systems: HashMap::new(),
@@ -12252,8 +12260,12 @@ impl<'a> Checker<'a> {
     /// latter is unsized and needs a fat pointer, while this form is a counted
     /// class owner whose vtable is found through TypeInfo under `[DSP-3]`.
     fn class_interface_type(&mut self, interface: Symbol, span: Span) -> Ty {
-        // `[DIA-21]` P22 (ODR-182) — an interface whose implementations are values, not classes.
-        if let Some(diagnostic) = self.interface_of_values(interface, span) {
+        // `[DIA-21]` P22 (ODR-182) — an interface whose implementations are values, not classes;
+        // asked once they are known.
+        if !self.implementations_known {
+            self.early_interface_types.push((interface, span));
+        } else if let Some(diagnostic) = self.interface_of_values(interface, span) {
+            self.values_only_interfaces.insert(interface);
             self.sink.emit(diagnostic);
             return self.common.error;
         }
@@ -16654,11 +16666,13 @@ impl<'a> Checker<'a> {
                 let shown = self.types.display(arg);
                 let interface = self.interface_shown(bound);
                 let owner = name.as_str().rsplit('.').next().unwrap_or_default().to_string();
-                self.error(
+                let diagnostic = Diagnostic::error(
                     codes::E2040,
                     span,
                     format!("`{shown}` does not implement `{interface}`, which `{owner}`'s `{}` requires", param.name),
                 );
+                let diagnostic = self.bound_help(diagnostic, arg, bound);
+                self.sink.emit(diagnostic);
                 met = false;
             }
         }
@@ -16679,6 +16693,10 @@ impl<'a> Checker<'a> {
             let substituted = self.substitute_bound(bound, substitution);
             if self.implements_or_blanket(ty, substituted) {
                 continue;
+            }
+            // `[DIA-14]` — a type holding an error was reported where the error was.
+            if self.mentions_error(ty) {
+                return Vec::new();
             }
             missed.push(substituted);
             let mut pending = vec![bound];
@@ -26221,12 +26239,15 @@ impl<'a> Checker<'a> {
                 hir::Pattern { ty: expected, kind: hir::PatternKind::Int(value), span }
             }
             None => {
-                let shown = self.types.display(expected);
-                self.error(
-                    codes::E2020,
-                    span,
-                    format!("this literal cannot match a value of type `{shown}`"),
-                );
+                // `[DIA-14]` — a scrutinee already in error says nothing more.
+                if !self.mentions_error(expected) {
+                    let shown = self.types.display(expected);
+                    self.error(
+                        codes::E2020,
+                        span,
+                        format!("this literal cannot match a value of type `{shown}`"),
+                    );
+                }
                 hir::Pattern { ty: self.common.error, kind: hir::PatternKind::Wild, span }
             }
         }
@@ -33243,9 +33264,17 @@ impl<'a> Checker<'a> {
                 .help("use a `c\"…\"` literal, or handle `.to_cstring()` and pass the owned value's `.as_cstr()`"));
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
+        let span = expr.span;
+        // `[DIA-14]` — a type holding an error was reported where the error was; and an interface
+        // named as a type that its implementations cannot be (P22) was reported at the name.
+        if self.mentions_error(expr.ty)
+            || self.mentions_error(expected)
+            || matches!(*self.types.kind(expected), TyKind::ClassInterface(interface) if self.values_only_interfaces.contains(&interface))
+        {
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         let found = self.types.display(expr.ty);
         let wanted = self.types.display(expected);
-        let span = expr.span;
         // D-555 — each lambda has a type of its own (`[CLO-1]`): a place that
         // holds one cannot hold another, and the fix is an owned callable value.
         if self.types.is_closure_environment(expr.ty)
@@ -33292,6 +33321,20 @@ impl<'a> Checker<'a> {
                 diagnostic = diagnostic.secondary(declared, format!("parameter `{param}` is declared `{wanted}` here"));
             }
             self.sink.emit(diagnostic);
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
+        // D-822 (D1) — a callable parameter's type is its own generic one (`[CLO-3]`), whose
+        // compiler-made name the program never wrote: the parameter is named instead.
+        if let ExprKind::Local(local) = expr.kind
+            && self.callable_parameter_locals.contains(&local)
+            && let Some(name) = self.locals[local.0 as usize].name
+        {
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found the callable parameter `{name}`"))
+                    .primary_label("a callable parameter: each call's argument has a type of its own")
+                    .help(format!("make an owned callable value of it: `owned fn(…) => {name}(…)`"))
+                    .note("a `fn` parameter takes any callable, so its type is the argument's; a place of type `fn(A) -> R` holds an owned callable value [CLO-3]"),
+            );
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
         let mut diagnostic =
@@ -40359,9 +40402,16 @@ impl<'a> Checker<'a> {
             _ => decl.ty,
         };
         let shown = self.types.display(ty);
+        // D-823 (B2) — the whole parameter given a new value is Python's rebinding of a name: the
+        // value it means is a new local's, and the caller's stays as it was.
+        let rebinding = matches!(place.kind, ExprKind::Local(_)) && !self.callable_parameter_locals.contains(&local);
         let structural_help = if self.callable_parameter_locals.contains(&local) {
             format!(
                 "declare this callable parameter `mut {name}: fn(...) -> ...` so it receives a mutable closure place"
+            )
+        } else if rebinding {
+            format!(
+                "bind the new value to a new local (`new_{name} = …`) and use that from here on; declare the parameter `mut {name}: {shown}` only if the caller is to see the new value, as a single owner passing it `mut`"
             )
         } else {
             format!(
@@ -40376,8 +40426,11 @@ impl<'a> Checker<'a> {
         .primary_label("this write needs mutable access")
         .secondary(declaration, format!("`{name}` is borrowed here"))
         .help(structural_help);
+        if rebinding {
+            diagnostic = diagnostic.note(format!("Python rebinds a parameter's name; an Ember parameter is the caller's `{shown}`, borrowed [FN-1]"));
+        }
 
-        if offer_interior_mutability {
+        if offer_interior_mutability && !rebinding {
             diagnostic = if self.types.is_copy(ty) {
                 diagnostic.help(
                     "if the value is genuinely shared, use `Cell[T]` for the `Copy` payload or \
@@ -41652,8 +41705,8 @@ impl<'a> Checker<'a> {
             receiver = self.read_through(receiver);
         }
         // `[DIA-21]` P6 — a Python call shape Ember spells with another method.
-        if let Some(diagnostic) = self.python_call_shape(&receiver, name, args) {
-            self.sink.emit(diagnostic);
+        if let Some(answer) = self.python_call_shape(&receiver, name, args) {
+            self.sink.emit_all(answer);
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         // `[FFI-23]` (ODR-132) — `token.ptr()`: the address foreign code keeps, typed by what the
@@ -42939,7 +42992,10 @@ impl<'a> Checker<'a> {
                     diagnostic.note("a struct or enum is `Clone` when every field is, unless it writes `@no_derive(Clone)` [STR-5]")
                 };
             }
-            self.sink.emit(diagnostic);
+            // `[DIA-14]` — a receiver whose type holds an error was reported where the error was.
+            if !self.mentions_error(receiver.ty) {
+                self.sink.emit(diagnostic);
+            }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
         // D-432 — a call found ambiguous (`E2070`) has nothing to be checked
@@ -48842,6 +48898,7 @@ impl<'a> Checker<'a> {
                 .help(format!("`m[k] = v` makes the key from `k` when it is new, which needs `{shown}` to be `Clone`; `m.insert(k, v)` takes the key itself"))
                 .note("looking a key up needs only `AsKey`; making one needs `ToKey` [STD-12]");
         }
+        let diagnostic = self.bound_help(diagnostic, ty, bound);
         self.sink.emit(diagnostic);
     }
 
@@ -51118,7 +51175,9 @@ impl<'a> Checker<'a> {
                 return call;
             }
             let diagnostic = self.no_method(&receiver, name, args, span);
-            self.sink.emit(diagnostic);
+            if !self.mentions_error(receiver.ty) {
+                self.sink.emit(diagnostic);
+            }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };
 
@@ -53397,7 +53456,7 @@ impl<'a> Checker<'a> {
         };
         // `[DIA-14]` — an operand whose type is already an error was reported; the operation is
         // that error too, and nothing more is said about it.
-        if lhs.ty == self.common.error || rhs.ty == self.common.error {
+        if lhs.ty == self.common.error || rhs.ty == self.common.error || self.mentions_error(lhs.ty) || self.mentions_error(rhs.ty) {
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
         // `[TXT-11]` — `a + b` with a `String` on the left consumes it and
