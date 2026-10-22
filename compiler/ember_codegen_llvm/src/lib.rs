@@ -25,6 +25,7 @@ mod func;
 mod glue;
 mod ranges;
 mod runtime;
+mod simd;
 mod soa;
 mod statics;
 mod sync;

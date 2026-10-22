@@ -1068,6 +1068,7 @@ impl<'a> FnCx<'_, 'a> {
                 self.store_result(dest, &taken, Sc::Bool, false)
             }
             Builtin::Atomic { op, order } => self.atomic(*op, *order, arg_ty, args, dest, span),
+            Builtin::Simd { op, vector } => self.simd(op, *vector, args, dest, span),
             // `[STA-3]` — the accessor that runs the initialiser the first time any thread asks.
             Builtin::LazyStatic { name, init, ty } => {
                 let accessor = crate::statics::lazy_static(self.m, name.as_str(), init.as_str(), *ty)?;
