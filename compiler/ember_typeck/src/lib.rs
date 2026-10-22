@@ -46609,7 +46609,23 @@ impl<'a> Checker<'a> {
                     // D-596 — with no result type expected, a literal body takes its default type
                     // (`i64`, `f64`), as any expression does: kept untyped, the lambda was a
                     // `fn() -> an integer`, which converted to no `fn` type and whose C was `int32_t`.
-                    None => self.synth_committed(expr),
+                    // D-876 — and a body that reads a value through a reference, which only a copy
+                    // could give by value, gives the reference: `fn(w: ref String) => w` is a
+                    // `fn(ref String) -> ref String`, as it is with the result type written. Read
+                    // through, the `String` was moved out of the borrowed parameter (`E3013`).
+                    None => {
+                        let value = self.synth_committed(expr);
+                        match value.kind {
+                            ExprKind::Deref(reference)
+                                if matches!(self.types.kind(reference.ty), TyKind::Ref { .. })
+                                    && !self.types.is_copy(value.ty)
+                                    && value.ty != self.common.error =>
+                            {
+                                *reference
+                            }
+                            kind => Expr { kind, ..value },
+                        }
+                    }
                     _ => self.synth(expr),
                 };
                 let ty = value.ty;

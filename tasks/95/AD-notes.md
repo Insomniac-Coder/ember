@@ -154,3 +154,18 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   `ember_types` `the_canonical_spelling_of_instance_arguments` (names `[MNG-6]`, and the
   built-in paths); `milestones.rs` `inline_header_functions_and_inline_attributes_reach_the_c`
   names `std.core.str.chars`. `phase-status.json`: `MNG-1`, `MNG-3` removed.
+
+* **D-876 `[CLO-1]`, `[OWN-3]`** — a lambda with no result type written whose body is a value read
+  through a reference that only a copy could give by value gives the reference
+  (`check_lambda_body`): `fn(w: ref String) => w` is `fn(ref String) -> ref String`, as with the
+  type written; a `Copy` value is still given by value. It moved the `String` out (`E3013`).
+  `CLO-1/accept_a_lambda_giving_a_borrowed_parameter_gives_its_reference.em` (three profiles).
+* **D-877 `[EFF-1]`** — a call through a `plain fn` value (a function, a lambda capturing nothing)
+  runs one of the functions the program uses as values (`Const::Fn`) of its shape (parameter count,
+  result type), so its effects are theirs (`plain_function_values`, the `Indirect` call sites of
+  the effect graph): a stored generator expression, an unfused adapter chain and a later-`for`
+  generator holding capture-free lambdas run in `@noalloc`. One allocating lambda of the same shape
+  anywhere makes the shared adapter instance's call allocate, which is right: the instance runs
+  whichever it holds (an instance per lambda would be more precise and cost code size; not built).
+  `EFF-1/accept_a_call_through_a_plain_fn_value_has_the_effects_of_its_functions.em` (three
+  profiles), `EFF-1/reject_a_plain_fn_value_of_a_shape_some_function_allocates_in.em`.
