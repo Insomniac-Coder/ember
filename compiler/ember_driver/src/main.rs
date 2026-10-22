@@ -4394,6 +4394,28 @@ fn build_id(map: &SourceMap, profile: Profile, toolchain: &Toolchain, runtime: &
     Ok(ember_build::content_hash(&bytes))
 }
 
+/// `[BLD-6]` — the build record, `inspect/<name>.build.json`: the profile, the C compiler, and the
+/// link-time optimisation the build asked for and the one it did, with why when they differ. A
+/// hot-reload image is linked without one (`ember_build::reload`).
+fn write_build_record(layout: &Layout, name: &str, profile: Profile, toolchain: &Toolchain, link: ember_build::Link, reload: bool) -> Result<(), String> {
+    let (asked, used, why) = if reload {
+        let asked = ember_build::asked_lto(profile);
+        let why = (asked != ember_build::Lto::Off).then(|| {
+            "a hot-reload image is linked without link-time optimisation: its functions are reached through thunks, and a reloadable one is never inlined [HR-9a]".to_string()
+        });
+        (asked, ember_build::Lto::Off, why)
+    } else {
+        ember_build::lto_record(toolchain, profile, link)
+    };
+    let record = serde_json::json!({
+        "schema": 1,
+        "profile": profile.name(),
+        "c_compiler": ember_build::toolchain_name(toolchain),
+        "lto": { "asked": asked.name(), "used": used.name(), "why": why },
+    });
+    std::fs::write(layout.inspect.join(format!("{name}.build.json")), format!("{record}\n")).map_err(|e| e.to_string())
+}
+
 fn package_source_root(input: &Path) -> PathBuf {
     // A bare file name's parent is the empty path: its folder is the working one.
     let fallback = input.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new(".")).to_path_buf();
@@ -4454,6 +4476,8 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     // package root until `ember.toml` is read.
     let root_dir = package_source_root(input);
     let lint_settings = manifest_lint_settings(&root_dir, &mut map, &mut sink);
+    // `[BLD-6]` — the manifest's link-time optimisation for this profile, else the profile's own.
+    ember_build::set_lto(lint_settings.lto[options.profile as usize]);
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
     // `ember test` builds the package's tests as a program of their own, without reload.
     let reload = if command == "test" { ReloadMode::None } else { reload };
@@ -5166,6 +5190,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             .clone()
             .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
         let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
+        write_build_record(&layout, &module_name, options.profile, &toolchain, ember_build::Link::Elsewhere, false)?;
         let includes = vec![runtime_dir()?.join("include")];
         let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
         let mut units = vec![(format!("{module_name}.c"), emitted.c_source.clone(), None)];
@@ -5248,6 +5273,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
         // `[BLD-FFI-4]` — and with GCC or Clang, its link-time optimisation.
         ember_build::inherit_gnu_lto(cimport::inherited_lto(&modules));
     }
+    // A static library's objects are linked by its host's build.
+    let link = if staticlib { ember_build::Link::Elsewhere } else { ember_build::Link::Here };
+    write_build_record(&layout, &module_name, options.profile, &toolchain, link, reload_image.is_some())?;
     if options.build_id {
         println!("{}", build_id(&map, options.profile, &toolchain, &runtime)?);
     }
@@ -5859,6 +5887,8 @@ struct ManifestLintSettings {
     max_instantiations: Option<(usize, Span)>,
     /// `[LNT-6]` — the levels `[lints]` gives `ember lint`'s lints, and `large_copy`'s threshold.
     perf: ember_analysis::PerfLints,
+    /// `[BLD-6]`, `[PRF-3]` — `[profiles.<name>] lto` for each built-in profile, by `Profile`.
+    lto: [Option<ember_build::Lto>; 3],
 }
 
 /// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
@@ -5968,6 +5998,20 @@ fn manifest_lint_settings(
                             None => sink.emit(
                                 Diagnostic::error(codes::E9031, location, format!("`{written}` is not a `reload` value"))
                                     .help("`[build] reload` is \"opt-in\", \"all\", \"bodies\" or \"none\" [MAN-7]"),
+                            ),
+                        }
+                    } else if let Some(profile) = section.strip_prefix("profiles.") && key == "lto" {
+                        // `[BLD-6]` — one of three words.
+                        let written = value.trim().trim_matches('"');
+                        match ember_build::Lto::from_name(written) {
+                            Some(lto) => {
+                                if let Some(profile) = Profile::from_name(profile.trim()) {
+                                    settings.lto[profile as usize] = Some(lto);
+                                }
+                            }
+                            None => sink.emit(
+                                Diagnostic::error(codes::E9001, location, format!("`{written}` is not an `lto` value"))
+                                    .help("`lto` is \"off\", \"thin\" or \"on\" [BLD-6]"),
                             ),
                         }
                     } else if section == "build" && key == "runtime" && value.trim().trim_matches('"') == "static" {

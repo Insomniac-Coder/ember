@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    BuildError, Key, Profile, Toolchain, compiler_command, gcc_flags, gnu_flags, msvc_flags, run,
+    BuildError, Key, Link, Lto, Profile, Toolchain, compiler_command, gcc_flags, gnu_flags, lto_compile_flags, msvc_flags, run,
 };
 
 /// The runtime a reloadable program shares, as the build links it.
@@ -56,12 +56,16 @@ fn compile_reload_object(
     instances: bool,
     hidden: bool,
 ) -> Result<(), BuildError> {
-    compile_library_object(toolchain, source, include_dirs, output, profile, &reload_defines(instances), hidden)
+    // `[BLD-6]` — no link-time optimisation for an image: its functions are reached through thunks,
+    // and a reloadable one is never inlined (`[HR-9a]`), so there is nothing for it to do.
+    compile_library_object(toolchain, source, include_dirs, output, profile, &reload_defines(instances), hidden, Lto::Off)
 }
 
 /// Compile one C file of a shared library to an object: the profile's flags, `defines`, and
 /// position-independent code where shared libraries need it; `hidden` gives its symbols hidden
-/// visibility off Windows.
+/// visibility off Windows; `lto` is the link-time optimisation of the link it goes into
+/// (`[BLD-6]`, one the toolchain does).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_library_object(
     toolchain: &Toolchain,
     source: &Path,
@@ -70,6 +74,7 @@ pub(crate) fn compile_library_object(
     profile: Profile,
     defines: &[String],
     hidden: bool,
+    lto: Lto,
 ) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
@@ -79,6 +84,7 @@ pub(crate) fn compile_library_object(
         Toolchain::Msvc { .. } => {
             // `/Z7` keeps the debug information in the object: no PDB shared between builds.
             command.args(msvc_flags(profile).into_iter().map(|flag| if flag == "/Zi" { "/Z7" } else { flag }));
+            command.args(lto_compile_flags(toolchain, lto, Link::Here));
             for define in defines {
                 command.arg(format!("/D{define}"));
             }
@@ -89,7 +95,7 @@ pub(crate) fn compile_library_object(
             command.arg(source).arg(format!("/Fo{}", output.display()));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile));
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(lto_compile_flags(toolchain, lto, Link::Here));
             if !cfg!(windows) {
                 command.arg("-fPIC");
             }
@@ -134,7 +140,8 @@ pub fn shared_runtime(
         });
     }
     let mut key = Key::new();
-    key.part(b"reload runtime v1");
+    // v2: compiled without link-time optimisation in every profile (`[BLD-6]`).
+    key.part(b"reload runtime v2");
     key.part(toolchain.name().as_bytes());
     key.part(profile.name().as_bytes());
     key.part(&[match reload { None => 2, Some(instances) => u8::from(instances) }]);
@@ -160,7 +167,9 @@ pub fn shared_runtime(
         std::fs::create_dir_all(&staging)?;
         let object = staging.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "rt.obj" } else { "rt.o" });
         let defines = reload.map(reload_defines).unwrap_or_default();
-        compile_library_object(toolchain, runtime_source, include_dirs, &object, profile, &defines, false)?;
+        // `[BLD-6]` — its exports are read from the object's symbols, which a link-time-optimised
+        // object does not have (`coff_external_symbols`).
+        compile_library_object(toolchain, runtime_source, include_dirs, &object, profile, &defines, false, Lto::Off)?;
         let library = staging.join(shared_library_name(&stem));
         let mut command = compiler_command(toolchain);
         match toolchain {
