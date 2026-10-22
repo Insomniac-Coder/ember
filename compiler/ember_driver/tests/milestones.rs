@@ -3077,10 +3077,11 @@ fn tcb_lists_an_overlay_method_line_as_an_asserted_fact() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `[FFI-10]`, `[TCB-1]`, `[TCB-2]`, `[TCB-3]` — `ember tcb` separates what the language guarantees
-/// from what the program supplies, and lists, grouped by module, every fact its foreign
+/// `[FFI-10]`, `[TCB-1]`, `[TCB-2]`, `[TCB-3]`, `[FFI-1]` — `ember tcb` separates what the language
+/// guarantees from what the program supplies, and lists, grouped by module, every fact its foreign
 /// declarations assert (`safe fn` among them), each with its source and its grade: asserted, for
-/// nothing a declaration writes raises one.
+/// nothing a declaration writes raises one. A function's thread rule is listed, unknown where its
+/// contract states none.
 #[test]
 fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
     let root = workspace_root();
@@ -3096,7 +3097,7 @@ fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
         &source,
         "import clib\n\n\
          unsafe extern \"C\":\n\
-         \x20   @ffi(param(text, borrowed, nul_terminated), link_name=\"strlen\")\n\
+         \x20   @ffi(param(text, borrowed, nul_terminated), threads(main), link_name=\"strlen\")\n\
          \x20   safe fn length(text: cstr) -> usize\n\
          \x20   @ffi(immutable)\n    static frozen: i32\n\n\
          fn main():\n    println(clib.abs(-3), length(c\"abc\"))\n\
@@ -3122,6 +3123,9 @@ fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
     assert!(out[trusted..].contains("its signature matches the C declaration (`unsafe extern \"C\"`, C symbol \"strlen\")  [asserted]  "), "{out}");
     assert!(out.contains("its contract: `param(text, borrowed, nul_terminated)`  [asserted]  "), "{out}");
     assert!(out.contains("a `const` C object that never changes: `immutable`  [asserted]"), "{out}");
+    // `[FFI-1]` — a function's contract has a thread rule: the one stated, else an unknown one.
+    assert!(out.contains("its thread rule: `threads(main)`  [asserted]  "), "{out}");
+    assert_eq!(out.matches("its thread rule: none stated, so unknown [FFI-1]").count(), 2, "{out}");
     assert!(!out.contains("[instrumented]") && !out.contains("[checked]") && !out.contains("[proven]"), "{out}");
     assert!(out.contains("block in `main`  SAFETY(ffi): rand has no precondition  [asserted]"), "{out}");
     let only = ember(&["tcb", "--module", "clib", &source_arg], &root);

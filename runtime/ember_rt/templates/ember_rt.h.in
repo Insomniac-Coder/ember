@@ -3231,11 +3231,12 @@ ember_obj_header* ember_cpp_object_adopt(ember_obj_header* object, ember_loc at)
 void* ember_ffi_adopt(void* object, ember_loc at);
 void ember_ffi_release(void* object, uint32_t creator);
 uint32_t ember_ffi_thread(void);
-/* `[FFI-22]`, `[FFI-33b]` — a callback whose contract says `threads(creator)` or `threads(main)`:
- * the debug profile checks that C calls it on that thread (`EMBER_FFI_MAIN_THREAD` names the
- * main one) and panics naming both otherwise. */
+/* `[FFI-22]`, `[FFI-33b]`, `[FFI-1]` — a callback, or a foreign function, whose contract says
+ * `threads(creator)` or `threads(main)`: the debug profile checks that it is called on that
+ * thread (`EMBER_FFI_MAIN_THREAD` names the main one) and panics naming `what` and both threads
+ * otherwise. */
 #define EMBER_FFI_MAIN_THREAD UINT32_MAX
-void ember_ffi_callback_thread(uint32_t expected);
+void ember_ffi_check_thread(uint32_t expected, const char* what);
 
 /* -- debug facilities ------------------------------------------------------- */
 

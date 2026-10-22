@@ -145,6 +145,18 @@ pub struct Function {
     pub out: bool,
     /// `[FFI-41]` — the C++ namespace it is in.
     pub namespace: Vec<String>,
+    /// `[FFI-1]` — the effects its declaration gives it: `__attribute__((const))` none, and the
+    /// same result for the same arguments; `__attribute__((pure))` none (it only reads memory).
+    pub derived: Derived,
+}
+
+/// `[FFI-1]` — what a C declaration says of a function's effects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Derived {
+    #[default]
+    Nothing,
+    Pure,
+    Const,
 }
 
 /// `[FFI-40]`, `[FFI-41]`, `[FFI-32]` — what a C++ member function is to its class's Ember type:
@@ -2257,7 +2269,16 @@ impl Writer {
                 self.wrapper(cursor, &wrapper, name);
                 wrapper
             });
-            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct, owner: None, out: false, namespace: Vec::new() })
+            // `[FFI-1]` — the function's effects, where its declaration states them.
+            let attributes: Vec<CXCursorKind> = children(cursor).into_iter().map(kind).collect();
+            let derived = if attributes.contains(&CXCursor_ConstAttr) {
+                Derived::Const
+            } else if attributes.contains(&CXCursor_PureAttr) {
+                Derived::Pure
+            } else {
+                Derived::Nothing
+            };
+            Ok(Function { name: name.to_string(), params, result, link_name, abi, policy: Policy::Direct, owner: None, out: false, namespace: Vec::new(), derived })
         }
     }
 
@@ -2371,7 +2392,7 @@ impl Writer {
                     item.text = format!("@ffi(destroys({destroys}))\n{}", item.text);
                 }
                 let owner = Some((owner.clone(), Member::Destructor));
-                self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone() });
+                self.functions.push(Function { name: "drop".to_string(), params: Vec::new(), result: None, link_name: Some(thunk), abi: "C", policy: Policy::Direct, owner, out: false, namespace: self.writing.clone(), derived: Derived::Nothing });
             }
             let mut taken: HashSet<String> = HashSet::new();
             let mut friends = Vec::new();
@@ -2584,6 +2605,7 @@ impl Writer {
                 owner,
                 out: false,
                 namespace: self.writing.clone(),
+                derived: Derived::Nothing,
             });
         }
     }
@@ -3005,6 +3027,7 @@ impl Writer {
                         owner: Some((class.clone(), member)),
                         out: false,
                         namespace: self.writing.clone(),
+                        derived: Derived::Nothing,
                     });
                 }
                 let entry_params: String = slot.params.iter().map(|param| format!(", {}: {}", param.local, param.ty.ember)).collect();
@@ -3325,7 +3348,7 @@ impl Writer {
             let returned = returned.unwrap_or_else(|| "void".to_string());
             let _ = writeln!(self.shim, "extern \"C\" {returned} {thunk}({declared}) noexcept {{ {body} }}");
             let owner = member.map(|(owner, member, _)| (owner.to_string(), member));
-            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result, namespace: Vec::new() })
+            Ok(Function { name: name.to_string(), params, result, link_name: Some(thunk), abi: "C", policy, owner, out: class_result, namespace: Vec::new(), derived: Derived::Nothing })
         }
     }
 
@@ -5581,6 +5604,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     owner: None,
                     out: false,
                     namespace: Vec::new(),
+                    derived: Derived::Nothing,
                 };
                 // A raw pointer states nothing a call can rely on: the call stays unsafe (`[FFI-2]`).
                 let raw = params.iter().map(|(_, ty)| ty).chain(result).any(|ty| matches!(ty.kind, ast::TypeKind::Ptr { .. }));
@@ -5848,10 +5872,25 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
             result = function.result.as_ref().map(|ty| safe_result(ty, &entry.result));
         }
     }
+    // `[FFI-1]` — the effects the header's declaration states, unless the entry states its own.
+    let stated = |key: &str| entry.is_some_and(|entry| entry.arguments.iter().any(|argument| argument.trim_start().starts_with(key)));
+    if function.derived != Derived::Nothing && !stated("effects") {
+        arguments.push("effects=[]".to_string());
+    }
+    if function.derived == Derived::Const && !stated("deterministic") {
+        arguments.push("deterministic".to_string());
+    }
     if let Some(link) = link {
         arguments.push(format!("link_name=\"{link}\""));
     }
     let mut text = String::new();
+    match function.derived {
+        Derived::Const => text.push_str("    # derived: `__attribute__((const))`, so no effects and the same result for the same arguments [FFI-1]
+"),
+        Derived::Pure => text.push_str("    # derived: `__attribute__((pure))`, so no effects: it only reads memory [FFI-1]
+"),
+        Derived::Nothing => {}
+    }
     if !arguments.is_empty() {
         let _ = writeln!(text, "    @ffi({})", arguments.join(", "));
     }
@@ -7132,7 +7171,7 @@ mod cbor {
 
 use cbor::Value;
 
-const EMBIND_VERSION: u64 = 11;
+const EMBIND_VERSION: u64 = 12;
 
 fn text_of(value: &Value) -> Option<String> {
     match value {
@@ -7262,6 +7301,7 @@ fn embind(imported: &Imported, files: &[(String, String)], configuration: &str, 
                             ("policy".to_string(), Value::Uint(POLICIES.iter().position(|policy| *policy == function.policy).unwrap_or(0) as u64)),
                             ("out".to_string(), Value::Uint(u64::from(function.out))),
                             ("namespace".to_string(), Value::Text(function.namespace.join("::"))),
+                            ("derived".to_string(), Value::Uint(function.derived as u64)),
                             ("owner".to_string(), Value::Array(function.owner.iter().map(|(owner, member)| {
                                 Value::Array(vec![Value::Text(owner.clone()), Value::Uint(MEMBERS.iter().position(|known| known == member).unwrap_or(0) as u64)])
                             }).collect())),
@@ -7373,6 +7413,7 @@ fn read_embind(bytes: &[u8]) -> Option<(Vec<(String, String)>, Imported)> {
                 policy: *POLICIES.get(uint_of(field(entry, "policy")?)? as usize)?,
                 out: uint_of(field(entry, "out")?)? == 1,
                 namespace: read_namespace(field(entry, "namespace")?)?,
+                derived: [Derived::Nothing, Derived::Pure, Derived::Const].get(uint_of(field(entry, "derived")?)? as usize).copied()?,
                 owner: match array_of(field(entry, "owner")?)? {
                     [] => None,
                     [owner] => Some((text_of(array_of(owner)?.first()?)?, *MEMBERS.get(uint_of(array_of(owner)?.get(1)?)? as usize)?)),

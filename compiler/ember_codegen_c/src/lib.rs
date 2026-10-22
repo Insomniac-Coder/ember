@@ -452,6 +452,10 @@ fn emit_with(
         native_fn_values: BTreeMap::new(),
         closure_values: BTreeMap::new(),
         job_closures: BTreeSet::new(),
+        main_thread_foreign: bodies.iter()
+            .filter(|body| body.contracts.foreign_threads == Some(ExportThreadPolicy::Main))
+            .map(|body| (body.symbol.clone(), body.name.clone()))
+            .collect(),
         comptime: None,
         tests: None,
         ffi_instrument: None,
@@ -729,6 +733,9 @@ struct Emitter<'a> {
     /// `[JOB-1]` — the closures a job runs: each gets an entry taking its state where the job's
     /// slot holds it, and a drop for that state.
     job_closures: BTreeSet<String>,
+    /// `[FFI-1]`, `[FFI-11]` — the foreign functions whose contract says `threads(main)`, by symbol,
+    /// with their names: the debug profile checks each call is on the main thread.
+    main_thread_foreign: BTreeMap<String, String>,
     /// `[CT-1]` — the requests, when this is the compile-time evaluator's
     /// program (`emit_comptime`).
     comptime: Option<Vec<ComptimeRoot>>,
@@ -6212,10 +6219,10 @@ impl Emitter<'_> {
             }
             None => (format!("(({env_c}*){data})"), None),
         };
-        let thread = thread.or_else(|| (callback.threads == ExportThreadPolicy::Main).then(|| format!("{RT}FFI_MAIN_THREAD")));
+        let thread = thread.or_else(|| (callback.threads == ExportThreadPolicy::Main).then(|| format!("EMBER_FFI_MAIN_THREAD")));
         if let Some(thread) = thread {
             self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
-            self.line(&format!("    {RT}ffi_callback_thread({thread});"));
+            self.line(&format!("    {RT}ffi_check_thread({thread}, \"a callback\");"));
             self.line("#endif");
         }
         // The other parameters, in the callable's own ABI.
@@ -6290,7 +6297,7 @@ impl Emitter<'_> {
         self.line(&format!("    struct {name}* _record = (struct {name}*)(void*)_data;"));
         if callback.threads == ExportThreadPolicy::Creator {
             self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
-            self.line(&format!("    {RT}ffi_callback_thread(_record->creator);"));
+            self.line(&format!("    {RT}ffi_check_thread(_record->creator, \"a callback\");"));
             self.line("#endif");
         }
         let arguments: Vec<String> = unregister.args.iter().zip(&unregister.params).map(|(arg, ty)| match arg {
@@ -8155,6 +8162,16 @@ impl Emitter<'_> {
                 };
                 if let Some((function, site)) = instrumented {
                     self.line(&format!("    {{ uint32_t {RT}ffi_previous = {RT}ffi_enter({function}u, {site}u);"));
+                }
+                // `[FFI-1]`, `[FFI-11]` — a foreign function whose contract says `threads(main)`: the
+                // debug profile checks that the call is on the main thread.
+                if let FuncRef::Direct { symbol, .. } = func
+                    && let Some(name) = self.main_thread_foreign.get(symbol)
+                {
+                    let what = c_string_literal(&format!("`{name}`"));
+                    self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
+                    self.line(&format!("    {RT}ffi_check_thread(EMBER_FFI_MAIN_THREAD, {what});"));
+                    self.line("#endif");
                 }
                 // `[STD-10]` — `input` panics at end of input, at its own call.
                 let call = if matches!(func, FuncRef::Builtin { which: Builtin::Input, .. }) {
@@ -13914,6 +13931,7 @@ mod string_descriptor_view_parts_tests {
     ) -> Emitter<'a> {
         Emitter {
             job_closures: BTreeSet::new(),
+            main_thread_foreign: BTreeMap::new(),
             comptime: None,
             tests: None,
             ffi_instrument: None,

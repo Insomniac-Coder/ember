@@ -132,3 +132,30 @@ std.ffi import Retained` and `import c "./events.c"`.
 - `ember_codegen_c`: `emit_ffi_callback` (record, trampoline, release), `emit_ffi_callback_data`.
 - `ember_analysis::effects`, `ember_mir::reached_bodies`, `ember_driver` (`inspect`, importer).
 - runtime: `ember_ffi_callback_thread`, `EMBER_FFI_MAIN_THREAD`; `std.ffi.ForeignCallback`.
+
+## AB3. `[FFI-1]` — a foreign declaration's contract carries its effects and its thread rule
+
+**Done** (`FFI-1`'s and `FFI-33b`'s unfinished entries are gone; `FFI-11`'s says what is left).
+
+*Effects, derived where the C declaration gives them.* The importer reads `__attribute__((const))`
+(no effects, and the same result for the same arguments: `@ffi(effects=[], deterministic)`) and
+`__attribute__((pure))` (no effects, it only reads memory: `@ffi(effects=[])`) on a C function,
+with a `# derived:` comment, unless the overlay entry states its own (`Derived`, `.embind` version
+12). The facts make no call safe (`[FFI-2]`). With no statement the effects stay every effect
+(`[EFF-3]`).
+
+*The thread rule.* `@ffi(threads(any | main))` on a foreign function is its thread rule
+(`hir::Contracts::foreign_threads`; unknown when the contract states none: no C declaration says
+one). Under `threads(main)` the debug profile checks each call is on the main thread before C runs
+(`ember_ffi_check_thread`, which the callback checks now share), naming the function and both
+threads. `threads(creator)` on a function is `E0900`: a function has no creator of its own (spec
+question 3). `ember tcb` lists the rule ("its thread rule: `threads(main)`") and, where the
+contract states none, "its thread rule: none stated, so unknown [FFI-1]".
+
+Tests: `tests/conformance/FFI-1/accept_a_declaration_states_its_effects.em`,
+`reject_a_declaration_that_states_nothing_has_every_effect.em` (`maths.c`),
+`accept_a_thread_rule_is_part_of_the_contract.em`, `run_fail_a_main_thread_function_called_elsewhere.em`
+(`ui.c`), `reject_a_function_has_no_creator.em`; milestone
+`tcb_lists_every_foreign_fact_with_its_source_and_grade` (the thread rule lines).
+`FFI-49/reject_unimplemented_ffi_contract.em` took `threads(main)` as its example of a word not
+built; now `handle` on a function is.

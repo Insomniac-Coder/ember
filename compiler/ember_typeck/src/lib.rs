@@ -19461,6 +19461,7 @@ impl<'a> Checker<'a> {
                 static_safe: has_attribute(&item.attrs, "static_safe"),
                 contracts: hir::Contracts {
                     foreign: decl.is_foreign_decl.then(|| ffi_declared_effects(&item.attrs)),
+                    foreign_threads: if decl.is_foreign_decl { ffi_function_threads(&item.attrs) } else { None },
                     ..self.std_contracts(self.contracts_of(&item.attrs), item.span, false)
                 },
                 borrows: self.declared_borrows(def),
@@ -21548,6 +21549,7 @@ impl<'a> Checker<'a> {
             static_safe: false,
             contracts: hir::Contracts {
                 foreign: Some(ffi_declared_effects(attrs)),
+                foreign_threads: ffi_function_threads(attrs),
                 ..self.std_contracts(self.contracts_of(attrs), span, false)
             },
             borrows: self.declared_borrows(instance),
@@ -39860,8 +39862,13 @@ impl<'a> Checker<'a> {
                                 } else if let ast::AttrArg::Expr(expr) = arg
                                     && let Some(rule) = ffi_threads_word(expr) {
                                     // `[FFI-1]`, `[FFI-11]` — the function's thread rule.
-                                    if rule.is_err() {
-                                        self.error(codes::E0104, attr.span, "`threads(…)` is `any`, `main` or `creator`");
+                                    match rule {
+                                        Err(()) => self.error(codes::E0104, attr.span, "`threads(…)` is `any`, `main` or `creator`"),
+                                        Ok(hir::ExportThreadPolicy::Creator) => self.sink.emit(
+                                            Diagnostic::error(codes::E0900, attr.span, "`threads(creator)` on a function is not implemented yet")
+                                                .note("a function has no creator of its own; `threads(creator)` binds a callback, a `retained` parameter or a `returns_owned` result to the thread that made it [FFI-33b]"),
+                                        ),
+                                        Ok(_) => {}
                                     }
                                     if saw_threads {
                                         self.error(codes::E0104, attr.span, "duplicate `threads(…)` in `@ffi`");

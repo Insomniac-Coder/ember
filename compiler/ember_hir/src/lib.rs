@@ -421,6 +421,10 @@ pub struct Contracts {
     /// effect when it states none, and `Nondet` unless `@ffi(deterministic)`
     /// (`[DET-2]`). `None` for a function with an Ember body.
     pub foreign: Option<Effects>,
+    /// `[FFI-1]`, `[FFI-11]` — for a foreign declaration, the threads its
+    /// contract lets it be called on (`@ffi(threads(…))`); `None` when its
+    /// contract states none, so its thread rule is unknown.
+    pub foreign_threads: Option<ExportThreadPolicy>,
 }
 
 #[derive(Debug)]
