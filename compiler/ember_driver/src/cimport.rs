@@ -43,6 +43,47 @@ pub struct Config<'a> {
     pub instantiate: &'a [String],
     /// `[FFI-39]` — the classes the import's overlays declare `@ffi(trampoline, …)`.
     pub trampolines: &'a [TrampolineDecl],
+    /// `[FFI-17a]` (ODR-198) — each alias of a `std::variant` the overlays name
+    /// `@ffi(variant=[…])`, with its alternatives' names.
+    pub variants: &'a [(String, Vec<String>)],
+}
+
+/// `[FFI-17a]` (ODR-198) — the overlays' `@ffi(variant=["A", "B"]) type Shape` entries, read before
+/// the header is: each alias and the names of its alternatives, in order.
+pub fn variant_decls(overlays: &str) -> Vec<(String, Vec<String>)> {
+    let quoted = |text: &str| -> Vec<String> { text.split('"').skip(1).step_by(2).map(str::to_string).collect() };
+    let mut found = Vec::new();
+    let mut attributes: Vec<String> = Vec::new();
+    for line in overlays.lines() {
+        let line = line.trim();
+        if line.starts_with('@') {
+            attributes.push(line.to_string());
+            continue;
+        }
+        let entry = line.trim_start_matches("override ").trim();
+        if let Some(name) = entry.strip_prefix("type ").map(str::trim)
+            && let Some(names) = attributes.iter().find_map(|attribute| {
+                let (_, rest) = attribute.strip_prefix("@ffi(")?.split_once("variant")?;
+                let (_, list) = rest.split_once('[')?;
+                Some(quoted(list.split_once(']')?.0))
+            })
+        {
+            found.push((name.to_string(), names));
+        }
+        if !line.is_empty() && !line.starts_with('#') {
+            attributes.clear();
+        }
+    }
+    found
+}
+
+/// `[FFI-17a]` (ODR-198) — a `std::variant` an overlay names: the thunks' stem, the Ember enum
+/// (as the module that uses it names it) and the bytes that hold the C++ object.
+#[derive(Clone, Debug)]
+struct Variant {
+    ops: String,
+    ember: String,
+    storage: String,
 }
 
 /// `[FFI-39]`, `[FFI-17d]` — an overlay's `@ffi(trampoline, virtuals=[…], owner=…)` entry for a
@@ -1297,6 +1338,7 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
         binding: config.binding.to_string(),
         cpp: config.cpp.is_some(),
         trampoline_decls: config.trampolines.to_vec(),
+        variant_decls: config.variants.to_vec(),
         ..Writer::default()
     };
     let element_prefix = format!("{}_element_", ember_branding::SYMBOL_PREFIX);
@@ -1532,6 +1574,10 @@ struct Writer {
     ns_uses: Vec<(Vec<String>, Vec<String>)>,
     /// `[FFI-39]` — the trampolines the overlays declare, and those made.
     trampoline_decls: Vec<TrampolineDecl>,
+    /// `[FFI-17a]` (ODR-198) — the overlays' variant entries, and each variant made of one, by its
+    /// canonical C++ spelling.
+    variant_decls: Vec<(String, Vec<String>)>,
+    variants: HashMap<String, Variant>,
     trampolines: Vec<Trampoline>,
     /// `[FFI-17a]` — each bridge type the module uses (by its C++ type and the namespace it is
     /// used in), with the thunks written for it.
@@ -2024,6 +2070,19 @@ impl Writer {
         if let Some(fixed) = standard_typedef(&name) {
             return Ok(fixed.to_string());
         }
+        // `[FFI-17a]` (ODR-198) — an alias of a `std::variant` an overlay names: its enum, which
+        // crosses only as a function's parameter or result (its C++ object is not its Ember value).
+        if self.cpp && let Some((_, names)) = self.variant_decls.iter().find(|(alias, _)| *alias == name || ident(&name) == *alias).cloned() {
+            let outcome = match self.variant(cursor, &name, &names) {
+                Ok(()) => Err(format!("`{name}`: a `std::variant` crosses as a function's parameter or result, not here ([FFI-17a])")),
+                Err(reason) => {
+                    self.skip(cursor, &name, reason.clone());
+                    Err(format!("`{name}`, not imported: {reason}"))
+                }
+            };
+            self.typedefs.insert(key, outcome.clone());
+            return outcome;
+        }
         // A pointer to the alias inside its own definition names it.
         self.typedefs.insert(key.clone(), Ok(ident(&name)));
         let outcome = self.typedef_target(cursor, &name);
@@ -2046,6 +2105,99 @@ impl Writer {
         };
         self.typedefs.insert(key, outcome.clone());
         outcome
+    }
+
+    /// `[FFI-17a]` (ODR-198) — the enum of a `std::variant` alias the overlay names, `names` its
+    /// alternatives': each alternative maps by value (so the variant is trivially copyable, and its
+    /// bytes move as any value's). Written: the enum; the storage, the variant's bytes; the thunks
+    /// that read its index and an alternative and make one; and the module's helpers that turn the
+    /// storage into the enum (`<ops>_take`) and back (`<ops>_store`).
+    fn variant(&mut self, cursor: CXCursor, name: &str, names: &[String]) -> Result<(), String> {
+        // SAFETY(ffi): cursors and types of a live translation unit.
+        unsafe {
+            let canonical = clang_getCanonicalType(clang_getTypedefDeclUnderlyingType(cursor));
+            if std_template(canonical).as_deref() != Some("variant") {
+                return Err(format!("`@ffi(variant=[…])` names `{name}`, which is no alias of a `std::variant` ([FFI-17a])"));
+            }
+            let count = clang_Type_getNumTemplateArguments(canonical).max(0) as usize;
+            if names.len() != count {
+                return Err(format!("`{name}` has {count} alternatives, and `@ffi(variant=[…])` names {} ([FFI-17a])", names.len()));
+            }
+            let spelled = cpp_spelling(canonical);
+            let mut alternatives = Vec::new();
+            for (index, variant_name) in names.iter().enumerate() {
+                let alternative = clang_Type_getTemplateArgumentAsType(canonical, index as c_uint);
+                let mapped = self.ty(alternative, false).map_err(|reason| format!("its alternative `{}` does not map by value ({reason}) [FFI-17a]", cpp_spelling(alternative)))?;
+                alternatives.push((ident(variant_name), mapped, cpp_spelling(alternative)));
+            }
+            if !self.claim(name) {
+                return Err("its name is taken by another declaration of the header".to_string());
+            }
+            let enum_name = ident(name);
+            let ops = format!("{}_cpp_{}_variant_{}", ember_branding::SYMBOL_PREFIX, self.stem, self.variants.len());
+            let storage = format!("{ops}_storage");
+            let (size, align) = (clang_Type_getSizeOf(canonical).max(1), clang_Type_getAlignOf(canonical).max(1));
+            let copy = alternatives.iter().all(|(_, mapped, _)| !mapped.split(|c: char| !(c.is_alphanumeric() || c == '_')).any(|word| word == "Atomic" || self.move_only.contains(word)));
+            let mut text = format!(
+                "## `[FFI-17a]` (ODR-198) — `{spelled}`, as the header's `{name}` names it: one value of an alternative,\n## crossing to and from C++ as a parameter or a result.\n{}enum {enum_name}:\n",
+                if copy { "@derive(Copy)\n" } else { "" }
+            );
+            for (variant_name, mapped, _) in &alternatives {
+                let _ = writeln!(text, "    {variant_name}({mapped})");
+            }
+            self.push(name, Kind::Type, text);
+            self.spelled(cursor, name);
+            // The C++ object's bytes, and the thunks that read and write it.
+            let mut shim = format!(
+                "static_assert(std::is_trivially_copyable_v<{spelled}> && sizeof({spelled}) == {size} && alignof({spelled}) == {align}, \"{name}: a variant Ember holds as bytes\");\n\
+                 extern \"C\" std::size_t {ops}_index(const void* v) noexcept {{ return static_cast<const {spelled}*>(v)->index(); }}\n"
+            );
+            let mut decls = format!("    @ffi(link_name=\"{ops}_index\")\n    fn {ops}_index(object: *u8) -> usize\n");
+            let (mut take, mut store, mut slots) = (String::new(), String::new(), String::new());
+            for (index, (variant_name, mapped, alternative)) in alternatives.iter().enumerate() {
+                let _ = writeln!(
+                    shim,
+                    "extern \"C\" void {ops}_get_{index}(const void* v, {alternative}* out) noexcept {{ ::new (static_cast<void*>(out)) {alternative}(std::get<{index}>(*static_cast<const {spelled}*>(v))); }}\n\
+                     extern \"C\" void {ops}_make_{index}(void* at, const {alternative}* value) noexcept {{ ::new (at) {spelled}(std::in_place_index<{index}>, *value); }}"
+                );
+                let _ = write!(
+                    decls,
+                    "    @ffi(link_name=\"{ops}_get_{index}\")\n    fn {ops}_get_{index}(object: *u8, value: *mut {mapped})\n    @ffi(link_name=\"{ops}_make_{index}\")\n    fn {ops}_make_{index}(object: *mut u8, value: *{mapped})\n"
+                );
+                // Each alternative's slot, before the block that reads one (`[UNS-3]`).
+                let _ = writeln!(slots, "    slot{index}: MaybeUninit[{mapped}] = MaybeUninit[{mapped}].uninit()");
+                let made = format!(
+                    "{ops}_get_{index}(at, ((ref mut slot{index}) as *mut MaybeUninit[{mapped}]) as *mut {mapped})\n{{indent}}return {enum_name}.{variant_name}(slot{index}.assume_init())\n"
+                );
+                if index + 1 < alternatives.len() {
+                    let _ = write!(take, "        if index == {index}:\n            {}", made.replace("{indent}", "            "));
+                } else {
+                    let _ = write!(take, "        {}", made.replace("{indent}", "        "));
+                }
+                let _ = write!(store, "            {enum_name}.{variant_name}(ref payload):\n                {ops}_make_{index}(at, (ref payload) as *{mapped})\n");
+            }
+            let _ = write!(self.shim, "{shim}");
+            self.push(
+                &storage,
+                Kind::Class,
+                format!(
+                    "## `[FFI-17a]` — the bytes of a `{spelled}` ({size}, aligned to {align}), which the thunks read and write.\n@layout(c)\n@derive(Copy)\n@align({align})\nstruct {storage}:\n    bytes: [u8; {size}]\n\n\
+                     ## `[FFI-17a]` — the thunks of `{spelled}`.\nunsafe extern \"C\":\n{decls}\n\
+                     ## `[FFI-17a]` — the `{enum_name}` the bytes of a `{spelled}` hold, its active alternative copied out.\nfn {ops}_take(storage: {storage}) -> {enum_name}:\n{slots}    unsafe:  # SAFETY(ffi): `storage` holds a `{spelled}` a thunk made, whose active alternative is read\n        at = ((ref storage) as *{storage}) as *u8\n        index = {ops}_index(at)\n{take}\n\
+                     ## `[FFI-17a]` — the bytes of the `{spelled}` holding `value`'s alternative.\nfn {ops}_store(value: {enum_name}) -> {storage}:\n    storage = {storage}([0; {size}])\n    unsafe:  # SAFETY(ffi): `storage` has the variant's size and alignment, and the payload is read for the call\n        at = ((ref mut storage) as *mut {storage}) as *mut u8\n        match value:\n{store}    return storage\n"
+                ),
+            );
+            let key = variant_key(canonical);
+            let ember = self.qualify(enum_name, cursor);
+            let storage = self.qualify(storage, cursor);
+            self.variants.insert(key, Variant { ops, ember, storage });
+            Ok(())
+        }
+    }
+
+    /// `[FFI-17a]` (ODR-198) — the variant an overlay names that `ty` (or what it refers to) is.
+    fn variant_of(&self, ty: CXType) -> Option<Variant> {
+        self.variants.get(&variant_key(ty)).cloned()
     }
 
     /// `None` when the typedef names a struct or enum that takes its name; else the alias's target.
@@ -3687,12 +3839,31 @@ impl Writer {
                 self.std_result(clang_getCanonicalType(result_ty))
             };
             // `[FFI-32]` (ODR-166) — an opaque class by value is held as a constructor's object is.
-            let boxed = if member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor)) || bridged_result.is_some() || viewed.is_some() {
+            let boxed = if member.is_some_and(|(_, member, _)| matches!(member, Member::Constructor | Member::BoxedConstructor))
+                || bridged_result.is_some()
+                || viewed.is_some()
+                || self.variant_of(result_ty).is_some()
+            {
                 None
             } else {
                 self.boxed_class(result_ty)
             };
+            // `[FFI-17a]` (ODR-198) — a variant the overlay names: written through the pointer the
+            // caller gives, as a class by value is, into the bytes its enum is made from.
+            let variant_result = if discarded || result_ty.kind == CXType_Void { None } else { self.variant_of(result_ty) };
             let (result, returned, call) = match (member, result_ty.kind) {
+                _ if let Some(variant) = &variant_result => {
+                    let ember = CType {
+                        ember: variant.storage.clone(),
+                        pointee: None,
+                        char_pointer: false,
+                        c: cpp_spelling(clang_getCanonicalType(result_ty)),
+                        mode: format!("variant {} {}", variant.ops, variant.ember),
+                        opaque: false,
+                        function: None,
+                    };
+                    (Some(ember), Some(cpp_spelling(clang_getCanonicalType(result_ty))), call)
+                }
                 (Some((owner, Member::Constructor, class)), _) => {
                     let ember = CType { ember: owner.to_string(), pointee: None, char_pointer: false, c: class.to_string(), mode: String::new(), opaque: false, function: None };
                     (Some(ember), Some(class.to_string()), call)
@@ -3963,6 +4134,29 @@ impl Writer {
             let referenced = matches!(ty.kind, CXType_LValueReference | CXType_RValueReference);
             if referenced || clang_getCanonicalType(ty).kind == CXType_Record {
                 let value = if referenced { clang_getPointeeType(ty) } else { ty };
+                // `[FFI-17a]` (ODR-198) — a variant the overlay names: its bytes, from the enum.
+                if let Some(variant) = self.variant_of(value) {
+                    let constant = clang_isConstQualifiedType(value) != 0;
+                    if ty.kind == CXType_LValueReference && !constant {
+                        return Err(format!("`{}` lent mutably (`&`): a variant crosses by value, by `const&` or by `&&` ([FFI-17a])", cpp_spelling(value)));
+                    }
+                    let spelled = cpp_spelling(clang_getCanonicalType(value));
+                    let pass = if ty.kind == CXType_RValueReference {
+                        format!("std::move(*static_cast<{spelled}*>(const_cast<void*>({name})))")
+                    } else {
+                        format!("*static_cast<const {spelled}*>({name})")
+                    };
+                    let ember = CType {
+                        ember: format!("*{}", variant.storage),
+                        pointee: Some((variant.storage.clone(), true)),
+                        char_pointer: false,
+                        c: c.clone(),
+                        mode: format!("variant {} {} ", variant.ops, variant.ember),
+                        opaque: false,
+                        function: None,
+                    };
+                    return Ok((ember, format!("const void* {name}"), pass));
+                }
                 // `[FFI-17a]` — `E5030`: a `std::function` is never a parameter type.
                 if std_template(clang_getCanonicalType(value)).as_deref() == Some("function") {
                     return Err(format!(
@@ -4414,6 +4608,13 @@ impl Writer {
 
 /// `[FFI-17b]` — the template a template-id names, by its qualified name (`engine::Vec`), if the
 /// header declares one: a class template's cursor kind or a function template's.
+/// `[FFI-17a]` (ODR-198) — a variant's key: its type as its declaration names it, without the
+/// `const` a parameter's may carry.
+fn variant_key(ty: CXType) -> String {
+    // SAFETY(ffi): a type of a live translation unit.
+    cpp_spelling(unsafe { clang_getCursorType(clang_getTypeDeclaration(clang_getCanonicalType(ty))) })
+}
+
 /// ODR-200 — the extent of a `std::span<T, N>` of fixed extent; `None` for a span of any length.
 fn span_extent(canonical: CXType) -> Option<u64> {
     // SAFETY(ffi): a type of a live translation unit.
@@ -5286,6 +5487,7 @@ pub fn load(
         cpp: project.as_ref().map(|(standard, ..)| standard.as_str()),
         instantiate: &options.instantiate,
         trampolines: &[],
+        variants: &[],
     };
     // `[FFI-7]` — the overlays are part of what the record is for.
     let overlay_text = options
@@ -5312,7 +5514,8 @@ pub fn load(
             None => trampolines.push(decl),
         }
     }
-    let config = Config { trampolines: &trampolines, ..config };
+    let variants = if cpp { variant_decls(&overlay_text) } else { Vec::new() };
+    let config = Config { trampolines: &trampolines, variants: &variants, ..config };
     let mut cached = false;
     let (mut imported, header_hash) = match import_cached(&config, &overlay_text, &mut cached) {
         Ok((imported, _, header_hash)) => {
@@ -6276,6 +6479,19 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 }
                 let _ = take(applied, sink, layer, entry.is_override, "type", name);
             }
+            // `[FFI-17a]` (ODR-198) — `@ffi(variant=[…]) type Name`: the importer made the alias's
+            // enum (it read the entry before the header), or said why it could not.
+            ast::OverlayItemKind::Type(name) if arguments().iter().any(|written| written.trim_start().starts_with("variant")) => {
+                let made = imported.items.iter().any(|item| item.name == name.name.as_str() && item.kind == Kind::Type && item.text.contains(&format!("enum {}:", ident(name.name.as_str()))));
+                if !made {
+                    let why = imported.skipped.iter().find(|skipped| skipped.name == name.name.as_str()).map(|skipped| {
+                        skipped.reason.split_once("] ").filter(|(tag, _)| tag.starts_with("[E")).map_or(skipped.reason.clone(), |(_, rest)| rest.to_string())
+                    });
+                    mismatch(sink, name.span, why.unwrap_or_else(|| format!("`{header}` declares no alias `{}` of a `std::variant`", name.name)));
+                    continue;
+                }
+                let _ = take(applied, sink, layer, entry.is_override, "type", name);
+            }
             ast::OverlayItemKind::Type(name) | ast::OverlayItemKind::Enum(name) => {
                 let kind = if matches!(entry.kind, ast::OverlayItemKind::Type(_)) { Kind::Opaque } else { Kind::Type };
                 let found = imported.items.iter().any(|item| item.name == name.name.as_str() && item.kind == kind && (kind == Kind::Opaque || item.text.starts_with("@repr")));
@@ -6564,7 +6780,8 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
         let public = if applied.hidden.contains(&item.name) { "" } else { "pub " };
         let mut first = true;
         for line in item.text.lines() {
-            if first && !line.starts_with('@') {
+            // `pub` goes on the declaration, after its comments and attributes.
+            if first && !line.starts_with('@') && !line.starts_with('#') {
                 let _ = writeln!(out, "{indent}{public}{line}");
                 first = false;
             } else {
@@ -6964,6 +7181,8 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
             "optional " => format!("{param}: Option[{inner}]"),
             "unique " => format!("owned {param}: ForeignBox[{inner}]"),
             fixed if fixed.starts_with("fixed ") => format!("{param}: ref {}", fixed_array(fixed, &inner).1),
+            // ODR-198 — a variant: its enum.
+            variant if variant.starts_with("variant ") => format!("{param}: {}", variant.trim().rsplit(' ').next().unwrap_or_default()),
             _ => wrapper_param(param, &ty),
         });
         // `[FFI-17a]` — a view is its pointer and its length: a `Span` the declaration counts, or a
@@ -7005,6 +7224,17 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
                     "        pass".to_string(),
                 ]);
                 (format!("{param}: {}", ty.ember), Vec::new(), at)
+            }
+            // ODR-198 — a variant: the bytes the enum makes, which live for the call.
+            (variant, contracted) if variant.starts_with("variant ") => {
+                let ops = variant.trim().split(' ').nth(1).unwrap_or_default();
+                let held = format!("{prefix}_{}_held", param.trim_start_matches("r#"));
+                prelude.push(format!("{held} = {ops}_store({param})"));
+                if contracted {
+                    (format!("{param}: ref {inner}"), one(false), held)
+                } else {
+                    (format!("{param}: *{inner}"), Vec::new(), format!("(ref {held}) as *{inner}"))
+                }
             }
             // ODR-200 — a `std::span<T, N>`: the array's address.
             (fixed, true) if fixed.starts_with("fixed ") => {
@@ -7135,6 +7365,12 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     let own = |given: Option<String>, slot: Option<String>| -> (Option<String>, Option<String>, bool) {
         let given_or = |default: &str| given.clone().unwrap_or_else(|| default.to_string());
         match (member, result_mode) {
+            // ODR-198 — a variant's bytes, made its enum.
+            (_, mode) if mode.starts_with("variant ") => {
+                let mut words = mode.split(' ').skip(1);
+                let (ops, ember) = (words.next().unwrap_or_default(), words.next().unwrap_or_default());
+                (slot.map(|slot| format!("{ops}_take({slot})")), Some(ember.to_string()), false)
+            }
             _ if function.out => (slot, Some(result_ty.clone()), false),
             (Some(Member::BoxedConstructor), _) => (Some(format!("adopt[{owner}]({} as *mut {owner})", given_or("0"))), Some(format!("ForeignBox[{owner}]")), true),
             (_, "boxed") => (Some(format!("adopt[{pointee}]({} as *mut {pointee})", given_or("0"))), Some(format!("ForeignBox[{pointee}]")), true),
@@ -7425,6 +7661,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         cpp: cpp.then_some(standard.as_str()),
         instantiate: &instantiate,
         trampolines: &[],
+        variants: &[],
     };
     let (imported, files) = import_header(&config)?;
     if emit_cpp {

@@ -416,3 +416,20 @@ dropped — its captures' `drop` never runs:
         println("called", call_once(f, 40))   # prints `called 41`; `dropped` never
 
 (A local owning the callable drops it at its scope's end, as it should.)
+
+**`std::variant` (ODR-198).** An overlay's `@ffi(variant=["A", "B"]) type Shape` (read before the
+header, as a trampoline entry is; `variant_decls`) makes the header's alias `Shape` of a
+`std::variant<…>` the enum `enum Shape: A(…), B(…)` — `@derive(Copy)` when every alternative is —
+when it names each alternative and each maps by value; else the entry is `E5010` saying which
+(the alias and what takes it are skipped). It crosses as a parameter (by value, `const&` or `&&`;
+`&` is refused) and as a result, never on the heap: the variant's bytes are a `@layout(c)` struct
+of its size and alignment (`<ops>_storage`; the variant is trivially copyable, as its alternatives
+are, which the shim asserts), made from the enum by the module's `<ops>_store` (a thunk placing the
+alternative's value, `std::in_place_index<k>`) and read back by `<ops>_take` (its `index()`, then
+the alternative copied out of `std::get<k>`); the function's thunk takes the bytes' address, or
+writes its result into them as a class by value is. Elsewhere (a field, behind a pointer) the alias
+is refused. Generated types may now carry comments before `pub` (`declare`). Tests:
+`FFI-17a/accept_a_variant_crosses_as_an_enum.em` (`variants.hpp`, `overlays/variants.em`),
+`reject_a_variant_the_overlay_does_not_name_whole.em` (`unnamed_variants.hpp`). The FFI-17a and
+FFI-44 directories pass in WSL too. `FFI-17a`'s entry keeps only the stateful deleter; `FFI-44`'s
+is removed.
