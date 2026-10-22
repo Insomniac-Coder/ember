@@ -15666,8 +15666,14 @@ impl<'a> Checker<'a> {
         if resolved.is("std.ffi.adopt") {
             return Some(self.synth_foreign_adopt(args, explicit, span));
         }
-        // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`.
-        if resolved.is("std.ffi.retained_pin") && args.len() == 1 {
+        // `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate` record goes.
+        if resolved.is("std.ffi.retained_unpin") && args.len() == 1 {
+            let u64_ty = self.common.u64;
+            let id = self.check_expr(&args[0].value, u64_ty);
+            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedUnpin, args: vec![id] }, span });
+        }
+        // `[FFI-23]` — what `Retained` pins: a class handle or a `Box`, with its `on_relocate`.
+        if resolved.is("std.ffi.retained_pin") && args.len() == 2 {
             let value = self.synth_committed(&args[0].value);
             let pinnable = matches!(self.types.kind(value.ty), TyKind::Class(_) | TyKind::Param { .. } | TyKind::Error)
                 || self.box_inner(value.ty).is_some();
@@ -15679,7 +15685,9 @@ impl<'a> Checker<'a> {
                 );
                 return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
             }
-            return Some(Expr { ty: self.common.void, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value] }, span });
+            let callback = self.synth_committed(&args[1].value);
+            let u64_ty = self.common.u64;
+            return Some(Expr { ty: u64_ty, kind: ExprKind::Builtin { which: Builtin::RetainedPin, args: vec![value, callback] }, span });
         }
         // `[FFI-17e]` — a C++ container's elements, viewed in place, and a smart pointer's object:
         // `cpp_span(ref owner, pointer, count)`, `cpp_span_mut(ref mut owner, …)` and

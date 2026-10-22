@@ -191,12 +191,21 @@ pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:  # SAFETY: the declaration s
 ## value's type is not known. Compiler-known. Dropping the token releases the object (the class
 ## handle's count, or the box and its value). A parameter contracted `retained` takes a token and
 ## gives C its address (`[FFI-11]`).
+## `[HR-20]` (ODR-194) — `on_relocate`, when given, lets a reload move the class object the token
+## holds: the runtime calls it with the old and the new address right after commit publishes the
+## move and before reclaim, so foreign code can follow it (a `Box`'s value never moves). Without
+## one, the object is pinned and a reload that would move it is refused.
 pub struct Retained[T]:
     value: T
+    ## The runtime's record of `on_relocate` (`0`: none), which the token's end takes out.
+    relocation: u64
 
-    pub fn pin(owned value: T) -> Retained[T]:
-        retained_pin(value)
-        return Retained(value)
+    pub fn pin(owned value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])] = None) -> Retained[T]:
+        relocation = retained_pin(value, on_relocate)
+        return Retained(value, relocation)
+
+    fn drop(mut self):
+        retained_unpin(self.relocation)
 
 ## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
 ## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
@@ -206,9 +215,19 @@ pub struct Retained[T]:
 pub struct ObjectPtr[C]:
     address: *mut u8
 
-## `[FFI-23]` — compiler-known: a class object's pinned flag is set, a `Box` needs nothing, and any
-## other value is refused.
-fn retained_pin[T](value: T):
+extend[C] ObjectPtr[C] implements Eq:
+    ## Equal when they are the address of one object.
+    fn eq(self, other: ObjectPtr[C]) -> bool:
+        return self.address == other.address
+
+## `[FFI-23]` — compiler-known: a class object's pinned flag is set, or with `on_relocate` its
+## record made (`[HR-20]`), a `Box` needs nothing, and any other value is refused. The result is
+## the record's number, `0` for none.
+fn retained_pin[T](value: T, on_relocate: Option[extern "C" fn(ObjectPtr[T], ObjectPtr[T])]) -> u64:
+    return 0
+
+## `[HR-20]` — compiler-known: a token's `on_relocate` record goes.
+fn retained_unpin(relocation: u64):
     pass
 
 

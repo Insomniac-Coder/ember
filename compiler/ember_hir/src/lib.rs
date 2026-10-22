@@ -1491,8 +1491,14 @@ pub enum Builtin {
     /// calls it and drops its result.
     ForeignDestructor { symbol: Symbol, pointee: Ty, ret: Ty, fn_ty: Ty },
     /// `[FFI-23]` — `Retained.pin`'s mark: a class object's header gets its
-    /// pinned flag; a `Box` needs none. The argument is the value pinned.
+    /// pinned flag; a `Box` needs none. The arguments are the value pinned and
+    /// its `on_relocate` callback (`[HR-20]`, ODR-194): given one, a class
+    /// object is recorded with it instead of pinned. The result is the
+    /// record's number (`0`: none), which `RetainedUnpin` takes.
     RetainedPin,
+    /// `[HR-20]` (ODR-194) — a `Retained` token's end: its `on_relocate`
+    /// record goes. The argument is the number `RetainedPin` gave.
+    RetainedUnpin,
     /// `[FFI-23]` — the address of the object a class handle or a `Box`
     /// holds, as `*mut u8`.
     RetainedAddress,
@@ -2072,6 +2078,7 @@ impl Builtin {
             Builtin::ForeignThread => "ffi_thread",
             Builtin::ForeignDestructor { .. } => "ffi_destructor",
             Builtin::RetainedPin => "retained_pin",
+            Builtin::RetainedUnpin => "retained_unpin",
             Builtin::RetainedAddress => "retained_address",
             Builtin::CppObjectAddress => "cpp_object_address",
             Builtin::CppObjectHandle { .. } => "cpp_object_handle",

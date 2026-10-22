@@ -8847,14 +8847,27 @@ impl Emitter<'_> {
                     Builtin::ForeignThread => return format!("{RT}ffi_thread()"),
                     // `[FFI-23]` — a class object is pinned in its header; a `Box`'s value is
                     // its own, and needs nothing.
+                    // `[HR-20]` (ODR-194) — with an `on_relocate` callback, a class object is
+                    // recorded with it instead of pinned, and may move; a `Box`'s value never does.
                     Builtin::RetainedPin => {
                         let boxed = matches!(self.types.kind(*arg_ty), TyKind::Struct(id) if self.box_inner_id(*id).is_some());
-                        return if boxed {
-                            "((void)0)".to_string()
-                        } else {
-                            format!("{RT}obj_pin(({RT}obj_header*)({}))", rendered[0])
+                        if boxed {
+                            return "((uint64_t)0)".to_string();
+                        }
+                        let callback = match args.get(1).and_then(|arg| self.operand_type(arg, body)).map(|ty| self.types.kind(ty).clone()) {
+                            Some(TyKind::Enum(id)) if self.types.option_niche(id).is_none() => {
+                                let ty = self.operand_type(&args[1], body).expect("typed above");
+                                let (some, payload) = self.option_some_parts(ty, &rendered[1]);
+                                format!("(({some}) ? (void (*)(void)){payload} : NULL)")
+                            }
+                            _ => format!("((void (*)(void))({}))", rendered[1]),
                         };
+                        let object = format!("(({RT}obj_header*)({}))", rendered[0]);
+                        return format!(
+                            "({callback} == NULL ? ({RT}obj_pin({object}), (uint64_t)0) : {RT}obj_pin_relocatable({object}, {callback}))"
+                        );
                     }
+                    Builtin::RetainedUnpin => return format!("{RT}obj_unpin_relocatable({})", rendered[0]),
                     Builtin::RetainedAddress => return self.retained_address(&rendered[0], *arg_ty),
                     // `[FFI-39]`, `[FFI-17d]` — a class object's address, and its handle again.
                     Builtin::CppObjectAddress => return format!("((uint8_t*)({}))", rendered[0]),

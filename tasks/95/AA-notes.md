@@ -99,6 +99,19 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `CLO-2/accept_a_lambda_inside_a_lambda_captures_the_functions_locals.em` (three profiles each);
   `GRM-28/reject_the_local_function_forms_not_built.em` keeps the generic case only.
   `phase-status.json`: `GRM-28` says what is built.
+* **ODR-194 `[HR-20]`** — `Retained.pin(handle, on_relocate: Option[extern "C" fn(ObjectPtr[C],
+  ObjectPtr[C])] = None)`. Given a callback, a class object is recorded with it in the runtime
+  (`ember_obj_pin_relocatable`) instead of pinned in its header, so a reload may move it; right
+  after commit publishes the moves and before reclaim, the runtime calls each recorded callback
+  once with the old and the new address (`rl_relocated`, the record unlocked during the calls)
+  and the record follows the object. The token's end (`Retained` now has a `drop` and a
+  `relocation` number) takes its record out. A `Box`'s value never moves; its callback is never
+  called. `ObjectPtr` got its `==` ([FFI-23] says equal for one object's address; it was
+  `E2040`).
+  * `compiler/ember_driver/tests/reload.rs`, `a_pinned_object_with_on_relocate_moves_and_is_told`
+    (the edit `a_pinned_object_is_never_moved` refuses applies, two moves, two calls, old ≠ new);
+    `HR-20/accept_a_token_with_on_relocate.em` (three profiles). `--test reload` 50/50; milestone
+    `retained_tokens_let_c_keep_ember_objects` passes. `phase-status.json`: `HR-20` removed.
 
 ## Added to the job by the coordinator (owner answers, binding)
 
@@ -148,6 +161,10 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
   `ember_mir`: a consumed callee in a `Box` moves the box. `ember_codegen_c`: the descriptor's
   `once` entry (after `captures`, so the runtime's reload view of the prefix is unchanged), the
   `_once` thunks, `ArrayHelper::OnceBoxCall`.
+* runtime (templates, regenerated): `ember_obj_pin_relocatable`, `ember_obj_unpin_relocatable`,
+  `rl_relocated`. `ember_hir`: `Builtin::RetainedUnpin`; `RetainedPin` takes the callback and
+  gives the record's number. std (`ffi.em`): `Retained.pin`'s `on_relocate`, `Retained.drop`,
+  `ObjectPtr`'s `Eq`.
 
 ## Defects found
 
@@ -162,5 +179,7 @@ Branch `helper-AA`, from `main` at `f00f2d61`. One commit per piece.
 * **AA4 — not fixed.** `map(fn(w: ref String) => w)` (no result type written) reads the reference
   through and moves the `String` out of the borrowed parameter (`E3013`); `-> ref String` written
   compiles. A lambda body's type with nothing expected should be the parameter's, `ref String`.
+* **AA5 — fixed.** `ObjectPtr[C]` had no `==`, though `[FFI-23]` makes two equal when they are
+  the address of one object.
 
 ## Questions

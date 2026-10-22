@@ -3115,6 +3115,69 @@ void ember_obj_pin(ember_obj_header* object) {
     }
 }
 
+/* [HR-20] (ODR-194) The `Retained` tokens made with an `on_relocate` callback: the object each
+ * pins, the callback, and the token's number. Such an object is not pinned in its header: a reload
+ * may move it, and calls each callback with the old and the new address after commit publishes the
+ * move and before reclaim. A token's end takes its row out. */
+typedef struct relocation_row {
+    ember_obj_header* object;
+    void (*callback)(void);
+    uint64_t id;
+} relocation_row;
+
+static relocation_row* g_relocations;
+static size_t g_relocation_count;
+static size_t g_relocation_cap;
+static uint64_t g_relocation_next = 1;
+static uint32_t g_relocation_lock;
+
+static void relocation_lock(void) {
+    uint32_t expected = 0;
+    while (!object_compare_exchange_u32(&g_relocation_lock, &expected, 1)) {
+        expected = 0;
+    }
+}
+
+static void relocation_unlock(void) {
+    (void)object_fetch_sub_u32(&g_relocation_lock, 1);
+}
+
+uint64_t ember_obj_pin_relocatable(ember_obj_header* object, void (*callback)(void)) {
+    if (object == NULL) {
+        return 0;
+    }
+    relocation_lock();
+    if (g_relocation_count == g_relocation_cap) {
+        size_t cap = g_relocation_cap == 0 ? 8 : g_relocation_cap * 2;
+        relocation_row* rows = (relocation_row*)realloc(g_relocations, cap * sizeof *rows);
+        if (rows == NULL) {
+            relocation_unlock();
+            fputs("ember runtime: unable to allocate the record of relocation callbacks\n", stderr);
+            runtime_abort();
+        }
+        g_relocations = rows;
+        g_relocation_cap = cap;
+    }
+    uint64_t id = g_relocation_next++;
+    g_relocations[g_relocation_count++] = (relocation_row){ object, callback, id };
+    relocation_unlock();
+    return id;
+}
+
+void ember_obj_unpin_relocatable(uint64_t id) {
+    if (id == 0) {
+        return;
+    }
+    relocation_lock();
+    for (size_t index = 0; index < g_relocation_count; ++index) {
+        if (g_relocations[index].id == id) {
+            g_relocations[index] = g_relocations[--g_relocation_count];
+            break;
+        }
+    }
+    relocation_unlock();
+}
+
 void ember_obj_retain(ember_obj_header* object) {
     if (object == NULL) {
         return;
@@ -12145,7 +12208,9 @@ static bool rl_plan_instances(const ember_rl_manifest* next, bool checkpoint, ch
     }
     /* [HR-20] An object pinned by a `Retained` token, whose address foreign code may keep, is never
      * moved: one whose new self does not fit its allocation (or that `migrate_from` builds anew)
-     * is refused, naming its class and how many such instances there are. */
+     * is refused, naming its class and how many such instances there are. A token made with an
+     * `on_relocate` callback does not pin its object (ODR-194): the callback is told the new
+     * address (`rl_relocated`). */
     for (size_t index = 0; index < g_rl_moves.count; ++index) {
         rl_move* move = &g_rl_moves.moves[index];
         if (move->in_place || (move->old->flags & EMBER_OBJ_PINNED) == 0) {
@@ -12309,6 +12374,54 @@ static void rl_commit_instances(void) {
             rl_live_insert(move->made);
         }
     }
+}
+
+/* [HR-20] (ODR-194) Each `on_relocate` callback of an object that moved, with its old and its new
+ * address, once commit has published the move and before reclaim frees the old memory (so commit
+ * stays pointer stores, and a callback cannot undo a reload that has succeeded); the token's row
+ * then names the new address. The calls are made with the record unlocked: a callback may pin or
+ * end a token. */
+typedef struct rl_object_ptr {
+    uint8_t* address;
+} rl_object_ptr;
+
+static void rl_relocated(void) {
+    size_t calls = 0;
+    relocation_lock();
+    for (size_t row = 0; row < g_relocation_count; ++row) {
+        for (size_t index = 0; index < g_rl_moves.count; ++index) {
+            const rl_move* move = &g_rl_moves.moves[index];
+            if (!move->in_place && move->made != NULL && g_relocations[row].object == move->old) {
+                calls += 1;
+            }
+        }
+    }
+    relocation_row* due = calls == 0 ? NULL : (relocation_row*)malloc(calls * 2 * sizeof *due);
+    if (calls != 0 && due == NULL) {
+        relocation_unlock();
+        fputs("ember runtime: unable to allocate the relocation callbacks' calls\n", stderr);
+        runtime_abort();
+    }
+    size_t made = 0;
+    for (size_t row = 0; row < g_relocation_count; ++row) {
+        for (size_t index = 0; index < g_rl_moves.count; ++index) {
+            const rl_move* move = &g_rl_moves.moves[index];
+            if (!move->in_place && move->made != NULL && g_relocations[row].object == move->old) {
+                /* The old address and the call, then the new address (two rows a call). */
+                due[made++] = (relocation_row){ move->old, g_relocations[row].callback, 0 };
+                due[made++] = (relocation_row){ move->made, NULL, 0 };
+                g_relocations[row].object = move->made;
+                break;
+            }
+        }
+    }
+    relocation_unlock();
+    for (size_t at = 0; at < made; at += 2) {
+        rl_object_ptr old_address = { (uint8_t*)due[at].object };
+        rl_object_ptr new_address = { (uint8_t*)due[at + 1].object };
+        ((void (*)(rl_object_ptr, rl_object_ptr))due[at].callback)(old_address, new_address);
+    }
+    free(due);
 }
 
 /* [HR-2a] Reclaim: the fields no new field took are dropped, running user `drop` code; an old
@@ -13084,6 +13197,7 @@ static int rl_apply(const char* path, bool first, bool checkpoint, uint64_t comp
     /* [HR-2a] Reclaim: what the old image owned and no new value took. */
     rl_tx_keep();
 #if defined(EMBER_RELOAD_INSTANCES)
+    rl_relocated();
     timings->instances_migrated = rl_reclaim_instances(next);
     for (size_t index = 0; index < pending.migrated_count; ++index) {
         const ember_rl_type* now = rl_new_schema(next, pending.migrated_shape[index]->type_name);
