@@ -45313,6 +45313,9 @@ impl<'a> Checker<'a> {
         which: hir::Builtin,
     ) -> Expr {
         let span = container.span;
+        // `[TYP-21]` — a mutable view of `m[k]` reaches the element through
+        // `IndexMut`, as a `mut` receiver does (`m[k].iter_mut()`).
+        let container = if mutable { self.index_place_for_write(container) } else { container };
         if mutable {
             self.reject_readonly_write(&container, span);
             let through_shared_ref = self.reject_write_through_shared_ref(&container, span);
