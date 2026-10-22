@@ -24672,21 +24672,17 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[TYP-37]` — `a.cmp(b) -> Ordering` for the numbers and text, in the
-    /// order `sort` and `min` use: `Less` when `a < b`, `Greater` when
-    /// `b < a`, else `Equal`. A `String` is compared as its `str`, so it is
-    /// borrowed, not moved.
+    /// `[TYP-37]`, `[TYP-36]` — `a.cmp(b) -> Ordering` where the compiler provides the order: the
+    /// numbers and text (`Less` when `a < b`, `Greater` when `b < a`, else `Equal`, as `sort` and
+    /// `min` use), a tuple lexicographically, and a shared reference as what it refers to
+    /// (ODR-181). A `String` is compared as its `str`, so it is borrowed, not moved.
     fn synth_total_cmp(&mut self, receiver: Expr, args: &[ast::Arg], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
         if args.len() != 1 || args[0].name.is_some() {
             self.error(codes::E2020, span, format!("`cmp` takes 1 argument, found {}", args.len()));
             return error;
         }
-        let Some(ordering) = self.named_types.get(&Symbol::intern("std.core.Ordering")).copied() else {
-            self.error(codes::E1010, span, "cannot find `std.core.Ordering`");
-            return error;
-        };
-        let TyKind::Enum(ordering_id) = *self.types.kind(ordering) else { return error };
+        // Text against `str`, so a literal argument is not made a `String`.
         let receiver = if self.is_text(receiver.ty) {
             let str_ty = self.common.str_;
             self.coerce(receiver, str_ty)
@@ -24695,17 +24691,97 @@ impl<'a> Checker<'a> {
         };
         let ty = receiver.ty;
         let other = self.check_expr(&args[0].value, ty);
+        if other.ty == self.common.error {
+            return error;
+        }
+        self.synth_cmp_of(receiver, other, span)
+    }
+
+    /// `lhs.cmp(rhs)` for two values of one type that is `Ord` (`[TYP-36]`): through a shared
+    /// reference to its referent, by `TotalLess` for the numbers and text, by a written or derived
+    /// `cmp`, and a tuple element by element, the first that differs deciding (each side evaluated
+    /// once, as `synth_eq_of` does for `==`).
+    fn synth_cmp_of(&mut self, lhs: Expr, rhs: Expr, span: Span) -> Expr {
+        let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        let Some(ordering) = self.named_types.get(&Symbol::intern("std.core.Ordering")).copied() else {
+            self.error(codes::E1010, span, "cannot find `std.core.Ordering`");
+            return error;
+        };
+        let TyKind::Enum(ordering_id) = *self.types.kind(ordering) else { return error };
+        if let TyKind::Ref { mutable: false, .. } = *self.types.kind(lhs.ty) {
+            let (lhs, rhs) = (self.read_through(lhs), self.read_through(rhs));
+            return self.synth_cmp_of(lhs, rhs, span);
+        }
+        let variant = |variant| Expr {
+            ty: ordering,
+            kind: ExprKind::EnumLit { enum_id: ordering_id, variant, fields: vec![] },
+            span,
+        };
+        let ty = lhs.ty;
+        if let TyKind::Tuple(items) = self.types.kind(ty).clone()
+            && !self.methods.contains_key(&(ty, Symbol::intern("cmp")))
+        {
+            let (mut stmts, left) = self.hold(lhs, span);
+            let (right_stmts, right) = self.hold(rhs, span);
+            stmts.extend(right_stmts);
+            // From the last element out: `Equal` when every element is, else the first that is not.
+            let mut decided = variant(1);
+            for (index, item) in items.into_iter().enumerate().rev() {
+                let field = |side: &Held| Expr { ty: item, kind: ExprKind::Field { base: Box::new(side.read(span)), index }, span };
+                let order = self.synth_cmp_of(field(&left), field(&right), span);
+                let local = self.declare(None, ordering, span);
+                let read = Expr { ty: ordering, kind: ExprKind::Local(local), span };
+                let arm = |kind, body| hir::MatchArm {
+                    pattern: hir::Pattern { ty: ordering, kind, span },
+                    guard: None,
+                    body: hir::MatchArmBody::Expr(body),
+                    span,
+                };
+                let chosen = Expr {
+                    ty: ordering,
+                    kind: ExprKind::Match {
+                        scrutinee: Box::new(read.clone()),
+                        arms: vec![
+                            arm(hir::PatternKind::Variant { enum_id: ordering_id, variant: 1, fields: Vec::new() }, decided),
+                            arm(hir::PatternKind::Wild, read),
+                        ],
+                    },
+                    span,
+                };
+                decided = Expr {
+                    ty: ordering,
+                    kind: ExprKind::Block {
+                        block: Block { stmts: vec![Stmt::Let { local, init: Some(order) }], span },
+                        value: Box::new(chosen),
+                    },
+                    span,
+                };
+            }
+            return Expr { ty: ordering, kind: ExprKind::Block { block: Block { stmts, span }, value: Box::new(decided) }, span };
+        }
+        if !self.sortable(ty) {
+            if self.methods.contains_key(&(ty, Symbol::intern("cmp"))) {
+                return self.call_operator("cmp", lhs, rhs, span);
+            }
+            if ty != self.common.error {
+                let shown = self.types.display(ty);
+                self.error(codes::E2040, span, format!("`{shown}` does not implement `Ord`, which `cmp` needs"));
+            }
+            return error;
+        }
+        let (lhs, rhs) = if self.is_text(ty) {
+            let str_ty = self.common.str_;
+            (self.coerce(lhs, str_ty), self.coerce(rhs, str_ty))
+        } else {
+            (lhs, rhs)
+        };
+        let ty = lhs.ty;
         let (a, b) = (self.declare(None, ty, span), self.declare(None, ty, span));
         let bool_ty = self.common.bool_;
         let local = |id| Expr { ty, kind: ExprKind::Local(id), span };
         let less = |x, y| Expr {
             ty: bool_ty,
             kind: ExprKind::Builtin { which: Builtin::TotalLess, args: vec![local(x), local(y)] },
-            span,
-        };
-        let variant = |variant| Expr {
-            ty: ordering,
-            kind: ExprKind::EnumLit { enum_id: ordering_id, variant, fields: vec![] },
             span,
         };
         let arm = |kind, body: Expr| hir::MatchArm {
@@ -24728,7 +24804,7 @@ impl<'a> Checker<'a> {
             ty: ordering,
             kind: ExprKind::Block {
                 block: Block {
-                    stmts: vec![Stmt::Let { local: a, init: Some(receiver) }, Stmt::Let { local: b, init: Some(other) }],
+                    stmts: vec![Stmt::Let { local: a, init: Some(lhs) }, Stmt::Let { local: b, init: Some(rhs) }],
                     span,
                 },
                 value: Box::new(chosen),
@@ -30531,6 +30607,16 @@ impl<'a> Checker<'a> {
     /// Whether `sort` can order values of `ty` (`[TYP-37]`): scalars and text.
     fn sortable(&self, ty: Ty) -> bool {
         self.totally_ordered(ty) || self.is_text(ty)
+    }
+
+    /// Whether `cmp` on `ty` is the compiler's (`synth_cmp_of`): the numbers and text, a tuple
+    /// whose elements are all `Ord` (`[TYP-36]`: lexicographic), or a shared reference to one.
+    fn provides_cmp(&self, ty: Ty) -> bool {
+        match *self.types.kind(ty) {
+            TyKind::Ref { mutable: false, inner } => self.provides_cmp(inner),
+            TyKind::Tuple(_) => self.implements(ty, Symbol::intern("std.core.Ord")),
+            _ => self.sortable(ty),
+        }
     }
 
     /// `b if b < a else a` in `Ord`'s order (`[TYP-37]`), each evaluated
@@ -38091,6 +38177,15 @@ impl<'a> Checker<'a> {
                 );
             return implied || self.generic_bounds(index, name).contains(&interface);
         }
+        // ODR-181 — `ref T` implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does.
+        if let TyKind::Ref { mutable: false, inner } = *self.types.kind(ty)
+            && matches!(
+                interface.as_str(),
+                "std.core.Eq" | "std.core.Ord" | "std.collections.Hash" | "std.core.Display" | "std.core.Debug" | "Display" | "Debug"
+            )
+        {
+            return self.implements(inner, interface);
+        }
         // Part IV §8, ODR-111 — a marker is what the type holds says, and what the program wrote by
         // hand (`unsafe extend`), never a recorded implementation alone.
         match interface.as_str() {
@@ -38115,7 +38210,11 @@ impl<'a> Checker<'a> {
         // totalOrder) and text, and `Clone` and `Eq` on every type it can
         // clone or compare, a struct's implicit ones included. D-246.
         let provided = match interface.as_str() {
-            "std.core.Ord" => self.sortable(ty),
+            // `[TYP-36]` — a tuple is `Ord` lexicographically when every element is.
+            "std.core.Ord" => {
+                self.sortable(ty)
+                    || matches!(self.types.kind(ty), TyKind::Tuple(items) if items.iter().all(|&item| self.implements(item, interface)))
+            }
             "std.core.Clone" => self.is_cloneable(ty),
             "std.core.Eq" => self.has_implicit_eq(ty),
             "std.collections.Hash" => self.hashes(ty, &mut HashSet::new()),
@@ -42085,11 +42184,11 @@ impl<'a> Checker<'a> {
         {
             return self.synth_int_method(receiver, name, args, span);
         }
-        // `[TYP-37]` — `a.cmp(b)` on the numbers and text, in `Ord`'s order,
-        // which generic code bounded by `Ord` uses.
+        // `[TYP-37]`, `[TYP-36]` — `a.cmp(b)` where the compiler gives the order (the numbers
+        // and text, tuples, shared references to them), which generic code bounded by `Ord` uses.
         if name.name.is("cmp")
             && explicit.is_empty()
-            && self.sortable(receiver.ty)
+            && self.provides_cmp(receiver.ty)
             && !self.methods.contains_key(&(receiver.ty, name.name))
         {
             return self.synth_total_cmp(receiver, args, span);
