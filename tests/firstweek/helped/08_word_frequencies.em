@@ -34,8 +34,7 @@ fn main():
     println(f"{total} words, {counts.len()} distinct")
 
     pairs = [(word.clone(), n) for word, n in counts.items()]
-    pairs.sort_by_key(fn(p) => p.0.clone())
-    pairs.sort_by_key(fn(p) => -p.1)
+    pairs.sort_by_key(fn(p) => (-p.1, p.0.clone()))
     println("top ten:")
     for i, (word, n) in pairs[..10].iter().enumerate():
         bar = "#".repeat(n)

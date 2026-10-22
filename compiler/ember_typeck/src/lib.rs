@@ -26293,6 +26293,11 @@ impl<'a> Checker<'a> {
         expected: Ty,
         span: Span,
     ) -> hir::Pattern {
+        // `[DIA-14]` — a scrutinee that did not check was reported; its
+        // patterns add nothing (it gave "cannot match `<error>`" per arm).
+        if expected == self.common.error {
+            return hir::Pattern { ty: expected, kind: hir::PatternKind::Wild, span };
+        }
         let value = match &pattern.lit {
             ast::Literal::Int { value, .. } if self.types.is_integral(expected) => {
                 let limit = if pattern.negative {
