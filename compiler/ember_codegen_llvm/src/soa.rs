@@ -23,6 +23,8 @@ struct Shape {
     columns: Vec<Column>,
     len: u64,
     cap: u64,
+    /// `[SOA-4]` — an `ArenaSoA`'s borrow of its arena.
+    arena: Option<u64>,
     soa_size: u64,
     elem_size: u64,
     elem_align: u64,
@@ -33,8 +35,8 @@ fn shape(m: &Module<'_>, soa: Ty) -> Result<Shape> {
     let TyKind::Struct(id) = *table.kind(soa) else { return unsupported("an `SoA` that is not a struct") };
     let def = table.struct_def(id);
     match &def.origin {
-        Some((origin, args)) if origin.as_str() == "SoA" && args.len() == 1 => {}
-        _ => return unsupported("an `ArenaSoA` ([SOA-4])"),
+        Some((origin, args)) if matches!(origin.as_str(), "SoA" | "ArenaSoA") && args.len() == 1 => {}
+        _ => return unsupported("an `SoA` of no element"),
     }
     let elem = def.origin.as_ref().expect("an SoA has its element").1[0];
     let TyKind::Struct(elem_id) = *table.kind(elem) else { return unsupported("an `SoA` of a non-struct") };
@@ -58,6 +60,7 @@ fn shape(m: &Module<'_>, soa: Ty) -> Result<Shape> {
         columns,
         len: at("len").expect("an SoA has a length"),
         cap: at("cap").expect("an SoA has a capacity"),
+        arena: at("arena"),
         soa_size: m.ty.size_align(soa).0,
         elem_size,
         elem_align,
@@ -483,7 +486,65 @@ impl<'a> FnCx<'_, 'a> {
                 let which = if matches!(op, SoAOp::Swap) { Helper::Swap } else { Helper::MoveSlot };
                 call(self, which, &format!("ptr {s}, i64 {i}, i64 {j}"))
             }
-            SoAOp::WithCapacityIn | SoAOp::TryPush => unsupported("an `ArenaSoA` ([SOA-4])"),
+            // `[SOA-4]` — an `ArenaSoA`: its one block taken from the arena, never grown or freed.
+            SoAOp::WithCapacityIn => {
+                let shape = shape(self.m, soa)?;
+                let arena = self.pointer(&args[0])?;
+                let arena_ty = self.element_of(self.operand_ty(&args[0]).unwrap_or(soa));
+                let state = self.word_of(&arena, arena_ty, "state")?;
+                let n = self.word(&args[1])?;
+                let positive = self.value(format!("icmp sgt i64 {n}, 0"));
+                let cap = self.value(format!("select i1 {positive}, i64 {n}, i64 0"));
+                let s = self.result_slot(dest, shape.soa_size, 8)?;
+                self.zero(&s, 8, shape.soa_size);
+                if let Some(at) = shape.arena {
+                    let field = self.gep(&s, at);
+                    self.emit(format!("store ptr {arena}, ptr {field}, align 8"));
+                }
+                let (offsets, size) = self.soa_layout(&shape, &cap);
+                let empty = self.value(format!("icmp eq i64 {size}, 0"));
+                let size = self.value(format!("select i1 {empty}, i64 1, i64 {size}"));
+                let block = self.alloca(8, 8);
+                let words = vec![
+                    Val::Imm(Sc::Ptr, state),
+                    Val::Imm(Sc::I(64), "1".to_string()),
+                    Val::Imm(Sc::I(64), size),
+                    Val::Imm(Sc::I(64), "64".to_string()),
+                ];
+                self.call_rt("arena_alloc_uninit", words, Some((&block, 8)));
+                let block = self.load(Sc::Ptr, &block, 8);
+                for (column, offset) in shape.columns.iter().zip(&offsets) {
+                    let start = self.value(format!("getelementptr i8, ptr {block}, i64 {offset}"));
+                    let field = self.gep(&s, column.pointer);
+                    self.emit(format!("store ptr {start}, ptr {field}, align 8"));
+                }
+                let cap_at = self.gep(&s, shape.cap);
+                self.emit(format!("store i64 {cap}, ptr {cap_at}, align 8"));
+                Ok(())
+            }
+            // `true` when it was full and nothing changed.
+            SoAOp::TryPush => {
+                let shape = shape(self.m, soa)?;
+                let s = self.pointer(&args[0])?;
+                let value = self.operand(&args[1])?;
+                let (value, _) = self.spill(&value, shape.elem_size, shape.elem_align);
+                let len = self.word_at(&s, shape.len);
+                let cap = self.word_at(&s, shape.cap);
+                let full = self.value(format!("icmp eq i64 {len}, {cap}"));
+                let (store, done) = (self.label(), self.label());
+                self.emit(format!("br i1 {full}, label %{done}, label %{store}"));
+                self.start(&store);
+                for column in &shape.columns {
+                    let slot = self.slot(&s, column, &len);
+                    let field = self.gep(&value, column.within);
+                    self.copy(&slot, column.align, &field, column.align, column.size, false);
+                }
+                let longer = self.value(format!("add i64 {len}, 1"));
+                self.set_len(&s, &shape, &longer);
+                self.emit(format!("br label %{done}"));
+                self.start(&done);
+                self.store_result(dest, &full, Sc::Bool, false)
+            }
             SoAOp::Element { .. } | SoAOp::Iter { .. } => unsupported("an `SoA` element or iterator outside a field access or `for`"),
         }
     }

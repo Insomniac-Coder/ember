@@ -178,9 +178,18 @@ fn emit_class(m: &mut Module<'_>, id: ClassId) -> Result<()> {
     let mangled = table.mangled_class(id);
     let info = ember_branding::type_info(&mangled);
     let layout = object_layout(m, id);
-    if table.class_reflection(id).is_some() {
-        return unsupported("a `@reflect` class's description ([RFL-2])");
-    }
+    // `[RFL-2]`, `[RT-3]` — a `@reflect` class's description, the constant static its type
+    // information reaches through a function.
+    let reflect = match table.class_reflection(id) {
+        Some((holder, ty)) => {
+            let description = crate::statics::constant_static(m, holder.as_str(), ty)?;
+            let function = global_name(&format!("{info}_reflect"));
+            let attrs = crate::func::fn_attrs(m);
+            m.fns.push_str(&format!("define internal ptr {function}() {attrs} {{\nentry:\n  ret ptr {description}\n}}\n\n"));
+            function
+        }
+        None => "null".to_string(),
+    };
     let drop = if has_user_drop(m, id) {
         let symbol = format!("{}_{mangled}", ember_branding::generated("drop_adapter"));
         emit_drop_adapter(m, id, &symbol)?;
@@ -226,7 +235,7 @@ fn emit_class(m: &mut Module<'_>, id: ClassId) -> Result<()> {
     m.global(format!(
         "{} = internal constant {{ i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, i32, ptr, i32, ptr }} \
          {{ i32 {}, i32 {}, i32 {flags}, ptr {name}, ptr {base}, ptr {drop}, ptr {drop_fields}, ptr {vtable}, \
-         ptr {itables}, i32 {itable_count}, ptr {fields}, i32 {field_count}, ptr null }}, align 8",
+         ptr {itables}, i32 {itable_count}, ptr {fields}, i32 {field_count}, ptr {reflect} }}, align 8",
         global_name(&info),
         layout.size,
         layout.align,

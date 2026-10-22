@@ -1071,6 +1071,16 @@ impl<'a> FnCx<'_, 'a> {
             }
             Builtin::Atomic { op, order } => self.atomic(*op, *order, arg_ty, args, dest, span),
             Builtin::Simd { op, vector } => self.simd(op, *vector, args, dest, span),
+            // `[RFL-2]` — the description the object's own class's type information reaches.
+            Builtin::ClassTypeInfo { .. } => {
+                let object = self.pointer(&args[0])?;
+                let info_at = self.gep(&object, 16);
+                let info = self.load(Sc::Ptr, &info_at, 8);
+                let reflect_at = self.gep(&info, 88);
+                let reflect = self.load(Sc::Ptr, &reflect_at, 8);
+                let description = self.value(format!("call ptr {reflect}()"));
+                self.store_result(dest, &description, Sc::Ptr, false)
+            }
             // `[CT-5]` — the constant data the evaluator computed.
             Builtin::ConstStatic { name, ty } => {
                 let address = crate::statics::constant_static(self.m, name.as_str(), *ty)?;
