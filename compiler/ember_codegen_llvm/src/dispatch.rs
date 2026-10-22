@@ -339,9 +339,39 @@ pub(crate) fn adapter_table(m: &mut Module<'_>, concrete: Ty, identity: &str) ->
         }
         None => "null".to_string(),
     };
-    if m.dispatch.clones.contains(identity) {
-        return unsupported("a `dyn` table that copies its value ([TYP-22], ODR-237)");
-    }
+    // `[TYP-22]` (ODR-237) — the copy entry of a table that copies its value: a clone of the value
+    // in a new block (a class handle's copy is the handle, retained).
+    let clone = if m.dispatch.clones.contains(identity) {
+        let function = format!("{symbol}_clone");
+        let mut cx = FnCx::glue(m);
+        let copy = if class.is_some() {
+            let helper = crate::glue::count_helper(cx.m, "retain", "any");
+            cx.emit(format!("call void {helper}(ptr %p0)"));
+            "%p0".to_string()
+        } else {
+            let (size, align) = cx.m.ty.size_align(concrete);
+            let slot = cx.alloca(8, 8);
+            cx.call_rt(
+                "alloc",
+                vec![Val::Imm(Sc::I(64), size.max(1).to_string()), Val::Imm(Sc::I(64), align.max(1).to_string())],
+                Some((&slot, 8)),
+            );
+            let block = cx.load(Sc::Ptr, &slot, 8);
+            cx.clone_part(&block, "%p0", align.max(1), concrete)?;
+            block
+        };
+        let attrs = crate::func::fn_attrs(cx.m);
+        let text = format!(
+            "define internal ptr {}(ptr %p0) {attrs} {{\nentry:\n{}  br label %start\nstart:\n{}  ret ptr {copy}\n}}\n\n",
+            global_name(&function),
+            cx.allocas_text(),
+            cx.out_text()
+        );
+        cx.m.fns.push_str(&text);
+        Some(global_name(&function))
+    } else {
+        None
+    };
     let mut slots = Vec::new();
     for (slot, (signature, implementation)) in adapter.layout.iter().zip(&adapter.implementations).enumerate() {
         let (Some((params, ret)), Some((implementation, receiver))) = (signature, implementation) else {
@@ -353,6 +383,7 @@ pub(crate) fn adapter_table(m: &mut Module<'_>, concrete: Ty, identity: &str) ->
         slots.push(format!("ptr {}", global_name(&function)));
     }
     let mut fields = vec![format!("ptr {drop}"), format!("i64 {size}"), format!("i64 {align}"), format!("ptr {access}")];
+    fields.extend(clone.map(|clone| format!("ptr {clone}")));
     fields.extend(slots);
     let types: Vec<&str> = fields.iter().map(|field| field.split(' ').next().unwrap_or("ptr")).collect();
     m.global(format!(

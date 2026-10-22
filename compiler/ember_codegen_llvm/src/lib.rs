@@ -238,6 +238,38 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         func::emit_entry(&mut module, bodies, options)?;
     }
     glue::emit_pending(&mut module)?;
+    // `[FFI-26]` — each export table: a constant of its struct holding each field's function, under
+    // a symbol carrying its protocol version (ODR-129).
+    for table in module.ty.table.export_tables().to_vec() {
+        let (size, align) = module.ty.size_align(table.ty);
+        let offsets = module.ty.table.layout(table.ty).field_offsets;
+        let (mut types, mut values, mut end) = (Vec::new(), Vec::new(), 0u64);
+        for (entry, offset) in table.entries.iter().zip(offsets) {
+            if offset > end {
+                types.push(format!("[{} x i8]", offset - end));
+                values.push(format!("[{} x i8] zeroinitializer", offset - end));
+            }
+            if !defined.contains(entry.as_str()) && module.bodies.contains_key(entry.as_str()) {
+                func::declare_body_symbol(&mut module, entry)?;
+            }
+            types.push("ptr".to_string());
+            values.push(format!("ptr {}", global_name(entry)));
+            end = offset + 8;
+        }
+        if size > end {
+            types.push(format!("[{} x i8]", size - end));
+            values.push(format!("[{} x i8] zeroinitializer", size - end));
+        }
+        module.global(format!(
+            "{} = constant <{{ {} }}> <{{ {} }}>, align {}",
+            global_name(&table.symbol()),
+            types.join(", "),
+            values.join(", "),
+            align.max(1)
+        ));
+        // The program may read it back as a foreign static: defined here, not declared.
+        module.decls.remove(&link_symbol(&table.symbol()));
+    }
     for symbol in &defined {
         module.decls.remove(&link_symbol(symbol));
     }

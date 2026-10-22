@@ -344,9 +344,18 @@ impl<'a> FnCx<'_, 'a> {
             return Ok(());
         }
         let callee_value = self.operand(callee)?;
-        let (value_at, _) = self.spill(&callee_value, 40, 8);
+        let (mut value_at, _) = self.spill(&callee_value, 40, 8);
+        // `[CLO-6a]` — a `once fn` value in a `Box` is taken out of the box, which is freed, first.
         if once && matches!(self.operand_ty(callee).map(|ty| self.m.ty.kind(ty).clone()), Some(TyKind::Struct(_))) {
-            return unsupported("a call of a boxed `once fn` value ([CLO-6a])");
+            let boxed = self.load(Sc::Ptr, &value_at, 8);
+            let taken = self.alloca(40, 8);
+            self.copy(&taken, 8, &boxed, 8, 40, false);
+            self.call_rt(
+                "free",
+                vec![Val::Imm(Sc::Ptr, boxed), Val::Imm(Sc::I(64), "40".to_string()), Val::Imm(Sc::I(64), "8".to_string())],
+                None,
+            );
+            value_at = taken;
         }
         let entry = if once {
             let descriptor_at = self.gep(&value_at, 8);

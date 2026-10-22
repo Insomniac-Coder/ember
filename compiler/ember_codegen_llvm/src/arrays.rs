@@ -366,8 +366,19 @@ pub(crate) fn clone_parts_fn(m: &mut Module<'_>, ty: Ty) -> Result<String> {
             // ODR-237 — a new box holding a clone of the value.
             TyKind::Struct(id) => {
                 let inner = table.compiler_box_inner(id).expect("a box");
+                // A `Box[dyn I]`'s through the copy entry of its table (after `drop`, `size`,
+                // `align` and `access`), which keeps the table.
                 if matches!(table.kind(inner), TyKind::Dyn { .. }) {
-                    return unsupported("a clone of a `Box[dyn]` ([TYP-22], ODR-237)");
+                    let data = cx.load(Sc::Ptr, src, 8);
+                    let vtable_at = cx.gep(src, 8);
+                    let vtable = cx.load(Sc::Ptr, &vtable_at, 8);
+                    let clone_at = cx.gep(&vtable, 32);
+                    let clone = cx.load(Sc::Ptr, &clone_at, 8);
+                    let copy = cx.value(format!("call ptr {clone}(ptr {data})"));
+                    cx.emit(format!("store ptr {copy}, ptr {dst}, align 8"));
+                    let dst_vtable = cx.gep(dst, 8);
+                    cx.emit(format!("store ptr {vtable}, ptr {dst_vtable}, align 8"));
+                    return Ok(());
                 }
                 let (inner_size, inner_align) = cx.m.ty.size_align(inner);
                 let slot = cx.alloca(8, 8);
