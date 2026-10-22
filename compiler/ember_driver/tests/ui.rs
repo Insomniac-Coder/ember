@@ -772,8 +772,9 @@ fn committed_python_habit_snapshots_match_and_fixes_compile() {
                         .collect()
                 })
                 .unwrap_or_default();
-            // From the end, so each edit's offsets still hold; two at one place keep their order.
-            edits.sort_by(|a, b| b.0.cmp(&a.0));
+            // From the end, so each edit's offsets still hold; at one place a replacement goes first,
+            // so what is inserted there lands before it.
+            edits.sort_by(|a, b| (b.0, b.1).cmp(&(a.0, a.1)));
             for (start, end, replacement) in edits {
                 source.splice(start..end, replacement.into_bytes());
             }

@@ -1386,6 +1386,7 @@ impl Parser<'_> {
                         let hi = self.starts_expression().then(|| Box::new(self.parse_expr()));
                         self.report(
                             Diagnostic::error(codes::E0100, colon, "a slice is written `xs[a..b]` in Ember")
+                                .habit(ember_diag::habits::Habit::P7)
                                 .primary_label("Python's `:`")
                                 .suggest("write `..`", colon, ".."),
                         );

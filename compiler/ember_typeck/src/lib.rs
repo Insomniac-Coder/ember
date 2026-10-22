@@ -2713,6 +2713,8 @@ struct Checker<'a> {
     /// nothing more (`[DIA-14]`).
     early_interface_types: Vec<(Symbol, Span)>,
     values_only_interfaces: HashSet<Symbol>,
+    /// `[DIA-21]` P25 — the locals holding an iterator that a list operation was answered for.
+    iterators_answered: HashSet<LocalId>,
     /// Whether every interface is collected (`collect_interfaces`): before then, a hidden
     /// parameter's bounds may still be unknown (`close_projection_bounds`).
     interfaces_collected: bool,
@@ -3249,6 +3251,7 @@ impl<'a> Checker<'a> {
             implementations_known: false,
             early_interface_types: Vec::new(),
             values_only_interfaces: HashSet::new(),
+            iterators_answered: HashSet::new(),
             interfaces_collected: false,
             early_instances: Vec::new(),
             ecs_systems: HashMap::new(),
@@ -13963,6 +13966,13 @@ impl<'a> Checker<'a> {
             let diagnostic = Diagnostic::error(codes::E1010, span, message);
             let diagnostic = if is_known_type {
                 diagnostic
+            } else if name.is("Generator") && args.len() == 1 {
+                // `[CORO-3]` (D-822) — `Generator[T]` names a `gen fn`'s own frame, in its return
+                // type: elsewhere the type that iterates `T`s is any iterator's.
+                let item = self.types.display(args[0].0);
+                diagnostic
+                    .help(format!("take any iterator of `{item}`: a type parameter `[I: Iterator[Item = {item}]]`, and `owned g: I`"))
+                    .note("`Generator[T]` names a `gen fn`'s own frame, and only in that function's return type [CORO-3]")
             } else {
                 self.add_name_suggestions(diagnostic, name, name_span)
             };
@@ -23797,7 +23807,20 @@ impl<'a> Checker<'a> {
                         if !self.is_text(text.ty) {
                             if text.ty != self.common.error {
                                 let shown = self.types.display(text.ty);
-                                self.error(codes::E2020, value.span, format!("`+=` appends text to a `String`, found `{shown}`"));
+                                let mut diagnostic = Diagnostic::error(codes::E2020, value.span, format!("`+=` appends text to a `String`, found `{shown}`"));
+                                // `[DIA-21]` P27 — Python adds a one-character string; a `char` is pushed.
+                                if matches!(self.types.kind(text.ty), TyKind::Char) && target.span.end <= value.span.start {
+                                    diagnostic = diagnostic.habit(ember_diag::habits::Habit::P27);
+                                    diagnostic.suggestions.push(ember_diag::Suggestion {
+                                        message: "push the character: `s.push(c)` [TXT-11]".to_string(),
+                                        edits: vec![
+                                            (Span::new(value.span.file, target.span.end, value.span.start), ember_diag::Replacement::Text(".push(".to_string())),
+                                            (value.span.shrink_to_end(), ember_diag::Replacement::Text(")".to_string())),
+                                        ],
+                                        migration: false,
+                                    });
+                                }
+                                self.sink.emit(diagnostic);
                             }
                             return;
                         }
@@ -23820,6 +23843,12 @@ impl<'a> Checker<'a> {
                     let code = if matches!(self.types.kind(place_ty), TyKind::Param { .. }) { codes::E2040 } else { codes::E2020 };
                     let mut diagnostic =
                         Diagnostic::error(code, stmt.span, format!("`{}=` is not defined on `{shown}`", bin.as_str()));
+                    // `[DIA-21]` P26 — text built with `+=` in a `str`.
+                    if *bin == ast::BinOp::Add && place_ty == self.common.str_ {
+                        diagnostic = self.growing_a_str(&place, diagnostic);
+                        self.sink.emit(diagnostic);
+                        return;
+                    }
                     if let Some((method, assign)) = compound_methods(*bin)
                         && let (Some(interface), Some(assign)) = (operator_interface(method), operator_interface(assign))
                     {
@@ -34326,7 +34355,7 @@ impl<'a> Checker<'a> {
                         let diagnostic = Diagnostic::error(codes::E2020, span, format!("cannot index `{shown}`"))
                             .note("a type is indexed by implementing `Index` [TYP-21]");
                         let diagnostic = self.index_habit(&base, args, span, diagnostic);
-                        self.sink.emit(diagnostic);
+                        self.sink.emit_all(diagnostic);
                     }
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 };
@@ -42975,7 +43004,9 @@ impl<'a> Checker<'a> {
                 return call;
             }
             let shown = self.types.display(receiver.ty);
-            let mut diagnostic = self.no_method(&receiver, name, args, span);
+            let Some(mut diagnostic) = self.no_method(&receiver, name, args, span) else {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            };
             // ODR-091 — `rev` is an iterator's only where it can run backwards.
             if name.name.is("rev") && self.lookup_method(receiver.ty, Symbol::intern("next")).is_some() {
                 diagnostic = diagnostic.note(
@@ -51176,7 +51207,7 @@ impl<'a> Checker<'a> {
             }
             let diagnostic = self.no_method(&receiver, name, args, span);
             if !self.mentions_error(receiver.ty) {
-                self.sink.emit(diagnostic);
+                self.sink.emit_all(diagnostic);
             }
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         };

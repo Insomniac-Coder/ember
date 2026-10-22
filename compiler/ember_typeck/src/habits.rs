@@ -285,12 +285,13 @@ impl Checker<'_> {
     /// `[STD-13]`, `[DIA-12]` N3 — `ty` has no method `name`: `E2072`, whose help is Ember's name for
     /// a Python one (`[DIA-21]` P6, P20), the `collect` a list operation on an iterator needs (P25),
     /// or the nearest members, and the interface that would supply it.
-    pub(crate) fn no_method(&mut self, receiver: &Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Diagnostic {
+    /// `None` when the mistake was answered already (`[DIA-14]`).
+    pub(crate) fn no_method(&mut self, receiver: &Expr, name: ast::Ident, args: &[ast::Arg], span: Span) -> Option<Diagnostic> {
         let ty = receiver.ty;
         let shown = self.types.display(ty);
         let diagnostic = Diagnostic::error(codes::E2072, name.span, format!("`{shown}` has no method named `{}`", name.name));
         if let Some(answered) = self.python_method(receiver, name, args, span, diagnostic.clone()) {
-            return answered;
+            return Some(answered);
         }
         if name.name.is("len") && let Some(answered) = self.list_operation_on_iterator(receiver, diagnostic.clone()) {
             return answered;
@@ -299,7 +300,7 @@ impl Checker<'_> {
         for candidate in self.method_name_suggestions(ty, name.name, name.span) {
             diagnostic = diagnostic.suggest(format!("did you mean `{candidate}`?"), name.span, candidate);
         }
-        self.note_unmet_extension_bound(diagnostic, ty, name.name)
+        Some(self.note_unmet_extension_bound(diagnostic, ty, name.name))
     }
 
     /// `[DIA-21]` P6, P20 — a Python method name, for the receiver kind Python has it on.
@@ -382,8 +383,9 @@ impl Checker<'_> {
 
     /// `[DIA-21]` P25 (ODR-187) — a list operation (`len()`, `[i]`) on an iterator, which yields its
     /// items once and has neither: `.collect[Array[T]]()` makes the list, where the iterator is made
-    /// when a local holds it.
-    pub(crate) fn list_operation_on_iterator(&mut self, receiver: &Expr, diagnostic: Diagnostic) -> Option<Diagnostic> {
+    /// when a local holds it. `Some(None)` for another such use of a local already answered: one
+    /// fix, one error (`[DIA-14]`).
+    pub(crate) fn list_operation_on_iterator(&mut self, receiver: &Expr, diagnostic: Diagnostic) -> Option<Option<Diagnostic>> {
         let ty = match *self.types.kind(receiver.ty) {
             TyKind::Ref { inner, .. } => inner,
             _ => receiver.ty,
@@ -393,6 +395,11 @@ impl Checker<'_> {
         }
         let item = self.project(ty, Symbol::intern("Item"))?;
         let collect = format!(".collect[Array[{}]]()", self.types.display(item));
+        if let ExprKind::Local(id) = receiver.kind
+            && !self.iterators_answered.insert(id)
+        {
+            return Some(None);
+        }
         let made_at = match receiver.kind {
             ExprKind::Local(id) if self.plain_declared.contains(&id) => self.locals.get(id.0 as usize).map(|local| local.span),
             ExprKind::Local(_) => None,
@@ -401,33 +408,33 @@ impl Checker<'_> {
         let diagnostic = diagnostic
             .habit(Habit::P25)
             .note("an iterator gives its items one at a time; a list of them is collected once [STD-19]");
-        Some(match made_at {
+        Some(Some(match made_at {
             Some(at) => suggestion(diagnostic, format!("collect the items into a list: `{collect}`"), vec![(at.shrink_to_end(), Replacement::Text(collect))]),
             None => diagnostic.help(format!("collect the items into a list where the iterator is made: `{collect}`")),
-        })
+        }))
     }
 
     /// `[DIA-21]` P25, P29, P30 — `x[i]` on a type with no `Index`: an iterator (collect it), text
     /// (no index by character, `[TXT-4]`) or a tuple (its fields are `.0`, `.1`, …).
-    pub(crate) fn index_habit(&mut self, base: &Expr, args: &[ast::TypeOrExpr], span: Span, diagnostic: Diagnostic) -> Diagnostic {
+    pub(crate) fn index_habit(&mut self, base: &Expr, args: &[ast::TypeOrExpr], span: Span, diagnostic: Diagnostic) -> Option<Diagnostic> {
         if self.is_text(base.ty) {
-            return diagnostic
+            return Some(diagnostic
                 .habit(Habit::P29)
                 .help("for the characters, iterate `s.chars()`, or collect them once, `cs = s.chars().collect[Array[char]]()`, and index `cs[i]`; for the bytes, `s.as_bytes()[i]`")
-                .note("there is no index by character position, which would be O(n); `s[a..b]` slices by byte offset [TXT-4]");
+                .note("there is no index by character position, which would be O(n); `s[a..b]` slices by byte offset [TXT-4]"));
         }
         if let TyKind::Tuple(items) = self.types.kind(base.ty) {
             let fields = items.len();
             let diagnostic = diagnostic.habit(Habit::P30).note("a tuple's fields are `.0`, `.1`, …, each with a type of its own, so a position is written, never computed (IV.3)");
-            return match args {
+            return Some(match args {
                 [ast::TypeOrExpr::Expr(index)] if let ast::ExprKind::Lit(ast::Literal::Int { value, suffix: None }) = index.kind && (value as usize) < fields => {
                     let field = format!(".{value}");
                     suggestion(diagnostic, format!("write `{field}`"), vec![(Span::new(span.file, base.span.end, span.end), Replacement::Text(field))])
                 }
                 _ => diagnostic.help("name the field by its position: `p.0`, `p.1`, …"),
-            };
+            });
         }
-        self.list_operation_on_iterator(base, diagnostic.clone()).unwrap_or(diagnostic)
+        self.list_operation_on_iterator(base, diagnostic.clone()).unwrap_or(Some(diagnostic))
     }
 
     /// `[DIA-21]` P20, P23, P27 — an operator Python applies to these operands and Ember does not:
@@ -492,10 +499,11 @@ impl Checker<'_> {
                         let literal = lhs_ast.span;
                         let mut edits = vec![(literal.shrink_to_start(), Replacement::Text("f".to_string()))];
                         for ((start, end, spec), value) in holes.into_iter().zip(values) {
-                            let hole = Span::new(literal.file, literal.start + 1 + start as u32, literal.start + 1 + end as u32);
-                            edits.push((hole.shrink_to_start(), Replacement::Text("{".to_string())));
-                            edits.push((hole, Replacement::Source(value.span)));
-                            edits.push((hole.shrink_to_end(), Replacement::Text(format!("{spec}}}"))));
+                            // `%` becomes `{`, the conversion the value, and its spec and `}` follow.
+                            let at = |offset: usize| literal.start + 1 + offset as u32;
+                            edits.push((Span::new(literal.file, at(start), at(start) + 1), Replacement::Text("{".to_string())));
+                            edits.push((Span::new(literal.file, at(start) + 1, at(end)), Replacement::Source(value.span)));
+                            edits.push((Span::new(literal.file, at(end), at(end)), Replacement::Text(format!("{spec}}}"))));
                         }
                         edits.push((Span::new(span.file, literal.end, span.end), Replacement::Text(String::new())));
                         Some(suggestion(diagnostic, "write an f-string", edits))
@@ -555,6 +563,22 @@ impl Checker<'_> {
         diagnostic
     }
 
+    /// `[DIA-21]` P26 — `s += t` on a `str` local, Python's way of building text: a `str` is a view
+    /// that does not grow, and text grows in a `String`; the local is declared one, which a literal
+    /// initialises (`[TXT-9]`).
+    pub(crate) fn growing_a_str(&self, place: &Expr, diagnostic: Diagnostic) -> Diagnostic {
+        let diagnostic = diagnostic.habit(Habit::P26).note("a `str` is borrowed text and does not grow; `+=` appends to a `String` [TXT-11]");
+        if let ExprKind::Local(id) = place.kind
+            && self.plain_declared.contains(&id)
+            && let Some(local) = self.locals.get(id.0 as usize)
+            && let Some(name) = local.name
+        {
+            let at = local.span.start + name.as_str().len() as u32;
+            return suggestion(diagnostic, format!("declare it a `String`: `{name}: String = …`"), vec![(Span::new(local.span.file, at, at), Replacement::Text(": String".to_string()))]);
+        }
+        diagnostic.help("build the text in a `String`: declare the place `String`")
+    }
+
     /// `[DIA-21]` P22 (ODR-182) — an interface's name in a type position is a class handle typed by
     /// it (IV.1, `[OBJ-2]`); when the types implementing it are values (structs, enums) and none is a
     /// class, a place of any of them is written another way, which the help names.
@@ -597,6 +621,17 @@ impl Checker<'_> {
                 "make text of the character: `.to_string()`",
                 suffix_edits(expr.span, operand, ".to_string()"),
             );
+        }
+        if matches!(self.types.kind(expected), TyKind::Char)
+            && let ExprKind::Str(text) = &expr.kind
+            && let mut chars = text.chars()
+            && let (Some(c), None) = (chars.next(), chars.next())
+        {
+            let literal = format!("'{}'", c.escape_default());
+            return diagnostic
+                .habit(Habit::P27)
+                .note("a `char` is one character, written in single quotes; Python has only text [TXT-10]")
+                .suggest(format!("write the character `{literal}`"), expr.span, literal);
         }
         if Some(&expected) == self.named_types.get(&Symbol::intern("std.core.AnyError")) && self.is_text(found) {
             let made = matches!(expr.kind, ExprKind::Str(_)) || found != self.common.str_;

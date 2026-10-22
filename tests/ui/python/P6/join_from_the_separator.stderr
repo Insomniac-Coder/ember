@@ -1,0 +1,10 @@
+error[E2072]: `str` has no method named `join`
+ --> tests/ui/python/P6/join_from_the_separator.em:3:18
+  |
+3 |     println(", ".join(names))
+  |                  ^^^^
+  |
+  = help: write `xs.join(sep)`
+  = note: Ember joins from the items: `xs.join(sep)` (Appendix E) [STD-13]
+
+error: could not compile due to 1 error(s)

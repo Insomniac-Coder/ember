@@ -1,0 +1,9 @@
+error[E0100]: a slice is written `xs[a..b]` in Ember
+ --> tests/ui/python/P7/slice.em:3:17
+  |
+3 |     println(xs[1:3])
+  |                 ^ Python's `:`
+  |
+  = help: write `..`
+
+error: could not compile due to 1 error(s)

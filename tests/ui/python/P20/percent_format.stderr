@@ -1,0 +1,10 @@
+error[E2020]: `%` cannot be applied to `str` and `i64`
+ --> tests/ui/python/P20/percent_format.em:3:13
+  |
+3 |     println("%d items" % n)
+  |             ^^^^^^^^^^^^^^ Python's `%` formatting
+  |
+  = help: write an f-string
+  = note: Ember formats with f-strings, which name each value where it goes [LEX-19]
+
+error: could not compile due to 1 error(s)

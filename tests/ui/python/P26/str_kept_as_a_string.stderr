@@ -1,0 +1,10 @@
+error[E2020]: expected `String`, found `str`
+ --> tests/ui/python/P26/str_kept_as_a_string.em:5:22
+  |
+5 |     return Item(name=name)
+  |                      ^^^^ this is `str`
+  |
+  = help: make a `String` of it: `.to_string()`
+  = note: a `str` value is borrowed text; a `String` owns its text, so keeping one copies it [TXT-9]
+
+error: could not compile due to 1 error(s)

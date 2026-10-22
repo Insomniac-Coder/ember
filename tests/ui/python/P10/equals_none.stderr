@@ -1,0 +1,10 @@
+error[E2040]: `Option[Handler]` does not implement `Eq`, which `==` needs
+ --> tests/ui/python/P10/equals_none.em:6:8
+  |
+6 |     if h == None:
+  |        ^^^^^^^^^
+  |
+  = help: write `x is None`
+  = note: `x is None` tests an `Option` for nothing, whatever it holds [EXP-9]
+
+error: could not compile due to 1 error(s)

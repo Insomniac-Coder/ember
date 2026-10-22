@@ -195,7 +195,7 @@ impl Parser<'_> {
             Some((exception, text)) => vec![
                 (start, Replacement::Text("return Err(AnyError.msg(".to_string())),
                 (Span::new(raise.file, exception.start, text.start), Replacement::Text(String::new())),
-                (Span::new(raise.file, text.end, value.span.end), Replacement::Text(")))".to_string())),
+                (Span::new(raise.file, text.end, value.span.end), Replacement::Text("))".to_string())),
             ],
             None => vec![(start, Replacement::Text("return Err(".to_string())), (value.span.shrink_to_end(), Replacement::Text(")".to_string()))],
         };
@@ -251,24 +251,28 @@ impl Parser<'_> {
             },
             _ => None,
         };
-        let diagnostic = Diagnostic::error(codes::E0100, value.span, "`with … as name` is Python's; Ember binds first, `with name = …:`")
+        // The whole `e as name`, to the end of the name.
+        let written = Span::new(file, value.span.start, ty.span.end.max(value.span.end));
+        let diagnostic = Diagnostic::error(codes::E0100, written, "`with … as name` is Python's; Ember binds first, `with name = …:`")
             .habit(Habit::P11)
             .note("what a `with` binds is closed or released when its block ends [THR-5]");
-        let start = Span::new(file, value.span.start, value.span.start);
-        let mut edits = vec![(start, Replacement::Text(format!("{} = ", name.name)))];
+        let mut edits = Vec::new();
         match opened {
             Some(path) => {
-                edits.push((Span::new(file, expr.span.start, value.span.end), Replacement::Text(format!("fs.File.open({path})?"))));
+                edits.push((written, Replacement::Text(format!("{} = fs.File.open({path})?", name.name))));
                 if !self.fs_imported {
                     let (at, line) = match self.import_at {
                         Some((at, true)) => (at.shrink_to_end(), "\nimport std.fs"),
-                        Some((at, false)) => (at, "import std.fs\n"),
-                        None => (Span::new(file, 0, 0), "import std.fs\n"),
+                        Some((at, false)) => (at, "import std.fs\n\n"),
+                        None => (Span::new(file, 0, 0), "import std.fs\n\n"),
                     };
                     edits.push((at, Replacement::Text(line.to_string())));
                 }
             }
-            None => edits.push((Span::new(file, expr.span.end, value.span.end), Replacement::Text(String::new()))),
+            None => {
+                edits.push((Span::new(file, value.span.start, value.span.start), Replacement::Text(format!("{} = ", name.name))));
+                edits.push((Span::new(file, expr.span.end, written.end), Replacement::Text(String::new())));
+            }
         }
         self.report(with_edits(diagnostic, format!("write `with {} = …:`", name.name), edits));
         let pattern = Pattern { id: self.next_id(), kind: PatternKind::Bind { name: name.clone(), by_ref: false, mutable: false, sub: None }, span: name.span };
@@ -327,7 +331,17 @@ impl Parser<'_> {
     /// P28 — a statement (`x = …`, `pass`) after a `=>`, which takes an expression: the arms are
     /// statement arms, `pattern: statement` (`[GRM-10]`); the fix-it turns every arm's `=>` into `:`.
     pub(crate) fn report_python_statement_arms(&mut self, first: Span, arrows: Vec<Span>) {
-        let edits = arrows.into_iter().map(|span| (span, Replacement::Text(":".to_string()))).collect();
+        // The `=>` and the spaces before it: `Pat:` is written against its pattern.
+        let edits = arrows
+            .into_iter()
+            .map(|span| {
+                let mut start = span.start as usize;
+                while start > 0 && self.src.as_bytes()[start - 1] == b' ' {
+                    start -= 1;
+                }
+                (Span::new(span.file, start as u32, span.end), Replacement::Text(":".to_string()))
+            })
+            .collect();
         self.sink.emit(with_edits(
             Diagnostic::error(codes::E0100, first, "a `=>` arm is an expression, and this is a statement")
                 .habit(Habit::P28)

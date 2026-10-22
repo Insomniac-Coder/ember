@@ -1,0 +1,9 @@
+error[E0100]: `global` is Python's; Ember declares no names as shared
+ --> tests/ui/python/P18/global.em:2:5
+  |
+2 |     global count
+  |     ^^^^^^
+  |
+  = help: keep shared state in a `static` or a class field; a lambda or a local function captures a name of the function around it without a declaration [CLO-2]
+
+error: could not compile due to 1 error(s)

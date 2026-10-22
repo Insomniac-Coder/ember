@@ -68,10 +68,10 @@ impl Habit {
     pub fn codes(self) -> &'static [Code] {
         match self {
             Habit::P1 => &[codes::E1010, codes::E2020, codes::E2060],
-            Habit::P2 | Habit::P7 | Habit::P9 | Habit::P12 | Habit::P13 | Habit::P17 | Habit::P18 | Habit::P19 | Habit::P28 => {
+            Habit::P2 | Habit::P7 | Habit::P9 | Habit::P11 | Habit::P12 | Habit::P13 | Habit::P17 | Habit::P18 | Habit::P19 | Habit::P28 => {
                 &[codes::E0100]
             }
-            Habit::P3 | Habit::P11 => &[codes::E1010],
+            Habit::P3 => &[codes::E1010],
             Habit::P4 => &[codes::E2073],
             Habit::P5 => &[codes::E2020],
             Habit::P6 => &[codes::E2072, codes::E2020],

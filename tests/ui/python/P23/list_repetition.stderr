@@ -1,0 +1,9 @@
+error[E2020]: `*` cannot be applied to `Array[i64]` and `an integer`
+ --> tests/ui/python/P23/list_repetition.em:2:14
+  |
+2 |     counts = [0] * 7
+  |              ^^^^^^^ Python's list repetition
+  |
+  = help: make each element with a comprehension: `[x for _ in 0..n]`
+
+error: could not compile due to 1 error(s)
