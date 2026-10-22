@@ -35746,6 +35746,13 @@ impl<'a> Checker<'a> {
                     let value = self.read_local_expecting(local, span, expected);
                     return self.generic_local_value(value, name);
                 }
+                // `[CLO-2]` — inside a closure, a local of the enclosing function is a capture, and
+                // shadows an item of its name there as it does in the function.
+                if self.is_capture_candidate(name)
+                    && let Some(captured) = self.resolve_capture(name, span)
+                {
+                    return self.generic_local_value(captured, name);
+                }
                 if let Some(value) = self.const_param_value(name, span) {
                     return value;
                 }

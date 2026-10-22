@@ -213,6 +213,14 @@ Baseline before any change: the whole conformance tree (every `tests/conformance
   `deep[T](n: int, label: T)` called with a `str`), which a module-level generic allows, is
   `E2020`. Building it: the self-call made as a generic call with the body's environment parameter
   first, which the opaque check, still discovering the environment, does not have.
+* **`[CLO-2]` — found on the way: a capture shadows an item of its name.** In a closure, a local of
+  the enclosing function read as a value was the module's item of its name when there was one
+  (`twice = 5` then `fn() => twice + 1` was `E2020`, `+` on `fn(i64) -> i64`), though called it was
+  the capture; the name's read now tries the capture before the items. A generic local function
+  named as a module's function, called from a closure, needed it.
+  `CLO-2/accept_a_capture_shadows_an_item_of_its_name.em` (three profiles).
+  `CLI-19/reject_an_unimplemented_construct_by_name.em` named the generic local function as its
+  unbuilt construct; it now names the local generator.
 * **`[GRM-28]` local generators — not built** (still `E0900`, named). The generators are written
   out before the checker as module-level declarations (ADR-193, `coroutines.rs`): a frame struct
   holding the parameters, its `Iterator` implementation, the body as a method of the frame. A
