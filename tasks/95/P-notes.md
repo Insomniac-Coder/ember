@@ -81,6 +81,24 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
   those functions are `@noreload` (`[HR-10]`'s advice) — if the run shows it, that is a question
   for the owner, not a figure to tune.
 
+* **HR-1** — not done: blocked on incremental builds (`[BLD-1]`, `[BLD-2]`'s caching, `[BLD-4]`,
+  `[BLD-8]`, all untested) that `[BUD-2]`'s B2 needs. Built: `bench/bigpkg/generate.py`
+  (`[BUD-1]`'s package: 400 modules, 50,429 lines, 14.3 % generic, a 19,813-line C header in
+  Vulkan's shapes imported by one module, 10,000 live instances, `game_frame` for a host, and
+  `edit_me` in `mods/m200.em`, the body an edit changes; it checks and builds) and
+  `bench/bigpkg/measure_reload_build.py` (B2: median of 15 after 3 warm-ups, with the stage
+  split). Measured here (this laptop, unpinned, other agents building; 3 runs): **B2 = 22.2 s**,
+  22 times the 1 s budget: check 1.3 s, lower 0.3 s, move/drop/borrow checks 2.4 s, analyses and
+  passes 7-8 s, C generation 1.4 s, C compile and link 8-9 s (one translation unit for the whole
+  package). A clean reloadable `debug` build is 19-40 s; `ember check` 9.5 s. The runtime half
+  (load, plan, prepare, commit over 10,000 instances) is milliseconds (`[BEN-8]`). What it takes
+  (a plan, not built): (1) the module as the unit of front-end caching, keyed by its interface
+  hashes (`[BLD-1]`, `[BLD-2]`), so a body edit re-checks one module; (2) per-function caching of
+  the borrow checks and analyses, re-running only a changed body and the callers that use a
+  changed fact (`[BLD-8]`, ODR-058); (3) one C translation unit per module behind a Ninja file
+  (`[BLD-4]`), so only the edited module's C compiles, and the image relinks from cached
+  objects. That is the toolchain's incremental build, a job of its own.
+
 ## Compiler changes
 
 * HR-23: `cimport.rs` (`import_cached` returns a hash over every file the header included),
@@ -223,7 +241,8 @@ Time box lifted by the coordinator; rules worked in turn and committed one by on
 
 ## Not done yet
 
-HR-1, HR-9 — in progress.
+HR-1 (blocked on incremental builds, above), HR-9 (the timed run), HR-20 (`on_relocate`, spec
+question 4), HR-24 (Annex D, spec question 5), HR-41 (its GPU row, HR-24's).
 
 One transient failure seen once and not again (four reruns): a reload build in
 `value_data_migrates_through_its_container` exited -1 with no output.
