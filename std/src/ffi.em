@@ -115,6 +115,14 @@ pub type c_ulonglong = u64
 pub type c_float = f32
 pub type c_double = f64
 pub type c_wchar = i32
+## `[FFI-8]` — C's `long double`: opaque bytes of the target's size and alignment (8 on Windows,
+## 16 on x86-64 and AArch64 Linux), passed and returned as C passes the type, with no arithmetic.
+## The compiler gives it its own type; `u8` here only stands in.
+pub type c_longdouble = u8
+## `[FFI-8]` — C's `va_list`, as a parameter of it holds it: a value C made, received by a function
+## C calls and passed on to one that reads it (`vsnprintf`), once; never constructed (`E5018`), a
+## view of the call that passed it. The compiler gives it its own type; `u8` here only stands in.
+pub type VaList = u8
 
 ## `[HR-39]` — the failure a foreign call returns as a value: a C++ exception its thunk caught
 ## (`CppError`), or a C function's status other than its success (`[FFI-16]`'s error types, which
@@ -212,6 +220,19 @@ pub struct Retained[T]:
     fn drop(mut self):
         retained_unpin(self.relocation)
 
+## `[FFI-21]` — what C keeps of a callback contracted `callback(retained, user_data=p)`: the
+## callable, moved into an allocation of its own whose address C was given as the user data. Only
+## the registering call makes one, held by the `Retained[ForeignCallback]` token it returns;
+## `tok.ptr()` is that address. Its end unregisters the callback through the registering
+## function's `destroys(f)`, then ends the callable and frees the allocation, once.
+pub struct ForeignCallback:
+    data: *mut u8
+    release: extern "C" fn(*mut u8)
+
+    fn drop(mut self):
+        release = self.release
+        release(self.data)
+
 ## `[FFI-23]` (ODR-132) — the address of a class object, for foreign code to keep or to be handed
 ## back: no count of its own, so it says nothing about how long the object lives (a `Retained`
 ## token keeps it alive). To C it is one pointer to the object. Two are equal when they are the
@@ -303,6 +324,28 @@ extend[T: Copy] CppVector[T]:
         for item in self.span():
             out.push(item)
         return out
+
+## `[FFI-17a]` — a C++ `std::function` Ember owns, which it does not call: what a result of one is
+## with no overlay entry. Its end deletes it (a call into C++). With the entry's
+## `@ffi(std_function)` the result is an `owned fn(A…) -> R` instead, whose capture this is
+## (ODR-199). Not `Copy`, `Send` or `Sync`.
+pub struct CppFunction:
+    object: *mut u8
+    destroy: unsafe extern "C" fn(*mut u8)
+
+    ## `[FFI-17a]` — the `std::function` at `object`, with its thunk: what `import cpp` makes of one.
+    @safety("`object` is a live `std::function` nothing else owns, and `destroy` deletes it")
+    pub unsafe fn from_thunks(object: *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppFunction:  # SAFETY: the caller keeps the obligation
+        return CppFunction(object, destroy)
+
+    ## The `std::function` itself, for a call into C++.
+    pub fn as_ptr(self) -> *mut u8:
+        return self.object
+
+    fn drop(mut self):
+        destroy = self.destroy
+        unsafe:  # SAFETY(ffi): the function's end, once
+            destroy(self.object)
 
 ## `[FFI-17a]`, `[FFI-17e]` — a C++ `std::string` Ember owns: its bytes in place. `bytes()` views
 ## them and `to_str()` views them as text when they are UTF-8 (`[TXT-2]`), each borrowing the

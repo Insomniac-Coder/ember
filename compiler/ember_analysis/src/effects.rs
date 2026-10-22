@@ -908,6 +908,18 @@ impl SiteBuilder<'_> {
             };
             own(declared, body.span, operation, &mut sites);
         }
+        // `[FFI-21]`, `[EFF-2]` — C calls back what the call is given: a lambda's body, or a
+        // callable value, whose effects nothing declares.
+        for callback in body.ffi_counted.iter().flat_map(|counted| &counted.callbacks) {
+            match callback.closure.as_ref().and_then(|symbol| self.index.get(symbol.as_str())) {
+                Some(&callee) => sites.push(Site { effects: Effects::ALL, span: body.span, origin: Origin::Call(callee) }),
+                None => sites.push(Site {
+                    effects: Effects::ALL,
+                    span: body.span,
+                    origin: Origin::Operation("a callback C calls, a callable value whose effects nothing declares"),
+                }),
+            }
+        }
         // `[DET-2]` — floating-point contraction and every `@fastmath` relaxation.
         if body.fp != ember_types::FpMode::Strict {
             own(Effects::NONDET, body.span, RELAXED, &mut sites);
@@ -1408,7 +1420,9 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         // and the second-owner panic; a box's end may panic on the wrong thread (`[FFI-33b]`).
         B::ForeignAdopt => (ALLOC | Effects::SYNC, "recording a foreign object Ember owns"),
         B::ForeignRelease => (Effects::SYNC | Effects::PANIC, "a foreign object's end"),
-        B::ForeignThread | B::ForeignDestructor { .. } | B::RetainedAddress | B::CppObjectAddress => (Effects::NONE, ""),
+        B::ForeignThread | B::ForeignDestructor { .. } | B::RetainedAddress | B::CppObjectAddress | B::CppOverrides { .. } | B::UnionLit { .. } => (Effects::NONE, ""),
+        // `[UNS-5]` — through a raw pointer, which is `unsafe`.
+        B::VolatileRead | B::VolatileWrite => (Effects::UNSAFE, "a volatile access through a raw pointer"),
         // `[FFI-39]`, `[FFI-17d]` — a count of a class object, and the check that a foreign
         // `delete` ends the only one.
         B::CppObjectHandle { .. } | B::CppObjectGive => (Effects::SYNC | Effects::PANIC, "a count of an object C++ holds"),

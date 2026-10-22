@@ -1858,6 +1858,12 @@ impl EngineReport {
                         ember_mir::FfiAbiParam::Owned { .. } => "a foreign box handed over".to_string(),
                         ember_mir::FfiAbiParam::Retained { .. } => "a retained object's address".to_string(),
                         ember_mir::FfiAbiParam::Out { .. } => "an `out` local zeroed and returned".to_string(),
+                        ember_mir::FfiAbiParam::Callback { index } => match counted.callbacks[*index].mode {
+                            ember_mir::FfiCallbackMode::Borrowed => "a callback's trampoline, its callable where the caller has it".to_string(),
+                            ember_mir::FfiCallbackMode::Once => "a callback's trampoline, its callable moved to an allocation freed after its one call".to_string(),
+                            ember_mir::FfiCallbackMode::Retained => "a callback's trampoline, its callable moved to an allocation its token frees".to_string(),
+                        },
+                        ember_mir::FfiAbiParam::CallbackData { .. } => continue,
                     });
                 }
                 if counted.result_span.is_some() {
@@ -2544,6 +2550,44 @@ fn safety_costs_json(
         .filter(|loaded| loaded.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some()))
         .map(|loaded| loaded.module.span.file)
         .collect();
+    // `[FFI-24c]` (ODR-220) — the bodies a `@noalloc` function reaches, and those the main thread
+    // runs (what `main` and an export contracted `threads=main` reach), by direct calls; each with
+    // the function its path starts at. A thread's or a job's function is reached through the
+    // runtime, not a direct call, so it is on no such path.
+    let index: std::collections::HashMap<&str, usize> = bodies.iter().enumerate().map(|(at, body)| (body.symbol.as_str(), at)).collect();
+    let reach = |roots: Vec<usize>| -> std::collections::HashMap<usize, usize> {
+        let mut found: std::collections::HashMap<usize, usize> = roots.iter().map(|&root| (root, root)).collect();
+        let mut work = roots;
+        while let Some(at) = work.pop() {
+            let root = found[&at];
+            for block in &bodies[at].blocks {
+                if let ember_mir::Terminator::Call { func: ember_mir::FuncRef::Direct { symbol, .. }, .. } = &block.terminator
+                    && let Some(&callee) = index.get(symbol.as_str())
+                    && !found.contains_key(&callee)
+                {
+                    found.insert(callee, root);
+                    work.push(callee);
+                }
+            }
+        }
+        found
+    };
+    let noalloc = reach((0..bodies.len()).filter(|&at| bodies[at].contracts.forbidden.contains(ember_hir::Effects::ALLOC)).collect());
+    let main_thread = reach((0..bodies.len()).filter(|&at| {
+        bodies[at].symbol == ember_branding::entry_symbol()
+            || bodies[at].name == "main"
+            || bodies[at].export_thread_policy == ember_mir::ExportThreadPolicy::Main
+    }).collect());
+    let paths = |at: usize| -> String {
+        let mut out = String::new();
+        if let Some(&root) = noalloc.get(&at) {
+            out.push_str(&format!("; on a `@noalloc` path, from `{}`", bodies[root].name));
+        }
+        if let Some(&root) = main_thread.get(&at) {
+            out.push_str(&format!("; on the main thread's path, from `{}`", bodies[root].name));
+        }
+        out
+    };
     let mut costs: Vec<serde_json::Value> = Vec::new();
     let mut add = |row: &str, class: &str, span: ember_span::Span, function: &str, detail: String| {
         costs.push(serde_json::json!({
@@ -2565,7 +2609,9 @@ fn safety_costs_json(
                 && let Some(callee) = by_symbol.get(symbol.as_str())
                 && let Some(mode) = cpp_call_mode(callee, &by_symbol, &cpp_files)
             {
-                add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, a C++ call through its thunk: {mode} [FFI-24c]", callee.name));
+                // ODR-220 — a catching call on a `@noalloc` or main-thread path says so.
+                let on = if mode == "catching" { paths(index) } else { String::new() };
+                add("FFI call", "guaranteed present", span, &body.name, format!("`{}`, a C++ call through its thunk: {mode}{on} [FFI-24c]", callee.name));
                 continue;
             }
             match func {
@@ -3547,91 +3593,146 @@ fn load_package_modules(
         seen.insert(key);
         queue.push((usize::MAX, names, parsed, None));
     }
+    // The prelude's modules stay at the bottom of the worklist until everything else is read.
+    let prelude = queue.len();
     queue.push((0, Vec::new(), root, None));
+    // `[FFI-39]` (ODR-221) — each `import c`/`import cpp`, by its module's place in `loaded` and
+    // its own in the module's imports: imported once every module of the program is read (the
+    // worklist holds the prelude's alone), so the importer sees the classes that derive from the
+    // header's; the modules it writes then come before the prelude's, as they did when each was
+    // imported where it was met.
+    let mut deferred: Vec<(usize, usize, usize)> = Vec::new();
 
-    while let Some((package, path, mut module, foreign)) = queue.pop() {
-        // Every import this module names, before it is moved into the list: one of a package
-        // (`[MOD-1]`) is already resolved, its path rewritten to the module's in the build.
-        let mut wanted: Vec<(Vec<String>, ember_span::Span, bool, Option<(usize, PathBuf)>)> = Vec::new();
-        for import in &mut module.imports {
-            // `[FFI-6]` — `import c "header"`: a module written from the header, the import
-            // rewritten to bind it.
-            if matches!(import.kind, ember_ast::ImportKind::Foreign { .. }) {
-                let importer = map.file(import.span.file).path.clone();
-                let package_dir = packages.list.get(package).map(|found| found.dir.clone());
-                let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
-                let mut flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
-                flags.extend(target_flags.iter().cloned());
-                let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
-                if let Some(written) = cimport::load(import, &importer, &base, &flags, manifest.as_deref(), &mut foreign_known, map, sink) {
-                    seen.insert(written.path.join("."));
-                    for (child_path, child, foreign) in written.children {
-                        seen.insert(child_path.join("."));
-                        queue.push((package, child_path, child, Some(foreign)));
-                    }
-                    for (overlay_path, overlay, backed) in written.overlays {
-                        seen.insert(overlay_path.join("."));
-                        // `[DIA-5]` — an overlay's errors name the header's declarations too.
-                        let declarations = written.foreign.declarations.clone();
-                        let graded = ember_typeck::ForeignImport { backed, declarations, ..Default::default() };
-                        queue.push((package, overlay_path, overlay, Some(graded)));
-                    }
-                    queue.push((package, written.path, written.module, Some(written.foreign)));
+    loop {
+        while queue.len() > prelude || deferred.is_empty() {
+            let Some((package, path, mut module, foreign)) = queue.pop() else { break };
+            // Every import this module names, before it is moved into the list: one of a package
+            // (`[MOD-1]`) is already resolved, its path rewritten to the module's in the build.
+            let mut wanted: Vec<(Vec<String>, ember_span::Span, bool, Option<(usize, PathBuf)>)> = Vec::new();
+            for (at, import) in module.imports.iter_mut().enumerate() {
+                // `[FFI-6]` — `import c "header"`: a module written from the header, the import
+                // rewritten to bind it; once every module is read (below).
+                if matches!(import.kind, ember_ast::ImportKind::Foreign { .. }) {
+                    deferred.push((loaded.len(), at, package));
+                    continue;
                 }
-                continue;
+                let resolved = if package == usize::MAX { None } else { resolve_package_import(packages, package, import) };
+                let segments = match &import.kind {
+                    ember_ast::ImportKind::Module { path, .. } => path,
+                    ember_ast::ImportKind::Items { path, .. } => path,
+                    // `import c "header.h"` is Phase 5's.
+                    ember_ast::ImportKind::Foreign { .. } => continue,
+                };
+                let names: Vec<String> = segments.iter().map(|s| s.name.to_string()).collect();
+                // `[CLI-20]` — an import of nothing but 0.9.8's `with_views*`, which 0.9.9 removed.
+                let removed = matches!(&import.kind, ember_ast::ImportKind::Items { items, glob: false, .. }
+                    if items.iter().all(|item| item.name.name.as_str().starts_with("with_views")));
+                wanted.push((names, import.span, removed, resolved.map(|(found, _, file)| (found, file))));
             }
-            let resolved = if package == usize::MAX { None } else { resolve_package_import(packages, package, import) };
-            let segments = match &import.kind {
-                ember_ast::ImportKind::Module { path, .. } => path,
-                ember_ast::ImportKind::Items { path, .. } => path,
-                // `import c "header.h"` is Phase 5's.
-                ember_ast::ImportKind::Foreign { .. } => continue,
-            };
-            let names: Vec<String> = segments.iter().map(|s| s.name.to_string()).collect();
-            // `[CLI-20]` — an import of nothing but 0.9.8's `with_views*`, which 0.9.9 removed.
-            let removed = matches!(&import.kind, ember_ast::ImportKind::Items { items, glob: false, .. }
-                if items.iter().all(|item| item.name.name.as_str().starts_with("with_views")));
-            wanted.push((names, import.span, removed, resolved.map(|(found, _, file)| (found, file))));
-        }
-        // `[RFL-2]`, `[SER-1]` — `@reflect` and the serialisation derives are written as `std.ser`'s
-        // declarations, so that module is loaded wherever they are, imported or not.
-        if module.items.iter().any(|item| item.attrs.iter().any(names_std_ser)) {
-            wanted.push((vec![ember_branding::STD_PACKAGE.to_string(), "ser".to_string()], ember_span::Span::DUMMY, false, None));
-        }
+            // `[RFL-2]`, `[SER-1]` — `@reflect` and the serialisation derives are written as `std.ser`'s
+            // declarations, so that module is loaded wherever they are, imported or not.
+            if module.items.iter().any(|item| item.attrs.iter().any(names_std_ser)) {
+                wanted.push((vec![ember_branding::STD_PACKAGE.to_string(), "ser".to_string()], ember_span::Span::DUMMY, false, None));
+            }
 
-        // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty
-        // path) may hold statements at file scope; elsewhere they are
-        // `E0100`, and the implicit `main` built from them is dropped.
-        if !path.is_empty() {
-            if let Some(script) = module.script.take() {
-                sink.emit(
-                    ember_diag::Diagnostic::error(
-                        ember_diag::codes::E0100,
-                        script.first,
-                        "a statement at file scope outside the entry file",
-                    )
-                    .help("move it into a function")
-                    .note("only the file given to `ember run`/`ember build` is a script [GRM-2]"),
-                );
-                module.items.remove(script.main);
+            // `[GRM-2]` (0.9.9) — only the entry file (the root, with an empty
+            // path) may hold statements at file scope; elsewhere they are
+            // `E0100`, and the implicit `main` built from them is dropped.
+            if !path.is_empty() {
+                if let Some(script) = module.script.take() {
+                    sink.emit(
+                        ember_diag::Diagnostic::error(
+                            ember_diag::codes::E0100,
+                            script.first,
+                            "a statement at file scope outside the entry file",
+                        )
+                        .help("move it into a function")
+                        .note("only the file given to `ember run`/`ember build` is a script [GRM-2]"),
+                    );
+                    module.items.remove(script.main);
+                }
             }
-        }
-        loaded.push(ember_typeck::LoadedModule {
-            path: path.clone(),
-            module,
-            package: if package == usize::MAX { None } else { Some(package) },
-            foreign,
-        });
+            loaded.push(ember_typeck::LoadedModule {
+                path: path.clone(),
+                module,
+                package: if package == usize::MAX { None } else { Some(package) },
+                foreign,
+            });
 
-        for (names, span, removed, resolved) in wanted {
-            let key = names.join(".");
-            if seen.contains(&key) {
-                continue;
-            }
-            seen.insert(key.clone());
-            // `[MOD-1]` — a module of a package (this one's, or a dependency's): `names` is already
-            // its path in the build.
-            if let Some((found, file_path)) = resolved {
+            for (names, span, removed, resolved) in wanted {
+                let key = names.join(".");
+                if seen.contains(&key) {
+                    continue;
+                }
+                seen.insert(key.clone());
+                // `[MOD-1]` — a module of a package (this one's, or a dependency's): `names` is already
+                // its path in the build.
+                if let Some((found, file_path)) = resolved {
+                    let file = match map.load(&file_path) {
+                        Ok(file) => file,
+                        Err(error) => {
+                            sink.emit(load_diagnostic(&error, span));
+                            continue;
+                        }
+                    };
+                    let text = map.file(file).text.clone();
+                    let lexed = ember_lexer::lex(file, &text, sink);
+                    let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
+                    check_safety_notes(&parsed, &lexed.comments, map, sink);
+                    mark("read and parse", &key);
+                    queue.push((found, names, parsed, None));
+                    continue;
+                }
+                // `[MOD-3]` — a standard module may be named without `std.`
+                // (`import math`), unless the package has a module of that name (found above).
+                let in_standard = |names: &[String]| {
+                    names.first().is_some_and(|first| first == ember_branding::STD_PACKAGE).then(|| resolve_module(root_dir, names)).flatten()
+                };
+                let mut names = names;
+                if in_standard(&names).is_none() {
+                    let mut in_std = vec![ember_branding::STD_PACKAGE.to_string()];
+                    in_std.extend(names.iter().cloned());
+                    if in_standard(&in_std).is_some() {
+                        if !seen.insert(in_std.join(".")) {
+                            continue;
+                        }
+                        names = in_std;
+                    }
+                }
+                let Some(file_path) = in_standard(&names) else {
+                    // `[MOD-3]` — a module path that names no module is `E1060` at
+                    // the import, never accepted silently (F-004). A `std` module
+                    // the specification lists (Part XV) that this compiler has not
+                    // written yet is `E0900` (`[CLI-19]`).
+                    let path = names.join(".");
+                    if names.first().is_some_and(|f| f == ember_branding::STD_PACKAGE)
+                        && names.len() == 2
+                        && SPECIFIED_STD_MODULES.contains(&names[1].as_str())
+                    {
+                        sink.emit(
+                            ember_diag::Diagnostic::error(ember_diag::codes::E0900, span, format!("module `{path}` is not implemented yet"))
+                                .note("the specification's standard library has it (Part XV); this compiler does not yet"),
+                        );
+                        continue;
+                    }
+                    let mut diagnostic = ember_diag::Diagnostic::error(
+                        ember_diag::codes::E1060,
+                        span,
+                        format!("no module named '{path}'"),
+                    );
+                    let nearest = ember_typeck::nearest_names(&path, &known_module_paths(root_dir));
+                    if !nearest.is_empty() {
+                        let listed: Vec<String> = nearest.iter().map(|module| format!("`{module}`")).collect();
+                        diagnostic = diagnostic.help(format!("the nearest modules: {}", listed.join(", ")));
+                    }
+                    if removed {
+                        diagnostic = diagnostic
+                            .note("`with_views*` were removed in 0.9.9: a callable type gets fresh regions at each call [LT-7]")
+                            .migrate("`with_views` import removed", span, "");
+                    }
+                    sink.emit(diagnostic);
+                    continue;
+                };
                 let file = match map.load(&file_path) {
                     Ok(file) => file,
                     Err(error) => {
@@ -3642,73 +3743,47 @@ fn load_package_modules(
                 let text = map.file(file).text.clone();
                 let lexed = ember_lexer::lex(file, &text, sink);
                 let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
-                check_safety_notes(&parsed, &lexed.comments, map, sink);
-                mark("read and parse", &key);
-                queue.push((found, names, parsed, None));
-                continue;
+                mark("read and parse", &names.join("."));
+                queue.push((usize::MAX, names, parsed, None));
             }
-            // `[MOD-3]` — a standard module may be named without `std.`
-            // (`import math`), unless the package has a module of that name (found above).
-            let in_standard = |names: &[String]| {
-                names.first().is_some_and(|first| first == ember_branding::STD_PACKAGE).then(|| resolve_module(root_dir, names)).flatten()
-            };
-            let mut names = names;
-            if in_standard(&names).is_none() {
-                let mut in_std = vec![ember_branding::STD_PACKAGE.to_string()];
-                in_std.extend(names.iter().cloned());
-                if in_standard(&in_std).is_some() {
-                    if !seen.insert(in_std.join(".")) {
-                        continue;
-                    }
-                    names = in_std;
+        }
+        if deferred.is_empty() {
+            break;
+        }
+        // `[FFI-39]` (ODR-221) — the program's classes, which the importer reads for the C++ classes
+        // they derive from and the virtuals they override.
+        let program: Vec<cimport::ProgramModule> = loaded
+            .iter()
+            .filter(|module| module.foreign.is_none())
+            .map(|module| {
+                let file = map.file(module.module.span.file).path.clone();
+                let dir = file.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
+                cimport::program_module(&module.module, &dir, &module.path)
+            })
+            .collect();
+        for (module_at, import_at, package) in std::mem::take(&mut deferred) {
+            let import = &mut loaded[module_at].module.imports[import_at];
+            let importer = map.file(import.span.file).path.clone();
+            let package_dir = packages.list.get(package).map(|found| found.dir.clone());
+            let manifest = package_dir.as_ref().and_then(|dir| std::fs::read_to_string(dir.join(ember_branding::MANIFEST)).ok());
+            let mut flags = manifest.as_deref().and_then(|text| manifest_list(text, "c", "flags")).unwrap_or_default();
+            flags.extend(target_flags.iter().cloned());
+            let base = package_dir.unwrap_or_else(|| importer.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
+            if let Some(written) = cimport::load(import, &importer, &base, &flags, manifest.as_deref(), &mut foreign_known, &program, map, sink) {
+                seen.insert(written.path.join("."));
+                for (child_path, child, foreign) in written.children {
+                    seen.insert(child_path.join("."));
+                    queue.push((package, child_path, child, Some(foreign)));
                 }
+                for (overlay_path, overlay, backed) in written.overlays {
+                    seen.insert(overlay_path.join("."));
+                    // `[DIA-5]` — an overlay's errors name the header's declarations too.
+                    let declarations = written.foreign.declarations.clone();
+                    let graded = ember_typeck::ForeignImport { backed, declarations, ..Default::default() };
+                    queue.push((package, overlay_path, overlay, Some(graded)));
+                }
+                queue.push((package, written.path, written.module, Some(written.foreign)));
             }
-            let Some(file_path) = in_standard(&names) else {
-                // `[MOD-3]` — a module path that names no module is `E1060` at
-                // the import, never accepted silently (F-004). A `std` module
-                // the specification lists (Part XV) that this compiler has not
-                // written yet is `E0900` (`[CLI-19]`).
-                let path = names.join(".");
-                if names.first().is_some_and(|f| f == ember_branding::STD_PACKAGE)
-                    && names.len() == 2
-                    && SPECIFIED_STD_MODULES.contains(&names[1].as_str())
-                {
-                    sink.emit(
-                        ember_diag::Diagnostic::error(ember_diag::codes::E0900, span, format!("module `{path}` is not implemented yet"))
-                            .note("the specification's standard library has it (Part XV); this compiler does not yet"),
-                    );
-                    continue;
-                }
-                let mut diagnostic = ember_diag::Diagnostic::error(
-                    ember_diag::codes::E1060,
-                    span,
-                    format!("no module named '{path}'"),
-                );
-                let nearest = ember_typeck::nearest_names(&path, &known_module_paths(root_dir));
-                if !nearest.is_empty() {
-                    let listed: Vec<String> = nearest.iter().map(|module| format!("`{module}`")).collect();
-                    diagnostic = diagnostic.help(format!("the nearest modules: {}", listed.join(", ")));
-                }
-                if removed {
-                    diagnostic = diagnostic
-                        .note("`with_views*` were removed in 0.9.9: a callable type gets fresh regions at each call [LT-7]")
-                        .migrate("`with_views` import removed", span, "");
-                }
-                sink.emit(diagnostic);
-                continue;
-            };
-            let file = match map.load(&file_path) {
-                Ok(file) => file,
-                Err(error) => {
-                    sink.emit(load_diagnostic(&error, span));
-                    continue;
-                }
-            };
-            let text = map.file(file).text.clone();
-            let lexed = ember_lexer::lex(file, &text, sink);
-            let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
-            mark("read and parse", &names.join("."));
-            queue.push((usize::MAX, names, parsed, None));
         }
     }
     loaded

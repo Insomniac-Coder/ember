@@ -2579,6 +2579,21 @@ uint32_t ember_ffi_thread(void) {
     return thread_number();
 }
 
+void ember_ffi_check_thread(uint32_t expected, const char* what) {
+    uint32_t wanted = expected == EMBER_FFI_MAIN_THREAD ? g_main_thread_number : expected;
+    if (wanted == thread_number()) {
+        return;
+    }
+    char buffer[400];
+    int written = snprintf(buffer, sizeof buffer,
+        "%s whose contract says `threads(%s)` is called on thread %u%s, not on thread %u%s [FFI-33b]",
+        what, expected == EMBER_FFI_MAIN_THREAD ? "main" : "creator",
+        (unsigned)thread_number(), thread_number() == g_main_thread_number ? " (main)" : "",
+        (unsigned)wanted, wanted == g_main_thread_number ? " (main)" : "");
+    ember_loc loc = { "<foreign-thread>", 0, 0 };
+    ember_panic(buffer, written > 0 ? (size_t)written : 0, loc);
+}
+
 void ember_rt_check_main_thread(void) {
     /* [FFI-33c] This is mandatory even in release builds. Shutdown revokes
      * all prior main identities before a later init can establish a new one. */

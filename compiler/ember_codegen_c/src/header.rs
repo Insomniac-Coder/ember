@@ -70,6 +70,12 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     for opaque in &reachable.opaque {
         line(&mut out, &format!("struct {opaque};"));
     }
+    // `[BLD-FFI-5a]` (ODR-162) — each `@sync` class an export hands over: its object's struct,
+    // which C holds only behind a pointer, under the class's name.
+    let classes = super::class_exports::plan(emitter, bodies, package_name);
+    for class in &classes {
+        line(&mut out, &format!("typedef struct {} {};", emitter.object_struct(class.class), class.name));
+    }
     if plan.iter().any(|(_, _, node)| emitter.node_layout_attrs(*node).align > 1) {
         out.push_str(ALIGNED_MACRO);
     }
@@ -112,7 +118,29 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
                 line(&mut out, &format!("/* symbol: {exact} */"));
                 line(&mut out, &super::exact_symbol_prototype(&emitter.signature(body), &body.symbol, &exact));
             }
-            None => line(&mut out, &format!("{};", emitter.signature(body))),
+            // `[BLD-FFI-5a]` — a class's handle by the class's name.
+            None => {
+                let mut signature = emitter.signature(body);
+                for class in &classes {
+                    signature = signature.replace(&format!("struct {}*", emitter.object_struct(class.class)), &format!("{}*", class.name));
+                }
+                line(&mut out, &format!("{signature};"));
+            }
+        }
+    }
+    // `[BLD-FFI-5a]` — a class's handle: a count taken and given back (the last one's end frees
+    // the object), and each `pub` method, its object first.
+    for class in &classes {
+        line(&mut out, "");
+        line(&mut out, &format!("/* `{0}`, an Ember `@sync` class: each handle holds a count of the object (atomic, so on", class.name));
+        line(&mut out, " * any thread); retain takes another, release gives one back, and the last one's release frees it. */");
+        line(&mut out, &format!("void {}({}* self);", class.retain, class.name));
+        line(&mut out, &format!("void {}({}* self);", class.release, class.name));
+        for method in &class.methods {
+            line(&mut out, &format!("{} {}({});", method.ret, method.symbol, method.params.join(", ")));
+        }
+        for (method, why) in &class.skipped {
+            line(&mut out, &format!("/* not for C: `{}.{method}`: {why} */", class.name));
         }
     }
     // `[FFI-26]` — each export table, its protocol version, and each entry's thread contract.
@@ -173,8 +201,57 @@ fn render_cpp(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Str
     line(&mut out, "#if defined(__cpp_lib_span)");
     line(&mut out, "#include <span>");
     line(&mut out, "#endif");
+    line(&mut out, "#include <utility>");
     line(&mut out, "");
     line(&mut out, &format!("namespace {namespace} {{"));
+    // `[BLD-FFI-5a]` (ODR-162) — each `@sync` class an export hands over, as a class of its name:
+    // a copyable handle whose copies share the object (its counts are atomic) and whose last end
+    // frees it, with the class's `pub` methods.
+    let classes = super::class_exports::plan(emitter, bodies, package_name);
+    for class in &classes {
+        line(&mut out, &format!("class {};", class.name));
+    }
+    for class in &classes {
+        let name = &class.name;
+        line(&mut out, &format!("/* [BLD-FFI-5a] `{name}`, an Ember `@sync` class: copies share the object; the last one's end frees it. */"));
+        line(&mut out, &format!("class {name} {{"));
+        line(&mut out, "public:");
+        line(&mut out, &format!("    explicit {name}(::{name}* handle) noexcept : handle_(handle) {{}}"));
+        line(&mut out, &format!("    {name}(const {name}& other) noexcept : handle_(other.handle_) {{ if (handle_) ::{}(handle_); }}", class.retain));
+        line(&mut out, &format!("    {name}({name}&& other) noexcept : handle_(other.handle_) {{ other.handle_ = nullptr; }}"));
+        line(&mut out, &format!("    {name}& operator=(const {name}& other) noexcept {{ {name} copy(other); std::swap(handle_, copy.handle_); return *this; }}"));
+        line(&mut out, &format!("    {name}& operator=({name}&& other) noexcept {{ std::swap(handle_, other.handle_); return *this; }}"));
+        line(&mut out, &format!("    ~{name}() {{ if (handle_) ::{}(handle_); }}", class.release));
+        line(&mut out, &format!("    ::{name}* get() const noexcept {{ return handle_; }}"));
+        for method in &class.methods {
+            let params: Vec<&str> = method.cpp_params.iter().map(|(declared, _)| declared.as_str()).collect();
+            let ret = method.cpp_class_result.clone().unwrap_or_else(|| method.ret.clone());
+            line(&mut out, &format!("    {ret} {}({}) const;", method.name, params.join(", ")));
+        }
+        line(&mut out, "private:");
+        line(&mut out, &format!("    ::{name}* handle_;"));
+        line(&mut out, "};");
+    }
+    for class in &classes {
+        for method in &class.methods {
+            let params: Vec<&str> = method.cpp_params.iter().map(|(declared, _)| declared.as_str()).collect();
+            let passed: Vec<&str> = std::iter::once("handle_").chain(method.cpp_params.iter().map(|(_, passed)| passed.as_str())).collect();
+            let call = format!("::{}({})", method.symbol, passed.join(", "));
+            let (ret, body) = match &method.cpp_class_result {
+                Some(other) => (other.clone(), format!("return {other}({call});")),
+                None if method.ret == "void" => (method.ret.clone(), format!("{call};")),
+                None => (method.ret.clone(), format!("return {call};")),
+            };
+            let span = method.cpp_params.iter().any(|(declared, _)| declared.starts_with("std::span"));
+            if span {
+                line(&mut out, "#if defined(__cpp_lib_span)");
+            }
+            line(&mut out, &format!("inline {ret} {}::{}({}) const {{ {body} }}", class.name, method.name, params.join(", ")));
+            if span {
+                line(&mut out, "#endif");
+            }
+        }
+    }
     for body in bodies.iter().filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract) {
         // A C name C++ can call as written, with the plain C signature.
         let plain = ember_branding::export_alias_symbol(&body.symbol).is_none()
@@ -190,6 +267,31 @@ fn render_cpp(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str) -> Str
             .enumerate()
             .map(|(index, (_, decl))| (decl.name.clone().filter(|name| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).unwrap_or_else(|| format!("_{index}")), decl.ty))
             .collect();
+        // `[BLD-FFI-5a]` — an export that takes or gives a class's object: in C++, the class.
+        let class_of = |ty: ember_types::Ty| match emitter.types.kind(ty) {
+            TyKind::Class(id) => classes.iter().find(|class| class.class == *id).map(|class| class.name.clone()),
+            _ => None,
+        };
+        if args.iter().any(|(_, ty)| class_of(*ty).is_some()) || class_of(body.return_ty()).is_some() {
+            let params: Vec<String> = args.iter().map(|(name, ty)| match class_of(*ty) {
+                Some(class) => format!("const {class}& {name}"),
+                None => format!("{} {name}", emitter.c_member_type(*ty)),
+            }).collect();
+            let passed: Vec<String> = args.iter().map(|(name, ty)| if class_of(*ty).is_some() { format!("{name}.get()") } else { name.clone() }).collect();
+            let call = format!("::{}({})", body.symbol, passed.join(", "));
+            let short = body.symbol.rsplit("__").next().unwrap_or(&body.symbol);
+            let (ret, made) = match class_of(body.return_ty()) {
+                Some(class) => (class.clone(), format!("return {class}({call});")),
+                None => {
+                    let ret = emitter.c_type(body.return_ty());
+                    let made = if ret == "void" { format!("{call};") } else { format!("return {call};") };
+                    (ret, made)
+                }
+            };
+            line(&mut out, &format!("/* threads: {} */", body.export_thread_policy.as_str()));
+            line(&mut out, &format!("inline {ret} {short}({}) {{ {made} }}", params.join(", ")));
+            continue;
+        }
         let mut params = Vec::new();
         let mut passed = Vec::new();
         let mut span = false;
@@ -299,7 +401,11 @@ impl<'a, 'b> Reachable<'a, 'b> {
                 self.opaque.insert(name.as_str().rsplit('.').next().unwrap_or(name.as_str()).to_string());
             }
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
-            | TyKind::Float(_) | TyKind::Void | TyKind::Never | TyKind::CStr => {}
+            | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::CStr => {}
+            // `[FFI-8]` — the runtime header's `ember_va_list`.
+            TyKind::VaList => self.runtime_integer_carrier = true,
+            // `[BLD-FFI-5a]` — a `@sync` class's handle, declared with its methods.
+            TyKind::Class(id) if self.emitter.types.class_def(id).is_sync => {}
             _ => return Err(self.unsupported(ty)),
         }
         Ok(())

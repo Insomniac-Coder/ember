@@ -17,6 +17,15 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>  /* [STD-15]: the generated Array helpers move bytes */
+#include <stdarg.h>
+/* [FFI-8] C's `va_list` as Ember's `VaList` holds it: as a parameter of that type is, so it is
+   passed on as C passes it and moved as a value. Where `va_list` is an array (x86-64 System V) a
+   parameter of it is a pointer to its element. */
+#if defined(__x86_64__) && !defined(_WIN32) && !defined(__CYGWIN__)
+typedef __typeof__(&(*(va_list*)0)[0]) ember_va_list;
+#else
+typedef va_list ember_va_list;
+#endif
 #if defined(__SSE2__) || defined(_M_X64)
 #include <emmintrin.h> /* integer byte reductions; portable scalar fallback below */
 #define EMBER_SSE2_BYTE_SUM 1
@@ -3251,6 +3260,12 @@ ember_obj_header* ember_cpp_object_adopt(ember_obj_header* object, ember_loc at)
 void* ember_ffi_adopt(void* object, ember_loc at);
 void ember_ffi_release(void* object, uint32_t creator);
 uint32_t ember_ffi_thread(void);
+/* `[FFI-22]`, `[FFI-33b]`, `[FFI-1]` — a callback, or a foreign function, whose contract says
+ * `threads(creator)` or `threads(main)`: the debug profile checks that it is called on that
+ * thread (`EMBER_FFI_MAIN_THREAD` names the main one) and panics naming `what` and both threads
+ * otherwise. */
+#define EMBER_FFI_MAIN_THREAD UINT32_MAX
+void ember_ffi_check_thread(uint32_t expected, const char* what);
 
 /* -- debug facilities ------------------------------------------------------- */
 

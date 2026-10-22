@@ -138,6 +138,14 @@ pub enum TyKind {
     Never,
     /// A view over UTF-8 bytes with a region; `Span[u8]` known to be valid.
     Str,
+    /// `[FFI-8]` — C's `long double` (`std.ffi.c_longdouble`): opaque bytes of the target's size and
+    /// alignment, passed and returned as C passes the type (System V's x87 class, Windows' `double`),
+    /// with no arithmetic. Only copied, stored and handed to C.
+    CLongDouble,
+    /// `[FFI-8]` — C's `va_list` (`std.ffi.VaList`), as a parameter of that type holds it: a value
+    /// C made, only received and passed on (never constructed, `E5018`), a view (it lives as long
+    /// as the call that passed it) and not `Copy` (whoever it is passed to reads it).
+    VaList,
     /// A borrowed pointer to NUL-terminated C bytes, distinct from UTF-8 `str`.
     CStr,
     /// `Span[T]` and `MutSpan[T]` (Part VII §7): pointer plus length, with a
@@ -248,10 +256,16 @@ pub type LayoutDescriptor = Layout;
 pub struct LayoutAttrs {
     pub packed: bool,
     pub align: u64,
+    /// `[FFI-8]` — `@layout(c, union)`: a C union, every field at offset zero, the size the
+    /// largest field's rounded to the alignment; a field is read only in `unsafe`.
+    pub union: bool,
+    /// `[FFI-8]` — `@layout(c, flexible)`: a C struct whose flexible array member follows its
+    /// fields: unsized, used only behind a pointer or reference (`E5017`).
+    pub flexible: bool,
 }
 
 impl LayoutAttrs {
-    pub const NONE: LayoutAttrs = LayoutAttrs { packed: false, align: 1 };
+    pub const NONE: LayoutAttrs = LayoutAttrs { packed: false, align: 1, union: false, flexible: false };
 
     pub fn is_none(self) -> bool {
         self == LayoutAttrs::NONE
@@ -562,6 +576,7 @@ pub struct TypeTable {
     class_reflections: HashMap<ClassId, (Symbol, Ty)>,
     /// `[FFI-26]` — each `@export_table` of the program.
     export_tables: Vec<ExportTable>,
+    class_exports: Vec<ClassExport>,
     /// `[MNG-1]` — each generic instance's name (`Pair_i64`, `Option_i32`, an interface's
     /// `FromIterator_char`), with the generic it instantiates and its arguments: what its symbol is
     /// made from, never its name.
@@ -569,6 +584,14 @@ pub struct TypeTable {
     /// `[TYP-22]` (ODR-237) — the interfaces that require `Clone`, of the `dyn` tables formed: each
     /// such table holds an entry copying its value into a new box.
     dyn_clone: HashSet<Symbol>,
+}
+
+/// `[BLD-FFI-5a]` (ODR-162) — a `@sync` class whose objects an export hands to C and C++: the class,
+/// and each `pub` method of it and of its bases (by name and C symbol), which C++ code calls.
+#[derive(Clone, Debug)]
+pub struct ClassExport {
+    pub class: ClassId,
+    pub methods: Vec<(String, String)>,
 }
 
 /// `[FFI-26]` — an `@export_table("Name", protocol=N)`: the struct exported as a constant table of
@@ -697,6 +720,15 @@ impl TypeTable {
         &self.export_tables
     }
 
+    /// `[BLD-FFI-5a]` — a `@sync` class an export hands to C and C++.
+    pub fn add_class_export(&mut self, export: ClassExport) {
+        self.class_exports.push(export);
+    }
+
+    pub fn class_exports(&self) -> &[ClassExport] {
+        &self.class_exports
+    }
+
     pub fn new() -> (TypeTable, CommonTypes) {
         let mut table = TypeTable {
             kinds: Vec::new(),
@@ -722,6 +754,7 @@ impl TypeTable {
             folded_statics: Vec::new(),
             class_reflections: HashMap::new(),
             export_tables: Vec::new(),
+            class_exports: Vec::new(),
             instance_origins: HashMap::new(),
             pointer_size: 8,
         };
@@ -879,6 +912,8 @@ impl TypeTable {
                 params.iter().any(|param| self.has_unsized_by_value_in(param.ty, seen))
                     || self.has_unsized_by_value_in(*ret, seen)
             }
+            // `[FFI-8]` — a struct a flexible array member ends.
+            TyKind::Struct(_) if self.layout_attrs(ty).flexible => true,
             TyKind::Struct(id) => {
                 seen.insert(ty)
                     && self
@@ -1433,6 +1468,9 @@ impl TypeTable {
                 FloatTy::F32 => 4,
                 FloatTy::F64 => 8,
             }),
+            // `[FFI-8]` — the target's `long double`, as the C compiler lays it out.
+            TyKind::CLongDouble => c_long_double_layout(self.pointer_size),
+            TyKind::VaList => va_list_layout(self.pointer_size),
             TyKind::Void | TyKind::Never => Layout::ZERO,
             // A view: pointer plus length.
             TyKind::Str | TyKind::Span { .. } => Layout {
@@ -1511,7 +1549,7 @@ impl TypeTable {
         let (offset, size, align) = if def.is_unit_only() {
             (tag.size, 0, tag.align)
         } else {
-            let variant = LayoutAttrs { packed: attrs.packed, align: 1 };
+            let variant = LayoutAttrs { packed: attrs.packed, align: 1, union: false, flexible: false };
             let mut payload_size = 0u64;
             let mut payload_align = 1u64;
             for variant_def in &def.variants {
@@ -1538,6 +1576,15 @@ impl TypeTable {
         let mut field_offsets = Vec::new();
         for field in fields {
             let inner = self.layout(field);
+            // `[FFI-8]` — a union's fields share its storage.
+            if attrs.union {
+                if !attrs.packed {
+                    align = align.max(inner.align);
+                }
+                field_offsets.push(0);
+                offset = offset.max(inner.size);
+                continue;
+            }
             if !attrs.packed {
                 offset = align_to(offset, inner.align);
                 align = align.max(inner.align);
@@ -1639,8 +1686,10 @@ impl TypeTable {
             // ODR-102 — an owned callable value hides what it captured, so it
             // stays on the thread that made it.
             TyKind::Fn { abi: None, stateless: false, .. } => (false, false),
+            // `[FFI-8]` — read on the thread C passed it to.
+            TyKind::VaList => (false, false),
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
-            | TyKind::Float(_) | TyKind::Void | TyKind::Never | TyKind::Str
+            | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::Str
             | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::Error => (true, true),
             TyKind::Class(id) => {
                 let safe = self.class_def(*id).is_sync;
@@ -1922,11 +1971,14 @@ impl TypeTable {
             // `[CLO-3]` — an owned callable value owns its captured state,
             // so it moves; only `extern fn` is `Copy` (Part VI's list).
             TyKind::Fn { abi: None, stateless, .. } => *stateless,
+            // `[FFI-8]` — whoever it is passed to reads it, so it is passed on once.
+            TyKind::VaList => false,
             TyKind::Bool
             | TyKind::Char
             | TyKind::Int(_)
             | TyKind::Uint(_)
             | TyKind::Float(_)
+            | TyKind::CLongDouble
             | TyKind::Void
             | TyKind::Never
             | TyKind::Str
@@ -2168,6 +2220,16 @@ impl TypeTable {
         out
     }
 
+    /// `[FFI-8]` — whether a struct is ended by a flexible array member (`@layout(c, flexible)`).
+    pub fn is_flexible(&self, ty: Ty) -> bool {
+        matches!(self.kind(ty), TyKind::Struct(_)) && self.layout_attrs(ty).flexible
+    }
+
+    /// `[FFI-8]` — whether a struct is a C union (`@layout(c, union)`).
+    pub fn is_union(&self, ty: Ty) -> bool {
+        matches!(self.kind(ty), TyKind::Struct(_)) && self.layout_attrs(ty).union
+    }
+
     /// `[LAY-2]` — record a struct's or an enum's `@packed` and `@align(N)`.
     pub fn declare_layout(&mut self, name: Symbol, attrs: LayoutAttrs) {
         if !attrs.is_none() {
@@ -2194,7 +2256,7 @@ impl TypeTable {
             (None, Some(ty)) => self.layout(ty).field_offsets.get(1).copied().unwrap_or(0),
             _ => 0,
         };
-        let attrs = LayoutAttrs { packed: ty.is_some_and(|ty| self.layout_attrs(ty).packed), align: 1 };
+        let attrs = LayoutAttrs { packed: ty.is_some_and(|ty| self.layout_attrs(ty).packed), align: 1, union: false, flexible: false };
         def.variants
             .iter()
             .map(|variant| {
@@ -2349,7 +2411,10 @@ impl TypeTable {
             | TyKind::Int(_)
             | TyKind::Uint(_)
             | TyKind::Float(_)
+            | TyKind::CLongDouble
             | TyKind::Ptr { .. } => true,
+            // `[FFI-8]` — never constructed (`E5018`).
+            TyKind::VaList => false,
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.is_builtin_zeroable(*elem),
             TyKind::Tuple(items) => items.iter().all(|&item| self.is_builtin_zeroable(item)),
             // The compiler-known `MaybeUninit[T]` wrapper accepts every byte
@@ -2465,8 +2530,8 @@ impl TypeTable {
     /// class fields, statics, containers or across threads (`[TYP-15]`).
     pub fn is_view(&self, ty: Ty) -> bool {
         match self.kind(ty) {
-            // Part IV §1's View category, in full.
-            TyKind::Ref { .. } | TyKind::Str | TyKind::CStr | TyKind::Span { .. } => true,
+            // Part IV §1's View category, in full; and `[FFI-8]`'s `VaList`, alive for its call.
+            TyKind::Ref { .. } | TyKind::Str | TyKind::CStr | TyKind::Span { .. } | TyKind::VaList => true,
             TyKind::Tuple(items) => items.iter().any(|&t| self.is_view(t)),
             TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.is_view(*elem),
             TyKind::Struct(id) => {
@@ -2535,6 +2600,8 @@ impl TypeTable {
             | TyKind::Int(_)
             | TyKind::Uint(_)
             | TyKind::Float(_)
+            | TyKind::CLongDouble
+            | TyKind::VaList
             | TyKind::Void
             | TyKind::Ptr { .. } => true,
             TyKind::CStr => true,
@@ -2685,6 +2752,8 @@ impl TypeTable {
 
     fn render(&self, ty: Ty, user: bool) -> String {
         match self.kind(ty) {
+            TyKind::CLongDouble => "c_longdouble".into(),
+            TyKind::VaList => "VaList".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Char => "char".into(),
             TyKind::Int(i) => match i {
@@ -2834,6 +2903,8 @@ impl TypeTable {
     /// the type table, so two modules' `Thing` types cannot collide.
     pub fn canonical_name(&self, ty: Ty) -> Result<String, CanonicalTypeError> {
         Ok(match self.kind(ty) {
+            TyKind::CLongDouble => "std.ffi.c_longdouble".into(),
+            TyKind::VaList => "std.ffi.VaList".into(),
             TyKind::Bool => "bool".into(),
             TyKind::Char => "char".into(),
             TyKind::Int(kind) => match kind {
@@ -4149,4 +4220,26 @@ mod tests {
         let a = table.intern(TyKind::Array { elem: c.f32, len: 4 });
         assert_eq!(table.display(a), "[f32; 4]");
     }
+}
+
+/// `[FFI-8]` — C's `long double` on the target the compiler builds for (Ember has no
+/// cross-compilation yet, `[CLI-…]`): `double` on Windows and Apple's ARM, the x87 80-bit format
+/// padded to 16 bytes on x86-64 System V, IEEE quad on AArch64 and RISC-V Linux, and 12 bytes
+/// aligned to 4 on 32-bit x86 System V.
+/// `[FFI-8]` — C's `va_list` as a parameter holds it: AArch64 Linux's is a 32-byte struct; x86-64
+/// System V's an array, so a parameter is a pointer to its element; every other target's a pointer.
+pub fn va_list_layout(pointer_size: u64) -> Layout {
+    let (size, align) = if cfg!(all(target_arch = "aarch64", not(target_vendor = "apple"), not(windows))) { (32, 8) } else { (pointer_size, pointer_size) };
+    Layout { size, align, field_offsets: Vec::new() }
+}
+
+pub fn c_long_double_layout(pointer_size: u64) -> Layout {
+    let (size, align) = if cfg!(windows) || (cfg!(target_vendor = "apple") && cfg!(target_arch = "aarch64")) {
+        (8, 8)
+    } else if pointer_size == 4 && cfg!(target_arch = "x86") {
+        (12, 4)
+    } else {
+        (16, 16)
+    };
+    Layout { size, align, field_offsets: Vec::new() }
 }

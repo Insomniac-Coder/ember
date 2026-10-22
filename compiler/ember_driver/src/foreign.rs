@@ -124,6 +124,14 @@ fn declaration(item: &Item, abi: &str, module: &str, prefix: &str, map: &SourceM
                     ember_ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("deterministic") => {
                         "the same result on every run"
                     }
+                    ember_ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("unsafe") => {
+                        "its calls left unsafe on purpose"
+                    }
+                    // `[FFI-1]` — the threads it may be called on; `[FFI-21]` — what undoes what it registers.
+                    ember_ast::ExprKind::Call { callee, .. } if matches!(&callee.kind,
+                        ember_ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("threads")) => "its thread rule",
+                    ember_ast::ExprKind::Call { callee, .. } if matches!(&callee.kind,
+                        ember_ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("destroys")) => "what undoes it",
                     _ => "its contract",
                 },
                 AttrArg::Named { .. } => "its contract",
@@ -514,6 +522,10 @@ pub fn print(decl: &ForeignDecl, map: &SourceMap, indent: &str, evidence: Option
     }
     if decl.kind == "fn" && !decl.facts.iter().any(|fact| fact.text.starts_with("its effects")) {
         println!("{indent}  its effects: none stated, so every effect [EFF-3]");
+    }
+    // `[FFI-1]` — a contract has a thread rule; with none stated it is unknown.
+    if decl.kind == "fn" && !decl.facts.iter().any(|fact| fact.text.starts_with("its thread rule")) {
+        println!("{indent}  its thread rule: none stated, so unknown [FFI-1]");
     }
     for line in evidence.and_then(|evidence| evidence_lines(decl, evidence, map)).unwrap_or_default() {
         println!("{indent}  {line}");

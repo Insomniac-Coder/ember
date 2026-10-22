@@ -3077,10 +3077,11 @@ fn tcb_lists_an_overlay_method_line_as_an_asserted_fact() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `[FFI-10]`, `[TCB-1]`, `[TCB-2]`, `[TCB-3]` — `ember tcb` separates what the language guarantees
-/// from what the program supplies, and lists, grouped by module, every fact its foreign
+/// `[FFI-10]`, `[TCB-1]`, `[TCB-2]`, `[TCB-3]`, `[FFI-1]` — `ember tcb` separates what the language
+/// guarantees from what the program supplies, and lists, grouped by module, every fact its foreign
 /// declarations assert (`safe fn` among them), each with its source and its grade: asserted, for
-/// nothing a declaration writes raises one.
+/// nothing a declaration writes raises one. A function's thread rule is listed, unknown where its
+/// contract states none.
 #[test]
 fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
     let root = workspace_root();
@@ -3096,7 +3097,7 @@ fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
         &source,
         "import clib\n\n\
          unsafe extern \"C\":\n\
-         \x20   @ffi(param(text, borrowed, nul_terminated), link_name=\"strlen\")\n\
+         \x20   @ffi(param(text, borrowed, nul_terminated), threads(main), link_name=\"strlen\")\n\
          \x20   safe fn length(text: cstr) -> usize\n\
          \x20   @ffi(immutable)\n    static frozen: i32\n\n\
          fn main():\n    println(clib.abs(-3), length(c\"abc\"))\n\
@@ -3122,6 +3123,9 @@ fn tcb_lists_every_foreign_fact_with_its_source_and_grade() {
     assert!(out[trusted..].contains("its signature matches the C declaration (`unsafe extern \"C\"`, C symbol \"strlen\")  [asserted]  "), "{out}");
     assert!(out.contains("its contract: `param(text, borrowed, nul_terminated)`  [asserted]  "), "{out}");
     assert!(out.contains("a `const` C object that never changes: `immutable`  [asserted]"), "{out}");
+    // `[FFI-1]` — a function's contract has a thread rule: the one stated, else an unknown one.
+    assert!(out.contains("its thread rule: `threads(main)`  [asserted]  "), "{out}");
+    assert_eq!(out.matches("its thread rule: none stated, so unknown [FFI-1]").count(), 2, "{out}");
     assert!(!out.contains("[instrumented]") && !out.contains("[checked]") && !out.contains("[proven]"), "{out}");
     assert!(out.contains("block in `main`  SAFETY(ffi): rand has no precondition  [asserted]"), "{out}");
     let only = ember(&["tcb", "--module", "clib", &source_arg], &root);
@@ -7864,7 +7868,7 @@ const BIND_HEADER: &str = "\
 static inline int bind_add(int a, int b) { return a + b; }
 static inline int bind_sum(const int* items, size_t n) { int t = 0; for (size_t i = 0; i < n; i++) t += items[i]; return t; }
 static inline void bind_zero(int* items, size_t n) { for (size_t i = 0; i < n; i++) items[i] = 0; }
-int bind_log(const char* format, ...);
+static inline int bind_log(const char* format, ...) { return format[0]; }
 ";
 
 /// `[CLI-5]` — `ember bind <header> --init` writes a starter overlay, `<stem>.overlay.em` beside the
@@ -7886,7 +7890,7 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
         "    # derived: `items` is a read-only borrow (`const`)",
         "    fn bind_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)",
         "    # derived: `items` is a mutable borrow (no `const`)",
-        "    # skipped: `bind_log` (calc.h:5): variadic",
+        "    # skipped: `bind_log` (calc.h:5): a variadic `static inline` function",
     ] {
         assert!(written.contains(line), "the starter overlay lacks {line:?}:\n{written}");
     }
@@ -7952,7 +7956,7 @@ fn bind_report_and_check_count_what_is_safe_unsafe_and_skipped() {
     let report = ember(&["bind", "calc.h", "--report", "--overlay", &format!("good.{SOURCE_EXT}")], &dir);
     assert_ne!(report.exit, 0, "a skip did not fail the report:\n{}", report.stdout);
     for line in [
-        "skipped: `bind_log` (calc.h:5): variadic",
+        "skipped: `bind_log` (calc.h:5): a variadic `static inline` function",
         "unsafe: `bind_zero`: `items`: TODO(count)",
         "assumes: `bind_sum`: `items` does not retain the pointer",
         "1 skipped declaration(s)",
@@ -8034,6 +8038,48 @@ struct Meter { int level; int read() const noexcept { return level; } };
         let found = report.stdout.lines().any(|line| line.contains(&format!("{function}`, a C++ call through its thunk: {mode}")));
         assert!(found, "no `{mode}` row for `{function}`:\n{}", report.stdout);
     }
+}
+
+/// `[FFI-24c]` (ODR-220) — `ember inspect --cost` lists the catching C++ calls on a `@noalloc` path
+/// or on the main thread's: each catching call's row says which, and from where the path starts
+/// (a `@noalloc` function, `main`). A call a spawned thread makes is on neither; a call that does
+/// not catch is not marked.
+#[test]
+fn inspect_marks_catching_cpp_calls_on_noalloc_and_main_thread_paths() {
+    let root = workspace_root();
+    let dir = temporary_directory("inspect-cpp-paths");
+    std::fs::write(dir.join("paths.hpp"), "\
+#pragma once
+#include <stdexcept>
+inline int checked(int x) { if (x < 0) throw std::runtime_error(\"negative\"); return x; }
+inline int quiet(int x) noexcept { return x + 1; }
+").unwrap();
+    let source = dir.join(format!("paths.{SOURCE_EXT}"));
+    std::fs::write(&source, "import std.thread\nimport cpp \"paths.hpp\"\n\n\
+@noalloc\nfn steady(x: int) -> int:\n    unsafe:  # SAFETY: the throw path is taken only for a negative `x`, which `steady` never gets\n        \
+match @assume_noalloc(cpp.checked(x as c_int)):\n            Ok(value):\n                return value as int\n            Err(_):\n                return 0\n\n\
+fn shown(x: c_int) -> c_int:\n    unsafe:  # SAFETY(ffi): a scalar call\n        match cpp.checked(x):\n            Ok(value):\n                return value\n            Err(_):\n                return 0\n\n\
+fn elsewhere() -> c_int:\n    unsafe:  # SAFETY(ffi): a scalar call\n        match cpp.checked(7):\n            Ok(value):\n                return value\n            Err(_):\n                return 0\n\n\
+fn main():\n    println(steady(2), shown(3))\n    unsafe:  # SAFETY(ffi): a scalar call\n        println(cpp.quiet(1))\n    \
+worker = thread.spawn(owned fn() => elsewhere())\n    println(worker.join())\n").unwrap();
+    let source_text = std::fs::read_to_string(&source).unwrap().replace("import std.thread\n", "import std.thread\nfrom std.ffi import c_int\n");
+    std::fs::write(&source, source_text).unwrap();
+    let out_dir = dir.join("out");
+    let build = ember(&["build", &source.to_string_lossy(), "--out-dir", &out_dir.to_string_lossy()], &root);
+    assert_eq!(build.exit, 0, "build failed:\n{}\n{}", build.stdout, build.stderr);
+    let table = out_dir.join("debug").join("inspect").join("paths.safety.json").to_string_lossy().into_owned();
+    let report = ember(&["inspect", &table, "--cost"], &root);
+    assert_eq!(report.exit, 0, "{}", report.stderr);
+    let rows: Vec<&str> = report.stdout.lines().filter(|line| line.contains("a C++ call through its thunk")).collect();
+    let row = |function: &str, callee: &str| rows.iter().find(|line| line.contains(&format!(".{callee}`")) && line.contains(&format!("  {function}  "))).copied().unwrap_or_else(|| panic!("no row for `{callee}` in `{function}`:\n{}", report.stdout));
+    let steady = row("steady", "checked");
+    assert!(steady.contains("catching; on a `@noalloc` path, from `steady`; on the main thread's path, from `main`"), "{steady}");
+    let shown = row("shown", "checked");
+    assert!(shown.contains("catching; on the main thread's path, from `main`") && !shown.contains("@noalloc"), "{shown}");
+    let elsewhere = row("elsewhere", "checked");
+    assert!(elsewhere.contains("catching [FFI-24c]"), "{elsewhere}");
+    let quiet = row("main", "quiet");
+    assert!(quiet.contains("noexcept (derived) [FFI-24c]"), "{quiet}");
 }
 
 /// `[FFI-24d]` — a header that adds or removes `noexcept` changes the Ember signature: the errors in
@@ -8159,6 +8205,98 @@ pub fn twice(x: i32) -> i32:
     let include = if matches!(toolchain, Toolchain::Msvc { .. }) { format!("/I{}", lib.display()) } else { format!("-I{}", lib.display()) };
     let object = dir.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "user.obj" } else { "user.o" });
     ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++20").expect("the C++ header compiles");
+}
+
+/// `[BLD-FFI-5a]` (ODR-162) — an export may hand C++ an object of a `@sync` class: the C header
+/// gives the class's handle its count, its end and each `pub` method, and the `--cpp` header a
+/// class of the same name whose copies share the object (retain) and whose last end frees it
+/// (release), with the class's `pub` methods; an export taking or giving one takes or gives the
+/// C++ class. It compiles as C++.
+#[test]
+fn the_cpp_header_gives_a_sync_class_a_shared_handle() {
+    let root = workspace_root();
+    let dir = temporary_directory("cpp-class-header");
+    std::fs::write(dir.join(MANIFEST), "[package]
+name = \"worlds\"
+kind = \"lib\"
+").unwrap();
+    let source = dir.join(format!("lib.{SOURCE_EXT}"));
+    std::fs::write(&source, "from std.sync import Atomic, MemoryOrder
+
+@sync
+pub class World:
+    people: Atomic[i32] = Atomic(0)
+    seed: i32 = 0
+
+    fn init(self, seed: i32):
+        self.seed = seed
+
+    pub fn population(self) -> i32:
+        return self.people.load(MemoryOrder.Acquire)
+
+    pub fn grow(self, by: i32) -> i32:
+        return self.people.fetch_add(by, MemoryOrder.AcqRel) + by
+
+    pub fn named(self, name: str) -> usize:
+        return name.len()
+
+    pub fn label(self) -> String:
+        return \"world\"
+
+@export(\"make_world\")
+pub fn make_world(seed: i32) -> World:
+    return World(seed)
+
+@export(\"population_of\")
+pub fn population_of(world: World) -> i32:
+    return world.population()
+").unwrap();
+    let out = dir.join("out");
+    let built = ember(&["build", &source.to_string_lossy(), "--emit", "header", "--cpp", "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    let lib = out.join("debug").join("lib");
+    let c_header = std::fs::read_to_string(lib.join("worlds.h")).expect("the C header");
+    for declared in [
+        "World* make_world(int32_t _1);",
+        "int32_t population_of(World* _1);",
+        "void worlds_World_retain(World* self);",
+        "void worlds_World_release(World* self);",
+        "int32_t worlds_World_grow(World* self, int32_t by);",
+        "size_t worlds_World_named(World* self, const uint8_t* name, size_t name_len);",
+        "/* not for C: `World.label`: it returns a `String`, which C has no form of */",
+    ] {
+        assert!(c_header.contains(declared), "no `{declared}`:
+{c_header}");
+    }
+    let header = std::fs::read_to_string(lib.join("worlds.hpp")).expect("the C++ header");
+    for declared in [
+        "class World {",
+        "World(const World& other) noexcept : handle_(other.handle_) { if (handle_) ::worlds_World_retain(handle_); }",
+        "~World() { if (handle_) ::worlds_World_release(handle_); }",
+        "inline int32_t World::population() const { return ::worlds_World_population(handle_); }",
+        "inline size_t World::named(std::string_view name) const { return ::worlds_World_named(handle_, reinterpret_cast<const uint8_t*>(name.data()), name.size()); }",
+        "inline World make_world(int32_t seed) { return World(::make_world(seed)); }",
+        "inline int32_t population_of(const World& world) { return ::population_of(world.get()); }",
+    ] {
+        assert!(header.contains(declared), "no `{declared}`:
+{header}");
+    }
+    // A C++ program includes it, copies a handle and calls the methods.
+    let user = dir.join("user.cpp");
+    std::fs::write(&user, "#include \"worlds.hpp\"
+int use() {
+    worlds::World world = worlds::make_world(3);
+    worlds::World copy = world;
+    copy.grow(2);
+            world = copy;
+    return world.population() + static_cast<int>(copy.named(\"abc\")) + worlds::population_of(copy);
+}
+").unwrap();
+    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
+    let include = if matches!(toolchain, Toolchain::Msvc { .. }) { format!("/I{}", lib.display()) } else { format!("-I{}", lib.display()) };
+    let object = dir.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "user.obj" } else { "user.o" });
+    ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++17").expect("the C++ header compiles");
 }
 
 /// `[FFI-17f]` — an operation of a C++ bridge type and a bridge value's end are each a call of a

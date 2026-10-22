@@ -141,6 +141,74 @@ pub struct FfiCounted {
     /// `[FFI-11]`, `[FFI-16]` — a call that returns its `out` parameters, or a
     /// status as a `Result`, in place of C's own result.
     pub outputs: Option<FfiOutputs>,
+    /// `[FFI-21]` — the callables C calls back, each named by an
+    /// `FfiAbiParam::Callback` (its trampoline) and an
+    /// `FfiAbiParam::CallbackData` (its user data).
+    pub callbacks: Vec<FfiCallback>,
+}
+
+/// `[FFI-21]`, `[FFI-11]` — a parameter contracted `callback(mode, user_data=p)`:
+/// a callable C calls through a trampoline, which finds it at the user data.
+/// The callable is the instance's own (a lambda's environment, or a callable
+/// value): the wrapper is monomorphised per callable, so a lambda is called
+/// directly, as through any callable parameter (`[CLO-3]`).
+#[derive(Debug, Clone)]
+pub struct FfiCallback {
+    /// The visible parameter holding the callable.
+    pub public_index: usize,
+    /// Its type: a lambda's environment struct, or a callable value.
+    pub callable: Ty,
+    /// The lambda's body, when the callable is one: called directly with its
+    /// environment. Otherwise the callable value's native entry is called.
+    pub closure: Option<String>,
+    /// The C function pointer type C calls (`extern "C" fn(…)`): its
+    /// parameters, the user data's among them, its result and its calling
+    /// convention.
+    pub c_fn: Ty,
+    /// Which of the C function pointer's parameters is the user data.
+    pub slot: usize,
+    /// The user data parameter's type as C has it: a pointer, or an integer.
+    pub data: Ty,
+    pub mode: FfiCallbackMode,
+    /// `[FFI-22]`, `[FFI-33b]` — the threads C calls it on: under `main` or
+    /// `creator` the debug profile checks each call.
+    pub threads: ExportThreadPolicy,
+    /// `[FFI-21]` — for `retained`: the function the token's end calls to
+    /// unregister it (`destroys(f)`), and the token's type.
+    pub unregister: Option<FfiUnregister>,
+}
+
+/// `[FFI-21]` — how long C keeps a callback: for the call (`borrowed`, the
+/// callable stays where the caller has it), until its one call (`once`), or
+/// until the `Retained` token the call returns ends (`retained`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiCallbackMode {
+    Borrowed,
+    Once,
+    Retained,
+}
+
+/// `[FFI-21]` — `destroys(f)` of a function registering a `retained` callback:
+/// `f`'s C symbol and result, what each of its parameters is given, and the
+/// `Retained[ForeignCallback]` token the call returns.
+#[derive(Debug, Clone)]
+pub struct FfiUnregister {
+    pub symbol: String,
+    pub ret: Ty,
+    pub args: Vec<FfiUnregisterArg>,
+    /// `f`'s parameter types, one per argument.
+    pub params: Vec<Ty>,
+    pub token: Ty,
+}
+
+/// What a parameter of `destroys(f)` is given: the trampoline, the user data,
+/// or what the registering call passed for one of its scalar parameters (kept
+/// with the callable).
+#[derive(Debug, Clone)]
+pub enum FfiUnregisterArg {
+    Entry,
+    Data,
+    Saved { public_index: usize, ty: Ty },
 }
 
 /// `[FFI-11]`, `[FFI-16]` — C's own result type, and with a status the value
@@ -199,6 +267,12 @@ pub enum FfiAbiParam {
     /// `[FFI-11]` — `param(p, out, one)`: the address of a local C writes,
     /// which the call returns; not a parameter of the Ember function.
     Out { ty: Ty },
+    /// `[FFI-21]` — the trampoline of `FfiCounted::callbacks[index]`.
+    Callback { index: usize },
+    /// `[FFI-21]` — the user data of `FfiCounted::callbacks[index]`: the
+    /// callable's address, or its allocation's; not a parameter of the Ember
+    /// function.
+    CallbackData { index: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -347,6 +421,10 @@ pub struct Contracts {
     /// effect when it states none, and `Nondet` unless `@ffi(deterministic)`
     /// (`[DET-2]`). `None` for a function with an Ember body.
     pub foreign: Option<Effects>,
+    /// `[FFI-1]`, `[FFI-11]` — for a foreign declaration, the threads its
+    /// contract lets it be called on (`@ffi(threads(…))`); `None` when its
+    /// contract states none, so its thread rule is unknown.
+    pub foreign_threads: Option<ExportThreadPolicy>,
 }
 
 #[derive(Debug)]
@@ -441,6 +519,9 @@ pub struct Function {
     /// A bodyless declaration in `unsafe extern`: emit a C prototype and
     /// resolve calls against the foreign linker symbol, never a C body.
     pub is_extern_declaration: bool,
+    /// `[FFI-8]` — a variadic C function (`@ffi(variadic)`): its prototype ends `...`, and a call
+    /// passes further arguments after the declared parameters.
+    pub variadic: bool,
     /// ODR-074 and `[FFI-9]`: an Ember wrapper around a differing C signature.
     pub ffi_counted: Option<FfiCounted>,
 }
@@ -1541,6 +1622,20 @@ pub enum Builtin {
     /// `[FFI-39]` — in a module `import cpp` wrote: a class object's address
     /// (the argument, a handle), which a trampoline keeps without a count.
     CppObjectAddress,
+    /// `[UNS-5]`, `[FFI-8]` — a volatile read of the `T` a raw pointer (the
+    /// argument) points to: it happens, in order, as written.
+    VolatileRead,
+    /// `[UNS-5]`, `[FFI-8]` — a volatile write of a `T` (the second argument)
+    /// through a raw pointer (the first).
+    VolatileWrite,
+    /// `[FFI-8]` — a C union's value with one field set (the argument), the
+    /// rest of its storage zero: `Number(i = 5)`.
+    UnionLit { union: StructId, field: usize },
+    /// `[FFI-39]` (ODR-221) — in a module `import cpp` wrote: whether the
+    /// object's own class (the argument, a handle of `owner` or below it)
+    /// overrides `owner`'s virtual method in `slot`, so that its trampoline
+    /// passes on exactly the virtuals the object's class overrides.
+    CppOverrides { owner: ClassId, slot: usize },
     /// `[FFI-39]` — the handle of the class object at an address a trampoline
     /// kept (the argument): a new count of it, or, with `adopt`, the count C++
     /// held, which must be the object's only one (`[FFI-17d]`).
@@ -2121,6 +2216,10 @@ impl Builtin {
             Builtin::RetainedUnpin => "retained_unpin",
             Builtin::RetainedAddress => "retained_address",
             Builtin::CppObjectAddress => "cpp_object_address",
+            Builtin::CppOverrides { .. } => "cpp_overrides",
+            Builtin::UnionLit { .. } => "union_literal",
+            Builtin::VolatileRead => "volatile_read",
+            Builtin::VolatileWrite => "volatile_write",
             Builtin::CppObjectHandle { .. } => "cpp_object_handle",
             Builtin::CppObjectGive => "cpp_object_give",
             Builtin::CppSpan { .. } => "cpp_span",
