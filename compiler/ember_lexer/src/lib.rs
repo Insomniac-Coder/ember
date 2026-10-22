@@ -586,6 +586,12 @@ impl<'a> Lexer<'a> {
         let looks_like_lifetime = self.peek_nth(1).is_some_and(is_ident_start_or_underscore)
             && self.peek_nth(2).is_some_and(|c| c != '\'');
         self.pos += 1; // opening quote
+        // `[DIA-21]` P24 (ODR-186) — `''` is Python's empty string.
+        if self.peek() == Some('\'') {
+            self.pos += 1;
+            self.single_quoted_string(start, String::new());
+            return;
+        }
         let value = match self.peek() {
             None | Some('\n') => {
                 let span = self.span(start);
@@ -608,17 +614,19 @@ impl<'a> Lexer<'a> {
                 self.bump();
             }
             let unterminated = self.peek() != Some('\'');
-            self.eat('\'');
+            if !unterminated {
+                // `[DIA-21]` P24 (ODR-186) — `'abc'` is Python's string.
+                let body = self.src[start + 1..self.pos].to_string();
+                self.pos += 1;
+                self.single_quoted_string(start, body);
+                return;
+            }
             let span = self.span(start);
-            let d = if unterminated {
-                let d = Diagnostic::error(codes::E0008, span, "unterminated character literal");
-                if looks_like_lifetime {
-                    d.note("Ember has no lifetime syntax [LEX-22]; where a relationship between regions cannot be inferred, return an owned value, or use an index, a view struct or `@borrows` [LT-6]")
-                } else {
-                    d
-                }
+            let d = Diagnostic::error(codes::E0008, span, "unterminated character literal");
+            let d = if looks_like_lifetime {
+                d.note("Ember has no lifetime syntax [LEX-22]; where a relationship between regions cannot be inferred, return an owned value, or use an index, a view struct or `@borrows` [LT-6]")
             } else {
-                Diagnostic::error(codes::E0101, span, "a character literal holds exactly one character")
+                d
             };
             self.sink.emit(d);
             self.push(TokenKind::Error, start);
@@ -634,6 +642,23 @@ impl<'a> Lexer<'a> {
                 self.push(TokenKind::Error, start);
             }
         }
+    }
+
+    /// `[DIA-21]` P24 (ODR-186) — a single-quoted run of other than one character, `'abc'` or `''`,
+    /// is Python's string: `E0008` (a `'` begins a character literal and nothing else,
+    /// `[LEX-22]`) with the double-quoted string as a fix-it. The token is that string, so the
+    /// expression it stands in checks as the fixed one would.
+    fn single_quoted_string(&mut self, start: usize, body: String) {
+        let span = self.span(start);
+        let escaped = body.replace("\\'", "'").replace('"', "\\\"");
+        let fixed = format!("\"{escaped}\"");
+        let d = Diagnostic::error(codes::E0008, span, "a character literal holds one character, and this is a string in single quotes")
+            .habit(ember_diag::habits::Habit::P24)
+            .note("Ember writes text in double quotes; `'c'` is one `char` [LEX-22]")
+            .suggest(format!("write `{fixed}`"), span, fixed);
+        self.sink.emit(d);
+        let text = decode_escapes(&body, EscapeContext::Text, span, self.sink);
+        self.push(TokenKind::Lit(Lit::Str(text)), start);
     }
 
     // -- strings ------------------------------------------------------------

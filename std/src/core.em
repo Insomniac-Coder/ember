@@ -203,6 +203,19 @@ fn option_with_context[T, M: Display](owned o: Option[T], f: once fn() -> M) -> 
         None:
             return Err(AnyError.from(Missing(f"{f()}")))
 
+## ODR-180 — a failure that is a message: what Python's `raise ValueError("…")` means, written
+## `return Err(AnyError.msg("…"))` in a function returning `Result[T]`. Its text is the message.
+extend AnyError:
+    ## It allocates: the error is boxed (`[ERR-11]`), on the failure path only.
+    pub fn msg(owned text: String) -> AnyError:
+        return AnyError(Box(Message(text)), type_identity[Message](), [])
+
+## The error `AnyError.msg` makes: its text alone.
+@derive(Error)
+@error("{text}")
+struct Message:
+    text: String
+
 ## The error an `Option`'s `context` makes of a `None`: its text alone.
 @derive(Error)
 @error("{text}")

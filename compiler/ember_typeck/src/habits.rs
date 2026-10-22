@@ -487,6 +487,27 @@ impl Checker<'_> {
         }
     }
 
+    /// `[DIA-21]` P22 (ODR-182) — an interface's name in a type position is a class handle typed by
+    /// it (IV.1, `[OBJ-2]`); when the types implementing it are values (structs, enums) and none is a
+    /// class, a place of any of them is written another way, which the help names.
+    pub(crate) fn interface_of_values(&self, interface: Symbol, span: Span) -> Option<Diagnostic> {
+        let mut implementers = self.implemented.iter().filter(|(_, each, _)| *each == interface).map(|&(ty, ..)| ty).peekable();
+        implementers.peek()?;
+        let mut implementers = implementers;
+        if implementers.any(|ty| matches!(self.types.kind(ty), TyKind::Class(_))) {
+            return None;
+        }
+        Some(self.interface_of_values_diagnostic(interface, Diagnostic::error(codes::E2173, span, format!("`{}` is an interface, and the types implementing it are values, not classes", self.interface_shown(interface)))))
+    }
+
+    fn interface_of_values_diagnostic(&self, interface: Symbol, diagnostic: Diagnostic) -> Diagnostic {
+        let shown = self.interface_shown(interface);
+        diagnostic
+            .habit(Habit::P22)
+            .help(format!("hold such a value behind a pointer: `Box[dyn {shown}]` in a field or a collection (`Box(v)` makes one), `ref dyn {shown}` for a parameter; or take a type parameter, `[T: {shown}]`, and pass the value itself"))
+            .note(format!("an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `{shown}` has its own size, which `dyn {shown}` keeps behind a pointer (ODR-182)"))
+    }
+
     /// `[DIA-21]` P21, P26, P27 and `[DIA-12]` N4 — what a value of `expr.ty` where `expected` is
     /// wanted means in Python's terms: a `str` kept as a `String` (`to_string()`, `[TXT-9]`), a
     /// `char` where text is wanted, a message where an `AnyError` is wanted (`AnyError.msg`,
@@ -519,7 +540,17 @@ impl Checker<'_> {
                 edits,
             );
         }
+        if let TyKind::ClassInterface(interface) = *self.types.kind(expected)
+            && matches!(self.types.kind(found), TyKind::Struct(_) | TyKind::Enum(_))
+        {
+            return self.interface_of_values_diagnostic(interface, diagnostic);
+        }
         let number = |ty: Ty| self.types.is_numeric(ty);
+        if let ExprKind::Local(id) = expr.kind
+            && self.literal_locals.contains_key(&id)
+        {
+            return diagnostic;
+        }
         if number(found) && number(expected) && !(self.whole(found) && self.whole(expected)) {
             let wanted = self.types.display(expected);
             let what = match (self.types.is_float(found), self.types.is_float(expected)) {

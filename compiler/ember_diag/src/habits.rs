@@ -82,7 +82,7 @@ impl Habit {
             Habit::P16 => &[codes::E2036],
             Habit::P20 => &[codes::E2020, codes::E2072],
             Habit::P21 | Habit::P23 | Habit::P26 | Habit::P27 | Habit::P29 | Habit::P30 => &[codes::E2020],
-            Habit::P22 => &[codes::E2173],
+            Habit::P22 => &[codes::E2173, codes::E2020],
             Habit::P24 => &[codes::E0008],
             Habit::P25 => &[codes::E2072, codes::E2020],
         }

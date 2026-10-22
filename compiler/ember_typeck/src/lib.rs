@@ -12252,6 +12252,11 @@ impl<'a> Checker<'a> {
     /// latter is unsized and needs a fat pointer, while this form is a counted
     /// class owner whose vtable is found through TypeInfo under `[DSP-3]`.
     fn class_interface_type(&mut self, interface: Symbol, span: Span) -> Ty {
+        // `[DIA-21]` P22 (ODR-182) — an interface whose implementations are values, not classes.
+        if let Some(diagnostic) = self.interface_of_values(interface, span) {
+            self.sink.emit(diagnostic);
+            return self.common.error;
+        }
         if let Some(reason) = self.dyn_incompatibility(interface) {
             self.sink.emit(
                 Diagnostic::error(
@@ -31312,11 +31317,18 @@ impl<'a> Checker<'a> {
                 }
                 match *self.types.kind(value.ty) {
                     _ if self.is_text(value.ty) => {
-                        self.sink.emit(
-                            Diagnostic::error(codes::E2073, positional[0].span, "`len` of a string")
-                                .note("Python counts characters; Ember's `s.len()` counts bytes [STD-26]")
-                                .help("`s.char_count()` for Python's count, or `s.len()` for the bytes"),
-                        );
+                        // `[DIA-21]` P4 — Python's count first, then the bytes.
+                        let mut diagnostic = Diagnostic::error(codes::E2073, positional[0].span, "`len` of a string")
+                            .habit(ember_diag::habits::Habit::P4)
+                            .note("Python counts characters; Ember's `s.len()` counts bytes [STD-26]");
+                        for (method, why) in [("char_count", "for Python's count of characters"), ("len", "for the bytes")] {
+                            diagnostic.suggestions.push(ember_diag::Suggestion {
+                                message: format!("`s.{method}()` {why}"),
+                                edits: habits::receiver_edits(span, positional[0], &format!(".{method}()")),
+                                migration: false,
+                            });
+                        }
+                        self.sink.emit(diagnostic);
                         error
                     }
                     TyKind::Vec { .. } => {
@@ -32502,24 +32514,23 @@ impl<'a> Checker<'a> {
     /// `[CTL-0]` — the fix-it for a non-`bool` condition, chosen by type. The
     /// rule names four shapes; anything else gets the bare error, because a
     /// wrong suggestion costs more than none.
-    fn truthiness_fix(&self, ty: Ty) -> Option<String> {
+    /// `[CTL-0]` — the test a value that is not a `bool` stands for in Python: the help, and what
+    /// goes before and after the value to write it.
+    fn truthiness_fix(&self, ty: Ty) -> Option<(String, &'static str, &'static str)> {
+        let fix = |help: &str, before, after| Some((help.to_string(), before, after));
         match self.types.kind(ty) {
             TyKind::Vec { .. } | TyKind::Str | TyKind::Array { .. } | TyKind::ArrayN { .. } => {
-                Some("a container is not a condition: write `not xs.is_empty()`".to_string())
+                fix("a container is not a condition: write `not xs.is_empty()`", "not ", ".is_empty()")
             }
-            TyKind::Int(_) | TyKind::Uint(_) => {
-                Some("a number is not a condition: write `x != 0`".to_string())
-            }
-            TyKind::Ptr { .. } => {
-                Some("a pointer is not a condition: write `not p.is_null()`".to_string())
-            }
+            TyKind::Int(_) | TyKind::Uint(_) => fix("a number is not a condition: write `x != 0`", "", " != 0"),
+            TyKind::Ptr { .. } => fix("a pointer is not a condition: write `not p.is_null()`", "not ", ".is_null()"),
             TyKind::Enum(id) => {
                 let name = self.types.enum_def(*id).name;
                 let name = name.as_str();
                 if name.starts_with("Option") || name.ends_with(".Option") {
-                    Some("write `x.is_some()`".to_string())
+                    fix("write `x is not None`", "", " is not None")
                 } else if name.starts_with("Result") || name.ends_with(".Result") {
-                    Some("write `x.is_ok()`".to_string())
+                    fix("write `x.is_ok()`", "", ".is_ok()")
                 } else {
                     None
                 }
@@ -32548,8 +32559,18 @@ impl<'a> Checker<'a> {
                         "condition must be `bool`",
                     )
                     .primary_label(format!("this is `{shown}`"));
-                    if let Some(fix) = fix {
-                        diag = diag.help(fix);
+                    // `[DIA-21]` P8 — Python's truthiness: the test it means, as a fix-it.
+                    if let Some((fix, before, after)) = fix {
+                        let (open, close) = if habits::binds_as_operand(expr) { ("", "") } else { ("(", ")") };
+                        diag = diag.habit(ember_diag::habits::Habit::P8);
+                        diag.suggestions.push(ember_diag::Suggestion {
+                            message: fix,
+                            edits: vec![
+                                (expr.span.shrink_to_start(), ember_diag::Replacement::Text(format!("{before}{open}"))),
+                                (expr.span.shrink_to_end(), ember_diag::Replacement::Text(format!("{close}{after}"))),
+                            ],
+                            migration: false,
+                        });
                     }
                     self.sink.emit(diag);
                     return Expr { ty: bool_ty, kind: ExprKind::Error, span: expr.span };
@@ -32718,13 +32739,17 @@ impl<'a> Checker<'a> {
             return false;
         }
         let mut diagnostic = Diagnostic::error(codes::E2240, span, "`/` on two integers")
-            .note("`/` is true division in Ember, as in Python 3 [TYP-28]")
-            .help("write `a // b` for floor division")
-            .help("or convert both operands, `a as float / b as float`, for a float result");
+            .habit(ember_diag::habits::Habit::P15)
+            .note("`/` is true division in Ember, as in Python 3 [TYP-28]");
         let (left, right) = operands;
         if left.file == right.file && left.end <= right.start {
-            diagnostic = diagnostic.migrate("integer `/` to `//`", Span::new(left.file, left.end, right.start), replacement);
+            // `[DIA-21]` P15 — the fix-it, and `[CLI-20]`'s migration, are the same edit.
+            let between = Span::new(left.file, left.end, right.start);
+            diagnostic = diagnostic.suggest("write `a // b` for floor division", between, replacement).migrate("integer `/` to `//`", between, replacement);
+        } else {
+            diagnostic = diagnostic.help("write `a // b` for floor division");
         }
+        diagnostic = diagnostic.help("or convert both operands, `a as float / b as float`, for a float result");
         self.sink.emit(diagnostic);
         true
     }
@@ -53830,6 +53855,18 @@ impl<'a> Checker<'a> {
                 }
                 let shown = self.types.display(operand_ty);
                 let interface = if equality { "Eq" } else { "Ord" };
+                // `[DIA-21]` P10 — `x == None` asks whether `x` holds nothing: `x is None` (`[EXP-9]`).
+                let names_none = |e: &ast::Expr| matches!(&e.kind, ast::ExprKind::Path { segments } if segments.len() == 1 && segments[0].name.is("None"));
+                if equality && self.is_option(operand_ty) && (names_none(lhs_ast) || names_none(rhs_ast)) && lhs_ast.span.end <= rhs_ast.span.start {
+                    let is = if op == ast::BinOp::Eq { " is " } else { " is not " };
+                    self.sink.emit(
+                        Diagnostic::error(codes::E2040, span, format!("`{shown}` does not implement `Eq`, which `{}` needs", op.as_str()))
+                            .habit(ember_diag::habits::Habit::P10)
+                            .note("`x is None` tests an `Option` for nothing, whatever it holds [EXP-9]")
+                            .suggest(format!("write `x{is}None`"), Span::new(span.file, lhs_ast.span.end, rhs_ast.span.start), is),
+                    );
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                }
                 self.sink.emit(
                     Diagnostic::error(
                         codes::E2040,
