@@ -16,7 +16,7 @@ pub use lower::{lower, lower_one};
 /// Consumers of MIR should name this boundary fact rather than depending on
 /// HIR solely to construct or inspect a MIR body.
 pub use ember_hir::Mode as ParameterMode;
-pub use ember_hir::{FfiAbiParam, FfiOutputs};
+pub use ember_hir::{FfiAbiParam, FfiCounted, FfiOutputs};
 pub use ember_hir::InlineHint;
 pub use ember_hir::BorrowSource;
 

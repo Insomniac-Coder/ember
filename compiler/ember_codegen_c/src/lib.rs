@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 // resolves to it through Rust's implicit format arguments.
 use ember_branding::RUNTIME_PREFIX as RT;
 use ember_mir::{
-    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FfiOutputs, FuncRef, LocalId, LocalKind, Operand, Place,
+    AggregateKind, AssertKind, Body, Builtin, CastKind, Const, FfiAbiParam, FfiCounted, FfiOutputs, FuncRef, LocalId, LocalKind, Operand, Place,
     ParameterMode, Projection, RETURN_LOCAL, Rvalue, Stmt, StmtKind, Terminator,
 };
 use ember_mir::verify::VerifiedMir;
@@ -5929,27 +5929,21 @@ impl Emitter<'_> {
 
     fn ffi_counted_signature(&self, body: &Body) -> String {
         let counted = body.ffi_counted.as_ref().expect("counted wrapper metadata");
-        // `[FFI-11b]` — C writes the count back through its pointer, and returns nothing or the
-        // first of the Ember function's tuple (ODR-125).
-        let inout = counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. }));
-        // `[FFI-11]`, `[FFI-16]` — C's own result, which the outputs or the status replace.
-        let result = if let Some(outputs) = &counted.outputs {
-            if self.is_void(outputs.c_result) { "void".to_string() } else { self.c_type(outputs.c_result) }
-        } else if inout {
-            match self.types.kind(body.return_ty()) {
-                TyKind::Tuple(items) => self.c_type(items[0]),
-                _ => "void".to_string(),
-            }
-        } else if let Some(span) = &counted.result_span {
+        // `[FFI-11]`, `[FFI-11b]`, `[FFI-16]` — C's own result, which comes first among the
+        // outputs, or which a status replaces.
+        let c_result = counted.outputs.as_ref().map_or(body.return_ty(), |outputs| outputs.c_result);
+        let result = if let Some(span) = &counted.result_span {
             let elem = self.c_type(span.elem);
             if span.mutable { format!("{elem}*") } else { format!("const {elem}*") }
         } else if let Some(array) = &counted.result_array {
             let elem = self.c_type(array.elem);
             if array.mutable { format!("{elem}*") } else { format!("const {elem}*") }
+        } else if self.is_void(c_result) {
+            "void".to_string()
         } else {
-            match self.types.kind(body.return_ty()) {
+            match self.types.kind(c_result) {
                 TyKind::Ref { mutable: false, inner } => format!("const {}*", self.c_type(*inner)),
-                _ => self.c_type(body.return_ty()),
+                _ => self.c_type(c_result),
             }
         };
         let params: Vec<_> = counted.abi_params.iter().enumerate().map(|(index, param)| {
@@ -6043,29 +6037,11 @@ impl Emitter<'_> {
         else { format!("({arg}).len") }
     }
 
-    /// `[FFI-11]`, `[FFI-16]` — the end of a wrapper whose call returns its `out` parameters:
-    /// with a status, `Ok` of them when C returned the success code and `Err(N(code))`
-    /// otherwise (an output is not read then); without one, C's own result and then them, or
-    /// them alone where C returns `void` (ODR-137).
-    fn emit_ffi_outputs(&mut self, body: &Body, outputs: &FfiOutputs, call: &str, outs: &[String]) {
+    /// `[FFI-16]` — the end of a wrapper whose C function returns a status: `Ok` of the outputs
+    /// (nothing, the one, or a tuple in C's order, ODR-137) when C returned the success code, and
+    /// `Err(N(code))` otherwise (an output is not read then).
+    fn emit_ffi_status(&mut self, body: &Body, outputs: &FfiOutputs, ok: i128, call: &str, outs: &[String]) {
         let ret = body.return_ty();
-        // What the outputs make: nothing, the one, or a tuple of type `ty`.
-        let value = |this: &Self, ty: Ty| match outs {
-            [] => None,
-            [one] => Some(one.clone()),
-            many => Some(format!("({}){{ {} }}", this.c_type(ty), many.join(", "))),
-        };
-        let Some(ok) = outputs.status_ok else {
-            if self.is_void(outputs.c_result) {
-                self.line(&format!("    {call};"));
-                let made = value(self, ret).expect("a call with no C result returns its outputs");
-                self.line(&format!("    return {made};"));
-            } else {
-                self.line(&format!("    {} _ffi_c = {call};", self.c_type(outputs.c_result)));
-                self.line(&format!("    return ({}){{ _ffi_c, {} }};", self.c_type(ret), outs.join(", ")));
-            }
-            return;
-        };
         let TyKind::Enum(id) = *self.types.kind(ret) else { unreachable!("a status call returns a `Result`") };
         assert!(self.types.option_niche(id).is_none(), "a `Result` has a tag");
         let def = self.types.enum_def(id).clone();
@@ -6079,7 +6055,7 @@ impl Emitter<'_> {
         self.line(&format!("    if (_ffi_status == ({status}){ok}) {{"));
         let ok_field = &ok_variant.fields[0];
         if !self.is_void(ok_field.ty)
-            && let Some(made) = value(self, ok_field.ty)
+            && let Some(made) = self.ffi_tuple_of(None, outs, ok_field.ty)
         {
             self.line(&format!("        _ffi_result.payload.{}.{} = {made};", member(ok_variant.name), member(ok_field.name)));
         }
@@ -6090,6 +6066,83 @@ impl Emitter<'_> {
         self.line(&format!("        _ffi_result.tag = {};", err_variant.discriminant));
         self.line("    }");
         self.line("    return _ffi_result;");
+    }
+
+    /// `[FFI-11]`, `[FFI-11b]` — what a call returns of C's result and its outputs: C's result
+    /// first, then the outputs in C's order; one value alone; a tuple of type `ty` for several
+    /// (ODR-125, ODR-137). `None` when there is nothing.
+    fn ffi_tuple_of(&self, first: Option<&str>, outs: &[String], ty: Ty) -> Option<String> {
+        let parts: Vec<&str> = first.into_iter().chain(outs.iter().map(String::as_str)).collect();
+        match parts.as_slice() {
+            [] => None,
+            [one] => Some(one.to_string()),
+            many => Some(format!("({}){{ {} }}", self.c_type(ty), many.join(", "))),
+        }
+    }
+
+    /// `[FFI-10]`, `[FFI-11]`, `[FFI-36a]` — C's result as the Ember value its contract makes
+    /// of it, of type `ty`, in the local `_ffi_value`: a counted result's view, a fixed array's
+    /// reference, a new object's `ForeignBox` (recorded, with its destructor and, under
+    /// `threads(creator)`, its creator), or the value itself. `None` when C returns `void`.
+    fn emit_ffi_result_value(&mut self, body: &Body, counted: &FfiCounted, ty: Ty, call: &str) -> Option<String> {
+        let args: Vec<_> = body.args().map(|(id, _)| format!("_{}", id.0)).collect();
+        if let Some(owned) = &counted.result_owned {
+            let boxed = self.foreign_box_type(ty, owned.nullable);
+            let fields = self.foreign_box_fields(boxed);
+            let (pointer, destructor_ty, box_c) = (self.c_type(fields[0]), self.c_type(fields[1]), self.c_type(boxed));
+            self.line(&format!("    extern {} {}({pointer});", self.c_type(owned.destructor_ret), owned.destructor));
+            let destructor = if self.is_void(owned.destructor_ret) {
+                owned.destructor.to_string()
+            } else {
+                foreign_destructor_thunk(owned.destructor.as_str())
+            };
+            let creator = if owned.creator { format!("{RT}ffi_thread()") } else { "0".to_string() };
+            self.line(&format!("    {pointer} _ffi_object = {call};"));
+            let made = format!(
+                "({box_c}){{ ({pointer}){RT}ffi_adopt((void*)_ffi_object, {}), ({destructor_ty}){destructor}, {creator} }}",
+                self.location(body.span),
+            );
+            self.line(&format!("    {} _ffi_value;", self.c_type(ty)));
+            if owned.nullable {
+                let TyKind::Enum(id) = *self.types.kind(ty) else { unreachable!("a nullable owned result is an `Option`") };
+                assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
+                let def = self.types.enum_def(id);
+                let (none, some) = (&def.variants[0], &def.variants[1]);
+                self.line("    memset(&_ffi_value, 0, sizeof _ffi_value);");
+                self.line(&format!("    if (_ffi_object == NULL) {{ _ffi_value.tag = {}; }} else {{", none.discriminant));
+                self.line(&format!("        _ffi_value.payload.{}.{} = {made};", member(some.name), member(some.fields[0].name)));
+                self.line(&format!("        _ffi_value.tag = {};", some.discriminant));
+                self.line("    }");
+            } else {
+                self.line(&format!("    _ffi_value = {made};"));
+            }
+            return Some("_ffi_value".to_string());
+        }
+        if let Some(result) = &counted.result_span {
+            let elem = self.c_type(result.elem);
+            let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
+            self.line(&format!("    {pointer} _ffi_pointer = {call};"));
+            let source = self.ffi_span_length(&args[result.public_index], result.source_nullable);
+            let len = if result.nullable {
+                format!("(_ffi_pointer == NULL ? SIZE_MAX : {source})")
+            } else {
+                source
+            };
+            self.line(&format!("    {} _ffi_value = ({}){{ _ffi_pointer, {len} }};", self.c_type(ty), self.c_type(ty)));
+            return Some("_ffi_value".to_string());
+        }
+        if self.is_void(ty) {
+            self.line(&format!("    {call};"));
+            return None;
+        }
+        let value = if counted.result_array.is_some()
+            || matches!(self.types.kind(ty), TyKind::Ref { mutable: false, .. }) {
+            format!("({})({call})", self.c_type(ty))
+        } else {
+            call.to_string()
+        };
+        self.line(&format!("    {} _ffi_value = {value};", self.c_type(ty)));
+        Some("_ffi_value".to_string())
     }
 
     fn emit_ffi_counted_wrapper(&mut self, body: &Body) {
@@ -6160,9 +6213,11 @@ impl Emitter<'_> {
                         self.line("#endif");
                     }
                     if *inout {
-                        // `[FFI-11b]` — C reads the capacity and writes the count back here.
+                        // `[FFI-11b]` — C reads the capacity and writes the count back here: an
+                        // output, in its place among the `out` parameters.
                         self.line(&format!("    {ty} _ffi_count = ({ty}){first};", ty = self.c_type(*ty)));
                         foreign_args.push("&_ffi_count".to_string());
+                        outs.push("_ffi_count".to_string());
                     } else {
                         foreign_args.push(format!("({}){first}", self.c_type(*ty)));
                     }
@@ -6199,80 +6254,17 @@ impl Emitter<'_> {
             }
         }
         let call = format!("{}({})", counted.foreign_symbol, foreign_args.join(", "));
-        if let Some(outputs) = &counted.outputs {
-            self.emit_ffi_outputs(body, outputs, &call, &outs);
-            self.line("}");
-            self.line("");
-            return;
-        }
-        // `[FFI-36a]`, `[FFI-33b]` — a new object the caller owns: recorded, boxed with its
-        // destructor, and its creator when the contract says `threads(creator)`.
-        if let Some(owned) = &counted.result_owned {
-            let ret = body.return_ty();
-            let boxed = self.foreign_box_type(ret, owned.nullable);
-            let fields = self.foreign_box_fields(boxed);
-            let (pointer, destructor_ty, box_c) = (self.c_type(fields[0]), self.c_type(fields[1]), self.c_type(boxed));
-            self.line(&format!("    extern {} {}({pointer});", self.c_type(owned.destructor_ret), owned.destructor));
-            let destructor = if self.is_void(owned.destructor_ret) {
-                owned.destructor.to_string()
-            } else {
-                foreign_destructor_thunk(owned.destructor.as_str())
-            };
-            let creator = if owned.creator { format!("{RT}ffi_thread()") } else { "0".to_string() };
-            self.line(&format!("    {pointer} _ffi_result = {call};"));
-            let made = format!(
-                "({box_c}){{ ({pointer}){RT}ffi_adopt((void*)_ffi_result, {}), ({destructor_ty}){destructor}, {creator} }}",
-                self.location(body.span),
-            );
-            if owned.nullable {
-                let option = self.c_type(ret);
-                let TyKind::Enum(id) = *self.types.kind(ret) else { unreachable!("a nullable owned result is an `Option`") };
-                assert!(self.types.option_niche(id).is_none(), "an `Option[ForeignBox[T]]` has a tag");
-                let def = self.types.enum_def(id);
-                let (none, some) = (&def.variants[0], &def.variants[1]);
-                self.line(&format!("    {option} _ffi_option;"));
-                self.line("    memset(&_ffi_option, 0, sizeof _ffi_option);");
-                self.line(&format!("    if (_ffi_result == NULL) {{ _ffi_option.tag = {}; return _ffi_option; }}", none.discriminant));
-                self.line(&format!("    _ffi_option.payload.{}.{} = {made};", member(some.name), member(some.fields[0].name)));
-                self.line(&format!("    _ffi_option.tag = {};", some.discriminant));
-                self.line("    return _ffi_option;");
-            } else {
-                self.line(&format!("    return {made};"));
-            }
-            self.line("}");
-            self.line("");
-            return;
-        }
-        if counted.abi_params.iter().any(|param| matches!(param, FfiAbiParam::Count { inout: true, .. })) {
-            if let TyKind::Tuple(items) = self.types.kind(body.return_ty()).clone() {
-                self.line(&format!("    {} _ffi_result = {call};", self.c_type(items[0])));
-                self.line(&format!("    return ({}){{ _ffi_result, _ffi_count }};", self.c_type(body.return_ty())));
-            } else {
-                self.line(&format!("    {call};"));
-                self.line("    return _ffi_count;");
-            }
-        } else if let Some(result) = &counted.result_span {
-            let elem = self.c_type(result.elem);
-            let pointer = if result.mutable { format!("{elem}*") } else { format!("const {elem}*") };
-            self.line(&format!("    {pointer} _ffi_result = {call};"));
-            let source = self.ffi_span_length(&args[result.public_index], result.source_nullable);
-            let len = if result.nullable {
-                format!("(_ffi_result == NULL ? SIZE_MAX : {source})")
-            } else {
-                source
-            };
-            self.line(&format!("    return ({}){{ _ffi_result, {len} }};", self.c_type(body.return_ty())));
-        } else if self.is_void(body.return_ty()) {
-            self.line(&format!("    {call};"));
-            self.line("    return;");
+        if let Some(outputs) = &counted.outputs
+            && let Some(ok) = outputs.status_ok {
+            self.emit_ffi_status(body, outputs, ok, &call, &outs);
         } else {
-            let value = if counted.result_array.is_some()
-                || matches!(self.types.kind(body.return_ty()), TyKind::Ref { mutable: false, .. }) {
-                format!("({})({call})", self.c_type(body.return_ty()))
-            } else {
-                call
-            };
-            self.line(&format!("    return {value};"));
+            let ret = body.return_ty();
+            let c_result = counted.outputs.as_ref().map_or(ret, |outputs| outputs.c_result);
+            let value = self.emit_ffi_result_value(body, counted, c_result, &call);
+            match self.ffi_tuple_of(value.as_deref(), &outs, ret) {
+                Some(made) => self.line(&format!("    return {made};")),
+                None => self.line("    return;"),
+            }
         }
         self.line("}");
         self.line("");

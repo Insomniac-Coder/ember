@@ -9516,24 +9516,19 @@ impl<'a> Checker<'a> {
                     } else {
                         HashSet::new()
                     };
-                    // `[FFI-11b]` — the two-call idiom returns the count C wrote back: in place of
-                    // C's `void`, or after C's own result in a tuple (ODR-125); `check_inout_counts`
-                    // refuses a result with an ownership or length contract.
-                    let inout_count = if decl.is_foreign_decl && decl.is_safe
-                        && (decl.ret.is_none() || (ffi_result_contract(&item.attrs).is_none() && ffi_owned_result(&item.attrs).is_none()))
-                    {
-                        ffi_inout_counts(&item.attrs).first().and_then(|(count, _)|
-                            params.iter().find(|(name, _, _, _)| name == count).map(|(_, ty, _, _)| *ty))
+                    // `[FFI-11]`, `[FFI-11b]` — what C writes through a pointer the call returns,
+                    // in C's order (ODR-137): each `out` parameter, and the count an
+                    // `inout_count` gets back. Both leave the callable signature.
+                    let (outs, inout) = if decl.is_foreign_decl && decl.is_safe {
+                        (ffi_out_params(&item.attrs), ffi_inout_counts(&item.attrs).first().map(|(count, _)| *count))
                     } else {
-                        None
+                        (Vec::new(), None)
                     };
-                    params.retain(|(name, _, _, _)| !count_witnesses.contains(name));
-                    // `[FFI-11]` — each `out` parameter leaves the callable signature; the call
-                    // returns what C wrote there, in C's order (ODR-137).
-                    let outs = if decl.is_foreign_decl && decl.is_safe { ffi_out_params(&item.attrs) } else { Vec::new() };
                     let out_params: Vec<(Symbol, Ty)> = params.iter().filter(|(name, _, _, _)| outs.contains(name)).map(|(name, ty, _, _)| (*name, *ty)).collect();
-                    let out_tys: Vec<Ty> = out_params.iter().map(|(_, ty)| *ty).collect();
-                    params.retain(|(name, _, _, _)| !outs.contains(name));
+                    let out_tys: Vec<Ty> = params.iter()
+                        .filter(|(name, _, _, _)| outs.contains(name) || inout == Some(*name))
+                        .map(|(_, ty, _, _)| *ty).collect();
+                    params.retain(|(name, _, _, _)| !count_witnesses.contains(name) && !outs.contains(name));
                     let status = decl.is_foreign_decl && decl.is_safe && ffi_status_result(&item.attrs);
                     let ret = decl
                         .ret
@@ -9546,18 +9541,9 @@ impl<'a> Checker<'a> {
                             self.in_return_type -= 1;
                             self.reject_unsized_by_value(resolved, t.span, "a return type")
                         })
-                        .map(|result| match inout_count {
-                            Some(count) => self.types.intern(TyKind::Tuple(vec![result, count])),
-                            None => result,
-                        })
-                        .or(inout_count)
                         .unwrap_or(self.common.void);
                     let mut c_result = None;
-                    let ret = if (status || !out_tys.is_empty()) && inout_count.is_some() {
-                        self.error(codes::E0900, decl.name.span,
-                            "an `inout_count` function with `out` parameters or a status result is not implemented yet");
-                        ret
-                    } else if status {
+                    let ret = if status {
                         // `[FFI-16]` — `Result[T, N]`, `T` the outputs.
                         let error = match *self.types.kind(ret) {
                             TyKind::Enum(id) => self.status_enums.get(&id).and_then(|(_, error)| self.named_types.get(error).copied()),
@@ -9585,8 +9571,8 @@ impl<'a> Checker<'a> {
                             }
                         }
                     } else if !out_tys.is_empty() {
-                        // `[FFI-11b]` — C's own result first, then the outputs; the outputs
-                        // alone where C returns `void`.
+                        // `[FFI-11b]` — C's own result first (as its contract makes it), then the
+                        // outputs; the outputs alone where C returns `void` (ODR-125).
                         c_result = Some(ret);
                         if ret == self.common.void {
                             self.ffi_outputs_value(&out_tys)
@@ -20039,13 +20025,9 @@ impl<'a> Checker<'a> {
             .map(|(n, t, m, s)| (*n, *t, *m, *s))
             .collect();
         let ret = self.signatures[def.0 as usize].ret;
-        // `[FFI-11b]` — an `inout_count` function's tuple: C returns its first part (ODR-125).
-        // `[FFI-11]`, `[FFI-16]` — one returning its `out` parameters or a status, C's own result.
-        let ret = match self.types.kind(ret) {
-            _ if self.foreign_c_results.contains_key(&def) => self.foreign_c_results[&def],
-            TyKind::Tuple(items) if decl.is_foreign_decl && !ffi_inout_counts(attrs).is_empty() => items[0],
-            _ => ret,
-        };
+        // `[FFI-11]`, `[FFI-11b]`, `[FFI-16]` — one returning its `out` parameters, an
+        // `inout_count`'s count or a status: C's own result is what its contract describes.
+        let ret = self.foreign_c_results.get(&def).copied().unwrap_or(ret);
         if decl.is_foreign_decl {
             self.check_ffi_outputs(def, decl, attrs);
         }
@@ -20189,7 +20171,7 @@ impl<'a> Checker<'a> {
         if decl.is_foreign_decl {
             let inout_counts = ffi_inout_counts(attrs);
             if decl.is_safe {
-                self.check_inout_counts(decl, attrs, &inout_counts, &contracts);
+                self.check_inout_counts(decl, &inout_counts, &contracts);
             }
             let mut checked_witnesses = HashSet::new();
             for &(_, kind) in &contracts {
@@ -20522,7 +20504,7 @@ impl<'a> Checker<'a> {
     /// `count(n)` witness is), with `param(items, borrowed, count(count), nullable, exclusive)`, so
     /// the function takes `Option[MutSpan[T]]` and returns the count C wrote back; with a C result of
     /// its own, a tuple of that result and the count (ODR-125).
-    fn check_inout_counts(&mut self, decl: &ast::FnDecl, attrs: &[ast::Attribute], inout_counts: &[(Symbol, Symbol)],
+    fn check_inout_counts(&mut self, decl: &ast::FnDecl, inout_counts: &[(Symbol, Symbol)],
         contracts: &[(Symbol, FfiPointerContract)])
     {
         if inout_counts.len() > 1 {
@@ -20549,15 +20531,6 @@ impl<'a> Checker<'a> {
                     Diagnostic::error(codes::E5002, decl.name.span,
                         format!("`inout_count({items})` needs `param({items}, borrowed, count({count}), nullable, exclusive)`"))
                         .note("the function takes `Option[MutSpan[T]]`: `None` asks for the count, `Some` is filled [FFI-11b]"),
-                );
-            }
-            if let Some(result) = &decl.ret
-                && (ffi_result_contract(attrs).is_some() || ffi_owned_result(attrs).is_some())
-            {
-                self.sink.emit(
-                    Diagnostic::error(codes::E0900, result.span,
-                        "an `inout_count` function whose C result has a contract is not implemented yet")
-                        .note("a plain C result is returned first in a tuple, then the count [FFI-11b]"),
                 );
             }
         }
@@ -20776,6 +20749,9 @@ impl<'a> Checker<'a> {
         result_ty: Ty,
     ) -> Option<hir::FfiCounted> {
         if !decl.is_foreign_decl { return None; }
+        // `[FFI-11]`, `[FFI-11b]` — a call returning outputs returns C's result first, as its
+        // contract makes it.
+        let result_ty = self.foreign_c_results.get(&def).copied().unwrap_or(result_ty);
         let borrowed_aggregate = visible.iter().any(|&(_, ty, mode, _)|
             mode == Mode::Borrow && self.types.is_ffi_safe(ty) && self.types.passed_by_address(ty));
         // An unsafe declaration retains its written C signature. It still
