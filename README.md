@@ -48,7 +48,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 7 | C++ interoperability and the interpreter | 85% |
 | 7a | Iteration, determinism, cost control | 89% |
 | 8 | Hardening and 1.0 | 70% |
-| | Overall (1.0) | 89% |
+| | Overall (1.0) | 90% |
 | | After 1.0: the LLVM backend (v2), the GPU host model (v0.6) | 0% |
 
 The latest language work is the owner's design G8-4, which made the language 0.9.10
