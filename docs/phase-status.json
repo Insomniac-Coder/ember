@@ -53,7 +53,7 @@
     "TYP-43": "not built: an `unsafe interface`, implemented only by an `unsafe extend` (`E3100` without it, ODR-175)",
     "STD-26": "not built: `sorted` over an iterator of references (`sorted(m.keys())`) giving an array of clones (ODR-207)",
     "GRM-17": "not built: a `:` lambda body on the lambda's own line outside brackets, ended by the statement's `NEWLINE` (`h = fn(x): total += x`, ODR-209)",
-    "STD-19": "not built: the consumers that apply a callable (`any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`, the `_by` and `_by_key` forms) taking it over (ODR-210)",
+    "STD-19": "not built: every standard-library function that takes a callable (the consumers `any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`, the `_by` and `_by_key` forms, and the adapters `map`, `filter`, …) borrowing a named callable the caller passes, a lambda written at the call given to it (ODR-240, the owner's answer, replacing ODR-210)",
     "LT-1a": "not built: `@borrows(self.f)` naming a field whose type is a type parameter, checked per instance (ODR-211)",
     "MNG-3": "not built: an ASCII `_` that begins what would otherwise read as an escape written `_u005F_`, in every component, which is then marked `u`; C member names spelled alike (ODR-213)",
     "MNG-1": "not built: a built-in type's path under `std.core` in a symbol (`std.core.str`, ODR-215)",
