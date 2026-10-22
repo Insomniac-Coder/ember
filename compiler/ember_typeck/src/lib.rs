@@ -30044,11 +30044,9 @@ impl<'a> Checker<'a> {
                 self.scan(receiver, elem, value, name.name.is("contains"), span).unwrap_or(error)
             }
             _ => {
-                // A reference into the array, so the array must be a place.
-                if !is_place(&receiver.kind) {
-                    self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
-                    return error;
-                }
+                // A reference into the array. A temporary array is borrowed
+                // where it is made and lives to the end of its statement
+                // (`[EXP-4]`); the borrow checker rejects a use past that.
                 let span_ty = self.types.intern(TyKind::Span { elem, mutable: false });
                 let view = self.view_of(receiver, span_ty, false, Builtin::SpanFrom { mutable: false });
                 let index = match name.name.as_str() {
@@ -50851,15 +50849,11 @@ impl<'a> Checker<'a> {
                     span,
                 }
             }
-        } else if self.viewed_place(&receiver) {
-            receiver
         } else {
-            self.error(
-                codes::E2140,
-                span,
-                "this operation needs a mutable span variable or a view of a mutable place",
-            );
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            // A view of a place, or a view that is itself a temporary
+            // (`make().iter_mut()`, `[EXP-4]`): no caller holds it, so the
+            // iterator takes it as it is.
+            receiver
         };
         let view = self.types.intern(TyKind::Span { elem, mutable });
         Expr {
@@ -51005,10 +50999,9 @@ impl<'a> Checker<'a> {
         if let Some((mutable, method)) = through_view
             && !is_string
         {
-            if !is_place(&receiver.kind) {
-                self.error(codes::E2140, span, format!("`{}` needs an Array variable to point into", name.name));
-                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-            }
+            // `[EXP-4]` — a temporary array is viewed where it is made: it
+            // lives to the end of its statement, or of the loop whose
+            // iterable made it (`for x in make().iter()`).
             let view_ty = self.types.intern(TyKind::Span { elem, mutable });
             let view = self.view_of(receiver, view_ty, mutable, Builtin::SpanFrom { mutable });
             return self.synth_span_method(view, recv_span, elem, mutable, method, args, span);
