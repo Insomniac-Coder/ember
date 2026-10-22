@@ -2623,8 +2623,8 @@ struct Checker<'a> {
     /// `[MNG-1]` — each instantiation's arguments, canonically spelled: the hash in its symbol, and
     /// what `E9040` names when two instances' hashes meet.
     instance_spellings: HashMap<DefId, String>,
-    /// `[MNG-1]` — each instance symbol made, with the path and arguments it was made from and
-    /// where: a second made from others is `E9040`.
+    /// `[MNG-1]` — each instance symbol made, with the instance it was made for: another instance
+    /// with it is `E9040`.
     instance_symbols: InstanceSymbols,
     /// Structs declared with type parameters, by qualified name.
     generic_structs: HashMap<Symbol, GenericStruct>,

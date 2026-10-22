@@ -3694,7 +3694,7 @@ fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
     // A write of `items` from a local outside `Log`'s constructor (its definition, the last mention),
     // whose own write (`[CLS-2]`: through a temporary, after the field's drop flag) is no write-back.
     let written_back = |c: &str| {
-        let init = c.rfind("Log_init(struct").unwrap_or(c.len());
+        let init = c.rfind(&format!("{}(struct", ember_branding::item_symbol("Log.init"))).unwrap_or(c.len());
         let (before, after) = c.split_at(init);
         let after = after.find("\n}\n").map_or("", |end| &after[end..]);
         before.contains("->items = _") || after.contains("->items = _")
@@ -3853,7 +3853,9 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
-    assert!(msvc.stdout.contains("_bump(&_"), "the call does not take the object's address directly:\n{}", msvc.stdout);
+    // `[CG-C-7]` — the object is the local `t`, by its own name.
+    let bump = format!("{}(&t)", ember_branding::item_symbol("Tally.bump"));
+    assert!(msvc.stdout.contains(&bump), "the call does not take the object's address directly:\n{}", msvc.stdout);
     let total_of = format!("{}(", ember_branding::item_symbol("total_of"));
     let start = msvc
         .stdout
@@ -6760,9 +6762,10 @@ fn text_iterator_loops_are_counted_loops_without_the_iterator() {
         // ADR-155: MSVC's native step behind the ASCII test takes the lead byte.
         let native = main.contains("str_char_next_usize(") || main.contains("str_char_next_wide_usize(");
         assert!(native, "{cc}: no native text loop in main:\n{main}");
-        assert!(!main.contains("CharIndices_next(") && !main.contains("Bytes_next("), "{cc}: a loop calls `next`:\n{main}");
+        let next = |iterator: &str| format!("{}(", ember_branding::item_symbol(&format!("std.string.{iterator}.next")));
+        assert!(!main.contains(&next("CharIndices")) && !main.contains(&next("Bytes")), "{cc}: a loop calls `next`:\n{main}");
         if cc == "clang" {
-            assert!(main.contains("Chars_next("), "clang: the iterator held in a variable lost its `next`:\n{main}");
+            assert!(main.contains(&next("Chars")), "clang: the iterator held in a variable lost its `next`:\n{main}");
         }
     }
 }
@@ -6910,7 +6913,8 @@ fn an_iterator_loop_without_else_has_no_flag() {
     let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
     let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
-    assert!(main.contains("Countdown_next(") && !main.contains("__done"), "the loop keeps a flag:\n{main}");
+    let next = format!("{}(", ember_branding::item_symbol("Countdown.next"));
+    assert!(main.contains(&next) && !main.contains("__done"), "the loop keeps a flag:\n{main}");
 }
 
 /// ADR-107 — for MSVC, a `for` loop's step through a standard iterator is
@@ -6924,8 +6928,9 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     let main = c_definition(&msvc.stdout, &ember_branding::entry_symbol());
-    for step in ["Lines_next(", "Split_next(", "SplitWhitespace_next("] {
-        assert!(!main.contains(step), "the loop still calls {step}:\n{main}");
+    let next = |iterator: &str| format!("{}(", ember_branding::item_symbol(&format!("std.string.{iterator}.next")));
+    for step in ["Lines", "Split", "SplitWhitespace"].map(next) {
+        assert!(!main.contains(&step), "the loop still calls {step}:\n{main}");
     }
     // `#line` markers sit between a label and its first statement.
     let lines: Vec<&str> = main.lines().filter(|line| !line.starts_with("#line")).collect();
@@ -6935,7 +6940,7 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     assert!(!entered_test, "a loop still tests what its step gave back:\n{main}");
     let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
-    assert!(c_definition(&clang.stdout, &ember_branding::entry_symbol()).contains("Split_next("), "clang's loop lost its call");
+    assert!(c_definition(&clang.stdout, &ember_branding::entry_symbol()).contains(&next("Split")), "clang's loop lost its call");
 }
 
 /// D-474 — a body instantiated from `std` (a generic function's instance, a

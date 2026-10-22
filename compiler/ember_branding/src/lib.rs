@@ -190,7 +190,7 @@ pub fn symbol(mangled: &str) -> String {
 /// A name the compiler makes for itself, not for an item: `em_` and `tag`, which begins with a
 /// letter (`em_closure3`, `em_drop_glue_2`), so it is never an item's (whose path begins with a
 /// digit). A name keyed by types or items writes their mangled forms after the tag, each after
-/// `_` (`em_vt_dyn_7Observe_6Reader`): a mangled form begins with a digit and its components'
+/// `_` (`em_vt_dyn_7Observe_4Bump`): a mangled form begins with a digit and its components'
 /// lengths say where it ends, so a `_` followed by a digit starts the next one, and one followed by
 /// a letter starts a tag of the name's own (`_slot0`).
 pub fn generated(tag: &str) -> String {

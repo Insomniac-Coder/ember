@@ -117,12 +117,6 @@ pub struct HeaderOutput {
     pub cpp_source: String,
 }
 
-/// A name the backend makes for a class (`tag`, as `drop_fields`), keyed by the class's mangled
-/// form (`[MNG-1]`): `em_drop_fields_6Animal`.
-fn class_helper_symbol(tag: &str, mangled_class: &str) -> String {
-    format!("{}_{mangled_class}", ember_branding::generated(tag))
-}
-
 /// A C-table identity for one ordered `dyn` bound list: each interface's mangled form (`[MNG-1]`),
 /// in order, after `_` (`_7Observe_4Bump`). A composed carrier gets its own table rather than
 /// pretending its first bound describes every slot.
@@ -1175,10 +1169,10 @@ impl Emitter<'_> {
         ember_branding::type_info(&self.mangled_type(TypeNode::Class(id)))
     }
 
-    /// A function the backend writes for a class (`drop_fields`, `drop_adapter`, `debug_edges`,
-    /// `itables`): its tag and the class's mangled form.
+    /// A name the backend makes for a class (`drop_fields`, `drop_adapter`, `debug_edges`,
+    /// `itables`): its tag and the class's mangled form (`em_drop_fields_6Animal`).
     fn class_helper(&self, tag: &str, id: ClassId) -> String {
-        class_helper_symbol(tag, &self.mangled_type(TypeNode::Class(id)))
+        format!("{}_{}", ember_branding::generated(tag), self.mangled_type(TypeNode::Class(id)))
     }
 
     /// `[OWN-2]` — the symbol of the class `id`'s own `drop` method, as the checker named it.
