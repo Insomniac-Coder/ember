@@ -545,8 +545,137 @@ fn arguments_returned(body: &Body) -> Option<Vec<usize>> {
 }
 
 /// Rounds before a body is left without facts: a guard, since widening
-/// bounds every chain.
+/// bounds every chain. A loop's turns while it settles have the same guard.
 const MAX_ROUNDS: usize = 200;
+
+/// One solve's working facts (`Analysis::solve_with`).
+struct Solve<'s, 'a> {
+    analysis: &'s Analysis<'a>,
+    headers: &'s HashSet<usize>,
+    loop_writes: &'s HashMap<usize, HashSet<LocalId>>,
+    thresholds: &'s HashMap<usize, Vec<i128>>,
+    entry: Vec<Option<State>>,
+    /// Per block, how many times its entry state changed.
+    visits: Vec<usize>,
+}
+
+impl Solve<'_, '_> {
+    /// Follow `block`'s edges from its entry state into its successors' (a loop header's widened
+    /// from its third change on); whether any of theirs changed.
+    fn visit(&mut self, block: usize) -> bool {
+        let analysis = self.analysis;
+        if analysis.branch_only(block, self.headers) {
+            return false;
+        }
+        let Some(state) = self.entry[block].clone() else { return false };
+        let exit = analysis.exit_state(block, state);
+        let mut changed = false;
+        for (target, incoming) in analysis.successors_through_branches(block, exit, self.headers) {
+            let merged = match &self.entry[target] {
+                None => incoming,
+                Some(old) => {
+                    let joined = old.join(&incoming);
+                    if self.headers.contains(&target) && self.visits[target] > 1 {
+                        old.widen(
+                            &joined,
+                            analysis,
+                            self.loop_writes.get(&target).unwrap_or(&HashSet::new()),
+                            self.thresholds.get(&target).map_or(&[], Vec::as_slice),
+                        )
+                    } else {
+                        joined
+                    }
+                }
+            };
+            let merged = analysis.seeded(target, merged);
+            if self.entry[target].as_ref() != Some(&merged) {
+                self.entry[target] = Some(merged);
+                self.visits[target] += 1;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// D-811 — one level of the loop nest in order, each loop in it turned until its header's
+    /// state stops changing (the loops inside settled within each turn) before what follows it:
+    /// Bourdoncle's recursive iteration over a weak topological order. `None` when a loop does
+    /// not settle within `MAX_ROUNDS` turns.
+    fn settle(&mut self, nest: &LoopNest, elements: &[Element]) -> Option<()> {
+        for element in elements {
+            match *element {
+                Element::Block(block) => {
+                    self.visit(block);
+                }
+                Element::Loop(header) => {
+                    let mut turns = 0;
+                    loop {
+                        turns += 1;
+                        if turns > MAX_ROUNDS {
+                            return None;
+                        }
+                        let seen = self.visits[header];
+                        self.visit(header);
+                        self.settle(nest, &nest.inner[&header])?;
+                        if self.visits[header] == seen {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Some(())
+    }
+}
+
+/// A body's blocks as a weak topological order made from its natural loops: the top level's
+/// elements in reverse postorder, a loop one element standing for all its blocks, and each
+/// loop's own elements, its header left out.
+struct LoopNest {
+    top: Vec<Element>,
+    inner: HashMap<usize, Vec<Element>>,
+}
+
+enum Element {
+    Block(usize),
+    /// The loop with this header.
+    Loop(usize),
+}
+
+impl LoopNest {
+    fn new(body: &Body, order: &[usize], headers: &HashSet<usize>) -> LoopNest {
+        let loops = natural_loops(body, order, headers);
+        // A level's blocks in order, past its head; a loop whose blocks are all the level's, and
+        // which does not hold the head, is one element (so each level is strictly smaller than
+        // the one around it, also when the graph is not reducible).
+        let level = |blocks: &[usize], head: Option<usize>, within: &dyn Fn(usize) -> bool| -> Vec<Element> {
+            let mut covered: HashSet<usize> = HashSet::new();
+            let mut out = Vec::new();
+            for &block in blocks {
+                if Some(block) == head || covered.contains(&block) {
+                    continue;
+                }
+                match loops.get(&block) {
+                    Some(inside) if head.is_none_or(|head| !inside.contains(&head)) && inside.iter().all(|&b| within(b)) => {
+                        covered.extend(inside.iter().copied());
+                        out.push(Element::Loop(block));
+                    }
+                    _ => out.push(Element::Block(block)),
+                }
+            }
+            out
+        };
+        let top = level(order, None, &|_| true);
+        let inner = loops
+            .iter()
+            .map(|(&header, inside)| {
+                let blocks: Vec<usize> = order.iter().copied().filter(|block| inside.contains(block)).collect();
+                (header, level(&blocks, Some(header), &|block| inside.contains(&block)))
+            })
+            .collect();
+        LoopNest { top, inner }
+    }
+}
 
 /// The most thresholds one loop's widening tries.
 const MAX_THRESHOLDS: usize = 64;
@@ -1897,11 +2026,20 @@ impl<'a> Analysis<'a> {
         let headers = loop_headers(self.body, &order);
         let loop_writes = loop_writes(self.body, &order, &headers);
         let thresholds = if use_thresholds { self.thresholds(&order, &headers) } else { HashMap::new() };
-        let unchanged = HashSet::new();
-        let none: Vec<i128> = Vec::new();
-        let mut entry: Vec<Option<State>> = vec![None; n];
-        entry[0] = Some(self.entry_state());
-        let mut visits = vec![0usize; n];
+        let mut solve = Solve {
+            analysis: self,
+            headers: &headers,
+            loop_writes: &loop_writes,
+            thresholds: &thresholds,
+            entry: vec![None; n],
+            visits: vec![0; n],
+        };
+        solve.entry[0] = Some(self.entry_state());
+        // D-811 — each loop settled before what follows it, so a body of many loops one after
+        // another is gone through a few times, not about once per loop; the rounds then confirm
+        // that nothing changes (one, as a rule).
+        let nest = LoopNest::new(self.body, &order, &headers);
+        solve.settle(&nest, &nest.top)?;
         let mut rounds = 0;
         loop {
             rounds += 1;
@@ -1910,40 +2048,13 @@ impl<'a> Analysis<'a> {
             }
             let mut changed = false;
             for &block in &order {
-                if self.branch_only(block, &headers) {
-                    continue;
-                }
-                let Some(state) = entry[block].clone() else { continue };
-                let exit = self.exit_state(block, state);
-                for (target, incoming) in self.successors_through_branches(block, exit, &headers) {
-                    let merged = match &entry[target] {
-                        None => incoming,
-                        Some(old) => {
-                            let joined = old.join(&incoming);
-                            if headers.contains(&target) && visits[target] > 1 {
-                                old.widen(
-                                    &joined,
-                                    self,
-                                    loop_writes.get(&target).unwrap_or(&unchanged),
-                                    thresholds.get(&target).unwrap_or(&none),
-                                )
-                            } else {
-                                joined
-                            }
-                        }
-                    };
-                    let merged = self.seeded(target, merged);
-                    if entry[target].as_ref() != Some(&merged) {
-                        entry[target] = Some(merged);
-                        visits[target] += 1;
-                        changed = true;
-                    }
-                }
+                changed |= solve.visit(block);
             }
             if !changed {
                 break;
             }
         }
+        let mut entry = solve.entry;
         // Narrowing: recompute every entry from the settled ones, twice.
         for _ in 0..2 {
             let mut next: Vec<Option<State>> = vec![None; n];
@@ -2009,13 +2120,13 @@ impl<'a> Analysis<'a> {
     fn accumulator_bounds(&self) -> Vec<(usize, Var, Interval)> {
         let mut seeds = Vec::new();
         let headers = loop_headers(self.body, &reverse_postorder(self.body));
+        let predecessors = crate::loop_version::predecessors(self.body);
         let loops: Vec<CountedLoop> = (0..self.body.blocks.len())
             .filter(|&header| self.entry[header].is_some())
-            .filter_map(|header| crate::loop_version::counted_loop(self.body, self.types, header))
+            .filter_map(|header| crate::loop_version::counted_loop_in(self.body, self.types, header, &predecessors))
             .collect();
-        let predecessors = crate::loop_version::predecessors(self.body);
         for shape in &loops {
-            let Some((turns, entry, writes, called)) = self.loop_turns(shape, &headers) else { continue };
+            let Some((turns, entry, writes, called)) = self.loop_turns(shape, &predecessors, &headers) else { continue };
             for (&acc, places) in &writes {
                 let [(block, index)] = places.as_slice() else { continue };
                 if acc == shape.counter || acc == shape.limit || !self.tracked[acc.0 as usize] || called.contains(&acc) {
@@ -2049,6 +2160,7 @@ impl<'a> Analysis<'a> {
     fn loop_turns(
         &self,
         shape: &CountedLoop,
+        predecessors: &[Vec<usize>],
         headers: &HashSet<usize>,
     ) -> Option<(i128, State, HashMap<LocalId, Vec<(usize, usize)>>, HashSet<LocalId>)> {
         let mut inside: Vec<usize> = shape.region.clone();
@@ -2081,15 +2193,25 @@ impl<'a> Analysis<'a> {
         {
             return None;
         }
-        // The state on entry from outside the loop.
+        // The state on entry from outside the loop: the edges into the header from each block
+        // outside it, followed through branch-only blocks. D-811 — those blocks are found by
+        // walking back from the header through branch-only blocks, not by stepping every block.
+        let mut sources: BTreeSet<usize> = BTreeSet::new();
+        let mut through: HashSet<usize> = HashSet::new();
+        let mut work = vec![shape.header];
+        while let Some(block) = work.pop() {
+            for &pred in &predecessors[block] {
+                if self.branch_only(pred, headers) {
+                    if through.insert(pred) {
+                        work.push(pred);
+                    }
+                } else if !inside.contains(&pred) {
+                    sources.insert(pred);
+                }
+            }
+        }
         let mut outside: Option<State> = None;
-        for pred in 0..self.body.blocks.len() {
-            if inside.contains(&pred) {
-                continue;
-            }
-            if self.branch_only(pred, headers) {
-                continue;
-            }
+        for pred in sources {
             let Some(state) = self.entry[pred].clone() else { continue };
             for (target, state) in self.successors_through_branches(pred, self.exit_state(pred, state), headers) {
                 if target == shape.header {
@@ -2155,7 +2277,7 @@ impl<'a> Analysis<'a> {
                 entries = entries.checked_add(self.runs_per_turn(loops, predecessors, headers, shape, pred, depth + 1)?)?;
             }
         }
-        let (turns, _, _, _) = self.loop_turns(inner, headers)?;
+        let (turns, _, _, _) = self.loop_turns(inner, predecessors, headers)?;
         let within = if block == inner.header {
             turns.checked_add(1)?
         } else {
@@ -2565,8 +2687,9 @@ pub(crate) fn narrow_lists_in_hot_loops(
     let Some(analysis) = Analysis::run_with_fields(body, types, common, returns, fields) else { return found };
     let floats = analysis.element_lists_where(&|elem| matches!(types.kind(elem), TyKind::Float(ember_types::FloatTy::F64)));
     let i64_ty = |ty: Ty| matches!(types.kind(ty), TyKind::Int(ember_types::IntTy::I64));
+    let preds = crate::loop_version::predecessors(body);
     for (header, blocks) in &hot {
-        let Some(counted) = crate::loop_version::counted_loop(body, types, *header) else { continue };
+        let Some(counted) = crate::loop_version::counted_loop_in(body, types, *header, &preds) else { continue };
         // Every turn runs to the step: the loop is left only by its test.
         let exit = match &body.blocks[*header].terminator {
             Terminator::SwitchInt { targets, .. } => targets[0].1.0 as usize,
@@ -3072,7 +3195,8 @@ fn remove_proven_checks(
         /// The checked operation to make plain, with its operand ranges.
         checked: Option<(Interval, Interval)>,
     }
-    let removals: Vec<Removal> = {
+    // What to remove and which branches to fold, from one run of the facts (D-811).
+    let (removals, folds) = {
         let Some(analysis) = Analysis::run_seeded(body, types, common, returns, fields, entry.to_vec()) else { return (0, 0) };
         let mut removals = Vec::new();
         let reached: HashSet<usize> = reverse_postorder(body).into_iter().collect();
@@ -3155,11 +3279,10 @@ fn remove_proven_checks(
             }
             removals.push(Removal { block, kind, checked });
         }
-        removals
+        // A branch whose test the facts decide goes one way.
+        let folds = analysis.decided_branches();
+        (removals, folds)
     };
-    // A branch whose test the facts decide goes one way.
-    let folds = Analysis::run_with_fields(body, types, common, returns, fields)
-        .map_or_else(Vec::new, |analysis| analysis.decided_branches());
     for removal in &removals {
         let span = body.blocks[removal.block].terminator_span;
         let Terminator::Assert { next, cond, .. } = body.blocks[removal.block].terminator.clone() else {

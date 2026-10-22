@@ -28,7 +28,7 @@ use ember_mir::{
 };
 use ember_types::{CommonTypes, Ty, TypeTable};
 
-use crate::loop_version::{CountedLoop, counted_loop, retarget, scalar_only};
+use crate::loop_version::{CountedLoop, counted_loop_in, predecessors, retarget, scalar_only};
 use crate::regions::place_type;
 
 /// Reduce the counter-derived values of every counted loop; returns how many
@@ -41,12 +41,19 @@ fn reduce_body(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> usiz
     // A reduced loop gains a block before it and statements in its step, and
     // keeps every block's number, so each header is looked at once.
     let headers = body.blocks.len();
-    (0..headers)
-        .map(|header| match counted_loop(body, types, header) {
-            Some(shape) => reduce_loop(body, types, common, &shape),
-            None => 0,
-        })
-        .sum()
+    let mut preds: Option<Vec<Vec<usize>>> = None;
+    let mut reduced = 0;
+    for header in 0..headers {
+        let shape = counted_loop_in(body, types, header, preds.get_or_insert_with(|| predecessors(body)));
+        if let Some(shape) = shape {
+            let changed = reduce_loop(body, types, common, &shape);
+            if changed > 0 {
+                preds = None;
+            }
+            reduced += changed;
+        }
+    }
+    reduced
 }
 
 /// `count * m + b` over 64-bit wrapping arithmetic, each side a sum and

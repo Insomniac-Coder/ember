@@ -47,7 +47,7 @@ use ember_mir::{
 };
 use ember_types::{CommonTypes, Ty, TyKind, TypeTable};
 
-use crate::loop_version::{CountedLoop, counted_loop};
+use crate::loop_version::{CountedLoop, counted_loop_in, predecessors};
 
 /// The C compiler a loop moves for: each takes `restrict` from a function's
 /// parameters, on its own conditions (module comment).
@@ -121,7 +121,8 @@ struct Uses {
 }
 
 fn outline_one(body: &mut Body, types: &mut TypeTable, common: &CommonTypes, made: usize, target: KernelTarget) -> Option<Body> {
-    let loops: Vec<CountedLoop> = (0..body.blocks.len()).filter_map(|header| counted_loop(body, types, header)).collect();
+    let preds = predecessors(body);
+    let loops: Vec<CountedLoop> = (0..body.blocks.len()).filter_map(|header| counted_loop_in(body, types, header, &preds)).collect();
     // For MSVC a nest: a counted loop whose turn holds another counted
     // loop's header, or a loop over views proved apart. For gcc any counted
     // loop; for clang one over views proved apart (`try_outline`).
@@ -543,7 +544,8 @@ fn adds_the_same_each_round(
     if !matches!(types.kind(elem_of(types, body.locals[list.0 as usize].ty)), TyKind::Int(_) | TyKind::Uint(_)) {
         return false;
     }
-    let inner: Vec<CountedLoop> = outer.region.iter().filter_map(|&block| counted_loop(body, types, block)).collect();
+    let preds = predecessors(body);
+    let inner: Vec<CountedLoop> = outer.region.iter().filter_map(|&block| counted_loop_in(body, types, block, &preds)).collect();
     let [inner] = inner.as_slice() else { return false };
     if inside.iter().any(|&block| {
         matches!(body.blocks[block].terminator, Terminator::SwitchInt { .. }) && block != outer.header && block != inner.header

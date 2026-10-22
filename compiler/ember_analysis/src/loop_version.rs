@@ -114,12 +114,13 @@ fn version_loops(
     loop {
         let facts = BodyFacts::new(body, types);
         let ranges = Analysis::run(body, types, common, returns);
+        let preds = predecessors(body);
         let mut plans = Vec::new();
         for header in 0..body.blocks.len() {
             if settled.contains(&header) {
                 continue;
             }
-            match plan(body, types, summaries, &facts, ranges.as_ref(), header) {
+            match plan(body, types, summaries, &facts, ranges.as_ref(), &preds, header) {
                 Some(plan) => plans.push(plan),
                 None => {
                     settled.insert(header);
@@ -198,6 +199,7 @@ fn plan(
     summaries: &Summaries,
     facts: &BodyFacts,
     ranges: Option<&Analysis>,
+    predecessors: &[Vec<usize>],
     header: usize,
 ) -> Option<Plan> {
     let head = body.blocks.get(header)?;
@@ -224,7 +226,6 @@ fn plan(
 
     // The loop: every block that reaches the header's one back edge without
     // passing through the header.
-    let predecessors = predecessors(body);
     let entry = otherwise.0 as usize;
     let reach = reachable_from(body, entry, header);
     let back: Vec<usize> = predecessors[header].iter().copied().filter(|p| reach.contains(p)).collect();
@@ -1842,9 +1843,10 @@ fn settle_inclusive_loops(body: &mut Body, types: &TypeTable, common: &CommonTyp
     let mut settled: HashSet<usize> = HashSet::new();
     let mut count = 0;
     loop {
+        let preds = predecessors(body);
         let Some(shape) = (0..body.blocks.len())
             .filter(|header| !settled.contains(header))
-            .filter_map(|header| counted_loop(body, types, header))
+            .filter_map(|header| counted_loop_in(body, types, header, &preds))
             .filter(|shape| shape.last.is_some())
             .max_by_key(|shape| shape.region.len())
         else {
@@ -1905,10 +1907,19 @@ fn settle_inclusive_loops(body: &mut Body, types: &TypeTable, common: &CommonTyp
 fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonTypes) -> (usize, usize) {
     let mut count = 0;
     let snapshot = body.blocks.len();
+    // The predecessors and the body's facts, each with the count of changed loops it was made at:
+    // made once, and again only after a loop changes the body (D-811).
+    let mut preds: Option<(usize, Vec<Vec<usize>>)> = None;
+    let mut facts: Option<(usize, BodyFacts)> = None;
     for header in 0..snapshot {
-        let Some(shape) = counted_loop(body, types, header) else { continue };
-        let facts = BodyFacts::new(body, types);
-        let (checks, written) = match vectorisable(body, types, &facts, &shape) {
+        if preds.as_ref().is_none_or(|(made, _)| *made != count) {
+            preds = Some((count, predecessors(body)));
+        }
+        let Some(shape) = counted_loop_in(body, types, header, &preds.as_ref().expect("made above").1) else { continue };
+        if facts.as_ref().is_none_or(|(made, _)| *made != count) {
+            facts = Some((count, BodyFacts::new(body, types)));
+        }
+        let (checks, written) = match vectorisable(body, types, &facts.as_ref().expect("made above").1, &shape) {
             Ok(found) => found,
             Err(why) => {
                 note_verdict(body, shape.counter, Err(why));
@@ -1993,10 +2004,11 @@ fn group_overflow_checks(body: &mut Body, types: &TypeTable, common: &CommonType
 /// the backend writes, whatever earlier passes copied or renumbered.
 pub fn loops_in_vectorisable_form(body: &Body, types: &TypeTable, headers: impl IntoIterator<Item = usize>) -> HashSet<usize> {
     let mut facts = None;
+    let preds = predecessors(body);
     headers
         .into_iter()
         .filter(|&header| {
-            let Some(shape) = counted_loop(body, types, header) else { return false };
+            let Some(shape) = counted_loop_in(body, types, header, &preds) else { return false };
             let facts = facts.get_or_insert_with(|| BodyFacts::new(body, types));
             vectorisable(body, types, facts, &shape).is_ok_and(|(checks, _)| checks.is_empty())
         })
