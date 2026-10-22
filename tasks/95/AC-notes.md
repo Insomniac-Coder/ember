@@ -222,6 +222,14 @@ so a merge carries other branches' edits of `main.rs` into it; the `ember` progr
    rule stays `unfinished` with this said.
 2. **`[IDE-3]` — the stages after type checking** (borrow and effect checks, the lints on MIR) do
    not run on a program with a type error: `compile` stops after type checking reports one.
-   Running them on the functions that checked needs the others lowered as placeholders (an
-   `unreachable` body: no effect, no borrow) and every MIR pass to accept the error type where a
-   signature holds it. Not done; the rule stays `unfinished` with this said.
+   Tried (the diff is kept out of the branch): each function that failed — the checker's
+   `incomplete`, one holding a placeholder or a value of an unresolved type, one an error was
+   reported in (its attributes' lines included) — lowered as a body that is never reached (no
+   effect, no borrow), left out of the interface artifact, and the passes run on the rest. Of the
+   compile-fail tests, 9 then changed: 5 gained a lint that is right (`L1001` for a binding never
+   read, in a function with no error), 1 a borrow error that is right (`TYP-17`'s `pick("x")`
+   returns a view of `u`), and 2 (`CLO-6`) a cascade that is not: the error is in `main`, but the
+   instance of `twice` made for `main`'s wrong argument is checked as if sound. Fixing that needs
+   the type checker to mark the instances a failed body asks for — and its `incomplete` set is
+   also what the compile-time evaluator stubs, so it needs a set of its own. Not done; the rule
+   stays `unfinished` with this said.
