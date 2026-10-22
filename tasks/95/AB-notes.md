@@ -433,3 +433,29 @@ is refused. Generated types may now carry comments before `pub` (`declare`). Tes
 `reject_a_variant_the_overlay_does_not_name_whole.em` (`unnamed_variants.hpp`). The FFI-17a and
 FFI-44 directories pass in WSL too. `FFI-17a`'s entry keeps only the stateful deleter; `FFI-44`'s
 is removed.
+
+## AB10. `[FFI-42]` — operators of an instantiation; two questions
+
+**Built.** An instantiation's import file takes each operator the template declares once by its
+address too (`<prefix>_inst_<k>_operator<n>`), and the instantiation's operators become their
+interface's methods as a class's do (`Pair<int>`'s `operator+` is `Add.add`, `operator==` `Eq.eq`);
+an overloaded one stays refused, as an overloaded method is, and one with no interface says so. The
+C++ corpus records move `basic_json.operator=`'s refusal to where it is now reported (both
+platforms, re-recorded). Test: `FFI-42/accept_operators_of_a_template_instantiation.em`
+(`pairs.hpp`, `overlays/pairs.em`).
+
+**Questions (not built).**
+
+1. *`operator*`/`->` "read-through" (`[FFI-42]`).* Ember has no interface that makes `p.x` read
+   through `p` (`[TYP-14]`), so what the importer gives a smart-pointer-like class is not settled.
+   Options: (a) `get()` → `ref T` and `get_mut()` → `ref mut T` (the `const` and other overload),
+   as `ForeignBox` reads through, borrowing `self` — no language change; (b) a `Deref`-like std
+   interface that `.` follows (a language change); (c) every method of `T` forwarded onto the
+   class. Recommendation: (a).
+2. *`Iterable` as a declared interface.* The spec's `Iterable` (`fn iter(self) -> Iter`) is not
+   declared by std (`for` finds `iter()` by name), and `[FFI-42a]` makes a C++ container's `iter`
+   take `mut self` (the loop borrows it mutably), which that signature does not. Options: (a)
+   declare `Iterable` in std as the spec writes it and let a C++ container implement it only when
+   iterating cannot invalidate (never, in general: no); (b) let `Iterable.iter` take the receiver
+   mode the implementation declares (a language change); (c) leave `for` finding `iter()` by name
+   (as now). Recommendation: (c) until std declares `Iterable`, then (b).

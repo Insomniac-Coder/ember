@@ -1313,6 +1313,10 @@ pub fn import_header(config: &Config) -> Result<(Imported, Vec<String>), String>
                     for name in methods.iter().filter(|name| !name.starts_with("operator") && !overloaded(name)) {
                         let _ = writeln!(source, "constexpr auto {prefix}_inst_{index}_{name} = &::{id}::{name};");
                     }
+                    // `[FFI-42]` — each operator the template declares once, by its address too.
+                    for (at, name) in methods.iter().filter(|name| name.starts_with("operator") && !overloaded(name)).enumerate() {
+                        let _ = writeln!(source, "constexpr auto {prefix}_inst_{index}_operator{at} = &::{id}::{name};");
+                    }
                 }
                 Some(_) => {
                     let _ = writeln!(source, "constexpr auto {prefix}_inst_{index} = &::{id};");
@@ -4286,7 +4290,6 @@ impl Writer {
                             CXCursor_Constructor if clang_CXXConstructor_isCopyConstructor(*child) == 0 && clang_CXXConstructor_isMoveConstructor(*child) == 0 => {
                                 "a constructor of a class template's instantiation: no C++ expression names one to take its types from"
                             }
-                            CXCursor_CXXMethod if member.starts_with("operator") => "an operator of a class template's instantiation: the import file names no address of it",
                             CXCursor_CXXMethod
                                 if declared.iter().filter(|other| matches!(kind(**other), CXCursor_CXXMethod | CXCursor_FunctionTemplate) && spelling(**other) == member).count() > 1 =>
                             {
@@ -4300,8 +4303,26 @@ impl Writer {
                     for method in methods.iter().filter_map(|var| referenced_function(*var)) {
                         let key = spelling(method);
                         let Some(member) = self.method_member(method, &owner, mutable_state) else { continue };
-                        match self.cpp_thunk(method, &key, Some((&owner, member, &class_spelled))) {
-                            Ok(function) => self.functions.push(Function { namespace: self.writing.clone(), ..function }),
+                        // `[FFI-42]` — an operator: the method of its Ember operator interface.
+                        let operator = if key.starts_with("operator") {
+                            match operator_method(&key, clang_Cursor_getNumArguments(method), member) {
+                                Ok(found) => Some(found),
+                                Err(why) => {
+                                    self.skip(method, &format!("{owner}.{key}"), why);
+                                    continue;
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        let name = operator.map_or(key.clone(), |(method, _)| method.to_string());
+                        match self.cpp_thunk(method, &name, Some((&owner, member, &class_spelled))) {
+                            Ok(function) => {
+                                if let Some((method, interface)) = operator {
+                                    self.operators.push((owner.clone(), method.to_string(), interface.to_string()));
+                                }
+                                self.functions.push(Function { namespace: self.writing.clone(), ..function });
+                            }
                             Err(reason) => self.skip(method, &format!("{owner}.{key}"), reason),
                         }
                     }
