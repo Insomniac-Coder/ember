@@ -2465,6 +2465,30 @@ impl TypeTable {
         }
     }
 
+    /// `[LT-1a]` (ODR-211) — whether some instance of `ty` is a view: it is one,
+    /// or a type parameter or an associated type stands where
+    /// [`TypeTable::is_view`] looks (`T`, `Option[I.Item]`, `(T, int)`).
+    pub fn may_be_view(&self, ty: Ty) -> bool {
+        self.may_be_view_in(ty, &mut HashSet::new())
+    }
+
+    fn may_be_view_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        match self.kind(ty) {
+            TyKind::Param { .. } | TyKind::Assoc { .. } => true,
+            TyKind::Tuple(items) => items.iter().any(|&t| self.may_be_view_in(t, seen)),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.may_be_view_in(*elem, seen),
+            TyKind::Struct(id) => {
+                self.is_view(ty) || (seen.insert(ty) && self.struct_def(*id).fields.iter().any(|f| self.may_be_view_in(f.ty, seen)))
+            }
+            TyKind::Enum(id) => {
+                self.is_view(ty)
+                    || (seen.insert(ty)
+                        && self.enum_def(*id).variants.iter().any(|v| v.fields.iter().any(|f| self.may_be_view_in(f.ty, seen))))
+            }
+            _ => self.is_view(ty),
+        }
+    }
+
     /// Whether a view reachable in `ty`, as [`TypeTable::is_view`] walks it,
     /// lends mutably: a `ref mut` or a `MutSpan`, or one inside a tuple, a
     /// fixed array, a struct or an enum's payload. A shared `ref` lends

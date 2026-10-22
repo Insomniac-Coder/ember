@@ -1068,6 +1068,9 @@ pub struct QueryIter[Q: QueryParam]:
     world: World
     at: int
 
+    ## An item borrows the query's columns, not this iterator (`[LT-1a]`, ODR-211), so it may be
+    ## kept while `next` is called again and after the loop.
+    @borrows(self.view)
     pub fn next(mut self) -> Option[Q.Ops.ReadItem]:
         while true:
             match entity_at(self.driver, self.world, self.at):

@@ -3132,6 +3132,10 @@ struct Checker<'a> {
     /// lambda in it takes.
     active_fp: FpMode,
     lint_return_intersection: bool,
+    /// ODR-211 — set while an interface default's signature is read again for one implementing
+    /// type: its `@borrows` was checked on the interface, and here applies only where this type
+    /// makes the result and the named parameters views.
+    borrows_in_copy: bool,
     /// `[ATT-6]` — statement attributes already reported, so a generic body
     /// checked once per instance reports each once.
     reported_stmt_attrs: HashSet<Span>,
@@ -3424,6 +3428,7 @@ impl<'a> Checker<'a> {
             active_overflow: OverflowPolicy::default(),
             active_fp: FpMode::Strict,
             lint_return_intersection: false,
+            borrows_in_copy: false,
             reported_stmt_attrs: HashSet::new(),
             debug_assertions: true,
             param_defaults: HashMap::new(),
@@ -3511,6 +3516,39 @@ impl<'a> Checker<'a> {
             return None;
         };
 
+        // ODR-211 — a copy for one type: what the interface's check accepted, kept where this
+        // type makes it a view (the result, then each named parameter or field).
+        if self.borrows_in_copy {
+            if !self.types.is_view(ret) {
+                return None;
+            }
+            let quiet = self.sink.mark();
+            let named = self.check_borrows_attribute_in(attr, params, ret);
+            self.sink.rollback(quiet);
+            let kept = named.map(|named| {
+                named
+                    .into_iter()
+                    .filter(|source| {
+                        let ty = params[source.parameter].1;
+                        let ty = match source.field {
+                            Some(field) => self.receiver_fields(ty).and_then(|fields| fields.get(field).map(|(_, ty)| *ty)),
+                            None => Some(ty),
+                        };
+                        ty.is_some_and(|ty| self.types.is_view(ty) || self.is_source_parameter(ty, params[source.parameter].2))
+                    })
+                    .collect()
+            });
+            return kept;
+        }
+        self.check_borrows_attribute_in(attr, params, ret)
+    }
+
+    fn check_borrows_attribute_in(
+        &mut self,
+        attr: &ast::Attribute,
+        params: &[(Symbol, Ty, Mode, Span)],
+        ret: Ty,
+    ) -> Option<Vec<hir::BorrowSource>> {
         if attr.args.is_empty() {
             self.sink.emit(
                 Diagnostic::error(
@@ -3527,7 +3565,9 @@ impl<'a> Checker<'a> {
             return None;
         }
 
-        if !self.types.is_view(ret) {
+        // ODR-211 — a result some instance makes a view (`Option[I.Item]`) is checked in each
+        // instance, as ODR-048 makes a parameter a source per instance.
+        if !self.types.may_be_view(ret) {
             let shown = self.types.display(ret);
             self.sink.emit(
                 Diagnostic::error(
@@ -3626,6 +3666,10 @@ impl<'a> Checker<'a> {
                     if *mode == Mode::Mut
                         || self.is_source_parameter(*ty, *mode)
                         || (*ty == self.common.self_ty && *mode != Mode::Owned) => {}
+                // ODR-211 — a parameter some instance makes a view, in any mode (an `owned self`
+                // iterator's items borrow what it borrows): a source in the instances where it is
+                // one ([LT-1], ODR-048), and nothing is borrowed from it in the others.
+                Some((_, ty, ..)) if !self.types.is_view(*ty) && self.types.may_be_view(*ty) => {}
                 Some((_, ty, mode, span)) if !self.types.is_view(*ty) => {
                     let shown = self.types.display(*ty);
                     let why = if *mode == Mode::Owned {
@@ -3683,14 +3727,15 @@ impl<'a> Checker<'a> {
             );
             return None;
         };
-        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.is_view(*ty)).map(|(name, _)| format!("`self.{name}`")).collect();
+        // ODR-211 — a field some instance makes a view (`inner: I`) counts, checked in each instance.
+        let views: Vec<String> = fields.iter().filter(|(_, ty)| self.types.may_be_view(*ty)).map(|(name, _)| format!("`self.{name}`")).collect();
         let help = if views.is_empty() {
             format!("{shown} has no view field: name `self` instead (LT-1a)")
         } else {
             format!("the view fields of {shown} are {}", views.join(", "))
         };
         match fields.iter().position(|(name, _)| *name == field) {
-            Some(index) if self.types.is_view(fields[index].1) => Some(index),
+            Some(index) if self.types.may_be_view(fields[index].1) => Some(index),
             Some(index) => {
                 let ty = self.types.display(fields[index].1);
                 self.sink.emit(
@@ -11259,8 +11304,10 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     self.some_quiet = true;
+                    self.borrows_in_copy = true;
                     let signature =
                         self.method_signature(fn_decl, Some(*ty), &member.attrs, member.span, 0);
+                    self.borrows_in_copy = false;
                     self.some_quiet = false;
                     self.leave_default(scope);
                     self.lint_return_intersection = lint;
@@ -12614,8 +12661,20 @@ impl<'a> Checker<'a> {
             })
             .unwrap_or(self.common.void);
         // `[LT-1a]` — the receiver is named as `self`, so a method's attribute
-        // is resolved against the same parameter list the body will see.
-        let borrows = self.check_borrows_attribute(attrs, &params, ret);
+        // is resolved against the same parameter list the body will see. An
+        // interface's method has no receiver type yet (`self_ty` is `None`);
+        // each implementing type's copy puts `self` first
+        // (`register_instantiated_default`), so its attribute is resolved
+        // against that list, with `Self` for the receiver (ODR-211: an
+        // iterator consumer's items borrow what `owned self` borrows).
+        let borrows = match (self_ty, receiver) {
+            (None, Some(mode)) => {
+                let mut with_self = params.clone();
+                with_self.insert(0, (Symbol::intern("self"), self.common.self_ty, mode, span));
+                self.check_borrows_attribute(attrs, &with_self, ret)
+            }
+            _ => self.check_borrows_attribute(attrs, &params, ret),
+        };
         // `[LT-1]` rule 1 takes a borrowed receiver; rule 3 is for the rest.
         if !matches!(receiver, Some(Mode::Borrow | Mode::Mut)) {
             self.lint_rule_3(&params, ret, &borrows, span);
