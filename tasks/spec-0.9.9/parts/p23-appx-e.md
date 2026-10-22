@@ -44,19 +44,23 @@ are rejected with a fix-it (`[DIA-21]`) rather than given a different meaning (`
 |---|---|
 | `len(s)` for a string | `s.char_count()` (characters, Python's count) or `s.len()` (bytes) |
 | `str(x)`, `repr(x)` | `x.to_string()` or `f"{x}"`; `f"{x!r}"` |
+| `"%d" % n`, `"{}".format(n)` | `f"{n}"` |
 | `int(s)`, `float(s)` | `s.parse[int]()`, `s.parse[float]()` (a `Result`) |
 | `int(x)` for a float | `x as int` (saturates; NaN is 0) |
 | `range(a, b)` in a loop | `a..b` is the usual spelling; `range` also works |
 | `xs.append(x)`, `xs.extend(ys)` | `xs.push(x)`, `xs.extend(ys)` |
 | `xs.pop()` | `xs.pop()` returns an `Option` |
 | `xs.index(x)` | `xs.index_of(x)` (an `Option`) |
+| `xs.sort(key=f)` | `xs.sort_by_key(f)` |
 | `xs[-1]` | `xs.last()` or `xs[xs.len() - 1]` (negative indices panic) |
 | `xs[a:b]` | `xs[a..b]` |
+| `s * n`, `[x] * n` | `s.repeat(n)`, `[x for _ in 0..n]` |
 | `s.strip()`, `s.lstrip()`, `s.rstrip()` | `s.trim()`, `s.trim_start()`, `s.trim_end()` |
 | `s.split()` | `s.split_whitespace()` |
 | `s.splitlines()` | `s.lines()` |
 | `s.startswith(p)`, `s.endswith(p)` | `s.starts_with(p)`, `s.ends_with(p)` |
 | `s.upper()`, `s.lower()` | `s.to_upper()`, `s.to_lower()` |
+| `c.isdigit()`, `c.isalpha()`, `c.isalnum()`, `c.isspace()` | `c.is_digit()`, `c.is_alphabetic()`, `c.is_alphanumeric()`, `c.is_whitespace()`; `c.is_ascii_digit()` and the like for ASCII only |
 | `s.find(t)` (returns -1) | `s.find(t)` (returns `Option[int]`) |
 | `", ".join(xs)` | `xs.join(", ")` |
 | `True`, `False`, `None` | `true`, `false`, `None` (only as an `Option`) |

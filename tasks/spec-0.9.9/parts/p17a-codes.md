@@ -13,8 +13,9 @@ reused; retired codes are listed with the reason.
 | `E0005` | reserved keyword used as an identifier | `[LEX-14]` |
 | `E0006` | a `#!` language directive names a version other than the current one | `[VER-8]` |
 | `E0008` | unterminated character literal | `[LEX-22]` |
+| `E0009` | malformed literal | `[LEX-26]` |
 | `E0100` | unexpected token | `[GRM-2]` |
-| `E0101` | unclosed delimiter | `[LEX-6]` |
+| `E0101` | unclosed delimiter or literal | `[LEX-6]` |
 | `E0102` | membership test chained (`a in b in c`) | `[GRM-23]` |
 | `E0103` | match arms mix statement and expression form | `[GRM-10]` |
 | `E0104` | attribute or construct not admitted here | `[ATT-1]`, `[PHIL-12]` |
@@ -33,6 +34,7 @@ reused; retired codes are listed with the reason.
 | `E1021` | name is not linked in this build | `[BLD-11]` |
 | `E1030` | two items with the same name in one scope | `[TYP-26]` |
 | `E1031` | a name bound by two glob imports is used | `[MOD-8]` |
+| `E1032` | an item has the path of a module or the name of a built-in type | `[MOD-1]` |
 | `E1041` | import cycle between packages | `[MOD-4]` |
 | `E1050` | field is read-only outside its module | `[MOD-7]` |
 | `E1051` | `read` visibility is valid on fields only | `[MOD-7]` |
@@ -77,7 +79,7 @@ reused; retired codes are listed with the reason.
 | `E2160` | control flow cannot leave a `defer` block | `[CTL-7]` |
 | `E2170` | reference to a field of a packed struct | `[LAY-2]` |
 | `E2172` | cannot index with a type | `[GRM-8b]` |
-| `E2173` | not a type or const-generic argument | `[GRM-8b]` |
+| `E2173` | an argument or type position that is neither a type nor a constant (an interface implemented by values only: ODR-182) | `[GRM-8b]` |
 | `E2180` | `?` outside a function returning `Option` or `Result` | `[ERR-2]` |
 | `E2181` | `?` on an `Option` in a `Result` function, or the reverse | `[ERR-2]` |
 | `E2182` | a function that returns a value can reach the end of its body | `[FN-10]` |
@@ -243,6 +245,7 @@ reused; retired codes are listed with the reason.
 | `W2091` | unreachable match arm | `[CTL-5]` |
 | `W2111` | `virtual` has no effect in a final class | `[CLS-4]` |
 | `W2190` | unused `Result` | `[ERR-5]` |
+| `W2192` | use of a deprecated item | `[VER-3]` |
 | `W2220` | instantiation ceiling exceeded | `[MONO-3]` |
 | `W3012` | unsafe block with no SAFETY note | `[UNS-8]` |
 | `W5001` | function-like macro ignored | `[FFI-6]` |

@@ -15,7 +15,7 @@ PARTS = os.path.join(HERE, '..', 'parts')
 OVERRIDE = {
     'E0006': ('a `#!` language directive names a version other than the current one', ['VER-8']),
     'E0100': ('unexpected token', ['GRM-2']),
-    'E0101': ('unclosed delimiter', ['LEX-6']),
+    'E0101': ('unclosed delimiter or literal', ['LEX-6']),
     'E0102': ('membership test chained (`a in b in c`)', ['GRM-23']),
     'E0104': ('attribute or construct not admitted here', ['ATT-1', 'PHIL-12']),
     'E0108': ('attribute is not permitted on this statement', ['GRM-20']),
@@ -26,6 +26,7 @@ OVERRIDE = {
     'E2150': ('`is` on an operand that is neither a handle, a reference nor an `Option`', ['EXP-9']),
     'E2151': ('integer `**` with a constant negative exponent', ['TYP-30']),
     'E2170': ('reference to a field of a packed struct', ['LAY-2']),
+    'E2173': ('an argument or type position that is neither a type nor a constant (an interface implemented by values only: ODR-182)', ['GRM-8b']),
     'E2200': ('type has infinite size (a recursive value type without `Box`)', ['TYP-14']),
     'E2228': ('callable parameter-mode mismatch (shape B15)', ['CLO-3']),
     'E3023': ('two writers of one value (shape B4)', ['BRW-1']),
@@ -176,6 +177,8 @@ NEW = {
     'E5068': ('one live foreign object adopted twice', ['FFI-36b']),
     'W1003': ('a package module shadows the standard module of the same name', ['MOD-3']),
     'L4003': ('large `Array[int]`/`Array[float]` in a hot loop whose values fit 32 bits', ['LNT-6']),
+    # added in 0.9.10_Hardened_34
+    'W2192': ('use of a deprecated item', ['VER-3']),
 }
 
 

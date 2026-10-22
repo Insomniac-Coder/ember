@@ -82,7 +82,7 @@ enum_member   := {attribute} (variant | fn_decl | const_decl)
 variant       := IDENT ["(" variant_field {"," variant_field} [","] ")"] ["=" expression] NEWLINE
 variant_field := {attribute} [IDENT ":"] type
 
-interface_decl:= "interface" IDENT [generic_params] [":" bound_list] [where_clause] ":"
+interface_decl:= ["unsafe"] "interface" IDENT [generic_params] [":" bound_list] [where_clause] ":"
                  NEWLINE INDENT {interface_member} DEDENT
 interface_member := {attribute} (fn_decl | assoc_type | const_decl)
 assoc_type    := "type" IDENT [":" bound_list] ["=" type] NEWLINE
@@ -271,8 +271,9 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
 * `[GRM-8a]` Inside `[ ]` in expression position the parser commits to a type argument when the next
   token is `ref`, `*`, `dyn`, `some`, `fn`, `once`, `extern` or `void`; otherwise it parses an
   expression and name resolution reinterprets it as a type where `[GRM-8]` resolved an instantiation.
-* `[GRM-8b]` An index whose argument is a type is `E2172`; an instantiation argument that is neither a
-  type nor a constant is `E2173`.
+* `[GRM-8b]` *(changed in 0.9.10)* An index whose argument is a type is `E2172`; an instantiation
+  argument that is neither a type nor a constant, or an interface named as a type that no class
+  implements (`[OBJ-2]`), is `E2173`.
 * `[GRM-8c]` `IDENT = type` inside `[ ]` is an associated-type binding (`Iterator[Item = int]`).
 * `[GRM-10]` A `match` whose arms use `pattern: block` is a statement; one whose arms use
   `pattern => expression` is an expression. Mixing the forms is `E0103`.
@@ -281,10 +282,13 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
 * `[GRM-16]` *(changed in 0.9.9)* `return`, `break` and `continue` are expressions of type `Never`;
   `yield e` is an expression of type `void` (`[CORO-3]`). A jump is either a whole expression statement or the whole
   body of a lambda, a match arm, or a conditional-expression branch; `a + return b` is `E0107`.
-* `[GRM-15]` `owned e` in expression position is legal only as the iterable of a `for` or the
-  scrutinee of a `match`, where it consumes `e`; elsewhere it is `E0109`.
-* `[GRM-17]` A lambda with a `:` body inside brackets holds exactly one simple statement (`[LEX-6a]`).
-  More is `E0106`, whose help is to declare a local function on the preceding line (`[GRM-28]`).
+* `[GRM-15]` *(changed in 0.9.10)* `owned e` in expression position is legal only as the iterable of a
+  `for` or of a comprehension's `for` clause (`[GRM-27]`), or the scrutinee of a `match`, where it
+  consumes `e`; elsewhere it is `E0109`.
+* `[GRM-17]` *(changed in 0.9.10)* A lambda with a `:` body inside brackets holds exactly one simple
+  statement (`[LEX-6a]`). More is `E0106`, whose help is to declare a local function on the preceding
+  line (`[GRM-28]`). Outside brackets, a `:` body on the lambda's own line is one simple statement,
+  ended by the statement's `NEWLINE`: `h = fn(x): total += x` assigns the lambda to `h`.
 * `[GRM-21]` `gen fn` declares a generator (`[CORO-1]`). It is legal wherever `fn` is, except in an
   `extern` block.
 * `[GRM-23]` `x in c` and `x not in c` are membership tests at comparison precedence. `not in` is one
@@ -298,10 +302,14 @@ match_expr    := "match" expression ":" NEWLINE INDENT {pattern ["if" expression
   (`E0102`).
 * `[GRM-26]` *(new in 0.9.9)* A `{…}` atom is a map literal if its first element is followed by `:`, and a set literal
   otherwise. `{}` is an empty map; an empty set is written `Set[T]()`.
-* `[GRM-27]` *(new in 0.9.9)* A comprehension is shorthand for an iterator pipeline and has exactly its meaning and
+* `[GRM-27]` *(new in 0.9.9)* *(changed in 0.9.10)* A comprehension is shorthand for an iterator pipeline and has exactly its meaning and
   cost: `[f(x) for x in xs if p(x)]` is `xs.iter().filter(fn(x) => p(x)).map(fn(x) => f(x)).collect()`
   into an `Array`; `{…}` forms collect into a `Set` or a `Map`. Clauses nest left to right as in
-  Python. The loop variables are scoped to the comprehension.
+  Python. The loop variables are scoped to the comprehension. A clause over `owned xs` takes the
+  collection over, as `for` does (`[CTL-1]`): the items the comprehension keeps move into the new
+  collection, the rest are dropped, and `xs` cannot be used afterwards (`[s for s in owned shapes if
+  s.area() > 1.0]`). Over a borrowed collection the items are references, which `.clone()` copies
+  (`[s.clone() for s in shapes if s.area() > 1.0]`), the collection staying as it was.
 * `[GRM-38]` *(new in 0.9.9)* A parenthesised comprehension `(e for x in it if c)` is a **generator
   expression**: the pipeline of `[GRM-27]` without the `collect`, a lazy `Iterator` that borrows what it
   iterates and allocates nothing. As the only argument of a call it needs no extra parentheses:

@@ -4,11 +4,18 @@
 
 ## V.1 Modules, packages, imports, visibility
 
-* `[MOD-1]` A **package** is a directory tree with an `ember.toml` at its root. A **module** is one
+* `[MOD-1]` *(changed in 0.9.10)* A **package** is a directory tree with an `ember.toml` at its root. A **module** is one
   `.em` file. A module's path is the package name followed by its path under `src/`, with `/` replaced
   by `.` and the extension removed; `src/lib.em` or `src/main.em` is the package's root module, and
   `src/a/mod.em` is module `a` when `a/` has submodules. A single `.em` file with no manifest is a
-  package of its own (`[CLI-4]`), and the directory containing it is its source root.
+  package of its own (`[CLI-4]`), and the directory containing it is its source root. A module and an
+  item of one name in one scope are `E1032`: an item whose path is a module's (the root module's `fn
+  grid()` beside module `grid`; a dependency's root module has its package's name), and an item named
+  like a module its module imports (`fn grid()` beside `import paths.grid`). A type named like a
+  built-in type (`struct i32`) is `E1032` too, except a name `[MOD-5]` lets a declaration shadow
+  (`int`, `float`, `Never`, `str`) and a declaration `import c` takes from a header, which keeps the
+  header's name. Every item thus has one path (`[MNG-1]`). The modules compared are those of the
+  build, each imported by some module, not every file under the source root.
 * `[MOD-2]` *(changed in 0.9.9)* Items are private to their module unless marked. `pub(package)` makes an
   item visible within the package; `pub` makes it visible to dependants. Using an item, field or
   constructor that is not visible is `E1052`, naming where it is declared and its visibility; `E1020`
@@ -211,8 +218,9 @@ class Door(Script):
         self.angle = min(self.angle + 90.0 * dt, 90.0)
 ```
 
-* `[CLS-1]` A class instance lives on the heap with the header of `[OBJ-1]`. `Name(args)` allocates,
-  runs the constructor and returns a handle with strong count 1.
+* `[CLS-1]` *(changed in 0.9.10)* A class instance lives on the heap with the header of `[OBJ-1]`,
+  except as `[OPT-1]` permits. `Name(args)` allocates, runs the constructor and returns a handle with
+  strong count 1.
 * `[CLS-2]` *(changed in 0.9.9)* *(changed in 0.9.10)* `fn init(self, …)` is the constructor. Before any `init` body runs,
   every field default of the class and of its bases is evaluated and stored. Every field without a
   default MUST then be assigned on every path before `self` is used as a whole (`E2100`); `self` is

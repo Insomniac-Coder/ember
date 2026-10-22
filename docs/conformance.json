@@ -18,13 +18,24 @@
         "XV.5",
         "XV.6"
       ],
-      "rules": 385,
-      "done": 381,
+      "rules": 386,
+      "done": 371,
       "missing": [
+        "CLO-10",
         "CLO-6a",
+        "GRM-15",
+        "GRM-17",
+        "GRM-27",
         "GRM-28",
         "GRM-38",
-        "STD-14"
+        "LEX-26",
+        "LT-1a",
+        "STD-14",
+        "STD-19",
+        "STD-26",
+        "TYP-22",
+        "TYP-36",
+        "TYP-43"
       ]
     },
     {
@@ -38,17 +49,29 @@
         "XV.2",
         "XV.7"
       ],
-      "rules": 575,
-      "done": 567,
+      "rules": 576,
+      "done": 556,
       "missing": [
         "ALC-2",
         "ALC-3",
+        "CLO-10",
         "CLO-6a",
         "ECS-4",
+        "GRM-15",
+        "GRM-17",
+        "GRM-27",
         "GRM-28",
         "GRM-38",
         "JOB-5",
-        "STD-14"
+        "LEX-26",
+        "LT-1a",
+        "STD-14",
+        "STD-19",
+        "STD-26",
+        "THR-8",
+        "TYP-22",
+        "TYP-36",
+        "TYP-43"
       ]
     },
     {
@@ -56,21 +79,33 @@
       "adds": [
         "XVI"
       ],
-      "rules": 632,
-      "done": 620,
+      "rules": 633,
+      "done": 609,
       "missing": [
         "ALC-2",
         "ALC-3",
+        "CLO-10",
         "CLO-6a",
         "ECS-4",
         "FFI-1",
         "FFI-11",
         "FFI-33b",
         "FFI-8",
+        "GRM-15",
+        "GRM-17",
+        "GRM-27",
         "GRM-28",
         "GRM-38",
         "JOB-5",
-        "STD-14"
+        "LEX-26",
+        "LT-1a",
+        "STD-14",
+        "STD-19",
+        "STD-26",
+        "THR-8",
+        "TYP-22",
+        "TYP-36",
+        "TYP-43"
       ]
     },
     {
@@ -78,26 +113,37 @@
       "adds": [
         "Annex B"
       ],
-      "rules": 691,
-      "done": 674,
+      "rules": 692,
+      "done": 664,
       "missing": [
         "ALC-2",
         "ALC-3",
+        "CLO-10",
         "CLO-6a",
         "ECS-4",
         "FFI-1",
         "FFI-11",
         "FFI-33b",
         "FFI-8",
+        "GRM-15",
+        "GRM-17",
+        "GRM-27",
         "GRM-28",
         "GRM-38",
         "HR-1",
         "HR-20",
         "HR-24",
-        "HR-41",
         "HR-9",
         "JOB-5",
-        "STD-14"
+        "LEX-26",
+        "LT-1a",
+        "STD-14",
+        "STD-19",
+        "STD-26",
+        "THR-8",
+        "TYP-22",
+        "TYP-36",
+        "TYP-43"
       ]
     }
   ]

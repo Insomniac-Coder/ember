@@ -87,12 +87,14 @@ fn main() -> Result[void]:
   `{0}` placeholders name the variant's fields — and implements `Debug` if it is not already derived.
   A variant marked `@from` whose single field is an error type gets `From` for that type and returns it
   from `source`.
-* `[ERR-8]` *(changed in 0.9.9)* **`AnyError`** is the prelude's "any error" type: an owned, boxed
+* `[ERR-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* **`AnyError`** is the prelude's "any error" type: an owned, boxed
   `dyn Error` plus an optional chain of context messages. It implements `From[E]` for every `E: Error`,
   so `?` converts any error into it, and `Display`, `Debug`, `source`, `downcast_ref[E]() -> Option[ref
   E]` and `is[E]() -> bool`. **`AnyError` does not implement `Error`** — otherwise `[ERR-7]` and
   `[ERR-8]` would both supply `From[AnyError]` for `AnyError`. An `AnyError` passed through `?` into
-  another `AnyError` is moved (`[ERR-7]`).
+  another `AnyError` is moved (`[ERR-7]`). `AnyError.msg(owned text: String)` is an error whose text
+  is `text`, so a function whose error type is `AnyError` fails with a message as `return
+  Err(AnyError.msg(f"no such file: {p}"))`.
 * `[ERR-10]` *(new in 0.9.9)* `r.context(msg)` on a `Result[T, E]` whose `E` converts into `AnyError`
   (`AnyError: From[E]`, `[ERR-8]`) returns a `Result[T, AnyError]`
   whose error, if any, displays as `msg: <original>`; `r.with_context(fn() => …)` builds the message

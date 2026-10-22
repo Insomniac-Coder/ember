@@ -44,8 +44,10 @@ The reference implementation compiles Ember to C11 and hands it to the platform'
   as well, and a view reassigned inside the loop is not hoisted.
 * `[CG-C-5]` Every panic function is `_Noreturn` and cold, and each check branches forward to its panic
   call, so the check costs one compare and one predicted branch on the fast path.
-* `[CG-C-6]` A loop in vectorisable form (`[SIMD-5]`) is preceded by the host compiler's vectorisation
-  pragma.
+* `[CG-C-6]` *(changed in 0.9.10)* A loop in vectorisable form (`[SIMD-5]`) is preceded by the host
+  compiler's vectorisation pragma: `#pragma clang loop vectorize(enable)` for Clang, `#pragma GCC
+  ivdep` for GCC. MSVC, which has no pragma that asks for vectorisation (`loop(ivdep)` only asserts
+  that no dependency exists), gets none.
 * `[CG-C-7]` Locals keep their Ember names in the C (transliterated per `[MNG-3]`), so debuggers show
   them.
 * `[CG-C-8]` Every emitted statement is preceded by a `#line` naming the Ember construct that
@@ -59,22 +61,45 @@ The reference implementation compiles Ember to C11 and hands it to the platform'
 
 ## XVIII.2 Symbol names
 
-* `[MNG-1]` *(changed in 0.9.9)* **Mangling is injective.** A symbol is `em_` followed by each path
-  component (package, modules, item) written as its length in decimal and then its text, then for a
-  generic instance `G` and the first 16 hex digits of the BLAKE3 hash of the canonical spelling of its
-  arguments: module `lib/m_x.em`'s `f` is `em_3lib3m_x1f` and module `lib/m.em`'s `x_f` is
-  `em_3lib1m3x_f`. Two distinct items therefore never share a name. A hash collision between two
-  instances is reported as `E9040`, naming both, never as an internal error.
+* `[MNG-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* **Mangling is injective.** A symbol is `em_`
+  followed by each path component (package, modules, item) written as its length in decimal and then
+  its text, then for a generic instance `G` and the first 16 hex digits of the BLAKE3 hash of the
+  canonical spelling of its arguments (`[MNG-6]`): module `lib/m_x.em`'s `f` is `em_3lib3m_x1f` and
+  module `lib/m.em`'s `x_f` is `em_3lib1m3x_f`. The root package's items have no package component
+  (its `main` is `em_4main`); a dependency's begin with its package's name. A method's path is its
+  type's path and its name, with the interface's path before the name for a method told apart by the
+  interface it implements (`[TYP-24]`). A built-in type's path is under `std.core` (`std.core.str`),
+  so a program's own `struct str`, `Never` or `cstr` never shares one with it; a structural type (a
+  tuple, fixed array, function, pointer or `dyn` type) that owns a method is `std.core.<kind>`, with
+  its whole spelling as its arguments; and `[CLO-3]`'s copy of a function for a function passed to it
+  is an instance of that function, the passed function among its arguments. Two distinct items
+  therefore never share a name (`[MOD-1]`). A hash collision between two instances is reported as
+  `E9040`, naming both, never as an internal error.
 * `[MNG-2]` `@export("name")` sets the symbol exactly.
-* `[MNG-3]` Non-ASCII identifier characters are transliterated as `_uXXXX_` before the length is taken.
-* `[MNG-4]` Object structs, method tables and type information are named `em_obj_`, `em_vt_` and
-  `em_ti_` followed by the mangled type.
+* `[MNG-3]` *(changed in 0.9.10)* Non-ASCII identifier characters are transliterated as `_uXXXX_`
+  before the length is taken, and so is an ASCII `_` that begins what would otherwise read as an
+  escape (`_u`, four or more hex digits and `_`), as `_u005F_`. A component so transliterated has `u`
+  before its length: `café` is `u10caf_u00E9_`, the ASCII name `caf_u00E9_` is
+  `u16caf_u005F_u00E9_`, and `é_u00E9_` and `éé` differ. C member names are spelled the same way,
+  without the length, so two fields never share one.
+* `[MNG-4]` *(changed in 0.9.10)* Object structs, method tables and type information are named
+  `em_obj_`, `em_vt_` and `em_ti_` followed by the type's mangled form without its own `em_`
+  (`em_obj_6Animal`).
+* `[MNG-6]` *(new in 0.9.10)* **The canonical spelling** of a generic instance's arguments, which
+  `[MNG-1]` hashes, is the same in every compiler, so separately compiled packages deduplicate
+  instances at link time (`[MONO-1]`). It is `[a, b]` for each generic level that has arguments, in
+  path order (the owner type's, then the interface's, then the method's own): a declared type by its
+  path, never by a name the compiler gave an instance, and an instance with its arguments; a scalar by
+  its keyword; `String`, `Array`, the spans and the generics the compiler makes (`Option`) under
+  `std.core`; tuples, fixed arrays, references, pointers and function types as written; a type
+  parameter as `$`, its name and its slot (`$T0`); and a function given for a callable parameter as
+  its path after its type (`[fn(i64) -> i64 = add_one]`).
 
 ## XVIII.3 Monomorphisation
 
-* `[MONO-1]` Generic code is instantiated per distinct set of type arguments, from the program's roots
-  (`main`, exports, tests, statics); instances are named deterministically and deduplicated at link
-  time.
+* `[MONO-1]` *(changed in 0.9.10)* Generic code is instantiated per distinct set of type arguments, from
+  the program's roots (`main`, exports, tests, statics); instances are named deterministically
+  (`[MNG-1]`, `[MNG-6]`) and deduplicated at link time, across separately compiled packages too.
 * `[MONO-2]` The compiler records, per generic, how many instances it produced and the time they took;
   `ember build --report=instantiations` prints it.
 * `[MONO-3]` `[build] max_instantiations = N` sets a per-generic ceiling (unset by default) on the

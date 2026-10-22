@@ -181,11 +181,13 @@ fn main():
   with no required storage iterates every live entity, in the world's order (ODR-142). `iter`
   borrows `q` shared and yields read-only items; `iter_mut` yields `ref mut` for `Mut` parameters and
   requires `mut q`. There is no access-mode generic kind in the language.
-* `[ECS-4]` *(changed in 0.9.9)* A query's read and write sets are compile-time constants computed from
+* `[ECS-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* A query's read and write sets are compile-time constants computed from
   its type. `world.run(system, arg)` borrows exactly those storages, and passes the system its query and
   one argument: a tuple for several, `()` for none (ODR-141). `world.run_parallel([s1, s2, …])`
-  runs systems at once when their sets do not conflict; a conflict between two systems known at
-  compile time is `E7020`, naming both systems and the component. Systems passed as values, whose sets
+  runs systems at once, on threads, when their sets do not conflict: each system, a function value
+  (`[THR-8]`), and every component its query reads or writes must be `Send` (`E7004`, naming it). A
+  conflict between two systems known at compile time is `E7020`, naming both systems and the
+  component. Systems passed as values, whose sets
   are not known at compile time, are checked against each other before any of them starts, and a
   conflict panics, naming both systems and the component.
 * `[ECS-5]` Adding, removing and destroying during iteration go through a `Commands` buffer

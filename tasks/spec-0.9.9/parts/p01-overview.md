@@ -73,12 +73,13 @@ compiler emits C11; LLVM is its planned second backend (`[CG-LL-1]`).
   (ODR-061). Profiles change only speed, debug information, and the amount of detail
   in diagnostics and panic messages (`[PRF-1]`). `debug_assert` is the one check a profile turns off; it
   may not have side effects, so it cannot change what a program whose assertions hold computes.
-* `[PHIL-14]` *(new in 0.9.9)* **Python spelling, Python meaning.** Where Ember accepts a spelling that Python also
+* `[PHIL-14]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python spelling, Python meaning.** Where Ember accepts a spelling that Python also
   has — `/`, `//`, `%`, `**`, `a < b < c`, `x in xs`, `x is None`, `[1, 2]`, `{"k": v}`, f-strings,
   `for … else`, keyword arguments — it gives it Python's meaning, restricted to Ember's types. Where
   Ember cannot give Python's meaning at C speed, it rejects the spelling with a fix-it rather than
   giving it a different meaning silently. Integer `/` is the example: rejected, with `//` and a float
-  conversion as the fixes (`[TYP-28]`).
+  conversion as the fixes (`[TYP-28]`). Sequence repetition (`s * n`, `[x] * n`) is rejected likewise,
+  with `s.repeat(n)` and `[x for _ in 0..n]` as the fixes (`[DIA-21]`).
 * `[PHIL-15]` *(new in 0.9.9)* **Costs are named.** Every cost the language can insert without the programmer writing
   it — a bounds check, an overflow check, a reference-count operation, a dynamic exclusivity check, an
   indirect call, an allocation — has a row in §X.4 and is reported per site by `ember inspect`.

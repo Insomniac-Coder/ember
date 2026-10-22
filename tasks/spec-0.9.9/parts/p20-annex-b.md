@@ -106,7 +106,7 @@ old image owned).
   instantiating package emits the registration, so `std` needs no reload support.
 * `[HR-13b]` Value data reachable only through raw pointers or foreign memory cannot be migrated; if its
   schema changed, the reload is refused.
-* `[HR-14]` *(changed in 0.9.9)* **Migration is by name**, and this table is exhaustive:
+* `[HR-14]` *(changed in 0.9.9)* *(changed in 0.9.10)* **Migration is by name**, and this table is exhaustive:
 
   | Change | Behaviour |
   |---|---|
@@ -127,7 +127,7 @@ old image owned).
   | enum variant added, reordered or renamed with `@renamed_from` | discriminants rewritten |
   | enum variant removed while a value holds it | refused, naming the variant and the count |
   | enum variant payload changed | the field rows, applied to the payload |
-  | layout attributes changed on a type used across FFI | refused |
+  | layout or fields changed on a type used across FFI by value | refused |
   | static's initialiser changed | refused unless the static is `@reinit_on_reload` (`[HR-17a]`) |
 
 * `[HR-15]` *(changed in 0.9.10)* Migration keeps an instance's address where the new size fits;
@@ -170,18 +170,17 @@ old image owned).
 * `[HR-18a]` A refusal is never partial: nothing of the new image is live.
 * `[HR-18b]` `ember build --reload --explain` predicts the outcome against the running process without
   applying anything.
-* `[HR-41]` **Failure matrix.**
+* `[HR-41]` *(changed in 0.9.10)* **Failure matrix.**
 
   | What happened | Detected in | Outcome |
   |---|---|---|
   | source does not compile, or fails checking | before the poll | old image keeps running |
   | reload protocol mismatch | load | refused, `E9037` |
-  | C++ header ABI changed | plan | refused (`[HR-23]`) |
+  | a C or C++ header changed | plan | refused (`[HR-23]`) |
   | schema change with no defined outcome | plan | refused (`[HR-14]`) |
   | `@noreload` body changed | plan | refused (`[HR-10]`) |
   | a reference that cannot be rewritten must move | plan | refused (`[HR-15a]`) |
   | allocation exhausted, `migrate_from` fails, or a foreign call fails | prepare | discarded; old image keeps running |
-  | GPU resource still in flight past the bound | prepare | discarded (`[HR-24]`) |
   | panic in `migrate_from`, or a failure in commit | cannot occur | forbidden by `[HR-35]` and `[HR-2]` |
   | panic in a `drop` during reclaim | reclaim | the reload has succeeded; the panic aborts as any panic does |
 
@@ -190,15 +189,21 @@ old image owned).
   provides.
 * `[HR-25]` `reload` is `"all"`, `"opt-in"`, `"bodies"` or `"none"` (`[MAN-7]`); `@reloadable` and
   `@noreload` apply to modules and items, item level winning.
-* `[HR-20]` *(changed in 0.9.9)* An object pinned by a `Retained` token that foreign code holds is never
+* `[HR-20]` *(changed in 0.9.9)* *(changed in 0.9.10)* An object pinned by a `Retained` token that foreign code holds is never
   moved: if its new size does not fit, the reload is refused, unless the token was created with an
-  `on_relocate` callback, which the runtime calls with the new address during commit.
+  `on_relocate` callback, `Retained.pin(handle, on_relocate: Option[extern "C" fn(ObjectPtr[C],
+  ObjectPtr[C])])` (`[FFI-23]`), which the runtime calls with the old and the new address right after
+  commit publishes and before reclaim: commit stays pointer stores (`[HR-2]`), and a callback cannot
+  undo a reload that has succeeded.
 * `[HR-22]` Foreign objects owned by Ember are carried across unchanged.
-* `[HR-23]` A changed C++ header refuses the reload and names it (the host must be rebuilt); a changed
-  overlay does not, because overlay edits change only Ember code; where the header is unchanged the
-  previous thunks are reused.
-* `[HR-24]` An object in use by an in-flight GPU frame is migrated in place when it fits; otherwise the
-  reload waits at most `frames_in_flight + 1` polls and is then refused, naming the resource.
+* `[HR-23]` *(changed in 0.9.10)* A changed C or C++ header refuses the reload and names it (the host
+  must be rebuilt): any change to the header or to a file it includes, a comment's too, since the
+  host compiled the inline bodies it declares. A changed overlay does not, because overlay edits
+  change only Ember code; where the header is unchanged the previous thunks are reused.
+* `[HR-24]` *(changed in 0.9.10)* An object in use by an in-flight GPU frame is migrated in place when
+  it fits; otherwise the reload waits at most `frames_in_flight + 1` polls and is then refused, naming
+  the resource. This is detected in prepare, so the reload is discarded and the old image keeps
+  running (`[HR-41]`).
 * `[HR-27]` A `release` build is bit-identical whether or not the source uses any reload attribute.
 * `[HR-29]` With reload enabled, one shared runtime serves every image in the process
   (`[build] runtime = "shared"`); a reloadable package that links its own runtime copy is `E9036`.

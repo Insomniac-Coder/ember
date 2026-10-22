@@ -423,7 +423,9 @@ implements Display:` block.
   Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
   parameters are bounded by. A class is `Send` or `Sync` only as `@sync` (`[THR-1]`: its counts must
   be atomic), `Copy` comes from `@derive(Copy)`, and `Sized` is never written: each of these is
-  `E2040`, as is an `unsafe extend` of any interface but a marker (ODR-111).
+  `E2040`, as is an `unsafe extend` of any interface but a marker or an `unsafe interface` (ODR-111).
+  An `unsafe interface` (`Allocator`, `[ALC-2]`) is implemented only by an `unsafe extend`, with its
+  members as for any interface; without `unsafe` it is `E3100`.
 
 **Standard interfaces.** These are the definitions; `std.core` declares them and the prelude exports
 them (`[MOD-5]`).
@@ -504,8 +506,10 @@ interface From[T]:
     fn from(owned value: T) -> Self                                 # `?` conversion; Into is derived
 ```
 
-* `[TYP-36]` *(new in 0.9.9)* **Which types implement which interfaces.** The table is normative; a `—` means the
-  implementation does not exist and a bound requiring it is `E2040`.
+* `[TYP-36]` *(new in 0.9.9)* *(changed in 0.9.10)* **Which types implement which interfaces.** The table is normative; a `—` means the
+  implementation does not exist and a bound requiring it is `E2040`. A shared reference `ref T`
+  implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works).
+  `Box[T]` is `Clone` when `T` is, and `Box[dyn I]` when `I` requires `Clone` (§IX.1, `[TYP-22]`).
 
 | Type | Clone | Copy | Eq | Ord | Hash | Default | Display | Debug |
 |---|---|---|---|---|---|---|---|---|
@@ -585,9 +589,12 @@ interface From[T]:
 
 * `dyn I` is unsized and used behind `ref dyn I`, `Box[dyn I]` or a class handle. It is a data pointer
   and a table pointer (a class handle reaches its table through the object header, `[OBJ-2]`).
-* `[TYP-22]` An interface is usable as `dyn` only if every method has a receiver, is not generic, and
-  does not return `Self` by value (methods marked `where Self: Sized` excepted). Violations are
-  `E2050`, naming the method and the clause.
+* `[TYP-22]` *(changed in 0.9.10)* An interface is usable as `dyn` only if every method has a receiver,
+  is not generic, and does not return `Self` by value (methods marked `where Self: Sized` excepted).
+  Violations are `E2050`, naming the method and the clause. An interface that requires `Clone`
+  (`interface Shape: Clone:`) is usable as `dyn` all the same: every type implementing it must be
+  `Clone`, as for any required interface, and its method table holds an entry that copies the value
+  into a new box, so `Box[dyn Shape]` is `Clone` (§IX.1).
 * `[TYP-32]` *(new in 0.9.9)* `some I` in a return type means "one concrete type, chosen by the function body, that
   implements `I`". The caller sees only `I`; the compiler knows the type and monomorphises through it,
   so there is no indirection. Every `return` in the body must produce the same concrete type

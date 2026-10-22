@@ -489,6 +489,916 @@ diagnostic suggestion ordering and does not require a language-version bump.
 
 ---
 
+## ODR-169 — `lto = "thin"` where the toolchain does only `off` and `on` — **CLOSED**
+
+    ID:        ODR-169
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_33.md [BLD-6]
+
+**The question.** `[BLD-6]` replaces a value the toolchain does not support by "the nearest one it does"; for `thin` with cl or gcc, which do only `off` and `on`, the two are equally near (helper Q's question 1).
+
+**Ruling.** `on`: thin LTO's purpose is the optimisation, and no correctness depends on LTO. As built, so MSVC `development` builds use `/GL` and `/LTCG`. ADR-256.
+
+---
+
+## ODR-170 — What "the build record" of `[BLD-6]` is — **CLOSED**
+
+    ID:        ODR-170
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_33.md [BLD-6], XVII.3
+
+**The question.** `[BLD-6]` says the build record says so when LTO is replaced; no rule defines a build record (Q2).
+
+**Ruling.** `target/<profile>/inspect/<name>.build.json`, whose `lto` gives `asked`, `used` and, where they differ, `why`, named in `[BLD-6]` (XVII.3). As built. ADR-256.
+
+---
+
+## ODR-171 — LTO for objects another link reads — **CLOSED**
+
+    ID:        ODR-171
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_33.md [BLD-6]
+
+**The question.** A static library's objects, `--emit obj` and `import c` objects are linked by someone else; with cl a `/GL` object holds no code and binds the archive to that compiler's version (Q3).
+
+**Ruling.** No LTO with cl or Clang, fat LTO objects with gcc. As built. ADR-256.
+
+---
+
+## ODR-172 — Which spread `[BUD-3b]` measures — **CLOSED**
+
+    ID:        ODR-172
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_33.md [BUD-3b]
+
+**The question.** "A gate applies only to a figure whose measured spread is below the gate" names no measure of spread and no threshold (Q4).
+
+**Ruling.** The spread is the interquartile range over the median, and both gates apply only to a figure whose spread is below 15 %. As built. ADR-256.
+
+---
+
+## ODR-173 — `[BUD-1]`'s Vulkan-sized header and `[BUD-2]`'s caches — **CLOSED**
+
+    ID:        ODR-173
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  BUILD
+    Location:  Ember_v0.9.10_Hardened_33.md [BUD-1], [BUD-2]
+
+**The question.** `[BUD-1]` asks for one C header import "of Vulkan's size" and `[BUD-2]` for a "cold cache" in B6, without saying what either is; a clean build of an unchanged package is otherwise a program-cache hit (Q5).
+
+**Ruling.** The header is generated in Vulkan's shape, 20,000 lines, not counted in the package's lines; B6's cold cache is a new, empty global build cache; B7 and B9 build with the program cache off. As built. ADR-256.
+
+---
+
+## ODR-174 — The diagnostic for a use of a deprecated item — **CLOSED**
+
+    ID:        ODR-174
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / VERSIONS
+    Location:  Ember_v0.9.10_Hardened_33.md [VER-3], XVII.9
+
+**The question.** `[VER-3]` gives `@deprecated(since, note)` but no diagnostic, and `[DIA-6a]` lets the compiler emit only codes the specification names (helper R).
+
+**Ruling.** `W2192` "use of a deprecated item", defined by `[VER-3]`, at each use outside the item's own module, naming `since` and `note`. ADR-257.
+
+---
+
+## ODR-175 — The `Allocator` interface, and how implementing it is `unsafe` — **CLOSED**
+
+    ID:        ODR-175
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  STANDARD LIBRARY / ALLOCATORS
+    Location:  Ember_v0.9.10_Hardened_33.md [ALC-2], [TYP-43]
+
+**The question.** `std.mem` names `Allocator`, `Layout` and `Global` but the specification gives no methods, and `[TYP-43]` (ODR-111) makes an `unsafe extend` of any interface but a marker `E2040`, so `[ALC-2]`'s "implementing `Allocator` is `unsafe`" could not be written (helper R).
+
+**Ruling.** `pub unsafe interface Allocator` with `allocate(self, layout: Layout) -> *mut u8` (null on failure), `deallocate(self, p: *mut u8, layout: Layout)`, `reallocate(self, p: *mut u8, old: Layout, new_size: usize) -> *mut u8`; `Layout` is `size` and `align`; `Global` is the runtime's. `[TYP-43]` reads "any interface but a marker or an `unsafe interface`", and `interface_decl` takes `unsafe`. ADR-257.
+
+---
+
+## ODR-176 — `[LT-39]`'s code for an ended region — **CLOSED**
+
+    ID:        ODR-176
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / OWNERSHIP
+    Location:  Ember_v0.9.10_Hardened_33.md [LT-39]
+
+**The question.** `[LT-39]` gives `E3065` when a region a run-time selection needs has ended, but `E3065` is "multi-region result provenance cannot be inferred" (`[LT-35]`, B14): here the region is known and has ended, an ordinary loan conflict (helper R).
+
+**Ruling.** A loan conflict, `E3021`. As built. ADR-257.
+
+---
+
+## ODR-177 — Objects in the frame against "lives on the heap" — **CLOSED**
+
+    ID:        ODR-177
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / CLASSES
+    Location:  Ember_v0.9.10_Hardened_33.md [CLS-1], [OBJ-4], [OPT-1]
+
+**The question.** `[CLS-1]` (on the heap) and `[OBJ-4]` (through the runtime allocator) read as absolute while `[OPT-1]` lets an object live in its function's frame; and an embedding host's allocation functions (`[FFI-27]`) are not called for such an object (helper R).
+
+**Ruling.** `[CLS-1]` and `[OBJ-4]` hold "except as `[OPT-1]` permits"; `[OPT-1]`: how many times a host's allocation functions are called is not behaviour. As built. ADR-257.
+
+---
+
+## ODR-178 — A collection held in a local, in Visual Studio — **CLOSED**
+
+    ID:        ODR-178
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  TOOLING / DEBUGGERS
+    Location:  Ember_v0.9.10_Hardened_33.md [CG-C-9]
+
+**The question.** One C struct serves every `Array[T]` and `String`, so a debugger shows a collection's elements only where its Ember type is known; Visual Studio keeps no typedef for a local (CodeView), so a collection held directly in a local shows its length only (helper R).
+
+**Ruling.** So it stays until a C struct per collection instance is made, with the backend's next rework; `[CG-C-9]` is unfinished until then. ADR-257.
+
+---
+
+## ODR-179 — Are `[DIA-21]`'s rows shapes? — **CLOSED**
+
+    ID:        ODR-179
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21], [TST-9]
+
+**The question.** `[TST-9]` blocks a release on a rejection whose shape is in no catalogue; `[DIA-21]`'s rows had no ids, so marks, the harness and `tests/ui/` could not name them (helper S's question 1).
+
+**Ruling.** Each row is a catalogued shape with an id (P1, P2, …) and its codes, which marks and `tests/ui/` pairs name. ADR-259, ADR-267.
+
+---
+
+## ODR-180 — How a `Result[T]` function fails with a message — **CLOSED**
+
+    ID:        ODR-180
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  STANDARD LIBRARY / ERRORS
+    Location:  Ember_v0.9.10_Hardened_33.md [ERR-8], [DIA-21]
+
+**The question.** Python's `raise ValueError("…")` has no Ember form for a function whose error type is `AnyError` (S2).
+
+**Ruling.** A std constructor, `AnyError.msg(text)`, and a catalogued help that names it (P21). ADR-259, ADR-267.
+
+---
+
+## ODR-181 — Does `ref T` implement `Eq`, `Ord` and `Hash`? — **CLOSED**
+
+    ID:        ODR-181
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  TYPES / IMPLEMENTATIONS
+    Location:  Ember_v0.9.10_Hardened_33.md [TYP-36]
+
+**The question.** `[TYP-36]` has no row for references, so `sorted(m.keys())` (`[STD-26]`) needs `ref K: Ord` and was refused (S3).
+
+**Ruling.** A shared `ref T` implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does. As built. ADR-264.
+
+---
+
+## ODR-182 — A bare interface name in a type position — **CLOSED**
+
+    ID:        ODR-182
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / TYPES
+    Location:  Ember_v0.9.10_Hardened_33.md [PHIL-12], [OBJ-2]
+
+**The question.** `s: Shape` and `Array[Shape]` were accepted in declarations and failed at the uses (S4).
+
+**Ruling.** An error whose catalogued help names `dyn Shape`, `Box[dyn Shape]` or `[T: Shape]`; read with `[OBJ-2]` by ODR-226. ADR-259.
+
+---
+
+## ODR-183 — Character classification — **CLOSED**
+
+    ID:        ODR-183
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  STANDARD LIBRARY / TEXT
+    Location:  Ember_v0.9.10_Hardened_33.md [TXT-10], Appendix E
+
+**The question.** Neither the specification nor std gave `char` Python's `isdigit`, `isalpha`, `isalnum`, `isspace` (S5).
+
+**Ruling.** `char` has `is_digit`, `is_alphabetic`, `is_alphanumeric`, `is_whitespace` (Unicode) and the `is_ascii_*` forms, with Appendix E rows. ADR-267.
+
+---
+
+## ODR-184 — `float(n)` and `int(n)` for numbers — **CLOSED**
+
+    ID:        ODR-184
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21]
+
+**The question.** The table mapped `float(s)` to `parse` and gave `float(n)` of an integer, the common case, no row (S6).
+
+**Ruling.** The help follows the argument's type: text gives `parse`, a number `as`. ADR-267.
+
+---
+
+## ODR-185 — Sequence repetition — **CLOSED**
+
+    ID:        ODR-185
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [PHIL-14], [DIA-21]
+
+**The question.** `s * n` and `[x] * n` were refused with no catalogued help; giving them Python's meaning would hide clones of a non-`Copy` `x` (S7).
+
+**Ruling.** Refused with a catalogued help: `s.repeat(n)`, `[x for _ in 0..n]` (P23). ADR-267.
+
+---
+
+## ODR-186 — Single-quoted strings — **CLOSED**
+
+    ID:        ODR-186
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21]
+
+**The question.** `'abc'` and `''` were unterminated character literals with no help (S8).
+
+**Ruling.** A `[DIA-21]` row whose fix-it is the double-quoted string (P24). ADR-267.
+
+---
+
+## ODR-187 — A list operation on an iterator — **CLOSED**
+
+    ID:        ODR-187
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21]
+
+**The question.** `split()` returns an iterator, so `len(parts)` and `parts[0]` were refused with no help (S9).
+
+**Ruling.** The help is `.collect[Array[…]]()` where the iterator is made (P25). ADR-267.
+
+---
+
+## ODR-188 — What the published first-week rate counts — **CLOSED**
+
+    ID:        ODR-188
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  PROCESS
+    Location:  Ember_v0.9.10_Hardened_33.md [TST-10]
+
+**The question.** After the helps 3 of 30 programs compiled counting the catalogue's helps, 0 counting only those the compiler printed (S10).
+
+**Ruling.** The published rate counts the catalogue's helps, as the specification mandates them; the gap to the printed ones is tracked as a defect. ADR-259.
+
+---
+
+## ODR-189 — Storing a consumed callable parameter — **CLOSED**
+
+    ID:        ODR-189
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / CALLABLES
+    Location:  Ember_v0.9.10_Hardened_33.md [CLO-3]
+
+**The question.** `[CLO-3]` makes a callable parameter an implicit generic; whether an `owned` one may be stored as an owned callable value was not said, so no user code could write a callback registry (S11, G3).
+
+**Ruling.** A consumed (`owned`) callable parameter is an owned callable value in its function and may be stored. As built. ADR-264.
+
+---
+
+## ODR-190 — MSVC's vectorisation pragma — **CLOSED**
+
+    ID:        ODR-190
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  C BACKEND
+    Location:  Ember_v0.9.10_Hardened_33.md [CG-C-6]
+
+**The question.** `[CG-C-6]` precedes a loop in vectorisable form by the host compiler's vectorisation pragma; MSVC's only loop pragma, `loop(ivdep)`, asserts no dependency and asks for nothing, and measured, it made bench b13_checked 1.17x C against 1.00x without (the lead's verification).
+
+**Ruling.** MSVC gets none; Clang's `loop vectorize(enable)` and GCC's `ivdep` stay. ADR-258.
+
+---
+
+## ODR-191 — What counts as a changed C++ header — **CLOSED**
+
+    ID:        ODR-191
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_33.md [HR-23]
+
+**The question.** `[HR-23]` refuses a reload after "a changed C++ header"; `[HR-41]`'s row reads "C++ header ABI changed" (helper P's question 1).
+
+**Ruling.** Any change to the header or a file it includes (content hash; a comment-only edit refuses too), since the host compiled its inline bodies. As built. ADR-260.
+
+---
+
+## ODR-192 — `[HR-23]` for C headers — **CLOSED**
+
+    ID:        ODR-192
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_33.md [HR-23]
+
+**The question.** The rule named C++ only, so a changed `import c` header was not refused, though the host rebuilds for it the same (P2).
+
+**Ruling.** Extended to `import c` headers. ADR-260.
+
+---
+
+## ODR-193 — `[HR-14]`'s FFI row and added fields — **CLOSED**
+
+    ID:        ODR-193
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_33.md [HR-14]
+
+**The question.** The row refused changed layout attributes on a type used across FFI; a field added to one used by value is refused too, through `[HR-21]`'s signature (P3).
+
+**Ruling.** The row reads "layout or fields changed on a type used across FFI by value". As built. ADR-260.
+
+---
+
+## ODR-194 — `[HR-20]`'s `on_relocate` — **CLOSED**
+
+    ID:        ODR-194
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_33.md [HR-20], [HR-2]
+
+**The question.** `[HR-20]` lets a pinned object move when its token has an `on_relocate` callback the runtime calls "during commit", but gives no spelling, and `[HR-2]` forbids any callback in commit (P4).
+
+**Ruling.** `Retained.pin(handle, on_relocate: Option[extern "C" fn(ObjectPtr[C], ObjectPtr[C])])` (0.8.5's spelling, `ObjectPtr` per `[FFI-23]`); the runtime calls each callback with the old and the new address right after commit publishes and before reclaim, so commit stays pointer stores and a callback cannot undo a reload that has succeeded. ADR-260.
+
+---
+
+## ODR-195 — `[HR-24]` and Annex D — **CLOSED**
+
+    ID:        ODR-195
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  HOT RELOAD
+    Location:  Ember_v0.9.10_Hardened_33.md [HR-24], [HR-41]
+
+**The question.** `[HR-24]` and `[HR-41]`'s GPU row need in-flight GPU frames, which only `std.gpu` (Annex D) has, and Annex D is after 1.0 (P5).
+
+**Ruling.** Both move to the post-1.0 families with Annex D: the GPU row's outcome moves into `[HR-24]`, which `docs/phase-status.json` places after 1.0. ADR-260.
+
+---
+
+## ODR-196 — What a map's iterator's items borrow — **CLOSED**
+
+    ID:        ODR-196
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / OWNERSHIP
+    Location:  Ember_v0.9.10_Hardened_33.md [LT-1a], [CTL-1]
+
+**The question.** D-819 (S's G5): `for k in m:` tied each key to the desugared iterator (`[LT-1]` rule 1), so a key kept across turns or after the loop was refused, though `[CTL-1]` says a `for` over a map borrows the map.
+
+**Ruling.** `@borrows` may name a view field of the receiver, `self.f`: the result borrows what `f` borrows and the receiver's loan ends with the call; a result read through a `ref mut` field borrows `self` as well. std's iterators that read through a shared `owner` declare it on `next`. ADR-261, ADR-265.
+
+---
+
+## ODR-197 — How `borrowed one exclusive` is written — **CLOSED**
+
+    ID:        ODR-197
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  C++ INTEROP
+    Location:  Ember_v0.9.10_Hardened_33.md [FFI-11]
+
+**The question.** The checker took only `mut p: T` for `borrowed one exclusive`, while `[FFI-11]`'s table gives `ref mut T`, the only form an incomplete type has (helper T's question 1).
+
+**Ruling.** Written `p: ref mut T` as well as `mut p: T`; an opaque type has only the first. As built. ADR-262.
+
+---
+
+## ODR-198 — How an overlay names a `std::variant`'s alternatives — **CLOSED**
+
+    ID:        ODR-198
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  C++ INTEROP
+    Location:  Ember_v0.9.10_Hardened_33.md [FFI-17a]
+
+**The question.** `[FFI-17a]` makes a `std::variant` a generated enum "when the overlay names each" alternative, and `[GRM-35]` has no form that names them (T2).
+
+**Ruling.** `@ffi(variant=["A", "B"])` on a `type` entry naming the header's alias of the variant. ADR-262.
+
+---
+
+## ODR-199 — What `@ffi(std_function)` gives — **CLOSED**
+
+    ID:        ODR-199
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  C++ INTEROP
+    Location:  Ember_v0.9.10_Hardened_33.md [FFI-17a], [FFI-44]
+
+**The question.** `[FFI-17a]` gives `std::function` as "an opaque owned object, or `@ffi(std_function, signature=…)`" without saying what either is (T3).
+
+**Ruling.** `@ffi(std_function)` makes a `std::function<R(A…)>` an Ember owned callable value `fn(A…) -> R`, called as any other, its target owned by the value. ADR-262.
+
+---
+
+## ODR-200 — A fixed-extent `std::span` — **CLOSED**
+
+    ID:        ODR-200
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  C++ INTEROP
+    Location:  Ember_v0.9.10_Hardened_33.md [FFI-17a]
+
+**The question.** The table's span rows are of dynamic extent; `std::span<T, N>` was refused as a parameter, since a `Span` could be of another length (T4).
+
+**Ruling.** It crosses as `ref [T; N]` / `ref mut [T; N]` (`const T` the first): the type says the length. ADR-262.
+
+---
+
+## ODR-201 — Paths that are not unique — **CLOSED**
+
+    ID:        ODR-201
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / MODULES
+    Location:  Ember_v0.9.10_Hardened_33.md [MOD-1], [MNG-1]
+
+**The question.** `[MNG-1]`'s "two distinct items never share a name" holds only if two items never share a path; a module and a type of one name in one module were accepted and gave their members one path (helper U's question 1).
+
+**Ruling.** A module and an item of one name in one scope is an error (`E1032`, its own page); a user type named as a built-in type (`struct i32`) likewise. Built by helper Y. ADR-263, ADR-266.
+
+---
+
+## ODR-202 — `[MNG-3]` is not injective — **CLOSED**
+
+    ID:        ODR-202
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  SYMBOLS
+    Location:  Ember_v0.9.10_Hardened_33.md [MNG-3]
+
+**The question.** `café` and the ASCII name `caf_u00E9_` both became `10caf_u00E9_` (U2).
+
+**Ruling.** A transliterated component is marked in its length prefix (`u10caf_u00E9_`). Built by helper Y. ADR-266.
+
+---
+
+## ODR-203 — `[MNG-4]`'s "followed by the mangled type" — **CLOSED**
+
+    ID:        ODR-203
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  SYMBOLS
+    Location:  Ember_v0.9.10_Hardened_33.md [MNG-4]
+
+**The question.** `em_obj_6Animal` and `em_obj_em_6Animal` both read as "`em_obj_` followed by the mangled type" (U3).
+
+**Ruling.** The type's mangled form without its own `em_` (`em_obj_6Animal`). As built. ADR-263.
+
+---
+
+## ODR-204 — The root package's component — **CLOSED**
+
+    ID:        ODR-204
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  SYMBOLS
+    Location:  Ember_v0.9.10_Hardened_33.md [MNG-1], [MOD-1]
+
+**The question.** `[MOD-1]` puts the package name first in a module's path, while `[MNG-1]`'s own example has none (U4).
+
+**Ruling.** In a symbol a root package's items have no package component (`em_4main`), as the example; the text says so. As built. ADR-263.
+
+---
+
+## ODR-205 — "The canonical spelling of its arguments" — **CLOSED**
+
+    ID:        ODR-205
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  SYMBOLS
+    Location:  Ember_v0.9.10_Hardened_33.md [MNG-1], [MONO-1]
+
+**The question.** `[MNG-1]` hashes "the canonical spelling" of a generic instance's arguments without defining it; separately compiled packages deduplicating instances at link time (`[MONO-1]`) need every compiler to spell alike (U5).
+
+**Ruling.** Defined in the specification as built (`[MNG-6]`, new). ADR-263.
+
+---
+
+## ODR-206 — Symbols the specification did not spell — **CLOSED**
+
+    ID:        ODR-206
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  SYMBOLS
+    Location:  Ember_v0.9.10_Hardened_33.md [MNG-1]
+
+**The question.** A method told apart by its interface, a built-in type's methods, a structural type that owns a method and `[CLO-3]`'s callable copies had no spelling in the rule (U6).
+
+**Ruling.** As built: the interface's path before the method's name; a built-in type's methods under its path (`std.core`, ODR-215); a structural owner as `std.core.<kind>`; a callable copy as an instance of its callee. ADR-263.
+
+---
+
+## ODR-207 — `sorted` of an iterator that lends references — **CLOSED**
+
+    ID:        ODR-207
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  STANDARD LIBRARY / ITERATORS
+    Location:  Ember_v0.9.10_Hardened_33.md [STD-26], [TYP-15]
+
+**The question.** `sorted(m.keys())` gives `Array[ref K]`, an `Array` of non-static views, which `[TYP-15]` forbids (helper W's question 1).
+
+**Ruling.** Its items are cloned, giving `Array[K]` (`K: Clone`), as `sorted(m)` does. ADR-264.
+
+---
+
+## ODR-208 — A lambda given to a `mut` callable parameter — **CLOSED**
+
+    ID:        ODR-208
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / CALLABLES
+    Location:  Ember_v0.9.10_Hardened_33.md [CLO-3]
+
+**The question.** A lambda is no mutable place; Rust lends a temporary there (`&mut |x| …`) (W3).
+
+**Ruling.** `E3027` (shape B10), as any other value there. As built. ADR-264.
+
+---
+
+## ODR-209 — Where a same-line `:` lambda body ends — **CLOSED**
+
+    ID:        ODR-209
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  GRAMMAR
+    Location:  Ember_v0.9.10_Hardened_33.md [GRM-17]
+
+**The question.** `h = fn(x): total += x` needed two `NEWLINE`s under `block := simple_stmt NEWLINE` (W4).
+
+**Ruling.** The body ends at the statement's `NEWLINE`. ADR-264.
+
+---
+
+## ODR-210 — Do std's consumers take their callable over? — **CLOSED**
+
+    ID:        ODR-210
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  STANDARD LIBRARY / ITERATORS
+    Location:  Ember_v0.9.10_Hardened_33.md [STD-19]
+
+**The question.** Only `for_each` took its callable `owned`; a predicate given to `any` or `find` could not count what it saw (W5).
+
+**Ruling.** Every consumer that takes a callable takes it over, as `for_each` and the adapters do. ADR-264.
+
+---
+
+## ODR-211 — `@borrows(self.f)` on an iterator adapter — **CLOSED**
+
+    ID:        ODR-211
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / OWNERSHIP
+    Location:  Ember_v0.9.10_Hardened_33.md [LT-1a]
+
+**The question.** An adapter's field (`inner: I`) and result (`Option[I.Item]`) are no views in the declaration, so `@borrows(self.inner)` was `E2031`, and `for k in m.keys().filter(f):` kept a key tied to the adapter (helper X's question 1).
+
+**Ruling.** `@borrows(self.f)` may name a field whose type is a type parameter, with a result whose type may be a view; each instance is checked, as ODR-048 does for sources, the result borrowing what the field borrows where both are views and nothing where they are not; the iterator adapters declare it. ADR-265.
+
+---
+
+## ODR-212 — The receiver's mode for `@borrows(self.f)` — **CLOSED**
+
+    ID:        ODR-212
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / OWNERSHIP
+    Location:  Ember_v0.9.10_Hardened_33.md [LT-1a]
+
+**The question.** ODR-196 names "a view field of the receiver" with no mode (X2).
+
+**Ruling.** Any mode (`self`, `mut self`, `owned self`, a copied receiver): what the field borrows does not depend on how the receiver is passed. As built. ADR-265.
+
+---
+
+## ODR-213 — Transliteration inside a component — **CLOSED**
+
+    ID:        ODR-213
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  SYMBOLS
+    Location:  Ember_v0.9.10_Hardened_33.md [MNG-3]
+
+**The question.** `é_u00E9_` and `éé` were both `u14_u00E9__u00E9_`, and one C field (helper Y's question 1).
+
+**Ruling.** An ASCII `_` that begins what would otherwise read as an escape is written `_u005F_`, in any component, and the component is then transliterated (marked `u`): the ASCII name `caf_u00E9_` is `u16caf_u005F_u00E9_`. C member names are spelled the same way, so two fields never share one, an ASCII one and a transliterated one included (the draft of cut 34 found that pair). ADR-266.
+
+---
+
+## ODR-214 — `E1032`'s shape — **CLOSED**
+
+    ID:        ODR-214
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-12], XVII.6.2
+
+**The question.** `[DIA-12]` classifies every name error into a shape of §XVII.6.2; `E1032` had none (Y2).
+
+**Ruling.** Name shape N14, "an item has the path of a module or the name of a built-in type", whose help is to rename the item or the module's file. ADR-266.
+
+---
+
+## ODR-215 — Prelude names that are built-in types — **CLOSED**
+
+    ID:        ODR-215
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  SYMBOLS
+    Location:  Ember_v0.9.10_Hardened_33.md [MNG-1], [MOD-5]
+
+**The question.** `[MOD-5]` lets a declaration shadow `str` or `Never`, so a program's `struct str` had the path its built-in's methods are under, and their symbols could meet (Y3).
+
+**Ruling.** A built-in type's path is spelled under `std.core` in a symbol (`std.core.str`). ADR-266.
+
+---
+
+## ODR-216 — Which modules `E1032` compares — **CLOSED**
+
+    ID:        ODR-216
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / MODULES
+    Location:  Ember_v0.9.10_Hardened_33.md [MOD-1]
+
+**The question.** A single-file package's directory holds unrelated files, as the conformance directories do (Y5).
+
+**Ruling.** The modules of the build, those some module imports, not every file of the source tree; the specification says so. As built. ADR-266.
+
+---
+
+## ODR-217 — An `import` binding beside an item of its name — **CLOSED**
+
+    ID:        ODR-217
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / MODULES
+    Location:  Ember_v0.9.10_Hardened_33.md [MOD-1]
+
+**The question.** `import paths.grid` beside `fn grid()`: `grid.at` silently meant the module (Y6).
+
+**Ruling.** Within ODR-201: the import binds `grid` in that scope, so it is `E1032`. As built. ADR-266.
+
+---
+
+## ODR-218 — `run_parallel`, and when a function value is `Send` — **CLOSED**
+
+    ID:        ODR-218
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / CONCURRENCY, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [ECS-4], [THR-1], [CLO-3]
+
+**The question.** `run_parallel` ran its systems one after another on the calling thread: the world's storages are classes, neither `Send` nor `Sync` (`[THR-1]`), and a system value is an owned callable value, which `[CLO-10]` made neither (owner question 1, `tasks/90/owner-questions.md`).
+
+**Ruling.** The owner, 2026-10-22: `run_parallel` runs non-conflicting systems at once, on threads; a function value is `Send` when everything it captures is `Send` (a function or a capture-free lambda captures nothing, so it is); a component must be `Send` to be used by `run_parallel`.
+
+---
+
+## ODR-219 — When a C++ base constructor runs — **CLOSED**
+
+    ID:        ODR-219
+    Status:    CLOSED — decided by the owner, 2026-10-22; incorporated in 0.9.10_Hardened_34
+    Category:  C++ INTEROP, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [FFI-39b], [CLS-2], [CLS-11]
+
+**The question.** `[FFI-39b]` ran the C++ base constructor before any Ember field was initialised, while `[CLS-2]` and `[CLS-11]` store field defaults and assign the class's own fields first: the rules disagreed for a C++ base (owner question, `tasks/90/N4-notes.md`).
+
+**Ruling.** The owner, 2026-10-22: in Ember's order, as every class: field defaults, then `init`'s lines before `super.init(…)`, then the C++ base constructor at `super.init(…)`, then the rest; `[FFI-39b]` reads "selects the C++ base constructor by arity and argument types and runs it at `super.init(…)` (`[CLS-11]`)". As built.
+
+---
+
+## ODR-220 — Where catching C++ calls on `@noalloc` paths are listed — **CLOSED**
+
+    ID:        ODR-220
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  C++ INTEROP, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [FFI-24c]
+
+**The question.** `[FFI-24c]` had `ember bind --report` list catching calls on `@noalloc` or main-thread paths, but `bind` reads a header, not a program, so no call path is in its view (owner question 7, `tasks/90/N3-notes.md`).
+
+**Ruling.** The owner, 2026-10-22: the list is part of `ember inspect --cost`, which reads the built program; `ember bind --report` lists none.
+
+---
+
+## ODR-221 — Inheriting from a C++ class without an overlay — **CLOSED**
+
+    ID:        ODR-221
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  C++ INTEROP, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [FFI-39], [FFI-44]
+
+**The question.** `[FFI-44]`'s table calls single inheritance from a C++ base automatic, while `[FFI-39]` required the overlay to declare the base with `@ffi(trampoline, virtuals=[…])`.
+
+**Ruling.** The owner, 2026-10-22: no overlay entry is needed; the trampoline passes on exactly the virtual methods the Ember class overrides (`override fn`), which the compiler reads from the class; the requirement is dropped.
+
+---
+
+## ODR-222 — Where each release is published — **CLOSED**
+
+    ID:        ODR-222
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  TOOLING / RELEASES, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [TOOL-1]
+
+**The question.** `[TOOL-1]` asks each release to publish an archive per host and a one-line installer, without saying where.
+
+**Ruling.** The owner, 2026-10-22: on GitHub Releases of the Ember repository, built by the release workflow (`.github/workflows/release.yml`).
+
+---
+
+## ODR-223 — The LLVM backend and the C toolchain in 1.0 — **CLOSED**
+
+    ID:        ODR-223
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  TOOLING / 1.0 SCOPE, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [TOOL-2], 1.0 scope
+
+**The question.** `[TOOL-2]` installed a pinned Clang separately (`ember toolchain install cc`), and the LLVM backend was planned after 1.0.
+
+**Ruling.** The owner, 2026-10-22: the LLVM backend is part of 1.0. Ember's download carries LLVM (Clang and LLD, as Zig's does), so a working installation needs no separately installed C toolchain and no separate Clang download is built; the C and C++ glue is compiled by the Clang Ember carries; Windows' system libraries are the one outside part (licence). The LLVM backend's own plan comes from the owner.
+
+---
+
+## ODR-224 — The macOS download — **CLOSED**
+
+    ID:        ODR-224
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  TOOLING / RELEASES, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [TOOL-1]
+
+**The question.** No machine here runs macOS, so the macOS arm64 archive `[TOOL-1]` lists could be neither built nor tested.
+
+**Ruling.** The owner, 2026-10-22: it is built and tested on GitHub's macOS machines in the release workflow, and stays in 1.0.
+
+---
+
+## ODR-225 — `[DIA-21]`'s new rows — **CLOSED**
+
+    ID:        ODR-225
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21], Appendix E
+
+**The question.** The habits ruled in ODR-180..187 and S's A-items were built as P21..P30 but were not in `[DIA-21]`'s table, nor their Appendix E rows (helper V's question 1).
+
+**Ruling.** The table gains P21..P30 as built, the habit ids in a column (ODR-179), and Appendix E rows for `isdigit`/`isalpha`/`isalnum`/`isspace`, `xs.sort(key=f)`, `"%d" % n` and `"{}".format(n)`, `s * n`, `[x] * n`. ADR-267.
+
+---
+
+## ODR-226 — ODR-182 read with `[OBJ-2]` — **CLOSED**
+
+    ID:        ODR-226
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / TYPES
+    Location:  Ember_v0.9.10_Hardened_33.md [PHIL-12], [OBJ-2], [GRM-8b]
+
+**The question.** A bare interface name in a type position already meant a class handle typed by the interface (IV.1, `[OBJ-2]`, `[DSP-3]`; tests use `Array[Shape]` of classes), so ODR-182 read literally would break them (V2).
+
+**Ruling.** The bare name is the class handle (`[OBJ-2]` says so); where every type implementing the interface is a struct or enum and none a class, it is `E2173` (P22), whose help names `dyn`, `Box[dyn]` or `[T: I]`, and a struct given for the handle gets P22's help at the use. `E2173`'s row reads "an argument or type position that is neither a type nor a constant (an interface implemented by values only: ODR-182)". As built. ADR-267.
+
+---
+
+## ODR-227 — `x == None` — **CLOSED**
+
+    ID:        ODR-227
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21], [PHIL-14]
+
+**The question.** `x == None` compiles where the payload is `Eq`, so the row answers it only where it is refused (V3).
+
+**Ruling.** It compiles where the payload is `Eq` (Python's meaning, `[PHIL-14]`); the row reads "`x == None` where the `Option` has no `Eq`". As built. ADR-267.
+
+---
+
+## ODR-228 — Malformed literals — **CLOSED**
+
+    ID:        ODR-228
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  LEXICAL
+    Location:  Ember_v0.9.10_Hardened_33.md [LEX-26], XVII.9
+
+**The question.** `E0101` reported an unclosed delimiter and also every literal II.5's grammar does not write: an escape, a character's value, a raw string's prefix, a byte string's character, an f-string's lone `}` (V4).
+
+**Ruling.** `[LEX-26]` (new): a literal is written as the grammar gives it; anything else is `E0009` ("malformed literal"); an unclosed literal is `E0101` ("unclosed delimiter or literal"). As built. ADR-267.
+
+---
+
+## ODR-229 — What `char`'s classes mean — **CLOSED**
+
+    ID:        ODR-229
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  STANDARD LIBRARY / TEXT
+    Location:  Ember_v0.9.10_Hardened_33.md [TXT-10]
+
+**The question.** ODR-183 named the classes without saying whether they mean Python's or Rust's properties (V5).
+
+**Ruling.** Python's meaning (`is_alphabetic`: Lu/Ll/Lt/Lm/Lo; `is_digit`: digits of any script and superscripts; `is_alphanumeric`: alphabetic or numeric; `is_whitespace`: what `split_whitespace` splits at); the `is_ascii_*` forms their restriction to ASCII. As built. ADR-267.
+
+---
+
+## ODR-230 — `AnyError.msg`'s signature — **CLOSED**
+
+    ID:        ODR-230
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  STANDARD LIBRARY / ERRORS
+    Location:  Ember_v0.9.10_Hardened_33.md [ERR-8]
+
+**The question.** ODR-180 named `AnyError.msg(text)` without its parameter (V6).
+
+**Ruling.** `AnyError.msg(owned text: String)` is an error whose text is `text`. As built. ADR-267.
+
+---
+
+## ODR-231 — `int(s)`'s and `max(xs)`'s fix-its — **CLOSED**
+
+    ID:        ODR-231
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21]
+
+**The question.** The table wrote `s.parse[int]()` and `xs.iter().max()`, which give a `Result` and an `Option` where Python gives the number (V7).
+
+**Ruling.** `int(s)`'s fix-it ends in `?` (in a function whose `Result` takes a `ParseError`) or `.unwrap()`, and `max(xs)`'s in `.unwrap()`, giving what Python gives; the rows say so. As built. ADR-267.
+
+---
+
+## ODR-232 — The code for an unknown field — **CLOSED**
+
+    ID:        ODR-232
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-6], XVII.6.2
+
+**The question.** Unknown fields were `E1010` ("cannot find field", N1), while `E2072`'s row covers fields (V8).
+
+**Ruling.** `E2072` (shape N3), as the registry's row gives, not `E1010`. ADR-267.
+
+---
+
+## ODR-233 — Type names among value suggestions — **CLOSED**
+
+    ID:        ODR-233
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-24]
+
+**The question.** `[DIA-24]` suggests a value where a value is expected; a type name stayed a value candidate, so `True` once got "did you mean `Tree`" (V9).
+
+**Ruling.** A type name is a value candidate only where it is of the right kind before `.` (`Color` before `.Red`). ADR-267.
+
+---
+
+## ODR-234 — O2's help and `[DIA-9]` — **CLOSED**
+
+    ID:        ODR-234
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-9], XVII.6.1
+
+**The question.** The catalogue's O2 help has no borrow, while `[DIA-9]` wants the structural fix before `.clone()` (V10, first half).
+
+**Ruling.** O2's help offers the borrow first, then `.clone()` and `owned`. As built. ADR-267.
+
+---
+
+## ODR-235 — B4 for a rebound parameter — **CLOSED**
+
+    ID:        ODR-235
+    Status:    CLOSED — delegated, 2026-10-22; for the owner's review; incorporated in 0.9.10_Hardened_34
+    Category:  DIAGNOSTICS
+    Location:  Ember_v0.9.10_Hardened_33.md [DIA-21], XVII.6.1
+
+**The question.** B4's help ("a single owner passing `mut`") does not fit Python's rebinding of a parameter (`letter = letter.lower()`) (V11).
+
+**Ruling.** B4's row adds, for a rebound parameter, "a new local first" (`lower = letter.lower()`). As built. ADR-267.
+
+---
+
+## ODR-236 — A comprehension over move-only elements — **CLOSED**
+
+    ID:        ODR-236
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  LANGUAGE / COMPREHENSIONS, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [GRM-27], [CTL-1]
+
+**The question.** D-865 (V10, second half): a comprehension over a borrowed collection of move-only elements gives references, `owned` was refused there (`E0109`), and `[TYP-15]` forbids an `Array[ref T]`, so a filtered list of them could not be made. Options: (a) consume an `owned` iterable; (b) collect references; (c) only a help naming `iter().filter(…)`.
+
+**Ruling.** The owner, 2026-10-22: a comprehension may take its list over and move the items (`[s for s in owned shapes if …]`: the chosen items move into the new list, the rest are dropped, the list cannot be used afterwards), or copy them with `.clone()` (`[s.clone() for s in shapes if …]`), the list staying as it was.
+
+---
+
+## ODR-237 — `Box` and `Clone` — **CLOSED**
+
+    ID:        ODR-237
+    Status:    CLOSED — decided by the owner, 2026-10-22; to be built; incorporated in 0.9.10_Hardened_34
+    Category:  TYPES / IMPLEMENTATIONS, decided by the owner
+    Location:  Ember_v0.9.10_Hardened_33.md [STR-5], IX.1, [TYP-36]
+
+**The question.** A struct or enum with a `Box` field could not derive `Clone`, since `Box` is move-only, and `Box[dyn Shape]` could not be copied at all (open since 2026-10-20).
+
+**Ruling.** The owner, 2026-10-22: `Box[T]` is `Clone` when `T` is (a new box holding a clone), so such a struct or enum derives `Clone`; an interface may require copying (`interface Shape: Clone:`), and then `Box[dyn Shape]` is `Clone`: every implementing type must be `Clone` (checked), and the shape copies itself through an entry in its method table. `Box` equality and two different kinds behind `dyn` are not yet decided.
+
+---
+
+## ODR-238 — How a user's callback registry marks its parameter — **OPEN**
+
+    ID:        ODR-238
+    Status:    OPEN — for the owner, 2026-10-22 (not ruled)
+    Category:  LANGUAGE / CALLABLES
+    Location:  Ember_v0.9.10_Hardened_33.md [CLO-15], [CLO-7], [BRW-10]
+
+**The question.** `[CLO-15]` makes a lambda written at a consumed callable parameter "whose captured state MUST carry only the static region" capture by move, but says how only for std's (`thread.spawn`, `jobs.submit`); a user's registry (`bus.subscribe(fn(e) => use(total))`) is refused with `E3026` inside the callee (helper W's question 2). Options: (a) inferred from the body storing the parameter where it outlives the call (W's recommendation; but a `pub` function's body would then change what its callers may pass, which `[BRW-10]` avoids for methods); (b) a mark in the signature (a new word). Under ODR-100 (the owner's).
+
+**Ruling.** Not ruled: for the owner. `[CLO-15]` is unchanged.
+
+---
+
 ## ODR-168 — `format`'s spec known only at run time — **CLOSED**
 
     ID:        ODR-168

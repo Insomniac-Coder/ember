@@ -5017,6 +5017,25 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-268 — Cut as 0.9.10_Hardened_34: the rulings ODR-169..ODR-237
+
+2026-10-22. The rulings waiting in `tasks/95/odr-pending.md` are written into the spec (§H.39,
+`docs/OWNER-QUEUE.md`): 68 of the 69 change rule text, 53 rules in all, two of them new (`[LEX-26]`,
+`E0009`; `[MNG-6]`, the canonical spelling of a generic instance's arguments); ODR-178 changes none
+(`[CG-C-9]` stays the target). The owner's answers of the day (ODR-218..224, ODR-236, ODR-237) are
+written as given; the LLVM backend's own rules wait for the owner's plan, so ODR-223 changes only
+`[TOOL-2]`'s words. New registry rows: `E0009`, `E1032`, `W2192`; `E0101` and `E2173` retitled.
+`E5056` and `E5057` lose their triggers with ODR-221 and retire when it is built.
+
+Two choices at the cut. ODR-213's escape of an ASCII `_` that would read as an escape applies in
+every component, an ASCII one included (which is then transliterated and marked `u`): applied only
+inside transliterated components, the ASCII field `caf_u00E9_` and `café` would still share the C
+member name `caf_u00E9_`, which carries no length to mark. ODR-195 places `[HR-24]` after 1.0 with
+Annex D's `std.gpu` (`docs/phase-status.json`); `[HR-41]`'s GPU row moved into `[HR-24]`'s text, so
+`[HR-41]`'s one unfinished reason is gone. The phase-status entries of `[FFI-39b]`, `[FFI-24c]` and
+`[ECS-4]` now say what the owner's answers leave to build. Open, for the owner: ODR-238 (`[CLO-15]`,
+the user registry), and `==` between two kinds behind `dyn` (ODR-237).
+
 ## ADR-267 — Helper V merged: the first week's diagnostics (`[DIA-21]`, `[DIA-2]`, `[TST-9]`)
 
 2026-10-22 (helper V, `tasks/95/V-notes.md`). `[DIA-21]`: every row a catalogued shape, P1..P30
