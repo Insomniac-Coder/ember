@@ -210,11 +210,11 @@ expression broken into single operations (reads, writes, moves, borrows, calls, 
 
 Restored from 0.9.8 by ODR-087.
 
-* `[CG-LL-1]` *(new in 0.9.9)* **Two backends over one intermediate representation.** The reference
+* `[CG-LL-1]` *(new in 0.9.9)* *(changed in 0.9.10)* **Two backends over one intermediate representation.** The reference
   implementation has two backends over the same MIR: C11 (§XVIII.1), for bootstrap and portability,
-  and LLVM, for optimisation control. The C backend comes first. The LLVM backend is begun once the C
-  backend passes the full conformance suite, and becomes the default once it also passes the
-  performance suite; until it exists, `--backend llvm` and `backend = "llvm"` are refused as not yet
+  and LLVM, for optimisation control. Both are part of 1.0. The C backend came first; the LLVM
+  backend is built beside it, and becomes the default once it passes the conformance and the
+  performance suites; until it exists, `--backend llvm` and `backend = "llvm"` are refused as not yet
   implemented. The C backend stays supported afterwards: it is how Ember reaches every platform that
   has a C compiler.
 * `[CG-LL-2]` *(new in 0.9.9)* The LLVM backend maps MIR to LLVM IR with the C backend's type mapping

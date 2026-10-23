@@ -79,15 +79,15 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[BLD-1]` | XVII | The module (one file) is the unit of front-end caching; the package … |
-| `[BLD-2]` | XVII | A module's front-end result is keyed by its source, the compiler and … |
-| `[BLD-4]` | XVII | The C compiler and linker run through a generated Ninja file, so C … |
+| `[BLD-1]` | XVII | *(changed in 0.9.10)* The module (one file) is the unit of front-end … |
+| `[BLD-2]` | XVII | *(changed in 0.9.10)* A module's front-end result is keyed by its … |
+| `[BLD-4]` | XVII | *(changed in 0.9.10)* The C compiler and linker run through a … |
 | `[BLD-5]` | XVII | Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`. |
 | `[BLD-6]` | XVII | *(changed in 0.9.10)* `lto = "off" \| "thin" \| "on"`. A value the … |
 | `[BLD-7]` | XVII | Front-end stages run in parallel across modules by default (`-j`, … |
 | `[BLD-8]` | XVII | Within a module, editing one function body re-checks that function, … |
 | `[BLD-9]` | XVII | `--timings` writes a per-stage, per-module timing report … |
-| `[BLD-10]` | XVII | The compile-time budgets below are release gates. |
+| `[BLD-10]` | XVII | *(changed in 0.9.10)* The compiler is made as fast as it can be, and … |
 | `[BLD-11]` | XVII | A package that omits a `[STD-6]` layer cannot use it or depend on a … |
 | `[BLD-13]` | XVII | Builds are reproducible: the same inputs give a byte-identical … |
 
@@ -124,10 +124,10 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[BUD-1]` | XVII | *(changed in 0.9.10)* They are measured on a recorded reference … |
+| `[BUD-1]` | XVII | *(changed in 0.9.10)* They are measured over `bench/bigpkg`, a … |
 | `[BUD-2]` | XVII | *(changed in 0.9.10)* Each figure is the median of 15 runs after 3 … |
-| `[BUD-3]` | XVII | A figure above its budget fails CI, and so does one more than 15 % … |
-| `[BUD-3a]` | XVII | CI normalises its measurements by a fixed calibration workload, and a … |
+| `[BUD-3]` | XVII | *(changed in 0.9.10)* A change is measured before and after on the … |
+| `[BUD-3a]` | XVII | *(changed in 0.9.10)* The before and after are measured in one run, … |
 | `[BUD-3b]` | XVII | *(changed in 0.9.10)* A figure's spread is its interquartile range … |
 | `[BUD-5]` | XVII | A proposed language or compiler feature states its measured effect on … |
 
@@ -169,7 +169,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[CG-LL-1]` | XVIII | Two backends over one intermediate representation. The reference … |
+| `[CG-LL-1]` | XVIII | *(changed in 0.9.10)* Two backends over one intermediate … |
 | `[CG-LL-2]` | XVIII | The LLVM backend maps MIR to LLVM IR with the C backend's type … |
 | `[CG-LL-3]` | XVIII | It passes the borrow checker's facts to LLVM as `noalias`, … |
 
@@ -276,7 +276,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CT-1]` | XIV | These are evaluated during compilation: `comptime(e)`; `comptime:` … |
 | `[CT-2]` | XIV | *(changed in 0.9.10)* An operation that cannot run at compile time — … |
 | `[CT-3]` | XIV | Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap … |
-| `[CT-4]` | XIV | Compile-time evaluation is deterministic by construction: the … |
+| `[CT-4]` | XIV | *(changed in 0.9.10)* Compile-time evaluation is deterministic by … |
 | `[CT-5]` | XIV | Where results live. A compile-time result is placed in the image as … |
 | `[CT-6]` | XIV | `comptime(e)` is an expression whose value is `e` evaluated at … |
 | `[CT-7]` | XIV | A `comptime:` block at item level, or as a statement, runs once … |
@@ -509,7 +509,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[FFI-1]` | XVI | Every foreign declaration has a contract: for each pointer-typed … |
+| `[FFI-1]` | XVI | *(changed in 0.9.10)* Every foreign declaration has a contract: for … |
 | `[FFI-2]` | XVI | A call to a foreign function whose contract contains an `unknown` … |
 | `[FFI-2a]` | XVI | Derived facts need no `unsafe`: `const T*` is a read-only borrow, … |
 | `[FFI-3]` | Annex C | Ember never links against C++ mangled symbols. The importer generates … |
@@ -520,7 +520,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-6a]` | XVI | *(changed in 0.9.10)* An object-like macro is imported when, after … |
 | `[FFI-6b]` | XVI | *(changed in 0.9.10)* A function-like macro is exposed only when an … |
 | `[FFI-7]` | XVI | A header is re-parsed only when its content, its overlay, or a … |
-| `[FFI-8]` | XVI | Type mapping. |
+| `[FFI-8]` | XVI | *(changed in 0.9.10)* Type mapping. |
 | `[FFI-9]` | XVI | `extern "C"` is the platform C ABI (SysV AMD64, Windows x64, … |
 | `[FFI-10]` | XVI | An `unsafe extern "C":` block declares foreign functions, statics and … |
 | `[FFI-11]` | XVI | *(changed in 0.9.10)* Contract vocabulary. A pointer contract has … |
@@ -534,14 +534,14 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-15]` | XVI | `cstr` is a borrowed, NUL-terminated C string (`c"…"` literals are … |
 | `[FFI-16]` | XVI | *(changed in 0.9.10)* An enum `E` marked `@ffi(status=E, ok=X, … |
 | `[FFI-17]` | Annex C | `import cpp "Header.hpp" with (project="engine", overlay="…", … |
-| `[FFI-17a]` | Annex C | *(changed in 0.9.10)* |
+| `[FFI-17a]` | Annex C | *(changed in 0.9.10)* *(changed in 0.9.10)* |
 | `[FFI-17b]` | Annex C | Templates are available only as explicit instantiations listed in … |
 | `[FFI-17c]` | Annex C | Destruction of an Ember class derived from a C++ class is … |
 | `[FFI-17d]` | Annex C | `@ffi(trampoline, owner="ember")`, the default, makes the Ember count … |
 | `[FFI-17e]` | Annex C | The bridge types `CppVector[T]`, `CppString` and `CppShared[T]` are … |
 | `[FFI-17f]` | Annex C | `ember inspect` reports each bridge operation that is a thunk call … |
 | `[FFI-20a]` | XVI | A declaration the importer cannot represent is recorded with the … |
-| `[FFI-21]` | XVI | A C function-pointer parameter accepts a capture-free Ember function … |
+| `[FFI-21]` | XVI | *(changed in 0.9.10)* A C function-pointer parameter accepts a … |
 | `[FFI-21a]` | XVI | *(new in 0.9.10)* A parameter C passes as a copy. C passes a … |
 | `[FFI-22]` | XVI | Every exported function and trampoline first attaches the calling … |
 | `[FFI-23]` | XVI | *(changed in 0.9.10)* `Retained.pin(v)` hands an Ember-owned object … |
@@ -589,7 +589,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-40]` | Annex C | `const` methods import as `self`, non-`const` methods as `mut self`; … |
 | `[FFI-40a]` | Annex C | `const` is not an aliasing guarantee in C++: a `const` method of a … |
 | `[FFI-41]` | Annex C | Static member functions import as associated functions. A static data … |
-| `[FFI-42]` | Annex C | Overloaded operators map to Ember operator interfaces where one … |
+| `[FFI-42]` | Annex C | *(changed in 0.9.10)* Overloaded operators map to Ember operator … |
 | `[FFI-42a]` | Annex C | Iterating an imported C++ container borrows it mutably for the loop, … |
 | `[FFI-43]` | Annex C | An overlay that marks a function both `noexcept` and throwing, or two … |
 | `[FFI-44]` | Annex C | *Automatic* means no overlay is needed; *overlay* means a contract … |
@@ -784,7 +784,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[IDE-3]` | XVII | Every compiler stage after parsing produces a complete result for a … |
 | `[IDE-4]` | XVII | Every editor request is answered from parsing, name resolution and … |
-| `[IDE-6]` | XVII | The compiler keeps all its state in a session object that can be … |
+| `[IDE-6]` | XVII | *(changed in 0.9.10)* The compiler keeps all its state in a session … |
 
 ## IFC
 
@@ -1018,7 +1018,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[PRF-1]` | XVII | A profile never changes what a program means. Every profile accepts … |
 | `[PRF-2]` | XVII | *(changed in 0.9.10)* Hot reload is a build mode of `debug` and … |
-| `[PRF-3]` | XVII | What a profile may set. |
+| `[PRF-3]` | XVII | *(changed in 0.9.10)* What a profile may set. |
 
 ## RC
 
@@ -1158,7 +1158,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[STD-11]` | XV | `Map[K, V, H = DefaultHasher, A = Global]` is a hash map that … |
 | `[STD-12]` | XV | Borrowed keys. Lookup methods, `m[k]` and `k in m` accept any key … |
 | `[STD-13]` | XV | One naming convention. Names are `snake_case` words joined by … |
-| `[STD-14]` | XV | Failure follows `[ERR-13]`: a caller's bug panics and has a … |
+| `[STD-14]` | XV | *(changed in 0.9.10)* Failure follows `[ERR-13]`: a caller's bug … |
 | `[STD-15]` | XV | `Array[T]` is a growable contiguous list (Python's `list`). `len`, … |
 | `[STD-16]` | XV | `Map` operations. `m[k]` reads the value and panics when the key is … |
 | `[STD-17]` | XV | Index assignment. `a[i] = v` calls `IndexSet.index_set(i, v)` when … |

@@ -49,11 +49,13 @@ comptime:
   `comptime.env(name)`. Both are recorded as build inputs.
 * `[CT-3]` Each evaluation is limited to 10⁸ steps and 256 MB of evaluator heap by default
   (`[comptime]` in the manifest); exceeding either is `E6001`.
-* `[CT-4]` *(changed in 0.9.9)* Compile-time evaluation is deterministic by construction: the evaluator
+* `[CT-4]` *(changed in 0.9.9)* *(changed in 0.9.10)* Compile-time evaluation is deterministic by construction: the evaluator
   has no source of `Nondet` (`[DET-2]`). A transcendental function runs at compile time when the
   source names `std.math.det`'s, with the same result it gives at run time; the platform library's
   `sin` is `Nondet` and does not run at compile time, and the evaluator never puts `det.sin` in its
-  place (ODR-056). The evaluator computes integer and floating-point results exactly as the target does, including overflow panics
+  place (ODR-056). The evaluator is the compiler's own (`[CLI-21]`): a `const` value is never computed
+  by building and running a C program, and the test suite runs every program both compiled and on the
+  evaluator and fails on any difference. The evaluator computes integer and floating-point results exactly as the target does, including overflow panics
   and the target's pointer size, endianness and layout. The lexical overflow policy is the same
   at compile time and run time (`[TYP-8]`, ODR-084), including module constants and arithmetic
   inside a function; calling another function preserves that function's policy. A result is cached with its inputs (source,

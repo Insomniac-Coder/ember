@@ -5017,6 +5017,20 @@ Therefore actual assembly and measurements, not the keyword alone, are the
 evidence. Complete current validation remains required before push. The short
 guard setup cost is separate and remains OPEN under D-498.
 
+## ADR-274 — Spec cut 35: the owner's answers of 2026-10-22/23 and the helpers' smaller questions (ODR-239..ODR-259)
+
+2026-10-23 (lead). `Ember_v0.9.10_Hardened_35` writes the owner's ODR-240 (std borrows a named
+callable; replaces ODR-210 in `[STD-19]`), ODR-241 (`Box ==`, `[TYP-36]`), ODR-242 (no fixed times:
+`[BLD-10]` and `[BUD-*]` are a gate by before-and-after comparison on one recorded machine, every
+figure published), ODR-244 (`debug` one C file per module, `release` one unit, `[BLD-1]`) and
+ODR-259 (`rewrites` in `[PRF-3]`'s table), and ODR-223 again: the LLVM backend is part of 1.0, built
+beside the C backend now (`[CG-LL-1]`), and the progress table counts it as phase 9 inside 1.0, not
+after it (Overall falls from 96 % to 95 %: three rules of 215 words). Delegated, for the owner's
+review: ODR-239 (`System`, confirmed), ODR-243 (`const` by the evaluator), ODR-245..ODR-253 (helper
+AB's C/C++ questions), ODR-254 (`[STD-14]`'s twins are an accessor's), ODR-255 (`dyn I` `Send`/`Sync`),
+ODR-256 (the interner per session), ODR-257, ODR-258 (Ninja). 32 substitutions over 10 parts
+(`scratchpad/cut35/edits.py`); ids, citations and the 46 examples check. ODR-238 stays open.
+
 ## ADR-273 — `debug` is the program as written: Ember's speed rewrites behind `rewrites` (`[PRF-3]`, `[TST-5]`, ODR-259)
 
 2026-10-22 (the owner's answer, ODR-259). `[TST-5]`'s session, run for the first time on a machine

@@ -1,5 +1,5 @@
 #$ test: compile-fail
-#$ rules: LEX-25, LEX-19, TXT-3
+#$ rules: LEX-25, LEX-26, LEX-19, TXT-3
 # ODR-186 — a literal the grammar does not write is `E0009`, an unclosed one `E0101`, a NUL in a
 # C string literal `E5064` ([TXT-3]): each code is the rule's own ([DIA-6a]).
 

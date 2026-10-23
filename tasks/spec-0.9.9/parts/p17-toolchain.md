@@ -176,18 +176,22 @@ large_copy = { level = "warn", threshold = 256 }
 
 ## XVII.3 Builds
 
-* `[BLD-1]` The module (one file) is the unit of front-end caching; the package is the unit of
-  monomorphisation and code generation.
-* `[BLD-2]` A module's front-end result is keyed by its source, the compiler and language versions,
+* `[BLD-1]` *(changed in 0.9.10)* The module (one file) is the unit of front-end caching; the package
+  is the unit of monomorphisation and code generation. A `debug` build writes one C file per module and
+  recompiles only the modules that changed; a `release` build writes one C unit, so the C compiler
+  optimises across modules and the shipped program loses no speed.
+* `[BLD-2]` *(changed in 0.9.10)* A module's front-end result is keyed by its source, the compiler and language versions,
   the package configuration and the **interface hashes** of what it imports (signatures, layouts,
   effect sets, inline bodies), so editing a private body recompiles that module and re-checks its
   callers only if a fact they use changed: its effect set (`[EFF-4]`), an inline body, or a borrow
   summary a caller relies on (a view result's sources, `[LT-22]`, `[LT-35]`; a method's field set,
-  `[BRW-10]`) (ODR-058).
+  `[BRW-10]`) (ODR-058). The cache serves `ember check` as `ember build` does.
 * `[BLD-8]` Within a module, editing one function body re-checks that function, and those of the
   module that use a fact of it that changed (`[BLD-2]`).
-* `[BLD-4]` The C compiler and linker run through a generated Ninja file, so C compilation is
-  incremental too.
+* `[BLD-4]` *(changed in 0.9.10)* The C compiler and linker run through a generated Ninja file, so C
+  compilation is incremental too. Ember's download carries Ninja beside Clang and LLD (`[TOOL-2]`); a
+  build from a source checkout finds `ninja` on `PATH`, and without it is an error naming the command
+  that installs it.
 * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
 * `[BLD-7]` Front-end stages run in parallel across modules by default (`-j`, default the number of
   physical cores).
@@ -198,31 +202,34 @@ large_copy = { level = "warn", threshold = 256 }
   (`why`). Objects another link reads (a static library) take no LTO with cl or Clang, and fat LTO
   objects with gcc. No correctness property depends on LTO.
 * `[BLD-9]` `--timings` writes a per-stage, per-module timing report (`--timings=json` for tools).
-* `[BLD-10]` *(changed in 0.9.9)* The compile-time budgets below are release gates.
-* `[BUD-1]` *(changed in 0.9.10)* They are measured on a recorded reference machine (an 8-core laptop
-  CPU of 2020 or later, 16 GB, NVMe, warm caches) over `bench/bigpkg`, a generated 50k-line package of
-  400 modules with 15 % generic code and one C header import of Vulkan's size: a generated header of
-  20,000 lines in Vulkan's shape (enums, structs, function-pointer types, prototypes), not counted in
-  the package's lines.
+* `[BLD-10]` *(changed in 0.9.10)* The compiler is made as fast as it can be, and memory safe. Its
+  speed is measured, not held to fixed times, since a time differs from one machine to another: the
+  figures below are a release gate by comparison, never by a limit in seconds.
+* `[BUD-1]` *(changed in 0.9.10)* They are measured over `bench/bigpkg`, a generated 50k-line package
+  of 400 modules with 15 % generic code and one C header import of Vulkan's size (a generated header
+  of 20,000 lines in Vulkan's shape: enums, structs, function-pointer types, prototypes, not counted in
+  the package's lines), on one recorded machine, whose CPU, memory and storage are published with the
+  figures.
 * `[BUD-2]` *(changed in 0.9.10)* Each figure is the median of 15 runs after 3 warm-up runs. B6's cold
   cache is a new, empty global build cache; B7 and B9 build with the program cache off:
 
-  | # | Operation | Budget |
-  |---|---|---|
-  | B1 | `ember check` after a one-function-body edit | ≤ 250 ms |
-  | B2 | `ember build --reload` after a one-function-body edit | ≤ 1 s |
-  | B3 | `ember build` after a one-function-body edit, `debug` | ≤ 1.5 s |
-  | B4 | `ember build` after a signature change in a leaf module | ≤ 2.5 s |
-  | B5 | `ember build` after a change to a widely imported type | ≤ 8 s |
-  | B6 | clean `debug` build, cold cache | ≤ 40 s |
-  | B7 | clean `development` build | ≤ 90 s |
-  | B8 | `.embind` regeneration for a Vulkan-sized header | ≤ 3 s |
-  | B9 | compiler peak memory, clean build | ≤ 3 GB |
+  | # | Operation |
+  |---|---|
+  | B1 | `ember check` after a one-function-body edit |
+  | B2 | `ember build --reload` after a one-function-body edit |
+  | B3 | `ember build` after a one-function-body edit, `debug` |
+  | B4 | `ember build` after a signature change in a leaf module |
+  | B5 | `ember build` after a change to a widely imported type |
+  | B6 | clean `debug` build, cold cache |
+  | B7 | clean `development` build |
+  | B8 | `.embind` regeneration for a Vulkan-sized header |
+  | B9 | compiler peak memory, clean build |
 
-* `[BUD-3]` A figure above its budget fails CI, and so does one more than 15 % above the recorded
-  baseline even inside its budget.
-* `[BUD-3a]` CI normalises its measurements by a fixed calibration workload, and a run whose
-  calibration varies by more than 10 % is inconclusive, not failed.
+* `[BUD-3]` *(changed in 0.9.10)* A change is measured before and after on the same machine; one that
+  makes a figure worse than before, beyond the figure's spread, fails CI. Every figure is published.
+* `[BUD-3a]` *(changed in 0.9.10)* The before and after are measured in one run, interleaved, and the
+  run is normalised by a fixed calibration workload; a run whose calibration varies by more than 10 %
+  is inconclusive, not failed.
 * `[BUD-3b]` *(changed in 0.9.10)* A figure's spread is its interquartile range over its median. Both
   gates of `[BUD-3]` apply only to a figure whose spread is below 15 %, and every figure is published
   with its spread.
@@ -241,7 +248,7 @@ large_copy = { level = "warn", threshold = 256 }
   The one check that differs is `debug_assert`, checked only where `[PRF-3]` says: it may not have
   side effects (`W2016`), so a program whose assertions hold computes the same results in every
   profile. Only the following differ between profiles.
-* `[PRF-3]` *(new in 0.9.9)* **What a profile may set.**
+* `[PRF-3]` *(new in 0.9.9)* *(changed in 0.9.10)* **What a profile may set.**
 
   | Setting (key) | `debug` | `development` | `release` |
   |---|---|---|---|
@@ -254,6 +261,14 @@ large_copy = { level = "warn", threshold = 256 }
   | lock-order report (`lock_order`, `[THR-4]`) | on | off | off |
   | C sanitizers (`sanitizers = […]`) | allowed | allowed | not allowed |
   | link-time optimisation (`lto`) | off | thin | on |
+  | Ember's own speed rewrites (`rewrites`) | off | on | on |
+
+  The speed rewrites are what the compiler does to a program's code for speed before the C compiler
+  sees it: inlining, copies of a loop, checks a proof removes, and the passes after them. Without
+  them a build's code is the program as written, which a debugger follows line by line, each local
+  by its name (`[TST-5]`); what the rewrites decide that a program is told (`@simd`'s verdicts,
+  `[SIMD-2]`) is the same in every profile (`[PRF-1]`). A package turns them on for `debug` with
+  `[profiles.debug] rewrites = true`.
 
   A package may define more profiles, each `inherits` one of these and overrides keys of this table.
   A key outside the table is `E9001`.
@@ -554,8 +569,9 @@ fn main():
 * `[IDE-4]` Every editor request is answered from parsing, name resolution and type checking alone,
   never from code generation or a C compiler; borrow- and effect-derived information is shown from the
   last completed `ember check` and never blocks a response.
-* `[IDE-6]` The compiler keeps all its state in a session object that can be dropped and rebuilt, so a
-  long-running editor process does not grow without bound.
+* `[IDE-6]` *(changed in 0.9.10)* The compiler keeps all its state in a session object that can be
+  dropped and rebuilt, so a long-running editor process does not grow without bound; the identifier
+  interner is the session's too (an identifier's text borrows from it).
 * `ember lsp`, a language server over stdio, is reserved for a named milestone before 1.0.
 
 ## XVII.8 Conformance profiles and ABI versions

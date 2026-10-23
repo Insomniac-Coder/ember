@@ -185,7 +185,8 @@ fn main():
   its type. `world.run(system, arg)` borrows exactly those storages, and passes the system its query and
   one argument: a tuple for several, `()` for none (ODR-141). `world.run_parallel([s1, s2, …])`
   runs systems at once, on threads, when their sets do not conflict: each system, a function value
-  (`[THR-8]`), and every component its query reads or writes must be `Send` (`E7004`, naming it). A
+  (`[THR-8]`), and every component its query reads or writes must be `Send`, and one two systems
+  read `Sync` (`E7004`, naming it). A
   conflict between two systems known at compile time is `E7020`, naming both systems and the
   component. Systems passed as values, whose sets
   are not known at compile time, are checked against each other before any of them starts, and a

@@ -516,6 +516,27 @@ ODR-132, the type of `Retained.ptr()` (§H.20).
 | ODR-235 | delegated: B4's help adds a new local for a rebound parameter | §XVII.6.1 |
 | ODR-236 | the owner's answer: a comprehension may take its list over and move the items, or copy them with `.clone()`; to be built | `[GRM-27]`, `[GRM-15]` |
 | ODR-237 | the owner's answer: `Box[T]` is `Clone` when `T` is; an interface may require `Clone`, and then `Box[dyn I]` is `Clone`; to be built | `[TYP-36]`, `[TYP-22]`, IX.1 |
+| ODR-239 | delegated, confirmed by the owner: `std.mem.System`, the platform's allocator, for a global allocator to wrap | `[ALC-2]` |
+| ODR-240 | the owner: std's callable-taking functions borrow a named callable; a lambda written at the call is given (replaces ODR-210) | `[STD-19]` |
+| ODR-241 | the owner: `Box == Box` as what they hold; `Box[dyn I]` when `I` requires `Eq`, two kinds never equal | `[TYP-36]` |
+| ODR-242 | the owner: no fixed times; the figures are a gate by before-and-after comparison on one machine | `[BLD-10]`, `[BUD-1]`, `[BUD-2]`, `[BUD-3]`, `[BUD-3a]` |
+| ODR-243 | delegated: a `const` value by the compiler's own evaluator, never a built C program | `[CT-4]` |
+| ODR-244 | the owner: `debug` one C file per module, recompiled as it changes; `release` one C unit | `[BLD-1]` |
+| ODR-245 | delegated: `user_data=p@N` names the callback parameter that receives the user data | `[FFI-21]` |
+| ODR-246 | delegated: `destroys(f)` may take the registering call's result, which the token keeps | `[FFI-11]` |
+| ODR-247 | delegated: `threads(creator)` and `handle` on a function are `E5002` | `[FFI-1]` |
+| ODR-248 | delegated: `@layout(c, union)` and `@layout(c, flexible)`, as built | `[FFI-8]` |
+| ODR-249 | delegated: `@ffi(newtype)` a nominal type with the typedef's representation, `as` only | `[FFI-8]` |
+| ODR-250 | delegated: a variadic call's further arguments typed; a promoted one `E5015`, as built | `[FFI-8]` |
+| ODR-251 | delegated: a `unique_ptr` whose deleter holds state is `E5034` | `[FFI-17a]` |
+| ODR-252 | delegated: `operator*`/`->` import `get()` and `get_mut()` | `[FFI-42]` |
+| ODR-253 | delegated: a `nullable` callback with user data is an `Option` of a callable value | `[FFI-21]` |
+| ODR-254 | delegated: the non-panicking twin is an accessor's; a constructor's or mutation's bug panics with none | `[STD-14]` |
+| ODR-255 | delegated: `dyn I` is `Send`/`Sync` when `I` requires it; shared reads in `run_parallel` need `Sync` | `[THR-8]`, `[ECS-4]` |
+| ODR-256 | delegated: the identifier interner is the session's | `[IDE-6]` |
+| ODR-257 | delegated: the module cache serves `ember check` as `ember build` | `[BLD-2]` |
+| ODR-258 | delegated: Ninja carried beside Clang and LLD; from a checkout on `PATH`, else an error naming the install | `[BLD-4]` |
+| ODR-259 | the owner: `debug` without Ember's speed rewrites unless `rewrites = true` | `[PRF-3]` |
 
 Generated: every rule whose text differs from Hardened_2 in Hardened_52, the last
 0.9.9.
@@ -1390,3 +1411,47 @@ Generated: every rule whose text differs from 0.9.10_Hardened_33.
 | `[TYP-36]` | changed |
 | `[TYP-43]` | changed |
 | `[VER-3]` | changed |
+
+## H.40 Changes in 0.9.10_Hardened_35 (from 0.9.10_Hardened_34)
+
+**0.9.10_Hardened_35** records the owner's answers of 2026-10-22 and 2026-10-23 (ODR-240, ODR-241, ODR-242, ODR-244, ODR-259, and ODR-223 again: the LLVM backend is part of 1.0, begun now) and the rulings on helpers AA, AB and AC's smaller questions (ODR-239, ODR-243, ODR-245..ODR-258, for the owner's review; ODR-239 the owner confirmed) (`docs/DECISIONS.md` ADR-273); the owner also confirmed ODR-175, ODR-207, ODR-209, ODR-211, ODR-213 and ODR-215, and ODR-238 (`[CLO-15]`) stays open:
+
+* For `[ALC-2]`: `Global` is the package's configured allocator and `System` the platform's, which a global allocator may wrap (ODR-239).
+* For `[STD-19]`: a callable given to the standard library is borrowed; a lambda written at the call is given (ODR-240, the owner, replacing ODR-210).
+* For `[TYP-36]`: two boxes compare with `==` as what they hold does; `Box[dyn I]` when `I` requires `Eq`, two kinds never equal (ODR-241, the owner).
+* For `[BLD-10]`, `[BUD-1]`, `[BUD-2]`, `[BUD-3]`, `[BUD-3a]`: no fixed times; the figures are a gate by before-and-after comparison on one machine (ODR-242, the owner).
+* For `[CT-4]`: a `const` value is the compiler's own evaluator's, never a built C program's (ODR-243).
+* For `[BLD-1]`, `[BLD-2]`, `[BLD-4]`: `debug` writes one C file per module, `release` one unit (ODR-244, the owner); the cache serves `ember check` (ODR-257); Ninja is carried, or found on `PATH` (ODR-258).
+* For `[FFI-1]`, `[FFI-8]`, `[FFI-11]`, `[FFI-21]`, `[FFI-17a]`, `[FFI-42]`: helper AB's questions (ODR-245..ODR-253).
+* For `[STD-14]`: the non-panicking twin is an accessor's (ODR-254).
+* For `[THR-8]`, `[ECS-4]`: `dyn I` is `Send`/`Sync` when `I` requires it; a component two parallel systems read is `Sync` (ODR-255).
+* For `[IDE-6]`: the identifier interner is the session's (ODR-256).
+* For `[PRF-3]`: a `debug` build makes none of Ember's speed rewrites unless `[profiles.debug] rewrites = true` (ODR-259, the owner).
+* For `[CG-LL-1]`: the LLVM backend is part of 1.0, built beside the C backend now (ODR-223, the owner, again on 2026-10-23); the progress table counts it as phase 9, inside 1.0.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_34.
+
+| Rule | 0.9.10_Hardened_34 → 0.9.10_Hardened_35 |
+|---|---|
+| `[ALC-2]` | changed |
+| `[BLD-1]` | changed |
+| `[BLD-2]` | changed |
+| `[BLD-4]` | changed |
+| `[BLD-10]` | changed |
+| `[BUD-1]` | changed |
+| `[BUD-3]` | changed |
+| `[BUD-3a]` | changed |
+| `[CG-LL-1]` | changed |
+| `[CT-4]` | changed |
+| `[ECS-4]` | changed |
+| `[FFI-1]` | changed |
+| `[FFI-8]` | changed |
+| `[FFI-17a]` | changed |
+| `[FFI-21]` | changed |
+| `[FFI-42]` | changed |
+| `[IDE-6]` | changed |
+| `[PRF-3]` | changed |
+| `[STD-14]` | changed |
+| `[STD-19]` | changed |
+| `[THR-8]` | changed |
+| `[TYP-36]` | changed |

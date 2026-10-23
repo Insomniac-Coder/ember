@@ -510,6 +510,9 @@ interface From[T]:
   implementation does not exist and a bound requiring it is `E2040`. A shared reference `ref T`
   implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works).
   `Box[T]` is `Clone` when `T` is, and `Box[dyn I]` when `I` requires `Clone` (§IX.1, `[TYP-22]`).
+  Two boxes compare with `==` when what they hold does (`Box(3) == Box(3)`); `Box[dyn I]` compares
+  when `I` requires `Eq` (`interface Shape: Eq:`, a method-table entry as for `Clone`): values of two
+  different kinds are never equal, and two of one kind compare their contents.
 
 | Type | Clone | Copy | Eq | Ord | Hash | Default | Display | Debug |
 |---|---|---|---|---|---|---|---|---|

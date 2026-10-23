@@ -23,11 +23,12 @@ fn main():
 
 ## XVI.1 Principles
 
-* `[FFI-1]` *(changed in 0.9.9)* Every foreign declaration has a **contract**: for each pointer-typed
+* `[FFI-1]` *(changed in 0.9.9)* *(changed in 0.9.10)* Every foreign declaration has a **contract**: for each pointer-typed
   parameter and result, its ownership, mutability, nullability, count and lifetime (§XVI.4), and for
   the function its effects, its thread rule and whether it is **safe to call** at all. Facts derivable
   from the C declaration are derived (`[FFI-2a]`); the rest are `unknown` until a contract supplies
-  them.
+  them. `threads(creator)` and `handle` are words of a type's or a result's contract, not a function's:
+  on a function each is a contract error (`E5002`).
 * `[FFI-2]` *(changed in 0.9.9)* A call to a foreign function whose contract contains an `unknown` fact
   requires `unsafe`. Supplying the facts, in an `@ffi(…)` attribute or an overlay (§XVI.4), makes the
   call safe. The safe-to-call fact is never derived, because a scalar can be an address
@@ -131,7 +132,7 @@ import c "vulkan/vulkan.h" with (
 * `[FFI-38]` The importer rejects rather than guesses: a fact it cannot establish leaves the
   declaration uncontracted (its calls need `unsafe`) and is reported; convenient-but-unsound is never
   an import mode.
-* `[FFI-8]` *(changed in 0.9.9)* **Type mapping.**
+* `[FFI-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* **Type mapping.**
 
   | C | Ember |
   |---|---|
@@ -145,18 +146,18 @@ import c "vulkan/vulkan.h" with (
   | `__attribute__((packed))`, `#pragma pack`, `alignas` | `@packed`, `@align(N)` |
   | `T*`, `const T*` | `*mut T`, `*T`; with a contract, `ref`, `MutSpan`/`Span`, `Option[…]`, `ForeignBox[T]`, `cstr` |
   | `T[N]` field | `[T; N]` |
-  | complete `struct`, `union` | `@layout(c) struct` (`Copy` when every field is plain data); a union's fields are read only in `unsafe` |
+  | complete `struct`, `union` | `@layout(c) struct` (`Copy` when every field is plain data); a union, `@layout(c, union) struct`, whose fields are read only in `unsafe` |
   | incomplete `struct` | `extern type S`, used only behind pointers |
   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
-  | `typedef` | a type alias, or a new type with `@ffi(newtype)` |
+  | `typedef` | a type alias; with `@ffi(newtype)` a nominal type with the typedef's representation, passed to C as the typedef is, converted with `as` only |
   | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: Sync`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `Sync` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
   | `#define S "text"` | `const S: cstr = c"text"` |
   | function pointer | `extern "C" fn(…) -> R`, `Option[…]` when nullable; another calling convention is `extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
   | anonymous member | a generated type `<Parent>_anon<N>` with transparent field access |
-  | flexible array member | an unsized struct (never by value, `E5017`) with `unsafe fn tail(self, n) -> Span[T]` |
+  | flexible array member | an unsized struct, `@layout(c, flexible)` (never by value, `E5017`), with `unsafe fn tail(self, n) -> Span[T]` |
   | `_Atomic T` | `Atomic[T]` when layouts match, else `E5016` |
-  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe` with explicit argument types |
+  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5015`, naming the cast to write |
   | an identifier that is an Ember keyword | a raw identifier `r#type` (`[LEX-14]`) |
 
 * `[FFI-29]` For every `import c` the importer emits a **shim** C file, compiled with that import's
@@ -255,7 +256,9 @@ unsafe overlay c "vulkan/vulkan.h":
 
   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
-  (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)`; `unsafe` (leave the call unsafe).
+  (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the registering
+  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe`
+  (leave the call unsafe).
   `@ffi(effects=[…])` states effects.
 * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
@@ -310,7 +313,7 @@ unsafe overlay c "vulkan/vulkan.h":
 
 ## XVI.6 Callbacks and foreign retention
 
-* `[FFI-21]` *(changed in 0.9.9)* A C function-pointer parameter accepts a capture-free Ember function
+* `[FFI-21]` *(changed in 0.9.9)* *(changed in 0.9.10)* A C function-pointer parameter accepts a capture-free Ember function
   (as an `extern "C" fn`) or an `extern "C" fn` value. A capturing closure is `E5040` unless the
   parameter's contract names a `user_data` parameter, in which case the importer generates the
   trampoline: the closure is boxed and passed as `user_data`. With `callback(borrowed)` the box is freed
@@ -318,7 +321,11 @@ unsafe overlay c "vulkan/vulkan.h":
   or `callback(once)` the closure outlives the call, so it MUST be an `owned fn` whose captures carry
   only the static region (`E3063`); `retained` returns a `Retained` token whose drop unregisters
   through the declared `destroys(f)` (`E5041` if none is declared), and with `once` the trampoline
-  frees the box after the first call.
+  frees the box after the first call. A callback with several parameters of its user data's type names
+  the one that receives it: `user_data=p@N`, the callback's `N`th parameter (1-based, as in the C
+  signature); without `@N`, exactly one parameter has that type, or the contract is `E5002`, whose help
+  shows the `@N` form. A `nullable` callback with user data is an `Option` of a callable value: `None`
+  passes `NULL` and no user data.
 * `[FFI-21a]` *(new in 0.9.10)* **A parameter C passes as a copy.** C passes a function's arguments by
   value. When a function's value becomes an `extern "C" fn` (`[FN-6]`), a parameter it borrows
   (`[FN-1]`) whose type is not a pointer is, for a call from C, a copy the call makes, which ends when

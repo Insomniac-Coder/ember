@@ -688,8 +688,9 @@ fn tagged(default: Option<&str>, context: &str, reason: &str) -> String {
 /// method is (`[TYP-21]`): `operator+` with one operand is `Add.add`, `operator-` with none
 /// `Neg.neg`, `operator+=` `AddAssign.add_assign`, `operator==` `Eq.eq`, a `const` `operator[]`
 /// `Index.index` and another `IndexMut.index_mut`; an operator with no such interface is skipped,
-/// saying why.
-fn operator_method(name: &str, operands: c_int, member: Member) -> Result<(&'static str, &'static str), String> {
+/// saying why. ODR-252 — `operator*` and `operator->` of a smart-pointer-like class read through it:
+/// `get()`, and `get_mut()` where the operator is not `const`, which implement no interface.
+fn operator_method(name: &str, operands: c_int, member: Member) -> Result<(&'static str, Option<&'static str>), String> {
     let operator = name.trim_start_matches("operator").trim();
     let binary = [
         ("+", "add", "Add"), ("-", "sub", "Sub"), ("*", "mul", "Mul"), ("/", "div", "Div"), ("%", "rem", "Rem"),
@@ -706,12 +707,13 @@ fn operator_method(name: &str, operands: c_int, member: Member) -> Result<(&'sta
         ("-", 0) => Some(("neg", "Neg")),
         ("~", 0) => Some(("not", "Not")),
         (_, 1) => binary.iter().find(|(spelled, _, _)| *spelled == operator).map(|(_, method, interface)| (*method, *interface)),
+        ("*" | "->", 0) if member == Member::Method => return Ok(("get", None)),
+        ("*" | "->", 0) => return Ok(("get_mut", None)),
         _ => None,
     };
-    found.ok_or_else(|| match operator {
+    found.map(|(method, interface)| (method, Some(interface))).ok_or_else(|| match operator {
         "!=" => "`operator!=`: Ember's `!=` is `Eq`'s, from `operator==` ([FFI-42])".to_string(),
         "<" | "<=" | ">" | ">=" | "<=>" => format!("`{name}`: Ember orders through `Ord.cmp`, which no one C++ operator is ([FFI-42])"),
-        "*" | "->" => format!("`{name}`: reading through an object of a class is not built ([FFI-42])"),
         _ => format!("`{name}`: Ember has no operator interface for it ([FFI-42])"),
     })
 }
@@ -2825,7 +2827,9 @@ impl Writer {
             let saved = std::mem::replace(&mut self.writing, namespace_of(declaration));
             match self.cpp_thunk(cursor, method, Some((&owner, member, &spelled))) {
                 Ok(function) => {
-                    self.operators.push((owner.clone(), method.to_string(), interface.to_string()));
+                    if let Some(interface) = interface {
+                        self.operators.push((owner.clone(), method.to_string(), interface.to_string()));
+                    }
                     self.functions.push(Function { namespace: self.writing.clone(), ..function });
                 }
                 Err(reason) => self.skip(cursor, &shown, reason),
@@ -2904,6 +2908,9 @@ impl Writer {
                     base = single_public_base(found);
                 }
             }
+            // ODR-252 — a class with `operator*` is read through `get()`, which `->` is reached
+            // through too: its `operator->` is not imported again.
+            let dereferences = members.iter().any(|member| kind(*member) == CXCursor_CXXMethod && spelling(*member) == "operator*" && clang_Cursor_getNumArguments(*member) == 0);
             for (index, child) in members.into_iter().enumerate() {
                 let inherited = index >= own;
                 // `[FFI-42]` — an operator the class declares its friend (often defined there, found
@@ -2916,6 +2923,9 @@ impl Writer {
                     continue;
                 }
                 let name = spelling(child);
+                if dereferences && name == "operator->" {
+                    continue;
+                }
                 match kind(child) {
                     // `[FFI-41]` — a nested type, under its outer type's name.
                     CXCursor_StructDecl | CXCursor_ClassDecl | CXCursor_UnionDecl | CXCursor_EnumDecl | CXCursor_TypedefDecl | CXCursor_TypeAliasDecl => {
@@ -2993,7 +3003,7 @@ impl Writer {
                 first_of.insert(key.clone(), child);
                 match self.cpp_thunk(child, &key, Some((&owner, member, &class_spelled))) {
                     Ok(function) => {
-                        if let Some((method, interface)) = operator {
+                        if let Some((method, Some(interface))) = operator {
                             self.operators.push((owner.clone(), method.to_string(), interface.to_string()));
                         }
                         self.functions.push(Function { namespace: self.writing.clone(), ..function });
@@ -3162,7 +3172,7 @@ impl Writer {
                     && !children(definition).into_iter().any(|member| kind(member) == CXCursor_FieldDecl);
                 if !stateless {
                     return Some(Err(format!(
-                        "`{spelled}`: a deleter that holds state (`{}`): a `ForeignBox` keeps only its object's address; free it in C++, or give it a stateless deleter [FFI-17a]",
+                        "[E5034] `{spelled}`: a deleter that holds state (`{}`): a `ForeignBox` keeps only its object's address; free it in C++, or give it a stateless deleter [FFI-17a]",
                         cpp_spelling(deleter)
                     )));
                 }
@@ -4320,7 +4330,7 @@ impl Writer {
                         let name = operator.map_or(key.clone(), |(method, _)| method.to_string());
                         match self.cpp_thunk(method, &name, Some((&owner, member, &class_spelled))) {
                             Ok(function) => {
-                                if let Some((method, interface)) = operator {
+                                if let Some((method, Some(interface))) = operator {
                                     self.operators.push((owner.clone(), method.to_string(), interface.to_string()));
                                 }
                                 self.functions.push(Function { namespace: self.writing.clone(), ..function });
