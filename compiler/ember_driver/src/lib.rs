@@ -5548,6 +5548,9 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             has_main: program.main.is_some() && !library && command != "test",
             command,
             library,
+            cdylib,
+            package_name: &package_name,
+            shared_runtime: runtime_mode == "shared",
             reload: reload_image.as_ref(),
             additions: reload_additions.as_ref(),
             started,
@@ -5782,80 +5785,22 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, cdylib)?;
     libraries.extend(foreign_libraries);
     library_relaxed.extend(foreign_objects.iter().cloned());
-    // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
-    // points; `[FFI-31c]` with `runtime = "shared"` it imports the runtime its process shares.
-    if cdylib {
+    if library {
         let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
-        let mut exports: Vec<String> = bodies.iter()
-            .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
-            .map(|body| body.symbol.clone())
-            .collect();
-        // `[FFI-28]`, `[ABI-1]` (ODR-131) — the entry points and the module protocol's marker.
-        exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown"),
-            format!("{} DATA", ember_branding::runtime(MODULE_PROTOCOL_MARKER))]);
-        // `[FFI-26]` — each export table, its protocol version in its symbol, as data.
-        for table in types.export_tables() {
-            exports.push(format!("{} DATA", table.symbol()));
-        }
-        exports.sort();
-        exports.dedup();
-        let shared = if runtime_mode == "shared" {
-            Some(ember_build::reload::shared_runtime(&toolchain, &runtime_source, &includes, options.profile, None,
-                &ember_build::cache_root(), &layout.lib).map_err(|e| e.to_string())?)
-        } else {
-            None
+        let built = Library {
+            toolchain: &toolchain,
+            layout: &layout,
+            package_name: &package_name,
+            module_name: &module_name,
+            cdylib,
+            shared_runtime: runtime_mode == "shared",
+            units: std::slice::from_ref(&c_path),
+            objects: &library_relaxed,
+            libraries: &libraries,
+            exports: if cdylib { cdylib_exports(&bodies, &types) } else { Vec::new() },
+            header,
         };
-        let package_header = layout.lib.join(format!("{package_name}.h"));
-        let built = ember_build::cdylib::link_cdylib(&toolchain, &package_name, &c_path, &runtime_source, &includes,
-            options.profile, shared.as_ref(), &exports, &libraries, &library_relaxed, &layout.obj, &layout.lib)
-            .map_err(|e| e.to_string())?;
-        copy_runtime_header(&layout.lib)?;
-        std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
-        if options.cpp_header {
-            std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
-        }
-        report(&sink, &map, options);
-        eprintln!("built {}", built.library.display());
-        return Ok(ExitCode::SUCCESS);
-    }
-    if staticlib {
-        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
-        let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
-        let package_object = layout.obj.join(format!("{module_name}.{object_ext}"));
-        let runtime_object = layout.obj.join("runtime").join(format!("{}_rt.{object_ext}", ember_branding::SYMBOL_PREFIX));
-        let package_archive = layout.lib.join(ember_build::archive_name(&toolchain, &package_name));
-        let runtime_lib = runtime_artifact_dir(&layout.lib);
-        let runtime_archive = runtime_lib.join(ember_build::archive_name(&toolchain,
-            &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
-        let package_header = layout.lib.join(format!("{package_name}.h"));
-        let runtime_header = runtime_lib.join(ember_branding::runtime_header());
-        let outputs = [&package_archive, &runtime_archive, &package_header, &runtime_header];
-        for path in outputs { if path.is_file() { std::fs::remove_file(path).map_err(|e| e.to_string())?; } }
-        let built = (|| -> Result<(), String> {
-            ember_build::compile_object(&toolchain, &c_path, &includes, &package_object, options.profile)
-                .map_err(|e| e.to_string())?;
-            ember_build::compile_object(&toolchain, &runtime_source, &includes, &runtime_object, options.profile)
-                .map_err(|e| e.to_string())?;
-            let mut package_objects = vec![package_object];
-            package_objects.extend(library_relaxed.iter().cloned());
-            ember_build::archive_objects(&toolchain, &package_objects, &package_archive)
-                .map_err(|e| e.to_string())?;
-            ember_build::archive_objects(&toolchain, &[runtime_object], &runtime_archive)
-                .map_err(|e| e.to_string())?;
-            copy_runtime_header(&layout.lib)?;
-            std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
-            if options.cpp_header {
-                std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = built {
-            for path in outputs { let _ = std::fs::remove_file(path); }
-            return Err(error);
-        }
-        report(&sink, &map, options);
-        eprintln!("built {} and {}", package_archive.display(), runtime_archive.display());
-        return Ok(ExitCode::SUCCESS);
+        return build_library(built, options, &sink, &map);
     }
     // The runtime is compiled once per toolchain and profile, then linked as
     // an object; without one (MSVC), it is compiled with the program.
@@ -6682,6 +6627,112 @@ fn manifest_lint_settings(
 /// `[ABI-1]`, `[FFI-28]` (ODR-131) — the marker a host looks up before calling into a module: its
 /// name carries the module protocol's version, `EMBER_MODULE_PROTOCOL` in the runtime's header.
 const MODULE_PROTOCOL_MARKER: &str = "module_protocol_v1";
+
+/// `[FFI-28]`, `[FFI-26]`, `[ABI-1]` (ODR-131) — what a `cdylib` exports: its `@export` functions,
+/// the module's entry points and the module protocol's marker, and each export table, its protocol
+/// version in its symbol (a datum's name ends in ` DATA`).
+fn cdylib_exports(bodies: &[ember_mir::Body], types: &TypeTable) -> Vec<String> {
+    let mut exports: Vec<String> = bodies.iter()
+        .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
+        .map(|body| body.symbol.clone())
+        .collect();
+    exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown"),
+        format!("{} DATA", ember_branding::runtime(MODULE_PROTOCOL_MARKER))]);
+    for table in types.export_tables() {
+        exports.push(format!("{} DATA", table.symbol()));
+    }
+    exports.sort();
+    exports.dedup();
+    exports
+}
+
+/// `[FFI-28]` — a library package, its units written (the C backend's C, or the LLVM backend's IR
+/// and its shim).
+pub(crate) struct Library<'a> {
+    pub toolchain: &'a Toolchain,
+    pub layout: &'a Layout,
+    pub package_name: &'a str,
+    pub module_name: &'a str,
+    pub cdylib: bool,
+    /// `[FFI-31c]` — `[build] runtime = "shared"`.
+    pub shared_runtime: bool,
+    pub units: &'a [PathBuf],
+    /// Objects compiled already (relaxed units, `import c`'s), linked or archived beside the units.
+    pub objects: &'a [PathBuf],
+    /// `[BLD-FFI-3]` — linked after them, in order.
+    pub libraries: &'a [String],
+    /// A `cdylib`'s exports (`cdylib_exports`).
+    pub exports: Vec<String>,
+    pub header: &'a ember_codegen_c::HeaderOutput,
+}
+
+/// `[FFI-28]`, `[FFI-31]` — a `cdylib`: a shared library exporting only its exports and the module's
+/// entry points, `[FFI-31c]` with `runtime = "shared"` importing the runtime its process shares; a
+/// `staticlib`: the package's archive beside the runtime's, for its host's build to link. The
+/// package's header (and with `--cpp` its C++ header) beside them.
+pub(crate) fn build_library(library: Library<'_>, options: &Options, sink: &ember_diag::Sink, map: &SourceMap) -> Result<ExitCode, String> {
+    let Library { toolchain, layout, package_name, module_name, units, objects, header, .. } = library;
+    let runtime = runtime_dir()?;
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let includes = vec![runtime.join("include")];
+    let package_header = layout.lib.join(format!("{package_name}.h"));
+    let write_headers = || -> Result<(), String> {
+        copy_runtime_header(&layout.lib)?;
+        std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+        if options.cpp_header {
+            std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    if library.cdylib {
+        let shared = if library.shared_runtime {
+            Some(ember_build::reload::shared_runtime(toolchain, &runtime_source, &includes, options.profile, None,
+                &ember_build::cache_root(), &layout.lib).map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let built = ember_build::cdylib::link_cdylib(toolchain, package_name, units, &runtime_source, &includes,
+            options.profile, shared.as_ref(), &library.exports, library.libraries, objects, &layout.obj, &layout.lib)
+            .map_err(|e| e.to_string())?;
+        write_headers()?;
+        report(sink, map, options);
+        eprintln!("built {}", built.library.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let object_ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+    let runtime_object = layout.obj.join("runtime").join(format!("{}_rt.{object_ext}", ember_branding::SYMBOL_PREFIX));
+    let package_archive = layout.lib.join(ember_build::archive_name(toolchain, package_name));
+    let runtime_lib = runtime_artifact_dir(&layout.lib);
+    let runtime_archive = runtime_lib.join(ember_build::archive_name(toolchain,
+        &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
+    let runtime_header = runtime_lib.join(ember_branding::runtime_header());
+    let outputs = [&package_archive, &runtime_archive, &package_header, &runtime_header];
+    for path in outputs { if path.is_file() { std::fs::remove_file(path).map_err(|e| e.to_string())?; } }
+    let built = (|| -> Result<(), String> {
+        let mut package_objects = Vec::with_capacity(units.len() + objects.len());
+        for (index, unit) in units.iter().enumerate() {
+            let object = ember_build::unit_object(&layout.obj, module_name, index, object_ext);
+            ember_build::compile_object(toolchain, unit, &includes, &object, options.profile)
+                .map_err(|e| e.to_string())?;
+            package_objects.push(object);
+        }
+        ember_build::compile_object(toolchain, &runtime_source, &includes, &runtime_object, options.profile)
+            .map_err(|e| e.to_string())?;
+        package_objects.extend(objects.iter().cloned());
+        ember_build::archive_objects(toolchain, &package_objects, &package_archive)
+            .map_err(|e| e.to_string())?;
+        ember_build::archive_objects(toolchain, &[runtime_object], &runtime_archive)
+            .map_err(|e| e.to_string())?;
+        write_headers()
+    })();
+    if let Err(error) = built {
+        for path in outputs { let _ = std::fs::remove_file(path); }
+        return Err(error);
+    }
+    report(sink, map, options);
+    eprintln!("built {} and {}", package_archive.display(), runtime_archive.display());
+    Ok(ExitCode::SUCCESS)
+}
 
 fn reload_mode(settings: &ManifestLintSettings, options: &Options, sink: &mut Sink) -> Result<ReloadMode, String> {
     let (written, location) = settings.reload.unwrap_or((ReloadMode::None, Span::DUMMY));

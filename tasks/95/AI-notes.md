@@ -113,7 +113,8 @@ With it the 50 reload tests pass on Linux under LLVM.
   (`define void @sink(ptr %p0, ptr %p1)`, C's `log_sink` takes three). Windows passed it as an
   `i64`, by luck the right register. A `va_list` parameter is a pointer on both x86-64 ABIs
   (Windows' `char*`; System V's array of one `__va_list_tag` decays to its address): `Types::repr`
-  says so, and both targets pass a `ptr`, as Clang's IR of the same C does.
+  says so, and both targets pass a `ptr`, as Clang's IR of the same C does. With it: every run test
+  under LLVM on Linux, **2143 of 2143**, and the 50 reload tests.
 
 ## 1b. The lead's ports, tried on both backends — DONE
 
@@ -147,6 +148,79 @@ ODR-276's question was settled here too, with cases (section 4 uses them):
 `HEAP-5/run_fail_a_callee_replacing_the_shared_a_borrow_points_into`,
 `EXC-2/run_fail_a_callee_clearing_the_list_an_element_borrow_came_from`,
 `EXC-2/run_fail_a_callee_replacing_the_list_an_element_borrow_came_from`.
+
+## 2. Libraries under the LLVM backend (`cdylib`, `staticlib`, `[FFI-28]`, `[FFI-31]`) — DONE
+
+### Design
+
+* **What a library and a reloadable image share is built once.** `ember_build::cdylib::link_cdylib`
+  takes the package's units (its C, or its IR and the IR's C shim), each compiled into an object
+  named as an image's are (`unit_object`: `name.o`, `name.1.o`); the flags Clang needs for a `.ll`
+  unit are one helper (`ir_flags`) every compile path takes (a program, an image, a library's
+  object, an archive's). The driver's library tail is one function both backends call
+  (`build_library`: a `cdylib`'s link with the export list, a `staticlib`'s archive beside the
+  runtime's, the headers), the export list one function (`cdylib_exports`).
+* **The module protocol in IR, as the C backend writes it:** `ember_module_protocol_v1` (1);
+  `ember_module_init`, which compares `ember_rt_abi_version()` with the ABI it was built for before
+  anything else (`EMBER_MODULE_INIT_ABI_MISMATCH`), returns 0 when already initialised, copies as
+  much of the host's config as its `size` says over the defaults (`llvm.umin` + `memcpy`), sets
+  `EMBER_RT_DEBUG_OBJECTS` in `debug`, calls `ember_rt_module_init_v3`, registers the leak check's
+  edges in `debug`, and records the creator thread; `ember_module_shutdown`. An export with a
+  `main`/`creator` contract checks the module's creator (`ember_rt_check_module_thread`), not the
+  process's main thread. The config's layout and the protocol numbers are named once
+  (`runtime::config`, `RUNTIME_ABI`, `MODULE_PROTOCOL`, `MODULE_INIT_ABI_MISMATCH`), and the unit
+  test that compares the runtime table with the header now checks each of them against
+  `ember_rt.h` (the program entry used the bare numbers 48, 40, 32, 1 and 3).
+* **The header is the C backend's.** `ember_codegen_c::library_interface` runs the C emitter's type
+  plan and class-method tables without writing C (`emit_with(…, interface_only)`, which returns
+  before any body is emitted) and gives the header and the `@sync` classes' functions it declares
+  (`ClassExport`, `MethodExport`, `Crossed`: how each parameter crosses). `VerifiedMir` is `Copy`
+  (two shared references), so the LLVM build reads it twice. A test asserts the LLVM library's
+  header equals `--emit header`'s byte for byte.
+* **`[BLD-FFI-5a]` in IR** (`ffi::emit_class_exports`): a handle's retain and release, and each
+  method: the thread attached, a kept handle retained, a view built from its address and length, a
+  borrowed value passed by its address, the body called directly or through the object's method
+  table (`virtual_call_values`).
+* **A library's shims are named under its package's namespace** (`ember_ll_em_pkg_<hex>_str_eq`):
+  the IR reaches the runtime's inline functions through one-line C functions, which were external
+  symbols of the same names in every library. Two LLVM static libraries in one host failed to link
+  (`lld-link: duplicate symbol: ember_ll_str_eq`, 12 of them; reproduced by the test below with the
+  namespace switched off). The C backend's library has internal linkage throughout, so it never had
+  this.
+
+### Tests
+
+* `ember_driver/tests/cdylib.rs`: 11 of 11 with `EMBER_BACKEND=llvm` and with the C backend. Its
+  helpers pass `--backend` from `EMBER_BACKEND` (as the reload tests' do) and link the host with
+  Clang under LLVM. `[ABI-3]` under LLVM: the module's IR with the ABI number its `module_init`
+  checks moved on (the line carries `; EMBER_RUNTIME_ABI`), linked with this runtime, is refused
+  first and leaves the runtime untouched. Under LLVM the relaxed-function test reads the fast-math
+  flags in the IR (one module, no relaxed unit).
+* `ember_driver/tests/staticlib.rs`: 6 of 6 under both backends, two of them new:
+  `a_sync_class_crosses_a_static_librarys_exports` (a C host calls every crossing kind, a virtual
+  method reaching the override, retain/release; under LLVM the header is the C backend's) and
+  `static_libraries_calling_the_same_runtime_functions_link_side_by_side`.
+* The IR of every run test without reload: identical to the base compiler's but for D-914's
+  program (`format_list(…, i64)` became `ptr`), 1945 of 1946.
+
+### Defects
+
+* **D-915 (C header, both backends, fixed)** `[BLD-FFI-5a]`: a `@sync` class's method taking a
+  C-laid-out struct by reference was declared with the struct's C name, but the header never
+  declared the struct (its reachable-types walk visited exports and export tables, not the class
+  methods): MSVC `C2146` in any host including it. The walk now visits each declared method's
+  borrowed and by-value types and its result (`header.rs`). Test: `a_sync_class_crosses_a_static_
+  librarys_exports` (`worlds_World_sum(World*, Pair)`).
+
+### Spec question (for the owner)
+
+`[FFI-28]` says a `cdylib` exports *only* its `@export` symbols, its tables, the two entry points and
+the marker; `[BLD-FFI-5a]`'s header declares a `@sync` class's retain, release and methods, which a
+`cdylib` therefore does not export (both backends, as the rule says): a host that loads the
+library cannot call what its header declares. Options: (a) a `cdylib` also exports its classes'
+functions (`[FFI-28]`'s list gains them); (b) a `cdylib`'s header leaves them out, so a `cdylib`'s
+host gets handles it can only pass back; (c) as now. Recommendation: (a) — the functions exist for
+the host, and they carry the package's name as their prefix, so they cannot clash.
 
 ## Merge notes for the lead
 

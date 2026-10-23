@@ -16,8 +16,30 @@ fn scratch() -> PathBuf {
     path
 }
 
+/// The backend the harness's `EMBER_BACKEND` names, when it is not the C backend.
+fn backend() -> Option<String> {
+    std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty() && backend != "c")
+}
+
+/// The C toolchain of the hosts a test links: the backend's (Clang's under LLVM).
+fn toolchain() -> Toolchain {
+    let requested = if backend().is_some() { Some("clang".to_string()) } else { std::env::var(ember_branding::cc_var()).ok() };
+    Toolchain::detect(requested.as_deref()).expect("C toolchain available")
+}
+
+/// `ember` with `args` in `cwd`: a build or a run with the backend `backend()` names, unless it
+/// emits C or a header, or names a backend itself.
 fn build(args: &[&str], cwd: &Path) -> std::process::Output {
-    Command::new(EMBER).args(args).current_dir(cwd).output().expect("ember starts")
+    let mut args: Vec<&str> = args.to_vec();
+    let backend = backend();
+    let chooses = args.iter().any(|arg| *arg == "--backend") || args.windows(2).any(|pair| pair[0] == "--emit" && pair[1] != "llvm-ir");
+    if let Some(backend) = backend.as_deref()
+        && matches!(args.first(), Some(&"build" | &"run"))
+        && !chooses
+    {
+        args.splice(1..1, ["--backend", backend]);
+    }
+    Command::new(EMBER).args(&args).current_dir(cwd).output().expect("ember starts")
 }
 
 fn assert_success(output: &std::process::Output, step: &str) {
@@ -72,8 +94,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
     std::fs::write(second.join("src").join(ember_branding::source_file("lib")),
         "struct HeaderLeaf:\n    value: i32\n    extra: i32\n\nfn private_library_bias(value: i32) -> i32:\n    return value\n\npub extern \"C\" fn second_value(leaf: HeaderLeaf, callback: Option[extern \"C\" fn(i32) -> i32]) -> i32:\n    match callback:\n        Some(function):\n            return function(private_library_bias(leaf.value) + leaf.extra)\n        None:\n            return private_library_bias(leaf.value) + leaf.extra\n").unwrap();
 
-    let requested = std::env::var(ember_branding::cc_var()).ok();
-    let toolchain = Toolchain::detect(requested.as_deref()).expect("C toolchain available");
+    let toolchain = toolchain();
     let out = scratch.join("out");
     let out_arg = out.to_string_lossy().into_owned();
     let package_arg = package.to_string_lossy().into_owned();
@@ -132,8 +153,16 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
         let header_text = std::fs::read_to_string(&header).unwrap();
         assert!(header_text.contains(&format!("{}_runtime/{}",
             ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header())));
-        let generated_c = std::fs::read_to_string(out.join(profile_name).join("c/lib.c")).unwrap();
-        assert!(!generated_c.contains("int main("), "staticlib emitted a process entry point");
+        match backend() {
+            None => {
+                let generated_c = std::fs::read_to_string(out.join(profile_name).join("c/lib.c")).unwrap();
+                assert!(!generated_c.contains("int main("), "staticlib emitted a process entry point");
+            }
+            Some(_) => {
+                let generated = std::fs::read_to_string(out.join(profile_name).join("c/lib.ll")).unwrap();
+                assert!(!generated.contains("@main("), "staticlib emitted a process entry point");
+            }
+        }
 
         let c_host = scratch.join(format!("host-{profile_name}.c"));
         let leaf = public_type_name(&runtime_stem, "HeaderLeaf");
@@ -207,8 +236,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
 #[test]
 fn static_libraries_with_relaxed_functions_link_side_by_side() {
     let scratch = scratch();
-    let requested = std::env::var(ember_branding::cc_var()).ok();
-    let toolchain = Toolchain::detect(requested.as_deref()).expect("C toolchain available");
+    let toolchain = toolchain();
     let out = scratch.join("out");
     let out_arg = out.to_string_lossy().into_owned();
     for (name, factor, offset) in [("fast_a", "2.0", "1.0"), ("fast_b", "3.0", "2.0")] {
@@ -231,6 +259,12 @@ kind = \"staticlib\"
 ")).unwrap();
         let built = build(&["build", "--out-dir", out_arg.as_str()], &dir);
         assert_success(&built, name);
+        if backend().is_some() {
+            // One module: its functions internal, the relaxed one with its flags.
+            let ir = std::fs::read_to_string(out.join("debug/c/lib.ll")).unwrap();
+            assert!(ir.contains("fmul nsz arcp contract afn reassoc double"), "{name}: the relaxed function lost its flags:\n{ir}");
+            continue;
+        }
         let c = std::fs::read_to_string(out.join("debug/c/lib.fastmath.c")).unwrap();
         assert!(!c.contains(&format!(" {}(", ember_branding::item_symbol("scaled"))), "{name}: `scaled` kept a bare symbol:
 {c}");
@@ -322,4 +356,171 @@ fn manifest_entry_below_src_resolves_sibling_imports_from_package_root() {
         .env(ember_branding::cc_var(), format!("{}-compiler-that-does-not-exist", ember_branding::CLI_NAME))
         .output().expect("explicit entry C-only compiler starts");
     assert_success(&explicit, "explicit nested source invocation");
+}
+
+/// `[BLD-FFI-5a]` (ODR-162) — a static library hands its host objects of a `@sync` class: the host
+/// counts a handle and ends it, and calls the class's `pub` methods through the functions the header
+/// declares: one taking a value, one a view (its address and length), one a value it borrows, one
+/// another handle, one keeping another handle (a count of its own), and a virtual one, which reaches
+/// the override of the object's class through its method table. Under the LLVM backend the header is
+/// the C backend's, byte for byte.
+#[test]
+fn a_sync_class_crosses_a_static_librarys_exports() {
+    let scratch = scratch();
+    let toolchain = toolchain();
+    let package = scratch.join("worlds");
+    std::fs::create_dir_all(package.join("src")).unwrap();
+    std::fs::write(package.join(ember_branding::MANIFEST), "[package]\nname = \"worlds\"\nkind = \"staticlib\"\n").unwrap();
+    std::fs::write(package.join("src").join(ember_branding::source_file("lib")), WORLDS).unwrap();
+    let out = scratch.join("out");
+    let out_arg = out.to_string_lossy().into_owned();
+    let built = build(&["build", "--out-dir", out_arg.as_str()], &package);
+    assert_success(&built, "the library");
+    let lib = out.join("debug/lib");
+    let header = std::fs::read_to_string(lib.join("worlds.h")).unwrap();
+    for declared in ["void worlds_World_retain(World* self);", "int32_t worlds_World_grow(World* self, int32_t by);",
+        "size_t worlds_World_named(World* self, const uint8_t* name, size_t name_len);", "int32_t worlds_World_kind(World* self);",
+        "int32_t worlds_World_merged(World* self, World* other);", "int32_t worlds_World_adopt(World* self, World* other);",
+        "int32_t worlds_World_sum(World* self, "] {
+        assert!(header.contains(declared), "no `{declared}`:\n{header}");
+    }
+    if backend().is_some() {
+        let c_out = scratch.join("c-header");
+        let c_out_arg = c_out.to_string_lossy().into_owned();
+        let emitted = build(&["build", "--emit", "header", "--out-dir", c_out_arg.as_str()], &package);
+        assert_success(&emitted, "the C backend's header");
+        assert_eq!(header, std::fs::read_to_string(c_out.join("debug/lib/worlds.h")).unwrap(), "the library's header is not the C backend's");
+    }
+    let pair = public_type_name("worlds", "Pair");
+    let rt_init = ember_branding::runtime("rt_init");
+    let rt_shutdown = ember_branding::runtime("rt_shutdown");
+    let runtime_header = format!("{}_runtime/{}", ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header());
+    let host = scratch.join("host.c");
+    std::fs::write(&host, format!("#include \"{runtime_header}\"
+#include \"worlds.h\"
+int main(void) {{
+    {rt_init}(NULL);
+    World* world = make_world();
+    World* moon = make_moon();
+    {pair} pair = {{3, 4}};
+    int ok = worlds_World_grow(world, 2) == 2 && worlds_World_population(world) == 2;
+    ok = ok && worlds_World_named(world, (const uint8_t*)\"abc\", 3) == 3;
+    ok = ok && worlds_World_sum(world, pair) == 7;
+    ok = ok && worlds_World_kind(world) == 1 && worlds_World_kind(moon) == 2;
+    worlds_World_grow(moon, 5);
+    ok = ok && worlds_World_merged(world, moon) == 7;
+    ok = ok && worlds_World_adopt(world, moon) == 20 && worlds_World_kind(moon) == 2;
+    worlds_World_retain(world);
+    worlds_World_release(world);
+    ok = ok && worlds_World_population(world) == 2;
+    worlds_World_release(moon);
+    worlds_World_release(world);
+    {rt_shutdown}();
+    return ok ? 0 : 1;
+}}
+")).unwrap();
+    let runtime_archive = lib.join(format!("{}_runtime", ember_branding::SYMBOL_PREFIX))
+        .join(ember_build::archive_name(&toolchain, &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
+    let executable = scratch.join(if cfg!(windows) { "host.exe" } else { "host" });
+    let objects = scratch.join("host-objects");
+    std::fs::create_dir_all(&objects).unwrap();
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[host, lib.join(ember_build::archive_name(&toolchain, "worlds")), runtime_archive],
+        include_dirs: &[lib.clone()], output: executable.clone(), profile: Profile::Debug, obj_dir: objects,
+    }).expect("the host links the library and the runtime");
+    assert_success(&ember_build::output_started(&mut Command::new(&executable)).expect("the host runs"), "the host");
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+const WORLDS: &str = "from std.sync import Atomic, MemoryOrder
+
+@layout(c)
+pub struct Pair:
+    a: i32
+    b: i32
+
+@sync
+pub open class World:
+    people: Atomic[i32] = Atomic(0)
+
+    pub fn population(self) -> i32:
+        return self.people.load(MemoryOrder.Acquire)
+
+    pub fn grow(self, by: i32) -> i32:
+        return self.people.fetch_add(by, MemoryOrder.AcqRel) + by
+
+    pub fn named(self, name: str) -> usize:
+        return name.len()
+
+    pub fn sum(self, pair: ref Pair) -> i32:
+        return pair.a + pair.b
+
+    pub fn merged(self, other: World) -> i32:
+        return self.population() + other.population()
+
+    pub fn adopt(self, owned other: World) -> i32:
+        return other.kind() * 10
+
+    pub virtual fn kind(self) -> i32:
+        return 1
+
+@sync
+pub class Moon(World):
+    pub override fn kind(self) -> i32:
+        return 2
+
+@export(\"make_world\")
+pub fn make_world() -> World:
+    return World()
+
+@export(\"make_moon\")
+pub fn make_moon() -> World:
+    return Moon()
+";
+
+/// `[FFI-28]` — two static libraries whose code calls the same runtime functions link into one host
+/// side by side: nothing of theirs but their exports is a symbol another object can meet. Under the
+/// LLVM backend the C through which the IR calls the runtime's inline functions is named under the
+/// package's namespace: the second library calls one the first does not (a checked `i128`
+/// product), so the link takes both libraries' C, which defined the same names before.
+#[test]
+fn static_libraries_calling_the_same_runtime_functions_link_side_by_side() {
+    let scratch = scratch();
+    let toolchain = toolchain();
+    let out = scratch.join("out");
+    let out_arg = out.to_string_lossy().into_owned();
+    for (name, more, test) in [("words_a", "", "text.starts_with(\"ab\")"),
+        ("words_b", "    wide: i128 = n as i128\n    square = wide * wide\n", "text.starts_with(\"ab\") and square == 1")] {
+        let dir = scratch.join(name);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join(ember_branding::MANIFEST), format!("[package]\nname = \"{name}\"\nkind = \"staticlib\"\n")).unwrap();
+        std::fs::write(dir.join("src").join(ember_branding::source_file("lib")), format!(
+            "pub extern \"C\" fn {name}(n: i32) -> i32:\n    text = f\"ab{{n}}\"\n{more}    if {test}:\n        return n\n    return 0\n")).unwrap();
+        let built = build(&["build", "--out-dir", out_arg.as_str()], &dir);
+        assert_success(&built, name);
+    }
+    let lib = out.join("debug/lib");
+    let runtime_header = format!("{}_runtime/{}", ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header());
+    let host = scratch.join("host.c");
+    std::fs::write(&host, format!("#include \"{runtime_header}\"
+int32_t words_a(int32_t n);
+int32_t words_b(int32_t n);
+int main(void) {{
+    {}(NULL);
+    int ok = words_a(1) == 1 && words_b(1) == 1 && words_b(2) == 0;
+    {}();
+    return ok ? 0 : 1;
+}}
+", ember_branding::runtime("rt_init"), ember_branding::runtime("rt_shutdown"))).unwrap();
+    let runtime_archive = lib.join(format!("{}_runtime", ember_branding::SYMBOL_PREFIX))
+        .join(ember_build::archive_name(&toolchain, &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
+    let executable = scratch.join(if cfg!(windows) { "host.exe" } else { "host" });
+    let objects = scratch.join("host-objects");
+    std::fs::create_dir_all(&objects).unwrap();
+    ember_build::compile_and_link(&toolchain, &LinkRequest {
+        sources: &[host, lib.join(ember_build::archive_name(&toolchain, "words_a")), lib.join(ember_build::archive_name(&toolchain, "words_b")), runtime_archive],
+        include_dirs: &[lib.clone()], output: executable.clone(), profile: Profile::Debug, obj_dir: objects,
+    }).expect("both libraries and the runtime link into one host");
+    assert_success(&ember_build::output_started(&mut Command::new(&executable)).expect("the host runs"), "the host");
+    let _ = std::fs::remove_dir_all(&scratch);
 }

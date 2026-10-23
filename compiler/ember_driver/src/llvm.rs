@@ -61,7 +61,12 @@ pub(crate) struct Build<'a> {
     pub module_name: &'a str,
     pub has_main: bool,
     pub command: &'a str,
+    /// `[FFI-28]` — a library package (`staticlib`, `cdylib`), its exports' names under
+    /// `package_name`; a `cdylib`'s runtime its own or `[FFI-31c]` the process's (`shared_runtime`).
     pub library: bool,
+    pub cdylib: bool,
+    pub package_name: &'a str,
+    pub shared_runtime: bool,
     /// Annex B — a reloadable program's image, as the driver decides it, and what it wrote into the
     /// program (the next build's `Old<Name>` structs are made from its schema).
     pub reload: Option<&'a ember_codegen_c::ReloadImage>,
@@ -86,26 +91,60 @@ fn profile(profile: Profile) -> ember_codegen_llvm::Profile {
     }
 }
 
+/// `[BLD-FFI-3]` — `[link] libs`, in the order written, a path the package's; `[FFI-29]`,
+/// `[BLD-FFI-1]` — each `import c`'s shim and C sources, compiled by the `[c]` section's compiler
+/// (Clang by default) into objects of their own (`shared_library`: for a `cdylib`), then its
+/// libraries.
+fn link_inputs(request: &Build<'_>, toolchain: &Toolchain, layout: &Layout, profile: Profile, shared_library: bool) -> Result<(Vec<String>, Vec<PathBuf>), String> {
+    let package_dir = super::nearest_manifest_path(request.input).and_then(|path| path.parent().map(Path::to_path_buf));
+    let mut libraries: Vec<String> = request
+        .manifest
+        .and_then(|text| super::manifest_list(text, "link", "libs"))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|library| match &package_dir {
+            Some(dir) if ember_build::cdylib::is_library_path(&library) && Path::new(&library).is_relative() => {
+                dir.join(&library).to_string_lossy().into_owned()
+            }
+            _ => library,
+        })
+        .collect();
+    let c_toolchain = match request.manifest.and_then(|text| manifest_string(text, "c", "compiler")) {
+        Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+        None => toolchain.clone(),
+    };
+    let (foreign_objects, foreign_libraries) =
+        super::cimport::build_objects(request.modules, &c_toolchain, toolchain, &layout.c, &layout.obj, profile, shared_library)?;
+    libraries.extend(foreign_libraries);
+    Ok((libraries, foreign_objects))
+}
+
 /// The module emitted, written, compiled and linked; run for `ember run`. A reloadable program's
 /// module is its image, which the shared runtime loads beside the host (Annex B).
 pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag::Sink) -> Result<ExitCode, String> {
-    if request.library {
-        return Err("the LLVM backend does not build a library package yet".to_string());
-    }
     let testing = request.command == "test";
     match options.emit.as_deref() {
         None | Some("llvm-ir") => {}
         Some(other) => return Err(format!("`--emit {other}` is the C backend's; the LLVM backend emits `llvm-ir`")),
     }
+    // `[FFI-26]`, `[BLD-FFI-5a]` — a library's headers are the C backend's, from the same type plan;
+    // this module defines what they declare.
+    let interface = request.library.then(|| {
+        ember_codegen_c::library_interface(request.mir, request.map, request.module_name, request.package_name, request.cdylib, false)
+    });
     let emit_options = ember_codegen_llvm::Options {
         module_name: request.module_name,
         has_main: request.has_main,
-        leak_check: options.leak_check,
+        // `[FFI-31]` — a shared library reports its leaks at shutdown in `debug`.
+        leak_check: options.leak_check || (request.cdylib && options.profile == Profile::Debug),
         profile: profile(options.profile),
         target: ember_codegen_llvm::Target::host(),
         triple: None,
         tests: testing.then(|| request.tests.iter().map(|test| test.symbol.clone()).collect()),
         reload: request.reload,
+        module: request.cdylib,
+        package: request.library.then_some(request.package_name),
+        classes: interface.as_ref().map_or(&[], |interface| interface.classes.as_slice()),
     };
     let output = ember_codegen_llvm::emit(request.mir, request.map, &emit_options).map_err(|error| error.to_string())?;
     super::mark("LLVM IR generation", "all modules");
@@ -119,7 +158,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         }
         return Ok(super::finish(sink, request.map, options));
     }
-    if !request.has_main && !testing {
+    if !request.has_main && !testing && !request.library {
         return Err("this file declares no `main`, so there is nothing to run".to_string());
     }
     let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
@@ -155,6 +194,24 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         };
         return super::build_reload_program(program, request.command, options, sink, request.map);
     }
+    if let Some(interface) = interface {
+        let header = interface.header?;
+        let (libraries, foreign_objects) = link_inputs(&request, &toolchain, &layout, options.profile, request.cdylib)?;
+        let library = super::Library {
+            toolchain: &toolchain,
+            layout: &layout,
+            package_name: request.package_name,
+            module_name: request.module_name,
+            cdylib: request.cdylib,
+            shared_runtime: request.shared_runtime,
+            units: &sources,
+            objects: &foreign_objects,
+            libraries: &libraries,
+            exports: if request.cdylib { super::cdylib_exports(request.bodies, request.mir.types()) } else { Vec::new() },
+            header: &header,
+        };
+        return super::build_library(library, options, sink, request.map);
+    }
     let runtime = super::runtime_dir()?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
@@ -163,29 +220,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         .unwrap_or(runtime_source);
     let exe_name = if cfg!(windows) { format!("{}.exe", request.module_name) } else { request.module_name.to_string() };
     let exe = layout.bin.join(&exe_name);
-    // `[BLD-FFI-3]` — `[link] libs`, in the order written, a path the package's.
-    let package_dir = super::nearest_manifest_path(request.input).and_then(|path| path.parent().map(Path::to_path_buf));
-    let mut libraries: Vec<String> = request
-        .manifest
-        .and_then(|text| super::manifest_list(text, "link", "libs"))
-        .unwrap_or_default()
-        .into_iter()
-        .map(|library| match &package_dir {
-            Some(dir) if ember_build::cdylib::is_library_path(&library) && Path::new(&library).is_relative() => {
-                dir.join(&library).to_string_lossy().into_owned()
-            }
-            _ => library,
-        })
-        .collect();
-    // `[FFI-29]`, `[BLD-FFI-1]` — each `import c`'s shim and C sources, compiled by the `[c]`
-    // section's compiler (Clang by default) into objects of their own, then its libraries.
-    let c_toolchain = match request.manifest.and_then(|text| manifest_string(text, "c", "compiler")) {
-        Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
-        None => toolchain.clone(),
-    };
-    let (foreign_objects, foreign_libraries) =
-        super::cimport::build_objects(request.modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, false)?;
-    libraries.extend(foreign_libraries);
+    let (libraries, foreign_objects) = link_inputs(&request, &toolchain, &layout, options.profile, false)?;
     // The exports stay though nothing in the program calls them.
     let mut retained: Vec<String> = request
         .bodies

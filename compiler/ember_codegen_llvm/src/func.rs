@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::abi::{self, Part, PartTy, Pass, Return, Shape, Signature};
-use crate::runtime;
+use crate::runtime::{self, config};
 use crate::types::{Repr, Sc, offset_align};
 use crate::{Module, Options, Profile, Result, global_name, unsupported};
 use ember_mir::{
@@ -411,6 +411,8 @@ pub(crate) enum Param {
     Ptr,
     /// C's `int`.
     Int,
+    /// C's `size_t`.
+    Size,
     /// The runtime's `ember_loc`.
     Loc,
 }
@@ -421,6 +423,7 @@ impl Param {
             Param::Ty(ty) => m.ty.shape(ty),
             Param::Ptr => Shape::Scalar(abi::Scalar::Ptr),
             Param::Int => Shape::Scalar(abi::Scalar::Int { bytes: 4, signed: true }),
+            Param::Size => Shape::Scalar(abi::Scalar::Int { bytes: 8, signed: false }),
             Param::Loc => runtime::c_type("$loc").shape().expect("ember_loc has a shape"),
         }
     }
@@ -430,6 +433,7 @@ impl Param {
             Param::Ty(ty) => m.ty.repr(ty),
             Param::Ptr => Repr::Scalar(Sc::Ptr),
             Param::Int => Repr::Scalar(Sc::I(32)),
+            Param::Size => Repr::Scalar(Sc::I(64)),
             Param::Loc => Repr::Mem { size: 16, align: 8 },
         }
     }
@@ -611,10 +615,15 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     /// A call of the runtime's `name()` in the entry block, before the body.
     fn prologue_rt(&mut self, name: &str) {
+        self.in_prologue(|cx| cx.call_rt(name, Vec::new(), None));
+    }
+
+    /// What `write` emits, placed in the prologue.
+    fn in_prologue(&mut self, write: impl FnOnce(&mut Self)) {
         let body = std::mem::take(&mut self.out);
-        self.call_rt(name, Vec::new(), None);
-        let call = std::mem::replace(&mut self.out, body);
-        self.prologue.push_str(&call);
+        write(self);
+        let code = std::mem::replace(&mut self.out, body);
+        self.prologue.push_str(&code);
     }
 
     pub(crate) fn label(&mut self) -> String {
@@ -798,7 +807,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
         if body.abi.is_some() {
             self.prologue_rt("rt_thread_attach");
             if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
-                self.prologue_rt("rt_check_main_thread");
+                if self.m.module {
+                    // `[FFI-33]` — a shared library's contract is its own: the thread of its
+                    // successful `ember_module_init`, even in a runtime other modules share.
+                    let creator = module_creator(self.m);
+                    self.in_prologue(|cx| {
+                        let id = cx.load(Sc::I(32), &creator, 4);
+                        cx.call_rt("rt_check_module_thread", vec![Val::Imm(Sc::I(32), id)], None);
+                    });
+                } else {
+                    self.prologue_rt("rt_check_main_thread");
+                }
             }
             // `[HR-42]` — entering Ember code from a foreign caller: this thread's depth counter.
             if self.m.reload.is_some() {
@@ -2735,7 +2754,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let ret = runtime::c_type(entry.ret).shape();
         let shapes: Vec<Shape> = entry.params.iter().map(|param| runtime::c_type(param).shape().expect("a parameter has a type")).collect();
         let sig = abi::classify(self.m.ty.target, ret.as_ref(), &shapes);
-        let symbol = runtime::symbol(entry);
+        let symbol = runtime::symbol(entry, &self.m.shim_namespace);
         if entry.inline {
             self.m.shims.insert(entry.name);
         }
@@ -3072,23 +3091,22 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         None => None,
     };
     // `ember_rt_config_default()`: its size, and nothing else set.
-    let cfg = cx.alloca(48, 8);
-    cx.zero(&cfg, 8, 48);
-    cx.emit(format!("store i64 48, ptr {cfg}, align 8"));
+    let cfg = cx.alloca(config::SIZE, 8);
+    cx.zero(&cfg, 8, config::SIZE);
+    cx.emit(format!("store i64 {}, ptr {cfg}, align 8", config::SIZE));
     if options.leak_check {
-        let flags = cx.gep(&cfg, 40);
-        // `EMBER_RT_DEBUG_OBJECTS`
-        cx.emit(format!("store i32 1, ptr {flags}, align 8"));
+        let flags = cx.gep(&cfg, config::FLAGS);
+        cx.emit(format!("store i32 {}, ptr {flags}, align 8", config::DEBUG_OBJECTS));
     }
     if which.is_some() {
         // A test's panic is marked for the runner.
-        let on_panic = cx.gep(&cfg, 32);
+        let on_panic = cx.gep(&cfg, config::ON_PANIC);
         cx.emit(format!("store ptr @ember_ll_test_on_panic, ptr {on_panic}, align 8"));
         cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "1".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
     } else {
         cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "%argc".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
     }
-    cx.call_rt("rt_init_v3", vec![Val::Imm(Sc::Ptr, cfg.clone()), Val::Imm(Sc::I(32), "3".to_string())], None);
+    cx.call_rt("rt_init_v3", vec![Val::Imm(Sc::Ptr, cfg.clone()), Val::Imm(Sc::I(32), runtime::RUNTIME_ABI.to_string())], None);
     let (named, sites) = if options.profile != Profile::Release { frame_tables(cx.m, bodies) } else { (0, 0) };
     if named > 0 {
         cx.call_rt("backtrace_names", vec![Val::Imm(Sc::Ptr, "@em_frame_names".to_string()), Val::Imm(Sc::I(64), named.to_string())], None);
@@ -3143,6 +3161,116 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     cx.emit(format!("ret i32 {status}"));
     let attrs = fn_attrs(cx.m);
     let text = format!("define {} {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", entry_head(cx.m), cx.allocas, cx.out);
+    cx.m.fns.push_str(&text);
+    Ok(())
+}
+
+/// `[FFI-33]` — a shared library's creator: the thread of its successful `ember_module_init`, 0
+/// before it and after `ember_module_shutdown`.
+fn module_creator(m: &mut Module<'_>) -> String {
+    let name = global_name(&format!("{}module_creator", ember_branding::mangle_prefix()));
+    m.declare(&name, || format!("{name} = internal global i32 0, align 4"));
+    name
+}
+
+/// `[FFI-28]`, `[FFI-31]`, `[ABI-1]`, `[ABI-3]`, `[FFI-33]` — a shared library's entry points, as the
+/// C backend writes them (`emit_module_entry`): the marker of the module protocol it follows;
+/// `ember_module_init`, which refuses a runtime of another ABI version before anything else, then
+/// initialises the module in its runtime (its own copy, or the one modules share) with the host's
+/// config, as much of it as the host's `size` covers and the defaults past it, and records its
+/// creator thread, a second call while initialised changing nothing; `ember_module_shutdown`, which
+/// shuts the module down in its runtime (the runtime's own shutdown when it is the last module).
+pub(crate) fn emit_module_entry(m: &mut Module<'_>, leak_check: bool) -> Result<()> {
+    let creator = module_creator(m);
+    m.global(format!(
+        "{} = constant i32 {}, align 4",
+        global_name(&ember_branding::runtime("module_protocol_v1")),
+        runtime::MODULE_PROTOCOL
+    ));
+    m.declare("llvm.umin.i64", || "declare i64 @llvm.umin.i64(i64, i64)".to_string());
+    m.declare("llvm.memcpy.p0.p0.i64", || "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)".to_string());
+    let mut cx = FnCx::glue(m);
+    let version = cx.alloca(4, 4);
+    cx.call_rt("rt_abi_version", Vec::new(), Some((&version, 4)));
+    let version = cx.load(Sc::I(32), &version, 4);
+    let same = cx.value(format!("icmp eq i32 {version}, {} ; EMBER_RUNTIME_ABI", runtime::RUNTIME_ABI));
+    let (refused, checked) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {same}, label %{checked}, label %{refused}"));
+    cx.start(&refused);
+    cx.emit(format!("ret i32 {}", runtime::MODULE_INIT_ABI_MISMATCH));
+    cx.start(&checked);
+    let current = cx.load(Sc::I(32), &creator, 4);
+    let initialised = cx.value(format!("icmp ne i32 {current}, 0"));
+    let (again, fresh) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {initialised}, label %{again}, label %{fresh}"));
+    cx.start(&again);
+    cx.emit("ret i32 0");
+    cx.start(&fresh);
+    let settings = cx.alloca(config::SIZE, 8);
+    cx.zero(&settings, 8, config::SIZE);
+    cx.emit(format!("store i64 {}, ptr {settings}, align 8", config::SIZE));
+    let given = cx.value("icmp ne ptr %p0, null");
+    let (copy, configured) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {given}, label %{copy}, label %{configured}"));
+    cx.start(&copy);
+    let size = cx.load(Sc::I(64), "%p0", 8);
+    let count = cx.value(format!("call i64 @llvm.umin.i64(i64 {size}, i64 {})", config::SIZE));
+    cx.emit(format!("call void @llvm.memcpy.p0.p0.i64(ptr align 8 {settings}, ptr align 8 %p0, i64 {count}, i1 false)"));
+    cx.emit(format!("store i64 {}, ptr {settings}, align 8", config::SIZE));
+    cx.emit(format!("br label %{configured}"));
+    cx.start(&configured);
+    if leak_check {
+        let flags = cx.gep(&settings, config::FLAGS);
+        let set = cx.load(Sc::I(32), &flags, 8);
+        let with = cx.value(format!("or i32 {set}, {}", config::DEBUG_OBJECTS));
+        cx.emit(format!("store i32 {with}, ptr {flags}, align 8"));
+    }
+    let status = cx.alloca(4, 4);
+    cx.call_rt(
+        "rt_module_init_v3",
+        vec![Val::Imm(Sc::Ptr, settings.clone()), Val::Imm(Sc::I(32), runtime::RUNTIME_ABI.to_string())],
+        Some((&status, 4)),
+    );
+    let status = cx.load(Sc::I(32), &status, 4);
+    let failed = cx.value(format!("icmp ne i32 {status}, 0"));
+    let (stopped, started) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {failed}, label %{stopped}, label %{started}"));
+    cx.start(&stopped);
+    cx.emit(format!("ret i32 {status}"));
+    cx.start(&started);
+    if leak_check {
+        cx.register_edges()?;
+    }
+    let thread = cx.alloca(4, 4);
+    cx.call_rt("rt_thread_id", Vec::new(), Some((&thread, 4)));
+    let thread = cx.load(Sc::I(32), &thread, 4);
+    cx.emit(format!("store i32 {thread}, ptr {creator}, align 4"));
+    cx.emit("ret i32 0");
+    let attrs = fn_attrs(cx.m);
+    let text = format!(
+        "define i32 {}(ptr %p0) {attrs} {{\nentry:\n{}  br label %start\nstart:\n{}}}\n\n",
+        global_name(&ember_branding::runtime("module_init")),
+        cx.allocas,
+        cx.out
+    );
+    cx.m.fns.push_str(&text);
+    let mut cx = FnCx::glue(m);
+    let current = cx.load(Sc::I(32), &creator, 4);
+    let initialised = cx.value(format!("icmp ne i32 {current}, 0"));
+    let (never, end) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {initialised}, label %{end}, label %{never}"));
+    cx.start(&never);
+    cx.emit("ret void");
+    cx.start(&end);
+    cx.emit(format!("store i32 0, ptr {creator}, align 4"));
+    cx.call_rt("rt_module_shutdown", Vec::new(), None);
+    cx.emit("ret void");
+    let text = format!(
+        "define void {}() {attrs} {{\nentry:\n{}  br label %start\nstart:\n{}}}\n\n",
+        global_name(&ember_branding::runtime("module_shutdown")),
+        cx.allocas,
+        cx.out
+    );
     cx.m.fns.push_str(&text);
     Ok(())
 }

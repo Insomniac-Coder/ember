@@ -98,11 +98,7 @@ pub(crate) fn compile_library_object(
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(lto_compile_flags(toolchain, lto, Link::Here));
             command.args(clang_windows_runtime(toolchain));
-            // `[CG-LL-1]` — the LLVM backend's IR: no triple of its own to override, and the C
-            // flags it ignores.
-            if source.extension().is_some_and(|ext| ext == "ll") {
-                command.args(["-Wno-override-module", "-Wno-unused-command-line-argument"]);
-            }
+            command.args(crate::ir_flags(&[source]));
             if !cfg!(windows) {
                 command.arg("-fPIC");
             }
@@ -241,10 +237,7 @@ pub fn link_image(
     let extension = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
     let mut objects = Vec::with_capacity(sources.len());
     for (index, source) in sources.iter().enumerate() {
-        let object = match index {
-            0 => obj_dir.join(format!("{stem}.{extension}")),
-            _ => obj_dir.join(format!("{stem}.{index}.{extension}")),
-        };
+        let object = crate::unit_object(obj_dir, &stem, index, extension);
         compile_reload_object(toolchain, source, include_dirs, &object, profile, instances, true)?;
         objects.push(object);
     }

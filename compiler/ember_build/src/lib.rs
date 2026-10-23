@@ -849,11 +849,7 @@ fn compile_and_link_impl(
             if warnings_as_errors() {
                 command.arg("-Werror");
             }
-            // `[CG-LL-1]` — the LLVM backend's module: Clang compiles it for its own target (the
-            // module names none), and it reads none of the C flags the command shares.
-            if request.sources.iter().any(|source| source.extension().is_some_and(|ext| ext == "ll")) {
-                command.args(["-Wno-override-module", "-Wno-unused-command-line-argument"]);
-            }
+            command.args(ir_flags(request.sources));
             folder_names(&mut command, request.sources, request.include_dirs);
             let section_flags = executable_section_flags(toolchain, retained_symbols.is_some());
             command.args(section_flags);
@@ -1476,6 +1472,7 @@ fn compile_c_object(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(lto).arg("-c").args(flags);
+            command.args(ir_flags(&[source]));
             // D-893 — for a reloadable image's shared library or a `cdylib`, position-independent:
             // a shared library cannot be linked with code made for an executable.
             if shared_library && !cfg!(windows) {
@@ -1886,6 +1883,25 @@ pub(crate) fn clang_windows_runtime(toolchain: &Toolchain) -> Option<&'static st
         "/MTd" => "-fms-runtime-lib=static_dbg",
         _ => "-fms-runtime-lib=dll",
     })
+}
+
+/// `[CG-LL-1]` — the LLVM backend's module among a compile's units: Clang compiles it for its own
+/// target (the module names none), and it reads none of the C flags the command shares.
+pub(crate) fn ir_flags<P: AsRef<Path>>(sources: &[P]) -> &'static [&'static str] {
+    if sources.iter().any(|source| source.as_ref().extension().is_some_and(|ext| ext == "ll")) {
+        &["-Wno-override-module", "-Wno-unused-command-line-argument"]
+    } else {
+        &[]
+    }
+}
+
+/// The object of a build's unit `index` (a module's `.ll` or `.c`, then its shim): `stem.o`, then
+/// `stem.1.o`, `stem.2.o`.
+pub fn unit_object(obj_dir: &Path, stem: &str, index: usize, extension: &str) -> PathBuf {
+    match index {
+        0 => obj_dir.join(format!("{stem}.{extension}")),
+        _ => obj_dir.join(format!("{stem}.{index}.{extension}")),
+    }
 }
 
 /// clang's and gcc's flags for a profile, shared by the program's compile and

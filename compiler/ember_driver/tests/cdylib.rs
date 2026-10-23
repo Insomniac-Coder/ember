@@ -24,8 +24,15 @@ fn scratch() -> PathBuf {
     path
 }
 
+/// The backend the harness's `EMBER_BACKEND` names, when it is not the C backend.
+fn backend() -> Option<String> {
+    std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty() && backend != "c")
+}
+
+/// The C toolchain of the hosts and archives a test builds: the backend's (Clang's under LLVM, so
+/// a host shares its C runtime with the libraries it loads).
 fn toolchain() -> Toolchain {
-    let requested = std::env::var(ember_branding::cc_var()).ok();
+    let requested = if backend().is_some() { Some("clang".to_string()) } else { std::env::var(ember_branding::cc_var()).ok() };
     Toolchain::detect(requested.as_deref()).expect("a C toolchain")
 }
 
@@ -37,7 +44,24 @@ fn package(dir: &Path, manifest: &str, source: &str) {
 }
 
 fn ember(args: &[&str], cwd: &Path) -> std::process::Output {
-    Command::new(EMBER).args(args).current_dir(cwd).output().expect("ember starts")
+    ember_command(args).current_dir(cwd).output().expect("ember starts")
+}
+
+/// `ember` with `args`: a build with the backend `backend()` names, unless it emits C or names a
+/// backend itself.
+fn ember_command(args: &[&str]) -> Command {
+    let mut args: Vec<&str> = args.to_vec();
+    let backend = backend();
+    let chooses = args.iter().any(|arg| *arg == "--backend") || args.windows(2).any(|pair| pair[0] == "--emit" && pair[1] != "llvm-ir");
+    if let Some(backend) = backend.as_deref()
+        && matches!(args.first(), Some(&"build" | &"run"))
+        && !chooses
+    {
+        args.splice(1..1, ["--backend", backend]);
+    }
+    let mut command = Command::new(EMBER);
+    command.args(&args);
+    command
 }
 
 fn assert_success(output: &std::process::Output, step: &str) {
@@ -398,6 +422,9 @@ fn a_module_built_for_another_runtime_abi_is_refused_first() {
     let toolchain = toolchain();
     package(&dir.join("plugin"), "[package]\nname = \"plugin\"\nkind = \"cdylib\"\n",
         "@export(\"plugin_value\")\nfn plugin_value() -> i32:\n    return 3\n");
+    if backend().is_some() {
+        return a_module_s_ir_built_for_another_runtime_abi_is_refused_first(&dir, &toolchain);
+    }
     let emitted = ember(&["build", "--emit", "c", "--out-dir", "out"], &dir.join("plugin"));
     assert_success(&emitted, "the module's C");
     let module_c = dir.join("plugin/out/debug/c/lib.c");
@@ -436,6 +463,42 @@ fn a_module_built_for_another_runtime_abi_is_refused_first() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok", "{:?} {}", output.status.code(),
         String::from_utf8_lossy(&output.stderr));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `[ABI-3]` under the LLVM backend: the module's IR with the runtime ABI it checks for moved on
+/// to the next version, linked with this runtime, is refused, the runtime left untouched.
+fn a_module_s_ir_built_for_another_runtime_abi_is_refused_first(dir: &Path, toolchain: &Toolchain) {
+    let emitted = ember(&["build", "--emit", "llvm-ir"], &dir.join("plugin"));
+    assert_success(&emitted, "the module's IR");
+    let printed = String::from_utf8_lossy(&emitted.stdout).replace("\r\n", "\n");
+    // The IR, then its shim's C as comments.
+    let (ir, shim) = printed.split_once("\n; the runtime's inline functions, called through this C:\n").unwrap_or((&printed, ""));
+    let check = ", 3 ; EMBER_RUNTIME_ABI";
+    assert_eq!(ir.matches(check).count(), 1, "`ember_module_init` checks the runtime ABI once:\n{ir}");
+    let module = dir.join("module.ll");
+    std::fs::write(&module, ir.replace(check, ", 4 ; EMBER_RUNTIME_ABI")).unwrap();
+    let mut sources = vec![module];
+    if !shim.is_empty() {
+        let shim_c = dir.join("module.rt.c");
+        std::fs::write(&shim_c, shim.lines().map(|line| line.strip_prefix("; ").unwrap_or("")).collect::<Vec<_>>().join("\n")).unwrap();
+        sources.push(shim_c);
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).unwrap();
+    let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
+    let header_name = ember_branding::runtime_header();
+    let host = dir.join("host.c");
+    std::fs::write(&host, branded(&format!("#include \"{header_name}\"\n#include <stdio.h>\nint @RT@module_init(const @RT@rt_config* cfg);\nstatic int g_hooked;\nstatic void hook(void* data) {{ (void)data; g_hooked = 1; }}\nint main(void) {{\n    @RT@rt_config cfg = @RT@rt_config_default();\n    if (@RT@rt_at_exit(hook, NULL) != 0) return 2;\n    if (@RT@module_init(&cfg) != EMBER_MODULE_INIT_ABI_MISMATCH) return 3;\n    @RT@rt_shutdown();\n    if (g_hooked) return 4;\n    printf(\"ok\\n\");\n    return 0;\n}}\n"))).unwrap();
+    sources.insert(0, host);
+    sources.push(runtime.join("src").join(format!("{}rt.c", ember_branding::RUNTIME_PREFIX)));
+    let exe = dir.join(if cfg!(windows) { "host.exe" } else { "host" });
+    std::fs::create_dir_all(dir.join("obj")).unwrap();
+    ember_build::compile_and_link(toolchain, &LinkRequest {
+        sources: &sources, include_dirs: &[runtime.join("include")], output: exe.clone(), profile: Profile::Debug, obj_dir: dir.join("obj"),
+    }).expect("the host links the module's IR and this runtime");
+    let output = run_host(&exe, &[], dir);
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok", "{:?} {}", output.status.code(),
+        String::from_utf8_lossy(&output.stderr));
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// `[FFI-26]` — a host that loads a library through one entry point finds its `@export_table` by
@@ -524,7 +587,13 @@ fn a_cdylib_with_a_relaxed_function_is_built_and_called() {
     let built = ember(&["build"], &dir.join("fastdll"));
     assert_success(&built, "the cdylib with a relaxed function");
     let lib = dir.join("fastdll/target/debug/lib");
-    assert!(dir.join("fastdll/target/debug/c/lib.fastmath.c").is_file(), "no relaxed unit was written");
+    match backend() {
+        None => assert!(dir.join("fastdll/target/debug/c/lib.fastmath.c").is_file(), "no relaxed unit was written"),
+        Some(_) => {
+            let ir = std::fs::read_to_string(dir.join("fastdll/target/debug/c/lib.ll")).expect("the module's IR");
+            assert!(ir.contains("fmul nsz arcp contract afn reassoc double"), "the relaxed function lost its flags:\n{ir}");
+        }
+    }
     let path = library_file(&lib, "fastdll").to_string_lossy().replace('\\', "\\\\");
     let host = format!(r#"{HOST_PRELUDE}
 typedef double (*fast_fn)(double);
@@ -661,7 +730,7 @@ fn libraries_link_by_path_and_name_in_declaration_order() {
             "");
         std::fs::remove_file(dir.join("app/src").join(ember_branding::source_file("lib"))).unwrap();
         std::fs::write(dir.join("app/src").join(ember_branding::source_file("main")), &source).unwrap();
-        let built = Command::new(EMBER).args(["build"]).current_dir(dir.join("app"))
+        let built = ember_command(&["build"]).current_dir(dir.join("app"))
             .env("LIBRARY_PATH", &vendor).output().expect("ember starts");
         assert_success(&built, "the build linking libraries");
         let exe = dir.join("app/target/debug/bin").join(if cfg!(windows) { "main.exe" } else { "main" });

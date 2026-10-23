@@ -562,6 +562,11 @@ impl<'a> FnCx<'_, 'a> {
             values.push(self.operand(argument)?);
         }
         let dest = dest.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+        self.virtual_call_values(owner, slot, receiver, values, dest)
+    }
+
+    /// `virtual_call` of the argument values themselves.
+    pub(crate) fn virtual_call_values(&mut self, owner: ClassId, slot: usize, receiver: ClassId, values: Vec<Val>, dest: Option<(&str, u64)>) -> Result<()> {
         if let Some(symbol) = self.m.dispatch.only_implementation(self.m, receiver, slot) {
             return self.call_body(&symbol, values, dest);
         }

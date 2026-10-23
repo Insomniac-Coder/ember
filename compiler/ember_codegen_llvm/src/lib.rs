@@ -71,6 +71,13 @@ pub struct Options<'a> {
     pub tests: Option<Vec<String>>,
     /// Annex B — a reloadable image's functions, statics and mode, as the driver decides them.
     pub reload: Option<&'a ember_codegen_c::ReloadImage>,
+    /// `[FFI-28]` — a shared library: the module's entry points, and its exports' `creator` thread
+    /// its own.
+    pub module: bool,
+    /// `[BLD-FFI-5a]` — a library's `@sync` classes' functions its header declares.
+    pub classes: &'a [ember_codegen_c::ClassExport],
+    /// `[FFI-28]` — a library package's name, under whose namespace its shims are named.
+    pub package: Option<&'a str>,
 }
 
 pub struct Output {
@@ -146,6 +153,10 @@ pub(crate) struct Module<'a> {
     pub reload_ids: BTreeSet<String>,
     /// A function the planner's writer could not write (`reload::LlvmWriter`).
     pub reload_error: Option<Unsupported>,
+    /// `[FFI-28]` — a shared library's module (`Options::module`).
+    pub module: bool,
+    /// The namespace of the shims' names: a library's package's (`Options::package`), else none.
+    pub shim_namespace: String,
 }
 
 impl<'a> Module<'a> {
@@ -263,6 +274,8 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         reload_plan: options.reload.map(|reload| ember_codegen_c::image::Planner::new(mir.types(), reload, bodies, &ember_codegen_c::image::lazy_statics(bodies))),
         reload_ids: BTreeSet::new(),
         reload_error: None,
+        module: options.module,
+        shim_namespace: options.package.map(ember_codegen_c::package_type_namespace).unwrap_or_default(),
     };
     if let Some(reload) = options.reload {
         module.ty.header = reload.header_bytes();
@@ -290,6 +303,10 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
     } else if options.has_main {
         func::emit_entry(&mut module, bodies, options, None)?;
     }
+    if options.module {
+        func::emit_module_entry(&mut module, options.leak_check)?;
+    }
+    ffi::emit_class_exports(&mut module, options.classes)?;
     glue::emit_pending(&mut module)?;
     // Annex B — the image's manifest and what it names (`[HR-8]`).
     if module.reload.is_some() {
@@ -366,7 +383,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
     ir.push_str(&module.fns);
     module.debug.write(options.target, &mut ir);
     let shim = (!module.shims.is_empty() || !module.shim_functions.is_empty()).then(|| {
-        let mut source = runtime::shim_source(&module.shims);
+        let mut source = runtime::shim_source(&module.shims, &module.shim_namespace);
         for function in module.shim_functions.values() {
             source.push_str(function);
         }

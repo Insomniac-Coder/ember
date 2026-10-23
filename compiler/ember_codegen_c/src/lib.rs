@@ -33,6 +33,7 @@ mod reload;
 mod visualisers;
 
 pub use visualisers::Visualisers;
+pub use class_exports::{ClassExport, Crossed, MethodExport};
 
 pub use image::{ReloadImage, manifest_symbol};
 
@@ -61,6 +62,22 @@ pub struct Output {
     pub ffi_instrument: Option<FfiInstrumentOutput>,
     /// `[CG-C-9]` — the program's debugger visualisers, which the build writes beside it.
     pub visualisers: Visualisers,
+    /// `[BLD-FFI-5a]` — the `@sync` classes' functions the header declares.
+    pub classes: Vec<ClassExport>,
+}
+
+/// `[FFI-26]`, `[BLD-FFI-5a]` — what a library's headers declare (`library_interface`).
+pub struct LibraryInterface {
+    pub header: Result<HeaderOutput, String>,
+    pub classes: Vec<ClassExport>,
+}
+
+/// `[FFI-26]`, `[BLD-FFI-5a]` — a library's C and C++ headers and the `@sync` classes' functions they
+/// declare, from the type plan `emit` makes, for a backend that writes the library itself
+/// (`ember_codegen_llvm`); no C is written. `module`: a shared library's (`[FFI-28]`).
+pub fn library_interface(mir: VerifiedMir<'_>, map: &SourceMap, module_name: &str, package_name: &str, module: bool, for_msvc: bool) -> LibraryInterface {
+    let output = emit_with(mir, map, module_name, package_name, false, false, true, module, for_msvc, None, None, None, false, true);
+    LibraryInterface { header: output.header_source, classes: output.classes }
 }
 
 /// `[FFI-37]`, `[FFI-37b]` — what an instrumented test binary counts.
@@ -290,7 +307,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false, false)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -322,7 +339,7 @@ pub fn emit(
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi, false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -340,6 +357,7 @@ fn emit_with(
     tests: Option<Vec<String>>,
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
+    interface_only: bool,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -538,6 +556,22 @@ fn emit_with(
         }
     };
     let mut emitter = make(None);
+    // `[FFI-26]` — only what the headers declare: the type plan, and the class methods' tables the
+    // class exports' plans read.
+    if interface_only {
+        emitter.collect_virtual_methods(bodies);
+        let class_plans = class_exports::plan(&emitter, bodies, package_name);
+        return Output {
+            c_source: String::new(),
+            relaxed_units: Vec::new(),
+            optimization_report: Vec::new(),
+            header_source: header::render(&emitter, bodies, package_name),
+            safety_json: String::new(),
+            ffi_instrument: None,
+            visualisers: Visualisers::default(),
+            classes: class_exports::exported(&class_plans),
+        };
+    }
     emitter.comptime = comptime.clone();
     emitter.tests = tests;
     if instrument_ffi {
@@ -548,6 +582,7 @@ fn emit_with(
     // `[BLD-FFI-5a]` — what C and C++ call of the `@sync` classes the exports hand them.
     let class_plans = class_exports::plan(&emitter, bodies, package_name);
     let class_definitions = class_exports::definitions(&emitter, &class_plans);
+    let classes = class_exports::exported(&class_plans);
     emitter.out.push_str(&class_definitions);
     let header_source = header::render(&emitter, bodies, package_name);
     let visualisers = visualisers::render(&emitter);
@@ -606,6 +641,7 @@ fn emit_with(
         safety_json: safety_json(bodies, map),
         ffi_instrument,
         visualisers,
+        classes,
     }
 }
 
@@ -12893,7 +12929,9 @@ fn library_namespaced(text: &str, namespace: &str, exports: &BTreeSet<String>) -
     out
 }
 
-fn package_type_namespace(package_name: &str) -> String {
+/// A library's namespace for the names its units share: `[CG-C-11]` its private types and
+/// functions across its C units, `[CG-LL-1]` its IR's shims.
+pub fn package_type_namespace(package_name: &str) -> String {
     let mut prefix = format!("{}pkg_", ember_branding::mangle_prefix());
     for byte in package_name.as_bytes() {
         prefix.push_str(&format!("{byte:02x}"));

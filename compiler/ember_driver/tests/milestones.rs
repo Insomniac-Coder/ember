@@ -8298,7 +8298,7 @@ pub fn twice(x: i32) -> i32:
     let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
     let include = if matches!(toolchain, Toolchain::Msvc { .. }) { format!("/I{}", lib.display()) } else { format!("-I{}", lib.display()) };
     let object = dir.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "user.obj" } else { "user.o" });
-    ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++20").expect("the C++ header compiles");
+    ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++20", false).expect("the C++ header compiles");
 }
 
 /// `[BLD-FFI-5a]` (ODR-162) — an export may hand C++ an object of a `@sync` class: the C header
@@ -8390,7 +8390,7 @@ int use() {
     let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
     let include = if matches!(toolchain, Toolchain::Msvc { .. }) { format!("/I{}", lib.display()) } else { format!("-I{}", lib.display()) };
     let object = dir.join(if matches!(toolchain, Toolchain::Msvc { .. }) { "user.obj" } else { "user.o" });
-    ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++17").expect("the C++ header compiles");
+    ember_build::compile_cpp_object(&toolchain, &user, &[include], &object, Profile::Debug, "c++17", false).expect("the C++ header compiles");
 }
 
 /// `[FFI-17f]` — an operation of a C++ bridge type and a bridge value's end are each a call of a

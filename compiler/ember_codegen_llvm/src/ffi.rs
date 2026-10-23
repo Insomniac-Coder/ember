@@ -818,3 +818,90 @@ impl<'a> FnCx<'_, 'a> {
         Ok(slot)
     }
 }
+
+/// `[BLD-FFI-5a]` (ODR-162) — what a library gives C and C++ of each `@sync` class an export hands
+/// them, as its header declares it (`ember_codegen_c::ClassExport`): a handle's count and its end,
+/// and each `pub` method, which attaches the calling thread and calls the method's body (through the
+/// object's method table when it is virtual) with what C passed: a handle as the object's address
+/// (with a count of its own where the method keeps it), a view from its address and length, a value
+/// the method borrows by its address.
+pub(crate) fn emit_class_exports(m: &mut Module<'_>, classes: &[ember_codegen_c::ClassExport]) -> Result<()> {
+    for class in classes {
+        define_c_fn(m, &class.retain, "", None, &[Param::Ptr], "", |cx, values, _| {
+            cx.call_rt("obj_retain", vec![values[0].clone()], None);
+            Ok(())
+        })?;
+        define_c_fn(m, &class.release, "", None, &[Param::Ptr], "", |cx, values, _| {
+            cx.call_rt("rt_thread_attach", Vec::new(), None);
+            cx.call_rt("obj_release", vec![values[0].clone()], None);
+            Ok(())
+        })?;
+        for method in &class.methods {
+            class_method(m, method)?;
+        }
+    }
+    Ok(())
+}
+
+fn class_method(m: &mut Module<'_>, method: &ember_codegen_c::MethodExport) -> Result<()> {
+    use ember_codegen_c::Crossed;
+    let Some(body) = m.bodies.get(method.body.as_str()).copied() else {
+        return unsupported(format!("the class method `{}` without its body", method.body));
+    };
+    let declared: Vec<Ty> = body.args().skip(1).map(|(_, decl)| decl.ty).collect();
+    let mut params = vec![Param::Ptr];
+    for (crossed, ty) in method.crossings.iter().zip(&declared) {
+        match crossed {
+            Crossed::Handle { .. } => params.push(Param::Ptr),
+            Crossed::View => params.extend([Param::Ptr, Param::Size]),
+            Crossed::Borrowed => match m.ty.kind(*ty) {
+                TyKind::Ref { inner, .. } => params.push(Param::Ty(*inner)),
+                _ => return unsupported("a borrowed class-method parameter that is not a reference"),
+            },
+            Crossed::Value => params.push(Param::Ty(*ty)),
+        }
+    }
+    let virtual_slot = body.class_owner.zip(body.class_virtual_slot);
+    let symbol = body.symbol.clone();
+    define_c_fn(m, &method.symbol, "", Some(body.return_ty()), &params, "", |cx, values, result| {
+        cx.call_rt("rt_thread_attach", Vec::new(), None);
+        let by_address = |cx: &mut FnCx<'_, '_>, value: &Val, size: u64, align: u64| {
+            let (ptr, _) = cx.spill(value, size, align);
+            Val::Imm(Sc::Ptr, ptr)
+        };
+        let mut arguments = vec![if method.receiver_by_address { by_address(cx, &values[0], 8, 8) } else { values[0].clone() }];
+        let mut next = 1;
+        for (crossed, ty) in method.crossings.iter().zip(&declared) {
+            let value = values[next].clone();
+            next += 1;
+            arguments.push(match crossed {
+                Crossed::Handle { by_address: address, kept } => {
+                    if *kept {
+                        cx.call_rt("obj_retain", vec![value.clone()], None);
+                    }
+                    if *address { by_address(cx, &value, 8, 8) } else { value }
+                }
+                Crossed::View => {
+                    let length = values[next].clone();
+                    next += 1;
+                    let view = cx.alloca(16, 8);
+                    cx.store(&value, &view, 8, 8, false);
+                    let at = cx.gep(&view, 8);
+                    cx.store(&length, &at, 8, 8, false);
+                    Val::Mem(view, 8)
+                }
+                Crossed::Borrowed => {
+                    let TyKind::Ref { inner, .. } = *cx.m.ty.kind(*ty) else { unreachable!("checked above") };
+                    let (size, align) = cx.m.ty.size_align(inner);
+                    by_address(cx, &value, size, align)
+                }
+                Crossed::Value => value,
+            });
+        }
+        let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+        match virtual_slot {
+            Some((owner, slot)) => cx.virtual_call_values(owner, slot, owner, arguments, dest),
+            None => cx.call_body(&symbol, arguments, dest),
+        }
+    })
+}

@@ -29,7 +29,10 @@ pub struct Violation {
 
 /// A MIR program that has passed every verifier required by the current C
 /// backend boundary. The constructor is private to this module, so a backend
-/// cannot accidentally consume a raw `&[Body]` after a transformation.
+/// cannot accidentally consume a raw `&[Body]` after a transformation. A copy is the same verified
+/// program (two shared references), which a second consumer reads (a library's header beside the
+/// LLVM backend's IR).
+#[derive(Clone, Copy)]
 pub struct VerifiedMir<'a> {
     bodies: &'a [Body],
     types: &'a TypeTable,
