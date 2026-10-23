@@ -357,6 +357,16 @@ impl HoistedAccessProof {
 }
 
 impl Body {
+    /// ODR-281 — the body's lists at their lengths: lowering grows them a statement at a time, which
+    /// leaves each with room for as many again, held by every body until a pass rewrites it.
+    pub fn shrink_to_fit(&mut self) {
+        self.locals.shrink_to_fit();
+        self.blocks.shrink_to_fit();
+        for block in &mut self.blocks {
+            block.stmts.shrink_to_fit();
+        }
+    }
+
     pub fn local(&self, id: LocalId) -> &LocalDecl {
         &self.locals[id.0 as usize]
     }

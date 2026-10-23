@@ -1371,6 +1371,8 @@ impl Parser<'_> {
             }
         }
         self.eat_dedent();
+        // ODR-281 — at their count, as a block's statements are (`parse_block_nested`).
+        members.shrink_to_fit();
         members
     }
 

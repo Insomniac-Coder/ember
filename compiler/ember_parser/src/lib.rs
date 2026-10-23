@@ -641,6 +641,8 @@ impl<'a> Parser<'a> {
         });
 
         let unsafe_sites = std::mem::take(&mut self.unsafe_sites);
+        // ODR-281 — at their count, as a block's statements are (`parse_block_nested`).
+        items.shrink_to_fit();
         Module { directives, imports, items, script, unsafe_sites, local_generators: self.local_generators, span: start.to(self.prev_span()) }
     }
 

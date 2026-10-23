@@ -702,7 +702,10 @@ pub const FP_CONTRACT: [&str; 6] = [
 /// a serialization dependency: this artifact is a compiler output with a
 /// fixed, small schema rather than a user-facing data model.
 fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
-    let mut entries = Vec::new();
+    // ODR-281 — written into one buffer as it is found: each entry its own string, joined into
+    // a copy and formatted into another, held a large program's table three times over.
+    let mut out = String::from("{\"schema\":1,\"checks\":[");
+    let mut entries = Entries { out: &mut out, first: true };
     for body in bodies {
         for (block_index, block) in body.blocks.iter().enumerate() {
             for (statement_index, stmt) in block.stmts.iter().enumerate() {
@@ -788,7 +791,23 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
             });
         }
     }
-    format!("{{\"schema\":1,\"checks\":[{}]}}\n", entries.join(","))
+    out.push_str("]}\n");
+    out
+}
+
+/// The safety table's entries, each written after a comma but the first.
+struct Entries<'a> {
+    out: &'a mut String,
+    first: bool,
+}
+
+impl Entries<'_> {
+    fn push(&mut self, entry: String) {
+        if !std::mem::replace(&mut self.first, false) {
+            self.out.push(',');
+        }
+        self.out.push_str(&entry);
+    }
 }
 
 fn json_string(value: &str) -> String {

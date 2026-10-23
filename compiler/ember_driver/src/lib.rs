@@ -3932,15 +3932,18 @@ fn prepare_callable_interface_cache(
     // by what its kept record knows of it.
     let (inputs, import_visible_contracts) =
         module_interface_inputs(modules, declarations, map, bodies, types, options, &|loaded| !kept_modules.contains_key(&module_identity(&loaded.path)))?;
-    let fresh = ember_build::interface::build_artifacts_known(&inputs, kept_modules, &compiler_identity()).map_err(|error| {
+    let built = ember_build::interface::build_artifacts_known(&inputs, kept_modules, &compiler_identity()).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot build interface artifact: {error}")
     })?;
+    drop(inputs);
     // The fresh record takes the same encode/decode path as a cache hit, so
     // every caller consumes the artifact representation even on its first
-    // build rather than only on a later, incidental cache reuse.
-    let fresh = round_trip_artifacts(&fresh).map_err(|error| {
+    // build rather than only on a later, incidental cache reuse. ODR-281: only the round-tripped
+    // artifacts are kept.
+    let fresh = round_trip_artifacts(&built).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot round-trip interface artifact: {error}")
     })?;
+    drop(built);
 
     let target_root = options
         .out_dir
@@ -3953,7 +3956,7 @@ fn prepare_callable_interface_cache(
         .to_string_lossy()
         .replace('\\', "/");
     let directory = cache_directory(&profile_root, &package_identity);
-    let mut prepared = prepare_interface_cache(&directory, &fresh).map_err(|error| {
+    let mut prepared = prepare_interface_cache(&directory, fresh).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot load interface cache: {error}")
     })?;
     // `[BLD-1]` — the records of the modules kept whole, keyed by what they import as it is now.
@@ -5982,12 +5985,16 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         }
     }
     let safety_path = layout.inspect.join(format!("{module_name}.safety.json"));
-    let safety_json = {
+    {
+        // Written in its pieces, not first copied into one string (ODR-281).
+        use std::io::Write;
         let table = emitted.safety_json.trim_end();
         let table = table.strip_suffix('}').unwrap_or(table);
-        format!("{table},\"functions\":{safety_functions},\"costs\":{safety_costs}}}\n")
-    };
-    std::fs::write(&safety_path, safety_json).map_err(|e| e.to_string())?;
+        let mut file = std::fs::File::create(&safety_path).map_err(|e| e.to_string())?;
+        for piece in [table, ",\"functions\":", &safety_functions, ",\"costs\":", &safety_costs, "}\n"] {
+            file.write_all(piece.as_bytes()).map_err(|e| e.to_string())?;
+        }
+    }
     // `[RC-6]` — the count operations left inside loops, read from the same
     // final MIR the backend was given.
     let counts_path = layout.inspect.join(format!("{module_name}.counts.json"));

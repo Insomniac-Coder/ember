@@ -313,8 +313,15 @@ pub struct InterfaceCacheReport {
 /// last verified interface record.
 pub struct PreparedInterfaceCache {
     artifacts: Vec<ModuleInterfaceArtifact>,
-    writes: Vec<(PathBuf, Vec<u8>)>,
+    writes: Vec<(PathBuf, Write)>,
     report: InterfaceCacheReport,
+}
+
+/// A record `commit` writes: one of the artifacts, encoded then, or a kept module's record as
+/// `refresh_known_records` keyed it again.
+enum Write {
+    Artifact(usize),
+    Bytes(Vec<u8>),
 }
 
 impl PreparedInterfaceCache {
@@ -325,11 +332,19 @@ impl PreparedInterfaceCache {
     /// Write the records, each a file of its own, on `jobs` threads (`[BLD-7]`).
     pub fn commit(self, jobs: usize) -> Result<InterfaceCacheReport, InterfaceArtifactError> {
         let per_thread = self.writes.len().div_ceil(jobs.max(1)).max(1);
+        let artifacts = &self.artifacts;
         std::thread::scope(|scope| {
             let writers: Vec<_> = self
                 .writes
                 .chunks(per_thread)
-                .map(|writes| scope.spawn(move || writes.iter().try_for_each(|(path, bytes)| write_record(path, bytes))))
+                .map(|writes| {
+                    scope.spawn(move || {
+                        writes.iter().try_for_each(|(path, write)| match write {
+                            Write::Artifact(index) => write_record(path, &artifacts[*index].to_bytes()?),
+                            Write::Bytes(bytes) => write_record(path, bytes),
+                        })
+                    })
+                })
                 .collect();
             writers.into_iter().try_for_each(|writer| writer.join().expect("a record's writer does not panic"))
         })?;
@@ -482,12 +497,15 @@ pub fn round_trip_artifacts(
         .collect()
 }
 
-/// Load verified records at an on-disk cache boundary. A matching cache key
+//// Load verified records at an on-disk cache boundary. A matching cache key
 /// must also have identical semantic contents. A mismatch is stale compiler
 /// metadata and is fatal; it is never widened to an unknown summary.
+///
+/// ODR-281 — `fresh` is taken, not copied, and a record to write is encoded when it is written
+/// (`PreparedInterfaceCache::commit`), not held encoded beside the artifact it is.
 pub fn prepare_interface_cache(
     directory: &Path,
-    fresh: &[ModuleInterfaceArtifact],
+    fresh: Vec<ModuleInterfaceArtifact>,
 ) -> Result<PreparedInterfaceCache, InterfaceArtifactError> {
     std::fs::create_dir_all(directory).map_err(|source| InterfaceArtifactError::Io {
         path: directory.to_path_buf(),
@@ -513,8 +531,8 @@ pub fn prepare_interface_cache(
                     // record that decodes and disagrees is still fatal below.
                     Err(_) => {
                         report.invalidated += 1;
-                        writes.push((path, artifact.to_bytes()?));
-                        artifacts.push(artifact.clone());
+                        writes.push((path, Write::Artifact(artifacts.len())));
+                        artifacts.push(artifact);
                         continue;
                     }
                 };
@@ -538,14 +556,14 @@ pub fn prepare_interface_cache(
                     artifacts.push(existing);
                 } else {
                     report.invalidated += 1;
-                    writes.push((path, artifact.to_bytes()?));
-                    artifacts.push(artifact.clone());
+                    writes.push((path, Write::Artifact(artifacts.len())));
+                    artifacts.push(artifact);
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 report.created += 1;
-                writes.push((path, artifact.to_bytes()?));
-                artifacts.push(artifact.clone());
+                writes.push((path, Write::Artifact(artifacts.len())));
+                artifacts.push(artifact);
             }
             // D-383 — on Windows a record another compilation is renaming into
             // place can refuse a reader for a moment, past `read_record`'s
@@ -553,7 +571,7 @@ pub fn prepare_interface_cache(
             // compilation uses it and leaves the file to the other one.
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
                 report.invalidated += 1;
-                artifacts.push(artifact.clone());
+                artifacts.push(artifact);
             }
             Err(source) => return Err(InterfaceArtifactError::Io { path, source }),
         }
@@ -600,7 +618,7 @@ pub fn refresh_known_records(
         }
         record.cache_key = cache_key(record.source_hash, &record.compiler_version, &record.language_version, &record.package_config, &dependencies);
         record.dependencies = dependencies;
-        writes.push((path, record.to_bytes()?));
+        writes.push((path, Write::Bytes(record.to_bytes()?)));
     }
     prepared.writes.extend(writes);
     Ok(())
@@ -1582,7 +1600,7 @@ mod tests {
         let fresh = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
         let path = artifact_path(&directory, &fresh[0].module);
         std::fs::create_dir_all(&path).unwrap();
-        let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+        let prepared = prepare_interface_cache(&directory, fresh.clone()).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
         let _ = std::fs::remove_dir_all(&directory);
     }
@@ -1600,7 +1618,7 @@ mod tests {
         for damaged in [vec![0u8; 64], whole[..whole.len() / 2].to_vec()] {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, &damaged).unwrap();
-            let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+            let prepared = prepare_interface_cache(&directory, fresh.clone()).unwrap();
             assert_eq!(prepared.artifacts(), fresh.as_slice());
             assert_eq!(prepared.commit(1).unwrap().invalidated, 1);
             assert_eq!(std::fs::read(&path).unwrap(), whole);
@@ -1623,9 +1641,9 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let fresh = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
-        let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+        let prepared = prepare_interface_cache(&directory, fresh.clone()).unwrap();
         assert_eq!(prepared.commit(1).unwrap().created, 1);
-        let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+        let prepared = prepare_interface_cache(&directory, fresh.clone()).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
         assert_eq!(prepared.commit(1).unwrap().reused, 1);
 
@@ -1641,7 +1659,7 @@ mod tests {
                 inline_body: None,
                 },
             );
-        let error = match prepare_interface_cache(&directory, &stale) {
+        let error = match prepare_interface_cache(&directory, stale.clone()) {
             Ok(_) => panic!("stale interface metadata was accepted"),
             Err(error) => error,
         };
@@ -1670,7 +1688,7 @@ mod tests {
         incompatible[4..8].copy_from_slice(&(SCHEMA_VERSION - 1).to_le_bytes());
         std::fs::write(&path, incompatible).unwrap();
 
-        let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
+        let prepared = prepare_interface_cache(&directory, fresh.clone()).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
         assert_eq!(prepared.commit(1).unwrap().invalidated, 1);
         let rewritten = ModuleInterfaceArtifact::from_bytes(&std::fs::read(&path).unwrap()).unwrap();

@@ -137,6 +137,7 @@ fn lower_function<'a>(
     builder.build(body);
     let mut body = builder.finish();
     prune_unreachable(&mut body);
+    body.shrink_to_fit();
     body
 }
 
