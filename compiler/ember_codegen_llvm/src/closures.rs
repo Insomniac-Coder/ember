@@ -343,6 +343,10 @@ impl<'a> FnCx<'_, 'a> {
             self.call_c(&function, Some(ret), &c_params, values, dest);
             return Ok(());
         }
+        // D-880 — a call that consumes its callee (moves it in: an owned callable value given to a
+        // `once fn` parameter, `[CLO-6]`) ends it through the `once` entry, whatever its type says,
+        // as nothing else ends it.
+        let once = once || matches!(callee, Operand::Move(_));
         let callee_value = self.operand(callee)?;
         let (mut value_at, _) = self.spill(&callee_value, 40, 8);
         // `[CLO-6a]` — a `once fn` value in a `Box` is taken out of the box, which is freed, first.

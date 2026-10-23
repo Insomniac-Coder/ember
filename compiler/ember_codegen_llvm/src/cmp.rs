@@ -41,6 +41,31 @@ pub(crate) fn emit_eq_fn(m: &mut Module<'_>, ty: Ty) -> Result<()> {
         Ok(())
     };
     match table.kind(ty).clone() {
+        // IX.1 (ODR-241) — two boxes compare what they hold; two `Box[dyn I]` of one kind (one
+        // table) through the table's `eq` (after `drop`, `size`, `align`, `access` and, in a table
+        // that copies its value, `clone`), of two kinds never.
+        TyKind::Struct(id) if table.compiler_box_inner(id).is_some() => {
+            let inner = table.compiler_box_inner(id).expect("a box");
+            let (data_a, data_b) = (cx.load(Sc::Ptr, &a, 8), cx.load(Sc::Ptr, &b, 8));
+            let same = match table.kind(inner).clone() {
+                TyKind::Dyn { interfaces } => {
+                    let (at_a, at_b) = (cx.gep(&a, 8), cx.gep(&b, 8));
+                    let (vtable_a, vtable_b) = (cx.load(Sc::Ptr, &at_a, 8), cx.load(Sc::Ptr, &at_b, 8));
+                    let one_kind = cx.value(format!("icmp eq ptr {vtable_a}, {vtable_b}"));
+                    let compare = cx.label();
+                    cx.emit(format!("br i1 {one_kind}, label %{compare}, label %{differ}"));
+                    cx.start(&compare);
+                    let eq_at = cx.gep(&vtable_a, 32 + 8 * u64::from(table.dyn_clones(&interfaces)));
+                    let eq = cx.load(Sc::Ptr, &eq_at, 8);
+                    cx.value(format!("call i1 {eq}(ptr {data_a}, ptr {data_b})"))
+                }
+                _ => {
+                    let (_, inner_align) = cx.m.ty.size_align(inner);
+                    cx.eq_at(&data_a, &data_b, inner_align, inner)?
+                }
+            };
+            cx.emit(format!("br i1 {same}, label %same, label %{differ}"));
+        }
         TyKind::Struct(id) => {
             let packed = table.layout_attrs(ty).packed;
             let offsets = table.layout(ty).field_offsets;

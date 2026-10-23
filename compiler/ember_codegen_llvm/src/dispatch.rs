@@ -44,6 +44,9 @@ pub(crate) struct Dispatch {
     pub class_tables: BTreeMap<ClassId, BTreeMap<String, Ty>>,
     /// The identities whose tables copy their value (`[TYP-22]`, ODR-237).
     pub clones: BTreeSet<String>,
+    /// IX.1 (ODR-241) — the identities whose tables compare two values (an interface requires
+    /// `Eq`): an `eq` entry follows `access` (and `clone`).
+    pub eqs: BTreeSet<String>,
     /// The tables and markers already written.
     emitted: BTreeSet<String>,
 }
@@ -110,16 +113,12 @@ impl Dispatch {
                     match kind {
                         CastKind::InterfaceUpcast { concrete, interfaces, layout, implementations } => {
                             let id = identity(m, interfaces);
-                            if m.ty.table.dyn_clones(interfaces) {
-                                dispatch.clones.insert(id.clone());
-                            }
+                            dispatch.note_entries(m, interfaces, &id);
                             add(&mut dispatch, adapter_of(*concrete, id, layout, implementations));
                         }
                         CastKind::ClassInterfaceUpcast { concrete, interface, layout, implementations } => {
                             let id = identity(m, &[*interface]);
-                            if m.ty.table.dyn_clones(&[*interface]) {
-                                dispatch.clones.insert(id.clone());
-                            }
+                            dispatch.note_entries(m, &[*interface], &id);
                             add(&mut dispatch, adapter_of(*concrete, id.clone(), layout, implementations));
                             if let TyKind::Class(class) = m.ty.kind(*concrete) {
                                 dispatch.class_tables.entry(*class).or_default().insert(id, *concrete);
@@ -130,19 +129,26 @@ impl Dispatch {
                 }
                 if let Terminator::Call { func: FuncRef::DynBoxNew { concrete, interfaces, layout, implementations, .. }, .. } = &block.terminator {
                     let id = identity(m, interfaces);
-                    if m.ty.table.dyn_clones(interfaces) {
-                        dispatch.clones.insert(id.clone());
-                    }
+                    dispatch.note_entries(m, interfaces, &id);
                     add(&mut dispatch, adapter_of(*concrete, id, layout, implementations));
                 }
-                if let Terminator::Call { func: FuncRef::Interface { interfaces, .. }, .. } = &block.terminator
-                    && m.ty.table.dyn_clones(interfaces)
-                {
-                    dispatch.clones.insert(identity(m, interfaces));
+                if let Terminator::Call { func: FuncRef::Interface { interfaces, .. }, .. } = &block.terminator {
+                    dispatch.note_entries(m, interfaces, &identity(m, interfaces));
                 }
             }
         }
         dispatch
+    }
+
+    /// `[TYP-22]` (ODR-237), IX.1 (ODR-241) — a table for `interfaces` copies its value when one
+    /// of them requires `Clone`, and compares two when one requires `Eq`.
+    fn note_entries(&mut self, m: &Module<'_>, interfaces: &[Symbol], id: &str) {
+        if m.ty.table.dyn_clones(interfaces) {
+            self.clones.insert(id.to_string());
+        }
+        if m.ty.table.dyn_eqs(interfaces) {
+            self.eqs.insert(id.to_string());
+        }
     }
 
     fn layout(&mut self, m: &Module<'_>, id: ClassId, declared: &BTreeMap<(ClassId, usize), VirtualMethod>) -> Vec<Option<VirtualMethod>> {
@@ -268,14 +274,14 @@ pub(crate) fn interface_id(m: &mut Module<'_>, identity: &str) -> String {
 }
 
 /// The offset of a table's slot: after `drop`, `size`, `align`, `access` and, in a table that
-/// copies its value, `clone`.
+/// copies its value, `clone`, and in one that compares two, `eq`.
 fn slot_offset(m: &Module<'_>, identity: &str, slot: usize) -> u64 {
-    let header = if m.dispatch.clones.contains(identity) { 5 } else { 4 };
+    let header = 4 + u64::from(m.dispatch.clones.contains(identity)) + u64::from(m.dispatch.eqs.contains(identity));
     8 * (header + slot as u64)
 }
 
 /// The table adapting `concrete` to the interfaces `identity` names (`em_vt_dyn_7Observe_for_6Reader`):
-/// `{drop, size, align, access, [clone,] slot…}`, each slot an adapter of the slot's C signature.
+/// `{drop, size, align, access, [clone,] [eq,] slot…}`, each slot an adapter of the slot's C signature.
 pub(crate) fn adapter_table(m: &mut Module<'_>, concrete: Ty, identity: &str) -> Result<String> {
     let name = concrete_name(m, concrete);
     let symbol = ember_branding::vtable(&format!("dyn{identity}_for_{name}"));
@@ -372,6 +378,43 @@ pub(crate) fn adapter_table(m: &mut Module<'_>, concrete: Ty, identity: &str) ->
     } else {
         None
     };
+    // IX.1 (ODR-241) — the `eq` entry of a table that compares two values: both of this type
+    // (the caller has found the two tables one), compared as it writes `==` (std's `dyn_eq`
+    // instance), each value borrowed.
+    let eq = if m.dispatch.eqs.contains(identity) {
+        match table.dyn_eq_symbol(concrete).map(str::to_string) {
+            None => Some("null".to_string()),
+            Some(compare) => {
+                let Some(ret) = m.bodies.get(compare.as_str()).map(|body| body.return_ty()) else {
+                    return unsupported("a comparing function with no body");
+                };
+                let function = format!("{symbol}_eq");
+                define_c_fn(m, &function, "internal ", Some(ret), &[Param::Ptr, Param::Ptr], "", |cx, values, result| {
+                    let mut arguments = Vec::with_capacity(2);
+                    for value in values {
+                        let Val::Imm(_, raw) = value.clone() else { unreachable!("a pointer") };
+                        // A class value is its handle, the data word itself; a value passed by
+                        // address is its address; another is read.
+                        arguments.push(if class.is_some() || cx.m.ty.table.passed_by_address(concrete) {
+                            Val::Imm(Sc::Ptr, raw)
+                        } else {
+                            let (_, align) = cx.m.ty.size_align(concrete);
+                            match cx.m.ty.repr(concrete) {
+                                crate::types::Repr::Scalar(sc) => Val::Imm(sc, cx.load(sc, &raw, align)),
+                                crate::types::Repr::Zst => Val::Zst,
+                                crate::types::Repr::Mem { .. } => Val::Mem(raw, align),
+                            }
+                        });
+                    }
+                    let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+                    cx.call_body(&compare, arguments, dest)
+                })?;
+                Some(global_name(&function))
+            }
+        }
+    } else {
+        None
+    };
     let mut slots = Vec::new();
     for (slot, (signature, implementation)) in adapter.layout.iter().zip(&adapter.implementations).enumerate() {
         let (Some((params, ret)), Some((implementation, receiver))) = (signature, implementation) else {
@@ -384,6 +427,7 @@ pub(crate) fn adapter_table(m: &mut Module<'_>, concrete: Ty, identity: &str) ->
     }
     let mut fields = vec![format!("ptr {drop}"), format!("i64 {size}"), format!("i64 {align}"), format!("ptr {access}")];
     fields.extend(clone.map(|clone| format!("ptr {clone}")));
+    fields.extend(eq.map(|eq| format!("ptr {eq}")));
     fields.extend(slots);
     let types: Vec<&str> = fields.iter().map(|field| field.split(' ').next().unwrap_or("ptr")).collect();
     m.global(format!(

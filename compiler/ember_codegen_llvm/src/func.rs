@@ -1719,6 +1719,18 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 if self.m.ty.is_zst(ty) && !place.projection.iter().any(|projection| matches!(projection, Projection::Deref)) {
                     return Ok(Val::Imm(Sc::Ptr, self.void_place()));
                 }
+                // `[TYP-14]`, `[TYP-22]` — a `Box[dyn I]` read through and borrowed (a `ref dyn I`
+                // argument): its value's address and its table, the box's own two words.
+                if let [.., Projection::Field(0), Projection::Deref] = place.projection.as_slice() {
+                    let boxed = Place { local: place.local, projection: place.projection[..place.projection.len() - 2].to_vec() };
+                    let table = self.m.ty.table;
+                    if let TyKind::Struct(id) = *table.kind(self.place_ty(&boxed))
+                        && table.compiler_box_inner(id).is_some_and(|inner| matches!(table.kind(inner), TyKind::Dyn { .. }))
+                    {
+                        let at = self.place(&boxed)?;
+                        return Ok(Val::Mem(at.ptr, at.align));
+                    }
+                }
                 if matches!(self.m.ty.repr(target), Repr::Mem { .. }) {
                     return unsupported("a borrow that makes a fat reference");
                 }

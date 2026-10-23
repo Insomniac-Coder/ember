@@ -787,6 +787,12 @@ impl<'a> FnCx<'_, 'a> {
                 let value = if matches!(which, Builtin::SizeOf) { size } else { align };
                 self.store_result(dest, &value.to_string(), Sc::I(64), false)
             }
+            // `[ECS-4]` — a constant of the instance.
+            Builtin::TypeIsSend | Builtin::TypeIsSync => {
+                let table = self.m.ty.table;
+                let holds = if matches!(which, Builtin::TypeIsSend) { table.is_send(arg_ty) } else { table.is_sync(arg_ty) };
+                self.store_result(dest, if holds { "true" } else { "false" }, Sc::Bool, false)
+            }
             // IX.1 — the value moved into a block of its own.
             Builtin::BoxNew { elem, .. } => {
                 let value = self.operand(&args[0])?;
