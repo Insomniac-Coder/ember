@@ -1,0 +1,33 @@
+{
+  "_what": "[TOOL-2] (ODR-223, ODR-258): the C toolchain Ember's archive carries, pinned. The release workflow downloads each host's files (tools/fetch_toolchain.py) and refuses one whose SHA-256 is not the one recorded here; an empty sha256 fails the release with the hash it found, to be checked against the project's own release page and recorded here.",
+  "llvm": {
+    "version": "19.1.7",
+    "windows-x64": {
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/clang+llvm-19.1.7-x86_64-pc-windows-msvc.tar.xz",
+      "sha256": ""
+    },
+    "linux-x64": {
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-Linux-X64.tar.xz",
+      "sha256": ""
+    },
+    "macos-arm64": {
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-macOS-ARM64.tar.xz",
+      "sha256": ""
+    }
+  },
+  "ninja": {
+    "version": "1.12.1",
+    "windows-x64": {
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip",
+      "sha256": ""
+    },
+    "linux-x64": {
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-linux.zip",
+      "sha256": ""
+    },
+    "macos-arm64": {
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-mac.zip",
+      "sha256": ""
+    }
+  }
+}

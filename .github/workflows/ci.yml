@@ -43,6 +43,15 @@ jobs:
       - name: libclang and gdb
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libclang-dev gdb
+      # `[BLD-4]` (ODR-258) — a program's C is compiled through Ninja, which a source checkout finds
+      # on `PATH`.
+      - name: Ninja
+        shell: bash
+        run: |
+          if ! command -v ninja >/dev/null; then
+            if [ "$RUNNER_OS" = "Windows" ]; then choco install ninja -y; elif [ "$RUNNER_OS" = "macOS" ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
+          fi
+          ninja --version
       - name: Build
         run: cargo build --workspace --locked --profile ci
       # The platform's own shell: on Windows, Git's bash would put its own
@@ -89,6 +98,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
+      # `[BLD-4]` (ODR-258) — a program's C is compiled through Ninja, which a source checkout finds
+      # on `PATH`.
+      - name: Ninja
+        shell: bash
+        run: |
+          if ! command -v ninja >/dev/null; then
+            if [ "$RUNNER_OS" = "Windows" ]; then choco install ninja -y; elif [ "$RUNNER_OS" = "macOS" ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
+          fi
+          ninja --version
       - name: Build
         run: cargo build --locked --profile ci -p ember_driver --bin ember
       # ODR-154 — a report: these runners' processors change from run to run (AMD EPYC of three
@@ -156,6 +174,15 @@ jobs:
       # (`E5001`, `E5010`, `W5002`, …) parse headers with libclang.
       - name: libclang
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
+      # `[BLD-4]` (ODR-258) — a program's C is compiled through Ninja, which a source checkout finds
+      # on `PATH`.
+      - name: Ninja
+        shell: bash
+        run: |
+          if ! command -v ninja >/dev/null; then
+            if [ "$RUNNER_OS" = "Windows" ]; then choco install ninja -y; elif [ "$RUNNER_OS" = "macOS" ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
+          fi
+          ninja --version
       - name: error pages compile as documented
         run: python tools/error_pages.py
 
