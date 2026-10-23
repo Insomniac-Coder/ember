@@ -126,7 +126,7 @@ pub(crate) fn emit_thunk(m: &mut Module<'_>, body: &Body, sig: &Signature) {
 /// exports nothing.
 fn visibility(m: &Module<'_>) -> &'static str {
     match m.ty.target {
-        crate::abi::Target::SysV => "hidden ",
+        crate::abi::Target::SysV | crate::abi::Target::Aapcs64 => "hidden ",
         crate::abi::Target::Win64 => "",
     }
 }
@@ -768,7 +768,7 @@ impl Writer for LlvmWriter<'_, '_> {
         let manifest_symbol = image::manifest_symbol();
         let section = match self.0.ty.target {
             crate::abi::Target::Win64 => ".emrl",
-            crate::abi::Target::SysV => "ember_reload",
+            crate::abi::Target::SysV | crate::abi::Target::Aapcs64 => "ember_reload",
         };
         let (fns_n, statics_n, types_n, identities_n, headers_n) = counts;
         self.0.global(format!(

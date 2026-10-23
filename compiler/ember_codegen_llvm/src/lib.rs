@@ -199,6 +199,16 @@ pub(crate) fn global_name(symbol: &str) -> String {
     if plain { format!("@{symbol}") } else { format!("@\"{}\"", escape(symbol.as_bytes())) }
 }
 
+/// `[FFI-9]` — the symbol the linker sees for the function `body` of a module built for `target`:
+/// its own, or a `__vectorcall` function's MSVC decoration (`scale@@16`), for a link that keeps
+/// the program's exports (`/INCLUDE:`).
+pub fn function_link_symbol(types: &ember_types::TypeTable, target: Target, body: &Body) -> String {
+    if body.abi.as_deref() == Some("vectorcall") && target == Target::Win64 {
+        return func::vectorcall_symbol(&Types::new(types, target), body);
+    }
+    link_symbol(&body.symbol)
+}
+
 /// The symbol the linker sees for `symbol`: an alias's exact symbol, else itself.
 pub(crate) fn link_symbol(symbol: &str) -> String {
     ember_branding::export_alias_symbol(symbol).unwrap_or_else(|| symbol.to_string())

@@ -411,7 +411,9 @@ pub fn lazy_statics(bodies: &[Body]) -> BTreeMap<String, (Ty, String)> {
 
 /// A struct the compiler supplies, which no edit changes.
 fn is_compiler_struct(name: &str) -> bool {
-    ["Box_", "Shared_", "Weak_", "Cell_", "RefCell_", "UnsafeCell_", "MaybeUninit_", "closure", "Option_", "Result_"]
+    // ODR-275 — not `UnsafeCell_`: a `Mutex`'s or an `Atomic`'s value is kept in one, which has a
+    // schema of its own when it holds the package's types, so a reload follows into it.
+    ["Box_", "Shared_", "Weak_", "Cell_", "RefCell_", "MaybeUninit_", "closure", "Option_", "Result_"]
         .iter()
         .any(|prefix| name.starts_with(prefix))
 }

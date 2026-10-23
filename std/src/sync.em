@@ -49,10 +49,16 @@
 ## `ember_mutex_try_lock`) and a guard's end to `ember_mutex_unlock`. The word is private, one
 ## pointer wide, starts at 0, and is the runtime's alone: on Windows the system's SRWLOCK, elsewhere
 ## a futex word.
+##
+## ODR-275 — what changes through a shared reference to one of these types is kept in an
+## `UnsafeCell` (`[UNS-10]`): a lock's value and word, an atomic's value. A shared reference to
+## anything else is only read through.
+
+from std.mem import UnsafeCell
 
 pub struct Mutex[T]:
-    value: T
-    word: usize = 0
+    value: UnsafeCell[T]
+    word: UnsafeCell[usize] = UnsafeCell(0)
 
 @view
 pub struct MutexGuard[T]:
@@ -66,11 +72,11 @@ pub enum MemoryOrder:
     SeqCst
 
 pub struct Atomic[T]:
-    value: T
+    value: UnsafeCell[T]
 
 pub struct RwLock[T]:
-    value: T
-    word: usize = 0
+    value: UnsafeCell[T]
+    word: UnsafeCell[usize] = UnsafeCell(0)
 
 @view
 pub struct RwLockReadGuard[T]:

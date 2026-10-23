@@ -67,6 +67,8 @@ pub(crate) struct Build<'a> {
     pub cdylib: bool,
     pub package_name: &'a str,
     pub shared_runtime: bool,
+    /// `[CG-LL-3]` (ODR-274) — the profile-guided optimisation asked for.
+    pub pgo: Option<super::PgoAsk>,
     /// Annex B — a reloadable program's image, as the driver decides it, and what it wrote into the
     /// program (the next build's `Old<Name>` structs are made from its schema).
     pub reload: Option<&'a ember_codegen_c::ReloadImage>,
@@ -89,6 +91,41 @@ fn profile(profile: Profile) -> ember_codegen_llvm::Profile {
         Profile::Development => ember_codegen_llvm::Profile::Development,
         Profile::Release => ember_codegen_llvm::Profile::Release,
     }
+}
+
+/// `[CG-LL-3]` (ODR-274) — the profile `--pgo-use` names: a merged `.profdata` as it is; a raw
+/// `.profraw`, or a folder of them (`--pgo-generate`'s `pgo` folder), merged by `llvm-profdata`
+/// into this build's own `pgo/<module>.profdata` first.
+fn profile_data(toolchain: &Toolchain, recorded: &Path, layout: &Layout, module_name: &str) -> Result<PathBuf, String> {
+    if recorded.extension().is_some_and(|ext| ext == "profdata") {
+        return if recorded.is_file() {
+            std::path::absolute(recorded).map_err(|e| e.to_string())
+        } else {
+            Err(format!("no recorded profile at {} [CG-LL-3]", recorded.display()))
+        };
+    }
+    let raw: Vec<PathBuf> = if recorded.is_dir() {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(recorded)
+            .map_err(|e| e.to_string())?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "profraw"))
+            .collect();
+        found.sort();
+        found
+    } else if recorded.is_file() {
+        vec![recorded.to_path_buf()]
+    } else {
+        Vec::new()
+    };
+    if raw.is_empty() {
+        return Err(format!(
+            "no recorded profile at {}: run the program built with `--pgo-generate` first, which writes its raw profiles there [CG-LL-3]",
+            recorded.display()
+        ));
+    }
+    let merged = std::path::absolute(layout.root.join("pgo").join(format!("{module_name}.profdata"))).map_err(|e| e.to_string())?;
+    ember_build::merge_profiles(toolchain, &raw, &merged).map_err(|e| e.to_string())?;
+    Ok(merged)
 }
 
 /// `[BLD-FFI-3]` — `[link] libs`, in the order written, a path the package's; `[FFI-29]`,
@@ -174,6 +211,19 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         sources.push(shim_path);
     }
     let toolchain = clang(options)?;
+    ember_build::set_pgo(match &request.pgo {
+        None => None,
+        Some(_) if request.library || request.reload.is_some() || testing => {
+            return Err("profile-guided optimisation builds a program ([CG-LL-3]), not a library, a reloadable image or a test binary".to_string());
+        }
+        // Raw profiles in the profile's own folder, where the program writes them as it ends.
+        Some(super::PgoAsk::Generate) => {
+            let dir = layout.root.join("pgo");
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            Some(ember_build::Pgo::Generate(std::path::absolute(&dir).map_err(|e| e.to_string())?))
+        }
+        Some(super::PgoAsk::Use(recorded)) => Some(ember_build::Pgo::Use(profile_data(&toolchain, recorded, &layout, request.module_name)?)),
+    });
     // `[BLD-6]` — the build record: the IR goes through the same Clang link, ThinLTO's included (a
     // hot-reload image without it).
     super::write_build_record(&layout, request.module_name, options.profile, &toolchain, ember_build::Link::Here, request.reload.is_some())?;
@@ -226,7 +276,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         .bodies
         .iter()
         .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
-        .map(|body| ember_branding::export_alias_symbol(&body.symbol).unwrap_or_else(|| body.symbol.clone()))
+        .map(|body| ember_codegen_llvm::function_link_symbol(request.mir.types(), ember_codegen_llvm::Target::host(), body))
         .collect();
     retained.sort();
     retained.dedup();

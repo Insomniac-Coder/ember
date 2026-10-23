@@ -42,14 +42,16 @@ this compiler does not have yet):
     ember build [file.em|package-dir] [--profile <name>] [--target <triple>] [--backend c|llvm]
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
-                [--build-id] [--reload [--explain]] [-D warnings]
+                [--build-id] [--reload [--explain]] [--pgo-generate | --pgo-use <file>] [-D warnings]
                                                    compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
                                                    --explain predicts that reload; --build-id prints
                                                    the hash of the build's inputs; --report=engine
                                                    what the build did to the program (--target is
                                                    not built yet; --backend llvm builds programs
-                                                   through Clang, the C backend stays the default)
+                                                   through Clang, the C backend stays the default;
+                                                   with it --pgo-generate instruments a program to
+                                                   record a profile, --pgo-use optimises it with one)
     ember check [file.em] [--syntax-only] [--timings]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
@@ -439,6 +441,9 @@ struct Options {
     cpp_header: bool,
     /// `[BLD-FFI-2]` — `--cc-flags-from-target <target>`: a CMake target's C compiler and flags.
     cc_flags_target: Option<String>,
+    /// `[CG-LL-3]` (ODR-274) — `--pgo-generate`, and `--pgo-use <file>`.
+    pgo_generate: bool,
+    pgo_use: Option<PathBuf>,
     cc: Option<String>,
     out_dir: Option<PathBuf>,
     json: bool,
@@ -686,7 +691,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 if arg.starts_with('-') {
                     skip_value = matches!(
                         arg.as_str(),
-                        "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D"
+                        "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "--pgo-use" | "-D"
                     );
                     rest.push(arg.clone());
                 } else if input.is_none() {
@@ -3389,6 +3394,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--report=instantiations" => options.instantiation_report = true,
             "--report=engine" => options.engine_report = true,
             "--build-id" => options.build_id = true,
+            "--pgo-generate" => options.pgo_generate = true,
+            "--pgo-use" => options.pgo_use = Some(PathBuf::from(value(&mut index, arg)?)),
             "--require-evidence" => options.require_evidence = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
@@ -4636,8 +4643,49 @@ fn write_build_record(layout: &Layout, name: &str, profile: Profile, toolchain: 
         "profile": profile.name(),
         "c_compiler": ember_build::toolchain_name(toolchain),
         "lto": { "asked": asked.name(), "used": used.name(), "why": why },
+        // `[CG-LL-3]` (ODR-274).
+        "pgo": match ember_build::pgo() {
+            Some(ember_build::Pgo::Generate(dir)) => serde_json::json!({ "generate": dir.display().to_string() }),
+            Some(ember_build::Pgo::Use(data)) => serde_json::json!({ "use": data.display().to_string() }),
+            None => serde_json::Value::Null,
+        },
     });
     std::fs::write(layout.inspect.join(format!("{name}.build.json")), format!("{record}\n")).map_err(|e| e.to_string())
+}
+
+/// `[CG-LL-3]`, `[BLD-6]` (ODR-274) — the profile-guided optimisation a build asks for: an
+/// instrumented build that records a profile as it runs, or one optimised with a recorded profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PgoAsk {
+    Generate,
+    Use(PathBuf),
+}
+
+/// The command line's `--pgo-generate` or `--pgo-use <file>`, else the manifest's
+/// `[profiles.<name>] pgo` with its `pgo_data` (a path from the manifest's folder), as `--profile`
+/// wins over the manifest.
+fn pgo_ask(settings: &ManifestLintSettings, options: &Options, input: &Path) -> Result<Option<PgoAsk>, String> {
+    if options.pgo_generate && options.pgo_use.is_some() {
+        return Err("`--pgo-generate` records a profile and `--pgo-use` optimises with one: one of the two [CG-LL-3]".to_string());
+    }
+    if options.pgo_generate {
+        return Ok(Some(PgoAsk::Generate));
+    }
+    if let Some(data) = &options.pgo_use {
+        return Ok(Some(PgoAsk::Use(data.clone())));
+    }
+    let profile = options.profile as usize;
+    match settings.pgo[profile] {
+        None => Ok(None),
+        Some(true) => Ok(Some(PgoAsk::Generate)),
+        Some(false) => {
+            let Some(data) = settings.pgo_data[profile] else {
+                return Err(format!("`[profiles.{}] pgo = \"use\"` needs `pgo_data`, the recorded profile it optimises with [CG-LL-3]", options.profile.name()));
+            };
+            let dir = nearest_manifest_path(input).and_then(|path| path.parent().map(Path::to_path_buf)).unwrap_or_default();
+            Ok(Some(PgoAsk::Use(dir.join(data.as_str()))))
+        }
+    }
 }
 
 /// `[DIA-12]` N2, `[DIA-15]` — the index of exported names a diagnostic offers import lines from:
@@ -4888,6 +4936,10 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     llvm::mark_selected(llvm::selected(options, nearest_manifest_text(input)?.as_deref())?);
     // `[BLD-6]` — the manifest's link-time optimisation for this profile, else the profile's own.
     ember_build::set_lto(lint_settings.lto[options.profile as usize]);
+    let pgo = pgo_ask(&lint_settings, options, input)?;
+    if pgo.is_some() && !llvm::is_selected() {
+        return Err("profile-guided optimisation is the LLVM backend's ([CG-LL-3]): build with `--backend llvm` or `[build] backend = \"llvm\"`".to_string());
+    }
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
     // `ember test` builds the package's tests as a program of their own, without reload.
     let reload = if command == "test" { ReloadMode::None } else { reload };
@@ -5551,6 +5603,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             cdylib,
             package_name: &package_name,
             shared_runtime: runtime_mode == "shared",
+            pgo: pgo.clone(),
             reload: reload_image.as_ref(),
             additions: reload_additions.as_ref(),
             started,
@@ -6443,6 +6496,10 @@ struct ManifestLintSettings {
     lto: [Option<ember_build::Lto>; 3],
     /// `[PRF-3]` — `[profiles.<name>] rewrites` for each built-in profile, by `Profile`.
     rewrites: [Option<bool>; 3],
+    /// `[CG-LL-3]` (ODR-274) — `[profiles.<name>] pgo` (`Some(true)`: `"generate"`, `Some(false)`:
+    /// `"use"`) and `pgo_data`.
+    pgo: [Option<bool>; 3],
+    pgo_data: [Option<ember_span::Symbol>; 3],
 }
 
 /// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
@@ -6567,6 +6624,21 @@ fn manifest_lint_settings(
                                 Diagnostic::error(codes::E9001, location, format!("`{written}` is not an `lto` value"))
                                     .help("`lto` is \"off\", \"thin\" or \"on\" [BLD-6]"),
                             ),
+                        }
+                    } else if let Some(profile) = section.strip_prefix("profiles.") && matches!(key, "pgo" | "pgo_data") {
+                        // `[CG-LL-3]` (ODR-274) — instrument, or optimise with the profile `pgo_data`.
+                        let written = value.trim().trim_matches('"').to_string();
+                        if key == "pgo" && !matches!(written.as_str(), "generate" | "use") {
+                            sink.emit(
+                                Diagnostic::error(codes::E9001, location, format!("`{written}` is not a `pgo` value"))
+                                    .help("`pgo` is \"generate\" (record a profile) or \"use\" (optimise with `pgo_data`) [CG-LL-3]"),
+                            );
+                        } else if let Some(profile) = Profile::from_name(profile.trim()) {
+                            if key == "pgo" {
+                                settings.pgo[profile as usize] = Some(written == "generate");
+                            } else {
+                                settings.pgo_data[profile as usize] = Some(ember_span::Symbol::intern(&written));
+                            }
                         }
                     } else if let Some(profile) = section.strip_prefix("profiles.") && key == "rewrites" {
                         // `[PRF-3]` — `true` or `false`.
@@ -6977,7 +7049,7 @@ fn manifest_section_keys(section: &str) -> Option<Option<&'static [&'static str]
         // `[PRF-3]` — the profile table's keys.
         _ if section.starts_with("profiles.") => &[
             "inherits", "opt", "rewrites", "debug_info", "strip", "backtrace", "debug_assert", "leak_report",
-            "lock_order", "sanitizers", "lto",
+            "lock_order", "sanitizers", "lto", "pgo", "pgo_data",
         ],
         // `[FFI-50]`.
         _ if section.starts_with("cpp.") => &["compiler", "standard", "defines", "include_paths", "flags", "cmake"],

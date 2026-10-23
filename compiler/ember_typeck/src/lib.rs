@@ -18132,8 +18132,11 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        // Unify each declared field type with the value given for it.
-        let fields: Vec<Ty> = decl.fields.iter().map(|field| field.ty).collect();
+        // Unify each declared field type with the value given for it. ODR-275 — a `std.sync` value
+        // type is given its value, which an `UnsafeCell` of it keeps.
+        let cell_kept = SYNC_VALUE_TYPES.contains(&name.as_str());
+        let fields: Vec<Ty> =
+            decl.fields.iter().map(|field| if cell_kept { self.types.cell_held(field.ty) } else { field.ty }).collect();
         let names: Vec<Symbol> = decl.fields.iter().map(|field| field.name).collect();
         let slots = self.constructor_slots(name, &names, args, span);
         let values =
@@ -18167,7 +18170,15 @@ impl<'a> Checker<'a> {
         let values = values
             .into_iter()
             .zip(field_tys)
-            .map(|(value, field_ty)| value.map(|value| self.coerce(value, field_ty)))
+            .map(|(value, field_ty)| {
+                value.map(|value| match self.types.unsafe_cell_inner(field_ty).filter(|_| cell_kept) {
+                    Some(held) => {
+                        let value = self.coerce(value, held);
+                        self.in_unsafe_cell(value)
+                    }
+                    None => self.coerce(value, field_ty),
+                })
+            })
             .collect();
         let instance = self.types.struct_def(id).name;
         self.finish_struct_literal(id, instance, values, span)
@@ -19438,6 +19449,15 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// ODR-275 — `UnsafeCell(value)`: where a compiler-known interior-mutable type keeps the state
+    /// a shared reference to it may change.
+    fn in_unsafe_cell(&mut self, value: Expr) -> Expr {
+        let span = value.span;
+        let ty = self.unsafe_cell_of(value.ty);
+        let TyKind::Struct(id) = *self.types.kind(ty) else { unreachable!("UnsafeCell is compiler-known as a struct") };
+        Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields: vec![value] }, span }
+    }
+
     /// `UnsafeCell` is public but deliberately not in the prelude. Resolve
     /// through the module visibility table so aliases work and an unimported
     /// bare spelling does not become a compiler-only back door.
@@ -19525,13 +19545,19 @@ impl<'a> Checker<'a> {
             }
             match this.types.kind(ty) {
                 TyKind::Struct(id) => {
+                    let module = this.types.struct_def(*id).declaring_module;
+                    let std_private = module == ember_types::COMPILER_MODULE
+                        || this.prefixes[module].as_str().starts_with(&format!("{}.", ember_branding::STD_PACKAGE));
                     this.unsafe_cells.contains_key(id)
-                        || this
-                            .types
-                            .struct_def(*id)
-                            .fields
-                            .iter()
-                            .any(|field| visit(this, field.ty, seen))
+                        || this.types.struct_def(*id).fields.iter().any(|field| {
+                            // ODR-275 — a std type keeps its changing state in an `UnsafeCell` of
+                            // its own (`RefCell`, `Mutex`, `Atomic`): an abstraction whose safety
+                            // is std's (`[UNS-10a]`); what it holds is still the program's.
+                            match this.unsafe_cell_inner(field.ty).filter(|_| std_private) {
+                                Some(held) => visit(this, held, seen),
+                                None => visit(this, field.ty, seen),
+                            }
+                        })
                 }
                 TyKind::Enum(id) => this
                     .types
@@ -19568,8 +19594,8 @@ impl<'a> Checker<'a> {
     /// `[CG-C-1]` forbids in emitted C — the backend writes field names
     /// verbatim and `$` needs `-pedantic` to be noticed).
     ///
-    /// Fields, in order: `value: T` (at offset 0, so a guard's pointer to the
-    /// value is also a pointer to the cell for the release), `borrow: isize`
+    /// Fields, in order (each in an `UnsafeCell`, ODR-275), `value: T` (at offset 0, so a guard's
+    /// pointer to the value is also a pointer to the cell for the release), `borrow: isize`
     /// (the one-word counter: `0` unborrowed, `>0` shared count, `-1`
     /// mutably borrowed), `borrow_file: *u8` + `borrow_line: u32` (the
     /// conflicting borrow's source location, recorded in debug and release
@@ -19589,12 +19615,16 @@ impl<'a> Checker<'a> {
         }
         let u8_ty = self.common.u8;
         let file_ty = self.types.intern(TyKind::Ptr { mutable: false, inner: u8_ty });
+        // ODR-275 — what changes through a shared `RefCell` is kept in `UnsafeCell`s: the value a
+        // `RefMut` writes and the borrow state.
+        let (value_cell, borrow_cell) = (self.unsafe_cell_of(inner), self.unsafe_cell_of(self.common.isize));
+        let (file_cell, line_cell) = (self.unsafe_cell_of(file_ty), self.unsafe_cell_of(self.common.u32));
         let id = self.types.add_struct(StructDef {
             name,
             fields: vec![
                 FieldDef {
                     name: Symbol::intern("value"),
-                    ty: inner,
+                    ty: value_cell,
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
@@ -19604,7 +19634,7 @@ impl<'a> Checker<'a> {
                 },
                 FieldDef {
                     name: Symbol::intern("borrow"),
-                    ty: self.common.isize,
+                    ty: borrow_cell,
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
@@ -19614,7 +19644,7 @@ impl<'a> Checker<'a> {
                 },
                 FieldDef {
                     name: Symbol::intern("borrow_file"),
-                    ty: file_ty,
+                    ty: file_cell,
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
@@ -19624,7 +19654,7 @@ impl<'a> Checker<'a> {
                 },
                 FieldDef {
                     name: Symbol::intern("borrow_line"),
-                    ty: self.common.u32,
+                    ty: line_cell,
                     span: Span::DUMMY,
                     ty_span: Span::DUMMY,
                     has_default: false,
@@ -22024,6 +22054,7 @@ impl<'a> Checker<'a> {
             if !borrowed_aggregate { return None; }
             return Some(hir::FfiCounted {
                 foreign_symbol: foreign_function_symbol(attrs, decl, self.qualified(decl.name.name)),
+                abi: decl.abi.clone(),
                 abi_params: visible.iter().enumerate().map(|(public_index, &(_, ty, mode, _))|
                     hir::FfiAbiParam::Value { public_index, ty, mode }).collect(),
                 result_array: None,
@@ -22237,6 +22268,7 @@ impl<'a> Checker<'a> {
         }
         Some(hir::FfiCounted {
             foreign_symbol: foreign_function_symbol(attrs, decl, self.qualified(decl.name.name)),
+            abi: decl.abi.clone(),
             abi_params,
             result_array,
             result_span,
@@ -38125,20 +38157,14 @@ impl<'a> Checker<'a> {
             };
             let def = self.types.struct_def(id).clone();
             // Fields 1–3 are the borrow state: `0`, null file, `0` line.
-            let zero_isize = Expr { ty: def.fields[1].ty, kind: ExprKind::Int(0), span };
+            let zero_isize = Expr { ty: self.types.cell_held(def.fields[1].ty), kind: ExprKind::Int(0), span };
             // A null `*u8` as integer zero with the pointer type: C renders a
             // plain `0`, which is the null pointer constant (no cast, no
             // `-Wall` noise).
-            let null_file = Expr { ty: def.fields[2].ty, kind: ExprKind::Int(0), span };
-            let zero_u32 = Expr { ty: def.fields[3].ty, kind: ExprKind::Int(0), span };
-            return Expr {
-                ty,
-                kind: ExprKind::StructLit {
-                    struct_id: id,
-                    fields: vec![value, zero_isize, null_file, zero_u32],
-                },
-                span,
-            };
+            let null_file = Expr { ty: self.types.cell_held(def.fields[2].ty), kind: ExprKind::Int(0), span };
+            let zero_u32 = Expr { ty: self.types.cell_held(def.fields[3].ty), kind: ExprKind::Int(0), span };
+            let fields = [value, zero_isize, null_file, zero_u32].into_iter().map(|field| self.in_unsafe_cell(field)).collect();
+            return Expr { ty, kind: ExprKind::StructLit { struct_id: id, fields }, span };
         }
 
         // `Array[T]()` and `String()` — the compiler-known constructors.

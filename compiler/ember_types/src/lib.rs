@@ -1667,8 +1667,27 @@ impl TypeTable {
         }
     }
 
+    /// ODR-275 — what an `UnsafeCell[T]` holds (`T`), else `None`: every std type whose state
+    /// changes through a shared reference keeps that state in one (`RefCell`'s, `Mutex`'s,
+    /// `RwLock`'s and `Atomic`'s fields), which the code reaching that state reads through.
+    pub fn unsafe_cell_inner(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Struct(id) = self.kind(ty) else { return None };
+        match &self.struct_def(*id).origin {
+            Some((name, args)) if name.is("std.mem.UnsafeCell") && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
+    /// The type a field of `ty` holds: through the `UnsafeCell` that keeps it, when it is one.
+    pub fn cell_held(&self, ty: Ty) -> Ty {
+        self.unsafe_cell_inner(ty).unwrap_or(ty)
+    }
+
     /// Whether a value of this type holds a `Cell` or `UnsafeCell` in its
-    /// own storage.
+    /// own storage: what a shared reference to it may change (`[BRW-8]`, and the LLVM backend's
+    /// `readonly`, `[CG-LL-3]`). ODR-275: every std type whose state changes through a shared
+    /// reference keeps it in an `UnsafeCell`, so this one structural fact serves both; `Cell`, which
+    /// is `Copy` where an `UnsafeCell` never is, is the other primitive.
     pub fn holds_a_cell(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Struct(id) => {

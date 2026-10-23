@@ -3980,9 +3980,7 @@ fn check_refcell_call(
             loan.capability.reference_kind == ReferenceKind::RuntimeGuard
                 // A mutex guard held across a call is ordinary: L3011 is `RefCell`'s.
                 && loan.capability.source_place().is_none_or(|source| {
-                    let mut parent = source.clone();
-                    parent.projection.pop();
-                    is_refcell_ty(types, place_ty(body, types, &parent))
+                    is_refcell_ty(types, place_ty(body, types, &guarded_parent(body, types, source)))
                 })
         })
         .collect();
@@ -3999,8 +3997,7 @@ fn check_refcell_call(
         .expect("a guard loan has source storage")
         .clone();
     if let Some(Projection::Field(0)) = display.projection.last() {
-        let mut parent = display.clone();
-        parent.projection.pop();
+        let parent = guarded_parent(body, types, &display);
         if is_refcell_ty(types, place_ty(body, types, &parent)) {
             display = parent;
         }
@@ -5320,9 +5317,18 @@ fn is_guard_loan(body: &Body, types: &TypeTable, place: &Place) -> bool {
     if place.projection.is_empty() {
         return false;
     }
+    is_guarded_cell_ty(types, place_ty(body, types, &guarded_parent(body, types, place)))
+}
+
+/// The place a loan of a cell's value is inside: its parent, or (ODR-275) its parent's parent when
+/// the parent is the `UnsafeCell` that keeps the value.
+fn guarded_parent(body: &Body, types: &TypeTable, place: &Place) -> Place {
     let mut parent = place.clone();
     parent.projection.pop();
-    is_guarded_cell_ty(types, place_ty(body, types, &parent))
+    if !parent.projection.is_empty() && types.unsafe_cell_inner(place_ty(body, types, &parent)).is_some() {
+        parent.projection.pop();
+    }
+    parent
 }
 
 fn operand_read(operand: &Operand, out: &mut Vec<(Place, Access)>) {

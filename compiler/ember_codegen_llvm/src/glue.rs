@@ -718,7 +718,7 @@ impl<'a> FnCx<'_, 'a> {
         {
             let Some(borrow_at) = crate::arenas::field_offset(self.m, cell, "borrow") else { return unsupported("a `RefCell` without its state") };
             let TyKind::Struct(cell_id) = *table.kind(cell) else { unreachable!("a cell is a struct") };
-            let borrow_ty = table.struct_def(cell_id).fields.iter().find(|field| field.name.as_str() == "borrow").expect("found above").ty;
+            let borrow_ty = table.cell_held(table.struct_def(cell_id).fields.iter().find(|field| field.name.as_str() == "borrow").expect("found above").ty);
             let crate::types::Repr::Scalar(Sc::I(bits)) = self.m.ty.repr(borrow_ty) else { return unsupported("a `RefCell` state that is not an integer") };
             let object = self.load(Sc::Ptr, ptr, align.min(8));
             let state = self.gep(&object, borrow_at);
@@ -989,7 +989,7 @@ fn refcell_for_guard(table: &ember_types::TypeTable, guard: Ty) -> Option<Ty> {
     table.all().find_map(|(ty, kind)| match kind {
         TyKind::Struct(cell) => {
             let def = table.struct_def(*cell);
-            (def.name.as_str().starts_with("RefCell_") && def.fields.len() == 4 && def.fields[0].ty == inner).then_some(ty)
+            (def.name.as_str().starts_with("RefCell_") && def.fields.len() == 4 && table.cell_held(def.fields[0].ty) == inner).then_some(ty)
         }
         _ => None,
     })

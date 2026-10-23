@@ -9,6 +9,7 @@ fn float_name(sc: Sc) -> &'static str {
     match sc {
         Sc::F32 => "f32",
         Sc::F80 => "f80",
+        Sc::F128 => "f128",
         _ => "f64",
     }
 }
@@ -133,6 +134,7 @@ impl<'a> FnCx<'_, 'a> {
                     crate::abi::Scalar::F32 => Sc::F32,
                     crate::abi::Scalar::F64 => Sc::F64,
                     crate::abi::Scalar::F80 => Sc::F80,
+                    crate::abi::Scalar::F128 => Sc::F128,
                     crate::abi::Scalar::Ptr => Sc::Ptr,
                 };
                 let value = self.load(sc, &slot, size.max(1));

@@ -222,6 +222,144 @@ functions (`[FFI-28]`'s list gains them); (b) a `cdylib`'s header leaves them ou
 host gets handles it can only pass back; (c) as now. Recommendation: (a) — the functions exist for
 the host, and they carry the package's name as their prefix, so they cannot clash.
 
+## 4. `readonly` (ODR-275) and `dereferenceable(N)` (ODR-276) — DONE
+
+### ODR-275: what changes through a shared reference is in an `UnsafeCell`
+
+* `std.sync`: `Mutex[T]` and `RwLock[T]` hold `value: UnsafeCell[T]` and `word: UnsafeCell[usize]`;
+  `Atomic[T]` holds `value: UnsafeCell[T]` (`std/src/sync.em`). The compiler-built `RefCell[T]`
+  holds its value, its borrow count and the location of its last borrow each in an `UnsafeCell`
+  (`refcell_of`); `RefCell(v)` and the `std.sync` constructors put what they are given into the cell
+  (`in_unsafe_cell`). `Once` holds an `Atomic`. `Cell` stays the other primitive, recognised by its
+  name as before: it is `Copy` where an `UnsafeCell` never is (`[UNS-10]`), so it cannot hold one.
+* The code that reaches that state goes through the cell: MIR lowering of `lock`, `read`/`write`,
+  the atomics and `borrow`/`borrow_mut` (`state_ty`, `state_place`), the C backend's guard ends
+  (`state_member`: `->word.value`, `->borrow.value`), the LLVM backend's and the evaluator's
+  (`TypeTable::cell_held`), the borrow checker's guard loans (`guarded_parent`).
+* `TypeTable::holds_a_cell` is now the one fact `[BRW-8]` and `readonly` read; the hand list ODR-275
+  ruled out does not exist. `[UNS-10b]`'s `E3105` in `@static_safe` code looks into what a std type
+  holds (its `T`), not at std's own cells: a `RefCell` parameter is still `[EFF-6a]`'s `E4030`, as
+  the tests expect.
+* Before this, `holds_a_cell(RefCell[T])`, `(Atomic[T])` and `(Mutex[T])` were false: `loop_version`
+  (D-529's lent locals) treated a shared loan of one as unchanging. No test showed it.
+* Hot reload: a `Mutex[Score]` static's value is now an `UnsafeCell[Score]`, which had no schema
+  (`image::is_compiler_struct` listed `UnsafeCell_`), so five reload tests saw "field `value`
+  changed type" where `Score` changed. An `UnsafeCell` holding the package's types now has its own
+  schema, as a std struct does (`[HR-13a]`), and the reload follows into it: 50 of 50 reload tests
+  under both backends again.
+* `CELL-9/accept_the_counter_is_one_machine_word` pinned the C `ptrdiff_t borrow;`; the counter is
+  now `UnsafeCell…G9ee56c8f11b4d4af borrow;` (`G9ee56c8f11b4d4af` is `isize`'s instance), which
+  the test now pins instead (the same fact: the counter is one machine word).
+
+### ODR-276: what a callee can end, established first
+
+The cases (section 1b; both backends and the evaluator):
+
+| Case | What happens |
+| --- | --- |
+| `RC-5/accept_a_callee_ending_the_owner_a_borrow_points_into` | the callee drops the last other handle of the class object a borrowed parameter points into: the caller's loan keeps the object until the statement ends |
+| `RC-5/accept_a_callee_replacing_the_field_a_borrow_went_through` | the callee replaces the field the borrow was taken through: the old object stays alive for the loan |
+| `RC-5/accept_a_callee_dropping_one_owner_of_a_borrowed_shared` | `mem.drop` of a `Shared` owner in the callee frees nothing while the borrow lives |
+| `HEAP-5/run_fail_a_callee_replacing_the_shared_a_borrow_points_into` | replacing the `Shared` the borrow points into panics |
+| `EXC-2/run_fail_a_callee_clearing_the_list_an_element_borrow_came_from` | clearing the list an element reference came from panics before anything is freed |
+| `EXC-2/run_fail_..._replacing_the_list_...` | so does replacing it |
+
+Safe Ember gives a callee no way to end the object a borrowed parameter points into; unsafe code
+that does is outside `[UNS-*]`'s rules. So the parameter attribute is derived, everywhere: an
+Ember function's reference parameter is `nonnull dereferenceable(size of the referent)`, and a
+shared one whose referent holds no cell is also `readonly` (`abi::Ext::Ref`, `body_signature`). A
+zero-sized referent gets none; an export's, a C-callable function value's or a callback's
+parameters none (their callers are foreign). No call-site attribute is needed.
+
+### Tests
+
+* `ember_driver/tests/llvm.rs` `cg_ll_3_references_are_dereferenceable_and_shared_ones_without_a_cell_readonly`:
+  `ref Pair` is `nonnull dereferenceable(16) readonly`; a `mut` one, and shared ones to a `Cell`,
+  a `RefCell`, a struct holding an `Atomic`, a `Mutex`, have `dereferenceable` and no `readonly`;
+  an export's parameter has neither.
+* `tests/conformance/UNS-10/accept_what_a_shared_reference_changes_is_in_a_cell` (both backends,
+  every profile): a never-inlined function changes a `Cell`, a `RefCell`, an `Atomic` in a struct and
+  a `Mutex` through a shared reference, and the caller reads the new value. Tried against a broken
+  build that marks every shared reference `readonly`: `development` and `release` then print the
+  old `Cell` and `RefCell` values (`1 1`), so the test catches the fact being wrong.
+* Every test folder using a cell or a sync type (56 folders): 0 failing under the C backend with the
+  evaluator; 334 of 334 run tests under LLVM in every profile.
+
+## 5. Profile-guided optimisation (ODR-274) — DONE
+
+* `ember build --pgo-generate` builds a program instrumented by Clang (`-fprofile-generate=<dir>`,
+  compile and link) to write its raw profile into `target/<profile>/pgo/` when it ends.
+  `ember build --pgo-use <file>` optimises with a recorded profile (`-fprofile-use=`): a `.profdata`
+  as it is; a `.profraw`, or a folder of them (`--pgo-generate`'s), merged first by
+  `llvm-profdata merge` into `target/<profile>/pgo/<module>.profdata` (the `llvm-profdata` beside
+  the Clang the build uses, its real path followed; else the one `PATH` finds).
+* The manifest: `[profiles.<name>] pgo = "generate"` or `"use"` with `pgo_data = "<file>"` (from
+  the manifest's folder). The command line wins over the manifest, as `--profile` does; both flags
+  together are refused; `pgo = "use"` without `pgo_data` is refused; a value other than the two is
+  `E9001`.
+* The LLVM backend's: the C backend refuses the flags naming it. A program only: a library, a
+  reloadable image or a test binary is refused (a library's instrumented code runs in its host; not
+  asked for).
+* The build record (`inspect/<module>.build.json`) says which (`"pgo": {"generate": dir}` /
+  `{"use": file}`). The program cache keys a `use` build by the profile's content.
+* Test: `cg_ll_3_profile_guided_optimisation_records_and_uses_a_profile` — the instrumented build
+  (the manifest asking for a missing profile, the command line winning), its run writing a
+  `.profraw`, the manifest's missing profile refused, the `use` build merging and using it, the
+  merged profile's counters for `work` (`[3003, 3, …]`: its loop's 1000 + 1001 + 1002 turns and its
+  three entries), a broken `.profdata` stopping the build at Clang, the C backend refusing.
+
+## 6. `extern "vectorcall"` and AAPCS64 (`[FFI-9]`, `[CG-LL-2]`) — DONE (AArch64: classified, not run)
+
+### `__vectorcall` on Windows x64
+
+* `abi::classify_vectorcall`, Clang's `WinX86_64ABIInfo` for the convention: the first six
+  arguments may take vector registers, six in all, a floating-point scalar its position's; a
+  homogeneous floating-point aggregate (one to four `f32` or `f64` members, nothing else, no
+  `std.simd` vector — C holds those in a union, never homogeneous) takes as many registers as it
+  has members from those left once every scalar has its own, as `{ T, … } inreg`, else it goes
+  behind a pointer; a result of up to four such members comes back in registers; everything else is
+  the C convention's. Calls, declarations and definitions say `x86_vectorcallcc`.
+* The symbol is MSVC's `name@@N` (N the parameters' bytes, each rounded up to 8, an aggregate passed
+  by address counting its own size), written `"\01name@@N"` so LLVM does not decorate it again by
+  the IR's parameters (it would count such an aggregate as a pointer). An export's `/INCLUDE:` uses
+  it too (`function_link_symbol`).
+* Off Windows x64 the convention is refused by name (the C backend's `EMBER_CC_VECTORCALL` stops a
+  build there the same way); a reloadable vectorcall function and one used as a value are refused
+  (`[HR-6]`'s thunk and a function value's call are the C convention's).
+* **D-916 (C backend, fixed; and the LLVM backend's counted wrapper)** `[FFI-9]`: a foreign function
+  of an `extern "vectorcall"` block taking a struct by value is called through its counted
+  wrapper, an Ember function with no convention of its own, and its C declaration came out without
+  `EMBER_CC_VECTORCALL`: MSVC linked `vc_hva2` against nothing (`LNK2019`, the C library's symbol
+  being `vc_hva2@@16`), and a C compiler that does not decorate would have called it with the C
+  convention. `FfiCounted` now carries the foreign function's convention (`abi`), which both
+  backends' declarations and calls use.
+* Tests: `abi::tests::ffi_9_vectorcall_matches_clang` (eleven signatures and symbols, each Clang
+  22's IR of the same C: `target/ai/abi_probe/vectorcall.c`); `ember_driver/tests/llvm.rs`
+  `ffi_9_vectorcall_passes_floating_point_aggregates_in_vector_registers` (Windows): a program
+  calling C compiled by the backend's own compiler (an HVA, an HVA after scalars, eight arguments
+  leaving no register for the HVA, an HVA result, a five-double struct), built by both backends;
+  the IR's declarations checked; both print the same.
+
+### AAPCS64
+
+* `Target::Aapcs64` (`Target::host()` on AArch64): Clang's `AArch64ABIInfo` for Linux: no small
+  integer extended; a floating-point aggregate as `[N x T]` with `alignstack(8)` (16 when aligned
+  to 16); another aggregate of up to 16 bytes as `i64`, `[2 x i64]`, or `i128` when aligned to 16;
+  a larger one behind a pointer to a copy (not `byval`); results: a floating-point aggregate as a
+  struct of its members, an aggregate of up to 8 bytes as the integer of its size, of up to 16 as
+  `[2 x i64]` (`i128` aligned to 16), larger into memory; `long double` is `fp128` (`Sc::F128`).
+  An aggregate whose parts reach past it (a 4-byte struct passed as `i64`, a 12-byte one as
+  `[2 x i64]`) is read from and written to storage padded to the parts (`parts_span`), never past
+  its own. Functions name Clang's AArch64 CPU and features; the object format is Linux's (DWARF,
+  hidden visibility, `ember_reload`).
+* Test: `abi::tests::cg_ll_2_aapcs64_matches_clang`, every parameter and result of the probe as
+  Clang 22's IR of the same C for `aarch64-linux-gnu` (`target/ai/abi_probe/aapcs.c`), registers
+  running out included.
+* **Not run on AArch64.** There is no AArch64 machine here and no emulator (installing one is not
+  allowed). On an AArch64 Linux machine with Rust and Clang:
+  `cargo build --profile ci -p ember_driver && EMBER=target/ci/ember EMBER_BACKEND=llvm EMBER_PROFILES=all python3 tasks/impl-0.9.9/annotations.py tests/conformance/* tests/run-pass tests/run-fail`.
+  Apple's AArch64 differs in one point not built: Darwin extends small integers.
+
 ## Merge notes for the lead
 
 * Helper AE's branch changes the C backend's `reload.rs` too (the manifest's unit check,
@@ -229,6 +367,10 @@ the host, and they carry the package's name as their prefix, so they cannot clas
   `ember_codegen_c::image` (`Planner`), which plans the layouts by class id already, so AE's change
   goes into the planner, and `reload.rs` keeps only the C text. AE's `frames.rs` change
   (`frames_on` for `Some(FpMode::Strict)`) applies to what is left of `frames.rs` as is.
+* ODR-275 changed `std/src/sync.em`'s `Mutex`, `RwLock` and `Atomic` fields and the compiler-built
+  `RefCell`'s to `UnsafeCell`s: code on another branch reading those fields by index (a lock's
+  `word`, an atomic's `value`, a `RefCell`'s `borrow`) reaches the state through the cell
+  (`TypeTable::cell_held`, MIR's `state_ty`/`state_place`).
 * AE's `ember_driver::reload::build` takes units and ninja: here it takes a list of units already
   (an LLVM image is the `.ll` and its shim); a ninja rule for a `.ll` unit needs the IR flags
   (`ember_build::ir_flags`).

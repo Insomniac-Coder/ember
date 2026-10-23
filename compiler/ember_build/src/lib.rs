@@ -111,6 +111,65 @@ pub fn asked_lto(profile: Profile) -> Lto {
     LTO.lock().ok().and_then(|set| *set).unwrap_or(profile.lto())
 }
 
+/// `[CG-LL-3]`, `[BLD-6]` (ODR-274) — profile-guided optimisation, which Clang does for the LLVM
+/// backend's IR and C: a build instrumented to write raw profiles into a folder when it runs, or
+/// one optimised with a merged profile (`llvm-profdata merge`'s `.profdata`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pgo {
+    Generate(PathBuf),
+    Use(PathBuf),
+}
+
+static PGO: std::sync::Mutex<Option<Pgo>> = std::sync::Mutex::new(None);
+
+/// `[CG-LL-3]` — set the profile-guided optimisation this build does.
+pub fn set_pgo(pgo: Option<Pgo>) {
+    if let Ok(mut set) = PGO.lock() {
+        *set = pgo;
+    }
+}
+
+pub fn pgo() -> Option<Pgo> {
+    PGO.lock().ok().and_then(|set| set.clone())
+}
+
+/// Clang's flags for the build's profile-guided optimisation: the same at a compile and at the
+/// link (an instrumented link takes the profile runtime). No other toolchain is asked.
+fn pgo_flags(toolchain: &Toolchain) -> Vec<String> {
+    match (toolchain, pgo()) {
+        (Toolchain::Clang(_), Some(Pgo::Generate(dir))) => vec![format!("-fprofile-generate={}", dir.display())],
+        (Toolchain::Clang(_), Some(Pgo::Use(data))) => vec![format!("-fprofile-use={}", data.display())],
+        _ => Vec::new(),
+    }
+}
+
+/// `[CG-LL-3]` (ODR-274) — `llvm-profdata merge`: the raw profiles `inputs` (each a `.profraw`
+/// file) merged into `output`, which `Pgo::Use` reads. The tool is Clang's own, beside it.
+pub fn merge_profiles(toolchain: &Toolchain, inputs: &[PathBuf], output: &Path) -> Result<(), BuildError> {
+    let tool = profdata_tool(toolchain);
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut command = Command::new(&tool);
+    command.arg("merge").arg("-o").arg(output).args(inputs);
+    run(command)
+}
+
+/// `llvm-profdata` beside the Clang the build uses (its real file: `/usr/bin/clang` is a link into
+/// LLVM's own folder), else the one the `PATH` finds.
+fn profdata_tool(toolchain: &Toolchain) -> PathBuf {
+    let name = if cfg!(windows) { "llvm-profdata.exe" } else { "llvm-profdata" };
+    let clang = match toolchain {
+        Toolchain::Clang(path) => Some(path.canonicalize().unwrap_or_else(|_| path.clone())),
+        Toolchain::Msvc { cl, .. } if is_clang_cl(cl) => Some(cl.clone()),
+        _ => None,
+    };
+    clang
+        .and_then(|clang| clang.parent().map(|dir| dir.join(name)))
+        .filter(|tool| tool.is_file())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
 /// Which C compiler drives the backend. `[MAN-1]`'s `c_compiler = "auto"`
 /// resolves to MSVC on Windows when it can be found, then clang, then gcc.
 #[derive(Clone, Debug)]
@@ -850,6 +909,7 @@ fn compile_and_link_impl(
                 command.arg("-Werror");
             }
             command.args(ir_flags(request.sources));
+            command.args(pgo_flags(toolchain));
             folder_names(&mut command, request.sources, request.include_dirs);
             let section_flags = executable_section_flags(toolchain, retained_symbols.is_some());
             command.args(section_flags);
@@ -1015,6 +1075,12 @@ impl CachedProgram {
         }
         for name in PROGRAM_VARIABLES {
             key.part(variable(command, name).unwrap_or_default().as_encoded_bytes());
+        }
+        // `[CG-LL-3]` — the profile a build is optimised with, by its content (its name is the same
+        // from one recording to the next).
+        if let Some(Pgo::Use(data)) = pgo() {
+            key.part(b"pgo");
+            key.part(&std::fs::read(data).ok()?);
         }
         // `[CG-C-9]` — the visualisers the link puts in the program database, by their content.
         if let Some(natvis) = natvis_beside(request) {

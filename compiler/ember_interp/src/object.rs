@@ -537,7 +537,7 @@ impl Interp<'_, '_> {
                 let layout = self.layout(cell);
                 let TyKind::Struct(cell_id) = *types.kind(cell) else { unreachable!() };
                 let borrow_index = types.struct_def(cell_id).fields.iter().position(|f| f.name.is("borrow")).unwrap_or(1);
-                let field = types.struct_def(cell_id).fields[borrow_index].ty;
+                let field = types.cell_held(types.struct_def(cell_id).fields[borrow_index].ty);
                 let at = value + layout.field_offsets[borrow_index];
                 let kind = self.int_kind(field).expect("a counter");
                 let current = kind.signed_value(self.mem.read(at, kind.bytes() as u64)?);
@@ -581,7 +581,7 @@ impl Interp<'_, '_> {
         self.types.all().find_map(|(ty, kind)| match kind {
             TyKind::Struct(id) => {
                 let def = self.types.struct_def(*id);
-                (def.name.as_str().starts_with("RefCell_") && def.fields.len() == 4 && def.fields[0].ty == inner).then_some(ty)
+                (def.name.as_str().starts_with("RefCell_") && def.fields.len() == 4 && self.types.cell_held(def.fields[0].ty) == inner).then_some(ty)
             }
             _ => None,
         })

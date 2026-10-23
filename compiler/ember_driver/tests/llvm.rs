@@ -1,6 +1,7 @@
 //! `[CG-LL-1]`..`[CG-LL-3]` — the LLVM backend's module, read as text (`--emit llvm-ir`): what the
-//! IR says about checks, floating point, vectors, attributes and debug information. Nothing here
-//! builds or runs a program; the conformance tree runs them (`EMBER_BACKEND=llvm`).
+//! IR says about checks, floating point, vectors, attributes and debug information; and the builds
+//! only this backend makes (`ember test`'s binary, profile-guided optimisation's two). The
+//! conformance tree runs the programs (`EMBER_BACKEND=llvm`).
 
 #[path = "support/temporary_directory.rs"]
 mod temporary_directory;
@@ -157,6 +158,82 @@ fn main():
     assert!(make.lines().next().is_some_and(|header| header.contains("ptr noalias sret(")), "{make}");
 }
 
+/// `[CG-LL-3]` (ODR-275, ODR-276) — a reference parameter of an Ember function is
+/// `dereferenceable` for its referent's size (no callee can end what a borrowed parameter points
+/// into: the caller's loan keeps it, RC-5, HEAP-5, EXC-2), and a shared one is `readonly` unless
+/// its referent holds a `Cell` or an `UnsafeCell`, which every std type changed through a shared
+/// reference keeps its state in (`RefCell`, `Mutex`, `Atomic`, and a struct holding one). An
+/// export's caller is foreign: none of it there.
+#[test]
+fn cg_ll_3_references_are_dereferenceable_and_shared_ones_without_a_cell_readonly() {
+    let ir = ir(
+        "\
+from std.sync import Atomic, Mutex, MemoryOrder
+
+struct Pair:
+    a: i64
+    b: i64
+
+struct Stats:
+    hits: Atomic[i64]
+    name: i64
+
+@noinline
+fn sum(p: ref Pair) -> i64:
+    return p.a + p.b
+
+@noinline
+fn bump(mut p: Pair):
+    p.a += 1
+
+@noinline
+fn poke(cell: ref Cell[i64]):
+    cell.set(cell.get() + 1)
+
+@noinline
+fn grow(cell: ref RefCell[i64]):
+    with g = cell.borrow_mut():
+        g += 1
+
+@noinline
+fn tick(stats: ref Stats):
+    stats.hits.fetch_add(1, MemoryOrder.Relaxed)
+
+@noinline
+fn locked(m: ref Mutex[i64]) -> i64:
+    with g = m.lock():
+        return g
+
+@export(\"pair_total\")
+fn pair_total(p: Pair) -> i64:
+    return p.a + p.b
+
+fn main():
+    p = Pair(a=1, b=2)
+    bump(p)
+    c = Cell(1i64)
+    poke(ref c)
+    r = RefCell(1i64)
+    grow(ref r)
+    stats = Stats(hits=Atomic(0i64), name=0)
+    tick(ref stats)
+    m = Mutex(3i64)
+    println(sum(ref p), c.get(), locked(ref m), pair_total(p))
+",
+        "release",
+    );
+    let header = |symbol: &str| function(&ir, symbol).lines().next().unwrap_or_default().to_string();
+    assert!(header("em_3sum").contains("ptr nonnull dereferenceable(16) readonly"), "{}", header("em_3sum"));
+    let bump = header("em_4bump");
+    assert!(bump.contains("ptr nonnull dereferenceable(16)") && !bump.contains("readonly"), "{bump}");
+    for (symbol, size) in [("em_4poke", 8), ("em_4grow", 32), ("em_4tick", 16), ("em_6locked", 16)] {
+        let header = header(symbol);
+        assert!(header.contains(&format!("ptr nonnull dereferenceable({size})")) && !header.contains("readonly"), "{header}");
+    }
+    let export = header("pair_total");
+    assert!(!export.contains("dereferenceable") && !export.contains("readonly"), "{export}");
+}
+
 /// `[CG-LL-3]`, `[THR-14]` — the IR in the shape LLVM optimises as it does the runtime's C: every
 /// function names the CPU and features Clang gives C (without them a link-time optimisation
 /// compiles the IR for the linker's default CPU, never inlines a runtime inline function into the
@@ -290,4 +367,162 @@ fn cg_ll_1_an_unknown_backend_is_refused() {
     assert!(!output.status.success());
     let said = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     assert!(said.contains("gcc-jit"), "{said}");
+}
+
+/// `[CG-LL-3]`, `[BLD-6]` (ODR-274) — profile-guided optimisation: `--pgo-generate` builds a program
+/// instrumented to write its raw profile into the profile's `pgo` folder as it ends; `--pgo-use`
+/// with that folder merges it (`llvm-profdata merge`) and optimises with it, and the profile holds
+/// what the run did (`work`'s entry count is the times `main` called it). A profile that is not one
+/// stops the build at Clang, one not there before it; the command line wins over the manifest's
+/// `[profiles.<name>] pgo`, as `--profile` does; the C backend refuses the flags by name.
+#[test]
+fn cg_ll_3_profile_guided_optimisation_records_and_uses_a_profile() {
+    let dir = temporary_directory("llvm-pgo");
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"warm\"\n\n[profiles.release]\npgo = \"use\"\npgo_data = \"absent.profdata\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src").join(ember_branding::source_file("main")), "\
+@noinline
+fn work(n: int) -> int:
+    total = 0
+    for i in 0..n:
+        total += i % 7
+    return total
+
+fn main():
+    sum = 0
+    for k in 0..3:
+        sum += work(1000 + k)
+    println(sum)
+").unwrap();
+    let ember = |args: &[&str]| Command::new(EMBER).args(args).current_dir(&*dir).output().expect("ember starts");
+    let said = |output: &std::process::Output| format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    // The manifest asks for a profile that is not there: the command line's ask wins.
+    let generated = ember(&["build", "--backend", "llvm", "--profile", "release", "--pgo-generate"]);
+    assert!(generated.status.success(), "the instrumented build failed:\n{}", said(&generated));
+    let record = std::fs::read_to_string(dir.join("target/release/inspect/main.build.json")).expect("the build record");
+    assert!(record.contains("\"pgo\":{\"generate\""), "{record}");
+    let exe = dir.join("target/release/bin").join(format!("main{}", std::env::consts::EXE_SUFFIX));
+    let ran = Command::new(&exe).output().expect("the instrumented program runs");
+    assert_eq!(String::from_utf8_lossy(&ran.stdout).trim(), "9003", "{}", said(&ran));
+    let raw: Vec<_> = std::fs::read_dir(dir.join("target/release/pgo")).expect("the profile folder")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "profraw"))
+        .collect();
+    assert!(!raw.is_empty(), "the instrumented run wrote no raw profile");
+    // The manifest's `pgo_data` is not there: refused before Clang.
+    let missing = ember(&["build", "--backend", "llvm", "--profile", "release"]);
+    assert!(!missing.status.success() && said(&missing).contains("no recorded profile"), "{}", said(&missing));
+    let used = ember(&["build", "--backend", "llvm", "--profile", "release", "--pgo-use", "target/release/pgo", "--out-dir", "used"]);
+    assert!(used.status.success(), "the optimised build failed:\n{}", said(&used));
+    let record = std::fs::read_to_string(dir.join("used/release/inspect/main.build.json")).expect("the build record");
+    assert!(record.contains("\"pgo\":{\"use\""), "{record}");
+    let merged = dir.join("used/release/pgo/main.profdata");
+    assert!(merged.is_file(), "no merged profile");
+    // What the run did: `work`'s loop turned 1000 + 1001 + 1002 times, and it was entered three.
+    let clang = ember_build::Toolchain::detect(Some("clang")).expect("Clang").compiler_path().to_path_buf();
+    let clang = clang.canonicalize().unwrap_or(clang);
+    let tool = clang.with_file_name(format!("llvm-profdata{}", std::env::consts::EXE_SUFFIX));
+    let shown = Command::new(&tool).args(["show", "--all-functions", "--counts"]).arg(&merged).output().expect("llvm-profdata runs");
+    let text = String::from_utf8_lossy(&shown.stdout);
+    let at = text.find("em_4work:").unwrap_or_else(|| panic!("`work` is not in the profile:\n{text}"));
+    let work: Vec<&str> = text[at..].lines().take(5).collect();
+    assert!(work.iter().any(|line| line.trim().starts_with("Block counts: [3003, 3,")), "{text}");
+    // A profile that is not one stops the build at Clang.
+    std::fs::write(dir.join("broken.profdata"), "not a profile").unwrap();
+    let broken = ember(&["build", "--backend", "llvm", "--profile", "release", "--pgo-use", "broken.profdata", "--out-dir", "broken"]);
+    assert!(!broken.status.success(), "a broken profile was used:\n{}", said(&broken));
+    // The C backend has no profile-guided optimisation of its own.
+    let c = ember(&["build", "--backend", "c", "--pgo-generate"]);
+    assert!(!c.status.success() && said(&c).contains("LLVM backend"), "{}", said(&c));
+}
+
+/// `[FFI-9]`, `[FFI-10]` — `extern "vectorcall"` on Windows x64: a floating-point aggregate of up to
+/// four members goes in vector registers while they last (here after scalars took theirs, and not
+/// at all once six are taken), a larger or mixed aggregate behind a pointer, such a result comes
+/// back in registers, and the symbols are MSVC's (`vc_scale@@16`). The program calls C compiled by
+/// the backend's own compiler, and both backends print the same.
+#[cfg(windows)]
+#[test]
+fn ffi_9_vectorcall_passes_floating_point_aggregates_in_vector_registers() {
+    let dir = temporary_directory("llvm-vectorcall");
+    std::fs::write(dir.join("vc.h"), "/* The functions are declared by the program, with their convention. */\n").unwrap();
+    std::fs::write(dir.join("vc.c"), "\
+#include \"vc.h\"
+typedef struct { double a, b; } hva2;
+typedef struct { float x, y, z; } hfa3;
+typedef struct { double a, b, c, d, e; } big5;
+double __vectorcall vc_scale(double x, double factor) { return x * factor; }
+double __vectorcall vc_hva2(hva2 h) { return h.a + 10 * h.b; }
+double __vectorcall vc_after(int a, hva2 h, double b, hfa3 f) { return a + 10 * h.a + 100 * h.b + 1000 * b + 10000 * f.x + 100000 * f.y + 1000000 * f.z; }
+hva2 __vectorcall vc_give(double a) { hva2 h = { a, a * 2 }; return h; }
+double __vectorcall vc_many(double a, double b, double c, double d, double e, double f, double g, hva2 h) {
+    return a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 8 * h.a + 9 * h.b;
+}
+double __vectorcall vc_big(big5 v) { return v.a + 2 * v.b + 3 * v.c + 4 * v.d + 5 * v.e; }
+").unwrap();
+    let source = dir.join(format!("main.{}", ember_branding::SOURCE_EXT));
+    std::fs::write(&source, "\
+import c \"./vc.c\"
+
+struct Hva2:
+    a: f64
+    b: f64
+
+struct Hfa3:
+    x: f32
+    y: f32
+    z: f32
+
+struct Big5:
+    a: f64
+    b: f64
+    c: f64
+    d: f64
+    e: f64
+
+unsafe extern \"vectorcall\":
+    safe fn vc_scale(x: f64, factor: f64) -> f64
+    safe fn vc_hva2(h: Hva2) -> f64
+    safe fn vc_after(a: i32, h: Hva2, b: f64, f: Hfa3) -> f64
+    safe fn vc_give(a: f64) -> Hva2
+    safe fn vc_many(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: Hva2) -> f64
+    safe fn vc_big(v: Big5) -> f64
+
+fn main():
+    h = Hva2(a=1.0, b=2.0)
+    println(vc_scale(2.0, 3.0), vc_hva2(h))
+    println(vc_after(1, h, 2.0, Hfa3(x=3.0, y=4.0, z=5.0)))
+    given = vc_give(1.5)
+    println(given.a, given.b)
+    println(vc_many(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, h))
+    println(vc_big(Big5(a=1.0, b=1.0, c=1.0, d=1.0, e=1.0)))
+").unwrap();
+    let mut outputs = Vec::new();
+    for backend in ["c", "llvm"] {
+        let out = format!("out-{backend}");
+        let built = Command::new(EMBER).args(["build", "--backend", backend, "--out-dir", &out]).arg(&source).current_dir(&*dir).output().expect("ember starts");
+        assert!(built.status.success(), "{backend}: {}{}", String::from_utf8_lossy(&built.stdout), String::from_utf8_lossy(&built.stderr));
+        if backend == "llvm" {
+            let ir = Command::new(EMBER).args(["build", "--backend", "llvm", "--emit", "llvm-ir"]).arg(&source).current_dir(&*dir).output().expect("ember starts");
+            let ir = String::from_utf8_lossy(&ir.stdout).into_owned();
+            for declared in [
+                "declare x86_vectorcallcc double @\"\\01vc_scale@@16\"(double, double)",
+                "declare x86_vectorcallcc double @\"\\01vc_hva2@@16\"({ double, double } inreg)",
+                "declare x86_vectorcallcc double @\"\\01vc_after@@48\"(i32, { double, double } inreg, double, { float, float, float } inreg)",
+                "declare x86_vectorcallcc { double, double } @\"\\01vc_give@@8\"(double)",
+                "declare x86_vectorcallcc double @\"\\01vc_many@@72\"(double, double, double, double, double, double, double, ptr)",
+                "declare x86_vectorcallcc double @\"\\01vc_big@@40\"(ptr)",
+            ] {
+                assert!(ir.contains(declared), "no `{declared}`:\n{ir}");
+            }
+        }
+        let exe = dir.join(&out).join("debug/bin/main.exe");
+        let ran = Command::new(&exe).output().expect("the program runs");
+        assert!(ran.status.success(), "{backend}: {}", String::from_utf8_lossy(&ran.stderr));
+        outputs.push(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"));
+    }
+    // 1 + 10·1 + 100·2 + 1000·2 + 10000·3 + 100000·4 + 1000000·5; 28 + 8·1 + 9·2.
+    let lines: Vec<&str> = outputs[0].lines().collect();
+    assert!(lines.len() == 5 && lines[1].starts_with("5432211") && lines[3].starts_with("54"), "the C backend's:\n{}", outputs[0]);
+    assert_eq!(outputs[0], outputs[1], "the backends disagree");
 }

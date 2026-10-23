@@ -5304,6 +5304,16 @@ impl Emitter<'_> {
     /// `RefCell_…` struct whose field 0 holds this guard's `T`. Name-checked
     /// first (like `is_option`'s `Option_` prefix) so a user struct with the
     /// same shape does not capture the release.
+    /// ODR-275 — the C member path of the field `name` of the struct `owner`: through the
+    /// `UnsafeCell` that keeps it (`word.value`), when it is one.
+    fn state_member(&self, owner: Ty, name: &str) -> String {
+        let TyKind::Struct(id) = *self.types.kind(owner) else { return name.to_string() };
+        match self.types.struct_def(id).fields.iter().find(|field| field.name.as_str() == name) {
+            Some(field) if self.types.unsafe_cell_inner(field.ty).is_some() => format!("{name}.value"),
+            _ => name.to_string(),
+        }
+    }
+
     fn refcell_for_guard(&self, guard_ty: Ty) -> Option<Ty> {
         let TyKind::Struct(guard_id) = *self.types.kind(guard_ty) else {
             return None;
@@ -5327,7 +5337,7 @@ impl Emitter<'_> {
             if def.fields.len() != 4 {
                 continue;
             }
-            if def.fields[0].ty == inner {
+            if self.types.cell_held(def.fields[0].ty) == inner {
                 return Some(ty);
             }
         }
@@ -5460,8 +5470,9 @@ impl Emitter<'_> {
                     Some("std.sync.MutexGuard") => {
                         if let Some(mutex) = self.lock_for_guard(ty, "std.sync.Mutex") {
                             let mutex_c = self.c_type(mutex);
-                            out.push(format!("{RT}lock_order_freed(&(({mutex_c}*){access}.value)->word);"));
-                            out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->word);"));
+                            let word = self.state_member(mutex, "word");
+                            out.push(format!("{RT}lock_order_freed(&(({mutex_c}*){access}.value)->{word});"));
+                            out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->{word});"));
                         }
                         return;
                     }
@@ -5490,8 +5501,9 @@ impl Emitter<'_> {
                         let write = guard == "std.sync.RwLockWriteGuard";
                         if let Some(lock) = self.lock_for_guard(ty, "std.sync.RwLock") {
                             let lock_c = self.c_type(lock);
-                            out.push(format!("{RT}lock_order_freed(&(({lock_c}*){access}.value)->word);"));
-                            out.push(format!("{RT}rwlock_release(&(({lock_c}*){access}.value)->word, {write});"));
+                            let word = self.state_member(lock, "word");
+                            out.push(format!("{RT}lock_order_freed(&(({lock_c}*){access}.value)->{word});"));
+                            out.push(format!("{RT}rwlock_release(&(({lock_c}*){access}.value)->{word}, {write});"));
                         }
                         return;
                     }
@@ -5515,13 +5527,14 @@ impl Emitter<'_> {
                 if guard_name.starts_with("RefMut_") || guard_name.starts_with("Ref_") {
                     if let Some(cell_ty) = self.refcell_for_guard(ty) {
                         let cell_c = self.c_type(cell_ty);
+                        let borrow = self.state_member(cell_ty, "borrow");
                         if guard_name.starts_with("RefMut_") {
                             out.push(format!(
-                                "((({cell_c}*){access}.value)->borrow = 0);"
+                                "((({cell_c}*){access}.value)->{borrow} = 0);"
                             ));
                         } else {
                             out.push(format!(
-                                "((({cell_c}*){access}.value)->borrow--);"
+                                "((({cell_c}*){access}.value)->{borrow}--);"
                             ));
                         }
                         return;
@@ -6267,7 +6280,7 @@ impl Emitter<'_> {
             Some(owned) => format!("{}*", self.c_type(owned.pointee)),
             None => result,
         };
-        format!("{result} {}{}({params})", calling_convention(body.abi.as_deref()), counted.foreign_symbol)
+        format!("{result} {}{}({params})", calling_convention(counted.abi.as_deref()), counted.foreign_symbol)
     }
 
     /// `[FFI-23]` — the address of the object `value`, a class handle or a `Box`, holds: the

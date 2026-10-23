@@ -254,7 +254,7 @@ impl Debug {
         let flags = self.nodes.len();
         let format = match target {
             Target::Win64 => "!{i32 2, !\"CodeView\", i32 1}",
-            Target::SysV => "!{i32 7, !\"Dwarf Version\", i32 5}",
+            Target::SysV | Target::Aapcs64 => "!{i32 7, !\"Dwarf Version\", i32 5}",
         };
         let _ = writeln!(out, "\n!llvm.dbg.cu = !{{!{}}}", self.unit);
         let _ = writeln!(out, "!llvm.module.flags = !{{!{flags}, !{}}}", flags + 1);

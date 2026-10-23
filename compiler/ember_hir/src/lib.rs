@@ -130,6 +130,9 @@ pub struct Param {
 #[derive(Debug, Clone)]
 pub struct FfiCounted {
     pub foreign_symbol: String,
+    /// `[FFI-9]` — the foreign function's calling convention (`"vectorcall"`), which its
+    /// declaration and its call keep; the wrapper itself is an Ember function.
+    pub abi: Option<String>,
     pub abi_params: Vec<FfiAbiParam>,
     /// A borrowed fixed-array result arrives as a C element pointer.
     pub result_array: Option<FfiArrayResult>,

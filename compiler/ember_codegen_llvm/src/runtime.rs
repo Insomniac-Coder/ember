@@ -19,7 +19,7 @@ impl CTy {
     pub fn shape(self) -> Option<Shape> {
         let word = Scalar::Int { bytes: 8, signed: false };
         let half = Scalar::Int { bytes: 4, signed: false };
-        let agg = |size, align, leaves: &[(u64, Scalar)]| Shape::Aggregate { size, align, leaves: leaves.to_vec(), unaligned: false };
+        let agg = |size, align, leaves: &[(u64, Scalar)]| Shape::Aggregate { size, align, leaves: leaves.to_vec(), unaligned: false, vectors: false };
         Some(match self {
             CTy::Void => return None,
             CTy::Scalar(scalar) => Shape::Scalar(scalar),

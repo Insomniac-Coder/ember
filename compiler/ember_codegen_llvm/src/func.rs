@@ -80,9 +80,16 @@ fn signature(m: &Module<'_>, ret: Ty, params: impl Iterator<Item = Ty>) -> Signa
 pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     let values = ffi_value_params(m, body);
     let passed: Vec<Ty> = body.args().enumerate().map(|(index, (_, decl))| passed_ty(m, &values, index, decl.ty)).collect();
-    let mut sig = signature(m, body.return_ty(), passed.iter().copied());
+    let mut sig = if is_vectorcall(body) {
+        let ret = (!m.ty.is_zst(body.return_ty())).then(|| m.ty.shape(body.return_ty()));
+        let params: Vec<Shape> = passed.iter().map(|ty| m.ty.shape(*ty)).collect();
+        abi::classify_vectorcall(ret.as_ref(), &params)
+    } else {
+        signature(m, body.return_ty(), passed.iter().copied())
+    };
     // `[CG-LL-3]` — the facts the types and the borrow checker give, derived, never assumed
-    // (`[SIMD-3]`): a reference is never null; a list kernel's views (`restrict_views`, the C
+    // (`[SIMD-3]`): a reference is never null, its referent stays allocated for the call, and a
+    // shared one to what holds no cell is only read (`abi::Ext::Ref`); a list kernel's views (`restrict_views`, the C
     // backend's `restrict` parameters) are each their elements' pointer, apart from every other,
     // and their length. Such a kernel is internal: its parameters are this backend's own.
     // An export's caller is foreign code, which the type system does not bind: no fact there; nor
@@ -92,10 +99,11 @@ pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     let internal = body.abi.is_none() && !body.is_extern_declaration && !given_to_c;
     for (pass, ty) in sig.params.iter_mut().zip(&passed) {
         match (pass, m.ty.kind(*ty)) {
-            (Pass::Direct(parts), TyKind::Ref { inner, .. })
-                if internal && parts.len() == 1 && parts[0].ty == PartTy::Ptr && !m.ty.is_zst(*inner) =>
+            (Pass::Direct(parts), &TyKind::Ref { inner, mutable })
+                if internal && parts.len() == 1 && parts[0].ty == PartTy::Ptr && !m.ty.is_zst(inner) =>
             {
-                parts[0].ext = abi::Ext::NonNull;
+                let (size, _) = m.ty.size_align(inner);
+                parts[0].ext = abi::Ext::Ref { size, readonly: !mutable && !m.ty.table.holds_a_cell(inner) };
             }
             (pass, TyKind::Span { .. }) if body.restrict_views && body.abi.is_none() => {
                 *pass = Pass::Direct(vec![
@@ -116,14 +124,53 @@ pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     sig
 }
 
+/// `[FFI-9]` — a function of an `extern "vectorcall"` block, or one defined with the convention.
+fn is_vectorcall(body: &Body) -> bool {
+    body.abi.as_deref() == Some("vectorcall")
+}
+
+/// The IR name of `body`: its symbol's, or for a `__vectorcall` function MSVC's decorated symbol
+/// (`\01scale@@16`, its bytes counted from the C types, as Clang counts them: an aggregate passed
+/// by address counts its own size, which LLVM, decorating by the IR's parameters, would count as a
+/// pointer's; the `\01` keeps LLVM from decorating it again).
+pub(crate) fn body_name(m: &Module<'_>, body: &Body) -> String {
+    if !is_vectorcall(body) {
+        return global_name(&body.symbol);
+    }
+    global_name(&format!("\u{1}{}", vectorcall_symbol(&m.ty, body)))
+}
+
+/// `[FFI-9]` — MSVC's symbol of the `__vectorcall` function `body` (`scale@@16`).
+pub(crate) fn vectorcall_symbol(types: &crate::types::Types<'_>, body: &Body) -> String {
+    let values = ffi_value_params_of(types.table, body);
+    let shapes: Vec<Shape> = body
+        .args()
+        .enumerate()
+        .map(|(index, (_, decl))| types.shape(passed_ty_of(types.table, &values, index, decl.ty)))
+        .collect();
+    abi::vectorcall_symbol(&crate::link_symbol(&body.symbol), &shapes)
+}
+
+/// `[FFI-9]` — `__vectorcall` is Windows x64's here (the C backend's `EMBER_CC_VECTORCALL` stops a
+/// build without it the same way).
+fn check_convention(m: &Module<'_>, body: &Body) -> Result<()> {
+    if is_vectorcall(body) && m.ty.target != abi::Target::Win64 {
+        return unsupported("`extern \"vectorcall\"` off Windows x64 ([FFI-9]: the convention is x86's)");
+    }
+    Ok(())
+}
+
 /// `[FFI-10]` — which parameters an exported function takes by value though its body borrows
 /// them: a borrowed C-safe value Ember passes by address is C's `T`, not `const T*` (the C
 /// backend's `ffi_export_value_params`). Empty for any other function.
 pub(crate) fn ffi_value_params(m: &Module<'_>, body: &Body) -> Vec<bool> {
+    ffi_value_params_of(m.ty.table, body)
+}
+
+fn ffi_value_params_of(table: &ember_types::TypeTable, body: &Body) -> Vec<bool> {
     if body.abi.is_none() || body.is_extern_declaration {
         return Vec::new();
     }
-    let table = m.ty.table;
     body.args()
         .enumerate()
         .map(|(index, (_, decl))| {
@@ -135,7 +182,11 @@ pub(crate) fn ffi_value_params(m: &Module<'_>, body: &Body) -> Vec<bool> {
 
 /// The type parameter `index` is passed as: a by-value export parameter's pointee.
 fn passed_ty(m: &Module<'_>, values: &[bool], index: usize, ty: Ty) -> Ty {
-    match m.ty.kind(ty) {
+    passed_ty_of(m.ty.table, values, index, ty)
+}
+
+fn passed_ty_of(table: &ember_types::TypeTable, values: &[bool], index: usize, ty: Ty) -> Ty {
+    match table.kind(ty) {
         TyKind::Ref { inner, .. } if values.get(index) == Some(&true) => *inner,
         _ => ty,
     }
@@ -180,20 +231,19 @@ pub(crate) fn declare_body_symbol(m: &mut Module<'_>, symbol: &str) -> Result<()
     let Some(body) = m.bodies.get(symbol).copied() else {
         return unsupported(format!("a call to `{symbol}`, which has no body"));
     };
+    check_convention(m, body)?;
     let sig = body_signature(m, body);
-    let name = global_name(symbol);
+    let name = body_name(m, body);
     // A foreign function is the C library's: whether it unwinds is its own.
     let attrs = if body.is_extern_declaration { "" } else { fn_attrs(m) };
     let variadic = body.variadic;
     // By the linker's symbol: a foreign function the runtime's tables also call is declared once.
     m.declare(&crate::link_symbol(symbol), || {
-        let ret = sig.ret.ir();
-        let ext = ret_attr(&sig);
         let mut params = ir_params(&sig, false);
         if variadic {
             params.push("...".to_string());
         }
-        format!("declare{ext} {ret} {name}({}) {attrs}", params.join(", "))
+        format!("declare {}{} {name}({}) {attrs}", sig.conv.ir(), ret_with_attr(&sig), params.join(", "))
     });
     Ok(())
 }
@@ -232,16 +282,16 @@ pub(crate) fn ir_params(sig: &Signature, named: bool) -> Vec<String> {
 
 /// The result's type with its extension (`zeroext i1`).
 pub(crate) fn ret_with_attr(sig: &Signature) -> String {
-    match ret_attr(sig) {
+    match ret_attr(sig).as_str() {
         "" => sig.ret.ir(),
         ext => format!("{} {}", ext.trim(), sig.ret.ir()),
     }
 }
 
-pub(crate) fn ret_attr(sig: &Signature) -> &'static str {
+pub(crate) fn ret_attr(sig: &Signature) -> String {
     match &sig.ret {
         Return::Direct(parts) if parts.len() == 1 => parts[0].ext.attr(),
-        _ => "",
+        _ => String::new(),
     }
 }
 
@@ -258,6 +308,10 @@ pub(crate) fn fn_attrs(m: &Module<'_>) -> &'static str {
             "nounwind uwtable \"probe-stack\"=\"inline-asm\" \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx16\" \"tune-cpu\"=\"generic\""
         }
         abi::Target::Win64 => "nounwind uwtable \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx16\" \"tune-cpu\"=\"generic\"",
+        // Clang's own for `aarch64-linux-gnu`, which the runtime's C is compiled with.
+        abi::Target::Aapcs64 => {
+            "nounwind uwtable \"probe-stack\"=\"inline-asm\" \"target-cpu\"=\"generic\" \"target-features\"=\"+fp-armv8,+neon,+v8a,-fmv\""
+        }
     }
 }
 
@@ -265,9 +319,14 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     if body.variadic {
         return unsupported("a variadic function definition");
     }
-    // `[FFI-9]` — on x86-64, `"system"` and `"fastcall"` are the platform's C convention.
-    if body.abi.as_deref().is_some_and(|abi| !matches!(abi, "C" | "system" | "fastcall")) {
+    // `[FFI-9]` — on x86-64, `"system"` and `"fastcall"` are the platform's C convention;
+    // `"vectorcall"` is its own (Windows x64).
+    if body.abi.as_deref().is_some_and(|abi| !matches!(abi, "C" | "system" | "fastcall" | "vectorcall")) {
         return unsupported(format!("the calling convention `{}`", body.abi.as_deref().unwrap_or_default()));
+    }
+    check_convention(m, body)?;
+    if is_vectorcall(body) && crate::reload::is_reloadable(m, &body.symbol) {
+        return unsupported("a reloadable `extern \"vectorcall\"` function ([HR-6]'s thunk is the C convention's)");
     }
     let sums = ember_codegen_c::byte_sum_loops(body, m.ty.table, |place| place_type(m, body, place));
     // `[HR-3b]` (A1) — what a checkpoint's frames of this body still use, described beside it.
@@ -388,9 +447,10 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
     }
     let linkage = if body.abi.is_some() && !reloadable { "" } else { "internal " };
     let header = format!(
-        "define {linkage}{} {}({}) {attrs} !dbg !{subprogram} {{",
+        "define {linkage}{}{} {}({}) {attrs} !dbg !{subprogram} {{",
+        cx.sig.conv.ir(),
         ret_with_attr(&cx.sig),
-        global_name(&defined),
+        if reloadable { global_name(&defined) } else { body_name(cx.m, body) },
         ir_params(&cx.sig, true).join(", ")
     );
     let text = format!("{header}\nentry:\n{}{}  br label %bb0\n{}}}\n\n", cx.allocas, cx.prologue, cx.out);
@@ -461,9 +521,9 @@ pub(crate) fn define_c_fn<'a>(
             index = 1;
             Some(("%p0".to_string(), *align))
         }
-        (Return::Direct(_), Some(ty)) => {
+        (Return::Direct(parts), Some(ty)) => {
             let (size, align) = cx.m.ty.size_align(ty);
-            Some((cx.alloca(size, align), align))
+            Some((cx.alloca(size.max(parts_span(parts)), align), align))
         }
         _ => None,
     };
@@ -485,7 +545,7 @@ pub(crate) fn define_c_fn<'a>(
                 }
                 _ => {
                     let (size, align) = (shape.size(), shape.align());
-                    let slot = cx.alloca(size, align);
+                    let slot = cx.alloca(size.max(parts_span(&parts)), align);
                     for part in &parts {
                         let incoming = format!("%p{index}");
                         cx.store_part(&slot, align, part, &incoming);
@@ -531,6 +591,12 @@ pub(crate) fn define_c_fn<'a>(
     Ok(())
 }
 
+/// The bytes a value's parts reach: AAPCS64 passes a 4-byte struct as an `i64` and a 12-byte one as
+/// `[2 x i64]`, so its storage is padded to them where the parts are read or written.
+fn parts_span(parts: &[Part]) -> u64 {
+    parts.iter().map(|part| part.offset + part.ty.size()).max().unwrap_or(0)
+}
+
 /// The ABI signature of a function the backend writes itself (as `define_c_fn` makes it).
 pub(crate) fn c_fn_signature(m: &Module<'_>, ret: Option<Ty>, params: &[Param]) -> Signature {
     let ret = ret.filter(|ty| !m.ty.is_zst(*ty)).map(|ty| m.ty.shape(ty));
@@ -549,7 +615,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             out: String::new(),
             next: 0,
             addr: Vec::new(),
-            sig: Signature { ret: Return::Void, params: Vec::new() },
+            sig: Signature { ret: Return::Void, params: Vec::new(), conv: abi::Conv::C },
             block: "start".to_string(),
             span: ember_span::Span::DUMMY,
             scope: None,
@@ -771,7 +837,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 }
                 Pass::Direct(parts) => {
                     let (size, align) = self.m.ty.size_align(passed_ty(self.m, &values, position, decl.ty));
-                    let slot = self.alloca(size, align);
+                    let slot = self.alloca(size.max(parts_span(&parts)), align);
                     for part in parts {
                         let at = if part.offset == 0 { slot.clone() } else {
                             let at = self.tmp();
@@ -849,6 +915,11 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     self.addr[index] = Some(name);
                 }
                 Repr::Mem { size, align } => {
+                    // The result's slot holds the parts it is returned in (`ret`).
+                    let size = match &self.sig.ret {
+                        Return::Direct(parts) if index == 0 => size.max(parts_span(parts)),
+                        _ => size,
+                    };
                     let slot = self.alloca(size, align);
                     self.addr[index] = Some(slot);
                 }
@@ -1114,6 +1185,9 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     return self.native_fn_value(symbol, signature);
                 }
                 let symbol = symbol.clone();
+                if self.m.bodies.get(symbol.as_str()).is_some_and(|body| is_vectorcall(body)) {
+                    return unsupported("a `__vectorcall` function as a value ([FFI-9])");
+                }
                 self.declare_body(&symbol)?;
                 Val::Imm(Sc::Ptr, global_name(&symbol))
             }
@@ -2300,14 +2374,14 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.call_rt(name, vec![Val::Imm(Sc::F64, wide)], Some((&slot, 16)));
                 self.load(Sc::I(128), &slot, 16)
             }
-            (Sc::I(from_bits), to @ (Sc::F32 | Sc::F64 | Sc::F80)) => {
+            (Sc::I(from_bits), to @ (Sc::F32 | Sc::F64 | Sc::F80 | Sc::F128)) => {
                 if from_bits > 64 {
                     return unsupported("a 256-bit integer to float conversion");
                 }
                 let instruction = if signed { "sitofp" } else { "uitofp" };
                 self.value(format!("{instruction} i{from_bits} {value} to {}", to.ir()))
             }
-            (from @ (Sc::F32 | Sc::F64 | Sc::F80), Sc::I(to_bits)) => {
+            (from @ (Sc::F32 | Sc::F64 | Sc::F80 | Sc::F128), Sc::I(to_bits)) => {
                 // `[TYP-6]` — saturating, NaN to 0: LLVM's `.sat` conversions exactly.
                 if to_bits > 64 {
                     return unsupported("a float to 256-bit integer conversion");
@@ -2318,10 +2392,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.m.declare(&intrinsic, || format!("declare i{to_bits} @{intrinsic}({from_ir})"));
                 self.value(format!("call i{to_bits} @{intrinsic}({from_ir} {value})"))
             }
-            (Sc::F32, to @ (Sc::F64 | Sc::F80)) | (Sc::F64, to @ Sc::F80) => {
+            (Sc::F32, to @ (Sc::F64 | Sc::F80 | Sc::F128)) | (Sc::F64, to @ (Sc::F80 | Sc::F128)) => {
                 self.value(format!("fpext {} {value} to {}", sc.ir(), to.ir()))
             }
-            (from @ (Sc::F64 | Sc::F80), to @ (Sc::F32 | Sc::F64)) => {
+            (from @ (Sc::F64 | Sc::F80 | Sc::F128), to @ (Sc::F32 | Sc::F64)) => {
                 self.value(format!("fptrunc {} {value} to {}", from.ir(), to.ir()))
             }
             (Sc::Ptr, Sc::I(bits)) => {
@@ -2505,7 +2579,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
                         out.push(format!("{}{} {text}", part.ty, part.ext.attr()));
                         continue;
                     }
-                    let (base, base_align) = self.spill(value, *size, *align);
+                    let (mut base, mut base_align) = self.spill(value, *size, *align);
+                    let span = parts_span(parts);
+                    if span > *size {
+                        let padded = self.alloca(span, base_align.max(8));
+                        self.copy(&padded, base_align.max(8), &base, base_align, *size, false);
+                        (base, base_align) = (padded, base_align.max(8));
+                    }
                     for part in parts {
                         let loaded = self.load_part(&base, base_align, part);
                         out.push(format!("{}{} {loaded}", part.ty, part.ext.attr()));
@@ -2539,18 +2619,22 @@ impl<'m, 'a> FnCx<'m, 'a> {
         };
         args.extend(self.lower_args(sig, values));
         let ret_ir = sig.ret.ir();
-        let ret_ext = ret_attr(sig);
-        let call = format!("call{ret_ext} {ret_ir} {callee}({}){attrs}", args.join(", "));
+        let call = format!("call {}{} {callee}({}){attrs}", sig.conv.ir(), ret_with_attr(sig), args.join(", "));
         match (&sig.ret, dest) {
-            (Return::Direct(parts), Some((to, to_align, _))) => {
+            (Return::Direct(parts), Some((to, to_align, to_size))) => {
                 let result = self.value(&call);
+                let span = parts_span(parts);
+                let (into, into_align) = if span > to_size { (self.alloca(span, to_align.max(8)), to_align.max(8)) } else { (to.to_string(), to_align) };
                 if parts.len() == 1 {
-                    self.store_part(to, to_align, &parts[0], &result);
+                    self.store_part(&into, into_align, &parts[0], &result);
                 } else {
                     for (index, part) in parts.iter().enumerate() {
                         let element = self.value(format!("extractvalue {ret_ir} {result}, {index}"));
-                        self.store_part(to, to_align, part, &element);
+                        self.store_part(&into, into_align, part, &element);
                     }
+                }
+                if into != to {
+                    self.copy(to, to_align, &into, into_align, to_size, false);
                 }
             }
             (Return::Sret { .. }, Some((to, to_align, _))) => {
@@ -2679,7 +2763,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let values = lowered;
         let (size, _) = self.m.ty.size_align(body.return_ty());
         let dest = dest.map(|(ptr, align)| (ptr, align, size));
-        self.lowered_call(&global_name(symbol), &sig, &values, dest, "");
+        let callee = body_name(self.m, body);
+        self.lowered_call(&callee, &sig, &values, dest, "");
         Ok(())
     }
 
@@ -2930,7 +3015,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let cap = self.gep(to, 16);
                 self.emit(format!("store i64 {capacity}, ptr {cap}, align 8"));
             }
-            abi::Target::SysV => {
+            abi::Target::SysV | abi::Target::Aapcs64 => {
                 let (low, high) = ("@ember_stack_low", "@ember_stack_high");
                 self.m.declare(low, || format!("{low} = external thread_local global i64, align 8"));
                 self.m.declare(high, || format!("{high} = external thread_local global i64, align 8"));
@@ -3008,6 +3093,7 @@ fn sc_part(sc: Sc) -> Option<PartTy> {
         Sc::F32 => PartTy::F32,
         Sc::F64 => PartTy::F64,
         Sc::F80 => PartTy::F80,
+        Sc::F128 => PartTy::F128,
         Sc::Ptr => PartTy::Ptr,
         Sc::I(_) => return None,
     })
@@ -3076,7 +3162,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         out: String::new(),
         next: 0,
         addr: Vec::new(),
-        sig: Signature { ret: Return::Void, params: Vec::new() },
+        sig: Signature { ret: Return::Void, params: Vec::new(), conv: abi::Conv::C },
         block: "entry".to_string(),
         span: ember_span::Span::DUMMY,
         scope: Some((subprogram, line)),

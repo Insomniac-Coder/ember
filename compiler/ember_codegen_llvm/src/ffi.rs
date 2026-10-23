@@ -123,9 +123,13 @@ pub(crate) fn declare_c(m: &mut Module<'_>, symbol: &str, ret: Option<Ty>, param
 }
 
 fn declare_sig(m: &mut Module<'_>, symbol: &str, sig: &abi::Signature) {
-    let name = global_name(symbol);
+    declare_named(m, symbol, &global_name(symbol), sig);
+}
+
+/// The declaration of the foreign function `symbol`, under its IR name `name`.
+fn declare_named(m: &mut Module<'_>, symbol: &str, name: &str, sig: &abi::Signature) {
     m.declare(&link_symbol(symbol), || {
-        format!("declare{} {} {name}({})", crate::func::ret_attr(sig), sig.ret.ir(), crate::func::ir_params(sig, false).join(", "))
+        format!("declare {}{} {name}({})", sig.conv.ir(), crate::func::ret_with_attr(sig), crate::func::ir_params(sig, false).join(", "))
     });
 }
 
@@ -656,9 +660,17 @@ impl<'a> FnCx<'_, 'a> {
         } else {
             (!self.m.ty.is_zst(c_result)).then(|| self.m.ty.shape(c_result))
         };
-        let sig = abi::classify(self.m.ty.target, result_shape.as_ref(), &shapes);
-        declare_sig(self.m, &counted.foreign_symbol, &sig);
-        let callee = global_name(&counted.foreign_symbol);
+        // `[FFI-9]` — the foreign function's own convention.
+        let (sig, callee) = if counted.abi.as_deref() == Some("vectorcall") {
+            if self.m.ty.target != abi::Target::Win64 {
+                return unsupported("`extern \"vectorcall\"` off Windows x64 ([FFI-9]: the convention is x86's)");
+            }
+            let name = format!("\u{1}{}", abi::vectorcall_symbol(&link_symbol(&counted.foreign_symbol), &shapes));
+            (abi::classify_vectorcall(result_shape.as_ref(), &shapes), global_name(&name))
+        } else {
+            (abi::classify(self.m.ty.target, result_shape.as_ref(), &shapes), global_name(&counted.foreign_symbol))
+        };
+        declare_named(self.m, &counted.foreign_symbol, &callee, &sig);
         let values: Vec<(Val, u64, u64)> = values.into_iter().zip(&shapes).map(|(value, shape)| (value, shape.size(), shape.align())).collect();
         let (result_size, result_align) = match &result_shape {
             Some(shape) => (shape.size(), shape.align()),
