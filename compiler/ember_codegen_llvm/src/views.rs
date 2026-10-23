@@ -25,8 +25,7 @@ impl<'a> FnCx<'_, 'a> {
         if size == 0 {
             return pointer.to_string();
         }
-        let offset = self.value(format!("mul i64 {index}, {size}"));
-        self.value(format!("getelementptr i8, ptr {pointer}, i64 {offset}"))
+        self.element_at(&pointer, &index, size)
     }
 
     /// A view `{pointer, len}` written at `at`.

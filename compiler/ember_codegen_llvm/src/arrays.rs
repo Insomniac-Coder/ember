@@ -92,8 +92,7 @@ fn pop(cx: &mut FnCx<'_, '_>, option: Ty) -> Result<()> {
     let last = cx.value(format!("sub i64 {len}, 1"));
     cx.emit(format!("store i64 {last}, ptr {len_at}, align 8"));
     let buffer = cx.load(Sc::Ptr, list, 8);
-    let offset = cx.value(format!("mul i64 {last}, {size}"));
-    let element = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+    let element = cx.element_at(&buffer, &last, size);
     cx.zero(dest, option_align, option_size);
     let payload_offset = if table.option_niche(id).is_some() { 0 } else { table.variant_field_offsets(id)[some][0] };
     let payload = cx.gep(dest, payload_offset);
@@ -114,8 +113,7 @@ fn remove(cx: &mut FnCx<'_, '_>, elem: Ty, swap: bool) -> Result<()> {
     let len_at = cx.gep(list, 8);
     let len = cx.load(Sc::I(64), &len_at, 8);
     let buffer = cx.load(Sc::Ptr, list, 8);
-    let offset = cx.value(format!("mul i64 {index}, {size}"));
-    let at = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+    let at = cx.element_at(&buffer, index, size);
     cx.copy(dest, align, &at, align, size, false);
     let last = cx.value(format!("sub i64 {len}, 1"));
     cx.emit(format!("store i64 {last}, ptr {len_at}, align 8"));
@@ -125,8 +123,7 @@ fn remove(cx: &mut FnCx<'_, '_>, elem: Ty, swap: bool) -> Result<()> {
     let intrinsic = "llvm.memmove.p0.p0.i64";
     cx.m.declare(intrinsic, || format!("declare void @{intrinsic}(ptr, ptr, i64, i1)"));
     if swap {
-        let last_offset = cx.value(format!("mul i64 {last}, {size}"));
-        let tail = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {last_offset}"));
+        let tail = cx.element_at(&buffer, &last, size);
         cx.emit(format!("call void @{intrinsic}(ptr align {align} {at}, ptr align {align} {tail}, i64 {size}, i1 false)"));
     } else {
         let next = cx.gep(&at, size);
@@ -150,8 +147,7 @@ fn drain(cx: &mut FnCx<'_, '_>, elem: Ty) -> Result<()> {
     cx.emit(format!("br label %{done}"));
     cx.start(&take);
     let buffer = cx.load(Sc::Ptr, list, 8);
-    let offset = cx.value(format!("mul i64 {lo}, {size}"));
-    let at = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+    let at = cx.element_at(&buffer, &lo, size);
     let count = cx.value(format!("sub i64 {hi}, {lo}"));
     if align > 16 {
         cx.call_rt("vec_from_elems_aligned", vec![size_word(size), size_word(align), Val::Imm(Sc::Ptr, at.clone()), Val::Imm(Sc::I(64), count.clone())], Some((dest, 8)));
@@ -161,8 +157,7 @@ fn drain(cx: &mut FnCx<'_, '_>, elem: Ty) -> Result<()> {
     let len_at = cx.gep(list, 8);
     let len = cx.load(Sc::I(64), &len_at, 8);
     if size > 0 {
-        let moved = cx.value(format!("mul i64 {count}, {size}"));
-        let from = cx.value(format!("getelementptr i8, ptr {at}, i64 {moved}"));
+        let from = cx.element_at(&at, &count, size);
         let after = cx.value(format!("sub i64 {len}, {hi}"));
         let bytes = cx.value(format!("mul i64 {after}, {size}"));
         let intrinsic = "llvm.memmove.p0.p0.i64";
@@ -193,8 +188,7 @@ fn truncate(cx: &mut FnCx<'_, '_>, elem: Ty, clear: bool) -> Result<()> {
         let n_owned = n.clone();
         cx.counted_loop(&count, |cx, index| {
             let at_index = cx.value(format!("add i64 {n_owned}, {index}"));
-            let offset = cx.value(format!("mul i64 {at_index}, {size}"));
-            let element = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+            let element = cx.element_at(&buffer, &at_index, size);
             cx.drop_at(&element, align, elem)
         })?;
     }
@@ -222,8 +216,7 @@ fn extend(cx: &mut FnCx<'_, '_>, elem: Ty) -> Result<()> {
     let len = cx.load(Sc::I(64), &len_at, 8);
     if size > 0 {
         let buffer = cx.load(Sc::Ptr, list, 8);
-        let offset = cx.value(format!("mul i64 {len}, {size}"));
-        let to = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+        let to = cx.element_at(&buffer, &len, size);
         let bytes = cx.value(format!("mul i64 {count}, {size}"));
         let intrinsic = "llvm.memcpy.p0.p0.i64";
         cx.m.declare(intrinsic, || format!("declare void @{intrinsic}(ptr, ptr, i64, i1)"));
@@ -262,12 +255,11 @@ fn copy_parts(cx: &mut FnCx<'_, '_>, to: &str, from: &str, count: &str, elem: Ty
     let (size, align) = cx.m.ty.size_align(elem);
     let (to, from) = (to.to_string(), from.to_string());
     cx.counted_loop(count, |cx, index| {
-        let offset = cx.value(format!("mul i64 {index}, {size}"));
-        let dest = cx.value(format!("getelementptr i8, ptr {to}, i64 {offset}"));
+        let dest = cx.element_at(&to, &index, size);
         if copy {
             cx.retain_lines(&dest, align, elem)
         } else {
-            let source = cx.value(format!("getelementptr i8, ptr {from}, i64 {offset}"));
+            let source = cx.element_at(&from, &index, size);
             cx.clone_part(&dest, &source, align, elem)
         }
     })

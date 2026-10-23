@@ -51,7 +51,10 @@ Branch `worktree-agent-a7590733616cc8073`. The lead merges.
   `winget install --id LLVM.LLVM` / `sudo apt install clang lld`. `--cc` other than clang is
   refused. `import c` shims and C sources are compiled and linked (`cimport::build_objects`),
   `[link] libs` resolved as the C path does; the build record is written (`[BLD-6]`).
-  Libraries, reload images and `ember test` are refused as not built yet.
+  `ember test --backend llvm` builds the test entry in IR and runs the C backend's runner.
+  Libraries and reload images are refused as not built yet. With the LLVM backend selected the
+  MIR passes tuned for the C compiler (`c_for_msvc` at the seven pass sites) tune for LLVM
+  (`tuned_for_msvc`, `tuned_for_gcc`); the C backend's choices are unchanged.
 - `ember bench --compare --backend llvm`: the Ember programs built by the LLVM backend, their C
   twins by Clang (`compiler/ember_driver/src/bench.rs`).
 - `ember_build`: a `.ll` source adds `-Wno-override-module -Wno-unused-command-line-argument`.
@@ -80,6 +83,7 @@ conformance tree (1904 run tests) + run-pass + run-fail:
 | 3d2f0c19 → 03497d80 | 1787 | |
 | e2a34cd8 | | 2062 |
 | 5b9400f2 | 1893 | 2075 |
+| 3621cb1f | 1893 | 2075 |
 
 Causes left at e2a34cd8 (24): hot-reload images 11 (refused: `[HR-*]`), and one each of the
 rest, each fixed since (backtraces, leak cycles, boxed `once fn`, export tables, `system`
@@ -107,6 +111,16 @@ convention, nesting 256 deep, reflection, float range niche, `ArenaSoA`, `dyn` c
   (`the_llvm_backends_program_gives_the_same_debugger_session`, `[TST-5]` with cdb).
 - `[CG-LL-1]`: `cg_ll_1_an_unknown_backend_is_refused`; `ember test --backend llvm`;
   `ember bench --compare --backend llvm`.
+- Speed, `[CG-LL-3]`: `cg_ll_3_functions_name_the_runtimes_cpu_and_elements_are_scaled_addresses`
+  (every function says `"target-cpu"="x86-64"`: without it the LTO link compiled the IR for the
+  linker's default CPU, a feature subset of the runtime's, and LLVM inlined no runtime inline
+  function into the program; an element's address is one `getelementptr [N x i8]`, which
+  LLVM's unroller counts as C's indexing, where `mul` + byte GEP unrolled `w1_sum_loop` 2x
+  instead of 5x). `[SIMD-7]`: `simd_7_a_byte_sum_is_the_runtimes_sum_bytes` (the C backend's
+  selection, `ember_codegen_c::byte_sum_loops`, now public; the C backend's output unchanged).
+- `annotations.py`: `EMBER_PROFILES=all` with `EMBER_BACKEND=llvm` runs each test in every
+  profile it lists (the C harness does); the release builds are where LTO, the MIR's loop
+  versions and the byte sums apply.
 
 ## Not done (and why)
 
@@ -121,6 +135,38 @@ convention, nesting 256 deep, reflection, float range niche, `ArenaSoA`, `dyn` c
 - Another target's C ABI (AArch64): only Windows x64 and System V x86-64.
 - The LLVM backend as the default: `[CG-LL-1]` makes it the default once it passes the
   performance suite on the reference laptop; see the bench results below.
+
+## Performance (`ember bench --compare --backend llvm`, laptop, mains, core 1)
+
+Twins built by Clang with the release profile's flags (`-O3`, full LTO), `[BEN-5]`. The
+machine was shared with other helpers' builds; wide intervals are load, not code.
+
+| run | build | passed | failed |
+|---|---|---|---|
+| 3 | 3621cb1f | 17 | a10 1.69x, int_math 1.28x, t5_words 1.08x, w1_sum_loop 1.31x |
+| 4 | + CPU attribute, scaled GEPs | 19 | a10 1.79x [1.52, 2.04], int_math 1.27x [1.26, 1.28] |
+| C backend, `EMBER_CC=clang` | same compiler | 19 | a10 1.70x [1.68, 1.73], int_math 1.27x [1.25, 1.28] |
+
+Run 4 against the C backend's own code under Clang (like with like): w1 20.6 / 20.4 ms, t5 56.0
+/ 54.2, t2 16.0 / 10.9 (before the byte sum; its LTO assembly is now the C build's, `psadbw`),
+the rest within noise. The two failures are the C backend's under Clang too:
+
+- `a10_recursion` (1.7x): Clang turns the twin's `fib(n-1) + fib(n-2)` into a loop with an
+  accumulator (reassociating the additions, which C's undefined signed overflow allows). Ember's
+  `+` is checked and panics at the addition that overflows, so the same rewrite would move that
+  panic; the IR's code is the C backend's. Not a backend defect; under MSVC the twin is not
+  rewritten. Re-measured alone at the coordinator's request: 1.79x [1.28, 2.41] under load,
+  1.69x on the quiet run.
+- `int_math` (1.27x): the IR's loop at `-O3` without LTO is the twin's at `-O3` (one 64-bit
+  multiply, two 32-bit). Full LTO's link-time pass over the already optimised module leaves
+  the last turn's exit values computed on every turn: 38 instructions, 4 64-bit multiplies; the
+  twin under the same LTO goes from 26 instructions to 29 (2 64-bit multiplies), less because
+  C's `i * 7` is `nsw` and its `% 13` narrows to 32 bits. Measured on the assembly and set
+  aside: `nsw`/`nuw` on the IR's arithmetic (no change; also unprovable, the MIR does not mark
+  an operation whose check it proved away), signed `sdiv`/`srem` (worse), the module optimised
+  at `-O3` before the LTO link (no change), the module not optimised before the link (fixes
+  `int_math`, 23 instructions, but `s5_range_step_enumerate`'s loop is then not vectorised, in
+  full and in thin LTO). Open: see question AF4.
 
 ## Defects found
 
@@ -145,3 +191,11 @@ convention, nesting 256 deep, reflection, float range niche, `ArenaSoA`, `dyn` c
   releasing the last handle to a class object or clearing the list an element reference came
   from? If the borrow rules rule it out, the attribute is derived; otherwise it needs a proof
   per call.
+- AF4 — `[BEN-5]`, `[TST-28]` against `int_math` (above): the twin's lead is LLVM's full-LTO
+  link pass plus C's undefined overflow, and it hits the C backend under Clang the same way.
+  Options: (a) accept it as the twin's advantage (MSVC, the reference gate, has no gap);
+  (b) a MIR fact on each arithmetic operation whose overflow check was proved away, which the
+  LLVM backend gives as `nsw`/`nuw` and the C backend as signed C arithmetic (measured: alone it
+  does not close this gap); (c) link the LLVM backend's release builds without LTO and reach the
+  runtime's inline functions some other way (the IR's loop is then the twin's). Recommendation
+  (a) for 1.0, with (b) worth its own measurement where loop narrowing matters.

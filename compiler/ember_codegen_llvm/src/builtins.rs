@@ -703,8 +703,7 @@ impl<'a> FnCx<'_, 'a> {
                 let base = self.load(Sc::Ptr, &words, align.min(8));
                 let index = self.word(&args[1])?;
                 let size = self.m.ty.size_align(elem).0;
-                let offset = self.value(format!("mul i64 {index}, {size}"));
-                let element = self.value(format!("getelementptr i8, ptr {base}, i64 {offset}"));
+                let element = self.element_at(&base, &index, size);
                 self.store_result(dest, &element, Sc::Ptr, false)
             }
             // `[SPN-8]`, `[SPN-9]` — the view's pointer.
@@ -721,8 +720,7 @@ impl<'a> FnCx<'_, 'a> {
                 let lo = self.word(&args[1])?;
                 let hi = self.word(&args[2])?;
                 let size = if *text { 1 } else { self.m.ty.size_align(self.span_element(arg_ty)).0 };
-                let offset = self.value(format!("mul i64 {lo}, {size}"));
-                let start = self.value(format!("getelementptr i8, ptr {base}, i64 {offset}"));
+                let start = self.element_at(&base, &lo, size);
                 let len = self.value(format!("sub i64 {hi}, {lo}"));
                 self.store_view(dest, &start, &len)
             }
@@ -753,8 +751,7 @@ impl<'a> FnCx<'_, 'a> {
                 let base = self.pointer(&args[0])?;
                 let index = self.word(&args[1])?;
                 let (size, align) = self.m.ty.size_align(pointee);
-                let offset = self.value(format!("mul i64 {index}, {size}"));
-                let element = self.value(format!("getelementptr i8, ptr {base}, i64 {offset}"));
+                let element = self.element_at(&base, &index, size);
                 if matches!(which, Builtin::PtrRead) {
                     let at = self.place(dest)?;
                     let value = match self.m.ty.repr(pointee) {
@@ -782,8 +779,7 @@ impl<'a> FnCx<'_, 'a> {
                 let base = self.pointer(&args[0])?;
                 let count = self.word(&args[1])?;
                 let size = self.m.ty.size_align(pointee).0;
-                let offset = self.value(format!("mul i64 {count}, {size}"));
-                let moved = self.value(format!("getelementptr i8, ptr {base}, i64 {offset}"));
+                let moved = self.element_at(&base, &count, size);
                 self.store_result(dest, &moved, Sc::Ptr, false)
             }
             Builtin::SizeOf | Builtin::AlignOf => {

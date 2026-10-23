@@ -75,9 +75,8 @@ pub(crate) fn emit_eq_fn(m: &mut Module<'_>, ty: Ty) -> Result<()> {
             let found = cx.alloca(1, 1);
             cx.emit(format!("store i8 1, ptr {found}, align 1"));
             cx.counted_loop(&len_a, |cx, index| {
-                let offset = cx.value(format!("mul i64 {index}, {size}"));
-                let at_a = cx.value(format!("getelementptr i8, ptr {buffer_a}, i64 {offset}"));
-                let at_b = cx.value(format!("getelementptr i8, ptr {buffer_b}, i64 {offset}"));
+                let at_a = cx.element_at(&buffer_a, &index, size);
+                let at_b = cx.element_at(&buffer_b, &index, size);
                 let same = cx.eq_at(&at_a, &at_b, elem_align, elem)?;
                 let (mark, next) = (cx.label(), cx.label());
                 cx.emit(format!("br i1 {same}, label %{next}, label %{mark}"));

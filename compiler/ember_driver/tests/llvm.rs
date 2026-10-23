@@ -157,6 +157,66 @@ fn main():
     assert!(make.lines().next().is_some_and(|header| header.contains("ptr noalias sret(")), "{make}");
 }
 
+/// `[CG-LL-3]` — the IR in the shape LLVM optimises as it does the runtime's C: every function
+/// names the CPU Clang gives C (without it a link-time optimisation compiles the IR for the
+/// linker's default CPU, and never inlines a runtime inline function into the program), and an
+/// element's address is one scaled `getelementptr`, which LLVM's unrolling counts as C's indexing.
+#[test]
+fn cg_ll_3_functions_name_the_runtimes_cpu_and_elements_are_scaled_addresses() {
+    let ir = ir(
+        "\
+@noinline
+fn total(xs: ref Array[i64]) -> i64:
+    sum = 0
+    for i in 0..xs.len():
+        sum += xs[i]
+    return sum
+
+fn main():
+    xs = [1, 2, 3]
+    println(total(ref xs))
+",
+        "release",
+    );
+    let total = function(&ir, "em_5total");
+    assert!(total.lines().next().is_some_and(|header| header.contains("\"target-cpu\"=\"x86-64\"")), "{total}");
+    assert!(total.contains("getelementptr [8 x i8], ptr"), "an element's address is not a scaled `getelementptr`:\n{total}");
+    assert!(!total.contains("mul i64"), "an element's offset is multiplied apart:\n{total}");
+}
+
+/// `[SIMD-7]` — a read-only byte sum whose checks the MIR proved away is the runtime's
+/// `sum_bytes`, as the C backend selects it: signed bytes and a subtracted total too. A total
+/// whose address is taken keeps its loop.
+#[test]
+fn simd_7_a_byte_sum_is_the_runtimes_sum_bytes() {
+    let ir = ir(
+        "\
+@noinline
+fn totals(xs: Span[u8], ys: Span[i8]) -> (int, int):
+    a = 9
+    b = -17
+    for x in xs:
+        a += x as int
+    for y in ys:
+        b -= y as int
+    return (a, b)
+
+fn main():
+    xs: Array[u8] = []
+    ys: Array[i8] = []
+    for i in 0..256:
+        xs.push(i as u8)
+        ys.push((i - 128) as i8)
+    (a, b) = totals(xs[0..256], ys[0..256])
+    println(a, b)
+",
+        "release",
+    );
+    let totals = function(&ir, "em_6totals");
+    assert_eq!(totals.matches("@ember_ll_sum_bytes(").count(), 2, "{totals}");
+    assert!(totals.contains("zeroext false)") && totals.contains("zeroext true)"), "the sums do not say which bytes are signed:\n{totals}");
+}
+
 /// `[CG-LL-3]`, `[RT-4]` — debug information in every profile: each function a subprogram named
 /// by its symbol, each instruction its Ember line; CodeView on Windows, DWARF elsewhere.
 #[test]

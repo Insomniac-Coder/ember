@@ -13212,6 +13212,60 @@ fn inline_bodies(bodies: &[Body], types: &TypeTable) -> BTreeMap<String, bool> {
     inline_header_symbols(bodies, types)
 }
 
+/// `[SIMD-7]` — a counted loop of `body` that is a read-only byte sum
+/// (`integer_reduction::byte_sum`): the C backend writes it as one call of
+/// the runtime's `sum_bytes`, and the LLVM backend selects the same.
+pub struct ByteSumLoop {
+    /// The loop's header block, whose test leaves to `exit`.
+    pub header: usize,
+    pub exit: usize,
+    pub counter: LocalId,
+    pub limit: LocalId,
+    pub total: LocalId,
+    /// The byte the loop reads, indexed by `counter`.
+    pub element: Place,
+    pub signed: bool,
+    pub subtract: bool,
+    pub span: ember_span::Span,
+}
+
+/// The byte sums among `body`'s counted loops, found as the C backend finds
+/// them for Clang (a loop whose body calls is never one).
+pub fn byte_sum_loops(body: &Body, types: &TypeTable, place_ty: impl Fn(&Place) -> Ty) -> Vec<ByteSumLoop> {
+    let loops = for_loops(body, &|_| false);
+    if loops.is_empty() {
+        return Vec::new();
+    }
+    let scoped = loop_scoped_locals(body, &loops, &|local| matches!(body.locals[local].kind, LocalKind::User | LocalKind::Temp));
+    let address_taken: BTreeSet<LocalId> = body
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter_map(|stmt| match &stmt.kind {
+            StmtKind::Assign { rvalue: Rvalue::Ref { place, .. }, .. } => Some(place.local),
+            _ => None,
+        })
+        .collect();
+    loops
+        .iter()
+        .filter_map(|(&header, counted)| {
+            let locals = scoped.get(&header).map_or(&[][..], Vec::as_slice);
+            let sum = integer_reduction::byte_sum(counted, body, types, locals, &address_taken, &place_ty)?;
+            Some(ByteSumLoop {
+                header,
+                exit: counted.exit,
+                counter: counted.counter,
+                limit: counted.limit,
+                total: sum.total,
+                element: sum.element,
+                signed: sum.signed,
+                subtract: sum.subtract,
+                span: sum.span,
+            })
+        })
+        .collect()
+}
+
 /// `[CG-C-3]`, `[CG-C-3b]` — the functions whose bodies the inline header
 /// exports (`inline_bodies`), by symbol: their bodies are part of the
 /// interface hash. With each, whether it is forced inline.

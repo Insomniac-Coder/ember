@@ -82,8 +82,7 @@ impl<'a> FnCx<'_, 'a> {
                 self.start(&walk);
                 let field = field.to_string();
                 self.counted_loop(&len, |cx, index| {
-                    let offset = cx.value(format!("mul i64 {index}, {size}"));
-                    let element = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+                    let element = cx.element_at(&buffer, &index, size);
                     cx.edges_of(&element, elem, &field, None, predicted)
                 })?;
                 self.emit(format!("br label %{done}"));
@@ -161,8 +160,7 @@ impl<'a> FnCx<'_, 'a> {
                 let field = field.to_string();
                 let at = at.to_string();
                 self.counted_loop(&len.to_string(), |cx, index| {
-                    let offset = cx.value(format!("mul i64 {index}, {size}"));
-                    let element = cx.value(format!("getelementptr i8, ptr {at}, i64 {offset}"));
+                    let element = cx.element_at(&at, &index, size);
                     cx.edges_of(&element, elem, &field, None, predicted)
                 })?;
             }

@@ -569,8 +569,7 @@ impl<'a> FnCx<'_, 'a> {
                     let len_at = self.gep(ptr, 8);
                     let len = self.load(Sc::I(64), &len_at, 8);
                     self.counted_loop(&len, |cx, index| {
-                        let offset = cx.value(format!("mul i64 {index}, {size}"));
-                        let element = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+                        let element = cx.element_at(&buffer, &index, size);
                         cx.drop_at(&element, elem_align, elem)
                     })?;
                 }

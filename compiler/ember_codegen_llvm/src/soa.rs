@@ -356,8 +356,7 @@ impl<'a> FnCx<'_, 'a> {
     /// Element `index`'s slot in `column`.
     fn slot(&mut self, s: &str, column: &Column, index: &str) -> String {
         let base = self.field_ptr(s, column.pointer);
-        let offset = self.value(format!("mul i64 {index}, {}", column.size));
-        self.value(format!("getelementptr i8, ptr {base}, i64 {offset}"))
+        self.element_at(&base, index, column.size)
     }
 
     /// The length set to `len`.

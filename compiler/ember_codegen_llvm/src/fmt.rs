@@ -217,8 +217,7 @@ impl<'a> FnCx<'_, 'a> {
             cx.text(&out, ", ");
             cx.emit(format!("br label %{item}"));
             cx.start(&item);
-            let offset = cx.value(format!("mul i64 {index}, {size}"));
-            let at = cx.value(format!("getelementptr i8, ptr {base}, i64 {offset}"));
+            let at = cx.element_at(&base, &index, size);
             cx.debug_into(&out, &at, elem_align, elem)
         })
     }
@@ -591,8 +590,7 @@ impl<'a> FnCx<'_, 'a> {
         self.emit(format!("store i8 1, ptr {first}, align 1"));
         let out_owned = out.to_string();
         self.counted_loop(&len, |cx, index| {
-            let offset = cx.value(format!("mul i64 {index}, {option_size}"));
-            let entry = cx.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+            let entry = cx.element_at(&buffer, &index, option_size);
             let at = crate::func::PlaceRef { ptr: entry.clone(), ty: option, variant: None, align: option_align };
             let (tag, bits) = cx.discriminant_at(&at)?;
             let live = cx.value(format!("icmp eq i{bits} {tag}, {}", crate::func::int_literal(some_tag as u128, bits)));

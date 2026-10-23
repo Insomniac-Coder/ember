@@ -244,12 +244,15 @@ pub(crate) fn ret_attr(sig: &Signature) -> &'static str {
 }
 
 /// The attributes every function of the program has: no unwinding (a panic aborts), unwind
-/// tables for the backtrace and the debugger, and on Linux stack probes (`[RT-12]`; Windows
-/// probes every frame larger than a page itself).
+/// tables for the backtrace and the debugger, on Linux stack probes (`[RT-12]`; Windows probes
+/// every frame larger than a page itself), and the CPU Clang gives the runtime's C. Without the
+/// CPU, a link-time optimisation compiles the IR's functions for the linker's default CPU, whose
+/// features are a subset of the runtime's, and LLVM never inlines a function needing features
+/// its caller lacks: no runtime inline function would be inlined into the program.
 pub(crate) fn fn_attrs(m: &Module<'_>) -> &'static str {
     match m.ty.target {
-        abi::Target::SysV => "nounwind uwtable \"probe-stack\"=\"inline-asm\"",
-        abi::Target::Win64 => "nounwind uwtable",
+        abi::Target::SysV => "nounwind uwtable \"probe-stack\"=\"inline-asm\" \"target-cpu\"=\"x86-64\" \"tune-cpu\"=\"generic\"",
+        abi::Target::Win64 => "nounwind uwtable \"target-cpu\"=\"x86-64\" \"tune-cpu\"=\"generic\"",
     }
 }
 
@@ -261,12 +264,16 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     if body.abi.as_deref().is_some_and(|abi| !matches!(abi, "C" | "system" | "fastcall")) {
         return unsupported(format!("the calling convention `{}`", body.abi.as_deref().unwrap_or_default()));
     }
+    let sums = ember_codegen_c::byte_sum_loops(body, m.ty.table, |place| place_type(m, body, place));
     define_body(m, body, |cx| {
         for index in block_order(body) {
             let block = &body.blocks[index];
             cx.start(&format!("bb{index}"));
             cx.stmts(&block.stmts)?;
-            cx.terminator(&block.terminator, block.terminator_span)?;
+            match sums.iter().find(|sum| sum.header == index) {
+                Some(sum) => cx.byte_sum(sum)?,
+                None => cx.terminator(&block.terminator, block.terminator_span)?,
+            }
         }
         Ok(())
     })
@@ -899,22 +906,19 @@ impl<'m, 'a> FnCx<'m, 'a> {
             }
             (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Array { elem, .. }) => {
                 let (size, elem_align) = self.m.ty.size_align(elem);
-                let offset = self.index_offset(projection, size)?;
-                let ptr = self.value(format!("getelementptr i8, ptr {}, i64 {offset}", at.ptr));
+                let ptr = self.index_ptr(projection, &at.ptr, size)?;
                 PlaceRef { ptr, ty: elem, variant: None, align: at.align.min(elem_align) }
             }
             (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Vec { elem, .. } | TyKind::Span { elem, .. }) => {
                 let (size, elem_align) = self.m.ty.size_align(elem);
                 let buffer = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
-                let offset = self.index_offset(projection, size)?;
-                let ptr = self.value(format!("getelementptr i8, ptr {buffer}, i64 {offset}"));
+                let ptr = self.index_ptr(projection, &buffer, size)?;
                 PlaceRef { ptr, ty: elem, variant: None, align: elem_align }
             }
             (Projection::Index(_) | Projection::ConstIndex(_), TyKind::Ptr { inner, .. }) => {
                 let (size, inner_align) = self.m.ty.size_align(inner);
                 let base = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
-                let offset = self.index_offset(projection, size)?;
-                let ptr = self.value(format!("getelementptr i8, ptr {base}, i64 {offset}"));
+                let ptr = self.index_ptr(projection, &base, size)?;
                 PlaceRef { ptr, ty: inner, variant: None, align: inner_align }
             }
             (Projection::Deref, TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. }) => {
@@ -929,11 +933,11 @@ impl<'m, 'a> FnCx<'m, 'a> {
         })
     }
 
-    /// The byte offset of an index: `index * size`, which cannot overflow, since the index was
-    /// checked against a length (or proved within one) and the elements fit in memory.
-    fn index_offset(&mut self, projection: &Projection, size: u64) -> Result<String> {
+    /// The address of an index's element from `base`. `index * size` cannot overflow, since the
+    /// index was checked against a length (or proved within one) and the elements fit in memory.
+    fn index_ptr(&mut self, projection: &Projection, base: &str, size: u64) -> Result<String> {
         Ok(match projection {
-            Projection::ConstIndex(index) => (index * size).to_string(),
+            Projection::ConstIndex(index) => self.value(format!("getelementptr i8, ptr {base}, i64 {}", index * size)),
             Projection::Index(local) => {
                 let local = *local;
                 let (index, sc) = self.read_scalar(&Place::local(local))?;
@@ -943,10 +947,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     Sc::I(bits) => self.value(format!("trunc i{bits} {index} to i64")),
                     other => return unsupported(format!("an index of type {}", other.ir())),
                 };
-                if size == 1 { index } else { self.value(format!("mul i64 {index}, {size}")) }
+                self.element_at(base, &index, size)
             }
             _ => unreachable!("an index projection"),
         })
+    }
+
+    /// Element `index` of `size`-byte elements from `base`, as one scaled `getelementptr` (no
+    /// `inbounds`, `[CG-LL-2]`). LLVM's cost models count it as one instruction where a `mul`
+    /// and a byte `getelementptr` are two, so a loop over elements unrolls as C's does.
+    pub(crate) fn element_at(&mut self, base: &str, index: &str, size: u64) -> String {
+        self.value(format!("getelementptr [{size} x i8], ptr {base}, i64 {index}"))
     }
 
     pub(crate) fn place_ty(&self, place: &Place) -> Ty {
@@ -1512,8 +1523,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let more = self.value(format!("icmp ult i64 {i}, {count}"));
         self.emit(format!("br i1 {more}, label %{body}, label %{done}"));
         self.start(&body);
-        let offset = self.value(format!("mul i64 {i}, {size}"));
-        let element = self.value(format!("getelementptr i8, ptr {}, i64 {offset}", at.ptr));
+        let element = self.element_at(&at.ptr, &i, size);
         self.store(&value, &element, at.align.min(align), size, false);
         self.emit(format!("{next} = add i64 {i}, 1"));
         self.emit(format!("br label %{head}"));
@@ -2236,6 +2246,36 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     // -- terminators ------------------------------------------------------------------------------
+
+    /// `[SIMD-7]` — a counted loop that is a read-only byte sum (`ember_codegen_c::byte_sum_loops`,
+    /// the C backend's selection), in place of its header's test: the runtime's `sum_bytes` over
+    /// the bytes left, the total moved by it modulo 2^64 as the loop's unchecked operation would
+    /// (its proof, or the program's `@overflow(wrap)`, is the MIR's), the counter at the limit.
+    /// The loop's own blocks are then reached by no path.
+    fn byte_sum(&mut self, sum: &ember_codegen_c::ByteSumLoop) -> Result<()> {
+        self.span = sum.span;
+        let (counter, _) = self.read_scalar(&Place::local(sum.counter))?;
+        let (limit, _) = self.read_scalar(&Place::local(sum.limit))?;
+        let more = self.value(format!("icmp ult i64 {counter}, {limit}"));
+        let work = self.label();
+        self.emit(format!("br i1 {more}, label %{work}, label %bb{}", sum.exit));
+        self.start(&work);
+        let element = self.place(&sum.element)?.ptr;
+        let count = self.value(format!("sub i64 {limit}, {counter}"));
+        let slot = self.alloca(8, 8);
+        let signed = Val::Imm(Sc::Bool, sum.signed.to_string());
+        self.call_rt("sum_bytes", vec![Val::Imm(Sc::Ptr, element), Val::Imm(Sc::I(64), count), signed], Some((&slot, 8)));
+        let bytes = self.load(Sc::I(64), &slot, 8);
+        let total = self.place(&Place::local(sum.total))?;
+        let before = self.load(Sc::I(64), &total.ptr, total.align);
+        let op = if sum.subtract { "sub" } else { "add" };
+        let after = self.value(format!("{op} i64 {before}, {bytes}"));
+        self.emit(format!("store i64 {after}, ptr {}, align {}", total.ptr, total.align));
+        let at = self.place(&Place::local(sum.counter))?;
+        self.emit(format!("store i64 {limit}, ptr {}, align {}", at.ptr, at.align));
+        self.emit(format!("br label %bb{}", sum.exit));
+        Ok(())
+    }
 
     fn terminator(&mut self, terminator: &Terminator, span: ember_span::Span) -> Result<()> {
         self.span = span;

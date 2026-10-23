@@ -13,7 +13,8 @@ python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directorie
 
 `EMBER_BACKEND=llvm` builds every run test with `--backend llvm` (`[CG-LL-1]`) and checks only
 those: what a program prints, its exit and its panic. The diagnostics and the evaluator do not
-depend on the backend, so the C run covers them.
+depend on the backend, so the C run covers them. With it, `EMBER_PROFILES=all` runs each test in
+every profile it lists, as the cargo harness does, not only the first.
 """
 import glob
 import hashlib
@@ -29,6 +30,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.exe')
 OUT = None  # Set only while the main run owns its TemporaryDirectory.
 BACKEND = os.environ.get('EMBER_BACKEND') or 'c'
+ALL_PROFILES = os.environ.get('EMBER_PROFILES') == 'all'
 
 if os.name == 'nt':
     # SEM_NOGPFAULTERRORBOX, inherited by every program this starts: a test program that
@@ -153,7 +155,10 @@ def check(path):
     if BACKEND != 'c':
         if kind not in ('run-pass', 'run-fail'):
             return None
-        return run_problems(path, text, profile, kind)[0]
+        listed = re.search(r'^#\$ profiles:\s*(.*)$', text, re.M)
+        profiles = [p.strip() for p in listed[1].split(',') if p.strip()] if listed and ALL_PROFILES else [profile]
+        return [f'{each}: {problem}' if len(profiles) > 1 else problem
+                for each in profiles for problem in run_problems(path, text, each, kind)[0]]
     problems = []
     exit_code, found = produced(path, profile, compiler_flags(text), checking_command(text))
     claimed = [False] * len(found)
