@@ -119,6 +119,18 @@ codec. Tests (all pass, C and LLVM backends, the evaluator agreeing):
 
 ## Not done
 
+* A foreign declaration's value keeps the C function pointer's type (spec question 5): its
+  symbol is its contract's, planned with its body.
+* The C backend's one byte for a zero-sized member (defect 3, option (a)): the LLVM backend holds
+  none; the C struct of an adapter holding a lambda is 8 bytes larger than Ember's layout says.
+* `callable_values` (instances keyed by the function given to an `@latebound` callable bound) is
+  kept: with items the generic argument already names the function, so the key is redundant, but
+  it also carries the latebound region contract into the instance (`synth_known_function_call`);
+  folding it into the item is a separate cleanup.
+* No `unfinished` entry in `docs/phase-status.json`: `[FN-6]` and `[CLO-1]` as Hardened_35 writes
+  them are met (a lambda's unique type is now built for one that captures nothing too); ODR-278's
+  text is the lead's to cut.
+
 ## Compiler changes
 
 * `ember_types`: `TyKind::FnItem { symbol, name, shape }` and its facts (layout zero, `Copy`, no
@@ -160,6 +172,52 @@ codec. Tests (all pass, C and LLVM backends, the evaluator agreeing):
   item calls are direct calls.
 
 ## Measurements
+
+The compiler before (`3f2fce5b`, built `ci` as `target/baseline/ember.exe`) against the one after
+(this branch, `ci`), on the reference laptop, mains power.
+
+**Memory of a program's values.** A function or capture-free lambda held anywhere was a
+`struct ember_fn_value` (entry, descriptor, three words: 40 bytes) and is now nothing (0 bytes in
+Ember's layout and the LLVM backend; one byte as a C struct member, as a `void` member is, so
+`+8` with alignment in a C struct, defect 3). `xs.iter().map(fn…)`'s adapter: 64 bytes → 24 (LLVM)
+/ 32 (C); `(0..n).map(fn…)`: 56 → 16 / 24.
+
+**Generated C and executables** (`release`, MSVC; `target/aj/sizes.py`: 79 programs, every
+`tests/perf`, `bench/programs` program and four of callables, `target/aj/perf_items`):
+
+| program | C before → after | executable before → after |
+|---|---|---|
+| `c1_kept_adapter` (an adapter chain held in a local) | 19,858 → 16,714 B | 79,872 → 79,872 B |
+| `c2_local_function` (`f = step`, called 200M times) | 6,974 → 4,505 B | 76,288 → 72,704 B |
+| `c3_generic_named` (`run(step, n)`, `F: fn(int) -> int`) | 9,416 → 4,716 B | 76,288 → 72,704 B |
+| `c4_sort_by` (`sort_by` with a lambda) | 42,801 → 39,285 B | 83,968 → 83,456 B |
+| `a04_map_int`, `a14_map_gap_1024`, `a15_map_gap_1048576` (std's own lambdas) | | 95,232 → 94,720 B each |
+| the other 72 | | unchanged |
+
+No program grew; the four callable programs hold no `fn_value` (before: 11 to 16 mentions each).
+Of the 75 `tests/perf` and `bench/programs` programs, 70 emit byte-identical C (so the same speed:
+no cost where the feature is not used); the five map programs (`a04`, `a13`..`a16`) differ because
+std's `Map.rebuild` gives `retain` a lambda, which is now called directly and inlined, and the
+whole callable-value machinery (`ember_fn_value`, its descriptor, the job helpers over it) leaves
+the program.
+
+**Speed, exact** (retired instructions, Cachegrind, `ember bench --compare` in WSL, clang,
+`release`; both compilers built there from the same sources as on Windows):
+
+| program | before | after | |
+|---|---|---|---|
+| `c1_kept_adapter` | 5,204,727,934 | 2,302,431,819 | −55.8 %, faster (3.89x → 1.68x the C twin's time there) |
+| `c2_local_function` | 3,200,305,108 | 3,200,305,010 | the same (ADR-169 made this call direct already) |
+| `c3_generic_named` | 3,200,305,096 | 3,200,305,021 | the same (the instance was inlined and devirtualised before) |
+| `c4_sort_by` | 1,576,182,317 | 1,576,180,580 | the same with clang |
+
+**Speed, timed** (Windows, MSVC, core 1, `ember bench --compare`, two rounds each, interleaved
+with the C twin): the machine was loaded throughout (the other helpers' builds: the C twins' own
+times moved up to 4x between runs, so every absolute time is inconclusive under `[BUD-3a]`); the
+ratio to the twin is the only comparable figure. `c1`: 2.26x and 2.10x the C before, 0.80x and
+1.03x after. `c4`: 1.27x and 1.31x before (one inconclusive), 1.03x and 1.00x after. `c2`, `c3`:
+within each other's noise, as the exact counts say they are. To be timed again on a quiet machine
+(the gate of record).
 
 ## Defects found
 
