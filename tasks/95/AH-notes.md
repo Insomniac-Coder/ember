@@ -80,6 +80,68 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
 
 ## Not done
 
+* **ODR-266 `[ECS-4]`, `[ECS-5]` — not built: the ruling's mechanism cannot meet the brief's
+  constraint.** The ruling hands a system `run_parallel` runs "a commands type of its own whose
+  `add` requires `Send`". A system reaches its commands through its query (`q.commands()`), and a
+  function written for `World.run`, `fn move(mut q: Query[(Mut[Pos], Vel)])`, names its query's
+  type, `Query[Q]`, and so its `Commands`: for `run_parallel` to hand it another commands type,
+  its parameter would have to be another type (`Query[Q, ParCommands]`, `ParQuery[Q]`), or generic
+  over one (`fn move[C: Queue](mut q: Query[(Mut[Pos], Vel), C])`) — the function rewritten,
+  which the constraint forbids. (A hidden default type argument does not help: the function's
+  parameter is one instance, not generic over it.) Nothing is changed: `Commands.add` keeps AD's
+  check, a panic before the change is queued (`type_is_send[T]()` is a constant per instance, so
+  for a `Send` component the test folds away; `World.run`'s systems pay a flag test only when
+  they add a component that is not `Send`). Options:
+  (a) **an effect-style check where a system is made** (`std.ecs.system(body, name)`, which
+  `run_parallel`'s literal calls): the components `T` of every `Commands.add[T]` the body can
+  reach, through the call graph the effect analysis already walks (`ember_analysis::effects`,
+  with D-877's resolution of calls through `fn` values, closures by their bodies, `dyn` by its
+  tables), must be `Send`, else `E7004` at the system naming the component and the call that adds
+  it. As one more bit of the effect set ("adds a component that is not `Send`", set by the
+  instances of `Commands.add` whose `T` is not `Send`, propagated as `Alloc` is) it costs nothing
+  at run time and nothing to a program that makes no system; system functions and `World.run`
+  are unchanged; the panic and `Commands.parallel` go. A call the analysis cannot follow counts as
+  adding anything, as an indirect call counts as every effect today: the error then names it.
+  (b) the ruling's commands type of its own: system functions rewritten (or written generic) to
+  be passed to `run_parallel`.
+  (c) as built (AD): a panic before the change is queued.
+  (d) `T: Send` on `Commands.add` everywhere: `World.run`'s systems may no longer add a class
+  handle.
+  Recommendation: (a) — the only static form that keeps a system written for `World.run` usable
+  in `run_parallel` as written, and free where unused. It needs a ruling (it replaces the
+  ruling's mechanism), so it is not built.
+* **D-901 `[EFF-1]`, `[STD-19]` — written up, not built.** A capture-free lambda or a function used
+  as a value has the shape type `fn(A) -> R` (ODR-102), so an adapter holding it
+  (`Map[I, fn(int) -> int]`) is one instance for every such lambda, its `next` calls through the
+  field, and since D-877 that call has the effects of every function of the shape the program
+  uses as a value: one allocating lambda anywhere makes every such adapter allocate. The precise
+  forms:
+  (a) **a type of its own for each function used as a value** (`[CLO-1]`: "a lambda … has a unique
+  anonymous type"), as C++ and Rust give each closure: a zero-sized function-item type that
+  coerces to `fn(A) -> R` where a value of that type is wanted (a field, an `Array`, `extern "C"`,
+  ODR-102's owned callable value), and that a generic argument keeps: `map(f)` is then
+  `Map[I, item f]`, an instance per lambda whose `next` calls `f` directly (inlined by the C
+  compiler; no pointer in the adapter), and its effects are `f`'s. Cost: code size, one small
+  instance per lambda an adapter holds (the C++/Rust trade, usually smaller once inlined), and a
+  new kind of type through the checker, the backends and the evaluator. An ADR of its own.
+  (b) effects per field: what an adapter's field can hold, followed from where each adapter is
+  built (a field-sensitive points-to over constructors): narrower than the shape, still one set for
+  every adapter of that instance (two `map`s of one shape, one allocating, still mix).
+  (c) leave it (D-877's precision).
+  Recommendation: (a). Not built: it changes what a function value's type is (ODR-102), which is
+  not a defect fix's to decide.
+* `[GRM-28]` — left as AD and the brief name it: a local function with a foreign ABI (`E0900`),
+  and a generic local function calling itself with other type arguments (`E2020`, AD's).
+* Local generators — limits known:
+  * A call inside a closure is made once per check of that closure (its two capture probes and
+    its body), each with that check's environment, so one or two instances more than run: dead
+    `static` functions the C compiler drops; compile time only. (Generic local functions do the
+    same.)
+  * `Self` in a local generator inside an interface's default method: the lifted body has no
+    `Self` to write out (the implementation's), so its instance reads `Self` as the frame; the
+    declaration's check reads it right, and reports.
+  * A local generator never called is not `L1001` (its name holds a marker no call reads).
+
 ## Compiler changes
 
 * `ember_ast`: `Module::local_generators`. `ember_parser`: the flag; `extern "C" fn` (and `unsafe
@@ -91,7 +153,6 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
   `synth_generic_call` as an argument already checked, `LOCAL_ENV_VALUE`),
   `local_generator_value`, `enter_local_generator_body`; `CaptureWatch::aliases`, read by
   `resolve_capture`.
-
 * `ember_hir`, `ember_mir` (lowering), `ember_analysis` (effects), `ember_codegen_c`, `ember_interp`:
   `Builtin::PrintHold`; the runtime's `ember_print_hold`/`ember_print_release`, the `_held`
   printers, `EMBER_OUT_*` (templates, regenerated).
@@ -100,3 +161,11 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
 ## Defects found
 
 ## Questions for the owner
+
+1. ODR-266 — the ruling's commands type of its own cannot be handed to a system function written
+   for `World.run` without rewriting it (above). Options (a) an effect-style check where a system
+   is made, (b) the ruling's mechanism with system functions rewritten, (c) the panic as built,
+   (d) `T: Send` on every `add`. Recommend (a).
+2. D-901 — a function used as a value given a type of its own (a zero-sized function item,
+   `[CLO-1]`'s unique type), so an adapter is made per lambda and calls it directly, its effects
+   the lambda's. Options (a) that, (b) effects per adapter field, (c) leave it. Recommend (a).
