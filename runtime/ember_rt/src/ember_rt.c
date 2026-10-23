@@ -9995,12 +9995,56 @@ ember_u128 ember_range_nth_u128(ember_u128 start, ember_u128 step, size_t k) {
     return ember_u128_add(start, ember_u128_mul(ember_u128_from_u64((uint64_t)k), step));
 }
 
-/* `[STD-9]` — each type has one printer taking its stream; `print`/`println`
- * write to standard output and `eprint`/`eprintln` to standard error. */
+/* `[STD-9]` (D-900) — a print statement writes its pieces with its stream held from the first to
+ * the last (`ember_print_hold`, `ember_print_release`), so another thread's print is written
+ * before or after it, never into it; each piece is written within, without taking the stream's
+ * lock again: one lock a statement, not one a piece. The lock is the C library's own, which a
+ * thread may take again (a `Display` a piece runs may print). */
+#if defined(_MSC_VER)
+#define EMBER_OUT_LOCK(out) _lock_file(out)
+#define EMBER_OUT_UNLOCK(out) _unlock_file(out)
+#define EMBER_OUT_WRITE(ptr, len, out) _fwrite_nolock((ptr), 1, (len), (out))
+#define EMBER_OUT_PUTC(c, out) _fputc_nolock((c), (out))
+#elif defined(__linux__)
+/* glibc's and musl's (`_GNU_SOURCE`, above). */
+#define EMBER_OUT_LOCK(out) flockfile(out)
+#define EMBER_OUT_UNLOCK(out) funlockfile(out)
+#define EMBER_OUT_WRITE(ptr, len, out) fwrite_unlocked((ptr), 1, (len), (out))
+#define EMBER_OUT_PUTC(c, out) fputc_unlocked((c), (out))
+#elif defined(_WIN32) || defined(__unix__) || defined(__APPLE__)
+#if defined(_WIN32)
+#define EMBER_OUT_LOCK(out) _lock_file(out)
+#define EMBER_OUT_UNLOCK(out) _unlock_file(out)
+#else
+#define EMBER_OUT_LOCK(out) flockfile(out)
+#define EMBER_OUT_UNLOCK(out) funlockfile(out)
+#endif
+/* No unlocked forms: each piece takes the lock it already holds again. */
+#define EMBER_OUT_WRITE(ptr, len, out) fwrite((ptr), 1, (len), (out))
+#define EMBER_OUT_PUTC(c, out) fputc((c), (out))
+#else
+#define EMBER_OUT_LOCK(out) ((void)(out))
+#define EMBER_OUT_UNLOCK(out) ((void)(out))
+#define EMBER_OUT_WRITE(ptr, len, out) fwrite((ptr), 1, (len), (out))
+#define EMBER_OUT_PUTC(c, out) fputc((c), (out))
+#endif
+
+static FILE* print_stream(int to_stderr) { return to_stderr ? stderr : stdout; }
+
+void ember_print_hold(int to_stderr) { EMBER_OUT_LOCK(print_stream(to_stderr)); }
+
+void ember_print_release(int to_stderr) { EMBER_OUT_UNLOCK(print_stream(to_stderr)); }
+
+/* `[STD-9]` — each type has one printer taking its stream, which its caller holds;
+ * `print`/`println` write to standard output and `eprint`/`eprintln` to standard error. */
 static void print_str_to(FILE* out, ember_str s) {
     if (s.len > 0) {
-        fwrite(s.ptr, 1, s.len, out);
+        EMBER_OUT_WRITE(s.ptr, s.len, out);
     }
+}
+
+static void print_text_to(FILE* out, const char* text) {
+    EMBER_OUT_WRITE(text, strlen(text), out);
 }
 
 /* `v`'s decimal digits, as `%llu` writes them, into `text` (20 bytes);
@@ -10031,72 +10075,88 @@ static size_t decimal_i64(char* text, int64_t v) {
 
 static void print_i64_to(FILE* out, int64_t v) {
     char text[21];
-    fwrite(text, 1, decimal_i64(text, v), out);
+    EMBER_OUT_WRITE(text, decimal_i64(text, v), out);
 }
 
 static void print_u64_to(FILE* out, uint64_t v) {
     char text[20];
-    fwrite(text, 1, decimal_u64(text, v), out);
+    EMBER_OUT_WRITE(text, decimal_u64(text, v), out);
 }
 
 static void print_i128_to(FILE* out, ember_i128 v) {
     char text[41];
     ember_u128 m = ember_i128_magnitude(v);
-    fwrite(text, 1, integer_text(text, ember_i128_is_negative(v), ember_u128_hi(m), ember_u128_lo(m)), out);
+    EMBER_OUT_WRITE(text, integer_text(text, ember_i128_is_negative(v), ember_u128_hi(m), ember_u128_lo(m)), out);
 }
 
 static void print_i256_to(FILE* out, ember_i256 v) {
     char text[80];
-    fwrite(text, 1, i256_text(text, v), out);
+    EMBER_OUT_WRITE(text, i256_text(text, v), out);
 }
 
 static void print_u256_to(FILE* out, ember_u256 v) {
     char text[80];
-    fwrite(text, 1, u256_text(text, v), out);
+    EMBER_OUT_WRITE(text, u256_text(text, v), out);
 }
 
 static void print_u128_to(FILE* out, ember_u128 v) {
     char text[41];
-    fwrite(text, 1, integer_text(text, false, ember_u128_hi(v), ember_u128_lo(v)), out);
+    EMBER_OUT_WRITE(text, integer_text(text, false, ember_u128_hi(v), ember_u128_lo(v)), out);
 }
 
 static void print_f16_to(FILE* out, uint16_t v) {
     char buffer[32];
     write_shortest_f16(v, buffer, sizeof buffer);
-    fputs(buffer, out);
+    print_text_to(out, buffer);
 }
 
 static void print_f32_to(FILE* out, float v) {
     char buffer[32];
     write_shortest_f32(v, buffer, sizeof buffer);
-    fputs(buffer, out);
+    print_text_to(out, buffer);
 }
 
 static void print_f64_to(FILE* out, double v) {
     char buffer[32];
     write_shortest_f64(v, buffer, sizeof buffer);
-    fputs(buffer, out);
+    print_text_to(out, buffer);
 }
 
-static void print_bool_to(FILE* out, bool v) { fputs(v ? "true" : "false", out); }
+static void print_bool_to(FILE* out, bool v) { print_text_to(out, v ? "true" : "false"); }
 
 static void print_char_to(FILE* out, uint32_t v) {
     unsigned char buffer[4];
     size_t n = ember_char_encode_utf8(v, buffer);
-    fwrite(buffer, 1, n, out);
+    EMBER_OUT_WRITE(buffer, n, out);
 }
 
+/* `ember_print_T` holds the stream for its one piece, `ember_println_T` for the piece and its
+ * line's end; `ember_print_T_held` writes a piece of a statement that holds it. */
 #define EMBER_PRINTERS(suffix, type)                                              \
-    void ember_print_##suffix(type v) { print_##suffix##_to(stdout, v); }        \
-    void ember_println_##suffix(type v) {                                       \
+    void ember_print_##suffix(type v) {                                         \
+        EMBER_OUT_LOCK(stdout);                                                 \
         print_##suffix##_to(stdout, v);                                         \
-        fputc('\n', stdout);                                                    \
+        EMBER_OUT_UNLOCK(stdout);                                               \
     }                                                                           \
-    void ember_eprint_##suffix(type v) { print_##suffix##_to(stderr, v); }       \
-    void ember_eprintln_##suffix(type v) {                                      \
+    void ember_println_##suffix(type v) {                                       \
+        EMBER_OUT_LOCK(stdout);                                                 \
+        print_##suffix##_to(stdout, v);                                         \
+        EMBER_OUT_PUTC('\n', stdout);                                           \
+        EMBER_OUT_UNLOCK(stdout);                                               \
+    }                                                                           \
+    void ember_print_##suffix##_held(type v) { print_##suffix##_to(stdout, v); } \
+    void ember_eprint_##suffix(type v) {                                        \
+        EMBER_OUT_LOCK(stderr);                                                 \
         print_##suffix##_to(stderr, v);                                         \
-        fputc('\n', stderr);                                                    \
-    }
+        EMBER_OUT_UNLOCK(stderr);                                               \
+    }                                                                           \
+    void ember_eprintln_##suffix(type v) {                                      \
+        EMBER_OUT_LOCK(stderr);                                                 \
+        print_##suffix##_to(stderr, v);                                         \
+        EMBER_OUT_PUTC('\n', stderr);                                           \
+        EMBER_OUT_UNLOCK(stderr);                                               \
+    }                                                                           \
+    void ember_eprint_##suffix##_held(type v) { print_##suffix##_to(stderr, v); }
 
 EMBER_PRINTERS(str, ember_str)
 EMBER_PRINTERS(i64, int64_t)
@@ -10746,7 +10806,7 @@ void ember_io_error_message(int64_t code, ember_vec* out) {
  * UTF-8 (D-450): a `String` is valid UTF-8 (`[TXT-1]`), and only a `_lossy`
  * form may substitute U+FFFD (`[TXT-2]`). */
 ember_vec ember_input(ember_str prompt, ember_loc loc) {
-    print_str_to(stdout, prompt);
+    ember_print_str(prompt);
     fflush(stdout);
     ember_vec line = ember_vec_empty();
     int read_any = 0;

@@ -2771,58 +2771,88 @@ void ember_backtrace_print(void);
 /* Before `Display` exists the compiler picks a printer from the argument's
  * type. std.fmt replaces these; they stay for the runtime's own diagnostics.
  *
- * [STD-2] println of a literal or a str does not allocate. */
+ * [STD-2] println of a literal or a str does not allocate.
+ *
+ * `[STD-9]` (D-900) — a print statement holds its stream from its first piece to its last
+ * (`ember_print_hold`, `ember_print_release`, standard error with `to_stderr`), and writes each
+ * piece with a `_held` printer; `ember_print_T` and `ember_println_T` hold it for their own. */
+void ember_print_hold(int to_stderr);
+void ember_print_release(int to_stderr);
 void ember_print_str(ember_str s);
+void ember_print_str_held(ember_str s);
 void ember_println_str(ember_str s);
 /* `[STD-10]` — print the prompt, flush, read one line without its ending;
  * end of input panics at `loc`. */
 ember_vec ember_input(ember_str prompt, ember_loc loc);
 void ember_print_i64(int64_t v);
+void ember_print_i64_held(int64_t v);
 void ember_println_i64(int64_t v);
 void ember_print_u64(uint64_t v);
+void ember_print_u64_held(uint64_t v);
 void ember_println_u64(uint64_t v);
 void ember_print_i128(ember_i128 v);
+void ember_print_i128_held(ember_i128 v);
 void ember_println_i128(ember_i128 v);
 void ember_print_i256(ember_i256 v);
+void ember_print_i256_held(ember_i256 v);
 void ember_println_i256(ember_i256 v);
 void ember_print_u256(ember_u256 v);
+void ember_print_u256_held(ember_u256 v);
 void ember_println_u256(ember_u256 v);
 void ember_print_u128(ember_u128 v);
+void ember_print_u128_held(ember_u128 v);
 void ember_println_u128(ember_u128 v);
 void ember_print_f16(uint16_t v);
+void ember_print_f16_held(uint16_t v);
 void ember_println_f16(uint16_t v);
 void ember_print_f32(float v);
+void ember_print_f32_held(float v);
 void ember_println_f32(float v);
 void ember_print_f64(double v);
+void ember_print_f64_held(double v);
 void ember_println_f64(double v);
 void ember_print_bool(bool v);
+void ember_print_bool_held(bool v);
 void ember_println_bool(bool v);
 void ember_print_char(uint32_t v);
+void ember_print_char_held(uint32_t v);
 void ember_println_char(uint32_t v);
 /* `[STD-9]` — `eprint`/`eprintln`, to standard error. */
 void ember_eprint_str(ember_str s);
+void ember_eprint_str_held(ember_str s);
 void ember_eprintln_str(ember_str s);
 void ember_eprint_i64(int64_t v);
+void ember_eprint_i64_held(int64_t v);
 void ember_eprintln_i64(int64_t v);
 void ember_eprint_u64(uint64_t v);
+void ember_eprint_u64_held(uint64_t v);
 void ember_eprintln_u64(uint64_t v);
 void ember_eprint_i128(ember_i128 v);
+void ember_eprint_i128_held(ember_i128 v);
 void ember_eprintln_i128(ember_i128 v);
 void ember_eprint_i256(ember_i256 v);
+void ember_eprint_i256_held(ember_i256 v);
 void ember_eprintln_i256(ember_i256 v);
 void ember_eprint_u256(ember_u256 v);
+void ember_eprint_u256_held(ember_u256 v);
 void ember_eprintln_u256(ember_u256 v);
 void ember_eprint_u128(ember_u128 v);
+void ember_eprint_u128_held(ember_u128 v);
 void ember_eprintln_u128(ember_u128 v);
 void ember_eprint_f16(uint16_t v);
+void ember_eprint_f16_held(uint16_t v);
 void ember_eprintln_f16(uint16_t v);
 void ember_eprint_f32(float v);
+void ember_eprint_f32_held(float v);
 void ember_eprintln_f32(float v);
 void ember_eprint_f64(double v);
+void ember_eprint_f64_held(double v);
 void ember_eprintln_f64(double v);
 void ember_eprint_bool(bool v);
+void ember_eprint_bool_held(bool v);
 void ember_eprintln_bool(bool v);
 void ember_eprint_char(uint32_t v);
+void ember_eprint_char_held(uint32_t v);
 void ember_eprintln_char(uint32_t v);
 
 /* -- lifecycle and embedding ------------------------------------------------ */

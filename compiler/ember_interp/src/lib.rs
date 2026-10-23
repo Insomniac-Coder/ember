@@ -1233,9 +1233,15 @@ impl<'a, 'io> Interp<'a, 'io> {
             Terminator::Return => self.return_from_frame(),
             Terminator::Unreachable => fault(format!("`{}` reached an unreachable block", self.body().name)),
             Terminator::Assert { cond, expected, msg, next, span } => {
-                let value = match self.scalar_word(cond, self.common.bool_)? {
-                    Some(word) => word & 0xFF,
-                    None => u64::from(self.operand(cond, Some(self.common.bool_))?.first().copied().unwrap_or(0)),
+                // D-899 — the condition at its own type: a `bool`, or a `Downcast`'s class handle,
+                // which holds when it is not null (as C's `if (!raw)` reads it), whatever its low byte.
+                let body = self.body();
+                let ty = self.operand_ty(body, cond).unwrap_or(self.common.bool_);
+                let size = self.size(ty);
+                let value = match self.scalar_word(cond, ty)? {
+                    Some(word) if size < 8 => word & ((1u64 << (8 * size)) - 1),
+                    Some(word) => word,
+                    None => u64::from(self.operand(cond, Some(ty))?.iter().any(|&byte| byte != 0)),
                 };
                 if (value != 0) == *expected {
                     return self.goto(*next);

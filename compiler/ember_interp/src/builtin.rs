@@ -175,6 +175,8 @@ impl Interp<'_, '_> {
                 self.print(which, arg_ty, &args[0])?;
                 return Ok(None);
             }
+            // D-900 — the evaluator runs one thread: no other print comes between a statement's pieces.
+            Builtin::PrintHold { .. } => return Ok(None),
             Builtin::SoA { op, soa } => return self.soa(*op, *soa, args, dest, span),
             // `[CT-2]` — the evaluator's own inputs while compiling.
             Builtin::ComptimeReadFile => {

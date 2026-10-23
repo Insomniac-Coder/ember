@@ -1394,7 +1394,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
     const ALLOC: Effects = Effects(Effects::ALLOC.0 | Effects::PANIC.0);
     use Builtin as B;
     match which {
-        B::Println | B::EPrintln | B::EPrint | B::Print => (Effects::IO, "console output"),
+        B::Println | B::EPrintln | B::EPrint | B::Print | B::PrintHold { .. } => (Effects::IO, "console output"),
         B::Input => (Effects::IO | Effects::BLOCK | ALLOC, "`input`, which reads the console"),
         B::Panic => (Effects::PANIC, "`panic`"),
         B::Assert => (Effects::PANIC, "`assert`"),

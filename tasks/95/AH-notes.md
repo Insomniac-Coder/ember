@@ -55,6 +55,29 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
   * `phase-status.json` `GRM-28`: says what is built; left are the foreign-ABI local function and
     a generic local function calling itself with other type arguments (AD's, `E2020`).
 
+* **D-900 `[STD-9]` — two threads' multi-argument `println`s interleaved their pieces.** Each piece
+  (argument, separator, end) was its own `fwrite`, each taking the stream's lock; another thread's
+  piece could come between. Now a print statement holds its stream from its first piece to its last:
+  MIR brackets the pieces with `Builtin::PrintHold { stderr, start }` (`ember_print_hold`,
+  `ember_print_release`: the C library's own recursive lock, `_lock_file` / `flockfile`), and each
+  piece is written with a `_held` printer that does not take the lock again (`_fwrite_nolock`,
+  `fwrite_unlocked` on Linux; elsewhere the plain call, which takes the held lock again): one lock
+  a statement where there was one a piece, so a `println(a, b)` takes one lock, not four. A
+  `Display` a piece runs may print (the lock is recursive). `ember_print_T`/`ember_println_T`
+  hold the stream for their own piece (the prompt of `input` uses it). The evaluator runs one
+  thread: `PrintHold` is nothing there. Test: `STD-9/accept_a_print_is_one_write_between_threads.em`
+  (four threads print one 37-piece line six times each; every line whole; `assert-c` for the hold;
+  with the compiler before the change its lines mixed). C gate: clang, MSVC.
+* **D-899 `[CLI-21]`, `[ECS-4]` — the evaluator's "invalid downcast" in `run_parallel`.** Not a
+  null storage: the storage's handle was right and of the right class, but the evaluator read an
+  `Assert`'s condition as a `bool`, its low byte, and a `Downcast`'s condition is the class handle,
+  which held at `0x10c00` (the program's static content only moved where the object landed). The
+  condition is now read at its own type (`Terminator::Assert` in `ember_interp`): a handle holds
+  when it is not null, as C's `if (!raw)` reads it. Tests:
+  `GRM-30/accept_an_asserted_downcast_holds_at_any_address.em` (300 objects, boxes between some, so
+  several lie at addresses ending in a zero byte; the evaluator before the change panicked there),
+  `ECS-4/accept_two_lambda_systems_capturing_one_sync_object.em` (AD's repro, reduced).
+
 ## Not done
 
 ## Compiler changes
@@ -68,6 +91,11 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
   `synth_generic_call` as an argument already checked, `LOCAL_ENV_VALUE`),
   `local_generator_value`, `enter_local_generator_body`; `CaptureWatch::aliases`, read by
   `resolve_capture`.
+
+* `ember_hir`, `ember_mir` (lowering), `ember_analysis` (effects), `ember_codegen_c`, `ember_interp`:
+  `Builtin::PrintHold`; the runtime's `ember_print_hold`/`ember_print_release`, the `_held`
+  printers, `EMBER_OUT_*` (templates, regenerated).
+* `ember_interp`: an `Assert`'s condition read at its own type.
 
 ## Defects found
 
