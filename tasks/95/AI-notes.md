@@ -314,6 +314,14 @@ parameters none (their callers are foreign). No call-site attribute is needed.
   old `Cell` and `RefCell` values (`1 1`), so the test catches the fact being wrong.
 * Every test folder using a cell or a sync type (56 folders): 0 failing under the C backend with the
   evaluator; 334 of 334 run tests under LLVM in every profile.
+* After items 4 to 6, on Windows: the whole conformance tree under the C backend with the evaluator,
+  0 failing; under LLVM in every profile, 2144 of 2144; ui 12, milestones 175, firstweek 1, reload 50
+  (both backends), cdylib 11 and staticlib 6 (both backends), llvm 12, interp 3. On Linux (WSL,
+  gcc and Clang 21): every run test under LLVM, 2144 of 2144; the cell and sync folders under the C
+  backend, 0 failing; reload 50, cdylib 11, staticlib 6 under both backends; llvm 11 of 12 (PGO,
+  section 5's missing runtime). The C warning gate (`tools/c_warning_sweep.py`, MSVC and Clang) over
+  the folders the C changes touch (CELL, THR, FFI-10, BLD-FFI, JOB, ECS, STD-9, EXC-19): no warning
+  under MSVC, Clang or (in WSL) gcc.
 
 ## 5. Profile-guided optimisation (ODR-274) — DONE
 
@@ -337,6 +345,11 @@ parameters none (their callers are foreign). No call-site attribute is needed.
   `.profraw`, the manifest's missing profile refused, the `use` build merging and using it, the
   merged profile's counters for `work` (`[3003, 3, …]`: its loop's 1000 + 1001 + 1002 turns and its
   three entries), a broken `.profdata` stopping the build at Clang, the C backend refusing.
+* **Missing tool (Linux).** In WSL the test fails at the instrumented link: Ubuntu's `clang` package
+  has no profile runtime (`cannot find …/libclang_rt.profile.a`). The owner would run
+  `sudo apt install libclang-rt-21-dev`. The build now says so (a `help` line naming the package
+  when an instrumented link misses `clang_rt.profile`). Windows' LLVM has it
+  (`clang_rt.profile-x86_64.lib`): the test passes there.
 
 ## 6. `extern "vectorcall"` and AAPCS64 (`[FFI-9]`, `[CG-LL-2]`) — DONE (AArch64: classified, not run)
 

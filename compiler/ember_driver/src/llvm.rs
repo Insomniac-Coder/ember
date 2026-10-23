@@ -294,7 +294,18 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         &retained,
         &libraries,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        // `[CG-LL-3]` — an instrumented link needs Clang's profile runtime, which some packagings
+        // of Clang leave out.
+        let error = e.to_string();
+        match ember_build::pgo() {
+            Some(ember_build::Pgo::Generate(_)) if error.contains("clang_rt.profile") => format!(
+                "{error}\n  = help: `--pgo-generate` links Clang's profile runtime, which this Clang lacks: {}",
+                if cfg!(windows) { "install LLVM's full package (`winget install --id LLVM.LLVM`)" } else { "on Debian or Ubuntu, `sudo apt install libclang-rt-dev`" }
+            ),
+            _ => error,
+        }
+    })?;
     super::mark("LLVM compile and link", "all modules");
     super::report(sink, request.map, options);
     if testing {
