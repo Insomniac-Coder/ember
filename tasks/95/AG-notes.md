@@ -60,6 +60,9 @@ captures are unknown is not, `E7004`): every call records what it gives a parame
 callback takes that callback's contract, to a fixpoint — so the C++ import's wrapper (which passes
 its parameter to the thunk) and a program's own forwarding function are checked at their callers,
 whichever body is checked first.
+A lambda's body is checked with no forwarding function of its own (its locals are numbered afresh),
+so a value a lambda passes on is one of unknown captures (`E7004`), and a body checked twice records
+its calls once.
 
 ### Tests
 
@@ -123,7 +126,8 @@ but still wrote `extend Stage:` with every member, so each method was the class'
   folders being compiled twice).
 - A record an earlier import of the build wrote is adopted members and all
   (`Imported.adopted`, `adopted_member`): a later import writes none of its methods, constructors
-  or operators. An entry of the later import's overlay that names only such members states nothing:
+  or operators (keyed by namespace and record name, so a record of the same name in another namespace keeps
+  its members). An entry of the later import's overlay that names only such members states nothing:
   `E5010`, naming the import whose entity it is.
 
 Tests: `tests/conformance/FFI-30/accept_one_cpp_header_imported_by_two_modules.em` (`classes.hpp`,
