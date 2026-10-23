@@ -1654,14 +1654,16 @@ fn explain_predicts_against_the_running_program() {
 }
 
 /// `[HR-7]` — a function an edit removes keeps its thunk, which would reach a stub; while a value
-/// of the function may be held (here by `main`'s own frame), or while old code that may call it
+/// of the function may be held (here by `main`'s own frame: `held` is a `fn(int) -> int`, which
+/// holds the function's address; `held = helper` would be `helper`'s own type, ODR-278, holding
+/// none), or while old code that may call it
 /// runs on (the frames live at a checkpoint), the thunk is reachable, so the reload is refused,
 /// naming it. `[DIA-23]` — by its Ember path, which the slot's symbol decodes to exactly: a
 /// transliterated name (`[MNG-3]`) as written, an instance with its arguments' hash (`[MNG-1]`).
 #[test]
 fn removing_a_function_whose_address_is_held_is_refused() {
     let v1 = "import std.hot\n\nfn helper(x: int) -> int:\n    return x + 1\n\nfn version() -> int:\n    return 1\n\n\
-              fn main():\n    held = helper\n    println(held(1))\n    hot.checkpoint()\n    println(version())\n";
+              fn main():\n    held: fn(int) -> int = helper\n    println(held(1))\n    hot.checkpoint()\n    println(version())\n";
     let v2 = "import std.hot\n\nfn version() -> int:\n    return 2\n\nfn main():\n    hot.checkpoint()\n    println(version())\n";
     let (run, reloads) = reload_run("reload-removed-held", RELOAD_ALL, v1, &[v2]);
     assert_eq!(reloads[0].exit, 0, "{}", reloads[0].stderr);

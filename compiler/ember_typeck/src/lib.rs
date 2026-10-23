@@ -36827,6 +36827,15 @@ impl<'a> Checker<'a> {
                             None => Expr { ty: self.common.error, kind: ExprKind::Error, span },
                         };
                     }
+                    // `[FN-6]` — `lib.offset`: a function reached through its module, as a value.
+                    if let Some(&def) = self.fn_ids.get(&qualified) {
+                        if !self.item_accessible(module, qualified) {
+                            self.report_item_not_visible(module, qualified, name.span);
+                            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                        }
+                        self.note_item_use(qualified, name.span);
+                        return self.named_function_value(def, name.name, span);
+                    }
                     if self.report_skipped_foreign(module, name.name, name.span) {
                         return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                     }
@@ -49713,16 +49722,17 @@ impl<'a> Checker<'a> {
     /// `[FN-6]` — a named function used as a value.
     ///
     /// "Functions are values of a unique zero-sized function type; they coerce
-    /// to `fn(A) -> R` (the generic callable bound)". The unique zero-sized
-    /// type is not modelled: this phase gives the value the `fn(A) -> R` type
-    /// directly, which is what every use of it wants and which loses only the
-    /// ability to distinguish two functions of one signature at compile time —
-    /// something `[TYP-26]`'s no-overloading rule already makes unnecessary.
-    /// A generic function has no single signature and is not a value
-    /// (`[TYP-18]` needs the arguments to pick one), so it is not offered.
+    /// to `fn(A) -> R` (the generic callable bound)": ODR-278's function item
+    /// (`fn_value_of`). A generic function has no single signature and is not
+    /// a value (`[TYP-18]` needs the arguments to pick one), so it is not offered.
     fn function_value(&mut self, name: Symbol, span: Span) -> Option<Expr> {
         let qualified = self.resolve_name(name);
         let def = *self.fn_ids.get(&qualified)?;
+        Some(self.named_function_value(def, name, span))
+    }
+
+    /// `[FN-6]` — the function `def`, named `name`, used as a value: `E2060` for a generic.
+    fn named_function_value(&mut self, def: DefId, name: Symbol, span: Span) -> Expr {
         let signature = &self.signatures[def.0 as usize];
         if !signature.generics.is_empty() {
             self.sink.emit(
@@ -49737,9 +49747,9 @@ impl<'a> Checker<'a> {
                 ))
                 .note("a generic is a recipe; each instantiation is its own function [TYP-16]"),
             );
-            return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
-        Some(self.fn_value_of(def, name, span))
+        self.fn_value_of(def, name, span)
     }
 
     /// The value of function `def` (`[FN-6]`), unless its `@borrows` lends

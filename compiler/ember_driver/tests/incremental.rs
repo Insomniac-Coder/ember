@@ -401,6 +401,10 @@ pub fn twice[F: fn(int) -> int](f: F, x: int) -> int:
 
 pub fn doubled(xs: Span[int]) -> int:
     return xs.iter().map(fn(x: ref int) -> int => x * 2).sum()
+
+pub fn shifted(x: int) -> int:
+    f = offset
+    return twice(f, x) + f(x)
 "#;
 
 const ITEMS_MAIN: &str = r#"
@@ -411,12 +415,12 @@ fn main():
     f = lib.offset
     k = fn(x: int) -> int => x * 3
     total = xs.iter().map(fn(x: ref int) -> int => lib.offset(x)).sum()
-    println(f(1), lib.twice(f, 2), lib.twice(k, 1), total, lib.doubled(xs.as_span()))
+    println(f(1), lib.twice(f, 2), lib.shifted(1), lib.twice(k, 1), total, lib.doubled(xs.as_span()))
 "#;
 
 /// ODR-278, `[BLD-1]` — a function's and a lambda's own types are kept with a module's checked form
 /// by the symbol that names the function, and the generics a kept module made for them (`twice`
-/// given `lib.offset`, `map` given a lambda) are made again by the same symbols: after each edit,
+/// given `lib.offset` or a lambda, `map` given a lambda) are made again by the same symbols: after each edit,
 /// every C unit is a clean build's, and the program prints what the clean build's prints.
 #[test]
 fn function_items_are_kept_across_builds_as_a_clean_build_makes_them() {

@@ -78,6 +78,45 @@ nothing (zero bytes).
 
 ## Done
 
+ODR-278 built as the ADR above says, in the checker, MIR, both backends, the evaluator and the
+codec. Tests (all pass, C and LLVM backends, the evaluator agreeing):
+
+* `EFF-1/accept_a_call_through_a_variable_holding_one_function_has_its_effects.em` — the owner's
+  example: `f = add_one` in a `@noalloc fast` while `make_list` allocates elsewhere (was `E4001`);
+  a lambda held in a local and a function given to a generic, `@noalloc` too.
+* `EFF-1/accept_an_adapter_holding_a_lambda_has_its_effects.em` — D-901's shared-adapter case,
+  renamed from `reject_a_plain_fn_value_of_a_shape_some_function_allocates_in.em`: `map` is made
+  per lambda, so the `@noalloc` adapter runs only its own lambda.
+* `EFF-1/reject_a_variable_holding_either_function_has_both_effects.em` — where a variable really
+  may hold the allocating function (a conditional, branches, a second assignment): `E4001` ×3.
+* `FN-6/accept_a_function_has_a_type_of_its_own_that_converts_to_its_shape.em` — the joins, the
+  conversions (a written parameter, a field, a list, a comparison with a callable value), a
+  destructuring assigned twice, a generic `T` given two functions, adapters given a function.
+* `FN-6/accept_a_function_reached_through_its_module_is_a_value.em`,
+  `FN-6/reject_a_private_function_of_another_module_is_no_value.em` (defect 1).
+* `CLO-1/accept_a_lambda_in_a_generic_adapter_is_called_directly.em` — `assert-c` in development
+  and release: no `ember_fn_value` and no native descriptor anywhere; and the LLVM IR test
+  `clo_1_a_lambda_in_an_adapter_is_called_directly` (`ember_driver/tests/llvm.rs`, debug, where
+  Ember inlines nothing): `Map.next` calls the lambda's symbol, no `fn_value` in the module.
+* `CLO-1/reject_a_place_holding_one_function_holds_no_other.em` — the new `E2020` and its help.
+* `LT-22/accept_a_function_given_by_name_has_its_own_provenance.em`; `LT-22/reject_…`,
+  `LT-23/reject_…` and `tests/ui/borrow/B14` (with `docs/errors/E3065.md`) now make their opaque
+  value from two functions (`chosen = bundle if … else crossed`): a function given by name is no
+  longer opaque, its own type naming it.
+* `CLO-13/reject_a_variable_assigned_by_destructuring_later_keeps_the_borrow_rule.em` (defect 2).
+* `ember_types` unit test `a_function_item_holds_nothing_and_meets_another_at_its_shape`;
+  `ember_driver/tests/incremental.rs` `function_items_are_kept_across_builds_as_a_clean_build_makes_them`
+  (items of another module's function and of lambdas, generics made for them, three edits: every
+  C unit the clean build's, the same output).
+* Changed expectations, each because a function given by name is no longer a function value:
+  `CLO-3/accept_a_function_argument_is_called_directly.em` (`apply`'s copy for `triple` has a new
+  instance hash, and the copy `apply` had for the shared type is gone: 2 definitions, was 4);
+  `HR-5/accept_a_call_goes_through_its_thunk.em` and `reload.rs`'s
+  `removing_a_function_whose_address_is_held_is_refused` hold a `fn(int) -> int` to make a value
+  of the function (`held = helper` holds no address now); `tests/run-pass/views_passed_as_two_
+  words.em` and its milestone likewise, plus a function given by name, which now splits its view
+  on Windows as one only ever called directly does.
+
 ## Not done
 
 ## Compiler changes
@@ -123,6 +162,31 @@ nothing (zero bytes).
 ## Measurements
 
 ## Defects found
+
+1. **A function reached through its module was not a value** (`f = lib.offset`: `E1010`, "`lib` is a
+   module, and what follows it is not one of its items", though `lib.offset(x)` called it). `[FN-6]`,
+   `[GRM-24]`. Fixed: the module path's item lookup (`math.PI`'s) takes a function too, visible as a
+   call is (`E1052` for a private one). `FN-6/accept_a_function_reached_through_its_module_is_a_value.em`,
+   `FN-6/reject_a_private_function_of_another_module_is_no_value.em` (support `FN-6/items/steps.em`).
+2. **`[CLO-13]`'s "assigned after" missed a destructuring assignment**: `(x, y) = (2, 3)` after
+   `f: fn() -> int = fn() => x` left `x` copied into `f`, which then gave 1 while `x` was 2 (the
+   difference a copy may never show). Fixed with ODR-278's scan of the body's assignments, which now
+   sees each name a destructuring target writes. `CLO-13/reject_a_variable_assigned_by_destructuring_
+   later_keeps_the_borrow_rule.em` (`E3026`; the baseline compiled it).
+3. **Not fixed — an effect estimate the C backend can exceed** (pre-existing for `void` fields and
+   empty structs; function items make it more frequent): Ember's layout gives a zero-sized field no
+   bytes, the C backend gives it one (C has no zero-sized member) plus padding, so a struct can be
+   larger in C than `TypeTable::layout` says. The effect analysis decides from the layout whether a
+   callable value's state fits its three words (`[CLO-10]`) and a job's state its slot (`[JOB-1]`),
+   while the C runtime decides by `sizeof`. Verified (`--emit c`): `it = (0..n).map(fn(x: int) ->
+   int => x * 2)`, then `owned fn() => drain(it) + k`: the environment is `{Map, int}`, 24 bytes to
+   the analysis (no `Alloc`), 32 in C (`Map` has `uint8_t f`), so `ember_fn_value_make` boxes it.
+   Narrow (a call through an owned callable value has every effect unless its type declares them,
+   `[EFF-2]`), but the creation's `Alloc` is missed. A closure naming a variable that holds a
+   function item captures nothing for it (built), which removes the common case. Options: (a) the C backend leaves
+   zero-sized members out of its structs (and their reads, writes and initialisers), as the LLVM
+   backend does, so the layouts agree and the bytes are saved too; (b) the analysis counts a
+   zero-sized field as C does (pessimistic for LLVM). Recommend (a), a C-backend change of its own.
 
 ## Spec questions
 

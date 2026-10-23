@@ -3636,6 +3636,10 @@ fn view_parameters_go_as_two_words_on_windows() {
         let split = format!("{count}(const unsigned char* _1_p, size_t _1_n, int64_t _2)");
         assert_eq!(c.stdout.contains(&split), cfg!(windows), "{cc}: count_spaces's text parameter:\n{}", c.stdout);
         assert!(!c.stdout.contains(&format!("{first}(const unsigned char*")), "{cc}: a function used as a value keeps its view whole");
+        // ODR-278 — a function given by name is its own type, called directly: it splits too.
+        let word = ember_branding::item_symbol("word_len");
+        let split = format!("{word}(const unsigned char* _1_p, size_t _1_n)");
+        assert_eq!(c.stdout.contains(&split), cfg!(windows), "{cc}: word_len's text parameter:\n{}", c.stdout);
     }
 }
 
