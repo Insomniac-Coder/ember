@@ -38,7 +38,7 @@ use ember_hir::{
 use ember_span::{FileId, Span, Symbol};
 use ember_types::{FpMode, 
     Bound, ClassDef, ClassId, ClassOpenness, CommonTypes, EnumDef, EnumId, FieldDef, FieldVis,
-    OverflowPolicy, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
+    OverflowPolicy, NewtypeDef, RangeDef, StructDef, StructId, Ty, TyKind, TypeTable, UintTy, VariantDef,
     FnParam, FnParamMode, int_max, ConstError, ConstNorm, ConstOp, LayoutAttrs,
 };
 
@@ -433,6 +433,16 @@ pub fn check(
     // count_t = c_int` in a module `import c` wrote), and the module list is in no dependency
     // order, so every module's aliases are resolved together, to a fixpoint.
     let mut aliases: Vec<Vec<&ast::TypeAlias>> = modules.iter().map(|loaded| pending_type_aliases(&loaded.module)).collect();
+    // `[FFI-8]` (ODR-249) — the aliases `@ffi(newtype)` makes nominal.
+    checker.newtype_aliases = modules
+        .iter()
+        .flat_map(|loaded| &loaded.module.items)
+        .filter_map(|item| match &item.kind {
+            ast::ItemKind::TypeAlias(decl) if item.attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("ffi")
+                && matches!(attr.args.as_slice(), [ast::AttrArg::Expr(expr)] if ffi_contract_word(expr).is_some_and(|word| word.is("newtype")))) => Some(decl.name.span),
+            _ => None,
+        })
+        .collect();
     loop {
         let mut progress = false;
         for (index, pending) in aliases.iter_mut().enumerate().rev() {
@@ -565,6 +575,8 @@ pub fn check(
         functions.extend(checker.check_instantiations(modules));
     }
     functions.extend(checker.take_some_forwarder_bodies());
+    // `[FFI-21]` (ODR-253) — every call is seen: what each `nullable` callback is given.
+    checker.check_nullable_callback_args();
     checker.publish_debug_writers(&functions);
     // IX.1 (ODR-241) — the comparing function of each type a `dyn` table of an interface requiring
     // `Eq` holds, by its symbol, for the backends.
@@ -1528,7 +1540,20 @@ struct ForeignCallbackDecl {
     slot: usize,
     mode: hir::FfiCallbackMode,
     threads: hir::ExportThreadPolicy,
+    /// `[FFI-21]` (ODR-253) — `nullable`: the caller passes an `Option` of a callable value, and
+    /// `None` gives C a null pointer and no user data.
+    nullable: bool,
     span: Span,
+}
+
+/// `[FFI-21]` (ODR-253) — what a call gives a parameter that is an `Option` of a callable value:
+/// something capturing values of this type (a lambda's environment; a callable value, whose
+/// captures are unknown), or the parameter (by place) of the function making the call, which passes
+/// its own on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CallableArg {
+    Captures(Ty, Span),
+    PassedOn(DefId, usize),
 }
 
 /// `[CLO-3]`, `[CLO-6]` — the signature a `fn(A) -> R` parameter may be called
@@ -3163,6 +3188,18 @@ struct Checker<'a> {
     foreign_outs: HashMap<DefId, Vec<(Symbol, Ty)>>,
     /// `[FFI-21]` — each foreign function's callbacks with user data, by its definition.
     foreign_callbacks: HashMap<DefId, Vec<ForeignCallbackDecl>>,
+    /// `[FFI-21]` (ODR-253) — the functions taking a `nullable` callback's `Option` of a callable
+    /// value, by the parameter's place in the callable signature: a foreign function's own, and a
+    /// function of a module the importer wrote that passes its parameter on to one (the C++
+    /// wrapper), so what the callable captures is checked where it is written.
+    nullable_callbacks: HashMap<DefId, Vec<(usize, ForeignCallbackDecl)>>,
+    /// `[FFI-8]` (ODR-249) — the type aliases written `@ffi(newtype)`, by their name's span.
+    newtype_aliases: HashSet<Span>,
+    /// The function whose body is being checked and its parameters' locals.
+    callback_body: Option<(DefId, Vec<LocalId>)>,
+    /// What each call gave a parameter that is an `Option` of a callable value: the callee, the
+    /// parameter, and the value (`check_nullable_callback_args`).
+    callable_value_args: Vec<(DefId, usize, CallableArg)>,
     /// `[FFI-8]` — the assignment target being checked when it stores into a field (`u.f = v`),
     /// which is no read of a union's field.
     union_store: Option<Span>,
@@ -3555,6 +3592,10 @@ impl<'a> Checker<'a> {
             foreign_c_results: HashMap::new(),
             foreign_outs: HashMap::new(),
             foreign_callbacks: HashMap::new(),
+            nullable_callbacks: HashMap::new(),
+            newtype_aliases: HashSet::new(),
+            callback_body: None,
+            callable_value_args: Vec::new(),
             union_store: None,
             closure_symbols: HashMap::new(),
             derive_requests: Vec::new(),
@@ -4154,6 +4195,8 @@ impl<'a> Checker<'a> {
                 // transparent, exactly as `[LEX-15a]` specifies.
                 let ty = match &decl.range {
                     Some(clause) => self.declare_range_type(decl, repr, clause),
+                    // `[FFI-8]` (ODR-249) — `@ffi(newtype)` makes it nominal.
+                    None if self.newtype_aliases.contains(&decl.name.span) => self.declare_newtype(decl, name, repr),
                     None => repr,
                 };
                 self.named_types.insert(name, ty);
@@ -4236,6 +4279,63 @@ impl<'a> Checker<'a> {
             self.named_types.insert(name, ty);
             self.foreign_type_contracts.insert(name, foreign_type_contract(&item.attrs, self.current_module));
         }
+    }
+
+    /// `[FFI-8]` (ODR-249) — `@ffi(newtype) type T = R`: a nominal type with `R`'s representation,
+    /// passed to C as the typedef is. `R` is a C type (`E5015` otherwise): a typedef's target is
+    /// plain data, so `T` is `Copy`.
+    fn declare_newtype(&mut self, decl: &ast::TypeAlias, name: Symbol, repr: Ty) -> Ty {
+        let c_type = self.types.is_ffi_safe(repr) && self.types.is_copy(repr)
+            && !matches!(self.types.kind(repr), TyKind::Void | TyKind::Never | TyKind::VaList | TyKind::Newtype(_));
+        if !c_type {
+            if repr != self.common.error {
+                let shown = self.types.display(repr);
+                self.sink.emit(
+                    Diagnostic::error(codes::E5015, decl.name.span, format!("`{shown}` is no C typedef's target, so `{}` cannot be a newtype of it", decl.name.name))
+                        .help("`@ffi(newtype)` makes a C `typedef` nominal: its value is a C scalar, pointer or `@layout(c)` struct")
+                        .note("a newtype is passed to C as its typedef is [FFI-8]"),
+                );
+            }
+            return repr;
+        }
+        let id = self.types.add_newtype(NewtypeDef { name, repr, span: decl.name.span });
+        self.types.intern(TyKind::Newtype(id))
+    }
+
+    /// `[FFI-8]` (ODR-249) — `x as T` and `t as R` between a newtype `T` and its typedef's
+    /// representation `R`: the same bits, read as the other type (no conversion is emitted). Any
+    /// other cast to or from a newtype is `E2020`, naming the two steps through `R`. `Err` gives the
+    /// operand back when neither side is a newtype.
+    fn newtype_cast(&mut self, inner: Expr, to: Ty, span: Span) -> Result<Expr, Expr> {
+        let newtype = |this: &Self, ty: Ty| match *this.types.kind(ty) {
+            TyKind::Newtype(id) => Some(this.types.newtype_def(id).repr),
+            _ => None,
+        };
+        let (from_repr, to_repr) = (newtype(self, inner.ty), newtype(self, to));
+        if from_repr.is_none() && to_repr.is_none() {
+            return Err(inner);
+        }
+        if inner.ty == to {
+            return Ok(inner);
+        }
+        if to_repr == Some(inner.ty) || from_repr == Some(to) {
+            return Ok(Expr { ty: to, kind: ExprKind::EraseRange(Box::new(inner)), span });
+        }
+        if inner.ty != self.common.error && to != self.common.error {
+            let (from, shown) = (self.types.display(inner.ty), self.types.display(to));
+            let through = to_repr.or(from_repr).map(|repr| self.types.display(repr)).unwrap_or_default();
+            let help = match (from_repr, to_repr) {
+                (None, Some(_)) => format!("convert to `{through}` first: `(x as {through}) as {shown}`"),
+                (Some(_), None) => format!("convert to `{through}` first: `(x as {through}) as {shown}`"),
+                _ => format!("convert through `{through}`"),
+            };
+            self.sink.emit(
+                Diagnostic::error(codes::E2020, span, format!("`{from}` cannot be cast to `{shown}` with `as`"))
+                    .help(help)
+                    .note("a newtype converts with `as` to and from its typedef's representation only [FFI-8]"),
+            );
+        }
+        Ok(Expr { ty: self.common.error, kind: ExprKind::Error, span })
     }
 
     /// `[RNG-1]` — build the nominal range type an `in` clause declares.
@@ -7937,6 +8037,8 @@ impl<'a> Checker<'a> {
         }
         let outer_names = self.comptime_outer_names.replace(outer_names);
         let outer_locals = std::mem::take(&mut self.locals);
+        // Its locals are numbered afresh: none is the enclosing function's parameter.
+        let outer_callback_body = self.callback_body.take();
         let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let outer_open = std::mem::take(&mut self.open);
         let outer_borrowed_params = std::mem::take(&mut self.borrowed_params);
@@ -7950,6 +8052,7 @@ impl<'a> Checker<'a> {
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, false);
         let value = check(self);
         let locals = std::mem::replace(&mut self.locals, outer_locals);
+        self.callback_body = outer_callback_body;
         self.scopes = outer_scopes;
         self.open = outer_open;
         self.borrowed_params = outer_borrowed_params;
@@ -9863,8 +9966,15 @@ impl<'a> Checker<'a> {
                     } else {
                         Vec::new()
                     };
-                    let token = callbacks.iter().any(|callback| callback.mode == hir::FfiCallbackMode::Retained)
-                        .then(|| self.foreign_callback_token(decl.name.span));
+                    // `[FFI-21]` (ODR-253) — a `nullable` one's token is an `Option`: `None` registers
+                    // nothing.
+                    let token = match callbacks.iter().find(|callback| callback.mode == hir::FfiCallbackMode::Retained) {
+                        Some(callback) => {
+                            let token = self.foreign_callback_token(decl.name.span);
+                            Some(if callback.nullable { self.option_of(token) } else { token })
+                        }
+                        None => None,
+                    };
                     let out_params: Vec<(Symbol, Ty)> = params.iter().filter(|(name, _, _, _)| outs.contains(name)).map(|(name, ty, _, _)| (*name, *ty)).collect();
                     let out_tys: Vec<Ty> = params.iter()
                         .filter_map(|(name, ty, _, _)| if outs.contains(name) || inout == Some(*name) {
@@ -10005,6 +10115,14 @@ impl<'a> Checker<'a> {
                         decl.abi.as_deref().or_else(|| has_attribute(&item.attrs, "export").then_some("C"))
                             .map(Symbol::intern)
                     } else { None };
+                    // `[FFI-21]` (ODR-253) — a `nullable` callback's `Option` is checked at each call.
+                    let nullable: Vec<(usize, ForeignCallbackDecl)> = callbacks.iter()
+                        .filter(|callback| callback.nullable)
+                        .filter_map(|callback| params.iter().position(|(name, ..)| *name == callback.param).map(|index| (index, callback.clone())))
+                        .collect();
+                    if !nullable.is_empty() {
+                        self.nullable_callbacks.insert(def, nullable);
+                    }
                     if !callbacks.is_empty() {
                         self.foreign_callbacks.insert(def, callbacks);
                     }
@@ -19993,6 +20111,7 @@ impl<'a> Checker<'a> {
                 }
                 params.push(Param { local, mode });
             }
+            self.begin_callback_body(def, &params);
 
             if self.in_static_safe
                 && (signature_params
@@ -21348,13 +21467,6 @@ impl<'a> Checker<'a> {
                 // lambda that captures nothing (`[FFI-21]`).
                 continue;
             };
-            if contract.nullable {
-                self.sink.emit(
-                    Diagnostic::error(codes::E0900, span, format!("a `nullable` callback with user data (`{name}`) is not implemented yet"))
-                        .note("a callback with `user_data` is always given; one with none may be `nullable` [FFI-21]"),
-                );
-                continue;
-            }
             let Some(&(_, data_ty, data_mode, data_span)) = params.iter().find(|(param, ..)| *param == data) else {
                 self.error(codes::E5002, span, format!("`user_data={data}` names no parameter of `{}`", decl.name.name));
                 continue;
@@ -21369,53 +21481,86 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let TyKind::Fn { params: c_params, ret, .. } = self.types.kind(c_fn).clone() else { unreachable!("a C function pointer") };
-            let slots: Vec<usize> = c_params.iter().enumerate()
-                .filter(|(_, param)| param.ty == data_ty && param.mode == FnParamMode::Borrow)
-                .map(|(slot, _)| slot)
-                .collect();
             let shown = self.types.display(data_ty);
-            let slot = match slots.as_slice() {
-                [slot] => *slot,
-                [] => {
-                    self.sink.emit(
-                        Diagnostic::error(codes::E5002, span, format!("the callback `{name}` takes no `{shown}` for its user data `{data}`"))
-                            .help(format!("C passes the user data back to the callback: declare its parameter `{shown}` at its place"))
-                            .note("the trampoline finds the callable at the user data [FFI-21]"),
-                    );
-                    continue;
+            // `[FFI-21]` (ODR-245) — `user_data=q@N` names the parameter that receives it; without
+            // `@N`, it is the callback's one parameter of its type.
+            let slot = match contract.user_data_slot {
+                Some(place) => {
+                    let fits = c_params.get(place - 1).is_some_and(|param| param.ty == data_ty && param.mode == FnParamMode::Borrow);
+                    if !fits {
+                        let what = match c_params.get(place - 1) {
+                            Some(param) => format!("is a `{}`", self.types.display(param.ty)),
+                            None => format!("does not exist: it takes {}", c_params.len()),
+                        };
+                        self.sink.emit(
+                            Diagnostic::error(codes::E5002, span, format!("parameter {place} of the callback `{name}` {what}, not the user data's `{shown}`"))
+                                .help("`@N` counts the callback's parameters from 1, as the C signature writes them")
+                                .note("C passes the user data back to the callback there [FFI-21]"),
+                        );
+                        continue;
+                    }
+                    place - 1
                 }
-                many => {
-                    self.sink.emit(
-                        Diagnostic::error(codes::E5002, span, format!("the callback `{name}` takes {} parameters of the user data's type `{shown}`, so which is `{data}` is not known", many.len()))
-                            .note("the user data is the callback's one parameter of its type; a contract that names it among several is not in this version [FFI-21]"),
-                    );
-                    continue;
+                None => {
+                    let slots: Vec<usize> = c_params.iter().enumerate()
+                        .filter(|(_, param)| param.ty == data_ty && param.mode == FnParamMode::Borrow)
+                        .map(|(slot, _)| slot)
+                        .collect();
+                    match slots.as_slice() {
+                        [slot] => *slot,
+                        [] => {
+                            self.sink.emit(
+                                Diagnostic::error(codes::E5002, span, format!("the callback `{name}` takes no `{shown}` for its user data `{data}`"))
+                                    .help(format!("C passes the user data back to the callback: declare its parameter `{shown}` at its place"))
+                                    .note("the trampoline finds the callable at the user data [FFI-21]"),
+                            );
+                            continue;
+                        }
+                        many => {
+                            let places: Vec<String> = many.iter().map(|slot| (slot + 1).to_string()).collect();
+                            self.sink.emit(
+                                Diagnostic::error(codes::E5002, span, format!("the callback `{name}` takes {} parameters of the user data's type `{shown}`, so which is `{data}` is not known", many.len()))
+                                    .help(format!("name the one that receives it: `user_data={data}@N`, `N` its place in the C signature ({})", places.join(" or ")))
+                                    .note("without `@N`, the user data is the callback's one parameter of its type [FFI-21]"),
+                            );
+                            continue;
+                        }
+                    }
                 }
             };
-            let bound = CallableBound {
-                params: c_params.iter().enumerate().filter(|(at, _)| *at != slot).map(|(_, param)| param.clone()).collect(),
-                ret,
-                once: contract.mode == hir::FfiCallbackMode::Once,
-                // A callable C keeps (`retained`) or calls later (`once`) is taken over: lent, it
-                // would leave C a pointer into the caller's frame (ODR-240 lends only what a call
-                // uses while it runs).
-                owned: contract.mode != hir::FfiCallbackMode::Borrowed,
-                latebound: false,
-                is_unsafe: false,
+            let callable_params: Vec<FnParam> = c_params.iter().enumerate().filter(|(at, _)| *at != slot).map(|(_, param)| param.clone()).collect();
+            let once = contract.mode == hir::FfiCallbackMode::Once;
+            let callable = if contract.nullable {
+                // `[FFI-21]` (ODR-253) — an `Option` of a callable value: `None` names no callable
+                // to make an instance for, so the callable is a value, called through its entry.
+                let value = self.types.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, once, send: false, params: callable_params, ret });
+                self.option_of(value)
+            } else {
+                let bound = CallableBound {
+                    params: callable_params,
+                    ret,
+                    once,
+                    // A callable C keeps (`retained`) or calls later (`once`) is taken over: lent, it
+                    // would leave C a pointer into the caller's frame (ODR-240 lends only what a call
+                    // uses while it runs).
+                    owned: contract.mode != hir::FfiCallbackMode::Borrowed,
+                    latebound: false,
+                    is_unsafe: false,
+                };
+                let generic = generics.len() as u32;
+                let generic_name = Symbol::intern(&format!("Callable{generic}"));
+                generics.push(GenericParam {
+                    name: generic_name,
+                    bounds: Vec::new(),
+                    callable: Some(bound),
+                    default: None,
+                    projection: None,
+                    count_op: None,
+                    bindings: Vec::new(),
+                    const_ty: None,
+                });
+                self.types.intern(TyKind::Param { index: generic, name: generic_name })
             };
-            let generic = generics.len() as u32;
-            let generic_name = Symbol::intern(&format!("Callable{generic}"));
-            let callable = self.types.intern(TyKind::Param { index: generic, name: generic_name });
-            generics.push(GenericParam {
-                name: generic_name,
-                bounds: Vec::new(),
-                callable: Some(bound),
-                default: None,
-                projection: None,
-                count_op: None,
-                bindings: Vec::new(),
-                const_ty: None,
-            });
             params[index].1 = callable;
             params[index].2 = if contract.mode == hir::FfiCallbackMode::Borrowed { Mode::Borrow } else { Mode::Owned };
             out.push(ForeignCallbackDecl {
@@ -21426,6 +21571,7 @@ impl<'a> Checker<'a> {
                 slot,
                 mode: contract.mode,
                 threads: contract.threads.unwrap_or_default(),
+                nullable: contract.nullable,
                 span,
             });
         }
@@ -21473,13 +21619,13 @@ impl<'a> Checker<'a> {
             );
             return;
         };
-        let _ = self.foreign_unregister(def, decl, destroys, true);
+        let _ = self.foreign_unregister(def, decl, attrs, destroys, true);
     }
 
     /// `[FFI-21]` — the `destroys(f)` that unregisters the `retained` callback of the function
     /// `def`: `f`'s C symbol and result, and what each of its parameters is given. With `report`,
     /// a mismatch is an error (`E5002`).
-    fn foreign_unregister(&mut self, def: DefId, decl: &ast::FnDecl, destroys: ast::Ident, report: bool) -> Option<(Symbol, Ty, Vec<(Symbol, Ty)>)> {
+    fn foreign_unregister(&mut self, def: DefId, decl: &ast::FnDecl, attrs: &[ast::Attribute], destroys: ast::Ident, report: bool) -> Option<(Symbol, Ty, Vec<(Symbol, Ty)>)> {
         let callbacks = self.foreign_callbacks.get(&def).cloned().unwrap_or_default();
         let retained = callbacks.iter().find(|callback| callback.mode == hir::FfiCallbackMode::Retained)?;
         let found = self.fn_ids.get(&self.qualified(destroys.name)).copied()
@@ -21495,24 +21641,35 @@ impl<'a> Checker<'a> {
             ast::ParamKind::Receiver { .. } => None,
         }).zip(self.declared_param_types(def, decl)).collect();
         let f_params: Vec<(Symbol, Ty)> = self.signatures[f.0 as usize].params.iter().map(|(name, ty, _, _)| (*name, *ty)).collect();
+        // `[FFI-11]` (ODR-246) — the registering call's result, which the token keeps: C's own
+        // result, a value C gave (not a status, which says only whether the call worked).
+        let c_result = self.foreign_c_results.get(&def).copied()
+            .filter(|&result| result != self.common.void && !ffi_status_result(attrs));
+        let kept = |this: &Self, ty: Ty| this.types.is_copy(ty) && this.types.is_ffi_safe(ty)
+            && !matches!(this.types.kind(ty), TyKind::Ptr { .. } | TyKind::Ref { .. });
         let mut ok = true;
         for &(name, ty) in &f_params {
             let given = written.iter().find(|(param, _)| *param == name);
             let fits = match given {
                 Some(&(param, _)) if param == retained.param => ty == retained.c_fn || self.option_some_payload(ty) == Some(retained.c_fn),
                 Some(&(param, _)) if param == retained.data => ty == retained.data_ty,
-                Some(&(_, written_ty)) => written_ty == ty && self.types.is_copy(ty) && self.types.is_ffi_safe(ty)
-                    && !matches!(self.types.kind(ty), TyKind::Ptr { .. } | TyKind::Ref { .. }),
-                None => false,
+                Some(&(_, written_ty)) => written_ty == ty && kept(self, ty),
+                // A number, a flag, a character or a C enum: an id or a handle C counts by.
+                None => c_result == Some(ty) && kept(self, ty)
+                    && matches!(self.types.kind(ty), TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Enum(_)),
             };
             if !fits {
                 ok = false;
                 if report {
                     let shown = self.types.display(ty);
+                    let result = match c_result {
+                        Some(result) => format!(", or the result it returns (a `{}`)", self.types.display(result)),
+                        None => String::new(),
+                    };
                     self.sink.emit(
                         Diagnostic::error(codes::E5002, destroys.span, format!("`{}`'s parameter `{name}: {shown}` is none of what `{}` passes it", destroys.name, decl.name.name))
-                            .help(format!("name each parameter of `{}` as `{}`'s callback `{}`, its user data `{}`, or a scalar parameter of the same type", destroys.name, decl.name.name, retained.param, retained.data))
-                            .note("the token's end calls it with what the registering call passed C; a pointer it was lent is not kept [FFI-21]"),
+                            .help(format!("name each parameter of `{}` as `{}`'s callback `{}`, its user data `{}`, or a scalar parameter of the same type{result}", destroys.name, decl.name.name, retained.param, retained.data))
+                            .note("the token's end calls it with what the registering call passed C and the result C gave back; a pointer it was lent is not kept [FFI-11], [FFI-21]"),
                     );
                 }
             }
@@ -21674,6 +21831,8 @@ impl<'a> Checker<'a> {
     /// then the result, a pointer, an integer or a float of its size, or a type by value.
     fn c_call_shape(&self, function: &Function) -> String {
         let shape = |ty: Ty| -> String {
+            // `[FFI-8]` (ODR-249) — a newtype is its typedef's representation to C.
+            let ty = self.types.newtype_repr(ty);
             let pointer = |ty: Ty| match self.types.kind(ty) {
                 TyKind::Ptr { .. } | TyKind::Ref { .. } | TyKind::Fn { .. } | TyKind::CStr => true,
                 TyKind::Enum(id) => self.types.option_niche(*id).is_some_and(|niche| {
@@ -21906,30 +22065,37 @@ impl<'a> Checker<'a> {
         let mut callbacks = Vec::new();
         for callback in self.foreign_callbacks.get(&def).cloned().unwrap_or_default() {
             let public_index = visible.iter().position(|(name, _, _, _)| *name == callback.param)?;
-            let callable = visible[public_index].1;
+            let given = visible[public_index].1;
             // The generic declaration itself has no wrapper: each instance has one.
-            if self.types.is_generic(callable) {
+            if self.types.is_generic(given) {
                 return None;
             }
+            // `[FFI-21]` (ODR-253) — a `nullable` one is an `Option` of a callable value.
+            let callable = if callback.nullable { self.option_some_payload(given)? } else { given };
             let closure = match *self.types.kind(callable) {
                 TyKind::Struct(id) => self.closure_calls.get(&id).and_then(|call| self.closure_symbols.get(&call.def).cloned()),
                 _ => None,
             };
             let unregister = if callback.mode == hir::FfiCallbackMode::Retained {
                 let destroys = ffi_destroys(attrs)?;
-                let (symbol, ret, params) = self.foreign_unregister(def, decl, destroys, false)?;
+                let (symbol, ret, params) = self.foreign_unregister(def, decl, attrs, destroys, false)?;
+                let own = |name: Symbol| decl.params.iter().any(|param| matches!(&param.kind, ast::ParamKind::Named { name: written, .. } if written.name == name));
                 let args = params.iter().map(|&(name, ty)| {
                     if name == callback.param {
                         Some(hir::FfiUnregisterArg::Entry)
                     } else if name == callback.data {
                         Some(hir::FfiUnregisterArg::Data)
-                    } else {
+                    } else if own(name) {
                         let public_index = visible.iter().position(|(slot, _, _, _)| *slot == name)?;
                         Some(hir::FfiUnregisterArg::Saved { public_index, ty })
+                    } else {
+                        // ODR-246 — the registering call's result.
+                        Some(hir::FfiUnregisterArg::Result { ty })
                     }
                 }).collect::<Option<Vec<_>>>()?;
                 let token = self.foreign_callback_token(callback.span);
-                Some(hir::FfiUnregister { symbol: symbol.to_string(), ret, args, params: params.iter().map(|(_, ty)| *ty).collect(), token })
+                let output = if callback.nullable { self.option_of(token) } else { token };
+                Some(hir::FfiUnregister { symbol: symbol.to_string(), ret, args, params: params.iter().map(|(_, ty)| *ty).collect(), token, output })
             } else {
                 None
             };
@@ -21942,6 +22108,7 @@ impl<'a> Checker<'a> {
                 data: callback.data_ty,
                 mode: callback.mode,
                 threads: callback.threads,
+                nullable: callback.nullable.then_some(given),
                 unregister,
             });
         }
@@ -22337,6 +22504,7 @@ impl<'a> Checker<'a> {
             }
             params.push(Param { local, mode });
         }
+        self.begin_callback_body(def, &params);
         if self.in_static_safe
             && (signature_params.iter().any(|(_, ty, _, _)| self.ty_contains_unsafe_cell(*ty))
                 || self.ty_contains_unsafe_cell(self.ret_ty))
@@ -23175,6 +23343,7 @@ impl<'a> Checker<'a> {
             }
             params.push(Param { local, mode });
         }
+        self.begin_callback_body(def, &params);
         if self.in_static_safe
             && (signature_params.iter().any(|(_, ty, _, _)| self.ty_contains_unsafe_cell(*ty))
                 || self.ty_contains_unsafe_cell(self.ret_ty))
@@ -34606,8 +34775,23 @@ impl<'a> Checker<'a> {
             return system;
         }
         let mut found = self.synth_with_expectation(expr, Some(expected));
-        while borrowed && found.ty != expected && self.box_inner(found.ty).is_some() {
-            found = self.read_box_through(found);
+        while borrowed && found.ty != expected {
+            if self.box_inner(found.ty).is_some() {
+                found = self.read_box_through(found);
+                continue;
+            }
+            // A reference to a `Box` is read through too, the reference first (`for b in boxes:
+            // f(b)` with `f(s: ref dyn Shape)`): `[TYP-14]` reads through both.
+            if let TyKind::Ref { inner, .. } = *self.types.kind(found.ty)
+                && self.box_inner(inner).is_some()
+                && inner != expected
+                && !matches!(*self.types.kind(expected), TyKind::Ref { inner: wanted, .. } if wanted == inner)
+            {
+                let span = found.span;
+                found = Expr { ty: inner, kind: ExprKind::Deref(Box::new(found)), span };
+                continue;
+            }
+            break;
         }
         let coerced = self.coerce(found, expected);
         self.warn_if_literal_loses_precision(expr, coerced.ty);
@@ -36805,7 +36989,20 @@ impl<'a> Checker<'a> {
 
             ast::ExprKind::Cast { expr: inner, ty } => {
                 let to = self.resolve_type(ty);
-                let inner = self.synth_committed(inner);
+                // `[FFI-8]` (ODR-249) — a newtype is made from its typedef's representation with
+                // `as`, which a literal takes as its type.
+                let inner = match *self.types.kind(to) {
+                    TyKind::Newtype(id) if self.types.is_numeric(self.types.newtype_def(id).repr) && matches!(
+                        unparenthesized(inner).kind, ast::ExprKind::Lit(_) | ast::ExprKind::Unary { .. }) => {
+                        let repr = self.types.newtype_def(id).repr;
+                        self.check_expr(inner, repr)
+                    }
+                    _ => self.synth_committed(inner),
+                };
+                let inner = match self.newtype_cast(inner, to, span) {
+                    Ok(cast) => return cast,
+                    Err(inner) => inner,
+                };
                 // `[ENM-3]` — a unit-only enum casts to an integer, because it
                 // is only its discriminant. The reverse needs `from_repr`,
                 // since not every integer names a variant.
@@ -37959,6 +38156,8 @@ impl<'a> Checker<'a> {
         let slots = self.call_argument_slots(name, args, &params);
         let (checked, slots, default_arg_locals) =
             self.check_call_with_defaults(def, name, args, &params, &slots, span, None, None);
+        // `[FFI-21]`, `[FFI-22]` (ODR-253) — what a `nullable` callback's callable value captures.
+        self.note_callable_value_args(def, &checked, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -41578,9 +41777,11 @@ impl<'a> Checker<'a> {
                                     // `[FFI-1]`, `[FFI-11]` — the function's thread rule.
                                     match rule {
                                         Err(()) => self.error(codes::E0104, attr.span, "`threads(…)` is `any`, `main` or `creator`"),
+                                        // ODR-247 — a word of a type's or a result's contract.
                                         Ok(hir::ExportThreadPolicy::Creator) => self.sink.emit(
-                                            Diagnostic::error(codes::E0900, attr.span, "`threads(creator)` on a function is not implemented yet")
-                                                .note("a function has no creator of its own; `threads(creator)` binds a callback, a `retained` parameter or a `returns_owned` result to the thread that made it [FFI-33b]"),
+                                            Diagnostic::error(codes::E5002, attr.span, "`threads(creator)` is a word of a type's or a result's contract, not a function's")
+                                                .help("write it where the object is made: `@ffi(threads(creator)) type T`, `result(returns_owned(destructor=f), threads(creator))`, or on a callback or a `retained` parameter")
+                                                .note("a function has no creator of its own; `threads(creator)` binds an object or a callback to the thread that made it [FFI-1], [FFI-33b]"),
                                         ),
                                         Ok(_) => {}
                                     }
@@ -41594,6 +41795,15 @@ impl<'a> Checker<'a> {
                                         self.error(codes::E0104, attr.span, "duplicate `destroys(…)` in `@ffi`");
                                     }
                                     saw_destroys = true;
+                                } else if let ast::AttrArg::Expr(expr) = arg
+                                    && (ffi_contract_word(expr).is_some_and(|word| word.is("handle"))
+                                        || matches!(&expr.kind, ast::ExprKind::Call { callee, .. } if ffi_contract_word(callee).is_some_and(|word| word.is("handle")))) {
+                                    // ODR-247 — `handle` is a word of a type's or a result's contract.
+                                    self.sink.emit(
+                                        Diagnostic::error(codes::E5002, attr.span, "`handle` is a word of a type's or a result's contract, not a function's")
+                                            .help("write it on the type the handle is: `@ffi(handle) type T`")
+                                            .note("a function is not a handle; what it takes or returns may be [FFI-1], [FFI-11]"),
+                                    );
                                 } else if let ast::AttrArg::Expr(expr) = arg
                                     && ffi_contract_word(expr).is_some_and(|word| word.is("unsafe")) {
                                     // `[FFI-11]` — `@ffi(unsafe)`: the function is left unsafe to call.
@@ -41663,6 +41873,24 @@ impl<'a> Checker<'a> {
         for attr in &item.attrs {
             if matches!(&item.kind, ast::ItemKind::Fn(decl) if !decl.is_foreign_decl)
                 && attr.path.len() == 1 && attr.path[0].name.is("export") {
+                continue;
+            }
+            // `[FFI-8]` (ODR-249) — `@ffi(newtype)` on a typedef's alias.
+            if let ast::ItemKind::TypeAlias(alias) = &item.kind
+                && attr.path.len() == 1 && attr.path[0].name.is("ffi") {
+                let newtype = matches!(attr.args.as_slice(), [ast::AttrArg::Expr(expr)] if ffi_contract_word(expr).is_some_and(|word| word.is("newtype")));
+                if !newtype {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, attr.span, "`@ffi` on a type alias takes `newtype` alone")
+                            .note("`@ffi(newtype) type T = R` makes a C typedef a nominal type [FFI-8]"),
+                    );
+                } else if alias.range.is_some() || !alias.generics.is_empty() || alias.value.is_none() {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, attr.span, "`@ffi(newtype)` makes a plain alias of a C type nominal")
+                            .help("write `@ffi(newtype) type T = R`, with no type parameters and no `in` clause")
+                            .note("a newtype has its typedef's representation [FFI-8]"),
+                    );
+                }
                 continue;
             }
             // `[MONO-7]` — built on a generic function; on a type, a method or anything else the
@@ -42200,6 +42428,7 @@ impl<'a> Checker<'a> {
         let slots = self.call_argument_slots(qualified, args, &params);
         let (checked, slots, default_arg_locals) =
             self.check_call_with_defaults(def, qualified, args, &params, &slots, span, None, None);
+        self.note_callable_value_args(def, &checked, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -42460,6 +42689,7 @@ impl<'a> Checker<'a> {
         let slots = self.call_argument_slots(name.name, args, &params);
         let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, None, Some(owner));
+        self.note_callable_value_args(def, &checked, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -42581,6 +42811,7 @@ impl<'a> Checker<'a> {
         let slots = self.call_argument_slots(name.name, args, &params);
         let (checked, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, None, Some(owner));
+        self.note_callable_value_args(def, &checked, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -42906,6 +43137,17 @@ impl<'a> Checker<'a> {
     /// silence. It is rejected here, where the type alone answers the
     /// question and no flow analysis is needed.
     fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) -> bool {
+        self.reject_shared_ref_access(place, span, false)
+    }
+
+    /// `[CLO-2]`, `[BRW-1]` — a call of an owned callable value reached through a shared
+    /// reference (`for handler in handlers: handler(e)`): it may write its captured state, so it
+    /// is called from a mutable place, and the help says how to borrow it so.
+    fn reject_call_through_shared_ref(&mut self, callee: &Expr, span: Span) -> bool {
+        self.reject_shared_ref_access(callee, span, true)
+    }
+
+    fn reject_shared_ref_access(&mut self, place: &Expr, span: Span, call: bool) -> bool {
         let mut current = place;
         loop {
             // D-747, `[FN-9]` — a class object's field is written through its handle, however the
@@ -42930,7 +43172,9 @@ impl<'a> Checker<'a> {
                 // reference is never re-pointed (ADR-010): `ref mut` would write `v` into what `r`
                 // refers to. The value it means is a copy or an index.
                 let rebinding = matches!(&place.kind, ExprKind::Deref(inner) if matches!(inner.kind, ExprKind::Local(_)));
-                let help = if rebinding {
+                let help = if call {
+                    "a callable value may change what it captured, so it is called from a mutable place [CLO-2]: borrow it as `ref mut`, and iterate a collection of them with `.iter_mut()` (`for f in fs.iter_mut():`)"
+                } else if rebinding {
                     "a reference is not pointed elsewhere: this writes through it, into what it refers to; to keep another value, keep a copy of it (`.clone()`), or its index"
                 } else {
                     "take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference"
@@ -45924,6 +46168,7 @@ impl<'a> Checker<'a> {
         let (values, slots, default_arg_locals) = self.check_call_with_defaults(
             def, name.name, args, &params, &slots, span, Some(checked[0].ty), Some(owner));
         checked.extend(values);
+        self.note_callable_value_args(def, &checked, span);
         Expr {
             ty: ret,
             kind: ExprKind::Call {
@@ -46460,7 +46705,7 @@ impl<'a> Checker<'a> {
         if !stateless && !once && is_place(&callee.kind) {
             if !self.is_lent_callable(&callee) {
                 self.reject_readonly_write(&callee, span);
-                if !self.reject_write_through_shared_ref(&callee, span) {
+                if !self.reject_call_through_shared_ref(&callee, span) {
                     self.reject_borrowed_parameter_write(&callee, span, false);
                 }
             }
@@ -46993,6 +47238,8 @@ impl<'a> Checker<'a> {
         env: Option<(Symbol, Ty, Mode, Span)>,
     ) -> (Block, Ty, Vec<LocalDecl>, CaptureWatch) {
         let outer_locals = std::mem::take(&mut self.locals);
+        // Its locals are numbered afresh: none is the enclosing function's parameter.
+        let outer_callback_body = self.callback_body.take();
         // `[STD-19]` — the known-numbers rule holds in a closure as in a
         // function: what an earlier check of this body found it changes is
         // not known.
@@ -47109,6 +47356,7 @@ impl<'a> Checker<'a> {
         let keys: Vec<(Span, Option<Symbol>)> = written.into_iter().map(|local| self.known_key(local)).collect();
         self.lambda_changed.entry(body_span).or_default().extend(keys);
         let locals = std::mem::replace(&mut self.locals, outer_locals);
+        self.callback_body = outer_callback_body;
         self.open = outer_open;
         self.scopes = outer_scopes;
         self.borrowed_params = outer_borrowed_params;
@@ -50826,6 +51074,90 @@ impl<'a> Checker<'a> {
             refused = true;
         }
         refused
+    }
+
+    /// `[FFI-21]` (ODR-253) — the function whose body is about to be checked, and its parameters:
+    /// one it passes on to a `nullable` callback is checked where the function is called.
+    fn begin_callback_body(&mut self, def: DefId, params: &[Param]) {
+        self.callback_body = Some((def, params.iter().map(|param| param.local).collect()));
+    }
+
+    /// `[FFI-21]`, `[FFI-22]` (ODR-253) — what a call to `callee` (`args` in parameter order) gives
+    /// each parameter that is an `Option` of a callable value, kept until every body is checked
+    /// (`check_nullable_callback_args`): which function's parameter takes a `nullable` callback is
+    /// known only then, the callee's own or one it passes its parameter on to. `None` and `Some` of
+    /// a function capture nothing; `Some` of a lambda captures what its environment holds; a
+    /// parameter of the function being checked is passed on; anything else's captures are unknown.
+    fn note_callable_value_args(&mut self, callee: DefId, args: &[Expr], span: Span) {
+        for (index, arg) in args.iter().enumerate() {
+            // A borrowed `Option` is passed by its address, and a borrowed parameter read through it.
+            let mut value = arg;
+            while let ExprKind::Cast { expr: inner, .. } | ExprKind::Widen { expr: inner, .. } | ExprKind::Ref { place: inner, .. }
+                | ExprKind::Deref(inner) = &value.kind {
+                value = inner;
+            }
+            let option = match *self.types.kind(value.ty) {
+                TyKind::Ref { inner, .. } => inner,
+                _ => value.ty,
+            };
+            let Some(payload_ty) = self.option_some_payload(option)
+                .filter(|&payload| matches!(self.types.kind(payload), TyKind::Fn { abi: None, stateless: false, .. })) else { continue };
+            let at = if arg.span == Span::DUMMY { span } else { arg.span };
+            let given = match &value.kind {
+                ExprKind::EnumLit { fields, .. } if fields.is_empty() => continue,
+                ExprKind::EnumLit { fields, .. } if fields.len() == 1 => {
+                    let mut inner = &fields[0];
+                    while let ExprKind::Cast { expr: next, .. } | ExprKind::Widen { expr: next, .. } = &inner.kind {
+                        inner = next;
+                    }
+                    match &inner.kind {
+                        // A lambda made a callable value: what it captures.
+                        ExprKind::MakeCallable { env, .. } => CallableArg::Captures(env.ty, at),
+                        // A function captures nothing.
+                        ExprKind::FnValue(_) => continue,
+                        _ if matches!(self.types.kind(inner.ty), TyKind::Fn { stateless: true, .. }) => continue,
+                        _ => CallableArg::Captures(payload_ty, at),
+                    }
+                }
+                ExprKind::Local(local) => match self.callback_body.as_ref().and_then(|(def, params)| params.iter().position(|param| param == local).map(|at| (*def, at))) {
+                    Some((def, parameter)) => CallableArg::PassedOn(def, parameter),
+                    None => CallableArg::Captures(payload_ty, at),
+                },
+                _ => CallableArg::Captures(payload_ty, at),
+            };
+            // A lambda's body is checked more than once; its calls are recorded once.
+            if !self.callable_value_args.contains(&(callee, index, given)) {
+                self.callable_value_args.push((callee, index, given));
+            }
+        }
+    }
+
+    /// `[FFI-21]`, `[FFI-22]` (ODR-253) — once every body is checked: each function parameter that
+    /// passes its `Option` of a callable value on to a `nullable` callback takes that callback's
+    /// contract, and what each call gave such a parameter is checked as the callback's argument
+    /// (`foreign_callback_refused`): a lambda's captures, or a value of unknown captures.
+    fn check_nullable_callback_args(&mut self) {
+        let args = std::mem::take(&mut self.callable_value_args);
+        loop {
+            let mut grew = false;
+            for (callee, index, given) in &args {
+                let CallableArg::PassedOn(def, parameter) = *given else { continue };
+                let Some(callback) = self.nullable_callbacks.get(callee).and_then(|callbacks| callbacks.iter().find(|(at, _)| at == index)).map(|(_, callback)| callback.clone()) else { continue };
+                let entry = self.nullable_callbacks.entry(def).or_default();
+                if !entry.iter().any(|(at, _)| *at == parameter) {
+                    entry.push((parameter, callback));
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        for (callee, index, given) in args {
+            let CallableArg::Captures(ty, span) = given else { continue };
+            let Some(callback) = self.nullable_callbacks.get(&callee).and_then(|callbacks| callbacks.iter().find(|(at, _)| *at == index)).map(|(_, callback)| callback.clone()) else { continue };
+            self.foreign_callback_refused(ty, span, &callback);
+        }
     }
 
     /// `[JOB-2]` — `jobs.submit(f)`. As `thread.spawn`'s function, `f` may outlive every local
@@ -59358,11 +59690,24 @@ fn ffi_threads_word(expr: &ast::Expr) -> Option<Result<hir::ExportThreadPolicy, 
 struct FfiCallbackContract {
     mode: hir::FfiCallbackMode,
     user_data: Option<Symbol>,
+    /// `[FFI-21]` (ODR-245) — `user_data=q@N`: the callback's `N`th parameter (1-based, as in the C
+    /// signature) receives the user data.
+    user_data_slot: Option<usize>,
     nullable: bool,
     threads: Option<hir::ExportThreadPolicy>,
 }
 
-/// `[FFI-21]` — `param(p, callback(borrowed | once | retained[, user_data=q])[, nullable]
+/// `[FFI-21]` (ODR-245) — the user data a `user_data=` word names, and with `q@N` the callback
+/// parameter that receives it (1-based). `Err` for an `@N` that is not a parameter's place.
+fn ffi_user_data_word(word: Symbol) -> Result<(Symbol, Option<usize>), String> {
+    let Some((name, place)) = word.as_str().split_once('@') else { return Ok((word, None)) };
+    match place.parse::<usize>() {
+        Ok(place) if place >= 1 => Ok((Symbol::intern(name), Some(place))),
+        _ => Err(format!("`user_data={word}`: the callback's parameters are counted from 1, as in the C signature")),
+    }
+}
+
+/// `[FFI-21]` — `param(p, callback(borrowed | once | retained[, user_data=q[@N]])[, nullable]
 /// [, threads(…)])`: the parameter and its contract, or why the clause is not one. `None` when the
 /// clause has no `callback(…)` word.
 fn ffi_callback_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, Result<FfiCallbackContract, String>)> {
@@ -59379,14 +59724,18 @@ fn ffi_callback_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, Result<FfiCallb
         let ast::ExprKind::Call { args: inner, .. } = &args[callback].value.kind else { unreachable!("a callback word") };
         let mut mode = None;
         let mut user_data = None;
+        let mut user_data_slot = None;
         for item in inner {
             match &item.name {
                 Some(key) if key.name.is("user_data") => {
                     if user_data.is_some() {
                         return Err("`callback(…)` names its `user_data` once".to_string());
                     }
-                    user_data = Some(ffi_contract_word(&item.value)
-                        .ok_or_else(|| "`user_data=` names the parameter that carries the callback's data".to_string())?);
+                    let word = ffi_contract_word(&item.value)
+                        .ok_or_else(|| "`user_data=` names the parameter that carries the callback's data".to_string())?;
+                    let (name, slot) = ffi_user_data_word(word)?;
+                    user_data = Some(name);
+                    user_data_slot = slot;
                 }
                 Some(key) => return Err(format!("`callback(…)` takes no `{}=`: it takes `borrowed`, `once` or `retained`, and `user_data=p`", key.name)),
                 None => {
@@ -59404,7 +59753,7 @@ fn ffi_callback_param_arg(arg: &ast::AttrArg) -> Option<(Symbol, Result<FfiCallb
             }
         }
         let mode = mode.ok_or_else(|| "`callback(…)` says how long C keeps it: `borrowed`, `once` or `retained`".to_string())?;
-        let mut contract = FfiCallbackContract { mode, user_data, nullable: false, threads: None };
+        let mut contract = FfiCallbackContract { mode, user_data, user_data_slot, nullable: false, threads: None };
         for (index, word) in args.iter().enumerate().skip(1) {
             if index == callback {
                 continue;

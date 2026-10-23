@@ -295,6 +295,7 @@ fn collect_strong_targets(
         | TyKind::Span { .. }
         | TyKind::Opaque(_)
         | TyKind::Range(_)
+        | TyKind::Newtype(_)
         | TyKind::Ref { .. }
         | TyKind::Ptr { .. }
         | TyKind::Fn { .. }
@@ -374,6 +375,7 @@ fn collect_weak_targets(
         | TyKind::Class(_)
         | TyKind::ClassInterface(_)
         | TyKind::Range(_)
+        | TyKind::Newtype(_)
         | TyKind::Ref { .. }
         | TyKind::Ptr { .. }
         | TyKind::Fn { .. }
@@ -442,6 +444,7 @@ fn contains_unknown_owner_inner(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty
         | TyKind::Opaque(_)
         | TyKind::Class(_)
         | TyKind::Range(_)
+        | TyKind::Newtype(_)
         | TyKind::Ref { .. }
         | TyKind::Ptr { .. }
         | TyKind::Fn { .. }

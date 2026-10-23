@@ -47,10 +47,9 @@
         "XVI"
       ],
       "rules": 633,
-      "done": 630,
+      "done": 631,
       "missing": [
         "FFI-11",
-        "FFI-8",
         "GRM-28"
       ]
     },
@@ -60,10 +59,9 @@
         "Annex B"
       ],
       "rules": 692,
-      "done": 686,
+      "done": 687,
       "missing": [
         "FFI-11",
-        "FFI-8",
         "GRM-28",
         "HR-1",
         "HR-24",

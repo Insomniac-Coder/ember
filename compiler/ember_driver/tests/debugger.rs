@@ -83,6 +83,13 @@ fn waiver() -> Option<String> {
     waivers.get(host()).and_then(|reason| reason.as_str()).map(str::to_string)
 }
 
+/// The folder of `program`, where cdb is to find its program database: never a symbol cache's,
+/// since a build whose code is the same as an earlier one's has its program database's signature
+/// (`/Brepro`), and a cached one of another build would be taken for it.
+fn beside(program: &Path) -> &Path {
+    program.parent().expect("the program is in a folder")
+}
+
 /// The session's commands, and its output: stop at the line, list the locals, go on to the
 /// line's second turn and print `sum`, then step.
 fn session(debugger: Debugger, path: &Path, program: &Path, source: &str) -> String {
@@ -93,7 +100,7 @@ fn session(debugger: Debugger, path: &Path, program: &Path, source: &str) -> Str
             // as `Matched: module!function+offset`: as a cdb user does, the breakpoint goes on the
             // first, the line's start.
             let line = format!("`{source}:{STOP_LINE}`");
-            let probe = Command::new(path).args(["-lines", "-c", &format!(".lines -e; bu {line}; q")]).arg(program).output().expect("the debugger runs");
+            let probe = Command::new(path).args(["-lines", "-y"]).arg(beside(program)).args(["-c", &format!(".lines -e; bu {line}; q")]).arg(program).output().expect("the debugger runs");
             let probe = String::from_utf8_lossy(&probe.stdout).into_owned();
             let location = match probe.contains("Ambiguous symbol error") {
                 true => probe.lines().find_map(|text| text.strip_prefix("Matched: ")).and_then(|text| text.split_whitespace().next()).map(str::to_string).unwrap_or(line),
@@ -104,7 +111,7 @@ fn session(debugger: Debugger, path: &Path, program: &Path, source: &str) -> Str
             let script = format!(
                 ".lines -e; l+t; l+s; bu {location}; g; .printf \"MARK%d\\n\", 1; .frame; dv; .printf \"MARK%d\\n\", 2; g; dv sum; .printf \"MARK%d\\n\", 3; p; .frame; .printf \"MARK%d\\n\", 4; q"
             );
-            Command::new(path).args(["-lines", "-c", &script]).arg(program).output()
+            Command::new(path).args(["-lines", "-y"]).arg(beside(program)).args(["-c", &script]).arg(program).output()
         }
         Debugger::Gdb => Command::new(path)
             .args(["-batch", "-nx", "-iex", "set auto-load safe-path /"])
@@ -131,6 +138,54 @@ fn between<'a>(output: &'a str, from: &str, to: &str) -> &'a str {
     let start = output.find(from).unwrap_or_else(|| panic!("the session never reached {from}:\n{output}"));
     let rest = &output[start + from.len()..];
     &rest[..rest.find(to).unwrap_or(rest.len())]
+}
+
+/// The line of `result = total(numbers)`, where `numbers` is set.
+const NUMBERS_LINE: u32 = 9;
+
+/// `[CG-C-9]` (ODR-178) — with the build's `.natvis`, the debugger shows a collection held directly
+/// in a local as its elements, of their type: the local is its type's own C struct, which the
+/// `.natvis` names. Visual Studio's engine (`cdb`'s `dx`) only: the GDB and LLDB scripts are read
+/// by `build_writes_debugger_visualisers_beside_the_program`.
+#[test]
+fn a_collection_held_in_a_local_shows_its_elements() {
+    let Some((Debugger::Cdb, path)) = find_debugger() else {
+        eprintln!("the natvis session needs cdb (Windows): {}", install_hint());
+        return;
+    };
+    let dir = temporary_directory("debugger-natvis");
+    let source_name = format!("count.{}", ember_branding::SOURCE_EXT);
+    std::fs::write(dir.join(&source_name), PROGRAM).expect("the program is written");
+    let out = dir.join("out");
+    let built = Command::new(EMBER)
+        .args(["build", &source_name, "--profile", "debug", "--out-dir", &out.to_string_lossy()])
+        .current_dir(&dir)
+        .output()
+        .expect("ember runs");
+    assert!(built.status.success(), "the build failed:\n{}", String::from_utf8_lossy(&built.stderr));
+    let bin = out.join("debug").join("bin");
+    let program = bin.join(format!("count{}", std::env::consts::EXE_SUFFIX));
+    let natvis = bin.join("count.natvis");
+    assert!(natvis.is_file(), "no .natvis beside the program in {}", bin.display());
+    let script = format!(
+        ".lines -e; .nvload {}; bu `{source_name}:{NUMBERS_LINE}`; g; .printf \"MARK%d\\n\", 1; dx -r1 numbers; .printf \"MARK%d\\n\", 2; q",
+        natvis.display()
+    );
+    let output = Command::new(&path)
+        .args(["-lines", "-y"])
+        .arg(beside(&program))
+        .args(["-c", &script])
+        .arg(&program)
+        .output()
+        .expect("the debugger runs");
+    let output = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)).replace("\r\n", "\n");
+    let shown = between(&output, "MARK1", "MARK2");
+    for (index, value) in [(0, 3), (1, 4), (2, 5)] {
+        let element = shown.lines().any(|line| line.trim_start().starts_with(&format!("[{index}]")) && line.contains(&format!(": {value}")));
+        assert!(element, "cdb does not show `numbers[{index}]` as {value}:\n{shown}\n(the whole session:\n{output})");
+    }
+    // Its length, which cdb writes in hexadecimal.
+    assert!(shown.contains("numbers") && shown.contains("[0x3]"), "cdb does not show `numbers`'s length:\n{shown}");
 }
 
 #[test]

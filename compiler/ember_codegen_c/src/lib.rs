@@ -363,6 +363,7 @@ fn emit_with(
     let make = |unit: Option<FpMode>| -> Emitter<'_> {
     let type_namespace = if library_mode { package_type_namespace(package_name) } else { String::new() };
     let (order, structural) = plan_types(types, &type_namespace);
+    let wrappers = collection_wrappers(bodies, types, &type_namespace);
     let usize_ty = types
         .all()
         .find(|(_, k)| matches!(k, TyKind::Uint(UintTy::Usize)))
@@ -490,6 +491,7 @@ fn emit_with(
             Vec::new()
         },
         mangled_types: std::cell::RefCell::new(BTreeMap::new()),
+        collection_wrappers: wrappers,
         array_helpers: std::cell::RefCell::new(Vec::new()),
         global_allocator: None,
         clone_fns: bodies
@@ -537,6 +539,8 @@ fn emit_with(
             foreign_declarations.push_str(&format!("{}* {init}_static(void);\n", emitter.c_type(*ty)));
         }
         emitter.out = emitter.out.replace(FOREIGN_STATIC_DECLARATIONS, &foreign_declarations);
+        let wrappers = emitter.collection_wrapper_definitions();
+        emitter.out = emitter.out.replace(COLLECTION_WRAPPERS, &wrappers);
         if emitter.unit.is_none() {
             let definitions = emitter.lazy_static_definitions(&lazy_statics);
             emitter.out.push_str(&definitions);
@@ -948,6 +952,10 @@ struct Emitter<'a> {
     /// `[MNG-1]` — each type's mangled form (`TypeTable::mangled`), made once: a type is named
     /// wherever a value of it is.
     mangled_types: std::cell::RefCell<BTreeMap<TypeNode, String>>,
+    /// `[CG-C-9]` (ODR-178) — each collection type a local holds (`Array[T]`, `String`, `Span[T]`,
+    /// `MutSpan[T]`), with the C struct of its own a local of it is declared as
+    /// (`collection_wrappers`).
+    collection_wrappers: BTreeMap<Ty, String>,
 }
 
 struct NativeFnValue {
@@ -959,6 +967,8 @@ struct NativeFnValue {
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
 const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
 const FOREIGN_STATIC_DECLARATIONS: &str = "/* @@foreign-static-declarations@@ */";
+/// Replaced, once every body has been emitted, by the collection locals' structs (`[CG-C-9]`).
+const COLLECTION_WRAPPERS: &str = "/* @@collection-wrappers@@ */";
 
 /// Replaced the same way by the D-187 equality-function prototypes.
 const EQ_FN_PROTOTYPES: &str = "/* @@eq-fn-prototypes@@ */";
@@ -1475,6 +1485,7 @@ impl Emitter<'_> {
         self.plan_reload_slots(bodies);
         self.plan_frame_layouts(bodies);
         self.emit_type_declarations();
+        self.line(COLLECTION_WRAPPERS);
         self.line(FOREIGN_STATIC_DECLARATIONS);
         self.collect_virtual_methods(bodies);
         self.collect_interface_methods(bodies);
@@ -4947,6 +4958,7 @@ impl Emitter<'_> {
             | TyKind::Span { .. }
             | TyKind::Opaque(_)
             | TyKind::Range(_)
+            | TyKind::Newtype(_)
             | TyKind::Ref { .. }
             | TyKind::Ptr { .. }
             | TyKind::Fn { .. }
@@ -6435,7 +6447,20 @@ impl Emitter<'_> {
                 fields.push(format!("{} saved{public_index}", self.c_type(*ty)));
             }
         }
+        // ODR-246 — C's result, written once the registering call returns.
+        if let Some(ty) = Self::ffi_callback_result(callback) {
+            fields.push(format!("{} result", self.c_type(ty)));
+        }
         Some((format!("{}_record", ffi_callback_entry(&body.symbol, index)), fields))
+    }
+
+    /// `[FFI-11]` (ODR-246) — the type of the registering call's result, when `destroys(f)` is
+    /// given it.
+    fn ffi_callback_result(callback: &FfiCallback) -> Option<Ty> {
+        callback.unregister.iter().flat_map(|unregister| &unregister.args).find_map(|arg| match arg {
+            FfiUnregisterArg::Result { ty } => Some(*ty),
+            _ => None,
+        })
     }
 
     /// `[FFI-21]` — the trampoline C calls for callback `index` of wrapper `body`, and for a
@@ -6555,6 +6580,7 @@ impl Emitter<'_> {
             FfiUnregisterArg::Entry => format!("({}){entry}", self.c_type(*ty)),
             FfiUnregisterArg::Data => format!("({})(uintptr_t)_data", self.c_type(*ty)),
             FfiUnregisterArg::Saved { public_index, .. } => format!("_record->saved{public_index}"),
+            FfiUnregisterArg::Result { .. } => "_record->result".to_string(),
         }).collect();
         let parameters: Vec<String> = unregister.params.iter().map(|ty| self.c_type(*ty)).collect();
         let parameters = if parameters.is_empty() { "void".to_string() } else { parameters.join(", ") };
@@ -6579,13 +6605,29 @@ impl Emitter<'_> {
         let (_, local) = body.args().nth(callback.public_index).expect("the callback's parameter");
         let arg = &args[callback.public_index];
         let by_address = matches!(self.types.kind(local.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
-        let (address, value) = if by_address { (arg.clone(), format!("(*{arg})")) } else { (format!("&{arg}"), arg.clone()) };
+        let (mut address, mut value) = if by_address { (arg.clone(), format!("(*{arg})")) } else { (format!("&{arg}"), arg.clone()) };
+        // `[FFI-21]` (ODR-253) — a `nullable` one: whether the caller passed `Some`, and its callable.
+        let some = callback.nullable.map(|option| {
+            let TyKind::Enum(id) = *self.types.kind(option) else { unreachable!("a nullable callback is an `Option`") };
+            let def = self.types.enum_def(id);
+            let (some, discriminant) = def.variants.iter().enumerate().find(|(_, variant)| variant.fields.len() == 1)
+                .map(|(at, variant)| (at, variant.discriminant)).expect("`Option` has `Some`");
+            let payload = self.enum_member(id, &value, some, 0);
+            self.line(&format!("    int _ffi_some{index} = {} == {discriminant};", self.enum_tag(id, &value)));
+            address = format!("&{payload}");
+            value = payload;
+            format!("_ffi_some{index}")
+        });
+        let given = |data: String| match &some {
+            Some(some) => format!("({some} ? {data} : NULL)"),
+            None => data,
+        };
         let creator = callback.threads == ExportThreadPolicy::Creator;
         match self.ffi_callback_record(body, index, callback) {
-            None => self.line(&format!("    void* _ffi_data{index} = (void*){address};")),
+            None => self.line(&format!("    void* _ffi_data{index} = {};", given(format!("(void*){address}")))),
             Some((name, _)) if callback.mode == FfiCallbackMode::Borrowed => {
                 self.line(&format!("    struct {name} _ffi_record{index} = {{ {address}, {RT}ffi_thread() }};"));
-                self.line(&format!("    void* _ffi_data{index} = (void*)&_ffi_record{index};"));
+                self.line(&format!("    void* _ffi_data{index} = {};", given(format!("(void*)&_ffi_record{index}"))));
             }
             Some((name, _)) => {
                 // The callable moves into an allocation of its own: C keeps it past the call.
@@ -6598,8 +6640,23 @@ impl Emitter<'_> {
                         parts.push(args[*public_index].clone());
                     }
                 }
-                self.line(&format!("    struct {name} _ffi_record{index} = {{ {} }};", parts.join(", ")));
-                self.line(&format!("    void* _ffi_data{index} = {RT}box_new_copy(sizeof(struct {name}), _Alignof(struct {name}), &_ffi_record{index});"));
+                // ODR-246 — C's result, written once the call returns.
+                if Self::ffi_callback_result(callback).is_some() {
+                    parts.push("0".to_string());
+                }
+                match &some {
+                    Some(some) => {
+                        self.line(&format!("    void* _ffi_data{index} = NULL;"));
+                        self.line(&format!("    if ({some}) {{"));
+                        self.line(&format!("        struct {name} _ffi_record{index} = {{ {} }};", parts.join(", ")));
+                        self.line(&format!("        _ffi_data{index} = {RT}box_new_copy(sizeof(struct {name}), _Alignof(struct {name}), &_ffi_record{index});"));
+                        self.line("    }");
+                    }
+                    None => {
+                        self.line(&format!("    struct {name} _ffi_record{index} = {{ {} }};", parts.join(", ")));
+                        self.line(&format!("    void* _ffi_data{index} = {RT}box_new_copy(sizeof(struct {name}), _Alignof(struct {name}), &_ffi_record{index});"));
+                    }
+                }
             }
         }
         let unregister = callback.unregister.as_ref()?;
@@ -6608,14 +6665,25 @@ impl Emitter<'_> {
         let TyKind::Struct(record) = *self.types.kind(held) else { unreachable!("a `ForeignCallback` is a struct") };
         let fields: Vec<Ty> = self.types.struct_def(record).fields.iter().map(|field| field.ty).collect();
         // `[HR-20]` — a callback's token has no `on_relocate` record: its `relocation` is `0`.
-        Some(format!(
+        let made = format!(
             "({}){{ ({}){{ ({})_ffi_data{index}, ({}){}_release }}, 0 }}",
             self.c_type(unregister.token),
             self.c_type(held),
             self.c_type(fields[0]),
             self.c_type(fields[1]),
             ffi_callback_entry(&body.symbol, index),
-        ))
+        );
+        Some(match &some {
+            // `None` registered nothing, so there is no token.
+            Some(some) => {
+                let TyKind::Enum(id) = *self.types.kind(unregister.output) else { unreachable!("a nullable callback's token is an `Option`") };
+                let def = self.types.enum_def(id);
+                let none = def.variants.iter().position(|variant| variant.fields.is_empty()).expect("`Option` has `None`");
+                let some_at = def.variants.iter().position(|variant| variant.fields.len() == 1).expect("`Option` has `Some`");
+                format!("({some} ? {} : {})", self.enum_value(id, some_at, &[made]), self.enum_value(id, none, &[]))
+            }
+            None => made,
+        })
     }
 
     fn emit_ffi_counted_wrapper(&mut self, body: &Body, bodies: &[Body]) {
@@ -6637,7 +6705,9 @@ impl Emitter<'_> {
                 // callback's token is an output in the callback's place.
                 FfiAbiParam::Callback { index } => {
                     let callback = &counted.callbacks[*index];
-                    foreign_args.push(format!("({}){}", self.c_type(callback.c_fn), ffi_callback_entry(&body.symbol, *index)));
+                    let entry = format!("({}){}", self.c_type(callback.c_fn), ffi_callback_entry(&body.symbol, *index));
+                    // `[FFI-21]` (ODR-253) — `None` gives C a null pointer.
+                    foreign_args.push(if callback.nullable.is_some() { format!("(_ffi_some{index} ? {entry} : NULL)") } else { entry });
                     if let Some(token) = &tokens[*index] {
                         outs.push(token.clone());
                     }
@@ -6753,6 +6823,14 @@ impl Emitter<'_> {
             let ret = body.return_ty();
             let c_result = counted.outputs.as_ref().map_or(ret, |outputs| outputs.c_result);
             let value = self.emit_ffi_result_value(body, counted, c_result, &call);
+            // `[FFI-11]` (ODR-246) — what `destroys(f)` is given of C's result is kept with the
+            // callable (where the call registered one).
+            for (index, callback) in counted.callbacks.iter().enumerate() {
+                if let (Some(_), Some(value)) = (Self::ffi_callback_result(callback), &value) {
+                    let (name, _) = self.ffi_callback_record(body, index, callback).expect("a retained callback is kept in a record");
+                    self.line(&format!("    if (_ffi_data{index} != NULL) {{ ((struct {name}*)_ffi_data{index})->result = {value}; }}"));
+                }
+            }
             match self.ffi_tuple_of(value.as_deref(), &outs, ret) {
                 Some(made) => self.line(&format!("    return {made};")),
                 None => self.line("    return;"),
@@ -7073,6 +7151,7 @@ impl Emitter<'_> {
         self.line("");
         self.interface_caches.clear();
         self.rl_frame_active = false;
+        wrap_collection_locals(&mut self.out, start, body, &self.collection_wrappers);
         name_locals(&mut self.out, start, body);
     }
 
@@ -7383,12 +7462,34 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[CG-C-9]` (ODR-178) — the struct of each collection type a local holds: its one member the
+    /// runtime's buffer (`ember_vec`, `ember_span`, `ember_mutspan`), so the C is the same but for
+    /// the local's type's name, which a debugger shows the local by (CodeView keeps no `typedef`).
+    /// `[CG-C-9]` — the collection locals' structs, by their types (`visualisers`).
+    pub(crate) fn collection_wrappers(&self) -> &BTreeMap<Ty, String> {
+        &self.collection_wrappers
+    }
+
+    fn collection_wrapper_definitions(&self) -> String {
+        let mut out = String::new();
+        for (&ty, name) in &self.collection_wrappers {
+            let buffer = self.c_type(ty);
+            out.push_str(&format!("/* `{}`, for a debugger [CG-C-9] */\ntypedef struct {name} {{ {buffer} v; }} {name};\n", self.types.display(ty)));
+        }
+        out
+    }
+
     fn local_declaration(&self, index: usize, decl: &ember_mir::LocalDecl) -> String {
         let comment = match &decl.name {
             Some(name) => format!("  /* {name} */"),
             None => String::new(),
         };
-        let declaration = format!("    {} _{index};{comment}", self.c_type(decl.ty));
+        // `[CG-C-9]` — a collection local is its type's own struct, read as its one member.
+        let c_type = match self.collection_wrappers.get(&decl.ty) {
+            Some(wrapper) if decl.kind != LocalKind::Arg => wrapper.clone(),
+            _ => self.c_type(decl.ty),
+        };
+        let declaration = format!("    {c_type} _{index};{comment}");
         match self.types.kind(decl.ty) {
             TyKind::Ref { inner, .. } if self.upcast_copies.contains(&index) => {
                 format!("{declaration}\n    {} _{index}_up;", self.c_type(*inner))
@@ -10691,6 +10792,16 @@ impl Emitter<'_> {
 
     // -- places, operands, rvalues -------------------------------------------
 
+    /// `[TYP-14]`, `[TYP-22]` — the `Box[dyn I]` a place reads through (`(*b.0)`, the checker's
+    /// spelling of a box's contents): the box's own place, whose `data` and `vtable` a borrow of the
+    /// contents is.
+    fn dyn_box_of(&self, place: &Place, body: &Body) -> Option<Place> {
+        let [.., Projection::Field(0), Projection::Deref] = place.projection.as_slice() else { return None };
+        let boxed = Place { local: place.local, projection: place.projection[..place.projection.len() - 2].to_vec() };
+        let TyKind::Struct(id) = *self.types.kind(self.place_ty(&boxed, body)) else { return None };
+        self.box_inner_id(id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })).then_some(boxed)
+    }
+
     fn place_in(&self, place: &Place, body: &Body) -> String {
         let mut out = format!("_{}", place.local.0);
         let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
@@ -11261,6 +11372,13 @@ impl Emitter<'_> {
             // A `void` place has no C object (a `void` local is never
             // declared, and `*p` of a `void*` is not C): its borrow takes
             // the runtime's one byte for them (ADR-062, D-449).
+            // `[TYP-14]`, `[TYP-22]` — a `Box[dyn I]` read through and borrowed (a `ref dyn I`
+            // argument): its value's address and its table, as the box holds them.
+            Rvalue::Ref { place, .. } if self.dyn_box_of(place, body).is_some() => {
+                let boxed = self.dyn_box_of(place, body).expect("matched above");
+                let boxed = self.place_in(&boxed, body);
+                format!("(({RT}dyn){{ ({boxed}).data, ({boxed}).vtable }})")
+            }
             Rvalue::Ref { place, .. } if self.is_void(self.place_ty(place, body)) => format!("{RT}void_place()"),
             Rvalue::Ref { place, .. } => {
                 let address = format!("&{}", self.place_in(place, body));
@@ -11704,6 +11822,9 @@ impl Emitter<'_> {
             // It emits no C type of its own, so `Roughness` and `f32` are the
             // same bits and `[RNG-8]`'s FFI representation falls out.
             TyKind::Range(id) => self.c_type(self.types.range_def(*id).repr),
+            // `[FFI-8]` (ODR-249) — a newtype is its typedef's representation in C, so it is passed
+            // and returned as the typedef is.
+            TyKind::Newtype(id) => self.c_type(self.types.newtype_def(*id).repr),
             // `[TYP-22]` — an interface reference is already a fat pointer;
             // do not add a second C indirection around its `{data*, vtable*}`
             // representation. Dispatch/vtable materialisation is a later
@@ -12223,6 +12344,7 @@ impl Emitter<'_> {
                 }
             }
             TyKind::Range(id) => self.constant_initializer(self.types.range_def(*id).repr, tokens, symbol, parts)?,
+            TyKind::Newtype(id) => self.constant_initializer(self.types.newtype_def(*id).repr, tokens, symbol, parts)?,
             TyKind::Str => {
                 let bytes = bytes_of(token(tokens)?.strip_prefix('s')?)?;
                 format!("{{ (const unsigned char*){}, {}u }}", c_bytes_literal(&bytes), bytes.len())
@@ -12428,6 +12550,7 @@ impl Emitter<'_> {
                 "{{ {RT}str s = ({access}); printf(\" s%lu:\", (unsigned long)s.len); for (size_t k = 0; k < s.len; ++k) {{ printf(\"%02x\", (unsigned)s.ptr[k]); }} }}"
             )),
             TyKind::Range(id) => self.comptime_dump(self.types.range_def(*id).repr, access, out, counter),
+            TyKind::Newtype(id) => self.comptime_dump(self.types.newtype_def(*id).repr, access, out, counter),
             // `[CT-5]` — a `String`'s bytes; an `Array`'s length, then its elements.
             TyKind::Vec { text: true, .. } => out.push(format!(
                 "{{ {RT}vec s = ({access}); printf(\" s%lu:\", (unsigned long)s.len); for (size_t k = 0; k < s.len; ++k) {{ printf(\"%02x\", (unsigned)((const unsigned char*)s.ptr)[k]); }} }}"
@@ -13993,6 +14116,76 @@ fn follows_member_access(text: &str, at: usize) -> bool {
     before.ends_with('.') || before.ends_with("->")
 }
 
+/// `[CG-C-9]` (ODR-178) — the collection types the locals of `bodies` hold (not a parameter, a C
+/// parameter as it is), each with its struct's name: `<prefix>coll_` and the type as it prints, a
+/// hash of its symbol added where two print alike. The same type has the same name in every unit
+/// of a build, for the `.natvis` written from one of them.
+fn collection_wrappers(bodies: &[Body], types: &TypeTable, namespace: &str) -> BTreeMap<Ty, String> {
+    let mut wrappers = BTreeMap::new();
+    let mut taken: BTreeMap<String, Ty> = BTreeMap::new();
+    let held = bodies.iter().flat_map(|body| &body.locals).filter(|decl| decl.kind != LocalKind::Arg).map(|decl| decl.ty);
+    let mut collections: Vec<Ty> = held
+        .filter(|&ty| matches!(types.kind(ty), TyKind::Vec { .. } | TyKind::Span { .. }))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    collections.sort_by_key(|&ty| types.symbol_name(ty));
+    for ty in collections {
+        let symbol = types.symbol_name(ty);
+        let base = format!("{namespace}{}coll_{}", ember_branding::mangle_prefix(), identifier_from(&symbol));
+        let name = match taken.get(&base) {
+            None => base,
+            Some(_) => format!("{base}_{}", &ember_build_hash(&symbol)[..12]),
+        };
+        taken.insert(name.clone(), ty);
+        wrappers.insert(ty, name);
+    }
+    wrappers
+}
+
+/// A stable hash of `text`, in hexadecimal.
+fn ember_build_hash(text: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// `[CG-C-9]` — in a function's C from `start`, each collection local (`collection_wrappers`) is
+/// its struct's member wherever it is named: `_N.v`, but in its declaration.
+fn wrap_collection_locals(out: &mut String, start: usize, body: &Body, wrappers: &BTreeMap<Ty, String>) {
+    let wrapped: BTreeMap<usize, &str> = body
+        .locals
+        .iter()
+        .enumerate()
+        .filter(|(_, decl)| decl.kind != LocalKind::Arg)
+        .filter_map(|(index, decl)| wrappers.get(&decl.ty).map(|name| (index, name.as_str())))
+        .collect();
+    if wrapped.is_empty() {
+        return;
+    }
+    let text = &out[start..];
+    let mut rewritten = String::with_capacity(text.len() + text.len() / 16);
+    let mut copied = 0;
+    for (at, identifier) in c_identifiers(text) {
+        let Some(index) = local_index(identifier) else { continue };
+        let Some(wrapper) = wrapped.get(&index) else { continue };
+        let before = text[..at].trim_end();
+        if follows_member_access(text, at) || before.ends_with(wrapper) {
+            continue;
+        }
+        let end = at + identifier.len();
+        rewritten.push_str(&text[copied..end]);
+        rewritten.push_str(".v");
+        copied = end;
+    }
+    rewritten.push_str(&text[copied..]);
+    out.truncate(start);
+    out.push_str(&rewritten);
+}
+
 /// `_N`, the name every local is written with until `name_locals` gives it its own.
 fn local_index(identifier: &str) -> Option<usize> {
     let digits = identifier.strip_prefix('_')?;
@@ -14363,6 +14556,7 @@ mod string_descriptor_view_parts_tests {
             lazy_statics: BTreeMap::new(),
             reload_bodies: Vec::new(),
             mangled_types: std::cell::RefCell::new(BTreeMap::new()),
+            collection_wrappers: BTreeMap::new(),
         }
     }
 

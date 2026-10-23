@@ -1051,7 +1051,8 @@ fn explain_prints_the_page_built_into_the_compiler() {
 /// Ember values: a `.natvis` (Visual Studio, WinDbg; the Windows link also puts it in the program
 /// database), GDB's auto-loaded `<program>-gdb.py` and an LLDB script. An enum (`Option`, `Result`)
 /// as its variant and payload, a struct and a class object by their fields (the object header left
-/// out), a `str` and a `String` as text, and an `Array` field as its elements, of their type.
+/// out), a `str` and a `String` as text, and an `Array` field as its elements, of their type; an
+/// `Array` and a `String` held in a local too, each local its type's own struct (ODR-178).
 #[test]
 fn build_writes_debugger_visualisers_beside_the_program() {
     let root = workspace_root();
@@ -1061,7 +1062,7 @@ fn build_writes_debugger_visualisers_beside_the_program() {
         &source,
         "enum Shape:\n    Circle(r: f64)\n    Empty\n\nstruct Bag:\n    items: Array[int]\n    label: String\n    shape: Shape\n\n\
          class Node:\n    value: int\n\nfn first(b: Bag) -> Option[int]:\n    if b.items.len() > 0:\n        return Some(b.items[0])\n    return None\n\n\
-         fn main():\n    b = Bag([1, 2], \"hi\", Shape.Circle(1.0))\n    n = Node(3)\n    t: str = \"text\"\n    println(first(b), n.value, t, b.label)\n",
+         fn main():\n    b = Bag([1, 2], \"hi\", Shape.Circle(1.0))\n    n = Node(3)\n    t: str = \"text\"\n    held: Array[int] = [4, 5, 6]\n    word = \"local\".to_string()\n    println(first(b), n.value, t, b.label, held.len(), word)\n",
     )
     .expect("write the program");
     let out = dir.join("out");
@@ -1088,14 +1089,20 @@ fn build_writes_debugger_visualisers_beside_the_program() {
         format!("<Type Name=\"{runtime}str\">"),
         "<StringView>(char*)ptr,[len]s8</StringView>".to_string(),
         "<DisplayString Condition=\"tag == 1\">Some({payload.Some._0})</DisplayString>".to_string(),
+        // ODR-178 — a collection held in a local is its type's own struct, found by its name.
+        format!("<Type Name=\"{}coll_Array_i64\">", ember_branding::mangle_prefix()),
+        "<ValuePointer>(int64_t*)v.ptr</ValuePointer>".to_string(),
+        format!("<Type Name=\"{}coll_String\">", ember_branding::mangle_prefix()),
+        "<StringView>(char*)v.ptr,[v.len]s8</StringView>".to_string(),
     ] {
         assert!(natvis.contains(&wanted), "the .natvis lacks {wanted}:\n{natvis}");
     }
     assert!(!natvis.contains("_header"), "an object's header is shown:\n{natvis}");
     let described = format!("\"{shape}\": {{\"kind\": \"enum\", \"name\": \"Shape\", \"variants\": {{0: (\"Circle\", [(\"r\", \"payload.Circle.r\", (\"value\",))]), 1: (\"Empty\", [])}}}}");
     let items = "(\"items\", \"items\", (\"elements\", \"int64_t\"))";
+    let held = format!("\"{}coll_Array_i64\": {{\"kind\": \"collection\", \"name\": \"Array[i64]\", \"shown\": (\"elements\", \"int64_t\")}}", ember_branding::mangle_prefix());
     for (name, script) in [(format!("{program}-gdb.py"), read(&format!("{program}-gdb.py"))), ("shapes.lldb.py".to_string(), read("shapes.lldb.py"))] {
-        assert!(script.contains(&described) && script.contains(items), "{name} does not describe the program's types:\n{script}");
+        assert!(script.contains(&described) && script.contains(items) && script.contains(&held), "{name} does not describe the program's types:\n{script}");
     }
     assert!(read(&format!("{program}-gdb.py")).contains("pretty_printers"), "the GDB script registers no printer");
     assert!(read("shapes.lldb.py").contains("def __lldb_init_module(debugger, internal_dict):"), "the LLDB script cannot be imported");

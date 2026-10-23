@@ -34,17 +34,16 @@ fn main():
     println(f"{total} words, {counts.len()} distinct")
 
     pairs = [(word.clone(), n) for word, n in counts.items()]
-    pairs.sort_by_key(fn(p) => p.0.clone())
-    pairs.sort_by_key(fn(p) => -p.1)
+    pairs.sort_by_key(fn(p) => (-p.1, p.0.clone()))
     println("top ten:")
     for i, (word, n) in pairs[..10].iter().enumerate():
         bar = "#".repeat(n)
         println(f"{i + 1:>2}. {word:<10} {n:>3} {bar}")
 
-    longest: String = ""
+    longest = ""
     for word in counts.keys():
         if word.len() > longest.len():
-            longest = word.clone()
+            longest = word
     println(f"longest word: {longest}")
 
     once = [w.clone() for w, n in counts.items() if n == 1]
@@ -53,5 +52,5 @@ fn main():
     by_length: Map[int, int] = {}
     for word, n in counts.items():
         by_length[word.len()] = by_length.get_or(word.len(), 0) + n
-    for length in sorted(by_length):
+    for length in sorted(by_length.keys()):
         println(f"{length:>2} letters: {by_length[length]}")

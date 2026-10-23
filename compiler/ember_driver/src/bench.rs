@@ -24,6 +24,121 @@ const SCREEN_WARMUP: usize = 1;
 const SCREEN_TIMED: usize = 7;
 /// `[BEN-3]` — the band the C program's ratio to its own copy must reach.
 const FIT_BAND: (f64, f64) = (0.98, 1.02);
+/// `[BEN-4]` — how far a benchmark's retired instructions may move from its baseline: 0.5 %.
+const INSTRUCTION_BAND: f64 = 0.005;
+/// `[BEN-4]` — the runs a hardware count is the median of (Cachegrind's is exact in one).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const COUNTED_RUNS: usize = 3;
+
+/// `[BEN-4]` (ODR-262) — how a count of retired instructions was read: from the processor's own
+/// counter (Linux's `perf_event_open`), or from Cachegrind's simulation of the program, exact and
+/// the same on every run (`valgrind --tool=cachegrind`, its `I refs`), where the host gives no
+/// counter (a virtual machine, WSL2, a container). A baseline is compared with a count of its kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CountKind {
+    Hardware,
+    Cachegrind,
+}
+
+impl CountKind {
+    fn word(self) -> &'static str {
+        match self {
+            CountKind::Hardware => "hardware",
+            CountKind::Cachegrind => "cachegrind",
+        }
+    }
+
+    fn parse(word: &str) -> Option<CountKind> {
+        match word {
+            "hardware" => Some(CountKind::Hardware),
+            "cachegrind" => Some(CountKind::Cachegrind),
+            _ => None,
+        }
+    }
+}
+
+/// `[BEN-4]` — a benchmark's recorded count: the instructions its Ember program retires, of one
+/// kind, built by one C compiler (another compiler's code is another count).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Recorded {
+    pub name: String,
+    pub kind: CountKind,
+    pub compiler: String,
+    pub count: u64,
+}
+
+/// `[BEN-4]` — `tests/perf/instructions`: one `name kind compiler: count` a line (`#` comments).
+pub(crate) fn parse_instructions(text: &str) -> Result<Vec<Recorded>, String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let bad = || format!("`{line}`: a line of the instruction baseline is `name kind compiler: count` [BEN-4]");
+            let (key, count) = line.split_once(':').ok_or_else(bad)?;
+            let mut words = key.split_whitespace();
+            let (Some(name), Some(kind), Some(compiler), None) = (words.next(), words.next(), words.next(), words.next()) else { return Err(bad()) };
+            Ok(Recorded {
+                name: name.to_string(),
+                kind: CountKind::parse(kind).ok_or_else(bad)?,
+                compiler: compiler.to_string(),
+                count: count.trim().replace(['_', ','], "").parse().map_err(|_| bad())?,
+            })
+        })
+        .collect()
+}
+
+/// `[BEN-4]` — the baseline's text, its entries sorted.
+pub(crate) fn render_instructions(entries: &[Recorded]) -> String {
+    let mut sorted = entries.to_vec();
+    sorted.sort_by(|a, b| (&a.name, a.kind.word(), &a.compiler).cmp(&(&b.name, b.kind.word(), &b.compiler)));
+    let mut out = String::from(
+        "# `[BEN-4]` (ODR-262) — each benchmark's retired instructions, by how they were counted (`hardware`:\n\
+         # the processor's counter; `cachegrind`: Cachegrind's exact count, where the host has no counter)\n\
+         # and the C compiler: `name kind compiler: count`. A run more than 0.5 % from its line fails,\n\
+         # whatever its time. `ember bench --compare --record-instructions` writes this run's counts here.\n",
+    );
+    for entry in &sorted {
+        out.push_str(&format!("{} {} {}: {}\n", entry.name, entry.kind.word(), entry.compiler, entry.count));
+    }
+    out
+}
+
+/// What `[BEN-4]`'s check says of one benchmark.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Instructions {
+    /// Within 0.5 % of the baseline of its kind.
+    Within(String),
+    /// More than 0.5 % from it: the benchmark fails.
+    Beyond(String),
+    /// Counted, with no baseline of its kind and compiler yet.
+    Unrecorded(String),
+    /// The host gives no count: no hardware counter and no Cachegrind. Never a pass.
+    Unavailable,
+}
+
+/// `[BEN-4]` — `count` of `kind` against the baseline's entry for the benchmark, of the same kind and
+/// compiler.
+pub(crate) fn check_instructions(name: &str, compiler: &str, measured: Option<(u64, CountKind)>, baseline: &[Recorded]) -> Instructions {
+    let Some((count, kind)) = measured else { return Instructions::Unavailable };
+    let recorded = baseline.iter().find(|entry| entry.name == name && entry.kind == kind && entry.compiler == compiler);
+    let Some(recorded) = recorded else {
+        return Instructions::Unrecorded(format!("{count} instructions ({}), none recorded for {compiler}", kind.word()));
+    };
+    let change = (count as f64 - recorded.count as f64) / recorded.count.max(1) as f64;
+    let shown = format!("{count} instructions ({}), {:+.3} % against {} recorded", kind.word(), change * 100.0, recorded.count);
+    if change.abs() > INSTRUCTION_BAND { Instructions::Beyond(shown) } else { Instructions::Within(shown) }
+}
+
+/// `[BEN-4]` — Cachegrind's count of the instructions a run executed, `I refs` in its summary
+/// (`==12== I   refs:      1,234,567`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn cachegrind_refs(report: &str) -> Option<u64> {
+    report.lines().find_map(|line| {
+        let (_, rest) = line.split_once("I")?;
+        let rest = rest.trim_start().strip_prefix("refs:")?;
+        rest.trim().replace(',', "").parse().ok()
+    })
+}
 
 /// `[BEN-6]` — what a benchmark measures, which fixes its threshold.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -312,6 +427,120 @@ fn run_once(exe: &Path, stdin: Option<&str>) -> Result<(String, f64), String> {
     Ok((String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), millis))
 }
 
+/// `[BEN-4]` (ODR-262) — the instructions the program at `exe` retires in a run, and how they were
+/// counted: the processor's counter where the host gives one (Linux's `perf_event_open`, user mode
+/// only, the median of three runs), else Cachegrind's exact count on Linux; `None` where the host
+/// gives neither.
+fn retired_instructions(exe: &Path, stdin: Option<&str>) -> Result<Option<(u64, CountKind)>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(count) = hardware_instructions(exe, stdin)? {
+            return Ok(Some((count, CountKind::Hardware)));
+        }
+        if let Some(count) = cachegrind_instructions(exe, stdin)? {
+            return Ok(Some((count, CountKind::Cachegrind)));
+        }
+        Ok(None)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (exe, stdin);
+        Ok(None)
+    }
+}
+
+/// The program run once with `stdin`, its output discarded; whether it succeeded.
+#[cfg(target_os = "linux")]
+fn run_quietly(command: &mut Command, stdin: Option<&str>) -> Result<std::process::Output, String> {
+    let mut child = command
+        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    if let (Some(text), Some(mut input)) = (stdin, child.stdin.take()) {
+        use std::io::Write;
+        let _ = input.write_all(format!("{text}\n").as_bytes());
+    }
+    child.wait_with_output().map_err(|error| error.to_string())
+}
+
+/// `[BEN-4]` — the processor's count of the instructions the program retires in user mode: a
+/// counter this process opens on itself, disabled, inherited by the child and enabled when the child
+/// execs, so it counts the child alone; its count, read once the child has ended, holds the child's.
+/// `None` where the host has no hardware counter or does not let this process open one.
+#[cfg(target_os = "linux")]
+fn hardware_instructions(exe: &Path, stdin: Option<&str>) -> Result<Option<u64>, String> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    unsafe extern "C" {
+        fn syscall(number: std::ffi::c_long, ...) -> std::ffi::c_long;
+    }
+    #[cfg(target_arch = "x86_64")]
+    const PERF_EVENT_OPEN: std::ffi::c_long = 298;
+    #[cfg(target_arch = "aarch64")]
+    const PERF_EVENT_OPEN: std::ffi::c_long = 241;
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    return Ok(None);
+    // `struct perf_event_attr` (PERF_ATTR_SIZE_VER7, 128 bytes): `type` at 0 (PERF_TYPE_HARDWARE,
+    // 0), `size` at 4, `config` at 8 (PERF_COUNT_HW_INSTRUCTIONS, 1), the flag bits at 40:
+    // `disabled` (0), `inherit` (1), `exclude_kernel` (5), `exclude_hv` (6), `enable_on_exec` (12).
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        let mut attr = [0u8; 128];
+        attr[4..8].copy_from_slice(&128u32.to_ne_bytes());
+        attr[8..16].copy_from_slice(&1u64.to_ne_bytes());
+        let flags: u64 = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 6) | (1 << 12);
+        attr[40..48].copy_from_slice(&flags.to_ne_bytes());
+        let mut counts = Vec::with_capacity(COUNTED_RUNS);
+        for _ in 0..COUNTED_RUNS {
+            // SAFETY(ffi): `perf_event_open(attr, pid 0 (this process), cpu -1 (any), group -1,
+            // PERF_FLAG_FD_CLOEXEC)`, with an attribute block of the size it names; `syscall` reads
+            // each argument as a `long`.
+            let none: std::ffi::c_long = -1;
+            let fd = unsafe { syscall(PERF_EVENT_OPEN, attr.as_ptr(), 0 as std::ffi::c_long, none, none, 8 as std::ffi::c_long) };
+            if fd < 0 {
+                return Ok(None);
+            }
+            // SAFETY(ffi): the descriptor the call just opened, owned here alone.
+            let mut counter = unsafe { std::fs::File::from_raw_fd(fd as i32) };
+            let output = run_quietly(&mut Command::new(exe), stdin)?;
+            if !output.status.success() {
+                return Err(format!("{} exited with {}", exe.display(), output.status));
+            }
+            let mut value = [0u8; 8];
+            counter.read_exact(&mut value).map_err(|error| format!("cannot read the instruction counter: {error}"))?;
+            counts.push(u64::from_ne_bytes(value));
+        }
+        counts.sort_unstable();
+        // A counter the host offers but never runs (some virtual machines) counts nothing.
+        Ok(Some(counts[counts.len() / 2]).filter(|&count| count > 0))
+    }
+}
+
+/// `[BEN-4]` — Cachegrind's exact count of the instructions the program executes
+/// (`valgrind --tool=cachegrind --cache-sim=no`, its `I refs`); `None` where Valgrind is not
+/// installed.
+#[cfg(target_os = "linux")]
+fn cachegrind_instructions(exe: &Path, stdin: Option<&str>) -> Result<Option<u64>, String> {
+    let out_file = std::env::temp_dir().join(format!("ember-cachegrind-{}.out", std::process::id()));
+    let mut command = Command::new("valgrind");
+    command
+        .args(["--tool=cachegrind", "--cache-sim=no"])
+        .arg(format!("--cachegrind-out-file={}", out_file.display()))
+        .arg(exe);
+    let output = match run_quietly(&mut command, stdin) {
+        Ok(output) => output,
+        Err(_) => return Ok(None),
+    };
+    let _ = std::fs::remove_file(&out_file);
+    let report = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        return Err(format!("{} under Cachegrind exited with {}:\n{report}", exe.display(), output.status));
+    }
+    Ok(cachegrind_refs(&report))
+}
+
 /// The Ember program, built for release by this compiler: the path it printed.
 fn build_ember(source: &Path, out_dir: &Path, layout: usize) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -384,6 +613,7 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
     let mut filter = None;
     let mut compare = false;
     let mut report = false;
+    let mut record = false;
     let mut core = 1usize;
     let mut dir = PathBuf::from("tests/perf");
     let mut rest = args.iter();
@@ -393,6 +623,8 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
             // ODR-154 — on a machine that is not the reference machine (CI's shared runners, whose
             // processor changes from run to run), the gate reports and does not fail.
             "--report" => report = true,
+            // `[BEN-4]` — this run's retired instructions become the baseline of their kind.
+            "--record-instructions" => record = true,
             "--core" => {
                 let value = rest.next().ok_or("`--core` needs a core number")?;
                 core = value.parse().map_err(|_| format!("`--core {value}` is not a core number"))?;
@@ -411,10 +643,19 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     let baseline = read_baseline(&dir)?;
+    let instructions_file = dir.join("instructions");
+    let mut instructions = match std::fs::read_to_string(&instructions_file) {
+        Ok(text) => parse_instructions(&text).map_err(|error| format!("{}: {error}", instructions_file.display()))?,
+        Err(_) => Vec::new(),
+    };
     let out_dir = std::env::temp_dir().join(format!("ember-bench-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).map_err(|error| error.to_string())?;
-    let result = compare_all(&pairs, &baseline, &out_dir, core, report);
+    let result = compare_all(&pairs, &baseline, &mut instructions, record, &out_dir, core, report);
     let _ = std::fs::remove_dir_all(&out_dir);
+    if record && result.is_ok() {
+        std::fs::write(&instructions_file, render_instructions(&instructions)).map_err(|error| format!("cannot write {}: {error}", instructions_file.display()))?;
+        println!("recorded the retired instructions in {} [BEN-4]", instructions_file.display());
+    }
     result
 }
 
@@ -439,7 +680,8 @@ pub(crate) fn gate_state(cases: usize, baselined: usize) -> &'static str {
     if baselined * 10 > cases { "baselined" } else { "green" }
 }
 
-fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, core: usize, report: bool) -> Result<ExitCode, String> {
+#[allow(clippy::too_many_arguments)]
+fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut Vec<Recorded>, record: bool, out_dir: &Path, core: usize, report: bool) -> Result<ExitCode, String> {
     let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
     let toolchain = ember_build::Toolchain::detect(requested.as_deref()).map_err(|error| error.to_string())?;
     if on_battery() {
@@ -465,6 +707,8 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
     }
     let mut failed = 0;
     let (mut passed, mut voided, mut inconclusive, mut baselined) = (0, 0, 0, 0);
+    // `[BEN-4]` — the instruction checks: within the band, beyond it, unrecorded, unavailable.
+    let (mut within, mut beyond, mut unrecorded, mut unavailable) = (0, 0, 0, 0);
     let mut summary: Vec<String> = Vec::new();
     for pair in pairs {
         let pair_dir = out_dir.join(&pair.name);
@@ -477,6 +721,14 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
             println!("{}: FAIL — its output differs from the C program's", pair.name);
             failed += 1;
             continue;
+        }
+        // `[BEN-4]` — the Ember program's retired instructions, at its first layout (a count of
+        // the same build every run), against the baseline of their kind and compiler.
+        let measured = retired_instructions(&embers[0], pair.stdin.as_deref())?;
+        let counted = check_instructions(&pair.name, toolchain.name(), measured, instructions);
+        if record && let Some((count, kind)) = measured {
+            instructions.retain(|entry| !(entry.name == pair.name && entry.kind == kind && entry.compiler == toolchain.name()));
+            instructions.push(Recorded { name: pair.name.clone(), kind, compiler: toolchain.name().to_string(), count });
         }
         let (e_layout, c_layout) = fastest_layouts(&embers, &twins, pair.stdin.as_deref())?;
         let (ember, twin) = (&embers[e_layout], &twins[c_layout]);
@@ -511,6 +763,29 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
             Verdict::Pass if known.is_some() && !clear => Verdict::Inconclusive,
             other => other,
         };
+        // `[BEN-4]` — beyond the band fails, whatever the time (unless this run records the band).
+        let outcome = match &counted {
+            Instructions::Beyond(why) if !record => Verdict::Fail(format!("retired instructions moved: {why} [BEN-4]")),
+            _ => outcome,
+        };
+        let counted_line = match &counted {
+            Instructions::Within(shown) => {
+                within += 1;
+                format!("{shown}, within 0.5 % [BEN-4]")
+            }
+            Instructions::Beyond(shown) => {
+                beyond += 1;
+                format!("{shown}, beyond 0.5 % [BEN-4]")
+            }
+            Instructions::Unrecorded(shown) => {
+                unrecorded += 1;
+                format!("{shown}: record it with `--record-instructions` [BEN-4]")
+            }
+            Instructions::Unavailable => {
+                unavailable += 1;
+                "instructions unavailable: this host has no hardware counter and no Cachegrind (`valgrind --tool=cachegrind`), so no count is checked [BEN-4]".to_string()
+            }
+        };
         match (&outcome, known) {
             (Verdict::Fail(_), Some(_)) => baselined += 1,
             (Verdict::Fail(_), None) => failed += 1,
@@ -526,7 +801,7 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
             (Verdict::Inconclusive, _) => format!("inconclusive after {ATTEMPTS} runs [BEN-2]"),
             (Verdict::Void(why), _) => format!("void — {why}"),
         };
-        println!("{}: {word}\n  {shown}", pair.name);
+        println!("{}: {word}\n  {shown}\n  {counted_line}", pair.name);
         let verdict_word = word.split([' ', ',']).next().unwrap_or("");
         summary.push(format!("{} {verdict_word} {}", pair.name, shown.split("ratio ").nth(1).and_then(|rest| rest.split(',').next()).unwrap_or("")));
         // A CI log is read only when signed in; an annotation by anyone.
@@ -544,6 +819,7 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         pairs.len(),
         gate_state(pairs.len(), baselined)
     );
+    println!("instructions: {within} within 0.5 %, {beyond} beyond, {unrecorded} unrecorded, {unavailable} unavailable [BEN-4]");
     // Every benchmark's ratio in one annotation: a CI log is read only when signed in.
     if std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true") {
         println!("::notice title=performance gate results::{}", summary.join(" | "));
@@ -632,6 +908,55 @@ mod tests {
         assert_eq!(gate_state(20, 2), "green");
         assert_eq!(gate_state(20, 3), "baselined");
         assert_eq!(gate_state(3, 0), "green");
+    }
+
+    /// `[BEN-4]` (ODR-262) — a count against the baseline of its kind and compiler: within 0.5 % is
+    /// within, past it beyond (either way), one of another kind or compiler is no baseline, and a
+    /// host with no count is unavailable, never within.
+    #[test]
+    fn retired_instructions_are_checked_against_the_baseline_of_their_kind() {
+        let baseline = parse_instructions("# comment\ns1 cachegrind gcc: 1,000,000\ns1 hardware gcc: 2000000\n").expect("a baseline");
+        assert_eq!(baseline.len(), 2);
+        assert!(matches!(check_instructions("s1", "gcc", Some((1_004_000, CountKind::Cachegrind)), &baseline), Instructions::Within(_)));
+        assert!(matches!(check_instructions("s1", "gcc", Some((1_006_000, CountKind::Cachegrind)), &baseline), Instructions::Beyond(_)));
+        assert!(matches!(check_instructions("s1", "gcc", Some((994_000, CountKind::Cachegrind)), &baseline), Instructions::Beyond(_)));
+        assert!(matches!(check_instructions("s1", "gcc", Some((2_000_100, CountKind::Hardware)), &baseline), Instructions::Within(_)));
+        assert!(matches!(check_instructions("s1", "clang", Some((1_000_000, CountKind::Cachegrind)), &baseline), Instructions::Unrecorded(_)));
+        assert!(matches!(check_instructions("s2", "gcc", Some((1, CountKind::Hardware)), &baseline), Instructions::Unrecorded(_)));
+        assert_eq!(check_instructions("s1", "gcc", None, &baseline), Instructions::Unavailable);
+        // The file round-trips.
+        assert_eq!(parse_instructions(&render_instructions(&baseline)).expect("written back"), {
+            let mut sorted = baseline.clone();
+            sorted.sort_by(|a, b| a.kind.word().cmp(b.kind.word()));
+            sorted
+        });
+        assert!(parse_instructions("s1 sometimes gcc: 5").is_err());
+        assert!(parse_instructions("s1 cachegrind: 5").is_err());
+    }
+
+    /// `[BEN-4]` — Cachegrind's `I refs` read from its summary.
+    #[test]
+    fn cachegrind_reports_its_instruction_count() {
+        let report = "==31== Cachegrind, a high-precision tracing profiler\n==31== Command: ./s1\n==31== \n==31== I   refs:      12,345,678\n";
+        assert_eq!(cachegrind_refs(report), Some(12_345_678));
+        assert_eq!(cachegrind_refs("==31== Command: ./s1\n"), None);
+    }
+
+    /// `[BEN-4]` — on Linux, the instructions a program retires are counted, by the processor's
+    /// counter or by Cachegrind, whichever the host gives (this test is silent where it gives
+    /// neither: the gate then reports the count unavailable).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_program_s_retired_instructions_are_counted_on_linux() {
+        let measured = retired_instructions(Path::new("/bin/true"), None).expect("`true` runs");
+        eprintln!("`true` retires {measured:?} [BEN-4]");
+        if let Some((count, kind)) = measured {
+            assert!(count > 1_000, "{count} instructions ({kind:?}) for `true`");
+            if kind == CountKind::Cachegrind {
+                let again = retired_instructions(Path::new("/bin/true"), None).expect("`true` runs").expect("counted again");
+                assert_eq!(again, (count, kind), "Cachegrind's count is the same on every run");
+            }
+        }
     }
 
     /// `[BEN-6]` — each category's threshold.

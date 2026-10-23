@@ -7,7 +7,10 @@
 //! All three are written from one description of the types the C defines (`describe`). In C one
 //! struct serves every `Array[T]` and `String` (`ember_vec`) and every view (`ember_span`), so a
 //! collection's elements are known where its Ember type is: a field of a struct, a class or a
-//! variant. A collection held directly in a local is shown by its length.
+//! variant, and a local, which is declared as its type's own struct around the buffer (ODR-178,
+//! `collection_wrappers`): the debugger finds it by that name, as CodeView keeps no `typedef`. A
+//! parameter holding a collection is the buffer itself (the C signature is not changed), shown by
+//! its length.
 
 use super::{member, Emitter, TypeNode};
 use ember_types::{Ty, TyKind};
@@ -52,6 +55,9 @@ enum Described {
     Enum { c: String, name: String, variants: Vec<(i128, String, Vec<Field>)> },
     /// A unit-only enum, an integer type.
     Unit { c: String, name: String, variants: Vec<(i128, String)> },
+    /// `[CG-C-9]` (ODR-178) — a collection local's struct: its buffer, `v`, shown as its text or
+    /// its elements.
+    Collection { c: String, name: String, shown: Shown },
 }
 
 /// `[CG-C-9]` — the visualisers of the types `emitter` defined.
@@ -135,6 +141,12 @@ fn describe(emitter: &Emitter<'_>) -> Vec<Described> {
                     .collect();
                 out.push(Described::Fields { c, name: types.display(ty), fields, tuple: true });
             }
+        }
+    }
+    for (&ty, c) in emitter.collection_wrappers() {
+        let shown = shown(emitter, ty);
+        if matches!(shown, Shown::Text | Shown::Elements(_)) {
+            out.push(Described::Collection { c: c.clone(), name: types.display(ty), shown });
         }
     }
     out
@@ -279,6 +291,18 @@ fn natvis(described: &[Described]) -> String {
             // A unit enum is an integer type in C, which no visualiser can tell from another; it is
             // shown by its variant where it is a field (`natvis_item`).
             Described::Unit { .. } => {}
+            Described::Collection { c, shown, .. } => {
+                out.push_str(&format!("  <Type Name=\"{}\">\n", xml(c)));
+                match shown {
+                    Shown::Text => out.push_str("    <DisplayString>{(char*)v.ptr,[v.len]s8}</DisplayString>\n    <StringView>(char*)v.ptr,[v.len]s8</StringView>\n"),
+                    Shown::Elements(elem) => out.push_str(&format!(
+                        "    <DisplayString>[{{v.len}}]</DisplayString>\n    <Expand>\n      <ArrayItems>\n        <Size>v.len</Size>\n        <ValuePointer>({}*)v.ptr</ValuePointer>\n      </ArrayItems>\n    </Expand>\n",
+                        natvis_type(elem)
+                    )),
+                    _ => {}
+                }
+                out.push_str("  </Type>\n");
+            }
         }
     }
     out.push_str("</AutoVisualizer>\n");
@@ -324,6 +348,9 @@ fn python(described: &[Described], template: &str) -> String {
             Described::Unit { c, name, variants } => {
                 let variants: Vec<String> = variants.iter().map(|(discriminant, variant)| format!("{discriminant}: {}", py(variant))).collect();
                 format!("    {}: {{\"kind\": \"unit\", \"name\": {}, \"variants\": {{{}}}}},", py(c), py(name), variants.join(", "))
+            }
+            Described::Collection { c, name, shown } => {
+                format!("    {}: {{\"kind\": \"collection\", \"name\": {}, \"shown\": {}}},", py(c), py(name), py_shown(shown))
             }
         });
     }
@@ -442,6 +469,16 @@ class _Buffer:
         return "[" + str(int(self.value["len"])) + "]"
 
 
+class _Collection:
+    """A collection local's struct: its buffer `v` as its text or its elements."""
+
+    def __init__(self, value, described):
+        self.value, self.described = value, described
+
+    def to_string(self):
+        return _shown(self.value["v"], self.described["shown"])
+
+
 def _lookup(value):
     named = value.type.name
     if named in TYPES and TYPES[named]["kind"] == "unit":
@@ -465,6 +502,8 @@ def _lookup(value):
         return _Enum(value, described)
     if described["kind"] == "fields":
         return _Fields(value, described)
+    if described["kind"] == "collection":
+        return _Collection(value, described)
     return None
 
 
@@ -537,6 +576,11 @@ def summary(value, internal_dict):
     if described["kind"] == "unit":
         number = value.GetValueAsUnsigned()
         return described["variants"].get(number, str(number))
+    if described["kind"] == "collection":
+        buffer = value.GetChildMemberWithName("v")
+        if described["shown"][0] == "text":
+            return _text(buffer)
+        return "[" + str(buffer.GetChildMemberWithName("len").GetValueAsUnsigned()) + "]"
     if described["kind"] == "enum":
         tag = value.GetChildMemberWithName("tag").GetValueAsUnsigned()
         return described["variants"].get(tag, ("?", []))[0]
@@ -556,6 +600,10 @@ class Children:
         elif described is not None and described["kind"] == "enum":
             tag = self.value.GetChildMemberWithName("tag").GetValueAsUnsigned()
             fields = described["variants"].get(tag, ("?", []))[1]
+        elif described is not None and described["kind"] == "collection" and described["shown"][0] == "elements":
+            elements = _child(self.value, "v", "v", described["shown"])
+            self.items = [elements.GetChildAtIndex(index) for index in range(elements.GetNumChildren())] if elements.GetType().IsArrayType() else []
+            return False
         self.items = [_child(self.value, name, path, shown) for name, path, shown in fields]
         return False
 
