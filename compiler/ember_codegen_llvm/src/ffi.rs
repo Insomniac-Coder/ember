@@ -188,11 +188,16 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
         let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
         let consumed = match closure {
             Some(closure) => {
+                // ODR-278 — a function's own type holds no state: its function takes none.
+                let item = matches!(cx.m.ty.kind(callback.callable), TyKind::FnItem { .. });
                 let mut closure_args = closure.args();
-                let (_, env_param) = closure_args.next().expect("a closure takes its environment first");
-                let by_address = matches!(cx.m.ty.kind(env_param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
+                let mut arguments = Vec::new();
+                if !item {
+                    let (_, env_param) = closure_args.next().expect("a closure takes its environment first");
+                    let by_address = matches!(cx.m.ty.kind(env_param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
+                    arguments.push(if by_address { Val::Imm(Sc::Ptr, env.clone()) } else { cx.value_in(&env, callback.callable) });
+                }
                 let locals: Vec<Ty> = closure_args.map(|(_, decl)| decl.ty).collect();
-                let mut arguments = vec![if by_address { Val::Imm(Sc::Ptr, env.clone()) } else { cx.value_in(&env, callback.callable) }];
                 for ((at, param), local) in others.iter().zip(&locals) {
                     let value = values[*at].clone();
                     if param.mode == ember_types::FnParamMode::Borrow && matches!(cx.m.ty.kind(*local), TyKind::Ref { .. } | TyKind::Ptr { .. }) {
@@ -205,7 +210,7 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
                 }
                 cx.call_body(&closure.symbol, arguments, dest)?;
                 // A lambda that takes its environment over ends it itself.
-                closure.param_modes.first() == Some(&ParameterMode::Owned)
+                !item && closure.param_modes.first() == Some(&ParameterMode::Owned)
             }
             None => {
                 let native = cx.load(Sc::Ptr, &env, 8);

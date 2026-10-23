@@ -568,6 +568,22 @@ impl<'a> Builder<'a> {
         self.blocks[index].terminator = terminator;
     }
 
+    /// ODR-278 — a function item evaluated for what it is, not for a value (it holds nothing).
+    fn read_item(&mut self, expr: &'a hir::Expr) {
+        let operand = self.lower_operand(expr);
+        self.keep_item_read(operand, expr.ty, expr.span);
+    }
+
+    /// ODR-278 — a place of a function item's type, read: the program reads what it wrote, for
+    /// every analysis of the body (a local only called is used), though the read moves no byte.
+    fn keep_item_read(&mut self, operand: Operand, ty: Ty, span: ember_span::Span) {
+        if matches!(operand, Operand::Copy(_) | Operand::Move(_)) {
+            let read = self.temp(ty, span);
+            self.push(StmtKind::StorageLive(read));
+            self.push(StmtKind::Assign { place: Place::local(read), rvalue: Rvalue::Use(operand) });
+        }
+    }
+
     fn temp(&mut self, ty: Ty, span: ember_span::Span) -> LocalId {
         let id = LocalId(self.locals.len() as u32);
         self.locals.push(LocalDecl { ty, kind: LocalKind::Temp, name: None, span });
@@ -2812,7 +2828,18 @@ impl<'a> Builder<'a> {
                 } else {
                     self.lower_operand_borrowed(callee)
                 };
-                let callable_modes = match self.types.kind(callee.ty) {
+                // ODR-278 — a call through a function item calls the function it names: directly,
+                // with the arguments its shape passes (the same function and arguments a call
+                // through the shape's value makes, ADR-169).
+                let item = match self.types.kind(callee.ty) {
+                    TyKind::FnItem { symbol, shape, .. } => Some((symbol.to_string(), *shape)),
+                    _ => None,
+                };
+                if item.is_some() {
+                    self.keep_item_read(callee_op.clone(), callee.ty, callee.span);
+                }
+                let callable = item.as_ref().map_or(callee.ty, |(_, shape)| *shape);
+                let callable_modes = match self.types.kind(callable) {
                     TyKind::Fn { params, .. } => Some(params.iter().map(|param| param.mode).collect::<Vec<_>>()),
                     _ => None,
                 };
@@ -2841,17 +2868,16 @@ impl<'a> Builder<'a> {
                     self.push(StmtKind::BeginAccess { place: place.clone(), mutable: true });
                 }
                 let next = self.new_block();
-                self.terminate(Terminator::Call {
-                    func: FuncRef::Indirect {
+                let func = match item {
+                    Some((symbol, _)) => FuncRef::Direct { symbol, latebound: *latebound },
+                    None => FuncRef::Indirect {
                         operand: callee_op,
                         ty: callee.ty,
                         latebound: *latebound,
                         sources: self.types.callable_sources(callee.ty),
                     },
-                    args,
-                    dest: place,
-                    next,
-                });
+                };
+                self.terminate(Terminator::Call { func, args, dest: place, next });
                 self.current = next;
                 for place in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place, mutable: true });
@@ -6468,6 +6494,13 @@ impl<'a> Builder<'a> {
                 let operand = self.lower_operand(operand);
                 Rvalue::UnaryOp { op: *op, operand }
             }
+            // ODR-278 — a function item's value as its shape: the item (zero-sized) evaluated, then
+            // the function it names, as that function's value is.
+            hir::ExprKind::Cast { expr: inner, .. } if let TyKind::FnItem { symbol, .. } = self.types.kind(inner.ty) => {
+                let symbol = symbol.to_string();
+                self.read_item(inner);
+                Rvalue::Use(Operand::Const(Const::Fn(symbol)))
+            }
             hir::ExprKind::Cast { expr: inner, to } => {
                 // `[FN-6]` — a C entry is read from a stored value, which
                 // stays where it is (ODR-102: an owned callable value moves).
@@ -6566,6 +6599,10 @@ impl<'a> Builder<'a> {
             }
             // `[FN-6]` — a named function as a value: its symbol identifies
             // the native descriptor (or the raw C entry for an extern body).
+            // ODR-278 — a function's own type holds nothing: its value is the unit's.
+            hir::ExprKind::FnValue(_) if matches!(self.types.kind(expr.ty), TyKind::FnItem { .. }) => {
+                Rvalue::Use(Operand::Const(Const::Void))
+            }
             hir::ExprKind::FnValue(def) => {
                 Rvalue::Use(Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())))
             }

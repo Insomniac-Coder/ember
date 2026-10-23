@@ -151,6 +151,8 @@ pub enum KindRecord {
     Const(ConstNorm),
     Vec { elem: u32, text: bool },
     Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, once: bool, send: bool, params: Vec<(u32, FnParamMode)>, ret: u32 },
+    /// ODR-278 — a function item, by the symbol that names its function in every build.
+    FnItem { symbol: Symbol, name: Symbol, shape: u32 },
     Dyn { interfaces: Vec<Symbol> },
     Param { index: u32, name: Symbol },
     Assoc { name: Symbol },
@@ -379,6 +381,7 @@ fn kind_record(kind: &TyKind, numbering: &mut Numbering) -> Result<KindRecord, U
             params: params.iter().map(|param| (ty(param.ty), param.mode)).collect(),
             ret: ty(*ret),
         },
+        TyKind::FnItem { symbol, name, shape } => KindRecord::FnItem { symbol: *symbol, name: *name, shape: ty(*shape) },
         TyKind::Dyn { interfaces } => KindRecord::Dyn { interfaces: interfaces.clone() },
         TyKind::Param { index, name } => KindRecord::Param { index: *index, name: *name },
         TyKind::Assoc { name } => KindRecord::Assoc { name: *name },
@@ -460,6 +463,7 @@ impl KindRecord {
                 params: params.iter().map(|(param, mode)| Some(crate::FnParam { ty: ty(param)?, mode: *mode })).collect::<Option<_>>()?,
                 ret: ty(ret)?,
             },
+            KindRecord::FnItem { symbol, name, shape } => TyKind::FnItem { symbol: *symbol, name: *name, shape: ty(shape)? },
             KindRecord::Dyn { interfaces } => TyKind::Dyn { interfaces: interfaces.clone() },
             KindRecord::Param { index, name } => TyKind::Param { index: *index, name: *name },
             KindRecord::Assoc { name } => TyKind::Assoc { name: *name },
@@ -472,7 +476,7 @@ impl KindRecord {
             KindRecord::Span { elem, .. } | KindRecord::Array { elem, .. } | KindRecord::ArrayN { elem, .. } | KindRecord::Vec { elem, .. } => {
                 vec![Part::Ty(*elem)]
             }
-            KindRecord::Ref { inner, .. } | KindRecord::Ptr { inner, .. } => vec![Part::Ty(*inner)],
+            KindRecord::Ref { inner, .. } | KindRecord::Ptr { inner, .. } | KindRecord::FnItem { shape: inner, .. } => vec![Part::Ty(*inner)],
             KindRecord::Tuple(items) => items.iter().map(|item| Part::Ty(*item)).collect(),
             KindRecord::Fn { params, ret, .. } => params.iter().map(|(param, _)| Part::Ty(*param)).chain([Part::Ty(*ret)]).collect(),
             KindRecord::Struct(id) => vec![Part::Struct(*id)],

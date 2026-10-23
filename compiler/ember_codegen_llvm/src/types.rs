@@ -119,7 +119,8 @@ impl<'a> Types<'a> {
                 Target::SysV => Repr::Scalar(Sc::F80),
                 Target::Win64 => Repr::Scalar(Sc::F64),
             },
-            TyKind::Void | TyKind::Never | TyKind::Error | TyKind::Opaque(_) => Repr::Zst,
+            // ODR-278 — a function item holds nothing.
+            TyKind::Void | TyKind::Never | TyKind::Error | TyKind::Opaque(_) | TyKind::FnItem { .. } => Repr::Zst,
             TyKind::CStr | TyKind::Class(_) | TyKind::ClassInterface(_) => Repr::Scalar(Sc::Ptr),
             TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } if !matches!(self.kind(*inner), TyKind::Dyn { .. }) => {
                 Repr::Scalar(Sc::Ptr)

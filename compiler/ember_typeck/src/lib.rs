@@ -855,6 +855,15 @@ pub fn check(
                 .secondary(previous.span, "first definition is here"));
         }
     }
+    // ODR-278 — a function item names its function by the symbol the function is emitted under.
+    if cfg!(debug_assertions) && checker.sink.error_count() == 0 {
+        let symbols: HashMap<DefId, &str> = functions.iter().map(|function| (function.def, function.symbol.as_str())).collect();
+        for (&item, def) in &checker.item_defs {
+            if let (TyKind::FnItem { symbol, .. }, Some(emitted)) = (checker.types.kind(item), symbols.get(def)) {
+                debug_assert_eq!(symbol.as_str(), *emitted, "a function item names its function by another symbol");
+            }
+        }
+    }
     checker.note_changed_declarations();
     checker.note_c_declarations();
     let unsafe_mark = checker.sink.mark();
@@ -3030,6 +3039,18 @@ struct Checker<'a> {
     /// anonymous struct that is its environment. A value of that struct type is
     /// callable, and this is what it calls.
     closure_calls: HashMap<StructId, ClosureCall>,
+    /// ODR-278 — the function each function item made in this run names (`TyKind::FnItem`).
+    item_defs: HashMap<Ty, DefId>,
+    /// ODR-278, `[MNG-1]` — each free function's symbol, known from its declaration, so a value
+    /// of it names it before its body is checked. A foreign declaration has none here: its
+    /// contract decides its symbol, and its value keeps the C function pointer's type.
+    function_symbols: HashMap<DefId, String>,
+    /// ODR-278 — each generic free function's qualified name, which its instances' symbols are
+    /// made from (with their arguments' spelling).
+    generic_paths: HashMap<DefId, Symbol>,
+    /// ODR-278 — the names the body being checked assigns more than once (`[CLO-13]`'s scan): a
+    /// local declared from a function and assigned again holds any function of its shape.
+    reassigned: HashSet<Symbol>,
     /// `[CLO-2]` — set while a closure body is checked, so that a read of an
     /// enclosing local is seen as a capture rather than as an ordinary read.
     captures: Option<CaptureWatch>,
@@ -3737,6 +3758,10 @@ impl<'a> Checker<'a> {
             lambda_changed: HashMap::new(),
             routed_method: None,
             closure_calls: HashMap::new(),
+            item_defs: HashMap::new(),
+            function_symbols: HashMap::new(),
+            generic_paths: HashMap::new(),
+            reassigned: HashSet::new(),
             lambdas: Vec::new(),
             comptime_answers: ComptimeAnswers::new(),
             comptime_requests: Vec::new(),
@@ -10471,6 +10496,13 @@ impl<'a> Checker<'a> {
                     self.projection_params.clear();
                     let def = DefId(self.signatures.len() as u32);
                     self.fn_ids.insert(name, def);
+                    if let Some(symbol) = free_function_symbol(&item.attrs, decl, name) {
+                        if decl.generics.is_empty() {
+                            self.function_symbols.insert(def, symbol);
+                        } else {
+                            self.generic_paths.insert(def, name);
+                        }
+                    }
                     let some = std::mem::take(&mut self.some_made);
                     if !some.is_empty() {
                         self.fn_some.insert(def, some);
@@ -18261,7 +18293,8 @@ impl<'a> Checker<'a> {
             let value = self.synth_committed(element);
             let value = self.read_through(value);
             self.sink.rollback(quiet);
-            return value.ty;
+            // ODR-278 — a collection holds any function of its elements' shape.
+            return self.types.item_shape(value.ty).unwrap_or(value.ty);
         }
         self.common.string
     }
@@ -20579,19 +20612,11 @@ impl<'a> Checker<'a> {
                         .note("a wrapper cannot pass `...` on [FFI-8]"),
                 );
             }
-            // `extern "C" fn` DEFINES a function a host links against, so its
-            // symbol is the name as written — `[MNG-1]`'s module-qualified
-            // mangling would make it unfindable, which defeats the point.
-            let symbol = if let Some(exported) = export_symbol(&item.attrs) {
-                // `[MNG-2]` — a symbol C cannot spell is named in C by its alias.
-                if c_link_identifier(exported) { exported.to_string() } else { ember_branding::export_alias(exported) }
-            } else { match &decl.abi {
-                Some(_) if ffi_counted.is_some() => mangle(name),
-                Some(_) if decl.is_foreign_decl => foreign_function_symbol(&item.attrs, decl, name),
-                Some(_) => decl.name.name.to_string(),
-                None if has_attribute(&item.attrs, "export") => decl.name.name.to_string(),
-                None => mangle(name),
-            } };
+            let symbol = match free_function_symbol(&item.attrs, decl, name) {
+                Some(symbol) => symbol,
+                None if ffi_counted.is_some() => mangle(name),
+                None => foreign_function_symbol(&item.attrs, decl, name),
+            };
             functions.push(Function {
                 def,
                 name,
@@ -21255,8 +21280,9 @@ impl<'a> Checker<'a> {
                 if value.ty == self.common.error {
                     continue;
                 }
-                if value.ty != field_ty {
-                    let (expected, found) = (self.types.display(field_ty), self.types.display(value.ty));
+                // ODR-278 — a function's own type, read as its shape: what a table holds.
+                if self.types.item_shape(value.ty).unwrap_or(value.ty) != field_ty {
+                    let (expected, found) = (self.types.display(field_ty), self.callable_shown(value.ty));
                     self.sink.emit(
                         Diagnostic::error(codes::E2020, at, format!("expected `{expected}`, found `{found}`"))
                             .primary_label(format!("function `{function}` is `{found}`"))
@@ -22515,6 +22541,8 @@ impl<'a> Checker<'a> {
             let callable = if callback.nullable { self.option_some_payload(given)? } else { given };
             let closure = match *self.types.kind(callable) {
                 TyKind::Struct(id) => self.closure_calls.get(&id).and_then(|call| self.closure_symbols.get(&call.def).cloned()),
+                // ODR-278 — a function's own type names it: the trampoline calls it, with no state.
+                TyKind::FnItem { symbol, .. } => Some(symbol.to_string()),
                 _ => None,
             };
             let unregister = if callback.mode == hir::FfiCallbackMode::Retained {
@@ -25468,6 +25496,21 @@ impl<'a> Checker<'a> {
         } else {
             source_ty
         };
+        // ODR-278 — a variable holding a function item holds nothing its type does not say: the
+        // closure captures nothing for it, and has a local of its own holding the function, set
+        // where its body begins. One it assigns is captured.
+        if !self.in_assignment_target
+            && let Some(&def) = self.item_defs.get(&ty)
+        {
+            if let Some(&(_, local, _)) = self.captures.as_ref()?.items.iter().find(|(item, ..)| *item == name) {
+                return Some(Expr { ty, kind: ExprKind::Local(local), span });
+            }
+            let declared = self.captures.as_ref()?.item_spans.get(&name).copied().unwrap_or(span);
+            let local = self.declare(None, ty, declared);
+            self.locals[local.0 as usize].name = Some(name);
+            self.captures.as_mut()?.items.push((name, local, def));
+            return Some(Expr { ty, kind: ExprKind::Local(local), span });
+        }
         let (env_local, struct_id) = {
             let watch = self.captures.as_mut()?;
             match watch.env {
@@ -25877,6 +25920,9 @@ impl<'a> Checker<'a> {
                         let synthesized = self.synth(value);
                         let from_literal = self.types.is_untyped_literal(synthesized.ty);
                         let init = self.commit(synthesized);
+                        // ODR-278 — a local declared from a function and assigned again holds any
+                        // function of its shape.
+                        let init = if self.reassigned.contains(&segments[0].name) { self.item_to_shape(init) } else { init };
                         self.warn_if_literal_loses_precision(value, init.ty);
                         let local = self.declare(Some(segments[0].name), init.ty, stmt.span);
                         self.plain_declared.insert(local);
@@ -26214,7 +26260,10 @@ impl<'a> Checker<'a> {
                 if place_ty == self.common.error
                     && let ExprKind::Local(local) = place.kind
                 {
-                    self.fix_open_local(local, value.ty, true);
+                    // ODR-278 — a local assigned after it is declared holds any function of its
+                    // shape.
+                    let ty = self.types.item_shape(value.ty).unwrap_or(value.ty);
+                    self.fix_open_local(local, ty, true);
                 }
                 if op.is_none() {
                     self.mark_class_init_field(&place);
@@ -26455,7 +26504,13 @@ impl<'a> Checker<'a> {
                 let ast::ExprKind::Path { segments } = &leaf.target.kind else {
                     unreachable!("declaration consistency admitted a non-name target")
                 };
-                let local = self.declare(Some(segments[0].name), leaf.ty, leaf.target.span);
+                // ODR-278 — a name declared from a function and assigned again holds any
+                // function of its shape.
+                let (source, ty) = match self.types.item_shape(leaf.ty) {
+                    Some(shape) if self.reassigned.contains(&segments[0].name) => (self.item_to_shape(source), shape),
+                    _ => (source, leaf.ty),
+                };
+                let local = self.declare(Some(segments[0].name), ty, leaf.target.span);
                 bindings.push(DestructureBinding::Let { local, value: source });
                 continue;
             }
@@ -26742,7 +26797,11 @@ impl<'a> Checker<'a> {
                     // against it, so a mismatch points at the arm that differs.
                     let value = match result_ty {
                         Some(ty) => self.check_expr(expr, ty),
-                        None => self.synth_committed(expr),
+                        // ODR-278 — arms giving functions give any function of their shape.
+                        None => {
+                            let value = self.synth_committed(expr);
+                            self.item_to_shape(value)
+                        }
                     };
                     if result_ty.is_none() && value.ty != self.common.never {
                         result_ty = Some(value.ty);
@@ -28276,6 +28335,11 @@ impl<'a> Checker<'a> {
                     then_v = self.coerce(then_v, else_v.ty);
                 }
                 let then_v = self.commit(then_v);
+                // ODR-278 — two functions of one shape meet at it: `a if c else b` holds either.
+                let then_v = match self.types.join_items(then_v.ty, else_v.ty) {
+                    Some(joined) if joined != then_v.ty => self.coerce(then_v, joined),
+                    _ => then_v,
+                };
                 let else_v = if then_v.ty == never {
                     self.commit(else_v)
                 } else {
@@ -29629,6 +29693,7 @@ impl<'a> Checker<'a> {
             return Block { stmts: Vec::new(), span: block.span };
         }
         let outer = std::mem::replace(&mut self.open, OpenState { allowed: true, knowing: true, ..OpenState::default() });
+        let outer_reassigned = std::mem::replace(&mut self.reassigned, reassigned_names(block));
         let mark = self.sink.mark();
         let snapshot = BodySnapshot {
             locals: self.locals.len(),
@@ -29720,6 +29785,7 @@ impl<'a> Checker<'a> {
             );
         }
         self.open = outer;
+        self.reassigned = outer_reassigned;
         self.body_locals_from = outer_body_locals;
         self.made_must_drop = outer_made;
         body
@@ -35334,6 +35400,12 @@ impl<'a> Checker<'a> {
         if expr.ty == expected || expected == self.common.error || expr.ty == self.common.error {
             return expr;
         }
+        // ODR-278, `[TYP-5]` — a function where a callable type is wanted: its value as its
+        // shape, which then converts as a function's value does.
+        if self.types.item_shape(expr.ty).is_some() && matches!(self.types.kind(expected), TyKind::Fn { .. }) {
+            let shaped = self.item_to_shape(expr);
+            return self.coerce(shaped, expected);
+        }
         // `[SOA-6]` — an `SoAMut` where an `SoARef` is wanted reads through a shared reborrow.
         if let (&TyKind::Struct(found), &TyKind::Struct(wanted)) = (self.types.kind(expr.ty), self.types.kind(expected))
             && let (Some(&(soa, true)), Some(&(wanted_soa, false))) = (self.soa_proxies.get(&found), self.soa_proxies.get(&wanted))
@@ -35914,6 +35986,17 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: expected, kind: ExprKind::Error, span };
         }
+        // ODR-278 — each function has a type of its own: a place holding one holds no other.
+        if let (Some(found_shape), Some(wanted_shape)) = (self.types.item_shape(expr.ty), self.types.item_shape(expected)) {
+            let shape = self.types.display(wanted_shape);
+            let mut diagnostic = Diagnostic::error(codes::E2020, span, format!("expected `{wanted}`, found `{found}`, and each function has a type of its own"))
+                .primary_label("another function");
+            if found_shape == wanted_shape {
+                diagnostic = diagnostic.help(format!("declare the place `{shape}`, which holds any function of that shape"));
+            }
+            self.sink.emit(diagnostic.note("a function's own type names it; it converts to its `fn(A) -> R` where that is wanted (CLO-1, FN-6)"));
+            return Expr { ty: expected, kind: ExprKind::Error, span };
+        }
         // `[TYP-41]` rule 3 — two const arguments that name parameters are
         // one only when their normal forms are; when they are not, the
         // diagnostic says they could not be shown equal, not that they differ.
@@ -36083,6 +36166,7 @@ impl<'a> Checker<'a> {
     fn callable_signature_of_value(&mut self, ty: Ty) -> Option<Ty> {
         match self.types.kind(ty).clone() {
             TyKind::Fn { .. } => Some(ty),
+            TyKind::FnItem { shape, .. } => Some(shape),
             TyKind::Struct(id) => {
                 let closure = self.closure_calls.get(&id)?;
                 let signature = &self.signatures[closure.def.0 as usize];
@@ -36334,6 +36418,8 @@ impl<'a> Checker<'a> {
     fn coerces_before_option(&self, expr: &Expr, wanted: Ty) -> bool {
         let string = |ty| matches!(*self.types.kind(ty), TyKind::Vec { text: true, .. });
         expr.ty == wanted
+            // ODR-278 — a function, as its shape.
+            || self.types.item_shape(expr.ty) == Some(wanted)
             || self.types.is_untyped_literal(expr.ty) && self.literal_fits(expr, wanted)
             || self.types.widens_to(expr.ty, wanted)
             || matches!(*self.types.kind(expr.ty), TyKind::Range(id)
@@ -36819,6 +36905,8 @@ impl<'a> Checker<'a> {
                             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                         };
                         let first = self.synth_committed(first);
+                        // ODR-278 — a list holds any function of its elements' shape.
+                        let first = self.item_to_shape(first);
                         let ty = first.ty;
                         elems.push(first);
                         ty
@@ -37991,7 +38079,7 @@ impl<'a> Checker<'a> {
             {
                 let value = self.synth(callee);
                 let value = self.through_callable_ref(value);
-                if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+                if matches!(self.types.kind(value.ty), TyKind::Fn { .. } | TyKind::FnItem { .. }) {
                     return self.synth_indirect_call(value, args, span, false, false);
                 }
             }
@@ -38004,7 +38092,7 @@ impl<'a> Checker<'a> {
                 if let Some(local) = self.lookup(segments[0].name) {
                     let value = self.read_local_expecting(local, callee.span, None);
                     let value = self.through_callable_ref(value);
-                    if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+                    if matches!(self.types.kind(value.ty), TyKind::Fn { .. } | TyKind::FnItem { .. }) {
                         if let Some(&def) = self.callable_value_bindings.get(&local) {
                             let latebound =
                                 self.latebound_callable_parameter_locals.contains(&local);
@@ -38053,7 +38141,7 @@ impl<'a> Checker<'a> {
                     // and reported `E1010`.
                     if let Some(value) = self.resolve_capture(segments[0].name, callee.span) {
                         let value = self.through_callable_ref(value);
-                        if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+                        if matches!(self.types.kind(value.ty), TyKind::Fn { .. } | TyKind::FnItem { .. }) {
                             return self.synth_indirect_call(value, args, span, false, false);
                         }
                         if let Some((fn_ty, consumes_callee)) = self.callable_bound_of(value.ty) {
@@ -40271,6 +40359,8 @@ impl<'a> Checker<'a> {
             env: Some((LocalId(0), entry.env)),
             captures_by_move: false,
             aliases: HashMap::new(),
+            items: Vec::new(),
+            item_spans: self.reachable_item_spans(),
         };
         self.local_fn_self.push(LocalFnSelf { name: entry.name, def, depth: self.lambda_depth + 1, env: Some(entry.env_mode), probing: false });
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, entry.in_unsafe);
@@ -40680,6 +40770,8 @@ impl<'a> Checker<'a> {
                 env: Some((env_local, env_id)),
                 captures_by_move: false,
                 aliases: HashMap::new(),
+                items: Vec::new(),
+                item_spans: self.reachable_item_spans(),
             });
         }
         self.local_generator_self.push(LocalGeneratorSelf { name: lift.name, env_fn, plain_fn, enclosing: lift.enclosing, env_ty, entry });
@@ -40772,7 +40864,7 @@ impl<'a> Checker<'a> {
         }
         let TyKind::Ref { inner, .. } = *self.types.kind(value.ty) else { return value };
         let callable = match *self.types.kind(inner) {
-            TyKind::Fn { .. } => true,
+            TyKind::Fn { .. } | TyKind::FnItem { .. } => true,
             TyKind::Struct(id) => self.closure_calls.contains_key(&id),
             _ => self.callable_bound_of(inner).is_some(),
         };
@@ -40801,7 +40893,7 @@ impl<'a> Checker<'a> {
     /// callable type.
     fn is_callable_value_type(&mut self, ty: Ty) -> bool {
         match *self.types.kind(ty) {
-            TyKind::Fn { abi: None, .. } => true,
+            TyKind::Fn { abi: None, .. } | TyKind::FnItem { .. } => true,
             TyKind::Struct(id) => self.closure_calls.contains_key(&id),
             TyKind::Param { .. } => self.callable_bound_of(ty).is_some(),
             _ => false,
@@ -41025,6 +41117,8 @@ impl<'a> Checker<'a> {
             Some(inner) if self.is_callable_value_type(inner) => inner,
             _ => actual,
         };
+        // ODR-278 — a function meets the bound as its shape does.
+        let actual = self.types.item_shape(actual).unwrap_or(actual);
         // `[FN-6]` (ODR-115) — `unsafe fn(…)` is met by what meets `fn(…)` and by an `unsafe fn`;
         // `fn(…)` is not met by an `unsafe fn`, nor by a parameter bounded `unsafe fn(…)`.
         let actual_unsafe = match *self.types.kind(actual) {
@@ -41138,6 +41232,10 @@ impl<'a> Checker<'a> {
     /// D-423 — a callable value's type as a signature: a capturing
     /// closure's is its call's, not its environment's.
     fn callable_shown(&self, ty: Ty) -> String {
+        // ODR-278 — a function's own type, as the signature it is called with.
+        if let Some(shape) = self.types.item_shape(ty) {
+            return self.types.display(shape);
+        }
         if let TyKind::Struct(id) = *self.types.kind(ty)
             && let Some(closure) = self.closure_calls.get(&id)
         {
@@ -44955,7 +45053,7 @@ impl<'a> Checker<'a> {
             return None;
         }
         let function = self.synth(expr);
-        let TyKind::Fn { params, .. } = self.types.kind(function.ty).clone() else { return None };
+        let TyKind::Fn { params, .. } = self.types.kind(self.types.item_shape(function.ty).unwrap_or(function.ty)).clone() else { return None };
         let query = params.first().map(|param| param.ty)?;
         let TyKind::Struct(id) = *self.types.kind(query) else { return None };
         let (origin, query_args) = self.types.struct_def(id).origin.clone()?;
@@ -45634,7 +45732,9 @@ impl<'a> Checker<'a> {
                 && let ("push" | "append", [item]) | ("insert", [_, item]) = (name.name.as_str(), args)
             {
                 let item = self.synth_committed(&item.value);
-                let array = self.types.intern(TyKind::Vec { elem: item.ty, text: false });
+                // ODR-278 — a list holds any function of its elements' shape.
+                let elem = self.types.item_shape(item.ty).unwrap_or(item.ty);
+                let array = self.types.intern(TyKind::Vec { elem, text: false });
                 self.fix_open_local(local, array, true);
             }
             // `m.insert(k, v)` and `s.add(x)` say what an open `Map()` or
@@ -47634,7 +47734,7 @@ impl<'a> Checker<'a> {
         if let TyKind::Ref { mutable: true, inner } = *self.types.kind(ty) {
             return self.is_callable_value_type(inner);
         }
-        matches!(self.types.kind(ty), TyKind::Fn { .. })
+        matches!(self.types.kind(ty), TyKind::Fn { .. } | TyKind::FnItem { .. })
             || self.callable_bound_of(ty).is_some()
             || matches!(*self.types.kind(ty), TyKind::Struct(id) if self.closure_calls.contains_key(&id))
     }
@@ -47649,7 +47749,7 @@ impl<'a> Checker<'a> {
         } else {
             value
         };
-        if matches!(self.types.kind(value.ty), TyKind::Fn { .. }) {
+        if matches!(self.types.kind(value.ty), TyKind::Fn { .. } | TyKind::FnItem { .. }) {
             return self.synth_indirect_call(value, args, span, false, false);
         }
         if let Some((fn_ty, consumes_callee)) = self.callable_bound_of(value.ty) {
@@ -47704,7 +47804,10 @@ impl<'a> Checker<'a> {
         consumes_callee: bool,
         latebound_override: bool,
     ) -> Expr {
-        let TyKind::Fn { latebound, stateless, is_unsafe, once, params, ret, .. } = self.types.kind(callee.ty).clone() else {
+        // ODR-278 — a call through a function item calls its function (lowering makes it direct),
+        // as its shape says it is called.
+        let signature = self.types.item_shape(callee.ty).unwrap_or(callee.ty);
+        let TyKind::Fn { latebound, stateless, is_unsafe, once, params, ret, .. } = self.types.kind(signature).clone() else {
             unreachable!("checked by the caller")
         };
         // `[CLO-6a]` — calling a `once fn` value moves it out of its place, which the move check
@@ -47713,7 +47816,7 @@ impl<'a> Checker<'a> {
         // `[UNS-1]`, `[FN-6]` (ODR-115) — the callee is some `unsafe fn`, whose obligation the
         // `unsafe` block takes on.
         if is_unsafe && !self.unsafe_context() {
-            let shown = self.types.display(callee.ty);
+            let shown = self.types.display(signature);
             self.sink.emit(
                 Diagnostic::error(codes::E3100, span, format!("calling a value of type `{shown}` requires an `unsafe` block"))
                     .help("wrap the call in `unsafe:` and state its safety reason")
@@ -47733,7 +47836,7 @@ impl<'a> Checker<'a> {
         }
         let latebound = latebound || latebound_override;
         if args.len() != params.len() {
-            let shown = self.types.display(callee.ty);
+            let shown = self.types.display(signature);
             self.error(
                 codes::E2020,
                 span,
@@ -47833,9 +47936,10 @@ impl<'a> Checker<'a> {
     /// to infer its type arguments, then checked against the instance, and a
     /// second closure type would not be the instance's.
     fn synth_lambda(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span) -> Expr {
+        // ODR-278 — a capture-free lambda checked again against its shape is the same function.
         if let Some(expected) = expected
             && let Some(value) = self.lambda_values.get(&span)
-            && value.ty == expected
+            && (value.ty == expected || self.types.item_shape(value.ty) == Some(expected))
         {
             return value.clone();
         }
@@ -48173,7 +48277,8 @@ impl<'a> Checker<'a> {
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
         let number = self.closure_tag();
         let skipped_before = self.skipped_instances;
-        let wanted = expected.and_then(|ty| match self.types.kind(ty) {
+        // ODR-278 — a function item expected (a generic's argument checked again) is its shape.
+        let wanted = expected.and_then(|ty| match self.types.kind(self.types.item_shape(ty).unwrap_or(ty)) {
             TyKind::Fn { params, ret, .. } => Some((params.clone(), *ret)),
             _ => None,
         });
@@ -48282,6 +48387,8 @@ impl<'a> Checker<'a> {
             env: None,
             captures_by_move: lambda.is_owned,
             aliases: HashMap::new(),
+            items: Vec::new(),
+            item_spans: self.reachable_item_spans(),
         };
         let (_, _, _, probe) = self.check_lambda_body(lambda, &params, ret, probe, None);
         let _discarded = self.sink.take();
@@ -48312,6 +48419,8 @@ impl<'a> Checker<'a> {
                 env: None,
                 captures_by_move: lambda.is_owned,
                 aliases: HashMap::new(),
+                items: Vec::new(),
+                item_spans: self.reachable_item_spans(),
             };
             let (body, body_ty, locals, _) =
                 self.check_lambda_body(lambda, &params, ret, watch, None);
@@ -48333,6 +48442,9 @@ impl<'a> Checker<'a> {
                     .collect(),
                 ret,
             });
+            // ODR-278 — its own type, named in a diagnostic as the local function it may be.
+            let name = self.local_fn_self.iter().rev().find(|own| reserved == Some(own.def)).map_or(Symbol::intern("lambda"), |own| own.name);
+            let ty = self.item_of(def, ty, name);
             return Expr { ty, kind: ExprKind::FnValue(def), span };
         }
 
@@ -48382,6 +48494,8 @@ impl<'a> Checker<'a> {
                 env: Some((LocalId(0), probe_id)),
                 captures_by_move: lambda.is_owned,
                 aliases: HashMap::new(),
+                items: Vec::new(),
+                item_spans: self.reachable_item_spans(),
             };
             // The probe checks the body only to learn what it writes; the
             // final check below reports ([DIA-14]: one error, not two).
@@ -48490,6 +48604,8 @@ impl<'a> Checker<'a> {
             env: Some((LocalId(0), struct_id)),
             captures_by_move: owned,
             aliases: HashMap::new(),
+            items: Vec::new(),
+            item_spans: self.reachable_item_spans(),
         };
         let body_env_mode = if probe_once {
             Mode::Owned
@@ -48687,7 +48803,9 @@ impl<'a> Checker<'a> {
                 (Block { stmts: vec![Stmt::Return(Some(value))], span: expr.span }, ty)
             }
             ast::LambdaBody::Block(block) => {
+                let outer_reassigned = std::mem::replace(&mut self.reassigned, reassigned_names(block));
                 let checked = self.check_block(block);
+                self.reassigned = outer_reassigned;
                 // `[FN-10]` applies to a block-bodied lambda as to a function.
                 let checked = self.complete_function_end(checked, block.span);
                 (checked, self.ret_ty)
@@ -48698,6 +48816,17 @@ impl<'a> Checker<'a> {
         let mut body = body;
         self.declare_arena_anchors(&mut body);
         self.arena_anchors = outer_anchors;
+        // ODR-278 — each local standing for an enclosing variable that holds a function item, set
+        // to that function where the body begins.
+        let items = self.captures.as_ref().map(|watch| watch.items.clone()).unwrap_or_default();
+        let lets: Vec<Stmt> = items
+            .into_iter()
+            .map(|(_, local, def)| {
+                let ty = self.locals[local.0 as usize].ty;
+                Stmt::Let { local, init: Some(Expr { ty, kind: ExprKind::FnValue(def), span: body.span }) }
+            })
+            .collect();
+        body.stmts.splice(0..0, lets);
         let mut written = HashSet::new();
         written_in_block(&body, &mut written);
         let keys: Vec<(Span, Option<Symbol>)> = written.into_iter().map(|local| self.known_key(local)).collect();
@@ -49691,7 +49820,61 @@ impl<'a> Checker<'a> {
             );
             return Expr { ty: self.common.error, kind: ExprKind::Error, span };
         }
+        let instance = self.instance_spellings.get(&def).map_or(String::new(), |spelling| spelling.replace('$', ""));
+        let ty = self.item_of(def, ty, Symbol::intern(&format!("{name}{instance}")));
         Expr { ty, kind: ExprKind::FnValue(def), span }
+    }
+
+    /// ODR-278, `[MNG-1]` — the symbol naming function `def` in every build: a lambda's, a free
+    /// function's (from its declaration), an instance's (its generic's path and its arguments).
+    /// `None` for a foreign declaration, whose contract decides its symbol.
+    fn item_symbol(&self, def: DefId) -> Option<String> {
+        if let Some(symbol) = self.closure_symbols.get(&def).or_else(|| self.function_symbols.get(&def)) {
+            return Some(symbol.clone());
+        }
+        let path = self.generic_of.get(&def).and_then(|generic| self.generic_paths.get(generic))?;
+        let arguments = self.instance_spellings.get(&def).map(String::as_str);
+        Some(ember_branding::instance_symbol(&ember_types::item_path(path.as_str()), arguments))
+    }
+
+    /// ODR-278 — where each variable a closure made here can reach that holds a function item is
+    /// declared: the innermost of a name, and the enclosing closure's reach.
+    fn reachable_item_spans(&self) -> HashMap<Symbol, Span> {
+        let mut spans: HashMap<Symbol, Span> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.iter())
+            .map(|(name, local)| (*name, &self.locals[local.0 as usize]))
+            .filter(|(_, decl)| self.types.item_shape(decl.ty).is_some())
+            .map(|(name, decl)| (name, decl.span))
+            .collect();
+        if let Some(watch) = &self.captures {
+            for (name, span) in &watch.item_spans {
+                spans.entry(*name).or_insert(*span);
+            }
+        }
+        spans
+    }
+
+    /// ODR-278 — function `def`'s own type: a function item naming it, which converts to
+    /// `shape`. A foreign declaration's value keeps `shape`, the C function pointer's type.
+    fn item_of(&mut self, def: DefId, shape: Ty, name: Symbol) -> Ty {
+        let Some(symbol) = self.item_symbol(def) else { return shape };
+        let ty = self.types.intern(TyKind::FnItem { symbol: Symbol::intern(&symbol), name, shape });
+        self.item_defs.insert(ty, def);
+        ty
+    }
+
+    /// ODR-278 — a function item's value as its shape (`[TYP-5]`): the function value itself,
+    /// or for any other expression of the item's type (a local holding it) that expression,
+    /// evaluated, then the function its type names.
+    fn item_to_shape(&mut self, expr: Expr) -> Expr {
+        let Some(shape) = self.types.item_shape(expr.ty) else { return expr };
+        let span = expr.span;
+        match expr.kind {
+            ExprKind::FnValue(def) => Expr { ty: shape, kind: ExprKind::FnValue(def), span },
+            _ => Expr { ty: shape, kind: ExprKind::Cast { expr: Box::new(expr), to: shape }, span },
+        }
     }
 
     /// `[GRM-8b]` — the arguments of `name[…]` read as types: each one
@@ -51577,7 +51760,7 @@ impl<'a> Checker<'a> {
         if f.ty == self.common.error {
             return error;
         }
-        let shown = self.types.display(f.ty);
+        let shown = self.callable_shown(f.ty);
         let signature = self.callable_signature_of_value(f.ty);
         let Some(TyKind::Fn { params, ret, .. }) = signature.map(|signature| self.types.kind(signature).clone()) else {
             self.error(codes::E2020, args[0].span, format!("`spawn` takes a function of no arguments, found `{shown}`"));
@@ -52363,7 +52546,7 @@ impl<'a> Checker<'a> {
                     refused = true;
                 }
             }
-        } else if !matches!(self.types.kind(f.ty), TyKind::Fn { stateless: true, .. } | TyKind::Fn { send: true, .. }) {
+        } else if !matches!(self.types.kind(f.ty), TyKind::Fn { stateless: true, .. } | TyKind::Fn { send: true, .. } | TyKind::FnItem { .. }) {
             let shown = self.types.display(f.ty);
             self.sink.emit(
                 Diagnostic::error(codes::E7004, arg_span, format!("a `{shown}` value may hold anything, so it is not Send"))
@@ -52462,7 +52645,7 @@ impl<'a> Checker<'a> {
                         ExprKind::MakeCallable { env, .. } => CallableArg::Captures(env.ty, at),
                         // A function captures nothing.
                         ExprKind::FnValue(_) => continue,
-                        _ if matches!(self.types.kind(inner.ty), TyKind::Fn { stateless: true, .. }) => continue,
+                        _ if matches!(self.types.kind(inner.ty), TyKind::Fn { stateless: true, .. } | TyKind::FnItem { .. }) => continue,
                         _ => CallableArg::Captures(payload_ty, at),
                     }
                 }
@@ -52559,7 +52742,7 @@ impl<'a> Checker<'a> {
 
     /// `[JOB-2]` — a job's function takes nothing and gives nothing.
     fn job_function(&mut self, f: &Expr, arg_span: Span, what: &str) -> bool {
-        let shown = self.types.display(f.ty);
+        let shown = self.callable_shown(f.ty);
         let signature = self.callable_signature_of_value(f.ty);
         match signature.map(|signature| self.types.kind(signature).clone()) {
             Some(TyKind::Fn { params, ret, .. }) if params.is_empty() && ret == self.common.void => true,
@@ -52746,7 +52929,7 @@ impl<'a> Checker<'a> {
                     refused = true;
                 }
             }
-        } else if !matches!(self.types.kind(f_ty), TyKind::Fn { stateless: true, .. } | TyKind::Fn { send: true, .. }) {
+        } else if !matches!(self.types.kind(f_ty), TyKind::Fn { stateless: true, .. } | TyKind::Fn { send: true, .. } | TyKind::FnItem { .. }) {
             let shown = self.types.display(f_ty);
             self.sink.emit(
                 Diagnostic::error(codes::E7004, arg_span, format!("a `{shown}` value may hold anything, so it is not Send"))
@@ -52800,7 +52983,7 @@ impl<'a> Checker<'a> {
         if f.ty == self.common.error {
             return error;
         }
-        let shown = self.types.display(f.ty);
+        let shown = self.callable_shown(f.ty);
         let signature = self.callable_signature_of_value(f.ty);
         let Some(TyKind::Fn { params, ret, .. }) = signature.map(|signature| self.types.kind(signature).clone()) else {
             self.error(codes::E2020, args[0].span, format!("`thread.spawn` takes a function of no arguments, found `{shown}`"));
@@ -58353,6 +58536,19 @@ impl<'a> Checker<'a> {
         // `add`, not fail to find one on a reference.
         lhs = self.read_through(lhs);
         rhs = self.read_through(rhs);
+        // ODR-278 — a function is compared as its value, beside a callable value as that one's
+        // type: two compare equal when they call the same function (ODR-102).
+        if comparison && (self.types.item_shape(lhs.ty).is_some() || self.types.item_shape(rhs.ty).is_some()) {
+            let callable = |this: &Self, ty: Ty| matches!(this.types.kind(ty), TyKind::Fn { .. });
+            if callable(self, lhs.ty) {
+                rhs = self.coerce(rhs, lhs.ty);
+            } else if callable(self, rhs.ty) {
+                lhs = self.coerce(lhs, rhs.ty);
+            } else {
+                lhs = self.item_to_shape(lhs);
+                rhs = self.item_to_shape(rhs);
+            }
+        }
         // `[TYP-14]` — and through a `Box`, as a field access does. IX.1 (ODR-241) — but two
         // `Box[dyn I]` compare as boxes, through their tables: the values they hold are of kinds
         // the operator cannot see.
@@ -61713,6 +61909,23 @@ fn mangle(name: Symbol) -> String {
     ember_branding::item_symbol(&ember_types::item_path(name.as_str()))
 }
 
+/// `[MNG-1]` — a free function's symbol, from its declaration; `None` for a foreign declaration,
+/// whose contract decides it (a wrapper's mangled name, or C's). `extern "C" fn` DEFINES a function
+/// a host links against, so its symbol is the name as written: `[MNG-1]`'s module-qualified
+/// mangling would make it unfindable, which defeats the point.
+fn free_function_symbol(attrs: &[ast::Attribute], decl: &ast::FnDecl, name: Symbol) -> Option<String> {
+    if let Some(exported) = export_symbol(attrs) {
+        // `[MNG-2]` — a symbol C cannot spell is named in C by its alias.
+        return Some(if c_link_identifier(exported) { exported.to_string() } else { ember_branding::export_alias(exported) });
+    }
+    match &decl.abi {
+        Some(_) if decl.is_foreign_decl => None,
+        Some(_) => Some(decl.name.name.to_string()),
+        None if has_attribute(attrs, "export") => Some(decl.name.name.to_string()),
+        None => Some(mangle(name)),
+    }
+}
+
 /// `[RNG-4]` — the interval an arithmetic operation produces, given its
 /// operands' intervals.
 ///
@@ -62135,6 +62348,13 @@ struct CaptureWatch {
     /// `[GRM-28]` — names this closure's reach holds for its captures, each the capture it names
     /// here: a local generator's, for a closure inside to capture by (`check_local_generator`).
     aliases: HashMap<Symbol, Symbol>,
+    /// ODR-278 — the enclosing variables holding a function item this closure names: each a local
+    /// of the closure's own, set to the function where its body begins (nothing is captured).
+    items: Vec<(Symbol, LocalId, DefId)>,
+    /// ODR-278 — where each variable this closure can reach that holds a function item is
+    /// declared: the closure's local standing for it is declared there too, so the variable
+    /// counts as read where the closure reads it (`L1001`).
+    item_spans: HashMap<Symbol, Span>,
 }
 
 /// An expression without the parentheses around it: `(0..10)` is `0..10`.
@@ -62162,11 +62382,16 @@ fn assignments_in_block(block: &ast::Block, loops: &mut Vec<Span>, out: &mut Vec
     for stmt in &block.stmts {
         match &stmt.kind {
             ast::StmtKind::Assign { targets, .. } => {
-                for target in targets {
-                    if let ast::ExprKind::Path { segments } = &target.kind
-                        && segments.len() == 1
-                    {
-                        out.push(Assignment { name: segments[0].name, target: target.span, at: stmt.span, loops: loops.clone() });
+                // A destructuring assignment's names are assigned too (`(f, n) = (g, 2)`).
+                let mut pending: Vec<&ast::Expr> = targets.iter().collect();
+                while let Some(target) = pending.pop() {
+                    match &target.kind {
+                        ast::ExprKind::Path { segments } if segments.len() == 1 => {
+                            out.push(Assignment { name: segments[0].name, target: target.span, at: stmt.span, loops: loops.clone() });
+                        }
+                        ast::ExprKind::Tuple(items) => pending.extend(items),
+                        ast::ExprKind::Paren(inner) => pending.push(inner),
+                        _ => {}
                     }
                 }
             }
@@ -62195,6 +62420,14 @@ fn assignments_in_block(block: &ast::Block, loops: &mut Vec<Span>, out: &mut Vec
             ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) | ast::StmtKind::Pass | ast::StmtKind::LocalFn(_) => {}
         }
     }
+}
+
+/// ODR-278 — the names `block` assigns (or declares by assignment) more than once.
+fn reassigned_names(block: &ast::Block) -> HashSet<Symbol> {
+    let mut assignments = Vec::new();
+    assignments_in_block(block, &mut Vec::new(), &mut assignments);
+    let mut seen = HashSet::new();
+    assignments.into_iter().filter(|assignment| !seen.insert(assignment.name)).map(|assignment| assignment.name).collect()
 }
 
 fn assignments_in_if(branch: &ast::IfStmt, loops: &mut Vec<Span>, out: &mut Vec<Assignment>) {
