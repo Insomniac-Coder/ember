@@ -60,3 +60,9 @@ fn main():
 
 fn passes_on(hook: Option[fn(c_int)]):
     maybe(hook)
+
+# A lambda's own parameter is no parameter of the function it is written in: one it passes to a
+# `nullable` callback is a callable value of unknown captures.
+fn wraps(n: c_int, hook: Option[fn(c_int)]):
+    pass_it = fn(given: c_int, cb: Option[fn(c_int)]): maybe(cb)    #$ error[E7004]: may hold anything, so it is not Send
+    pass_it(n, hook)

@@ -1504,7 +1504,7 @@ struct ForeignCallbackDecl {
 /// something capturing values of this type (a lambda's environment; a callable value, whose
 /// captures are unknown), or the parameter (by place) of the function making the call, which passes
 /// its own on.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum CallableArg {
     Captures(Ty, Span),
     PassedOn(DefId, usize),
@@ -7969,6 +7969,8 @@ impl<'a> Checker<'a> {
         }
         let outer_names = self.comptime_outer_names.replace(outer_names);
         let outer_locals = std::mem::take(&mut self.locals);
+        // Its locals are numbered afresh: none is the enclosing function's parameter.
+        let outer_callback_body = self.callback_body.take();
         let outer_scopes = std::mem::replace(&mut self.scopes, vec![HashMap::new()]);
         let outer_open = std::mem::take(&mut self.open);
         let outer_borrowed_params = std::mem::take(&mut self.borrowed_params);
@@ -7982,6 +7984,7 @@ impl<'a> Checker<'a> {
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, false);
         let value = check(self);
         let locals = std::mem::replace(&mut self.locals, outer_locals);
+        self.callback_body = outer_callback_body;
         self.scopes = outer_scopes;
         self.open = outer_open;
         self.borrowed_params = outer_borrowed_params;
@@ -46614,6 +46617,8 @@ impl<'a> Checker<'a> {
         env: Option<(Symbol, Ty, Mode, Span)>,
     ) -> (Block, Ty, Vec<LocalDecl>, CaptureWatch) {
         let outer_locals = std::mem::take(&mut self.locals);
+        // Its locals are numbered afresh: none is the enclosing function's parameter.
+        let outer_callback_body = self.callback_body.take();
         // `[STD-19]` — the known-numbers rule holds in a closure as in a
         // function: what an earlier check of this body found it changes is
         // not known.
@@ -46714,6 +46719,7 @@ impl<'a> Checker<'a> {
         let keys: Vec<(Span, Option<Symbol>)> = written.into_iter().map(|local| self.known_key(local)).collect();
         self.lambda_changed.entry(body_span).or_default().extend(keys);
         let locals = std::mem::replace(&mut self.locals, outer_locals);
+        self.callback_body = outer_callback_body;
         self.open = outer_open;
         self.scopes = outer_scopes;
         self.borrowed_params = outer_borrowed_params;
@@ -50482,7 +50488,10 @@ impl<'a> Checker<'a> {
                 },
                 _ => CallableArg::Captures(payload_ty, at),
             };
-            self.callable_value_args.push((callee, index, given));
+            // A lambda's body is checked more than once; its calls are recorded once.
+            if !self.callable_value_args.contains(&(callee, index, given)) {
+                self.callable_value_args.push((callee, index, given));
+            }
         }
     }
 

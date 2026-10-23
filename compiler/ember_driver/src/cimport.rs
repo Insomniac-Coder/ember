@@ -529,7 +529,8 @@ pub struct Imported {
     pub conflicts: Vec<(String, String, String)>,
     /// `[FFI-30]` (D-879) — each record an earlier import of the build wrote, which this module
     /// names by an alias: its members (a C++ class's methods, constructors, operators) are that
-    /// import's, written once.
+    /// import's, written once. `namespace|Name`: the C++ namespace it is in (`::`-joined) and its
+    /// Ember name.
     pub adopted: Vec<String>,
     /// `[FFI-6b]` — the function-like macros, for an overlay entry to declare.
     pub macro_functions: Vec<MacroFunction>,
@@ -2552,7 +2553,8 @@ impl Writer {
         }
         let alias = format!("{}_{}.{}", ember_branding::SYMBOL_PREFIX, shared.module.join("_"), shared.name);
         let name = ident(named);
-        self.adopted.push(named.to_string());
+        // By the namespace it is written in and its Ember name, as a member's owner is named.
+        self.adopted.push(format!("{}|{}", self.writing.join("::"), ident(named.rsplit("::").next().unwrap_or(named))));
         self.push(named, Kind::Type, format!("type {name} = {alias}"));
         self.spelled(cursor, named);
         let record = if shared.layout.starts_with("opaque") { Record::Opaque(name, None) } else { Record::Full(name) };
@@ -6688,9 +6690,10 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
 /// record an earlier import of the build wrote, whose members that import wrote once: written again
 /// here, each would be the entity's a second time.
 fn adopted_member(imported: &Imported, function: &Function) -> bool {
-    function.owner.as_ref().is_some_and(|(owner, _)| imported.adopted.iter().any(|name| {
-        ident(name) == *owner || ident(name.rsplit("::").next().unwrap_or(name)) == *owner
-    }))
+    function.owner.as_ref().is_some_and(|(owner, _)| {
+        let key = format!("{}|{owner}", function.namespace.join("::"));
+        imported.adopted.iter().any(|adopted| *adopted == key)
+    })
 }
 
 /// `[GRM-35]` — an overlay writes a slot's words in any order; a hand declaration's `param(…)` and
