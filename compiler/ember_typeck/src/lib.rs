@@ -1309,8 +1309,8 @@ struct GenericLocalFn {
 }
 
 /// `[GRM-28]` (ODR-268) — a generator written in a block, as one check of its declaration found it
-/// (`check_local_generator`): what its name holds, a marker type naming this entry (its
-/// environment, or an empty struct when it captures nothing), and what its body captured.
+/// (`check_local_generator`, which gives its name a marker type of no value naming this entry):
+/// what its body captured, and the environment a call makes of it.
 #[derive(Clone)]
 struct LocalGenerator {
     name: Symbol,
@@ -1336,8 +1336,8 @@ struct LocalGenerator {
 }
 
 /// `[GRM-28]` — a local generator's own name in its body: in its declaration's check, typed as a
-/// frame over an opaque environment (`env: None`); in an instance's, the call made with the
-/// environment the instance was given (`ENV_PARAM`), of type `env_ty`.
+/// frame over an opaque environment (`entry: None`); in an instance's, the call made with the
+/// environment the instance was given (`LOCAL_ENV_PARAM`) made again, of type `env_ty`.
 #[derive(Clone)]
 struct LocalGeneratorSelf {
     name: Symbol,
@@ -2540,7 +2540,7 @@ struct Checker<'a> {
     /// `[GRM-28]` (ODR-268) — each generator written in a block as the desugaring lifted it, by
     /// its name's span; the lifted frames, by name, with whether each is the form with an
     /// environment, and the lift it is of; each check of such a declaration, by its marker type;
-    /// the one a call is reading the marker of (as `generic_local_callee`); and the local
+    /// the environments the calls being checked pass, checked (`LOCAL_ENV_VALUE`); and the local
     /// generators whose bodies are being checked, innermost last.
     local_lifts: HashMap<Span, coroutines::LocalLift>,
     local_frames: HashMap<Symbol, (bool, Span)>,

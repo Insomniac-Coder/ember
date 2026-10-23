@@ -54,9 +54,10 @@ pub(crate) struct Desugared {
 
 /// `[GRM-28]`, `[GRM-21]` (ODR-268) — a generator written in a block, lifted to its module twice,
 /// generic over what its calls pass: `count.local.env[…, ·E](owned ·env: ·E, n: int)`, whose `·E`
-/// is a reference to the environment the declaration's check finds (`ref` when its body only
-/// reads what it captures, `ref mut` when it writes), and `count.local.plain[…, ·E](n: int)` for
-/// one that captures nothing, whose `·E` holds nothing. Each takes the enclosing declarations'
+/// is the environment each call makes, `ref` or `ref mut` of each place its body captures as the
+/// declaration's check finds (`[CLO-2]`: `ref mut` what it writes), and
+/// `count.local.plain[…, ·E](n: int)` for one that captures nothing, whose `·E` is phantom (the
+/// calls give `void`). Each takes the enclosing declarations'
 /// type parameters first, by name. The checker makes an instance of one of them per call; neither
 /// is checked on its own (`Checker::local_frames`).
 #[derive(Clone, Debug)]

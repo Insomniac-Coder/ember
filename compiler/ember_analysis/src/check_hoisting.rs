@@ -223,7 +223,8 @@ pub(crate) fn runs_no_ember_code(body: &Body, types: &TypeTable, which: &Builtin
         | Builtin::StringRemove
         | Builtin::StringTruncate
         | Builtin::Print
-        | Builtin::Println => true,
+        | Builtin::Println
+        | Builtin::PrintHold { .. } => true,
         Builtin::ArrayClear | Builtin::ArrayTruncate => args.first().is_some_and(|list| {
             let (Operand::Copy(place) | Operand::Move(place)) = list else { return false };
             let mut ty = crate::regions::place_type(body, types, place);
