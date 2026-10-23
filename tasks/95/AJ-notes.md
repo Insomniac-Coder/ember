@@ -1,0 +1,281 @@
+# Helper AJ — every function and every lambda has a type of its own (ODR-278)
+
+Branch `worktree-agent-aa2ff85845051a332`, from `main` at `3f2fce5b`.
+
+## ADR draft (written before building) — function items
+
+**Rules:** `[CLO-1]`, `[FN-6]`, `[CLO-3]`, `[CLO-10]`, `[EFF-1]`, `[EFF-2]`, `[TYP-5]`, `[TYP-23]`,
+`[MNG-1]`, `[BLD-1]`, `[COST-3]`, ODR-102, ODR-278, D-877, D-901.
+
+**Context.** A function or a capture-free lambda used as a value has today the shape type
+`fn(A) -> R` (`stateless`), which says only "some function from `A` to `R`". So the compiler cannot
+tell `add_one` from `make_list` (D-901: `@noalloc fast` refused because `make_list`, another
+`fn(int) -> int` used as a value elsewhere, allocates), an adapter's instance is shared by every
+lambda of one shape and calls through a 40-byte callable value (`struct ember_fn_value`: entry,
+descriptor, three words), and the call goes through a thunk to the lambda. A capturing lambda
+already has a type of its own (its environment struct, `closure_calls`), called directly.
+
+**Decision.**
+
+1. *The type.* `TyKind::FnItem { symbol, name, shape }`: the type of exactly one function — a
+   function named as a value (`add_one`), an instance (`identity[int]`), a capture-free lambda or
+   capture-free local function. `symbol` is the function's C symbol (an instance's carries its
+   arguments' hash), which names it across builds as kept MIR names functions (`[BLD-1]`), so a
+   kept body's item type is found again with no definition to look up; `shape` is the stateless
+   `fn(A) -> R` it converts to (its `unsafe` too); `name` is how a diagnostic shows it.
+   It holds nothing: size 0, `Copy`, nothing to drop, `Send` and `Sync`, not a view.
+   Shown `fn(int) -> int {add_one}` (Rust's spelling: shape and identity), a lambda
+   `fn(int) -> int {lambda}`. Spelled for `[MNG-1]` by its symbol (unique, stable).
+2. *Where it stays itself:* a local declared from it, a generic argument inferred from it (so a
+   generic is instantiated per function: `map(f)` is `Map[I, R, <f's item>]`), a lambda's
+   inferred result, a tuple or `Option` built from it.
+3. *Where it converts to its shape* (`[TYP-5]`, a new conversion): every coercion site whose
+   expected type is a callable type — `fn(A) -> R` (ODR-102's owned callable value: a field, an
+   annotated local, a return type, a collection's written element type, a `static`), `unsafe fn`,
+   `@latebound fn`, `once fn`, `fn(…) + Send`, `extern "C" fn`. The conversion is the value
+   today's function value is (`Const::Fn`, its native descriptor), so everything downstream of it
+   is unchanged.
+4. *When two meet* the result is the shape (a join), and the same item met twice stays the item:
+   the branches of a conditional expression, the arms of a `match`, a generic parameter solved by
+   two arguments (`pick(add_one, sub_one)`), and a local the body assigns again (`if c: f = a
+   else: f = b`, or `f = a` … `f = b`: found by the same scan of the body's assignments `[CLO-13]`
+   uses). A list, set or map written out holds the shape: a collection is for holding any
+   function of its shape (as `[TYP-38]` makes a literal's text owned). Effects of a value of the
+   shape are D-877's (the functions converted to that shape).
+5. *Calls.* A call through a value of item type is a direct call to its function
+   (`FuncRef::Direct`; the zero-sized value is still evaluated): its effects are exactly that
+   function's (`[EFF-1]`, `[EFF-2]`), an analysis of it is exact, and the C compiler can inline
+   it. A call through the shape stays indirect, and D-877's resolution by shape stays for it only
+   — now more precise too, since an item never converted is not counted for its shape.
+6. *Capturing lambdas:* unchanged. Their type is already their own (the environment struct), and
+   a call through one is already direct; the environment is the value, so an "item plus
+   environment" would add nothing.
+7. *Backends.* An item is laid out and passed as `void` is: the C backend's `void` (one byte as a
+   struct member, as a `void` field is: C has no zero-sized member), the LLVM backend's `Zst`, the
+   evaluator's empty value. MIR: an item value is `Const::Void`; its conversion to the shape
+   `Const::Fn(symbol)` (as `FnValue` is today); a call through it `FuncRef::Direct { symbol }`
+   (the rewrite `call_known_callables` (ADR-169) already proves sound: same arguments, same
+   function).
+8. *Effect analysis.* Exact for item calls by construction (direct calls); D-877's
+   `plain_function_values` unchanged, serving only values typed as the shape.
+9. *Incremental builds.* `KindRecord::FnItem { symbol, name, shape }`; found again by interning.
+10. *Hot reload (`[HR-*]`).* A call through an item is a direct call, which a reloadable image
+    sends through the function's slot like any direct call; an item value holds no address, so a
+    reload has nothing to re-point. A conversion to the shape is `Const::Fn` as today.
+11. *Code size.* A generic is instantiated per function given to it (one `Map` instance per
+    lambda an adapter holds, was one per shape), each instance's call direct and inlinable — the
+    C++/Rust trade. Measured below.
+
+**Spec text the lead writes** (proposals): `[FN-6]` "A function is a value of a type of its own,
+naming exactly that function (zero-sized), which converts to any callable type it satisfies";
+`[CLO-1]` "a lambda … has a unique anonymous type" (now built for capture-free lambdas: a function
+item); `[CLO-3]` (a local declared from a function holds that function's type unless assigned
+again); `[TYP-5]` a new rule: a function item converts to its callable type where one is expected;
+`[TYP-23]` the joins of decision 4 and the collection rule; `[EFF-2]` "a call through a value of a
+function's own type contributes that function's effects"; `[MNG-1]` an item's spelling;
+`[COST-3]` a call through a function item is a direct call; `[CLO-10]` a function item holds
+nothing (zero bytes).
+
+## Done
+
+ODR-278 built as the ADR above says, in the checker, MIR, both backends, the evaluator and the
+codec. Tests (all pass, C and LLVM backends, the evaluator agreeing):
+
+* `EFF-1/accept_a_call_through_a_variable_holding_one_function_has_its_effects.em` — the owner's
+  example: `f = add_one` in a `@noalloc fast` while `make_list` allocates elsewhere (was `E4001`);
+  a lambda held in a local and a function given to a generic, `@noalloc` too.
+* `EFF-1/accept_an_adapter_holding_a_lambda_has_its_effects.em` — D-901's shared-adapter case,
+  renamed from `reject_a_plain_fn_value_of_a_shape_some_function_allocates_in.em`: `map` is made
+  per lambda, so the `@noalloc` adapter runs only its own lambda.
+* `EFF-1/reject_a_variable_holding_either_function_has_both_effects.em` — where a variable really
+  may hold the allocating function (a conditional, branches, a second assignment): `E4001` ×3.
+* `FN-6/accept_a_function_has_a_type_of_its_own_that_converts_to_its_shape.em` — the joins, the
+  conversions (a written parameter, a field, a list, a comparison with a callable value), a
+  destructuring assigned twice, a generic `T` given two functions, adapters given a function.
+* `FN-6/accept_a_function_reached_through_its_module_is_a_value.em`,
+  `FN-6/reject_a_private_function_of_another_module_is_no_value.em` (defect 1).
+* `CLO-1/accept_a_lambda_in_a_generic_adapter_is_called_directly.em` — `assert-c` in development
+  and release: no `ember_fn_value` and no native descriptor anywhere; and the LLVM IR test
+  `clo_1_a_lambda_in_an_adapter_is_called_directly` (`ember_driver/tests/llvm.rs`, debug, where
+  Ember inlines nothing): `Map.next` calls the lambda's symbol, no `fn_value` in the module.
+* `CLO-1/reject_a_place_holding_one_function_holds_no_other.em` — the new `E2020` and its help.
+* `LT-22/accept_a_function_given_by_name_has_its_own_provenance.em`; `LT-22/reject_…`,
+  `LT-23/reject_…` and `tests/ui/borrow/B14` (with `docs/errors/E3065.md`) now make their opaque
+  value from two functions (`chosen = bundle if … else crossed`): a function given by name is no
+  longer opaque, its own type naming it.
+* `CLO-13/reject_a_variable_assigned_by_destructuring_later_keeps_the_borrow_rule.em` (defect 2).
+* `ember_types` unit test `a_function_item_holds_nothing_and_meets_another_at_its_shape`;
+  `ember_driver/tests/incremental.rs` `function_items_are_kept_across_builds_as_a_clean_build_makes_them`
+  (items of another module's function and of lambdas, generics made for them, three edits: every
+  C unit the clean build's, the same output).
+* Changed expectations, each because a function given by name is no longer a function value:
+  `CLO-3/accept_a_function_argument_is_called_directly.em` (`apply`'s copy for `triple` has a new
+  instance hash, and the copy `apply` had for the shared type is gone: 2 definitions, was 4);
+  `HR-5/accept_a_call_goes_through_its_thunk.em` and `reload.rs`'s
+  `removing_a_function_whose_address_is_held_is_refused` hold a `fn(int) -> int` to make a value
+  of the function (`held = helper` holds no address now); `tests/run-pass/views_passed_as_two_
+  words.em` and its milestone likewise, plus a function given by name, which now splits its view
+  on Windows as one only ever called directly does.
+
+## Not done
+
+* A foreign declaration's value keeps the C function pointer's type (spec question 5): its
+  symbol is its contract's, planned with its body.
+* The C backend's one byte for a zero-sized member (defect 3, option (a)): the LLVM backend holds
+  none; the C struct of an adapter holding a lambda is 8 bytes larger than Ember's layout says.
+* `callable_values` (instances keyed by the function given to an `@latebound` callable bound) is
+  kept: with items the generic argument already names the function, so the key is redundant, but
+  it also carries the latebound region contract into the instance (`synth_known_function_call`);
+  folding it into the item is a separate cleanup.
+* No `unfinished` entry in `docs/phase-status.json`: `[FN-6]` and `[CLO-1]` as Hardened_35 writes
+  them are met (a lambda's unique type is now built for one that captures nothing too); ODR-278's
+  text is the lead's to cut.
+
+## Compiler changes
+
+* `ember_types`: `TyKind::FnItem { symbol, name, shape }` and its facts (layout zero, `Copy`, no
+  drop, `Send` and `Sync`, not generic unless its shape is, display `fn(A) -> R {name}`, spelling
+  and canonical name `fn{symbol}`); `TypeTable::item_shape`, `TypeTable::join_items`; the unifier
+  joins two items of one shape at a parameter and solves a written `fn(…)` from an item's shape;
+  `callable_sources` reads an item as its shape. `codec`: `KindRecord::FnItem`.
+* `ember_typeck`:
+  * the item made where a function becomes a value (`fn_value_of`: a free function, an instance
+    `f[T]`) and where a capture-free lambda or local function is made (`synth_lambda_fresh`),
+    named by its symbol (`item_symbol`: a lambda's `closure_symbols`; a free function's
+    `function_symbols`, now computed from its declaration when its signature is collected by
+    `free_function_symbol`, which the body's check uses too; an instance's from
+    `generic_paths` and its arguments' spelling); a foreign declaration keeps its C pointer type;
+    `item_defs` maps each item back to its function (debug-asserted equal to the emitted symbol);
+  * conversion to the shape (`item_to_shape`: the `FnValue` itself, or a `Cast` of any other
+    expression) at every coercion to a callable type (`coerce`), in `[TYP-5]` rule 11
+    (`Option[fn]`), an export table's fields, a comparison (`==` beside a callable value);
+  * joins: a conditional expression, `match` arms (their shape), a list literal and a collection
+    literal's elements, an open `[]` fixed by a push, a local declared from a function and assigned
+    again (`reassigned`, from `[CLO-13]`'s assignment scan, which now also sees destructuring
+    targets), a destructuring declaration likewise, an open `None` fixed by a function;
+  * calls through an item: `synth_indirect_call` takes the shape's signature, every callable-value
+    test (`is_callable_value`, `through_callable_ref`, `callable_signature_of_value`, the bound
+    unifier) sees items;
+  * a closure that names an enclosing variable holding an item captures nothing for it: a local of
+    its own is set to the function where its body begins (`CaptureWatch::items`);
+  * diagnostics: two items that differ (`E2020`, "each function has a type of its own", help: the
+    shape); messages about a callable's signature show an item's shape (`callable_shown`);
+  * thread, job, scope and FFI-callback checks treat an item as holding nothing; an FFI callback
+    given an item calls its function from the trampoline (`FfiCallback::closure`).
+* `ember_mir`: an item value is `Const::Void`; its conversion `Const::Fn(symbol)`; a call through
+  it `FuncRef::Direct { symbol }` (the item still read: `keep_item_read`).
+* `ember_codegen_c`: an item is `void` (`c_type`, `is_void`; a member is one byte, as a `void`
+  member is); a callback record's member; the trampoline calls an item's function with no state.
+* `ember_codegen_llvm`: an item is `Repr::Zst`; the callback trampoline as the C backend's.
+* `ember_interp`: an item is void (`is_void`).
+* `ember_analysis`: the cycle analysis reads an item as owning nothing. Effects need no change:
+  item calls are direct calls.
+
+## Measurements
+
+The compiler before (`3f2fce5b`, built `ci` as `target/baseline/ember.exe`) against the one after
+(this branch, `ci`), on the reference laptop, mains power.
+
+**Memory of a program's values.** A function or capture-free lambda held anywhere was a
+`struct ember_fn_value` (entry, descriptor, three words: 40 bytes) and is now nothing (0 bytes in
+Ember's layout and the LLVM backend; one byte as a C struct member, as a `void` member is, so
+`+8` with alignment in a C struct, defect 3). `xs.iter().map(fn…)`'s adapter: 64 bytes → 24 (LLVM)
+/ 32 (C); `(0..n).map(fn…)`: 56 → 16 / 24.
+
+**Generated C and executables** (`release`, MSVC; `target/aj/sizes.py`: 79 programs, every
+`tests/perf`, `bench/programs` program and four of callables, `target/aj/perf_items`):
+
+| program | C before → after | executable before → after |
+|---|---|---|
+| `c1_kept_adapter` (an adapter chain held in a local) | 19,858 → 16,714 B | 79,872 → 79,872 B |
+| `c2_local_function` (`f = step`, called 200M times) | 6,974 → 4,505 B | 76,288 → 72,704 B |
+| `c3_generic_named` (`run(step, n)`, `F: fn(int) -> int`) | 9,416 → 4,716 B | 76,288 → 72,704 B |
+| `c4_sort_by` (`sort_by` with a lambda) | 42,801 → 39,285 B | 83,968 → 83,456 B |
+| `a04_map_int`, `a14_map_gap_1024`, `a15_map_gap_1048576` (std's own lambdas) | | 95,232 → 94,720 B each |
+| the other 72 | | unchanged |
+
+No program grew; the four callable programs hold no `fn_value` (before: 11 to 16 mentions each).
+Of the 75 `tests/perf` and `bench/programs` programs, 70 emit byte-identical C (so the same speed:
+no cost where the feature is not used); the five map programs (`a04`, `a13`..`a16`) differ because
+std's `Map.rebuild` gives `retain` a lambda, which is now called directly and inlined, and the
+whole callable-value machinery (`ember_fn_value`, its descriptor, the job helpers over it) leaves
+the program.
+
+**Speed, exact** (retired instructions, Cachegrind, `ember bench --compare` in WSL, clang,
+`release`; both compilers built there from the same sources as on Windows):
+
+| program | before | after | |
+|---|---|---|---|
+| `c1_kept_adapter` | 5,204,727,934 | 2,302,431,819 | −55.8 %, faster (3.89x → 1.68x the C twin's time there) |
+| `c2_local_function` | 3,200,305,108 | 3,200,305,010 | the same (ADR-169 made this call direct already) |
+| `c3_generic_named` | 3,200,305,096 | 3,200,305,021 | the same (the instance was inlined and devirtualised before) |
+| `c4_sort_by` | 1,576,182,317 | 1,576,180,580 | the same with clang |
+
+**Speed, timed** (Windows, MSVC, core 1, `ember bench --compare`, two rounds each, interleaved
+with the C twin): the machine was loaded throughout (the other helpers' builds: the C twins' own
+times moved up to 4x between runs, so every absolute time is inconclusive under `[BUD-3a]`); the
+ratio to the twin is the only comparable figure. `c1`: 2.26x and 2.10x the C before, 0.80x and
+1.03x after. `c4`: 1.27x and 1.31x before (one inconclusive), 1.03x and 1.00x after. `c2`, `c3`:
+within each other's noise, as the exact counts say they are. To be timed again on a quiet machine
+(the gate of record).
+
+## Defects found
+
+1. **A function reached through its module was not a value** (`f = lib.offset`: `E1010`, "`lib` is a
+   module, and what follows it is not one of its items", though `lib.offset(x)` called it). `[FN-6]`,
+   `[GRM-24]`. Fixed: the module path's item lookup (`math.PI`'s) takes a function too, visible as a
+   call is (`E1052` for a private one). `FN-6/accept_a_function_reached_through_its_module_is_a_value.em`,
+   `FN-6/reject_a_private_function_of_another_module_is_no_value.em` (support `FN-6/items/steps.em`).
+2. **`[CLO-13]`'s "assigned after" missed a destructuring assignment**: `(x, y) = (2, 3)` after
+   `f: fn() -> int = fn() => x` left `x` copied into `f`, which then gave 1 while `x` was 2 (the
+   difference a copy may never show). Fixed with ODR-278's scan of the body's assignments, which now
+   sees each name a destructuring target writes. `CLO-13/reject_a_variable_assigned_by_destructuring_
+   later_keeps_the_borrow_rule.em` (`E3026`; the baseline compiled it).
+3. **Not fixed — an effect estimate the C backend can exceed** (pre-existing for `void` fields and
+   empty structs; function items make it more frequent): Ember's layout gives a zero-sized field no
+   bytes, the C backend gives it one (C has no zero-sized member) plus padding, so a struct can be
+   larger in C than `TypeTable::layout` says. The effect analysis decides from the layout whether a
+   callable value's state fits its three words (`[CLO-10]`) and a job's state its slot (`[JOB-1]`),
+   while the C runtime decides by `sizeof`. Verified (`--emit c`): `it = (0..n).map(fn(x: int) ->
+   int => x * 2)`, then `owned fn() => drain(it) + k`: the environment is `{Map, int}`, 24 bytes to
+   the analysis (no `Alloc`), 32 in C (`Map` has `uint8_t f`), so `ember_fn_value_make` boxes it.
+   Narrow (a call through an owned callable value has every effect unless its type declares them,
+   `[EFF-2]`), but the creation's `Alloc` is missed. A closure naming a variable that holds a
+   function item captures nothing for it (built), which removes the common case. Options: (a) the C backend leaves
+   zero-sized members out of its structs (and their reads, writes and initialisers), as the LLVM
+   backend does, so the layouts agree and the bytes are saved too; (b) the analysis counts a
+   zero-sized field as C does (pessimistic for LLVM). Recommend (a), a C-backend change of its own.
+
+## Spec questions
+
+1. *A local assigned two functions* (`if c: f = a else: f = b`, `f = a` … `f = b`). ODR-278 names
+   the conditional expression (the shape); a local assigned again is not named. Options: (a) the
+   local holds the shape, decided from the body's assignments as `[CLO-13]` decides "assigned
+   after" (built: Python-like, and every program that compiled before compiles); (b) the first
+   assignment fixes the item and the second is `E2020` (Rust's rule, and D-555's for capturing
+   lambdas, whose join would need an owned callable value). Recommend (a): the join costs nothing
+   (a function pointer, as before), (b) breaks working programs for no gain.
+2. *A collection written out* (`[add_one, sub_one]`, `{"a": f}`, `xs = []; xs.push(f)`): built as
+   the shape always, even for one function (`[add_one]` is `Array[fn(int) -> int]`), since a
+   collection is for holding any function of its shape (a list of one function's values could
+   hold no other: `push(sub_one)` would be `E2020`). Option: the item when every element is the
+   same function. Recommend as built.
+3. *`match` arms giving functions* are built as the shape (the first arm settles the type and the
+   others are checked against it, so a mismatch points at the arm that differs); a conditional
+   expression keeps the item when both branches are the same function. Option: join arms as the
+   conditional does (two passes over the arms). Recommend as built (rare; no cost).
+4. *How a diagnostic shows a function's type*: built `fn(int) -> int {add_one}` (Rust's: the
+   shape and the one function), a lambda `fn(int) -> int {lambda}`; messages about a callable's
+   signature (`cannot take`, `takes a function of no arguments`, `calling a value of type`) show
+   the shape only. The owner's words were "is of type `add_shield`". Recommend as built.
+5. *Foreign declarations* (`extern "C"` functions declared, not defined) keep their C function
+   pointer type as their value's type (no item): their symbol is decided by their contract (a
+   wrapper's, or C's), known only once the declaration's wrapper is planned, and their value is
+   only ever given to C. Every function Ember defines (`extern "C" fn` definitions and `@export`
+   functions too) has its item. Options: (a) as built; (b) items for them as well, the contract's
+   symbol planned with the signature. Recommend (a) for now: no program gains from (b).
+6. *A variable holding a function item, assigned inside a local function or a lambda* (the
+   body's assignment scan does not look inside closures): `E2020`, "each function has a type of
+   its own", whose help names the shape (`CLO-1/reject_a_place_holding_one_function_holds_no_
+   other.em`). Option: extend the scan into closure bodies (the variable then holds the shape).
+   Recommend leaving it (rare, and the help gives the fix).
