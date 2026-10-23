@@ -1,0 +1,372 @@
+################ target/redesign/phase1/sharing/a09_refcell_escape.em
+warning[L3011]: a `RefCell` guard for `*c` is live across this call
+ --> target/redesign/phase1/sharing/a09_refcell_escape.em:9:9
+  |
+8 |     with g = c.borrow_mut():
+  |              -------------- guard borrowed here
+9 |         g.clear()
+  |         ^^^^^^^^^ call happens here
+  |
+  = help: drop the guard before the call, or put the call in a block of its own
+  = note: a guard live across a call that re-enters the same cell panics at run time [CELL-7]
+
+exit=0
+################ target/redesign/phase1/sharing/a09_shared_state.em
+exit=0
+################ target/redesign/phase1/sharing/a09_shared_state_struct.em
+error[E3022]: `p` is already mutably borrowed
+  --> target/redesign/phase1/sharing/a09_shared_state_struct.em:16:15
+   |
+15 |     cam = Camera(ref mut p)
+   |                  --------- mutable borrow of `p` starts here
+16 |     hud = Hud(ref mut p)
+   |               ^^^^^^^^^ conflicting access here
+17 |     cam.target.hp -= 1
+   |                      - borrow later used here
+   |
+   = help: use one mutable access rather than borrowing the same place twice; split the owner's mutable view with `split_at` when the intended operands are disjoint parts of it
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a10_ownership_kinds.em
+error[E3040]: `m` has been moved out of
+  --> target/redesign/phase1/sharing/a10_ownership_kinds.em:12:9
+   |
+11 |     a = Entity(m)
+   |         --------- moved here
+12 |     b = Entity(m)
+   |         ^^^^^^^^^ used here after the move
+   |
+   = help: clone the value, or borrow it instead of moving it
+   = note: a move gives the value away; the old owner cannot use it again
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a12_closures.em
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> void`
+ --> target/redesign/phase1/sharing/a12_closures.em:7:28
+  |
+7 |         self.handlers.push(f)
+  |                            ^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a12_closures_class.em
+exit=0
+################ target/redesign/phase1/sharing/a12_closures_class_plain.em
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> void`
+ --> target/redesign/phase1/sharing/a12_closures_class_plain.em:7:28
+  |
+7 |         self.handlers.push(f)
+  |                            ^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a12_closures_owned.em
+exit=0
+################ target/redesign/phase1/sharing/a13_dyn.em
+error[E2020]: `cast … as` and `cast … if` need related class handles, found `Box[dyn AnyPool]` and `Pool[T]`
+  --> target/redesign/phase1/sharing/a13_dyn.em:18:16
+   |
+18 |         pool = cast self.pools[7u128] as Pool[T]
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2050]: interface `Inspect` is not `dyn`-compatible
+  --> target/redesign/phase1/sharing/a13_dyn.em:27:22
+   |
+27 | fn all(xs: Array[Box[dyn Inspect]]) -> int:
+   |                      ^^^^^^^^^^^ method `inspect` is generic
+   |
+
+error: could not compile due to 2 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a14_async_kw.em
+error[E0005]: `async` is reserved for v2
+ --> target/redesign/phase1/sharing/a14_async_kw.em:3:1
+  |
+3 | async fn fetch() -> int:
+  | ^^^^^
+  |
+  = help: rename the item, or write `r#async` to use the word as an identifier
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a14_generators.em
+error[E2221]: a borrow of `buf`, a local of this generator, is held across this `yield`
+ --> target/redesign/phase1/sharing/a14_generators.em:7:15
+  |
+7 |         yield s.clone()
+  |               ^ the generator suspends here
+  |
+  = help: iterate the collection `owned` (`for x in owned xs:`), or by index; borrows of the generator's parameters may be held
+  = note: a suspended frame is a value that may move, which would leave the borrow pointing where the local was [CORO-6]
+
+error[E2229]: a borrow of a field of a class object is held across this `yield`
+  --> target/redesign/phase1/sharing/a14_generators.em:15:19
+   |
+15 |             yield entry.len()
+   |                   ^^^^^ the generator suspends here
+   |
+   = help: copy what is needed out of the field before the `yield`, or iterate by index
+   = note: a long-term access to an object's field may not span a suspension, when any other code may run [CORO-12]
+
+error: could not compile due to 2 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a15_threads.em
+error[E3021]: `t` cannot be written while it is borrowed
+ --> target/redesign/phase1/sharing/a15_threads.em:7:9
+  |
+7 |         for t in texts:
+  |         ^^^^^^^^^^^^^^^ conflicting access here
+8 |             scope.spawn(fn(): total += t.split_whitespace().count())
+  |                         ------------------------------------------- borrow of `t` starts here
+  |             -------------------------------------------------------- borrow later used here
+  |
+  = help: end the borrow before this: `scope` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3022]: `total` is already mutably borrowed
+ --> target/redesign/phase1/sharing/a15_threads.em:8:25
+  |
+8 |             scope.spawn(fn(): total += t.split_whitespace().count())
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+  |                         ------------------------------------------- mutable borrow of `total` starts here
+  |
+  = help: use one mutable access rather than borrowing the same place twice; split the owner's mutable view with `split_at` when the intended operands are disjoint parts of it
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3060]: `t` does not live long enough
+ --> target/redesign/phase1/sharing/a15_threads.em:8:25
+  |
+8 |             scope.spawn(fn(): total += t.split_whitespace().count())
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this borrow remains live after its source's scope ends
+  |             -------------------------------------------------------- `t` ends its scope here
+  |
+  = help: declare the borrowed value in an enclosing scope, or drop its borrower before leaving this scope
+  = note: borrowed storage must remain valid through every use, including a destructor [DRP-7]
+
+error[E7004]: the thread's function captures `names`, a `Names`, which is not Send
+  --> target/redesign/phase1/sharing/a15_threads.em:16:22
+   |
+16 |     h = thread.spawn(owned fn() => names.items.len())
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: declare it `@sync class Names`: its fields are all `Send` and `Sync` [THR-1]
+   = note: what a thread's function captures moves to that thread [THR-10]
+
+error: could not compile due to 4 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a15_workaround.em
+error[E1010]: cannot find `t` in this scope
+ --> target/redesign/phase1/sharing/a15_workaround.em:9:49
+  |
+9 |             scope.spawn(fn() => total.fetch_add(t.split_whitespace().count()))
+  |                                                 ^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a15_workaround2.em
+error[E1010]: cannot find `t` in this scope
+ --> target/redesign/phase1/sharing/a15_workaround2.em:9:47
+  |
+9 |             scope.spawn(fn(): total.fetch_add(t.split_whitespace().count()))
+  |                                               ^
+  |
+
+error[E1010]: cannot find `texts` in this scope
+  --> target/redesign/phase1/sharing/a15_workaround2.em:15:45
+   |
+15 |         scope.spawn(fn() => total.fetch_add(texts[0].len()))
+   |                                             ^^^^^
+   |
+
+error: could not compile due to 2 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a15_workaround3.em
+error[E3021]: `t` cannot be written while it is borrowed
+  --> target/redesign/phase1/sharing/a15_workaround3.em:11:9
+   |
+11 |         for t in texts:
+   |         ^^^^^^^^^^^^^^^ conflicting access here
+12 |             scope.spawn(fn() => add_words(total, t))
+   |                         --------------------------- borrow of `t` starts here
+   |             ---------------------------------------- borrow later used here
+   |
+   = help: end the borrow before this: `scope` is what keeps it alive, so shorten its last use or put it in a block of its own
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3060]: `t` does not live long enough
+  --> target/redesign/phase1/sharing/a15_workaround3.em:12:25
+   |
+12 |             scope.spawn(fn() => add_words(total, t))
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this borrow remains live after its source's scope ends
+   |             ---------------------------------------- `t` ends its scope here
+   |
+   = help: declare the borrowed value in an enclosing scope, or drop its borrower before leaving this scope
+   = note: borrowed storage must remain valid through every use, including a destructor [DRP-7]
+
+error: could not compile due to 2 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a15_workaround4.em
+exit=0
+################ target/redesign/phase1/sharing/a16_generics.em
+error[E2121]: `Array[Vec3]` and `Neg` are both another package's, so this package cannot implement one for the other
+ --> target/redesign/phase1/sharing/a16_generics.em:8:31
+  |
+8 | extend Array[Vec3] implements Neg:
+  |                               ^^^
+  |
+  = help: implement it where `Neg` or `Array[Vec3]` is declared, or wrap the value in a type of this package
+  = note: an implementation lives with its interface or its type, or with a type of its package among the interface's arguments [TYP-20]
+
+error[E2040]: `T`'s bounds do not provide a matching `Add` operator
+  --> target/redesign/phase1/sharing/a16_generics.em:16:15
+   |
+16 |         acc = acc + x
+   |               ^^^^^^^
+   |
+   = help: add a `Add` bound with the required operand and output types
+   = note: inside a generic body only the bounds' operations are available [TYP-17]
+
+error[E2041]: `i32` already implements `Describe`
+  --> target/redesign/phase1/sharing/a16_generics.em:26:23
+   |
+22 | extend[T: Debug] T implements Describe:
+   | --------------------------------------- every type implements it here
+...
+26 | extend i32 implements Describe:
+   |                       ^^^^^^^^
+   |
+   = note: two implementations of one interface may not apply to one type [TYP-19]; the prelude converts every type from itself [ERR-7]
+
+error: could not compile due to 3 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a19_globals.em
+error[E1010]: cannot find `FRAME` in this scope
+ --> target/redesign/phase1/sharing/a19_globals.em:7:5
+  |
+7 |     FRAME += 1
+  |     ^^^^^
+  |
+
+error[E3021]: cannot write through a shared reference
+ --> target/redesign/phase1/sharing/a19_globals.em:8:5
+  |
+8 |     LOG.push("tick".to_string())
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is `ref Array[String]`, which only reads
+  |
+  = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+  = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 2 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a19_workaround.em
+exit=0
+################ target/redesign/phase1/sharing/a20_ffi.em
+error[E5040]: expected `extern "C" fn(*mut void) -> void`, found a lambda that captures
+  --> target/redesign/phase1/sharing/a20_ffi.em:22:22
+   |
+22 |         register_raw(fn(ud: *mut void): game.score += 1, null[*mut void]())
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this lambda captures
+   |
+   = help: pass the captured values as arguments, or give C a function that captures nothing
+   = help: where C hands the function a user data pointer back, contract the parameter `callback(borrowed, user_data=p)`: it then takes this lambda
+   = note: a C function pointer has no room for captured state: `extern "C" fn` holds capture-free functions only ([CLO-3], [FFI-21])
+
+warning[L1001]: `token` is never read
+  --> target/redesign/phase1/sharing/a20_ffi.em:26:5
+   |
+26 |     token = register_cb(owned fn(): game.score += 1)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ declared here and never used
+   |
+   = help: remove it, or rename it `_token` if that is deliberate
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a31_lazy_cache.em
+error[E3023]: cannot mutate borrowed parameter `self`
+  --> target/redesign/phase1/sharing/a31_lazy_cache.em:12:13
+   |
+ 7 |     fn radius(self) -> f32:
+   |               ---- `self` is borrowed here
+...
+12 |             self.radius_cache = Some(r)
+   |             ^^^^^^^^^^^^^^^^^ this write needs mutable access
+   |
+   = help: restructure to a single owner and declare this parameter `mut self: Mesh`
+   = help: if the value is genuinely shared, use `RefCell[T]` for runtime-checked borrows
+   = help: if the value has identity, make it a `class`
+   = note: `RefCell` adds a one-word runtime borrow-state check in every profile (CELL-5, CELL-9); a class adds a heap allocation, a 24-byte header, reference counting and dynamic exclusivity, and is not `@static_safe` (OBJ-1, RC-1, EXC-1, EFF-13)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a32_reentrant_callback.em
+error[E3080]: `self.handlers` cannot be read while it is mutably borrowed
+ --> target/redesign/phase1/sharing/a32_reentrant_callback.em:9:15
+  |
+8 |         for h in self.handlers.iter_mut():
+  |                  ------------- mutable borrow of `self.handlers` starts here
+9 |             h(self)
+  |               ^^^^ conflicting access here
+  |
+  = help: bind the borrow of `self.handlers` to a local and finish with it before this line, or copy the value out first
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3020]: cannot mutate `*self.handlers` while it is borrowed by this loop
+  --> target/redesign/phase1/sharing/a32_reentrant_callback.em:25:13
+   |
+24 |         for h in self.handlers.iter_mut():
+   |                  ------------- `*self.handlers` borrowed here for the whole loop
+25 |             h(self)
+   |             ^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 2 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a33_lock.em
+exit=0
+################ target/redesign/phase1/sharing/a33_lock_race.em
+exit=0
+################ target/redesign/phase1/sharing/a33_lock_uaf.em
+error[E3021]: `m` is borrowed here and mutably borrowed elsewhere
+  --> target/redesign/phase1/sharing/a33_lock_uaf.em:11:14
+   |
+10 |     r = top(m)
+   |             - borrow of `m` starts here
+11 |     with g = m.lock():
+   |              ^^^^^^^^ conflicting access here
+12 |         g.clear()
+13 |     println(r)
+   |             - borrow later used here
+   |
+   = help: end the borrow before this: `r` is what keeps it alive, so shorten its last use or put it in a block of its own
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ target/redesign/phase1/sharing/a33_lock_uaf2.em
+exit=0
+################ target/redesign/phase1/sharing/a34_clone_dance.em
+exit=0
+################ target/redesign/phase1/sharing/x_capture_in_method_arg.em
+error[E1010]: cannot find `n` in this scope
+  --> target/redesign/phase1/sharing/x_capture_in_method_arg.em:12:33
+   |
+12 |     f = fn() => total.fetch_add(n)
+   |                                 ^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1

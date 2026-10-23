@@ -1,5 +1,11 @@
 # Ember — handoff
 
+> **2026-10-24 — read first.** The owner ruled on 2026-10-23 that the memory model needs a rework
+> (C-like performance, memory safety without Rust's annoying parts, Python-like syntax) and stopped
+> all work until it is discussed. The research and the current state are in
+> `tasks/96/redesign/FINDINGS.md`; the stopped helpers' work and how to resume it in
+> `tasks/96/helpers-stopped.md`. Nothing below is to be continued before that discussion.
+
 ## 0. Current state — the authoritative snapshot (updated 2026-09-23)
 
 **Written as a migration hand-off. Everything in this section was verified

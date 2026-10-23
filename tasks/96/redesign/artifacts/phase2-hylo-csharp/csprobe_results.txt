@@ -1,0 +1,18 @@
+# dotnet 8.0.423, net8.0, LangVersion 12, 2026-10-24T00:05:24+05:30
+## run (default build)
+A2 stale ref: wrote 100, pool now reads 1
+A2 stale span: wrote 42, list[0] = 1
+A3 aliasing: a[0] = 7
+A4 run-time check: InvalidOperationException
+A4 index loop: 6 items
+A12 capture: counter = 2
+A1 whole-object: hp = 11, ticks = 1
+## -p:DefineConstants=ERRORS
+Program.cs(100,23): error CS0611: Array elements cannot be of type 'View' 
+Program.cs(101,14): error CS9244: The type 'Span<int>' may not be a ref struct or a type parameter allowing ref structs in order to use it as parameter 'T' in the generic type or method 'List<T>' 
+Program.cs(94,55): error CS8168: Cannot return local 'x' by reference because it is not a ref local 
+Program.cs(95,76): error CS8352: Cannot use variable 'b' in this context because it may expose referenced variables outside of their declaration scope 
+Program.cs(96,49): error CS8170: Struct members cannot return 'this' or other instance members by reference 
+Program.cs(99,29): error CS8175: Cannot use ref local 'sp' inside an anonymous method, lambda expression, or query expression 
+## -p:DefineConstants=ERRORS;ERRORS_FIELD
+Program.cs(91,30): error CS8345: Field or auto-implemented property cannot be of type 'Span<int>' unless it is an instance member of a ref struct. 

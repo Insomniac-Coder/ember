@@ -1,0 +1,459 @@
+################ a09_shared_state.rs
+error[E0499]: cannot borrow `p` as mutable more than once at a time
+  --> a09_shared_state.rs:9:29
+   |
+ 8 |     let cam = Camera { target: &mut p };
+   |                                ------ first mutable borrow occurs here
+ 9 |     let hud = Hud { target: &mut p };
+   |                             ^^^^^^ second mutable borrow occurs here
+10 |     cam.target.hp -= 1;
+   |     ------------------ first borrow later used here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0499`.
+################ a09_workaround.rs
+warning: function `main` is never used
+ --> a09_workaround.rs:8:4
+  |
+8 | fn main() {
+  |    ^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: 1 warning emitted
+
+################ a10_ownership_kinds.rs
+error[E0382]: use of moved value: `m`
+  --> a10_ownership_kinds.rs:10:28
+   |
+ 8 |     let m = Box::new(Mesh { verts: vec![0.0; 9] });
+   |         - move occurs because `m` has type `Box<Mesh>`, which does not implement the `Copy` trait
+ 9 |     let a = Entity { mesh: m };
+   |                            - value moved here
+10 |     let b = Entity { mesh: m };
+   |                            ^ value used here after move
+   |
+note: if `Mesh` implemented `Clone`, you could clone the value
+  --> a10_ownership_kinds.rs:3:1
+   |
+ 3 | pub struct Mesh { pub verts: Vec<f32> }
+   | ^^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+...
+ 9 |     let a = Entity { mesh: m };
+   |                            - you could clone this value
+
+error[E0596]: cannot borrow data in an `Rc` as mutable
+  --> a10_ownership_kinds.rs:16:5
+   |
+16 |     a.mesh.verts.push(1.0);
+   |     ^^^^^^^^^^^^ cannot borrow as mutable
+   |
+   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `Rc<Mesh>`
+
+error: aborting due to 2 previous errors
+
+Some errors have detailed explanations: E0382, E0596.
+For more information about an error, try `rustc --explain E0382`.
+################ a12_closures.rs
+error[E0373]: closure may outlive the current function, but it borrows `score`, which is owned by the current function
+  --> a12_closures.rs:11:16
+   |
+11 |     b.on_click(|| score += 1);
+   |                ^^ ----- `score` is borrowed here
+   |                |
+   |                may outlive borrowed value `score`
+   |
+note: function requires argument type to outlive `'static`
+  --> a12_closures.rs:11:5
+   |
+11 |     b.on_click(|| score += 1);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+help: to force the closure to take ownership of `score` (and any other referenced variables), use the `move` keyword
+   |
+11 |     b.on_click(move || score += 1);
+   |                ++++
+
+error[E0503]: cannot use `score` because it was mutably borrowed
+  --> a12_closures.rs:13:5
+   |
+11 |     b.on_click(|| score += 1);
+   |     -------------------------
+   |     |          |  |
+   |     |          |  borrow occurs due to use of `score` in closure
+   |     |          `score` is borrowed here
+   |     argument requires that `score` is borrowed for `'static`
+12 |     b.click();
+13 |     score
+   |     ^^^^^ use of borrowed `score`
+   |
+note: requirement that the value outlives `'static` introduced here
+  --> a12_closures.rs:4:50
+   |
+ 4 |     pub fn on_click(&mut self, f: impl FnMut() + 'static) { self.handlers.push(Box::new(f)); }
+   |                                                  ^^^^^^^
+
+warning: value captured by `score` is never read
+  --> a12_closures.rs:20:24
+   |
+20 |     b.on_click(move || score += 1);
+   |                        ^^^^^
+   |
+   = help: did you mean to capture by reference instead?
+   = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `score` is never read
+  --> a12_closures.rs:20:24
+   |
+20 |     b.on_click(move || score += 1);
+   |                        ^^^^^^^^^^
+   |
+   = help: maybe it is overwritten before being read?
+
+error: aborting due to 2 previous errors; 2 warnings emitted
+
+Some errors have detailed explanations: E0373, E0503.
+For more information about an error, try `rustc --explain E0373`.
+################ a13_dyn.rs
+error[E0038]: the trait `Inspect` is not dyn compatible
+  --> a13_dyn.rs:21:22
+   |
+21 | pub fn all(xs: &[Box<dyn Inspect>]) -> usize { xs.len() }
+   |                      ^^^^^^^^^^^ `Inspect` is not dyn compatible
+   |
+note: for a trait to be dyn compatible it needs to allow building a vtable
+      for more information, visit <https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility>
+  --> a13_dyn.rs:20:24
+   |
+20 | pub trait Inspect { fn inspect<V: Visitor>(&self, v: &mut V); }
+   |           -------      ^^^^^^^ ...because method `inspect` has generic type parameters
+   |           |
+   |           this trait is not dyn compatible...
+   = help: consider moving `inspect` to another trait
+
+error[E0599]: no method named `downcast_mut` found for mutable reference `&mut Box<(dyn AnyPool + 'static)>` in the current scope
+  --> a13_dyn.rs:13:25
+   |
+13 |         let pool = pool.downcast_mut::<Pool<T>>().unwrap();
+   |                         ^^^^^^^^^^^^
+   |
+help: there is a method `as_mut` with a similar name
+   |
+13 -         let pool = pool.downcast_mut::<Pool<T>>().unwrap();
+13 +         let pool = pool.as_mut::<Pool<T>>().unwrap();
+   |
+
+error[E0038]: the trait `Inspect` is not dyn compatible
+  --> a13_dyn.rs:21:48
+   |
+21 | pub fn all(xs: &[Box<dyn Inspect>]) -> usize { xs.len() }
+   |                                                ^^^^^^^^ `Inspect` is not dyn compatible
+   |
+note: for a trait to be dyn compatible it needs to allow building a vtable
+      for more information, visit <https://doc.rust-lang.org/reference/items/traits.html#dyn-compatibility>
+  --> a13_dyn.rs:20:24
+   |
+20 | pub trait Inspect { fn inspect<V: Visitor>(&self, v: &mut V); }
+   |           -------      ^^^^^^^ ...because method `inspect` has generic type parameters
+   |           |
+   |           this trait is not dyn compatible...
+   = help: consider moving `inspect` to another trait
+
+error: aborting due to 3 previous errors
+
+Some errors have detailed explanations: E0038, E0599.
+For more information about an error, try `rustc --explain E0038`.
+################ a13_workaround.rs
+################ a14_async.rs
+error[E0599]: no method named `poll` found for mutable reference `&mut Box<(dyn Future<Output = ()> + 'static)>` in the current scope
+  --> a14_async.rs:27:19
+   |
+27 |         let _ = t.poll(cx);
+   |                   ^^^^ method not found in `&mut Box<(dyn Future<Output = ()> + 'static)>`
+
+error: future cannot be sent between threads safely
+  --> a14_async.rs:10:5
+   |
+10 | /     spawn(async move {
+11 | |         let n = fetch().await;
+12 | |         println!("{}", cache.len() + n);
+13 | |     });
+   | |______^ future created by async block is not `Send`
+   |
+   = help: within `{async block@a14_async.rs:10:11: 10:21}`, the trait `Send` is not implemented for `Rc<Vec<i32>>`
+note: captured value is not `Send`
+  --> a14_async.rs:12:24
+   |
+12 |         println!("{}", cache.len() + n);
+   |                        ^^^^^ has type `Rc<Vec<i32>>` which is not `Send`
+note: required by a bound in `spawn`
+  --> a14_async.rs:5:39
+   |
+ 5 | pub fn spawn<F: Future<Output = ()> + Send + 'static>(_f: F) {}
+   |                                       ^^^^ required by this bound in `spawn`
+
+error[E0373]: async block may outlive the current function, but it borrows `name`, which is owned by the current function
+  --> a14_async.rs:18:11
+   |
+18 |     spawn(async {
+   |           ^^^^^ may outlive borrowed value `name`
+19 |         let n = fetch().await;
+20 |         println!("{} {}", name, n);
+   |                           ---- `name` is borrowed here
+   |
+   = note: async blocks are not executed immediately and must either take a reference or ownership of outside variables they use
+help: to force the async block to take ownership of `name` (and any other referenced variables), use the `move` keyword
+   |
+18 |     spawn(async move {
+   |                 ++++
+
+error: aborting due to 3 previous errors
+
+Some errors have detailed explanations: E0373, E0599.
+For more information about an error, try `rustc --explain E0373`.
+################ a15_threads.rs
+error[E0277]: `Rc<Vec<String>>` cannot be sent between threads safely
+  --> a15_threads.rs:17:27
+   |
+17 |     let h = thread::spawn(move || names.len());
+   |             ------------- -------^^^^^^^^^^^^
+   |             |             |
+   |             |             `Rc<Vec<String>>` cannot be sent between threads safely
+   |             |             within this `{closure@a15_threads.rs:17:27: 17:34}`
+   |             required by a bound introduced by this call
+   |
+   = help: within `{closure@a15_threads.rs:17:27: 17:34}`, the trait `Send` is not implemented for `Rc<Vec<String>>`
+note: required because it's used within this closure
+  --> a15_threads.rs:17:27
+   |
+17 |     let h = thread::spawn(move || names.len());
+   |                           ^^^^^^^
+note: required by a bound in `spawn`
+  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library\std\src\thread\functions.rs:125:0
+
+error[E0521]: borrowed data escapes outside of function
+ --> a15_threads.rs:9:22
+  |
+5 | pub fn count_words(texts: &Vec<String>) -> usize {
+  |                    -----  - let's call the lifetime of this reference `'1`
+  |                    |
+  |                    `texts` is a reference that is only valid in the function body
+...
+9 |         handles.push(thread::spawn(|| { total += t.split_whitespace().count(); }));
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |                      |
+  |                      `texts` escapes the function body here
+  |                      argument requires that `'1` must outlive `'static`
+  |
+  = note: requirement occurs because of a mutable reference to `usize`
+  = note: mutable references are invariant over their type parameter
+  = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance
+
+error[E0373]: closure may outlive the current function, but it borrows `total`, which is owned by the current function
+ --> a15_threads.rs:9:36
+  |
+9 |         handles.push(thread::spawn(|| { total += t.split_whitespace().count(); }));
+  |                                    ^^   ----- `total` is borrowed here
+  |                                    |
+  |                                    may outlive borrowed value `total`
+  |
+note: function requires argument type to outlive `'static`
+ --> a15_threads.rs:9:22
+  |
+9 |         handles.push(thread::spawn(|| { total += t.split_whitespace().count(); }));
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: to force the closure to take ownership of `total` (and any other referenced variables), use the `move` keyword
+  |
+9 |         handles.push(thread::spawn(move || { total += t.split_whitespace().count(); }));
+  |                                    ++++
+
+error[E0499]: cannot borrow `total` as mutable more than once at a time
+ --> a15_threads.rs:9:36
+  |
+9 |         handles.push(thread::spawn(|| { total += t.split_whitespace().count(); }));
+  |                      --------------^^--------------------------------------------
+  |                      |             |    |
+  |                      |             |    borrows occur due to use of `total` in closure
+  |                      |             `total` was mutably borrowed here in the previous iteration of the loop
+  |                      argument requires that `total` is borrowed for `'static`
+  |
+note: requirement that the value outlives `'static` introduced here
+ --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library\std\src\thread\functions.rs:128:14
+
+error[E0503]: cannot use `total` because it was mutably borrowed
+  --> a15_threads.rs:12:5
+   |
+ 9 |         handles.push(thread::spawn(|| { total += t.split_whitespace().count(); }));
+   |                      ------------------------------------------------------------
+   |                      |             |    |
+   |                      |             |    borrow occurs due to use of `total` in closure
+   |                      |             `total` is borrowed here
+   |                      argument requires that `total` is borrowed for `'static`
+...
+12 |     total
+   |     ^^^^^ use of borrowed `total`
+   |
+note: requirement that the value outlives `'static` introduced here
+  --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library\std\src\thread\functions.rs:128:14
+
+error: aborting due to 5 previous errors
+
+Some errors have detailed explanations: E0277, E0373, E0499, E0503, E0521.
+For more information about an error, try `rustc --explain E0277`.
+################ a15_workaround.rs
+################ a16_generics.rs
+error[E0117]: only traits defined in the current crate can be implemented for types defined outside of the crate
+ --> a16_generics.rs:5:1
+  |
+5 | impl fmt::Display for Vec<Vec3> {
+  | ^^^^^^^^^^^^^^^^^^^^^^---------
+  |                       |
+  |                       `Vec` is not defined in the current crate
+  |
+  = note: impl doesn't have any local type before any uncovered type parameters
+  = note: for more information see https://doc.rust-lang.org/reference/items/implementations.html#orphan-rules
+  = note: define and implement a trait or new type instead
+
+error[E0119]: conflicting implementations of trait `Describe` for type `i32`
+  --> a16_generics.rs:17:1
+   |
+16 | impl<T: fmt::Debug> Describe for T { fn describe(&self) -> String { format!("{:?}", self) } }
+   | ---------------------------------- first implementation here
+17 | impl Describe for i32 { fn describe(&self) -> String { format!("int {}", self) } }
+   | ^^^^^^^^^^^^^^^^^^^^^ conflicting implementation for `i32`
+
+error[E0369]: cannot add `T` to `T`
+  --> a16_generics.rs:11:35
+   |
+11 |     for x in &xs[1..] { acc = acc + *x; }
+   |                               --- ^ -- T
+   |                               |
+   |                               T
+   |
+help: consider restricting type parameter `T` with trait `Add`
+   |
+ 9 | pub fn sum<T: std::ops::Add<Output = T>>(xs: &[T]) -> T {
+   |             +++++++++++++++++++++++++++
+
+error: aborting due to 3 previous errors
+
+Some errors have detailed explanations: E0117, E0119, E0369.
+For more information about an error, try `rustc --explain E0117`.
+################ a19_globals.rs
+error[E0133]: use of mutable static is unsafe and requires unsafe function or block
+ --> a19_globals.rs:6:5
+  |
+6 |     FRAME += 1;
+  |     ^^^^^ use of mutable static
+  |
+  = note: mutable statics can be mutated by multiple threads: aliasing violations or data races will cause undefined behavior
+
+error[E0596]: cannot borrow immutable static item `LOG` as mutable
+ --> a19_globals.rs:7:5
+  |
+3 | static LOG: Vec<String> = Vec::new();
+  | ----------------------- this `static` cannot be borrowed as mutable
+...
+7 |     LOG.push(format!("tick"));
+  |     ^^^ cannot borrow as mutable
+
+error: aborting due to 2 previous errors
+
+Some errors have detailed explanations: E0133, E0596.
+For more information about an error, try `rustc --explain E0133`.
+################ a19_workaround.rs
+################ a20_ffi.rs
+error[E0308]: mismatched types
+ --> a20_ffi.rs:8:26
+  |
+7 |     let cb = |_ud: *mut c_void| game.score += 1;
+  |              ------------------ the found closure
+8 |     unsafe { register_cb(cb, std::ptr::null_mut()) }
+  |              ----------- ^^ expected fn pointer, found closure
+  |              |
+  |              arguments to this function are incorrect
+  |
+  = note: expected fn pointer `extern "C" fn(*mut c_void)`
+                found closure `{closure@a20_ffi.rs:7:14: 7:32}`
+note: closures can only be coerced to `fn` types if they do not capture any variables
+ --> a20_ffi.rs:7:33
+  |
+7 |     let cb = |_ud: *mut c_void| game.score += 1;
+  |                                 ^^^^ `game` captured here
+note: function defined here
+ --> a20_ffi.rs:3:17
+  |
+3 | extern "C" { fn register_cb(cb: extern "C" fn(*mut c_void), ud: *mut c_void); }
+  |                 ^^^^^^^^^^^ --
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0308`.
+################ a31_lazy_cache.rs
+error[E0594]: cannot assign to `self.radius`, which is behind a `&` reference
+ --> a31_lazy_cache.rs:6:13
+  |
+6 |             self.radius = Some(self.verts.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `self` is a `&` reference, so it cannot be written to
+  |
+help: consider changing this to be a mutable reference
+  |
+4 |     pub fn radius(&mut self) -> f32 {
+  |                    +++
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0594`.
+################ a32_reentrant_callback.rs
+error[E0499]: cannot borrow `*self` as mutable more than once at a time
+ --> a32_reentrant_callback.rs:6:15
+  |
+5 |         for h in self.handlers.iter_mut() {
+  |                  ------------------------
+  |                  |
+  |                  first mutable borrow occurs here
+  |                  first borrow later used here
+6 |             h(self);
+  |               ^^^^ second mutable borrow occurs here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0499`.
+################ a33_lock.rs
+error[E0515]: cannot return value referencing temporary value
+ --> a33_lock.rs:4:5
+  |
+4 |     &scores.lock().unwrap()[0]
+  |     ^----------------------^^^
+  |     ||
+  |     |temporary value created here
+  |     returns a value referencing data owned by the current function
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0515`.
+################ a34_clone_dance.rs
+error[E0382]: the type `Arc` does not implement `Copy`
+ --> a34_clone_dance.rs:6:27
+  |
+4 | pub fn start(log: Arc<Mutex<Vec<String>>>) {
+  |              --- this move could be avoided by cloning the original `Arc`, which is inexpensive
+5 |     let a = thread::spawn(move || log.lock().unwrap().push("a".to_string()));
+  |                           ------- --- variable moved due to use in closure
+  |                           |
+  |                           value moved into closure here
+6 |     let b = thread::spawn(move || log.lock().unwrap().push("b".to_string()));
+  |                           ^^^^^^^ --- use occurs due to use in closure
+  |                           |
+  |                           value used here after move
+  |
+  = note: consider using `Arc::clone`
+help: consider cloning the value before moving it into the closure
+  |
+5 ~     let value = log.clone();
+6 ~     let a = thread::spawn(move || value.lock().unwrap().push("a".to_string()));
+  |
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0382`.

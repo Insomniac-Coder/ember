@@ -1,0 +1,319 @@
+################ e01_whole_object.em
+exit=0
+################ e01b_whole_object_pub.em
+exit=0
+################ e01c_whole_object_class.em
+exit=0
+################ e01d_whole_object_class_mut.em
+error[E3020]: cannot mutate `self.players` while it is borrowed by this loop
+  --> e01d_whole_object_class_mut.em:18:17
+   |
+15 |         for p in self.players:
+   |                  ------------ `self.players` borrowed here for the whole loop
+...
+18 |                 self.note(f"{p.name} died")
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e02_container_invalidation.em
+error[E3022]: `*enemies[0]` is already mutably borrowed
+ --> e02_container_invalidation.em:8:5
+  |
+7 |     boss = ref mut enemies[0]
+  |                            - mutable borrow of `*enemies[0]` starts here
+8 |     enemies.push(Enemy(x=boss.x + 1.0, hp=boss.hp - 10))
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+  |                                   --- borrow later used here
+  |
+  = help: end the borrow before this: `boss` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e02b_container_python_spelling.em
+error[E3040]: `enemies` is borrowed after it has been moved out of
+ --> e02b_container_python_spelling.em:8:5
+  |
+7 |     boss = enemies[0]
+  |            ---------- moved here
+8 |     enemies.push(Enemy(x=boss.x + 1.0, hp=boss.hp - 10))
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ borrowed here after the move
+  |
+  = help: borrow before the move, or clone the value so the move takes the copy
+  = note: the borrow would point at memory whose owner gave it away
+  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e02c_container_class.em
+error[E3023]: cannot mutate borrowed parameter `enemies`
+ --> e02c_container_class.em:8:5
+  |
+6 | fn split_boss(enemies: Array[Enemy]):
+  |               --------------------- `enemies` is borrowed here
+7 |     boss = enemies[0]
+8 |     enemies.push(Enemy(x=boss.x + 1.0, hp=boss.hp - 10))
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this write needs mutable access
+  |
+  = help: restructure to a single owner and declare this parameter `mut enemies: Array[Enemy]`
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e03_two_elements.em
+error[E3022]: `*bodies[…]` is already mutably borrowed
+  --> e03_two_elements.em:10:31
+   |
+10 |     collide(bodies[i], bodies[j])
+   |                               ^ conflicting access here
+   |                    - mutable borrow of `*bodies[…]` starts here
+   |
+   = help: use `bodies.get_pair_mut(i, j)` for two elements at once (`None` when they are the same), or `bodies.as_mut_span().split_at(k)` for two non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover other patterns
+   = note: computed indices may overlap; a structural split proves non-overlap (BRW-5)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e03b_two_elements_pair.em
+exit=0
+################ e04_mutate_while_iterating.em
+error[E3020]: cannot mutate `*enemies` while it is borrowed by this loop
+ --> e04_mutate_while_iterating.em:9:13
+  |
+7 |     for e in enemies:
+  |              ------- `*enemies` borrowed here for the whole loop
+8 |         if e.hp <= 0 and e.splits:
+9 |             enemies.push(Enemy(hp=5, splits=false))
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+  |
+  = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+  = help: or iterate over a fixed index range and mutate only after taking the current value
+  = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e04b_mutate_while_iterating_class.em
+error[E3020]: cannot mutate `self.enemies` while it is borrowed by this loop
+  --> e04b_mutate_while_iterating_class.em:12:17
+   |
+10 |         for e in self.enemies:
+   |                  ------------ `self.enemies` borrowed here for the whole loop
+11 |             if e.hp <= 0 and e.splits:
+12 |                 self.enemies.push(Enemy(hp=5, splits=false))
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e04c_mutate_while_iterating_fix.em
+exit=0
+################ e05a_longer.em
+exit=0
+################ e05b_conditional_return.em
+exit=0
+################ e06_struct_refs.em
+exit=0
+################ e06b_two_words.em
+error[E3025]: cannot call a method on `p` while `p.lexer` is mutably borrowed
+  --> e06b_two_words.em:20:9
+   |
+19 |     a = p.next_word()
+   |         ------------- mutable borrow of `p.lexer` starts here
+20 |     b = p.next_word()
+   |         ^^^^^^^^^^^^^ conflicting access here
+21 |     println(a, b)
+   |             - borrow later used here
+   |
+   = help: inline the field access, take the two fields as separate parameters, or split the method
+   = note: a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e06c_two_words_borrows.em
+exit=0
+################ e06d_handles_in_array.em
+error[E3063]: `Handle` is a view, so it may not be stored in an `Array` unless it is `static`
+  --> e06d_handles_in_array.em:12:13
+   |
+12 |     hs.push(Handle(reg=ref mut reg, entity=0))
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `reg`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error[E3063]: `Handle` is a view, so it may not be stored in an `Array` unless it is `static`
+  --> e06d_handles_in_array.em:13:13
+   |
+13 |     hs.push(Handle(reg=ref mut reg, entity=1))
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `reg`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 2 error(s)
+exit=1
+################ e07_self_ref.em
+error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+ --> e07_self_ref.em:9:20
+  |
+9 |         words.push(w)
+  |                    ^ stored here
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e08_tree_struct.em
+
+thread '<unknown>' (50992) has overflowed its stack
+
+thread '<unknown>' (65232) has overflowed its stack
+exit=127
+################ e08b_tree_class.em
+warning[L3001]: potential reference cycle: Node.children -> Node
+ --> e08b_tree_class.em:4:5
+  |
+4 |     children: Array[Node] = []
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `Node.children` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+exit=0
+################ e08c_dlist_class.em
+warning[L3001]: potential reference cycle: Item.next -> Item
+ --> e08c_dlist_class.em:4:5
+  |
+4 |     next: Option[Item] = None
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `Item.next` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+exit=0
+################ e11_moves.em
+error[E3040]: `m` is borrowed after it has been moved out of
+  --> e11_moves.em:14:9
+   |
+13 |     send(m)
+   |          - moved here
+14 |     log(m)
+   |         ^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+
+error[E3042]: `p` is partially moved
+  --> e11_moves.em:26:10
+   |
+23 | fn rename(owned p: Player):
+   |           --------------- `p` is declared here
+...
+26 |     keep(p)
+   |          ^ used here as a whole after one of its fields was moved
+   |
+   = help: reassign the moved field, or destructure the whole struct up front
+   = note: moving a field out leaves the rest of the struct live, but the struct cannot be used as a whole [EXP-6]
+
+error[E3041]: `template` is moved in a loop
+  --> e11_moves.em:31:16
+   |
+31 |         v.push(template)
+   |                ^^^^^^^^ moved here, and the loop comes back
+   |
+   = help: move the declaration inside the loop, clone it for each iteration, or use `mem.take` when replacing it on every pass
+   = note: the first iteration moves it and the second finds it gone; a value moved in a loop must be put back before the next iteration [OWN-4]
+
+error[E3040]: `items` is borrowed after it has been moved out of
+  --> e11_moves.em:37:5
+   |
+36 |     snapshot = items
+   |                ----- moved here
+37 |     items.push(3)
+   |     ^^^^^^^^^^^^^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+   = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 4 error(s)
+exit=1
+################ e11b_moves_class.em
+exit=0
+################ e18_init.em
+error[E2100]: `self` is used before all struct fields are initialized
+  --> e18_init.em:12:23
+   |
+12 |         self.assets = self.load_assets()
+   |                       ^^^^^^^^^^^^^^^^^^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e18b_init_class.em
+error[E2100]: `self` is used before all class fields are initialized
+  --> e18b_init_class.em:12:23
+   |
+12 |         self.assets = self.load_assets()
+   |                       ^^^^^^^^^^^^^^^^^^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e21_map_update.em
+error[E2020]: expected `ref i64`, found `an integer`
+  --> e21_map_update.em:13:45
+   |
+13 |         counts[w] = counts.get(w).unwrap_or(0) + 1
+   |                                             ^ this is `an integer`
+   |
+
+error[E2140]: assignment target is not a place
+  --> e21_map_update.em:19:9
+   |
+19 |         counts.entry(w.to_string()).or_default() += 1
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is a value, not somewhere to store one
+   |
+
+error: could not compile due to 2 error(s)
+exit=1
+################ e22_temporary.em
+error[E2140]: a `mut self` method needs a variable to write through
+ --> e22_temporary.em:3:12
+  |
+3 |     word = line.to_lower().split(" ").next().unwrap_or("")
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e23_move_out_of_field.em
+error[E3013]: cannot move out of a reference
+  --> e23_move_out_of_field.em:12:13
+   |
+12 |             State.Walking(path):
+   |             ^^^^^^^^^^^^^^^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error[E3013]: cannot move out of a reference
+  --> e23_move_out_of_field.em:18:13
+   |
+18 |             other:
+   |             ^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 2 error(s)
+exit=1
+################ e23b_move_out_of_field_fix.em
+exit=0

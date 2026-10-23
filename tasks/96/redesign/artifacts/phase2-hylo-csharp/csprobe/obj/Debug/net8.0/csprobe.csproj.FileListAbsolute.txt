@@ -1,0 +1,15 @@
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\bin\Debug\net8.0\csprobe.exe
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\bin\Debug\net8.0\csprobe.deps.json
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\bin\Debug\net8.0\csprobe.runtimeconfig.json
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\bin\Debug\net8.0\csprobe.dll
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\bin\Debug\net8.0\csprobe.pdb
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.AssemblyInfoInputs.cache
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.AssemblyInfo.cs
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.csproj.CoreCompileInputs.cache
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.sourcelink.json
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.dll
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\refint\csprobe.dll
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.pdb
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\csprobe.genruntimeconfig.cache
+C:\Users\ism19\Code\ember\target\redesign\phase2-hylo-csharp\csprobe\obj\Debug\net8.0\ref\csprobe.dll

@@ -1,0 +1,111 @@
+################ e02c_container_class.em
+exit=0
+################ e05c_class_returns_ref.em
+exit=0
+################ e05d_class_returns_ref_misuse.em
+error[E3021]: `p` is borrowed here and mutably borrowed elsewhere
+  --> e05d_class_returns_ref_misuse.em:11:5
+   |
+10 |     r = p.at(0)
+   |         - borrow of `p` starts here
+11 |     p.dense.push(3)
+   |     ^^^^^^^^^^^^^^^ conflicting access here
+12 |     r += 1
+   |          - borrow later used here
+   |
+   = help: end the borrow before this: `r` is what keeps it alive, so shorten its last use or put it in a block of its own
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e21b_map_update.em
+error[E2072]: `Option[ref i64]` has no method named `copied`
+ --> e21b_map_update.em:7:35
+  |
+7 |         counts[w] = counts.get(w).copied().unwrap_or(0) + 1
+  |                                   ^^^^^^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e22b_temporary.em
+error[E3060]: this temporary is dropped at the end of its statement while it is still borrowed
+ --> e22b_temporary.em:3:12
+  |
+3 |     word = line.to_lower().trim()
+  |            ^^^^^^^^^^^^^^^ a temporary value, dropped at the end of this statement
+4 |     return word.len()
+  |            ---- borrow later used here
+  |
+  = help: bind the value to a variable first, so it lives as long as the borrow
+  = note: a temporary lives to the end of the statement that makes it [EXP-4]
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e22c_temporary_parts.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> e22c_temporary_parts.em:3:48
+  |
+3 |     pieces: Array[str] = line.to_lower().split(" ").collect()
+  |                                                ^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: this place has no bounding region, so only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ e21c_map_update.em
+exit=0
+################ ../../../analysis/ecs5/pos.em
+error[E3060]: `pool.dense[…]` does not live long enough
+  --> ../../../analysis/ecs5/pos.em:21:35
+   |
+20 |         pool = cast self.pools[7u128] as Pool[T]
+   |         ---------------------------------------- `pool` is a local, so its storage ends with the frame
+21 |         return ref mut pool.dense[i]
+   |                                   ^ the borrow is still live when the function returns
+   |                                   - `pool.dense[…]` is borrowed here
+   |
+   = help: return an owned value, take the destination as a `mut` parameter, or borrow something the caller owns
+   = note: a returned reference must derive from a parameter (LT-1)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ ../../../analysis/ecs5/box1.em
+exit=0
+################ ../../../analysis/ecs5/box_bad.em
+error[E3025]: cannot call a method on `reg.pools` while `reg.pools` is mutably borrowed
+  --> ../../../analysis/ecs5/box_bad.em:17:5
+   |
+16 |     p = reg.get_mut(1)
+   |         -------------- mutable borrow of `reg.pools` starts here
+17 |     reg.pools.clear()
+   |     ^^^^^^^^^^^^^^^^^ conflicting access here
+18 |     p += 1
+   |          - borrow later used here
+   |
+   = help: inline the field access, take the two fields as separate parameters, or split the method
+   = note: a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)
+
+error: could not compile due to 1 error(s)
+exit=1
+################ ../../../analysis/ecs4/accept_change_during_loop.em
+exit=0
+################ e08d_ref_self_type.em
+
+thread '<unknown>' (11380) has overflowed its stack
+exit=127
+################ e08e_owned_children.em
+exit=0
+################ e06e_local_array_of_views.em
+error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+ --> e06e_local_array_of_views.em:6:20
+  |
+6 |         words.push(w)
+  |                    ^ stored here
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `lower`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1

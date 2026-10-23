@@ -1,0 +1,16 @@
+
+round=1 plain-w1-sparse ms=100.605 peak_kb=39536 checksum=2111831520
+round=1 plain-w1 ms=43.920 peak_kb=17116 checksum=2111831520
+round=1 D1-w1 ms=153.751 peak_kb=37428 checksum=2111831520
+round=2 plain-w1-sparse ms=85.942 peak_kb=39088 checksum=2111831520
+round=2 plain-w1 ms=42.096 peak_kb=17116 checksum=2111831520
+round=2 D1-w1 ms=126.342 peak_kb=37440 checksum=2111831520
+round=3 plain-w1-sparse ms=87.363 peak_kb=39164 checksum=2111831520
+round=3 plain-w1 ms=41.194 peak_kb=17120 checksum=2111831520
+round=3 D1-w1 ms=130.901 peak_kb=37356 checksum=2111831520
+round=4 plain-w1-sparse ms=96.567 peak_kb=39208 checksum=2111831520
+round=4 plain-w1 ms=42.236 peak_kb=17116 checksum=2111831520
+round=4 D1-w1 ms=126.906 peak_kb=37484 checksum=2111831520
+round=5 plain-w1-sparse ms=102.044 peak_kb=39176 checksum=2111831520
+round=5 plain-w1 ms=41.415 peak_kb=17120 checksum=2111831520
+round=5 D1-w1 ms=126.466 peak_kb=37500 checksum=2111831520

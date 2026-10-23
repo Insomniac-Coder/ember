@@ -1,0 +1,88 @@
+﻿# clang -O2 (clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)), pinned to logical CPU 1 (P-core), mains power, 5 rounds, 2026-10-24T00:01:02
+contig_append work_ms=0.000 contig_append ms=35.182 peak_kb=70064 checksum=689917281
+paged_append work_ms=0.000 paged_append ms=24.975 peak_kb=69124 checksum=689917281
+contig_iter work_ms=61.670 contig_iter ms=96.856 peak_kb=70064 checksum=90230191209720440
+paged_iter work_ms=75.265 paged_iter ms=100.587 peak_kb=69124 checksum=90230191209720440
+contig_rand work_ms=80.605 contig_rand ms=115.661 peak_kb=70068 checksum=18016532897167075
+paged_rand work_ms=100.278 paged_rand ms=125.410 peak_kb=69124 checksum=18016532897167075
+ptr_deref work_ms=108.631 ptr_deref ms=145.510 peak_kb=78264 checksum=18025823460274547
+handle_deref work_ms=199.725 handle_deref ms=245.462 peak_kb=94652 checksum=18025823460274547
+contig_append work_ms=0.000 contig_append ms=34.801 peak_kb=70064 checksum=689917281
+paged_append work_ms=0.000 paged_append ms=24.874 peak_kb=69124 checksum=689917281
+contig_iter work_ms=68.415 contig_iter ms=107.126 peak_kb=70080 checksum=90230191209720440
+paged_iter work_ms=78.115 paged_iter ms=104.544 peak_kb=69120 checksum=90230191209720440
+contig_rand work_ms=76.793 contig_rand ms=112.109 peak_kb=70068 checksum=18016532897167075
+paged_rand work_ms=106.434 paged_rand ms=131.407 peak_kb=69124 checksum=18016532897167075
+ptr_deref work_ms=109.163 ptr_deref ms=146.673 peak_kb=78260 checksum=18025823460274547
+handle_deref work_ms=186.463 handle_deref ms=231.222 peak_kb=94652 checksum=18025823460274547
+contig_append work_ms=0.000 contig_append ms=34.986 peak_kb=70064 checksum=689917281
+paged_append work_ms=0.000 paged_append ms=25.180 peak_kb=69120 checksum=689917281
+contig_iter work_ms=69.205 contig_iter ms=104.897 peak_kb=70076 checksum=90230191209720440
+paged_iter work_ms=85.743 paged_iter ms=110.381 peak_kb=69116 checksum=90230191209720440
+contig_rand work_ms=76.590 contig_rand ms=111.567 peak_kb=70064 checksum=18016532897167075
+paged_rand work_ms=99.355 paged_rand ms=123.949 peak_kb=69124 checksum=18016532897167075
+ptr_deref work_ms=111.094 ptr_deref ms=148.100 peak_kb=78264 checksum=18025823460274547
+handle_deref work_ms=192.237 handle_deref ms=238.242 peak_kb=94652 checksum=18025823460274547
+contig_append work_ms=0.000 contig_append ms=34.974 peak_kb=70068 checksum=689917281
+paged_append work_ms=0.000 paged_append ms=25.103 peak_kb=69124 checksum=689917281
+contig_iter work_ms=59.810 contig_iter ms=95.361 peak_kb=70068 checksum=90230191209720440
+paged_iter work_ms=77.240 paged_iter ms=102.750 peak_kb=69124 checksum=90230191209720440
+contig_rand work_ms=76.840 contig_rand ms=111.960 peak_kb=70064 checksum=18016532897167075
+paged_rand work_ms=99.681 paged_rand ms=124.394 peak_kb=69124 checksum=18016532897167075
+ptr_deref work_ms=108.024 ptr_deref ms=144.761 peak_kb=78264 checksum=18025823460274547
+handle_deref work_ms=191.769 handle_deref ms=236.725 peak_kb=94652 checksum=18025823460274547
+contig_append work_ms=0.000 contig_append ms=34.616 peak_kb=70068 checksum=689917281
+paged_append work_ms=0.000 paged_append ms=24.389 peak_kb=69120 checksum=689917281
+contig_iter work_ms=58.044 contig_iter ms=93.260 peak_kb=70068 checksum=90230191209720440
+paged_iter work_ms=73.592 paged_iter ms=98.325 peak_kb=69124 checksum=90230191209720440
+contig_rand work_ms=76.243 contig_rand ms=111.337 peak_kb=70080 checksum=18016532897167075
+paged_rand work_ms=99.720 paged_rand ms=124.439 peak_kb=69120 checksum=18016532897167075
+ptr_deref work_ms=117.163 ptr_deref ms=153.719 peak_kb=78264 checksum=18025823460274547
+handle_deref work_ms=190.297 handle_deref ms=236.053 peak_kb=94652 checksum=18025823460274547
+# page-size check: p12 = 4096-element (64 KiB) pages, p16 = 65536-element (1 MiB) pages; CPU 1, mains, 2026-10-24T00:01:39
+p12 contig_iter work_ms=60.618 contig_iter ms=96.153 peak_kb=70064 checksum=90230191209720440
+p16 contig_iter work_ms=60.190 contig_iter ms=95.100 peak_kb=70456 checksum=90230191209720440
+p12 paged_iter work_ms=74.511 paged_iter ms=97.641 peak_kb=69124 checksum=90230191209720440
+p16 paged_iter work_ms=61.982 paged_iter ms=77.069 peak_kb=69284 checksum=90230191209720440
+p12 paged_rand work_ms=99.465 paged_rand ms=121.490 peak_kb=69124 checksum=18016532897167075
+p16 paged_rand work_ms=98.923 paged_rand ms=113.871 peak_kb=69284 checksum=18016532897167075
+p12 contig_iter work_ms=60.078 contig_iter ms=95.110 peak_kb=70068 checksum=90230191209720440
+p16 contig_iter work_ms=61.300 contig_iter ms=96.551 peak_kb=70064 checksum=90230191209720440
+p12 paged_iter work_ms=75.000 paged_iter ms=99.621 peak_kb=69120 checksum=90230191209720440
+p16 paged_iter work_ms=70.258 paged_iter ms=85.889 peak_kb=69280 checksum=90230191209720440
+p12 paged_rand work_ms=106.945 paged_rand ms=131.969 peak_kb=69124 checksum=18016532897167075
+p16 paged_rand work_ms=100.927 paged_rand ms=115.726 peak_kb=69288 checksum=18016532897167075
+p12 contig_iter work_ms=59.677 contig_iter ms=95.528 peak_kb=70076 checksum=90230191209720440
+p16 contig_iter work_ms=57.996 contig_iter ms=93.432 peak_kb=70068 checksum=90230191209720440
+p12 paged_iter work_ms=74.222 paged_iter ms=96.471 peak_kb=69124 checksum=90230191209720440
+p16 paged_iter work_ms=62.973 paged_iter ms=77.747 peak_kb=69288 checksum=90230191209720440
+p12 paged_rand work_ms=101.845 paged_rand ms=123.268 peak_kb=69120 checksum=18016532897167075
+p16 paged_rand work_ms=101.741 paged_rand ms=117.267 peak_kb=69284 checksum=18016532897167075
+p12 contig_iter work_ms=60.171 contig_iter ms=95.729 peak_kb=70068 checksum=90230191209720440
+p16 contig_iter work_ms=73.218 contig_iter ms=108.359 peak_kb=70064 checksum=90230191209720440
+p12 paged_iter work_ms=75.199 paged_iter ms=97.334 peak_kb=69124 checksum=90230191209720440
+p16 paged_iter work_ms=64.891 paged_iter ms=79.965 peak_kb=69284 checksum=90230191209720440
+p12 paged_rand work_ms=100.513 paged_rand ms=122.712 peak_kb=69120 checksum=18016532897167075
+p16 paged_rand work_ms=100.578 paged_rand ms=115.650 peak_kb=69288 checksum=18016532897167075
+p12 contig_iter work_ms=62.946 contig_iter ms=98.340 peak_kb=70068 checksum=90230191209720440
+p16 contig_iter work_ms=61.463 contig_iter ms=97.491 peak_kb=70068 checksum=90230191209720440
+p12 paged_iter work_ms=75.769 paged_iter ms=100.349 peak_kb=69124 checksum=90230191209720440
+p16 paged_iter work_ms=63.067 paged_iter ms=78.210 peak_kb=69288 checksum=90230191209720440
+p12 paged_rand work_ms=108.078 paged_rand ms=132.651 peak_kb=69120 checksum=18016532897167075
+p16 paged_rand work_ms=103.990 paged_rand ms=118.947 peak_kb=69284 checksum=18016532897167075
+# handle layout check: generation in a separate array vs beside the value; CPU 1, mains, 2026-10-24T00:02:07
+ptr_deref work_ms=107.606 ptr_deref ms=144.054 peak_kb=78264 checksum=18025823460274547
+handle_deref work_ms=183.985 handle_deref ms=229.757 peak_kb=94648 checksum=18025823460274547
+handle_inline_deref work_ms=144.310 handle_inline_deref ms=217.338 peak_kb=168328 checksum=18025823460274547
+ptr_deref work_ms=110.440 ptr_deref ms=147.379 peak_kb=78260 checksum=18025823460274547
+handle_deref work_ms=203.886 handle_deref ms=251.647 peak_kb=94652 checksum=18025823460274547
+handle_inline_deref work_ms=157.800 handle_inline_deref ms=231.561 peak_kb=168332 checksum=18025823460274547
+ptr_deref work_ms=115.345 ptr_deref ms=153.095 peak_kb=78264 checksum=18025823460274547
+handle_deref work_ms=188.790 handle_deref ms=234.640 peak_kb=94648 checksum=18025823460274547
+handle_inline_deref work_ms=150.986 handle_inline_deref ms=228.036 peak_kb=168332 checksum=18025823460274547
+ptr_deref work_ms=107.832 ptr_deref ms=153.884 peak_kb=78260 checksum=18025823460274547
+handle_deref work_ms=193.140 handle_deref ms=238.244 peak_kb=94652 checksum=18025823460274547
+handle_inline_deref work_ms=154.697 handle_inline_deref ms=230.651 peak_kb=168332 checksum=18025823460274547
+ptr_deref work_ms=127.799 ptr_deref ms=165.178 peak_kb=78260 checksum=18025823460274547
+handle_deref work_ms=216.005 handle_deref ms=264.783 peak_kb=94652 checksum=18025823460274547
+handle_inline_deref work_ms=148.825 handle_inline_deref ms=223.845 peak_kb=168332 checksum=18025823460274547

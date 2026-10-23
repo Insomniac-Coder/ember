@@ -1,0 +1,395 @@
+################ a01_whole_object.rs
+error[E0499]: cannot borrow `*self` as mutable more than once at a time
+  --> a01_whole_object.rs:13:17
+   |
+10 |         for p in self.players.iter_mut() {
+   |                  -----------------------
+   |                  |
+   |                  first mutable borrow occurs here
+   |                  first borrow later used here
+...
+13 |                 self.note(format!("{} died", p.name));
+   |                 ^^^^ second mutable borrow occurs here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0499`.
+exit=1
+################ a01_whole_object_fix.rs
+exit=0
+################ a02_container_invalidation.rs
+error[E0499]: cannot borrow `*enemies` as mutable more than once at a time
+ --> a02_container_invalidation.rs:6:5
+  |
+5 |     let boss = &mut enemies[0];
+  |                     ------- first mutable borrow occurs here
+6 |     enemies.push(Enemy { x: boss.x + 1.0, hp: boss.hp / 2 });
+  |     ^^^^^^^                 ------ first borrow later used here
+  |     |
+  |     second mutable borrow occurs here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0499`.
+exit=1
+################ a02_container_invalidation_fix.rs
+exit=0
+################ a03_two_elements.rs
+error[E0499]: cannot borrow `*bodies` as mutable more than once at a time
+ --> a03_two_elements.rs:8:34
+  |
+8 |     collide(&mut bodies[i], &mut bodies[j]);
+  |     -------      ------          ^^^^^^ second mutable borrow occurs here
+  |     |            |
+  |     |            first mutable borrow occurs here
+  |     first borrow later used by call
+  |
+  = help: use `.split_at_mut(position)` to obtain two mutable non-overlapping sub-slices
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0499`.
+exit=1
+################ a03_two_elements_fix.rs
+exit=0
+################ a04_mutate_while_iterating.rs
+error[E0502]: cannot borrow `*enemies` as mutable because it is also borrowed as immutable
+ --> a04_mutate_while_iterating.rs:8:17
+  |
+5 |     for (i, e) in enemies.iter().enumerate() {
+  |                   --------------------------
+  |                   |
+  |                   immutable borrow occurs here
+  |                   immutable borrow later used here
+...
+8 |                 enemies.push(Enemy { hp: 5, splits: false });
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+
+error[E0502]: cannot borrow `*enemies` as mutable because it is also borrowed as immutable
+  --> a04_mutate_while_iterating.rs:10:13
+   |
+ 5 |     for (i, e) in enemies.iter().enumerate() {
+   |                   --------------------------
+   |                   |
+   |                   immutable borrow occurs here
+   |                   immutable borrow later used here
+...
+10 |             enemies.remove(i);
+   |             ^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+
+error: aborting due to 2 previous errors
+
+For more information about this error, try `rustc --explain E0502`.
+exit=1
+################ a04_mutate_while_iterating_fix.rs
+exit=0
+################ a05_conditional_return.rs
+error[E0502]: cannot borrow `*cache` as mutable because it is also borrowed as immutable
+ --> a05_conditional_return.rs:8:5
+  |
+4 | pub fn get_or_load(cache: &mut HashMap<u32, String>, id: u32) -> &String {
+  |                           - let's call the lifetime of this reference `'1`
+5 |     if let Some(s) = cache.get(&id) {
+  |                      ----- immutable borrow occurs here
+6 |         return s;
+  |                - returning this value requires that `*cache` is borrowed for `'1`
+7 |     }
+8 |     cache.insert(id, format!("asset {}", id));
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0502`.
+exit=1
+################ a05_conditional_return_fix.rs
+exit=0
+################ a05_ecs_get_mut.rs
+exit=0
+################ a05_ecs_misuse.rs
+error[E0499]: cannot borrow `*reg` as mutable more than once at a time
+  --> a05_ecs_misuse.rs:22:5
+   |
+21 |     let p = reg.get_mut::<i32>(0);
+   |             --- first mutable borrow occurs here
+22 |     reg.emplace(5i32);
+   |     ^^^ second mutable borrow occurs here
+23 |     *p += 1;
+   |     ------- first borrow later used here
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0499`.
+exit=1
+################ a05_return_refs.rs
+error[E0106]: missing lifetime specifier
+ --> a05_return_refs.rs:2:36
+  |
+2 | pub fn longer(a: &str, b: &str) -> &str {
+  |                  ----     ----     ^ expected named lifetime parameter
+  |
+  = help: this function's return type contains a borrowed value, but the signature does not say whether it is borrowed from `a` or `b`
+help: consider introducing a named lifetime parameter
+  |
+2 | pub fn longer<'a>(a: &'a str, b: &'a str) -> &'a str {
+  |              ++++     ++          ++          ++
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0106`.
+exit=1
+################ a06_struct_refs.rs
+error[E0106]: missing lifetime specifier
+ --> a06_struct_refs.rs:2:25
+  |
+2 | pub struct Lexer { src: &str, pos: usize }
+  |                         ^ expected named lifetime parameter
+  |
+help: consider introducing a named lifetime parameter
+  |
+2 | pub struct Lexer<'a> { src: &'a str, pos: usize }
+  |                 ++++         ++
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0106`.
+exit=1
+################ a06_struct_refs_fix.rs
+exit=0
+################ a07_self_ref.rs
+error[E0515]: cannot return value referencing function parameter `text`
+ --> a07_self_ref.rs:6:5
+  |
+5 |     let words = text.split_whitespace().collect();
+  |                 ---- `text` is borrowed here
+6 |     Document { text, words }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^ returns a value referencing data owned by the current function
+
+error[E0505]: cannot move out of `text` because it is borrowed
+ --> a07_self_ref.rs:6:16
+  |
+4 | pub fn load<'a>(text: String) -> Document<'a> {
+  |             --  ---- binding `text` declared here
+  |             |
+  |             lifetime `'a` defined here
+5 |     let words = text.split_whitespace().collect();
+  |                 ---- borrow of `text` occurs here
+6 |     Document { text, words }
+  |     -----------^^^^---------
+  |     |          |
+  |     |          move out of `text` occurs here
+  |     returning this value requires that `text` is borrowed for `'a`
+  |
+note: requirement that the value outlives `'a` introduced here
+ --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library\core\src\iter\traits\iterator.rs:2077:18
+
+error: aborting due to 2 previous errors
+
+Some errors have detailed explanations: E0505, E0515.
+For more information about an error, try `rustc --explain E0505`.
+exit=1
+################ a07_self_ref_fix.rs
+exit=0
+################ a08_tree_parent.rs
+error[E0502]: cannot borrow `root.children` as mutable because it is also borrowed as immutable
+  --> a08_tree_parent.rs:11:5
+   |
+10 |     let leaf = Node { name: "leaf".into(), parent: Some(&root), children: vec![] };
+   |                                                         ----- immutable borrow occurs here
+11 |     root.children.push(leaf);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow occurs here
+12 |     root
+   |     ---- returning this value requires that `root` is borrowed for `'static`
+
+error[E0505]: cannot move out of `root` because it is borrowed
+  --> a08_tree_parent.rs:12:5
+   |
+ 9 |     let mut root = Node { name: "root".into(), parent: None, children: vec![] };
+   |         -------- binding `root` declared here
+10 |     let leaf = Node { name: "leaf".into(), parent: Some(&root), children: vec![] };
+   |                                                         ----- borrow of `root` occurs here
+11 |     root.children.push(leaf);
+12 |     root
+   |     ^^^^
+   |     |
+   |     move out of `root` occurs here
+   |     returning this value requires that `root` is borrowed for `'static`
+   |
+note: if `Node<'_>` implemented `Clone`, you could clone the value
+  --> a08_tree_parent.rs:2:1
+   |
+ 2 | pub struct Node<'a> {
+   | ^^^^^^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+...
+10 |     let leaf = Node { name: "leaf".into(), parent: Some(&root), children: vec![] };
+   |                                                          ---- you could clone this value
+
+error[E0515]: cannot return value referencing local variable `root`
+  --> a08_tree_parent.rs:12:5
+   |
+10 |     let leaf = Node { name: "leaf".into(), parent: Some(&root), children: vec![] };
+   |                                                         ----- `root` is borrowed here
+11 |     root.children.push(leaf);
+12 |     root
+   |     ^^^^ returns a value referencing data owned by the current function
+
+error: aborting due to 3 previous errors
+
+Some errors have detailed explanations: E0502, E0505, E0515.
+For more information about an error, try `rustc --explain E0502`.
+exit=1
+################ a08_tree_parent_fix.rs
+exit=0
+################ a11_moves.rs
+error[E0382]: borrow of moved value: `m`
+ --> a11_moves.rs:8:9
+  |
+6 | pub fn notify(m: Msg) {
+  |               - move occurs because `m` has type `Msg`, which does not implement the `Copy` trait
+7 |     send(m);
+  |          - value moved here
+8 |     log(&m);
+  |         ^^ value borrowed here after move
+  |
+note: consider changing this parameter type in function `send` to borrow instead if owning the value isn't necessary
+ --> a11_moves.rs:3:13
+  |
+3 | fn send(_m: Msg) {}
+  |    ----     ^^^ this parameter takes ownership of the value
+  |    |
+  |    in this function
+note: if `Msg` implemented `Clone`, you could clone the value
+ --> a11_moves.rs:2:1
+  |
+2 | pub struct Msg { pub to: String, pub body: String }
+  | ^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+...
+7 |     send(m);
+  |          - you could clone this value
+
+error[E0382]: use of partially moved value: `p`
+  --> a11_moves.rs:17:10
+   |
+15 |     let n = p.name;
+   |             ------ value partially moved here
+16 |     println!("{}", n);
+17 |     keep(p);
+   |          ^ value used here after partial move
+   |
+   = note: partial move occurs because `p.name` has type `String`, which does not implement the `Copy` trait
+
+error[E0382]: use of moved value: `template`
+  --> a11_moves.rs:23:16
+   |
+20 | pub fn spawn_all(template: Player, n: usize) -> Vec<Player> {
+   |                  -------- move occurs because `template` has type `Player`, which does not implement the `Copy` trait
+21 |     let mut v = Vec::new();
+22 |     for _ in 0..n {
+   |     ------------- inside of this loop
+23 |         v.push(template);
+   |                ^^^^^^^^ value moved here, in previous iteration of loop
+   |
+note: if `Player` implemented `Clone`, you could clone the value
+  --> a11_moves.rs:11:1
+   |
+11 | pub struct Player { pub name: String, pub inventory: Vec<String> }
+   | ^^^^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+...
+23 |         v.push(template);
+   |                -------- you could clone this value
+
+error: aborting due to 3 previous errors
+
+For more information about this error, try `rustc --explain E0382`.
+exit=1
+################ a18_init.rs
+error[E0381]: partially assigned binding `g` isn't fully initialized
+  --> a18_init.rs:11:9
+   |
+10 |         let mut g: Game;
+   |             ----- binding declared here but left uninitialized
+11 |         g.renderer = Renderer { width };
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `g` partially assigned here but it isn't fully initialized
+   |
+   = help: partial initialization isn't supported, fully initialize the binding with a default value and mutate it, or use `std::mem::MaybeUninit`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0381`.
+exit=1
+################ a18_init_fix.rs
+exit=0
+################ a21_map_update.rs
+warning: variable does not need to be mutable
+ --> a21_map_update.rs:5:9
+  |
+5 |     let mut counts: HashMap<String, u32> = HashMap::new();
+  |         ----^^^^^^
+  |         |
+  |         help: remove this `mut`
+  |
+  = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+error[E0594]: cannot assign to data in an index of `HashMap<String, u32>`
+ --> a21_map_update.rs:7:9
+  |
+7 |         counts[w] += 1;
+  |         ^^^^^^^^^^^^^^ cannot assign
+  |
+  = help: trait `IndexMut` is required to modify indexed content, but it is not implemented for `HashMap<String, u32>`
+  = help: to modify a `HashMap<String, u32>`, use `.get_mut()`, `.insert()` or the entry API
+
+error: aborting due to 1 previous error; 1 warning emitted
+
+For more information about this error, try `rustc --explain E0594`.
+exit=1
+################ a21_map_update_fix.rs
+exit=0
+################ a22_temporary.rs
+error[E0716]: temporary value dropped while borrowed
+ --> a22_temporary.rs:3:16
+  |
+3 |     let word = line.to_lowercase().split(' ').next().unwrap_or("");
+  |                ^^^^^^^^^^^^^^^^^^^                                - temporary value is freed at the end of this statement
+  |                |
+  |                creates a temporary value which is freed while still in use
+4 |     word.len()
+  |     ---- borrow later used here
+  |
+help: consider using a `let` binding to create a longer lived value
+  |
+3 ~     let binding = line.to_lowercase();
+4 ~     let word = binding.split(' ').next().unwrap_or("");
+  |
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0716`.
+exit=1
+################ a23_move_out_of_field.rs
+error[E0507]: cannot move out of `self.state` as enum variant `Walking` which is behind a mutable reference
+  --> a23_move_out_of_field.rs:7:28
+   |
+ 7 |         self.state = match self.state {
+   |                            ^^^^^^^^^^
+ 8 |             State::Walking(mut path) => {
+   |                            -------- data moved here
+...
+12 |             other => other,
+   |             ----- ...and here
+   |
+   = note: move occurs because these variables have types that don't implement the `Copy` trait
+help: consider borrowing the pattern binding
+   |
+ 8 |             State::Walking(ref mut path) => {
+   |                            +++
+help: consider borrowing the pattern binding
+   |
+12 |             ref other => other,
+   |             +++
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0507`.
+exit=1
+################ a23_move_out_of_field_fix.rs
+exit=0
