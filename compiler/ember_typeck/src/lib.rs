@@ -21818,6 +21818,19 @@ impl<'a> Checker<'a> {
         let known = |word: &Symbol| FFI_CONTRACT_WORDS.contains(&word.as_str());
         let unknown = top.filter(|word| !known(word) && !FORMS.contains(&word.as_str()))
             .or_else(|| inner.iter().copied().find(|word| !known(word)));
+        // ODR-269 — `handle` is a word of a type's contract (`@ffi(handle) type T`). A result of a
+        // handle type says who owns it and how long it lives with the words that do for any
+        // pointer: a handle C made for the caller is `returns_owned(destructor=f)`, one tied to an
+        // argument `borrowed one from(p)`. A handle with no lifetime would let safe code pass C one
+        // C has freed.
+        if unknown.is_none() && top.is_some_and(|word| word.is("result")) && inner.iter().any(|word| word.is("handle")) {
+            self.sink.emit(
+                Diagnostic::error(codes::E5002, span, "`handle` is a word of a type's contract, not a result's")
+                    .help("a new handle the caller owns is `result(returns_owned(destructor=f), one)`; one tied to an argument `p` is `result(borrowed, one, from(p))`")
+                    .note("what a handle result is owned by and lives as long as decides whether safe code may keep it [FFI-11], [FFI-36a]"),
+            );
+            return;
+        }
         match (top, unknown) {
             (_, Some(word)) => self.sink.emit(
                 Diagnostic::error(codes::E0104, span, format!("`{word}` is not a contract word of `@ffi`"))
@@ -41803,9 +41816,9 @@ impl<'a> Checker<'a> {
                                 } else if let ast::AttrArg::Expr(expr) = arg
                                     && (ffi_contract_word(expr).is_some_and(|word| word.is("handle"))
                                         || matches!(&expr.kind, ast::ExprKind::Call { callee, .. } if ffi_contract_word(callee).is_some_and(|word| word.is("handle")))) {
-                                    // ODR-247 — `handle` is a word of a type's or a result's contract.
+                                    // ODR-247, ODR-269 — `handle` is a word of a type's contract.
                                     self.sink.emit(
-                                        Diagnostic::error(codes::E5002, attr.span, "`handle` is a word of a type's or a result's contract, not a function's")
+                                        Diagnostic::error(codes::E5002, attr.span, "`handle` is a word of a type's contract, not a function's")
                                             .help("write it on the type the handle is: `@ffi(handle) type T`")
                                             .note("a function is not a handle; what it takes or returns may be [FFI-1], [FFI-11]"),
                                     );
