@@ -157,9 +157,10 @@ fn main():
     assert!(make.lines().next().is_some_and(|header| header.contains("ptr noalias sret(")), "{make}");
 }
 
-/// `[CG-LL-3]` — the IR in the shape LLVM optimises as it does the runtime's C: every function
-/// names the CPU Clang gives C (without it a link-time optimisation compiles the IR for the
-/// linker's default CPU, and never inlines a runtime inline function into the program), and an
+/// `[CG-LL-3]`, `[THR-14]` — the IR in the shape LLVM optimises as it does the runtime's C: every
+/// function names the CPU and features Clang gives C (without them a link-time optimisation
+/// compiles the IR for the linker's default CPU, never inlines a runtime inline function into the
+/// program, and calls a library for a 16-byte compare-exchange), and an
 /// element's address is one scaled `getelementptr`, which LLVM's unrolling counts as C's indexing.
 #[test]
 fn cg_ll_3_functions_name_the_runtimes_cpu_and_elements_are_scaled_addresses() {
@@ -179,7 +180,10 @@ fn main():
         "release",
     );
     let total = function(&ir, "em_5total");
-    assert!(total.lines().next().is_some_and(|header| header.contains("\"target-cpu\"=\"x86-64\"")), "{total}");
+    assert!(
+        total.lines().next().is_some_and(|header| header.contains("\"target-cpu\"=\"x86-64\"") && header.contains("\"target-features\"=\"+cx16\"")),
+        "{total}"
+    );
     assert!(total.contains("getelementptr [8 x i8], ptr"), "an element's address is not a scaled `getelementptr`:\n{total}");
     assert!(!total.contains("mul i64"), "an element's offset is multiplied apart:\n{total}");
 }

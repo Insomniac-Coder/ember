@@ -245,14 +245,17 @@ pub(crate) fn ret_attr(sig: &Signature) -> &'static str {
 
 /// The attributes every function of the program has: no unwinding (a panic aborts), unwind
 /// tables for the backtrace and the debugger, on Linux stack probes (`[RT-12]`; Windows probes
-/// every frame larger than a page itself), and the CPU Clang gives the runtime's C. Without the
-/// CPU, a link-time optimisation compiles the IR's functions for the linker's default CPU, whose
-/// features are a subset of the runtime's, and LLVM never inlines a function needing features
-/// its caller lacks: no runtime inline function would be inlined into the program.
+/// every frame larger than a page itself), and the CPU and features Clang gives the runtime's C
+/// (`-mcx16`, `[THR-14]`). Without them, a link-time optimisation compiles the IR's functions
+/// for the linker's default CPU: its features are a subset of the runtime's, LLVM never inlines a
+/// function needing features its caller lacks, so no runtime inline function would be inlined
+/// into the program, and a 16-byte compare-exchange would be a library call no link has.
 pub(crate) fn fn_attrs(m: &Module<'_>) -> &'static str {
     match m.ty.target {
-        abi::Target::SysV => "nounwind uwtable \"probe-stack\"=\"inline-asm\" \"target-cpu\"=\"x86-64\" \"tune-cpu\"=\"generic\"",
-        abi::Target::Win64 => "nounwind uwtable \"target-cpu\"=\"x86-64\" \"tune-cpu\"=\"generic\"",
+        abi::Target::SysV => {
+            "nounwind uwtable \"probe-stack\"=\"inline-asm\" \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx16\" \"tune-cpu\"=\"generic\""
+        }
+        abi::Target::Win64 => "nounwind uwtable \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx16\" \"tune-cpu\"=\"generic\"",
     }
 }
 
@@ -2004,7 +2007,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 return Ok(Val::Imm(sc, self.load(sc, &slot, 16)));
             }
             BinOp::Div => self.value(format!("{} {ty} {a}, {b}", if signed { "sdiv" } else { "udiv" })),
-            BinOp::Rem => self.value(format!("{} {ty} {a}, {b}", if signed { "srem" } else { "urem" })),
+            BinOp::Rem if signed => self.signed_rem(sc, &a, &b),
+            BinOp::Rem => self.value(format!("urem {ty} {a}, {b}")),
             BinOp::FloorDiv | BinOp::FloorRem if !signed => {
                 self.value(format!("{} {ty} {a}, {b}", if op == BinOp::FloorDiv { "udiv" } else { "urem" }))
             }
@@ -2031,21 +2035,34 @@ impl<'m, 'a> FnCx<'m, 'a> {
     /// `[TYP-28]` — floor division and modulo of signed integers: C's truncating forms, the
     /// quotient one less and the remainder plus the divisor when the remainder is not zero and
     /// its sign differs from the divisor's.
+    /// Only the operator's own division: `MIN % -1` is 0 (`[TYP-28]`), and a quotient computed
+    /// beside it would be `sdiv MIN, -1`, undefined in LLVM even unused (`[CG-LL-2]`). A
+    /// `//`'s overflow is checked or proved before it.
     fn floor_div(&mut self, op: BinOp, sc: Sc, a: &str, b: &str) -> String {
         let ty = sc.ir();
-        let quotient = self.value(format!("sdiv {ty} {a}, {b}"));
-        let remainder = self.value(format!("srem {ty} {a}, {b}"));
+        let remainder = self.signed_rem(sc, a, b);
         let nonzero = self.value(format!("icmp ne {ty} {remainder}, 0"));
         let signs = self.value(format!("xor {ty} {remainder}, {b}"));
         let differ = self.value(format!("icmp slt {ty} {signs}, 0"));
         let adjust = self.value(format!("and i1 {nonzero}, {differ}"));
         if op == BinOp::FloorDiv {
+            let quotient = self.value(format!("sdiv {ty} {a}, {b}"));
             let less = self.value(format!("sub {ty} {quotient}, 1"));
             self.value(format!("select i1 {adjust}, {ty} {less}, {ty} {quotient}"))
         } else {
             let more = self.value(format!("add {ty} {remainder}, {b}"));
             self.value(format!("select i1 {adjust}, {ty} {more}, {ty} {remainder}"))
         }
+    }
+
+    /// A signed remainder, whose divisor `-1` is taken as `1`: every value's remainder by
+    /// either is 0, and `srem MIN, -1` is undefined in LLVM (`[CG-LL-2]`; C's `%` is too, which
+    /// the runtime's `floorrem` tests for). A constant divisor folds the test away.
+    fn signed_rem(&mut self, sc: Sc, a: &str, b: &str) -> String {
+        let ty = sc.ir();
+        let minus_one = self.value(format!("icmp eq {ty} {b}, -1"));
+        let divisor = self.value(format!("select i1 {minus_one}, {ty} 1, {ty} {b}"));
+        self.value(format!("srem {ty} {a}, {divisor}"))
     }
 
     /// `[TYP-9]` — the flags this body's floating point allows: none but under `@fastmath`

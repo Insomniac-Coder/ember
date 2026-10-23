@@ -84,6 +84,11 @@ conformance tree (1904 run tests) + run-pass + run-fail:
 | e2a34cd8 | | 2062 |
 | 5b9400f2 | 1893 | 2075 |
 | 3621cb1f | 1893 | 2075 |
+| 25891563 | 1893 | 2075 |
+
+Every listed profile (`EMBER_PROFILES=all`), after the merge of origin/main (D-903; 2088 run
+tests): 2075 at first (the two defects below), 2077 with them fixed. The 11 left are the
+reloadable programs (10 `HR-*`, one `LNT-5`), refused.
 
 Causes left at e2a34cd8 (24): hot-reload images 11 (refused: `[HR-*]`), and one each of the
 rest, each fixed since (backtraces, leak cycles, boxed `once fn`, export tables, `system`
@@ -146,6 +151,7 @@ machine was shared with other helpers' builds; wide intervals are load, not code
 | 3 | 3621cb1f | 17 | a10 1.69x, int_math 1.28x, t5_words 1.08x, w1_sum_loop 1.31x |
 | 4 | + CPU attribute, scaled GEPs | 19 | a10 1.79x [1.52, 2.04], int_math 1.27x [1.26, 1.28] |
 | C backend, `EMBER_CC=clang` | same compiler | 19 | a10 1.70x [1.68, 1.73], int_math 1.27x [1.25, 1.28] |
+| 6 | + byte sums, merge of D-903, the two defect fixes | 19 | a10 1.69x [1.65, 1.73], int_math 1.22x [1.14, 1.39] |
 
 Run 4 against the C backend's own code under Clang (like with like): w1 20.6 / 20.4 ms, t5 56.0
 / 54.2, t2 16.0 / 10.9 (before the byte sum; its LTO assembly is now the C build's, `psadbw`),
@@ -169,6 +175,18 @@ the rest within noise. The two failures are the C backend's under Clang too:
   full and in thin LTO). Open: see question AF4.
 
 ## Defects found
+
+Both in this backend's own code, found by the first run of every listed profile
+(`EMBER_PROFILES=all`), both fixed:
+
+- `[TYP-28]`, `[CG-LL-2]`: a signed `%` (floor or truncating) whose check is gone computed
+  `sdiv`/`srem` of `MIN` by `-1`, undefined in LLVM though `MIN % -1` is 0: in `release` the
+  program stopped printing there (`TYP-28/accept_floor_division_and_modulo`). Now only the
+  operator's own division, the remainder's divisor `-1` taken as `1` (`signed_rem`).
+- `[THR-14]`: with the CPU named but not `cx16`, an LTO build (`development`) left a 16-byte
+  compare-exchange to `__atomic_compare_exchange_16`, which no link has
+  (`THR-14/accept_128_bit_atomics`). Every function now says `"target-features"="+cx16"`, as
+  the program's C gets `-mcx16`.
 
 ## Spec questions
 
