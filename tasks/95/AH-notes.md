@@ -82,6 +82,19 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
   several lie at addresses ending in a zero byte; the evaluator before the change panicked there),
   `ECS-4/accept_two_lambda_systems_capturing_one_sync_object.em` (AD's repro, reduced).
 
+## Verification (at the last commit)
+
+* The whole conformance tree (every `tests/conformance/*`, `tests/run-pass`, `compile-pass`,
+  `compile-fail`, `run-fail`; the runner compares every run test with the evaluator): failing 0.
+* `ember_driver`'s `milestones` (175, the conformance suite with its C assertions), `ui`,
+  `firstweek`, `reload`, `interp`: all pass; the unit tests of `ember_typeck`, `ember_parser`,
+  `ember_ast`, `ember_hir`, `ember_mir`, `ember_analysis`, `ember_codegen_c`, `ember_interp`,
+  `ember_driver`: all pass.
+* The C gate (warnings as errors): `GRM-28`, `STD-9` under MSVC and clang (Windows), and
+  `GRM-28`, `STD-9`, `GRM-30`, `ECS-4`, `CLI-19`, `RNG-4` under gcc in WSL (a copy of this tree,
+  built there; the same directories' run tests pass compiled by gcc); the runtime itself under gcc
+  and clang on Linux, `-std=c11 -Wall -Wextra -Werror`.
+
 ## Not done
 
 * **ODR-266 `[ECS-4]`, `[ECS-5]` — not built: the ruling's mechanism cannot meet the brief's
