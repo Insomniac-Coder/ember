@@ -28,12 +28,13 @@ mod class_exports;
 mod frames;
 mod header;
 mod integer_reduction;
+pub mod image;
 mod reload;
 mod visualisers;
 
 pub use visualisers::Visualisers;
 
-pub use reload::{ReloadImage, manifest_symbol};
+pub use image::{ReloadImage, manifest_symbol};
 
 pub struct Output {
     /// The single translation unit for this module.
@@ -475,21 +476,11 @@ fn emit_with(
         fmt_prints: std::cell::RefCell::new(Vec::new()),
         fmt_specs: std::cell::RefCell::new(Vec::new()),
         reload: reload.cloned(),
-        reload_slots: BTreeMap::new(),
+        reload_plan: None,
         reload_interface_ids: std::cell::RefCell::new(BTreeSet::new()),
-        reload_shapes: BTreeMap::new(),
-        reload_shapes_open: BTreeSet::new(),
-        reload_elements: BTreeMap::new(),
-        reload_frame_layouts: BTreeMap::new(),
-        reload_old_layouts: BTreeSet::new(),
         rl_sites: BTreeMap::new(),
         rl_frame_active: false,
         lazy_statics: lazy_statics.clone(),
-        reload_bodies: if reload.is_some() {
-            bodies.iter().map(|body| (body.name.clone(), body.symbol.clone(), body.return_ty())).collect()
-        } else {
-            Vec::new()
-        },
         mangled_types: std::cell::RefCell::new(BTreeMap::new()),
         collection_wrappers: wrappers,
         array_helpers: std::cell::RefCell::new(Vec::new()),
@@ -926,29 +917,16 @@ struct Emitter<'a> {
     fmt_specs: std::cell::RefCell<Vec<Ty>>,
     /// Annex B — a reloadable image's functions, statics and mode (`reload.rs`).
     reload: Option<ReloadImage>,
-    /// Each function the reload manifest lists, by symbol, with its index in the image's tables.
-    reload_slots: BTreeMap<String, usize>,
+    /// What the image says of itself, decided once for both backends (`image.rs`).
+    reload_plan: Option<image::Planner<'a>>,
     /// The interface identities a reloadable image defines.
     reload_interface_ids: std::cell::RefCell<BTreeSet<String>>,
-    /// `[HR-15]` — the tables describing a value no schema names, by type and whether the table
-    /// lists the type's fields (`reload.rs`); and the types being described, met again inside
-    /// themselves.
-    reload_shapes: BTreeMap<(Ty, bool), String>,
-    reload_shapes_open: BTreeSet<Ty>,
-    /// `[HR-13]` — the rows describing a container's element by its schema, by element type, with
-    /// the row's kind.
-    reload_elements: BTreeMap<Ty, (String, &'static str)>,
-    /// `[HR-3b]` (A1) — what each body depends on with its direct callees, what any old body may
-    /// (a call through a function value), the current body's call sites by block, and whether the
-    /// body being emitted keeps a frame record (`frames.rs`).
-    reload_frame_layouts: BTreeMap<String, BTreeSet<String>>,
-    reload_old_layouts: BTreeSet<String>,
+    /// `[HR-3b]` (A1) — the current body's call sites by block, and whether the body being emitted
+    /// keeps a frame record (`frames.rs`).
     rl_sites: BTreeMap<usize, u32>,
     rl_frame_active: bool,
     /// `[STA-3]` — the statics initialised on first access, by initialiser symbol.
     lazy_statics: BTreeMap<String, (Ty, String)>,
-    /// Annex B — every body's name, symbol and return type, for the functions the driver wrote.
-    reload_bodies: Vec<(String, String, Ty)>,
     /// `[MNG-1]` — each type's mangled form (`TypeTable::mangled`), made once: a type is named
     /// wherever a value of it is.
     mangled_types: std::cell::RefCell<BTreeMap<TypeNode, String>>,
@@ -1482,8 +1460,7 @@ impl Emitter<'_> {
         if self.module {
             self.line(&format!("static uint32_t {}module_creator;", ember_branding::mangle_prefix()));
         }
-        self.plan_reload_slots(bodies);
-        self.plan_frame_layouts(bodies);
+        self.plan_reload(bodies);
         self.emit_type_declarations();
         self.line(COLLECTION_WRAPPERS);
         self.line(FOREIGN_STATIC_DECLARATIONS);
@@ -4620,7 +4597,7 @@ impl Emitter<'_> {
                 .base
                 .map(|base| format!("&{}", self.class_type_info(base)))
                 .unwrap_or_else(|| "NULL".to_string());
-            let identity = reload::class_identity_symbol(&self.mangled_type(TypeNode::Class(id)));
+            let identity = image::class_identity_symbol(&self.mangled_type(TypeNode::Class(id)));
             if self.reload.is_some() {
                 self.line(&format!("static {RT}rl_identity {identity} = {{ {}, NULL }};", c_string_literal(&info)));
             }
@@ -14613,17 +14590,11 @@ mod string_descriptor_view_parts_tests {
             fmt_prints: Default::default(),
             fmt_specs: Default::default(),
             reload: None,
-            reload_slots: BTreeMap::new(),
+            reload_plan: None,
             reload_interface_ids: Default::default(),
-            reload_shapes: BTreeMap::new(),
-            reload_shapes_open: BTreeSet::new(),
-            reload_elements: BTreeMap::new(),
-            reload_frame_layouts: BTreeMap::new(),
-            reload_old_layouts: BTreeSet::new(),
             rl_sites: BTreeMap::new(),
             rl_frame_active: false,
             lazy_statics: BTreeMap::new(),
-            reload_bodies: Vec::new(),
             mangled_types: std::cell::RefCell::new(BTreeMap::new()),
             collection_wrappers: BTreeMap::new(),
         }
