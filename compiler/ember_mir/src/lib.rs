@@ -12,7 +12,7 @@ pub mod lower;
 pub mod parallel;
 pub mod verify;
 
-pub use lower::{lower, lower_one, lower_with};
+pub use lower::{FunctionIndex, function_index, lower, lower_one, lower_with};
 /// Exact source-level parameter mode retained by MIR for callable contracts.
 /// Consumers of MIR should name this boundary fact rather than depending on
 /// HIR solely to construct or inspect a MIR body.

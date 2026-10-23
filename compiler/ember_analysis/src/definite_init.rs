@@ -449,6 +449,30 @@ pub fn check_all(bodies: &[Body], sink: &mut Sink) -> usize {
     check_all_with_facts(bodies, &facts, sink)
 }
 
+/// ODR-281 — [`analyze_all`], [`verify_initialization_facts_all`] (when `verify`) and
+/// [`check_all_with_facts`] as one pass over the bodies, each body's facts dropped once it is
+/// checked: the program's facts, a state for every local at every block of every body, are never
+/// held together. The same diagnostics in the same order, and the same verdict of the verifier.
+pub fn check_all_verified(bodies: &[Body], verify: bool, sink: &mut Sink) -> usize {
+    let done = crate::parallel::each(bodies, sink, |body, sink| {
+        let facts = analyze_definite_init(body);
+        let violations = if verify { verify_initialization_facts(body, &facts) } else { Vec::new() };
+        let errors = if violations.is_empty() { check_definite_init_with_facts(body, &facts, sink) } else { 0 };
+        (errors, violations)
+    });
+    let violations: Vec<&InitializationFactViolation> = done.iter().flat_map(|((_, violations), _)| violations).collect();
+    assert!(
+        violations.is_empty(),
+        "initialization fact verification failed:\n{}",
+        violations
+            .iter()
+            .map(|v| format!("  {}: {}", v.body, v.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    done.iter().map(|((errors, _), _)| errors).sum()
+}
+
 /// Verify every body's initialization facts, panicking on a compiler-internal
 /// mismatch. User source errors are diagnosed by the consumer above; a fact
 /// mismatch means the compiler's trusted semantic boundary is stale.

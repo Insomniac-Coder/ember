@@ -49,8 +49,10 @@ use ember_types::codec::{Found, TypeRecord};
 use ember_typeck::{CheckOutput, Kept, LoadedModule};
 use serde::{Deserialize, Serialize};
 
-/// A record of another schema is one this compiler cannot read: it is not used.
-const SCHEMA: u32 = 3;
+/// A record of another schema is one this compiler cannot read: it is not used. Schema 4
+/// (ODR-281): a record names its imports at their reach hashes, where schema 3 named every module
+/// it reached at its declarations.
+const SCHEMA: u32 = 4;
 const EXTENSION: &str = "emck";
 
 type Hash = [u8; 32];
@@ -83,7 +85,7 @@ struct Record {
     key: Hash,
     source: Hash,
     declarations: Hash,
-    /// Each module it imports, directly or not: its name and declarations when this was kept.
+    /// Each module it imports: its name and its reach hash (`Plan::reach`) when this was kept.
     deps: Vec<(String, Hash)>,
     /// The files its spans point into (numbered as its spans name them).
     files: Vec<FileRef>,
@@ -199,8 +201,12 @@ pub(crate) struct Plan {
     shapes: Vec<Shape>,
     /// Each module's place by its file.
     module_of_file: HashMap<FileId, usize>,
-    /// Each module's transitive imports, by their places in the loaded list.
-    deps: Vec<Vec<usize>>,
+    /// Each module's imports, by their places in the loaded list.
+    imports: Vec<Vec<usize>>,
+    /// ODR-281 — each module's reach hash: of its declarations and of those of every module it
+    /// reaches by its imports (`ember_build::interface::component_hashes`). A record names its
+    /// imports at theirs, so its size is its imports', not every module's below it.
+    reach: Vec<Hash>,
     clean: Vec<Clean>,
     /// The modules kept whole, and those kept in part with the bodies (their spans now) kept.
     whole_set: HashSet<usize>,
@@ -262,13 +268,24 @@ impl Plan {
             .as_bytes(),
         );
         let module_of_file = modules.iter().enumerate().map(|(index, loaded)| (loaded.module.span.file, index)).collect();
+        let imports = direct_imports(modules);
+        let reach = {
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let declarations: Vec<Hash> = shapes.iter().map(|shape| shape.declarations).collect();
+            ember_build::interface::component_hashes(&names, &declarations, &imports, 0..modules.len())
+                .expect("each import is a loaded module")
+                .into_iter()
+                .map(|hash| hash.expect("every module is a root"))
+                .collect()
+        };
         let mut plan = Plan {
             dir,
             key,
             names,
             shapes,
             module_of_file,
-            deps: transitive_imports(modules),
+            imports,
+            reach,
             clean: Vec::new(),
             whole_set: HashSet::new(),
             partial: HashMap::new(),
@@ -288,11 +305,11 @@ impl Plan {
             if record.key != plan.key || record.declarations != plan.shapes[index].declarations || attempts.forced.contains(&plan.names[index]) {
                 continue;
             }
-            // Each import as the record knows it: the same modules, declaring the same.
-            let now: BTreeSet<&str> = plan.deps[index].iter().map(|dep| plan.names[*dep].as_str()).collect();
+            // Each import as the record knows it: the same modules, reaching modules declaring the same.
+            let now: BTreeSet<&str> = plan.imports[index].iter().map(|dep| plan.names[*dep].as_str()).collect();
             let then: BTreeSet<&str> = record.deps.iter().map(|(name, _)| name.as_str()).collect();
             let deps_hold = now == then
-                && record.deps.iter().all(|(name, declared)| by_name.get(name.as_str()).is_some_and(|&dep| plan.shapes[dep].declarations == *declared));
+                && record.deps.iter().all(|(name, reach)| by_name.get(name.as_str()).is_some_and(|&dep| plan.reach[dep] == *reach));
             if !deps_hold {
                 continue;
             }
@@ -739,7 +756,7 @@ impl Plan {
                 key: self.key,
                 source: hash(map.file(checks.files[index]).text.as_bytes()),
                 declarations: self.shapes[index].declarations,
-                deps: self.deps[index].iter().map(|&dep| (self.names[dep].clone(), self.shapes[dep].declarations)).collect(),
+                deps: self.imports[index].iter().map(|&dep| (self.names[dep].clone(), self.reach[dep])).collect(),
                 files,
                 types: types_bytes,
                 module: module_part,
@@ -1190,14 +1207,14 @@ fn declarations(loaded: &LoadedModule, map: &SourceMap) -> Shape {
     Shape { declarations: hash(whole.as_bytes()), open, bodies: bodies.iter().map(|body| (body.start, body.end)).collect(), ends }
 }
 
-/// Each module's imports, directly or not, by their places in `modules`. The prelude's modules are
-/// every module's (`[MOD-5]`).
-fn transitive_imports(modules: &[LoadedModule]) -> Vec<Vec<usize>> {
+/// Each module's imports, by their places in `modules`. The prelude's modules are every module's
+/// (`[MOD-5]`).
+fn direct_imports(modules: &[LoadedModule]) -> Vec<Vec<usize>> {
     let by_path: HashMap<String, usize> = modules.iter().enumerate().map(|(index, loaded)| (loaded.path.join("."), index)).collect();
     let std = ember_branding::STD_PACKAGE;
     let prelude: Vec<usize> =
         ["core", "collections", "mem", "string"].iter().filter_map(|module| by_path.get(&format!("{std}.{module}")).copied()).collect();
-    let direct: Vec<Vec<usize>> = modules
+    modules
         .iter()
         .enumerate()
         .map(|(index, loaded)| {
@@ -1226,18 +1243,6 @@ fn transitive_imports(modules: &[LoadedModule]) -> Vec<Vec<usize>> {
                 out.insert(ser);
             }
             out.into_iter().collect()
-        })
-        .collect();
-    (0..modules.len())
-        .map(|start| {
-            let mut seen = BTreeSet::new();
-            let mut stack = direct[start].clone();
-            while let Some(module) = stack.pop() {
-                if module != start && seen.insert(module) {
-                    stack.extend(direct[module].iter().copied());
-                }
-            }
-            seen.into_iter().collect()
         })
         .collect()
 }

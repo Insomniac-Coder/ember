@@ -89,7 +89,7 @@ pub use cycles::{
 };
 pub use definite_init::{
     analyze_all as analyze_definite_init_all, analyze_definite_init,
-    check_all as check_definite_init_all,
+    check_all as check_definite_init_all, check_all_verified as check_definite_init_all_verified,
     check_all_with_facts as check_definite_init_all_with_facts, check_definite_init,
     check_definite_init_with_facts, verify_initialization_facts, verify_initialization_facts_all,
 };

@@ -7,7 +7,7 @@
 //! serialized, reread, independently validated, and included in the
 //! dependency identity that a later item-granular cache can reuse.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use ember_mir::{BorrowSource, CallableRegionMetadata, CallableRegionMetadataCodecError};
@@ -47,7 +47,10 @@ const MAGIC: &[u8; 4] = b"EMIF";
 // `@borrows(self)`, which lend a caller different things, would be one contract.
 // Schema 14 marks a transliterated component in its length (`[MNG-3]`, ODR-202: `café` is
 // `u10caf_u00E9_`): a schema 13 record names `café` as the ASCII name `caf_u00E9_` is now named.
-const SCHEMA_VERSION: u32 = 14;
+// Schema 15 (ODR-281) names a module's direct dependencies, each at its reach hash (its interface
+// and every module it reaches, `reach_hashes`), where schema 14 named every module it reached at
+// its interface hash: a program's records grew with the square of its modules.
+const SCHEMA_VERSION: u32 = 15;
 const EXTENSION: &str = "emif";
 
 /// A BLAKE3 identity. It is kept opaque so callers cannot accidentally use a
@@ -263,6 +266,8 @@ pub struct ModuleInterfaceArtifact {
     pub language_version: String,
     pub package_config: String,
     pub source_hash: InterfaceHash,
+    /// The modules it imports, each at its reach hash (`reach_hashes`): the hash of that module's
+    /// interface and of every module it reaches in turn.
     pub dependencies: BTreeMap<String, InterfaceHash>,
     pub callables: BTreeMap<String, CallableInterfaceContract>,
     pub layouts: BTreeMap<String, String>,
@@ -350,10 +355,11 @@ fn write_record(path: &Path, bytes: &[u8]) -> Result<(), InterfaceArtifactError>
 }
 
 /// Build every module's current interface artifact. Interface hashes are
-/// computed before cache keys, then each module's key receives the sorted
-/// transitive hashes of the modules it imports. That makes a callable-summary
-/// change in an imported module invalidate every dependent key under
-/// `[LT-40]`, including through an import chain.
+/// computed before cache keys, then each module's key receives the reach hash
+/// of each module it imports, which holds the interface hash of every module
+/// reached through it. That makes a callable-summary change in an imported
+/// module invalidate every dependent key under `[LT-40]`, including through an
+/// import chain.
 pub fn build_artifacts(
     inputs: &[ModuleInterfaceInput],
     compiler_version: &str,
@@ -362,7 +368,7 @@ pub fn build_artifacts(
 }
 
 /// `[BLD-1]` — a module this build does not check again, as its kept record knows its artifact:
-/// what it imports, directly or not, and its interface hash.
+/// what it imports and its interface hash.
 #[derive(Clone, Debug)]
 pub struct KnownInterface {
     pub dependencies: Vec<String>,
@@ -422,26 +428,20 @@ pub fn build_artifacts_known(
         );
     }
 
+    let mut graph: BTreeMap<&str, (InterfaceHash, &[String])> =
+        known.iter().map(|(module, known)| (module.as_str(), (known.interface_hash, known.dependencies.as_slice()))).collect();
+    for input in inputs {
+        let interface_hash: InterfaceHash = preliminary[&input.module].interface_hash;
+        graph.insert(input.module.as_str(), (interface_hash, input.direct_dependencies.as_slice()));
+    }
+    let reach = reach_hashes(&graph, inputs.iter().map(|input| input.module.as_str()))?;
     let mut artifacts = Vec::with_capacity(inputs.len());
     for input in inputs {
-        let mut reachable = BTreeSet::new();
-        collect_transitive_dependencies(
-            &input.module,
-            &input.direct_dependencies,
-            &inputs_by_module,
-            known,
-            &mut reachable,
-        )?;
-        reachable.remove(&input.module);
-        let dependencies = reachable
-            .into_iter()
-            .map(|module| {
-                let interface_hash = match preliminary.get(&module) {
-                    Some(artifact) => artifact.interface_hash,
-                    None => known.get(&module).expect("dependency existence was checked during graph traversal").interface_hash,
-                };
-                (module, interface_hash)
-            })
+        let dependencies = input
+            .direct_dependencies
+            .iter()
+            .filter(|module| **module != input.module)
+            .map(|module| (module.clone(), reach[module.as_str()]))
             .collect();
         let current = preliminary
             .get(&input.module)
@@ -575,14 +575,16 @@ pub fn refresh_known_records(
     directory: &Path,
     known: &BTreeMap<String, KnownInterface>,
 ) -> Result<(), InterfaceArtifactError> {
-    let hash_of = |module: &str| {
-        prepared
-            .artifacts
-            .iter()
-            .find(|artifact| artifact.module == module)
-            .map(|artifact| artifact.interface_hash)
-            .or_else(|| known.get(module).map(|known| known.interface_hash))
-    };
+    // The import graph as this build knows it: its own artifacts, and the kept modules.
+    let fresh_dependencies: Vec<Vec<String>> =
+        prepared.artifacts.iter().map(|artifact| artifact.dependencies.keys().cloned().collect()).collect();
+    let mut graph: BTreeMap<&str, (InterfaceHash, &[String])> =
+        known.iter().map(|(module, known)| (module.as_str(), (known.interface_hash, known.dependencies.as_slice()))).collect();
+    for (artifact, dependencies) in prepared.artifacts.iter().zip(&fresh_dependencies) {
+        graph.insert(artifact.module.as_str(), (artifact.interface_hash, dependencies.as_slice()));
+    }
+    let reach = reach_hashes(&graph, known.keys().map(String::as_str))?;
+    let hash_of = |module: &str| reach.get(module).copied();
     let mut writes = Vec::new();
     for module in known.keys() {
         let path = artifact_path(directory, module);
@@ -765,30 +767,114 @@ struct PreliminaryArtifact {
     layouts: BTreeMap<String, String>,
 }
 
-fn collect_transitive_dependencies(
-    owner: &str,
-    direct_dependencies: &[String],
-    inputs: &BTreeMap<&str, &ModuleInterfaceInput>,
-    known: &BTreeMap<String, KnownInterface>,
-    out: &mut BTreeSet<String>,
-) -> Result<(), InterfaceArtifactError> {
-    let mut pending: Vec<String> = direct_dependencies.to_vec();
-    while let Some(module) = pending.pop() {
-        if module == owner || !out.insert(module.clone()) {
+/// `[BLD-2]`, ODR-281 — the reach hash of each module reached from `roots` in `graph` (each module's
+/// interface hash and what it imports): the hash of its interface and of every module it reaches.
+/// A cache key naming its imports at their reach hashes changes when any interface reached through
+/// them does, as one naming every reached module did, at a size linear in the program where that
+/// one grew with the square of its modules.
+fn reach_hashes<'a>(
+    graph: &BTreeMap<&'a str, (InterfaceHash, &'a [String])>,
+    roots: impl Iterator<Item = &'a str>,
+) -> Result<BTreeMap<&'a str, InterfaceHash>, InterfaceArtifactError> {
+    let names: Vec<&str> = graph.keys().copied().collect();
+    let place: BTreeMap<&str, usize> = names.iter().enumerate().map(|(at, name)| (*name, at)).collect();
+    let own: Vec<[u8; 32]> = graph.values().map(|(hash, _)| hash.bytes()).collect();
+    let imports: Vec<Vec<usize>> =
+        graph.values().map(|(_, imports)| imports.iter().map(|import| place.get(import.as_str()).copied().unwrap_or(usize::MAX)).collect()).collect();
+    let roots: Vec<usize> = roots.filter_map(|root| place.get(root).copied()).collect();
+    let reach = component_hashes(&names, &own, &imports, roots).map_err(|(owner, import)| InterfaceArtifactError::UnknownDependency {
+        owner: names[owner].to_string(),
+        module: graph[names[owner]].1[import].clone(),
+    })?;
+    Ok(names.iter().zip(reach).filter_map(|(name, hash)| Some((*name, InterfaceHash(hash?)))).collect())
+}
+
+/// `[BLD-1]`, `[BLD-2]`, ODR-281 — over a graph of named nodes, each with a hash of its own and the
+/// nodes it reaches directly (`usize::MAX` for one the graph has not), the hash of each node reached
+/// from `roots` and of every node it reaches in turn; `None` for a node not reached. The nodes of one
+/// cycle (`[MOD-4]` allows import cycles) share theirs: the hash of the members' names and own
+/// hashes and of the hashes of what the cycle reaches outside itself. So a hash changes when the own
+/// hash of anything reached does, and an import graph's hashes take time and room linear in its
+/// edges, where listing what each node reaches took the square of its nodes. The cycles are
+/// Tarjan's strongly connected components, found without recursion (an import chain may be
+/// thousands of modules deep), each hashed once all it reaches is. `Err((node, k))`: the `k`th edge
+/// of a reached `node` names no node.
+pub fn component_hashes(
+    names: &[&str],
+    own: &[[u8; 32]],
+    edges: &[Vec<usize>],
+    roots: impl IntoIterator<Item = usize>,
+) -> Result<Vec<Option<[u8; 32]>>, (usize, usize)> {
+    const UNSEEN: usize = usize::MAX;
+    let count = names.len();
+    let mut index = vec![UNSEEN; count];
+    let mut low = vec![0usize; count];
+    let mut on_stack = vec![false; count];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut hashes: Vec<Option<[u8; 32]>> = vec![None; count];
+    let mut seen = 0;
+    for root in roots {
+        if index[root] != UNSEEN {
             continue;
         }
-        match (inputs.get(module.as_str()), known.get(&module)) {
-            (Some(input), _) => pending.extend(input.direct_dependencies.iter().cloned()),
-            (None, Some(known)) => pending.extend(known.dependencies.iter().cloned()),
-            (None, None) => {
-                return Err(InterfaceArtifactError::UnknownDependency {
-                    owner: owner.to_string(),
-                    module,
-                });
+        // Each frame: a node and the next of its edges to follow.
+        let mut frames: Vec<(usize, usize)> = vec![(root, 0)];
+        (index[root], low[root], on_stack[root]) = (seen, seen, true);
+        seen += 1;
+        stack.push(root);
+        while let Some(&(node, next)) = frames.last() {
+            if let Some(&target) = edges[node].get(next) {
+                frames.last_mut().expect("a frame").1 += 1;
+                if target >= count {
+                    return Err((node, next));
+                }
+                if index[target] == UNSEEN {
+                    (index[target], low[target], on_stack[target]) = (seen, seen, true);
+                    seen += 1;
+                    stack.push(target);
+                    frames.push((target, 0));
+                } else if on_stack[target] {
+                    low[node] = low[node].min(index[target]);
+                }
+                continue;
+            }
+            frames.pop();
+            if let Some(&(parent, _)) = frames.last() {
+                low[parent] = low[parent].min(low[node]);
+            }
+            if low[node] != index[node] {
+                continue;
+            }
+            // `node` roots a component: its members are the stack from it up, and everything they
+            // reach outside it is hashed already.
+            let at = stack.iter().rposition(|&member| member == node).expect("a component's root is on the stack");
+            let mut members: Vec<usize> = stack.split_off(at);
+            members.sort_unstable_by(|a, b| names[*a].cmp(names[*b]));
+            for &member in &members {
+                on_stack[member] = false;
+            }
+            let mut below: Vec<[u8; 32]> =
+                members.iter().flat_map(|&member| edges[member].iter()).filter_map(|&target| hashes[target]).collect();
+            below.sort_unstable();
+            below.dedup();
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(b"ember-reach-v1\0");
+            hash_count(&mut hasher, members.len());
+            for &member in &members {
+                hash_string(&mut hasher, names[member]);
+                hasher.update(&own[member]);
+            }
+            hash_count(&mut hasher, below.len());
+            for hash in &below {
+                hasher.update(hash);
+            }
+            let hash = *hasher.finalize().as_bytes();
+            for member in members {
+                hashes[member] = Some(hash);
             }
         }
     }
-    Ok(())
+    Ok(hashes)
 }
 
 fn interface_hash(
@@ -1675,5 +1761,82 @@ mod tests {
             let artifacts = build_artifacts(&[foreign], "test").unwrap();
             assert_eq!(artifacts[0].callables.values().next().unwrap().signature.borrows, Some(Vec::new()));
         }
+    }
+
+    /// ODR-281 — a module's cache key changes exactly when the interface of a module it reaches does
+    /// (brute force over small import graphs, cycles among them): its imports at their reach hashes
+    /// stand for every module reached, as the list of them did.
+    #[test]
+    fn a_cache_key_changes_when_a_reached_interface_does_and_only_then() {
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for _ in 0..200 {
+            let count = 2 + next(6) as usize;
+            let names: Vec<String> = (0..count).map(|module| format!("m{module}")).collect();
+            let imports: Vec<Vec<usize>> = (0..count)
+                .map(|module| (0..count).filter(|&other| other != module && next(3) == 0).collect())
+                .collect();
+            let build = |changed: Option<usize>| -> Vec<InterfaceHash> {
+                let inputs: Vec<ModuleInterfaceInput> = (0..count)
+                    .map(|module| {
+                        let dependencies: Vec<&str> = imports[module].iter().map(|&other| names[other].as_str()).collect();
+                        input(&names[module], &names[module], &dependencies, usize::from(changed == Some(module)))
+                    })
+                    .collect();
+                let artifacts = build_artifacts(&inputs, "test").unwrap();
+                names.iter().map(|name| artifacts.iter().find(|artifact| artifact.module == *name).unwrap().cache_key).collect()
+            };
+            let before = build(None);
+            for changed in 0..count {
+                let after = build(Some(changed));
+                for module in (0..count).filter(|&module| module != changed) {
+                    // Whether `changed` is reached from `module` through its imports.
+                    let mut seen = vec![false; count];
+                    let mut pending = imports[module].clone();
+                    while let Some(at) = pending.pop() {
+                        if !std::mem::replace(&mut seen[at], true) {
+                            pending.extend(&imports[at]);
+                        }
+                    }
+                    assert_eq!(before[module] != after[module], seen[changed], "{module} of {imports:?}, {changed} changed");
+                }
+            }
+        }
+    }
+
+    /// ODR-281 — a module the build kept (`known`) is a link of the chain like any other: a change
+    /// past it reaches the key of a module importing it.
+    #[test]
+    fn a_kept_module_passes_on_what_it_reaches() {
+        let key = |leaf_field: usize| {
+            let known = BTreeMap::from([(
+                "kept".to_string(),
+                KnownInterface { dependencies: vec!["leaf".to_string()], interface_hash: InterfaceHash::of_bytes(b"kept") },
+            )]);
+            let artifacts =
+                build_artifacts_known(&[input("root", "root", &["kept"], 0), input("leaf", "leaf", &[], leaf_field)], &known, "test").unwrap();
+            artifacts.iter().find(|artifact| artifact.module == "root").unwrap().cache_key
+        };
+        assert_ne!(key(0), key(1));
+    }
+
+    /// ODR-281 — an import chain thousands of modules deep is walked without recursion, and each
+    /// record names its one import, not every module below it.
+    #[test]
+    fn a_deep_import_chain_keys_each_module_by_its_one_import() {
+        let names: Vec<String> = (0..20_000).map(|module| format!("m{module}")).collect();
+        let inputs: Vec<ModuleInterfaceInput> = (0..names.len())
+            .map(|module| {
+                let dependencies: Vec<&str> = if module == 0 { Vec::new() } else { vec![names[module - 1].as_str()] };
+                input(&names[module], &names[module], &dependencies, 0)
+            })
+            .collect();
+        let artifacts = build_artifacts(&inputs, "test").unwrap();
+        assert!(artifacts.iter().all(|artifact| artifact.dependencies.len() <= 1));
     }
 }

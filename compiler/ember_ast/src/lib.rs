@@ -57,6 +57,38 @@ pub struct Script {
     pub first: Span,
 }
 
+impl Module {
+    /// ODR-281 — the statements of every function body, dropped once the module is checked: each
+    /// body is left an empty block where it was written (its span kept), and the declarations stay,
+    /// which is all the stages after the type check read of a module.
+    pub fn drop_bodies(&mut self) {
+        fn empty(decl: &mut FnDecl) {
+            if let Some(body) = &mut decl.body {
+                body.stmts = Vec::new();
+            }
+        }
+        for item in &mut self.items {
+            let members = match &mut item.kind {
+                ItemKind::Fn(decl) => {
+                    empty(decl);
+                    continue;
+                }
+                ItemKind::Struct(StructDecl { members, .. })
+                | ItemKind::Class(ClassDecl { members, .. })
+                | ItemKind::Enum(EnumDecl { members, .. })
+                | ItemKind::Interface(InterfaceDecl { members, .. })
+                | ItemKind::Extend(ExtendDecl { members, .. }) => members,
+                _ => continue,
+            };
+            for member in members {
+                if let MemberKind::Fn(decl) = &mut member.kind {
+                    empty(decl);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Directive {
     pub name: Ident,
