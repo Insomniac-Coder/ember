@@ -3675,6 +3675,13 @@ fn load_package_modules(
     }
     // The prelude's modules stay at the bottom of the worklist until everything else is read.
     let prelude = queue.len();
+    // `[FFI-6]` — a module read that imports C starts libclang loading while the rest are read.
+    let imports_c = |module: &ember_ast::Module| {
+        if module.imports.iter().any(|import| matches!(import.kind, ember_ast::ImportKind::Foreign { .. })) {
+            cimport::prefetch_libclang();
+        }
+    };
+    imports_c(&root);
     queue.push((0, Vec::new(), root, None));
     // `[FFI-39]` (ODR-221) — each `import c`/`import cpp`, by its module's place in `loaded` and
     // its own in the module's imports: imported once every module of the program is read (the
@@ -3760,6 +3767,7 @@ fn load_package_modules(
                     let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
                     check_safety_notes(&parsed, &lexed.comments, map, sink);
                     mark("read and parse", &key);
+                    imports_c(&parsed);
                     queue.push((found, names, parsed, None));
                     continue;
                 }
@@ -3824,6 +3832,7 @@ fn load_package_modules(
                 let lexed = ember_lexer::lex(file, &text, sink);
                 let parsed = ember_parser::parse(file, &text, lexed.tokens, sink);
                 mark("read and parse", &names.join("."));
+                imports_c(&parsed);
                 queue.push((usize::MAX, names, parsed, None));
             }
         }
@@ -5351,6 +5360,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // `[CORO-4]` — each generator's body, checked, becomes its frame's state
     // machine; what borrow checking read of the stubs is made again.
     mir.pass("the coroutine transform", &mut types, |bodies, types| ember_analysis::coroutines::transform(bodies, types));
+    mark("one order, coroutines", "all modules");
     // The passes below place, hoist and remove the dynamic exclusivity checks, which the program's C
     // carries: what `ember check` reports of them is only `@static_safe`'s verdict (`[EFF-13]`), so
     // without a `@static_safe` function a check does none of them (no contract forbids an aliasing
@@ -5378,6 +5388,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         // `[DSJ-5]` — an `assert_disjoint` comparison of views known apart is left out.
         mir.pass("eliding known-disjoint comparisons", &mut types, |bodies, types| ember_analysis::elide_known_disjoint_comparisons_all(bodies, types));
     }
+    mark("access checks", "all modules");
     // `[EFF-13]` — what is left of the dynamic aliasing checks is the verdict
     // a `@static_safe` function answers for, before inlining mixes callers'
     // and callees' checks.
@@ -5414,6 +5425,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     if ember_analysis::effects::check_layers_all(mir.bodies(), &types, &omitted, &mut sink) > 0 {
         return Ok(finish(&sink, &map, options));
     }
+    mark("effects", "all modules");
     // `[EFF-16]` — what the safety side table says of each function, read where the contracts
     // were checked: inlining below folds a small function into its callers.
     // `ember check` writes no side table: neither is made for it.
@@ -5424,6 +5436,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let safety_costs = if command == "check" { String::new() } else {
         safety_costs_json(mir.bodies(), &types, &modules, &map, &checked.contains_uses)
     };
+    mark("safety tables", "all modules");
     // `[DOC-3]` — the view contracts, read where the checks left the bodies, before inlining.
     if options.doc_report {
         let (standard, _) = standard_parts(mir.bodies(), &modules);
@@ -5513,14 +5526,16 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let rewrites = lint_settings.rewrites[options.profile as usize].unwrap_or(options.profile != Profile::Debug);
     // `[SIMD-2]` — each `@simd` loop's verdict, once its form is final: an
     // `@simd(assert)` loop not in vectorisable form is `E4020`, naming the
-    // first clause of `[SIMD-5]` it fails; the report says the same of each.
+    // first clause of `[SIMD-5]` it fails; the report says the same of each. Without the rewrites,
+    // the verdicts are decided on a copy only when something reads them: an `@simd(assert)` loop's
+    // check, or the report.
     let simd_report = if rewrites {
         let inlined = rewrite_calls_checks_and_loops(&mut mir, &mut types, &common, options);
         if let Some(engine) = engine.as_mut() {
             engine.inlined.extend(inlined);
         }
         simd_verdicts(mir.bodies(), &map, &mut sink)
-    } else if mir.bodies().iter().any(|body| !body.loop_notes.simd.is_empty()) {
+    } else if mir.bodies().iter().any(|body| body.loop_notes.simd.iter().any(|note| note.assert || options.optimization_report)) {
         let mut rewritten = mir.fork();
         rewrite_calls_checks_and_loops(&mut rewritten, &mut types, &common, options);
         simd_verdicts(rewritten.bodies(), &map, &mut sink)
@@ -5736,7 +5751,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // instrumented test is one unit: its call sites are numbered across the whole program.
     let instrumented = command == "test" && options.ffi_evidence.is_some();
     let unit_plan: Option<Vec<(String, std::collections::BTreeSet<String>)>> =
-        (options.emit.is_none() && !library && reload_image.is_none() && options.profile != Profile::Release && !instrumented)
+        (options.emit.is_none() && !library && options.profile != Profile::Release && !instrumented)
             .then(|| module_units(&modules, &bodies));
     let emitted = ember_codegen_c::emit(
         verified_mir,
@@ -5939,8 +5954,9 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             None => toolchain.clone(),
         };
         let foreign = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, true)?;
-        let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
-            options.profile, image, &emitted.relaxed_units, &foreign, options.reload, options.explain, started)
+        let units: Vec<PathBuf> = std::iter::once(c_path.clone()).chain(module_unit_paths.iter().cloned()).collect();
+        let built = match reload::build(&toolchain, &layout, &module_name, &units, &runtime_source, &includes,
+            options.profile, image, &emitted.relaxed_units, &foreign, options.reload, options.explain, started, options.jobs)
         {
             Ok(built) => built,
             Err(reload::Failure::Other(message)) => return Err(message),
@@ -6169,6 +6185,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             profile: options.profile,
             dir: layout.obj.clone(),
             jobs: options.jobs,
+            image: None,
         },
         &retained_symbols,
         &libraries,

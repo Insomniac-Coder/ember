@@ -1770,10 +1770,14 @@ impl Emitter<'_> {
                 continue;
             }
             // `[BLD-4]` (ODR-244) — a module's functions are its unit's; the main unit's are those of
-            // no module.
+            // no module. A reloadable one's thunk is the main unit's wherever its body is
+            // (`[HR-6]`), beside the image's tables.
             if let Some(defines) = &self.defines
                 && !defines.contains(&body.symbol)
             {
+                if self.unit.is_none() && self.is_reloadable(&body.symbol) {
+                    self.emit_thunk(body);
+                }
                 continue;
             }
             // `[CG-C-11]` — each body in the unit of its floating point; the
@@ -5881,8 +5885,9 @@ impl Emitter<'_> {
                 };
             }
             let hi = ember_types::f16_value(hi_bits);
-            // A relaxed unit clamps through the runtime, strictly (`[CG-C-11]`).
-            if self.unit.is_some() {
+            // A relaxed unit clamps through the runtime, strictly (`[CG-C-11]`); a module's unit
+            // (`[BLD-4]`) is strict, as the main unit is.
+            if matches!(self.unit, Some(FpMode::Contract | FpMode::Fast)) {
                 return format!(
                     "{RT}f64_to_f16({RT}range_clamp_f64({RT}f16_to_f64({value}), {}, {}))",
                     render_float(lo, false),
@@ -5941,7 +5946,7 @@ impl Emitter<'_> {
             // A relaxed unit's flags may assume no NaN, which is exactly
             // what the clamp must handle (`[RNG-3a]`): the runtime clamps,
             // strictly (`[CG-C-11]`).
-            if self.unit.is_some() {
+            if matches!(self.unit, Some(FpMode::Contract | FpMode::Fast)) {
                 let width = if fmin == "fmin" { "f64" } else { "f32" };
                 return format!("{RT}range_clamp_{width}(({value}), {lo}, {hi})");
             }

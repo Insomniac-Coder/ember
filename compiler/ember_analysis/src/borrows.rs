@@ -347,27 +347,15 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
         &slots,
     );
 
-    bodies
-        .iter_mut()
-        .map(|body| {
-            let capture_paths = capture_borrow_paths(body, &capture_contracts);
-            let regions = Regions::infer_with_capture_borrow_paths(
-                body,
-                types,
-                &call_contract,
-                &capture_paths,
-            );
-            insert_shared_accesses(
-                body,
-                types,
-                &regions,
-                &returned_accesses,
-                &returning_accesses,
-                &field_returns,
-                &slots,
-            )
-        })
-        .sum()
+    // Each body on the driver's threads (`[BLD-7]`): it reads only the summaries above.
+    crate::parallel::each_mut(bodies, &mut ember_diag::Sink::new(), |body, _| {
+        let capture_paths = capture_borrow_paths(body, &capture_contracts);
+        let regions = Regions::infer_with_capture_borrow_paths(body, types, &call_contract, &capture_paths);
+        insert_shared_accesses(body, types, &regions, &returned_accesses, &returning_accesses, &field_returns, &slots)
+    })
+    .into_iter()
+    .map(|(inserted, _)| inserted)
+    .sum()
 }
 
 /// Per (class, virtual slot), the symbols of the bodies that class declares
@@ -400,7 +388,7 @@ struct SharedReturnAccess {
 fn infer_shared_return_accesses(
     bodies: &[Body],
     types: &TypeTable,
-    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    call_contract: &(dyn Fn(&FuncRef) -> CallRegionContract + Sync),
     capture_contracts: &CaptureContracts,
     slots: &VirtualSlots,
 ) -> (HashMap<String, SharedReturnAccess>, HashSet<String>, FieldReturns) {
@@ -411,20 +399,18 @@ fn infer_shared_return_accesses(
         let mut next = HashMap::new();
         let mut next_returning = HashSet::new();
         let mut next_fields = FieldReturns::new();
-        for body in bodies {
+        // Each round reads only the last one's summaries: its bodies on the driver's threads
+        // (`[BLD-7]`).
+        let found = crate::parallel::each(bodies, &mut ember_diag::Sink::new(), |body, _| {
             let capture_paths = capture_borrow_paths(body, capture_contracts);
-            let regions = Regions::infer_with_capture_borrow_paths(
-                body,
-                types,
-                call_contract,
-                &capture_paths,
-            );
+            let regions = Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths);
             let fields = field_return_accesses(body, types, &regions, &field_returns, slots);
+            (fields, shared_return_access(body, types, &regions, &summaries, &returning))
+        });
+        for (body, ((fields, (summary, returns_shared_access)), _)) in bodies.iter().zip(found) {
             if !fields.is_empty() {
                 next_fields.insert(body.symbol.clone(), fields);
             }
-            let (summary, returns_shared_access) =
-                shared_return_access(body, types, &regions, &summaries, &returning);
             if returns_shared_access {
                 next_returning.insert(body.symbol.clone());
             }

@@ -30,6 +30,18 @@ pub struct Program<'a> {
     pub dir: PathBuf,
     /// `[BLD-7]` — `-j`: the compiles Ninja runs at once (its own default otherwise).
     pub jobs: Option<usize>,
+    /// Annex B — the units make a reloadable program's image, not a program.
+    pub image: Option<Image<'a>>,
+}
+
+/// Annex B (`[BLD-4]`) — a reloadable program's image: its units compiled with the reload
+/// definitions as a shared library's objects, and linked into one against the shared runtime
+/// (`link_with`), keeping its manifest (`[HR-8]`), as `crate::reload::link_image` links one unit.
+#[derive(Clone, Copy)]
+pub struct Image<'a> {
+    pub defines: &'a [String],
+    pub link_with: &'a Path,
+    pub manifest: &'a str,
 }
 
 /// Write `text` to `path` unless it holds it already: an unchanged unit keeps its time stamp, so
@@ -62,14 +74,21 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
         profile: program.profile,
         dir: absolute(&program.dir),
         jobs: program.jobs,
+        image: program.image,
     };
     let lto = build_lto(toolchain, program.profile, Link::Here);
     let objects: Vec<PathBuf> = program.units.iter().map(|unit| object_of(toolchain, &program.dir, unit)).collect();
-    let compile = compile_args(toolchain, program, lto);
-    let link = link_args(toolchain, program, lto, retained, libraries);
+    let compile = match &program.image {
+        Some(image) => image_compile_args(toolchain, program, image),
+        None => compile_args(toolchain, program, lto),
+    };
+    let link = match &program.image {
+        Some(image) => image_link_args(toolchain, program, image, libraries),
+        None => link_args(toolchain, program, lto, retained, libraries),
+    };
     // The program cache's key: the commands without their outputs, the units and objects by what
-    // they hold (`CachedProgram::find`).
-    let cache = if libraries.is_empty() { program_cache() } else { None };
+    // they hold (`CachedProgram::find`). An image is the next one of a running program: none.
+    let cache = if libraries.is_empty() && program.image.is_none() { program_cache() } else { None };
     let inputs: Vec<PathBuf> = program.units.iter().chain(program.objects).cloned().collect();
     let request = LinkRequest { sources: &inputs, include_dirs: program.include_dirs, output: program.output.clone(), profile: program.profile, obj_dir: program.dir.clone() };
     let mut key = compiler_command(toolchain);
@@ -123,7 +142,9 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     let linked: Vec<&PathBuf> = objects.iter().chain(program.objects).collect();
     let mut rsp: Vec<OsString> = linked.iter().map(|path| path.as_os_str().to_os_string()).collect();
     rsp.extend(link.iter().cloned());
-    rsp.extend(output_args(toolchain, program));
+    if program.image.is_none() {
+        rsp.extend(output_args(toolchain, program));
+    }
     text.push_str(&format!(
         "build {}: link {}\n  rsp = {}\n",
         escape_path(&program.output),
@@ -214,6 +235,67 @@ fn compile_args(toolchain: &Toolchain, program: &Program<'_>, lto: Lto) -> Vec<O
             for dir in program.include_dirs {
                 args.push("-I".into());
                 args.push(dir.into());
+            }
+        }
+    }
+    args
+}
+
+/// Annex B — an image's compile flags, without the unit and the object: a shared library's object's
+/// (`crate::reload::compile_library_object`), with the reload definitions and no link-time
+/// optimisation (a reloadable function is never inlined, `[HR-9a]`).
+fn image_compile_args(toolchain: &Toolchain, program: &Program<'_>, image: &Image<'_>) -> Vec<OsString> {
+    let mut args: Vec<OsString> = Vec::new();
+    match toolchain {
+        Toolchain::Msvc { .. } => {
+            args.extend(msvc_flags(program.profile).into_iter().map(|flag| if flag == "/Zi" { "/Z7" } else { flag }).map(OsString::from));
+            args.extend(lto_compile_flags(toolchain, Lto::Off, Link::Here).iter().map(OsString::from));
+            args.extend(image.defines.iter().map(|define| OsString::from(format!("/D{define}"))));
+            args.extend(program.include_dirs.iter().map(|dir| OsString::from(format!("/I{}", dir.display()))));
+        }
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            args.extend(gnu_flags(program.profile).into_iter().chain(gcc_flags(toolchain, program.profile).iter().copied()).map(OsString::from));
+            args.extend(lto_compile_flags(toolchain, Lto::Off, Link::Here).iter().map(OsString::from));
+            if !cfg!(windows) {
+                // An image exports nothing: the runtime finds its manifest by section ([HR-8]).
+                args.extend(["-fPIC", "-fvisibility=hidden"].map(OsString::from));
+            }
+            args.extend(image.defines.iter().map(|define| OsString::from(format!("-D{define}"))));
+            for dir in program.include_dirs {
+                args.push("-I".into());
+                args.push(dir.into());
+            }
+        }
+    }
+    args
+}
+
+/// Annex B — an image's link after its objects, its output included: a shared library against the
+/// shared runtime, keeping the manifest.
+fn image_link_args(toolchain: &Toolchain, program: &Program<'_>, image: &Image<'_>, libraries: &[String]) -> Vec<OsString> {
+    let mut args: Vec<OsString> = Vec::new();
+    match toolchain {
+        Toolchain::Msvc { .. } => {
+            args.extend(["/nologo", "/LD", crate::msvc_runtime_switch()].map(OsString::from));
+            args.push(image.link_with.into());
+            args.extend(libraries.iter().map(|library| OsString::from(crate::cdylib::windows_library(library))));
+            args.push(format!("/Fe{}", program.output.display()).into());
+            args.push("/link".into());
+            args.push(format!("/INCLUDE:{}", image.manifest).into());
+            if program.profile != Profile::Release {
+                args.push("/DEBUG".into());
+                args.push(format!("/PDB:{}", program.output.with_extension("pdb").display()).into());
+            }
+        }
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => {
+            args.push("-shared".into());
+            args.push(image.link_with.into());
+            args.extend(["-o".into(), program.output.clone().into_os_string()]);
+            args.extend(libraries.iter().map(|library| OsString::from(crate::cdylib::gnu_library(library))));
+            if cfg!(windows) {
+                args.push(format!("-Wl,/INCLUDE:{}", image.manifest).into());
+            } else {
+                args.extend(["-lm", "-pthread"].map(OsString::from));
             }
         }
     }

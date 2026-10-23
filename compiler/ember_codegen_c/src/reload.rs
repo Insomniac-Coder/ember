@@ -484,10 +484,11 @@ impl Emitter<'_> {
     /// protocol's version, in the image's own section. The tables it points at are the runtime's
     /// to fill.
     pub(crate) fn emit_reload_manifest(&mut self, bodies: &[Body], has_entry: bool) {
-        let Some(reload) = self.reload.clone() else { return };
+        // The main unit's alone: no other unit copies the image's description to write nothing.
         if self.unit.is_some() {
             return;
         }
+        let Some(reload) = self.reload.clone() else { return };
         // `[HR-14]` — each range type's test, which a field's row names.
         let ranges: Vec<(ember_types::RangeId, ember_types::RangeDef)> = self.types.ranges().map(|(id, def)| (id, def.clone())).collect();
         for (id, def) in ranges {
@@ -1326,10 +1327,10 @@ impl Emitter<'_> {
     /// `[CLO-10]`, `[HR-15]` — in a reloadable image, what a closure's descriptor says its
     /// captured state holds: `NULL` when it holds no object.
     pub(crate) fn reload_captures(&mut self, env: Ty) -> String {
-        let Some(reload) = self.reload.clone() else { return "NULL".to_string() };
-        if !self.holds_objects(env, &mut Vec::new()) {
+        if self.reload.is_none() || !self.holds_objects(env, &mut Vec::new()) {
             return "NULL".to_string();
         }
+        let reload = self.reload.clone().expect("a reloadable image");
         self.reload_shape_table(env, &reload)
     }
 
@@ -1397,8 +1398,8 @@ impl Emitter<'_> {
         let contained = self.contained_structs(reload);
         let foreign = self.pointed_structs(reload, bodies);
         // A field's row and, when it has a declared default, its default's case; each type with its
-        // mangled form (`[MNG-1]`), which its tables are named by.
-        let mut layouts: Vec<(String, String, String, Vec<(String, Ty)>, String)> = Vec::new();
+        // mangled form (`[MNG-1]`), which its tables are named by, and the type itself.
+        let mut layouts: Vec<(Option<ClassId>, String, String, Vec<(String, Ty)>, String, Option<Ty>)> = Vec::new();
         let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
         for id in classes {
             let def = self.types.class_def(id);
@@ -1412,7 +1413,8 @@ impl Emitter<'_> {
                 .filter_map(|index| self.types.class_field_at(id, index))
                 .map(|field| (field.name.to_string(), field.ty))
                 .collect();
-            layouts.push(("class".to_string(), name.clone(), mangled.clone(), fields, format!("struct {}", ember_branding::object_struct(&mangled))));
+            let ty = self.types.find(&TyKind::Class(id));
+            layouts.push((Some(id), name.clone(), mangled.clone(), fields, format!("struct {}", ember_branding::object_struct(&mangled)), ty));
         }
         let structs: Vec<(StructId, String)> = self.types.structs().map(|(id, def)| (id, def.name.to_string())).collect();
         for (id, name) in structs {
@@ -1422,9 +1424,9 @@ impl Emitter<'_> {
             }
             let fields: Vec<(String, Ty)> =
                 self.types.struct_def(id).fields.iter().map(|field| (field.name.to_string(), field.ty)).collect();
-            layouts.push(("struct".to_string(), name, self.mangled_type(TypeNode::Struct(id)), fields, self.c_type(ty)));
+            layouts.push((None, name, self.mangled_type(TypeNode::Struct(id)), fields, self.c_type(ty), Some(ty)));
         }
-        for (kind, name, mangled, fields, c_type) in layouts {
+        for (class, name, mangled, fields, c_type, ty) in layouts {
             let table_name = table(&format!("fields_{mangled}"));
             let init_name = table(&format!("init_{mangled}"));
             let mut rows = Vec::new();
@@ -1509,7 +1511,7 @@ impl Emitter<'_> {
                 self.line("}");
                 drop_name
             };
-            let mut layout = match (kind == "struct" && contained.contains(&name), foreign.contains(&name)) {
+            let mut layout = match (class.is_none() && contained.contains(&name), foreign.contains(&name)) {
                 (_, true) => "EMBER_RL_LAYOUT_FOREIGN",
                 (true, false) => "EMBER_RL_LAYOUT_CONTAINED",
                 (false, false) => "0",
@@ -1518,14 +1520,8 @@ impl Emitter<'_> {
             if abi.contains(&name) {
                 layout = if layout == "0" { "EMBER_RL_LAYOUT_ABI".to_string() } else { format!("{layout} | EMBER_RL_LAYOUT_ABI") };
             }
-            let ty = if kind == "class" {
-                self.types.classes().find(|(_, def)| def.name.to_string() == name).and_then(|(id, _)| self.types.find(&TyKind::Class(id)))
-            } else {
-                self.types.structs().find(|(_, def)| def.name.to_string() == name).and_then(|(id, _)| self.types.find(&TyKind::Struct(id)))
-            };
             let schema = ty.map_or(0, |ty| self.type_schema(ty, &mut Vec::new()));
-            if kind == "class" {
-                let id = self.types.classes().find(|(_, def)| def.name.to_string() == name).map(|(id, _)| id).expect("a class");
+            if let Some(id) = class {
                 let def = self.types.class_def(id);
                 let base = def.base.map_or("NULL".to_string(), |base| c_string_literal(&self.types.class_def(base).name.to_string()));
                 types.push(format!(

@@ -269,7 +269,7 @@ pub fn build(
     toolchain: &Toolchain,
     layout: &Layout,
     module: &str,
-    c_path: &Path,
+    units: &[PathBuf],
     runtime_source: &Path,
     includes: &[PathBuf],
     profile: Profile,
@@ -279,6 +279,7 @@ pub fn build(
     next: bool,
     explain: bool,
     started: std::time::Instant,
+    jobs: Option<usize>,
 ) -> Result<Built, Failure> {
     let host = layout.bin.join(if cfg!(windows) { format!("{module}.exe") } else { module.to_string() });
     let header: u32 = if image.instances { 40 } else { 24 };
@@ -343,18 +344,24 @@ pub fn build(
     }
     // `[FFI-29]`, `[BLD-FFI-3]` — the imports' shims and thunks are the image's, and their libraries.
     relaxed.extend(foreign.0.iter().cloned());
-    ember_build::reload::link_image(
+    // `[BLD-4]` — the image's units (the program's own and, one per module, `debug`'s and
+    // `development`'s) compiled through Ninja: a unit whose text did not change is not compiled again.
+    let defines = ember_build::reload::reload_defines(image.instances);
+    let manifest = ember_codegen_c::manifest_symbol();
+    ember_build::ninja::build(
         toolchain,
-        c_path,
-        includes,
-        profile,
-        image.instances,
-        &runtime,
-        &ember_codegen_c::manifest_symbol(),
-        &relaxed,
+        &ember_build::ninja::Program {
+            units,
+            objects: &relaxed,
+            include_dirs: includes,
+            output: output.clone(),
+            profile,
+            dir: layout.obj.clone(),
+            jobs,
+            image: Some(ember_build::ninja::Image { defines: &defines, link_with: &runtime.link_with, manifest: &manifest }),
+        },
+        &[],
         &foreign.1,
-        &layout.obj,
-        &output,
     )
     .map_err(|error| error.to_string())?;
     if next && !explain {
