@@ -2071,15 +2071,29 @@ fn runtime_object_impl(
         let _ = std::fs::remove_file(&temp);
         return Err(error);
     }
-    if let Err(error) = std::fs::rename(&temp, &object) {
-        let _ = std::fs::remove_file(&temp);
-        // Another build renamed its identical object into place first (and
-        // Windows refuses to replace a file that a linker has open).
-        if !object.is_file() {
-            return Err(error.into());
-        }
+    if let Err(error) = publish_once(&temp, &object)
+        && !object.is_file()
+    {
+        return Err(error.into());
     }
     Ok(Some(object))
+}
+
+/// D-903 — moves `temp` to `object` unless a copy is already there, which
+/// then stays: gcc's LTO link opens the object twice by name (the linker
+/// plugin, then `lto1`), and another build's copy, though built from the same
+/// source, carries different random section ids, so a replacement between
+/// the two opens fails the link ("resolution sub id ... not in object file").
+fn publish_once(temp: &Path, object: &Path) -> std::io::Result<()> {
+    let published = match std::fs::hard_link(temp, object) {
+        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => {
+            // A file system without hard links: the old replacing rename.
+            std::fs::rename(temp, object)
+        }
+        _ => Ok(()),
+    };
+    let _ = std::fs::remove_file(temp);
+    published
 }
 
 /// The compiler's file on disk, found as `Command` finds a bare name: on
@@ -2565,6 +2579,23 @@ int main(int argc, char** argv) {
         let second = build().expect("the object is built");
         assert_ne!(second, first, "a changed header kept the old object");
         assert!(second.is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// D-903 — a second build's copy never replaces the published object.
+    #[test]
+    fn a_published_runtime_object_is_never_replaced() {
+        let dir = std::env::temp_dir().join(format!("publish-once-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let object = dir.join("rt.o");
+        let temp = dir.join("rt.tmp.o");
+        std::fs::write(&temp, "first").unwrap();
+        publish_once(&temp, &object).unwrap();
+        std::fs::write(&temp, "second").unwrap();
+        publish_once(&temp, &object).unwrap();
+        assert_eq!(std::fs::read_to_string(&object).unwrap(), "first");
+        assert!(!temp.exists(), "the losing copy was left behind");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
