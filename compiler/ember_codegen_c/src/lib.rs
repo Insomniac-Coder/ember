@@ -536,39 +536,51 @@ fn emit_with(
     if instrument_ffi {
         emitter.ffi_instrument = Some(FfiInstrument::new(bodies));
     }
-    write(&mut emitter);
-    // `[BLD-FFI-5a]` — what C and C++ call of the `@sync` classes the exports hand them.
-    let class_plans = class_exports::plan(&emitter, bodies, package_name);
-    let class_definitions = class_exports::definitions(&emitter, &class_plans);
-    emitter.out.push_str(&class_definitions);
-    let header_source = header::render(&emitter, bodies, package_name);
-    let visualisers = visualisers::render(&emitter);
-    let mut direct_calls = emitter.direct_calls.take();
     // What a unit may name of the program, for each unit's declarations (`finish_declarations`).
     let names = UnitNames {
         functions: bodies.iter().enumerate().map(|(index, body)| (body.symbol.clone(), index)).collect(),
         types: emitter.order.clone().into_iter().map(|node| (emitter.node_name(node), node)).collect(),
     };
-    // `[BLD-4]` (ODR-244) — each module's unit, written by one emitter in turn from one preamble.
-    let module_units: Vec<(String, String)> = match units {
-        Some(units) => {
-            let mut unit = make(Some(FpMode::Strict));
-            unit.collect_native_fn_values(bodies);
-            let preamble = unit.module_preamble(bodies, module_name, leak_check);
-            let place: BTreeMap<&str, usize> = bodies.iter().enumerate().map(|(index, body)| (body.symbol.as_str(), index)).collect();
-            let written = units
-                .iter()
-                .map(|(name, symbols)| {
-                    let mut defines: Vec<usize> = symbols.iter().filter_map(|symbol| place.get(symbol.as_str()).copied()).collect();
-                    defines.sort_unstable();
-                    (name.clone(), unit.emit_module_unit(bodies, leak_check, defines, &preamble, &lazy_statics, &names))
-                })
-                .collect();
-            direct_calls.append(&mut unit.direct_calls.take());
-            written
-        }
-        None => Vec::new(),
+    // `[BLD-4]` (ODR-244), `[BLD-7]` — each module's unit is a function of the preamble and its own
+    // bodies alone: the units are shared out in runs among the `-j` threads, each thread's emitter
+    // writing the preamble once and then its run's units in turn, while this thread writes the
+    // main unit.
+    let place: BTreeMap<&str, usize> = bodies.iter().enumerate().map(|(index, body)| (body.symbol.as_str(), index)).collect();
+    let write_run = |run: &[(String, BTreeSet<String>)]| {
+        let mut unit = make(Some(FpMode::Strict));
+        unit.collect_native_fn_values(bodies);
+        let preamble = unit.module_preamble(bodies, module_name, leak_check);
+        let written: Vec<(String, String)> = run
+            .iter()
+            .map(|(name, symbols)| {
+                let mut defines: Vec<usize> = symbols.iter().filter_map(|symbol| place.get(symbol.as_str()).copied()).collect();
+                defines.sort_unstable();
+                (name.clone(), unit.emit_module_unit(bodies, leak_check, defines, &preamble, &lazy_statics, &names))
+            })
+            .collect();
+        (written, unit.direct_calls.take())
     };
+    let units = units.unwrap_or_default();
+    let run = units.len().div_ceil(ember_mir::parallel::jobs().max(1)).max(1);
+    let (runs, class_plans) = std::thread::scope(|scope| {
+        let writers: Vec<_> = units.chunks(run).map(|run| scope.spawn(|| write_run(run))).collect();
+        write(&mut emitter);
+        // `[BLD-FFI-5a]` — what C and C++ call of the `@sync` classes the exports hand them.
+        let class_plans = class_exports::plan(&emitter, bodies, package_name);
+        let runs: Vec<(Vec<(String, String)>, BTreeSet<(ember_span::FileId, u32, String)>)> =
+            writers.into_iter().map(|writer| writer.join().expect("a unit's writer does not panic")).collect();
+        (runs, class_plans)
+    });
+    let class_definitions = class_exports::definitions(&emitter, &class_plans);
+    emitter.out.push_str(&class_definitions);
+    let header_source = header::render(&emitter, bodies, package_name);
+    let visualisers = visualisers::render(&emitter);
+    let mut direct_calls = emitter.direct_calls.take();
+    let mut module_units = Vec::with_capacity(units.len());
+    for (written, mut calls) in runs {
+        module_units.extend(written);
+        direct_calls.append(&mut calls);
+    }
     let mut relaxed_units = Vec::new();
     for mode in modes {
         let mut unit = make(Some(mode));

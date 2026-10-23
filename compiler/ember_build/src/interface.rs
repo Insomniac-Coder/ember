@@ -317,27 +317,36 @@ impl PreparedInterfaceCache {
         &self.artifacts
     }
 
-    pub fn commit(self) -> Result<InterfaceCacheReport, InterfaceArtifactError> {
-        for (path, bytes) in self.writes {
-            // D-189 — compilations running side by side share this directory.
-            // Each writes aside and renames into place, so a reader sees the
-            // old record or the new one, never a half-written file.
-            let temp = path.with_extension(format!("tmp{}", std::process::id()));
-            std::fs::write(&temp, bytes).map_err(|source| InterfaceArtifactError::Io {
-                path: temp.clone(),
-                source,
-            })?;
-            if let Err(source) = std::fs::rename(&temp, &path) {
-                let _ = std::fs::remove_file(&temp);
-                // Another compilation replaced it at the same moment; its
-                // record is complete, and the next read checks its key.
-                if !path.exists() {
-                    return Err(InterfaceArtifactError::Io { path, source });
-                }
-            }
-        }
+    /// Write the records, each a file of its own, on `jobs` threads (`[BLD-7]`).
+    pub fn commit(self, jobs: usize) -> Result<InterfaceCacheReport, InterfaceArtifactError> {
+        let per_thread = self.writes.len().div_ceil(jobs.max(1)).max(1);
+        std::thread::scope(|scope| {
+            let writers: Vec<_> = self
+                .writes
+                .chunks(per_thread)
+                .map(|writes| scope.spawn(move || writes.iter().try_for_each(|(path, bytes)| write_record(path, bytes))))
+                .collect();
+            writers.into_iter().try_for_each(|writer| writer.join().expect("a record's writer does not panic"))
+        })?;
         Ok(self.report)
     }
+}
+
+/// D-189 — compilations running side by side share the cache's directory. Each writes a record
+/// aside and renames it into place, so a reader sees the old record or the new one, never a
+/// half-written file.
+fn write_record(path: &Path, bytes: &[u8]) -> Result<(), InterfaceArtifactError> {
+    let temp = path.with_extension(format!("tmp{}", std::process::id()));
+    std::fs::write(&temp, bytes).map_err(|source| InterfaceArtifactError::Io { path: temp.clone(), source })?;
+    if let Err(source) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        // Another compilation replaced it at the same moment; its record is complete, and the
+        // next read checks its key.
+        if !path.exists() {
+            return Err(InterfaceArtifactError::Io { path: path.to_path_buf(), source });
+        }
+    }
+    Ok(())
 }
 
 /// Build every module's current interface artifact. Interface hashes are
@@ -1507,7 +1516,7 @@ mod tests {
             std::fs::write(&path, &damaged).unwrap();
             let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
             assert_eq!(prepared.artifacts(), fresh.as_slice());
-            assert_eq!(prepared.commit().unwrap().invalidated, 1);
+            assert_eq!(prepared.commit(1).unwrap().invalidated, 1);
             assert_eq!(std::fs::read(&path).unwrap(), whole);
         }
         let _ = std::fs::remove_dir_all(&directory);
@@ -1529,10 +1538,10 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let fresh = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
         let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
-        assert_eq!(prepared.commit().unwrap().created, 1);
+        assert_eq!(prepared.commit(1).unwrap().created, 1);
         let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
-        assert_eq!(prepared.commit().unwrap().reused, 1);
+        assert_eq!(prepared.commit(1).unwrap().reused, 1);
 
         let mut stale = fresh.clone();
         stale[0]
@@ -1577,7 +1586,7 @@ mod tests {
 
         let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
-        assert_eq!(prepared.commit().unwrap().invalidated, 1);
+        assert_eq!(prepared.commit(1).unwrap().invalidated, 1);
         let rewritten = ModuleInterfaceArtifact::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(rewritten, fresh[0]);
         let _ = std::fs::remove_dir_all(&directory);

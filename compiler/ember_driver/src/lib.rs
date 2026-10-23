@@ -5514,7 +5514,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         if sink.has_errors() {
             return Ok(finish(&sink, &map, options));
         }
-        interface_cache.commit().map_err(|error| error.to_string())?;
+        interface_cache.commit(ember_analysis::parallel::jobs()).map_err(|error| error.to_string())?;
         report(&sink, &map, options);
         return Ok(ExitCode::SUCCESS);
     }
@@ -5617,7 +5617,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     mark("loop passes", "all modules");
     if command == "check" {
         interface_cache
-            .commit()
+            .commit(ember_analysis::parallel::jobs())
             .map_err(|error| error.to_string())?;
         report(&sink, &map, options);
         return Ok(ExitCode::SUCCESS);
@@ -5625,7 +5625,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
 
     if options.emit.as_deref() == Some("mir") {
         interface_cache
-            .commit()
+            .commit(ember_analysis::parallel::jobs())
             .map_err(|error| error.to_string())?;
         print!("{}", ember_mir::dump(mir.bodies(), &types));
         return Ok(finish(&sink, &map, options));
@@ -5715,7 +5715,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             )
         });
     interface_cache
-        .commit()
+        .commit(ember_analysis::parallel::jobs())
         .map_err(|error| error.to_string())?;
     if options.emit.is_none() {
         if command == "run" && package_kind != "bin" {
