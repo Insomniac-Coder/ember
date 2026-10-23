@@ -102,7 +102,12 @@ pub(crate) fn emit_thunk(m: &mut Module<'_>, body: &Body, sig: &Signature) {
     let ret = sig.ret.ir();
     let ext = crate::func::ret_attr(sig);
     let target = slot_address(m, "targets", index);
-    let call = format!("musttail call{ext} {ret} %t({})", params.join(", "));
+    // A `byval` argument (System V's aggregate in memory) is forwarded by a plain tail call, which
+    // LLVM makes a jump where the argument already sits where the target wants it: x86-64's
+    // `musttail` lowering of a forwarded `byval` corrupts it (the image crashed calling a method
+    // taking a 32-byte `ArenaArray`, Linux only).
+    let byval = sig.params.iter().any(|pass| matches!(pass, crate::abi::Pass::Indirect { byval: true, .. }));
+    let call = format!("{} call{ext} {ret} %t({})", if byval { "tail" } else { "musttail" }, params.join(", "));
     let tail = if matches!(sig.ret, Return::Void | Return::Sret { .. }) { format!("  {call}\n  ret void\n") } else { format!("  %r = {call}\n  ret {ret} %r\n") };
     // An export's symbol is the one a host's table names (`[HR-21]`).
     let linkage = if body.abi.is_some() { visibility(m) } else { "internal " };

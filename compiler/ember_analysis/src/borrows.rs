@@ -546,13 +546,15 @@ fn whole_receiver_access(body: &Body, types: &TypeTable, args: &[Operand], dest:
         }
         // A `dyn` receiver: the object behind it, if its concrete is a
         // class, through its table's `access` entry (F4). The fat
-        // pointer itself names it.
-        TyKind::Dyn { .. } => receiver.clone(),
+        // pointer itself names it; one a class field holds is named with a
+        // `Deref` after it (D-913), since the field's own place names the
+        // field's access word (`[EXC-19]`), which a store into it takes.
+        TyKind::Dyn { .. } => behind_dyn(body, types, receiver),
         TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Dyn { .. }) => receiver.clone(),
         TyKind::Struct(id)
             if types.compiler_box_inner(*id).is_some_and(|inner| matches!(types.kind(inner), TyKind::Dyn { .. })) =>
         {
-            receiver.clone()
+            behind_dyn(body, types, receiver)
         }
         _ => return Vec::new(),
     };
@@ -560,6 +562,20 @@ fn whole_receiver_access(body: &Body, types: &TypeTable, args: &[Operand], dest:
     // the result (`Option[ref mut T]`, a tuple; D-452).
     let mutable = types.has_mutable_view(place_ty(body, types, dest));
     vec![(object, mutable, 0)]
+}
+
+/// D-913 — the object behind a `dyn` carrier at `receiver`: the carrier itself, or, when a class
+/// field holds it, the field's place with a `Deref` after it, which the backends read as the
+/// carrier's object (the field's own place is its access word).
+fn behind_dyn(body: &Body, types: &TypeTable, receiver: &Place) -> Place {
+    let Some((Projection::Field(_), prefix)) = receiver.projection.split_last() else { return receiver.clone() };
+    let holder = Place { local: receiver.local, projection: prefix.to_vec() };
+    if !matches!(types.kind(place_ty(body, types, &holder)), TyKind::Class(_)) {
+        return receiver.clone();
+    }
+    let mut object = receiver.clone();
+    object.projection.push(Projection::Deref);
+    object
 }
 
 /// The region of the loan an argument was made from, when the argument is a

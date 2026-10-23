@@ -1223,8 +1223,16 @@ impl<'m, 'a> FnCx<'m, 'a> {
     /// (`[HEAP-5]`).
     fn access(&mut self, place: &Place, operation: &str, span: ember_span::Span) -> Result<()> {
         let ty = self.place_ty(place);
-        if self.is_dyn_place(ty) {
-            // `[EXC-18]` — through the table's `access` entry.
+        // `[EXC-18]` — a `dyn` receiver's object, through the table's `access` entry. D-913: one a
+        // class field holds is named with a `Deref` after the field, whose own place is its access
+        // word (`[EXC-19]`), which a store into the field takes.
+        let (carrier, behind) = match place.projection.split_last() {
+            Some((Projection::Deref, prefix)) if self.is_dyn_place(self.place_ty(&Place { local: place.local, projection: prefix.to_vec() })) => {
+                (Place { local: place.local, projection: prefix.to_vec() }, true)
+            }
+            _ => (place.clone(), false),
+        };
+        if behind || (self.is_dyn_place(ty) && !self.has_field_word(place)) {
             let code = match operation {
                 "begin_read" => 0,
                 "end_read" => 1,
@@ -1232,7 +1240,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 _ => 3,
             };
             // A `ref dyn I`, a `dyn I` and a `Box[dyn I]` are each the carrier itself.
-            let at = self.place(place)?;
+            let at = self.place(&carrier)?;
             let loc = self.loc(span);
             self.dyn_access(&at, code, loc);
             return Ok(());
@@ -1320,6 +1328,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
             TyKind::Struct(id) => table.compiler_box_inner(*id).is_some_and(|inner| matches!(table.kind(inner), TyKind::Dyn { .. })),
             _ => false,
         }
+    }
+
+    /// Whether `place` is a class handle's field with its own access word (`h.f`).
+    fn has_field_word(&self, place: &Place) -> bool {
+        let Some((Projection::Field(index), prefix)) = place.projection.split_last() else { return false };
+        let handle = Place { local: place.local, projection: prefix.to_vec() };
+        matches!(*self.m.ty.kind(self.place_ty(&handle)), TyKind::Class(id) if self.m.ty.table.class_field_has_access_word(id, *index))
     }
 
     /// When `place` is a class handle's field with its own access word (`h.f`), the word's address

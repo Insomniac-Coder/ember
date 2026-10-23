@@ -7786,15 +7786,22 @@ impl Emitter<'_> {
     fn access_call(&self, place: &Place, operation: &str, span: ember_span::Span, body: &Body) -> String {
         let location = self.location(span);
         // `[EXC-18]` — a `dyn` receiver's object, through its table's `access`
-        // entry, which only a class concrete has (F4).
-        let dyn_place = match self.types.kind(self.place_ty(place, body)) {
+        // entry, which only a class concrete has (F4). D-913: one a class field
+        // holds is named with a `Deref` after the field; the field's own place
+        // is its access word (`[EXC-19]`), which a store into the field takes
+        // (through the table it read the box before the store wrote it).
+        let (carrier, behind) = match place.projection.split_last() {
+            Some((Projection::Deref, prefix)) => (Place { local: place.local, projection: prefix.to_vec() }, true),
+            _ => (place.clone(), false),
+        };
+        let dyn_place = match self.types.kind(self.place_ty(&carrier, body)) {
             TyKind::Dyn { .. } => true,
-            TyKind::Ref { inner, .. } => matches!(self.types.kind(*inner), TyKind::Dyn { .. }),
+            TyKind::Ref { inner, .. } => !behind && matches!(self.types.kind(*inner), TyKind::Dyn { .. }),
             TyKind::Struct(id) => self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })),
             _ => false,
         };
-        if dyn_place {
-            let fat = self.place_in(place, body);
+        if dyn_place && (behind || self.class_field_of_place(place, body).is_none()) {
+            let fat = self.place_in(&carrier, body);
             let header = ember_branding::generated("dyn_vtable_header");
             let code = match operation {
                 "begin_read" => DYN_BEGIN_READ,

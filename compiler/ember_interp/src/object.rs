@@ -668,14 +668,32 @@ impl Interp<'_, '_> {
     pub(crate) fn access(&mut self, place: &Place, mutable: bool, begin: bool, span: Span) -> R<()> {
         let body = self.frames_body();
         let ty = self.place_ty(body, place);
+        let is_dyn = |this: &Self, ty: Ty| match this.types.kind(ty) {
+            TyKind::Dyn { .. } => true,
+            TyKind::Ref { inner, .. } => matches!(this.types.kind(*inner), TyKind::Dyn { .. }),
+            TyKind::Struct(id) => this.types.compiler_box_inner(*id).is_some_and(|inner| matches!(this.types.kind(inner), TyKind::Dyn { .. })),
+            _ => false,
+        };
+        // `[EXC-18]` — a `dyn` receiver's object, through its table's `access` entry. D-913: one a
+        // class field holds is named with a `Deref` after the field, whose own place is its access
+        // word (`[EXC-19]`), which a store into the field takes.
+        if let Some((ember_mir::Projection::Deref, prefix)) = place.projection.split_last() {
+            let carrier = Place { local: place.local, projection: prefix.to_vec() };
+            if is_dyn(self, self.place_ty(body, &carrier)) {
+                return self.dyn_access(&carrier, mutable, begin, span);
+            }
+        }
+        let field_with_word = match place.projection.split_last() {
+            Some((ember_mir::Projection::Field(index), prefix)) => {
+                let handle = Place { local: place.local, projection: prefix.to_vec() };
+                matches!(*self.types.kind(self.place_ty(body, &handle)), TyKind::Class(id) if self.types.class_field_has_access_word(id, *index))
+            }
+            _ => false,
+        };
+        if is_dyn(self, ty) && !field_with_word {
+            return self.dyn_access(place, mutable, begin, span);
+        }
         match self.types.kind(ty) {
-            TyKind::Dyn { .. } => return self.dyn_access(place, mutable, begin, span),
-            TyKind::Ref { inner, .. } if matches!(self.types.kind(*inner), TyKind::Dyn { .. }) => {
-                return self.dyn_access(place, mutable, begin, span);
-            }
-            TyKind::Struct(id) if self.types.compiler_box_inner(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })) => {
-                return self.dyn_access(place, mutable, begin, span);
-            }
             TyKind::Class(_) | TyKind::ClassInterface(_) => {
                 let loc = self.place(place)?;
                 let object = self.pointer_at(loc)?;
