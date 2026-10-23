@@ -222,6 +222,36 @@ functions (`[FFI-28]`'s list gains them); (b) a `cdylib`'s header leaves them ou
 host gets handles it can only pass back; (c) as now. Recommendation: (a) — the functions exist for
 the host, and they carry the package's name as their prefix, so they cannot clash.
 
+## 3. ODR-277: `nsw`/`nuw` from a proved-away check — MEASURED, NOT BUILT (no program changes)
+
+* **What was measured.** An experiment, never committed: under `EMBER_LLVM_NSW`, the LLVM backend
+  wrote `nsw` (signed) or `nuw` (unsigned) on each `add`/`sub`/`mul` whose overflow check a pass
+  removed (the operation's span is a `RemovedCheck` of kind `Overflow`), which is the IR the MIR fact
+  would give. The scripts are `target/ai/nsw_experiment.py on|off`, `nsw_count.py`, `nsw_asm.py`,
+  `nsw_exe.py`.
+* **What it marks.** 15 of `tests/perf`'s 21 programs get marked operations (1 to 10 each: e.g.
+  `int_math` 5, `b15_checked` 10, `a10_recursion` 2), and 33 of `bench/programs`' 50.
+* **Result: the machine code does not change.** Each program's release IR compiled by Clang 22 at
+  `-O3` (the release flags) gives the same instructions with and without the flags, for all 50
+  `bench/programs` and all 21 `tests/perf` programs (`b15_checked.plain.s` and `.nsw.s` are
+  byte-identical files while their IR differs in ten `nsw`s). The release executables, linked with
+  link-time optimisation by the build itself, are byte-identical too for all 21 `tests/perf`
+  programs (the link is reproducible, `/Brepro`). Identical code cannot be faster, so no program
+  gets faster beyond noise, and the MIR fact is not built (the brief's condition).
+* **Why not.** The loops' induction variables are already 64-bit (no sign extension for `nsw` to
+  remove), and where a check was proved away the range facts that proved it already bound the
+  values LLVM reasons about. `a10_recursion`'s gap is the remaining check on `+` itself (ODR-277),
+  which no flag on the other operations touches.
+* **A timing round was taken and is not used.** One round of `ember bench --compare --backend llvm
+  --core 1` per arm (`target/ai/bench_*_0.txt`): the `nsw` round ran while the machine was loaded by
+  other work (CPU 37 % before the run; `s2_zip_and`'s Ember time 1003 ms against 120 ms, intervals
+  up to [0.38, 1.82]), so its ratios say nothing; the identical code makes a second round needless.
+* **`tests/perf/int_math.em` fixed** (ODR-277 found the defect; its rewrite, `60588521`, reached only
+  `bench/programs/a01_int_math.em`): the gate's program added to `total` three times a pass where
+  its C twin adds once. Written as the twin is: 0.948x C [0.934, 0.963] on core 1 (26.71 ms against
+  28.18 ms; the `nsw` arm's run, its code identical to the plain build's), where it was 1.281x
+  [1.244, 1.336] before (35.53 ms against 27.74 ms) — the same loop as the twin's.
+
 ## 4. `readonly` (ODR-275) and `dereferenceable(N)` (ODR-276) — DONE
 
 ### ODR-275: what changes through a shared reference is in an `UnsafeCell`

@@ -1654,7 +1654,7 @@ impl<'a> Planner<'a> {
                 methods: None,
                 type_info: None,
                 identity: None,
-                fields: payloads.then(|| (1, Some(tag_name))),
+                fields: payloads.then_some((1, Some(tag_name))),
                 variants: Some((rows.len(), (!rows.is_empty()).then_some(table_name))),
                 init,
                 migrate: None,
