@@ -1,8 +1,8 @@
 {
   "01_text_adventure.em": {
-    "mark": "rejected", "shape": "P24", "codes": ["E0008", "E1010", "E2020", "E2072"], "after_helps": "rejected",
-    "shapes": ["P24"],
-    "helps": ["R1:P24", "R2:P6", "R2:P1", "R2:P26", "R3:P25", "R4:O2", "R4:O1", "R4:B12", "R5:O2", "R5:O1", "R5:B12", "R6:O2", "R6:O1"]
+    "mark": "rejected", "shape": "P24", "codes": ["E0008", "E1010", "E2020", "E2072"], "after_helps": "accepted",
+    "shapes": ["P24", "P6", "P1", "P26"],
+    "helps": ["R1:P24", "R1:P6", "R1:P1", "R1:P26", "R2:P25", "R2:P6", "R3:O2", "R3:O1", "R3:B12", "R4:O2", "R4:O1"]
   },
   "02_csv_summariser.em": {
     "mark": "rejected", "shape": "P24", "codes": ["E0008", "E1010", "E2020", "E2072"], "after_helps": "accepted",
@@ -15,14 +15,14 @@
     "helps": ["R1:P23", "R2:O2"]
   },
   "04_event_bus.em": {
-    "mark": "rejected", "shape": "P28", "codes": ["E0100", "E3021"], "after_helps": "rejected",
-    "shapes": ["P28"],
-    "helps": ["R1:P28", "R2:gap:E3021"]
+    "mark": "rejected", "shape": "P28", "codes": ["E0100", "E3021"], "after_helps": "accepted",
+    "shapes": ["P28", "B3"],
+    "helps": ["R1:P28", "R2:B3"]
   },
   "05_inventory.em": {
-    "mark": "rejected", "shape": "P26", "codes": ["E1010", "E2020"], "after_helps": "rejected",
-    "shapes": ["P26", "P3", "N9"],
-    "helps": ["R1:P26", "R1:P3", "R2:N9", "R3:O2", "R4:X1"]
+    "mark": "rejected", "shape": "P26", "codes": ["E1010", "E2020"], "after_helps": "accepted",
+    "shapes": ["P26", "P3"],
+    "helps": ["R1:P26", "R1:P3", "R2:O2", "R3:X1"]
   },
   "06_path_finder.em": {
     "mark": "rejected", "shape": "N9", "codes": ["E1010", "E2020", "E2040", "E2072"], "after_helps": "accepted",
@@ -35,9 +35,9 @@
     "helps": ["R1:P26", "R1:P1", "R1:P6", "R2:O2"]
   },
   "08_word_frequencies.em": {
-    "mark": "rejected", "shape": "P7", "codes": ["E0100", "E2020", "E2072"], "after_helps": "rejected",
-    "shapes": ["P7"],
-    "helps": ["R1:P7", "R2:P6", "R2:P26", "R2:P23", "R3:P6", "R3:P27", "R3:P26", "R3:P30", "R4:P27", "R5:N9", "R6:O2"]
+    "mark": "rejected", "shape": "P7", "codes": ["E0100", "E2020", "E2072"], "after_helps": "accepted",
+    "shapes": ["P7", "P6", "P26", "P23"],
+    "helps": ["R1:P7", "R1:P6", "R1:P26", "R1:P23", "R2:P6", "R2:P27", "R2:P26", "R2:P30", "R3:P27", "R4:O2"]
   },
   "09_bank_account.em": {
     "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2020"], "after_helps": "accepted",
@@ -45,9 +45,9 @@
     "helps": ["R1:P1", "R1:P26", "R2:O2"]
   },
   "10_grade_book.em": {
-    "mark": "rejected", "shape": "P23", "codes": ["E1010", "E2020"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "P23", "codes": ["E1010", "E2020"], "after_helps": "accepted",
     "shapes": ["P23", "P3", "P5", "P26", "P6"],
-    "helps": ["R1:P23", "R1:P3", "R1:P5", "R1:P26", "R1:P6", "R2:O2", "R3:O2"]
+    "helps": ["R1:P23", "R1:P3", "R1:P5", "R1:P26", "R1:P6", "R2:O2"]
   },
   "11_rpn_calculator.em": {
     "mark": "rejected", "shape": "P26", "codes": ["E2020"], "after_helps": "accepted",
@@ -75,9 +75,9 @@
     "helps": ["R1:P6", "R1:P26", "R2:O2", "R2:O1", "R2:B3"]
   },
   "16_shapes_interface.em": {
-    "mark": "rejected", "shape": "P22", "codes": ["E2173"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "P22", "codes": ["E2173"], "after_helps": "accepted",
     "shapes": ["P22"],
-    "helps": ["R1:P22", "R2:P6", "R3:gap:E3013"]
+    "helps": ["R1:P22", "R2:P6", "R2:O2"]
   },
   "17_linked_list.em": {
     "mark": "rejected", "shape": "P1", "codes": ["E1010", "E2072"], "after_helps": "accepted",
@@ -110,9 +110,9 @@
     "helps": ["R1:P7", "R2:P26", "R2:P1", "R3:N9"]
   },
   "23_recipe_scaler.em": {
-    "mark": "rejected", "shape": "P25", "codes": ["E1010", "E2020", "E2072"], "after_helps": "rejected",
+    "mark": "rejected", "shape": "P25", "codes": ["E1010", "E2020", "E2072"], "after_helps": "accepted",
     "shapes": ["P25", "P21", "P3"],
-    "helps": ["R1:P25", "R1:P21", "R1:P3", "R2:P26", "R3:O2", "R3:O1", "R4:O2", "R4:O1"]
+    "helps": ["R1:P25", "R1:P21", "R1:P3", "R2:P26", "R3:O2", "R3:O1"]
   },
   "24_dice_game.em": {
     "mark": "rejected", "shape": "P23", "codes": ["E2020"], "after_helps": "accepted",

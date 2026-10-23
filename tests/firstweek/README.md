@@ -23,7 +23,7 @@ helped copy compiles, and the rate below is the one the marks give.
 
 ## The acceptance rate (`[TST-10]`)
 
-Acceptance rate: 0 of 30 as written, 23 of 30 after the helps.
+Acceptance rate: 0 of 30 as written, 30 of 30 after the helps.
 
 A change of either number is a new line here, with its reason; a release that lowers one says why.
 
@@ -32,3 +32,4 @@ A change of either number is a new line here, with its reason; a release that lo
 | 2026-10-22 | `b8c4df20` | 0 of 30 | 3 of 30 | the first marking |
 | 2026-10-22 | `d3e170c6` | 0 of 30 | 21 of 30 | helper V: `[DIA-21]`'s Python habits P1..P30 answered, most with fix-its, the rejections in no catalogue (A1..A10) given shapes, and the helps that did not compile (B1..B6) fixed; the 9 left need a compiler gap closed (G1..G6, ODR-181: helper W, G5 the lead's) or, in 16, a move-only element of a comprehension, which no help of O2's moves |
 | 2026-10-22 | merge of V | 0 of 30 | 23 of 30 | helpers V, W and X together on main: W closed G1..G4, G6 and G7 (string patterns, a temporary's iterator, a stored consumed callable, `m[k].iter_mut()`, tuples `Ord`, a one-statement lambda) and X the iterator half of G5 (`@borrows(self.f)`); the 7 left (01, 04, 05, 08, 10, 16, 23) still need a workaround after the catalogue's helps (their chains in `marks.json`) |
+| 2026-10-23 | `f6a5ec2d` | 0 of 30 | 30 of 30 | helper AG: every chain replayed round by round with this compiler, each help applied literally. Five (01, 05, 08, 10, 23) compile with the catalogue's helps alone now that W's and X's gaps are closed (their chains re-recorded); 04's `E3021` (a stored callable called through a `for` loop's shared reference) gives B3's help, `.iter_mut()`, not the rebinding help; 16's `ref dyn Shape` parameter takes a loop's `ref Box[dyn Shape]` (`[TYP-14]`, whose C now compiles), and its comprehension of boxes takes `for s in owned shapes` |

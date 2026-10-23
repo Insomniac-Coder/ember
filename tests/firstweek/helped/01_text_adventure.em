@@ -70,21 +70,18 @@ class Game:
             println(f"There is no {item} here.")
 
 fn parse_direction(word: str) -> Option[Direction]:
-    if word == "north" or word == "n":
-        return Some(Direction.North)
-    if word == "south" or word == "s":
-        return Some(Direction.South)
-    if word == "east" or word == "e":
-        return Some(Direction.East)
-    if word == "west" or word == "w":
-        return Some(Direction.West)
-    return None
+    return match word:
+        "north" | "n" => Some(Direction.North)
+        "south" | "s" => Some(Direction.South)
+        "east" | "e" => Some(Direction.East)
+        "west" | "w" => Some(Direction.West)
+        _ => None
 
 fn run_command(game: Game, line: str):
     words = line.trim().to_lower().split(" ").map(fn(w) => w.to_string()).collect[Array[String]]()
     if words.len() == 0:
         return
-    verb = words[0].clone()
+    verb = ref words[0]
     if verb == "look":
         game.look()
     elif verb == "go" and words.len() > 1:
