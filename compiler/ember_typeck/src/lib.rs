@@ -17720,22 +17720,29 @@ impl<'a> Checker<'a> {
     /// The type a literal's element has with no context: its own, literals
     /// committed, and text as `String` (ODR-036): a map written with no type
     /// owns its text, and holds `str` only when the program says so (ODR-069).
-    fn collection_element_type(&mut self, element: &ast::Expr) -> Ty {
-        let quiet = self.sink.mark();
-        let value = self.synth_committed(element);
-        let value = self.read_through(value);
-        self.sink.rollback(quiet);
-        if self.is_text(value.ty) {
-            self.common.string
-        } else {
-            value.ty
+    fn collection_element_type(&mut self, elements: &[&ast::Expr]) -> Ty {
+        // `[TYP-38]` (ODR-267, D-881) — the type of the first element that is not a string
+        // literal: a text the program has as `str` stays `str` (`{name: 1}`, `{k: name for k,
+        // name in pairs}`), as a list comprehension's does, and `String` stays `String`; only a
+        // collection of string literals makes owned text (`{"a": 1}` is a `Map[String, int]`).
+        // No text is converted (`[TXT-9]`).
+        for element in elements {
+            if matches!(element.kind, ast::ExprKind::Lit(ast::Literal::Str(_))) {
+                continue;
+            }
+            let quiet = self.sink.mark();
+            let value = self.synth_committed(element);
+            let value = self.read_through(value);
+            self.sink.rollback(quiet);
+            return value.ty;
         }
+        self.common.string
     }
 
     /// `[TYP-23]` — an open `Map` local fixed by a key and a value.
     fn fix_open_map(&mut self, local: LocalId, key: &ast::Expr, value: &ast::Expr, span: Span) {
-        let key = self.collection_element_type(key);
-        let value = self.collection_element_type(value);
+        let key = self.collection_element_type(&[key]);
+        let value = self.collection_element_type(&[value]);
         if key == self.common.error || value == self.common.error {
             return;
         }
@@ -17751,7 +17758,7 @@ impl<'a> Checker<'a> {
         let ty = match expected.filter(|&want| self.collection_named(want) == Some("std.collections.Map")) {
             Some(ty) => ty,
             None => {
-                let Some((key, value)) = entries.first() else {
+                if entries.is_empty() {
                     // ODR-034 — `{}` is an empty `Map`; an empty set is `Set[T]()`.
                     if let Some(want) = expected.filter(|&want| self.collection_named(want) == Some("std.collections.Set")) {
                         let shown = self.types.display(want);
@@ -17771,9 +17778,11 @@ impl<'a> Checker<'a> {
                             .help("give it a type: `m: Map[String, int] = {}`"),
                     );
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
-                };
-                let key = self.collection_element_type(key);
-                let value = self.collection_element_type(value);
+                }
+                let keys: Vec<&ast::Expr> = entries.iter().map(|(key, _)| key).collect();
+                let values: Vec<&ast::Expr> = entries.iter().map(|(_, value)| value).collect();
+                let key = self.collection_element_type(&keys);
+                let value = self.collection_element_type(&values);
                 self.instantiate_named_generic("std.collections.Map", &[key, value], span)
             }
         };
@@ -17786,7 +17795,8 @@ impl<'a> Checker<'a> {
         let ty = match expected.filter(|&want| self.collection_named(want) == Some("std.collections.Set")) {
             Some(ty) => ty,
             None => {
-                let element = self.collection_element_type(&items[0]);
+                let items: Vec<&ast::Expr> = items.iter().collect();
+                let element = self.collection_element_type(&items);
                 self.instantiate_named_generic("std.collections.Set", &[element], span)
             }
         };
@@ -44370,7 +44380,7 @@ impl<'a> Checker<'a> {
                 match (kind, name.name.as_str(), args) {
                     (OpenKind::Map, "insert", [key, value]) => self.fix_open_map(local, &key.value, &value.value, span),
                     (OpenKind::Set, "add", [item]) => {
-                        let element = self.collection_element_type(&item.value);
+                        let element = self.collection_element_type(&[&item.value]);
                         let set = self.instantiate_named_generic("std.collections.Set", &[element], span);
                         self.fix_open_local(local, set, true);
                     }
