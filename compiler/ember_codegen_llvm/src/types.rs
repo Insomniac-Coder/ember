@@ -143,9 +143,11 @@ impl<'a> Types<'a> {
                 Repr::Scalar(Sc::Ptr)
             }
             TyKind::Fn { abi: Some(_), .. } => Repr::Scalar(Sc::Ptr),
-            // `[FFI-8]` — a `va_list` parameter is a pointer on both x86-64 ABIs: Windows' is a
+            // `[FFI-8]` — a `va_list` parameter is a pointer on every target here: Windows' is a
             // `char*`, System V's an array of one `__va_list_tag`, which a parameter decays to a
-            // pointer to (`va_list_layout`'s 8 bytes, which hold no scalar its shape could show).
+            // pointer to (`va_list_layout`'s 8 bytes, which hold no scalar its shape could show),
+            // and AAPCS64's 32-byte struct is passed by the address of a copy, which the function
+            // passes on as it came.
             TyKind::VaList => Repr::Scalar(Sc::Ptr),
             TyKind::Range(id) => self.repr(self.table.range_def(*id).repr),
             // `[FFI-8]` — a newtype is its typedef's representation, passed as C passes it.
