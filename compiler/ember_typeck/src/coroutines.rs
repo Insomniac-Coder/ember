@@ -44,11 +44,39 @@ use ember_types::FrameParam;
 use crate::{LoadedModule, has_attribute};
 
 /// The modules with every `gen fn` written out, and each frame struct's
-/// qualified name with how each of its parameter fields' parameters is passed.
+/// qualified name with how each of its parameter fields' parameters is passed;
+/// each generator written in a block, by its name's span, as it was lifted.
 pub(crate) struct Desugared {
     pub(crate) modules: Vec<LoadedModule>,
     pub(crate) frames: Vec<(Symbol, Vec<FrameParam>)>,
+    pub(crate) locals: Vec<(Span, LocalLift)>,
 }
+
+/// `[GRM-28]`, `[GRM-21]` (ODR-268) — a generator written in a block, lifted to its module twice,
+/// generic over what its calls pass: `count.local.env[…, ·E](owned ·env: ·E, n: int)`, whose `·E`
+/// is a reference to the environment the declaration's check finds (`ref` when its body only
+/// reads what it captures, `ref mut` when it writes), and `count.local.plain[…, ·E](n: int)` for
+/// one that captures nothing, whose `·E` holds nothing. Each takes the enclosing declarations'
+/// type parameters first, by name. The checker makes an instance of one of them per call; neither
+/// is checked on its own (`Checker::local_frames`).
+#[derive(Clone, Debug)]
+pub(crate) struct LocalLift {
+    /// The local generator's name in its block.
+    pub(crate) name: Symbol,
+    /// The two constructors' names in the module, unqualified.
+    pub(crate) env_fn: Symbol,
+    pub(crate) plain_fn: Symbol,
+    /// Their frames' qualified names.
+    pub(crate) env_frame: Symbol,
+    pub(crate) plain_frame: Symbol,
+    /// The enclosing declarations' type parameters, which come first.
+    pub(crate) enclosing: Vec<Symbol>,
+}
+
+/// The type parameter a lifted local generator takes for its environment, and the parameter
+/// holding it: names no program can write.
+pub(crate) const LOCAL_ENV_TYPE: &str = "\u{b7}E";
+pub(crate) const LOCAL_ENV_PARAM: &str = "\u{b7}env";
 
 /// The suspension points the coroutine transform rewrites (`ember_mir::lower::coroutines`).
 const START: &str = "std.core.__coroutine_start";
@@ -69,27 +97,45 @@ const BODY_ATTRIBUTES: &[&str] = &[
 pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> Option<Desugared> {
     let gen_member = |members: &[ast::Member]| members.iter().any(|m| matches!(&m.kind, ast::MemberKind::Fn(f) if f.is_gen));
     let any = modules.iter().any(|loaded| {
-        loaded.module.items.iter().any(|item| match &item.kind {
-            ast::ItemKind::Fn(decl) => decl.is_gen,
-            ast::ItemKind::Struct(decl) => gen_member(&decl.members),
-            ast::ItemKind::Class(decl) => gen_member(&decl.members),
-            ast::ItemKind::Enum(decl) => gen_member(&decl.members),
-            ast::ItemKind::Extend(decl) => gen_member(&decl.members),
-            ast::ItemKind::Interface(decl) => gen_member(&decl.members),
-            _ => false,
-        })
+        loaded.module.local_generators
+            || loaded.module.items.iter().any(|item| match &item.kind {
+                ast::ItemKind::Fn(decl) => decl.is_gen,
+                ast::ItemKind::Struct(decl) => gen_member(&decl.members),
+                ast::ItemKind::Class(decl) => gen_member(&decl.members),
+                ast::ItemKind::Enum(decl) => gen_member(&decl.members),
+                ast::ItemKind::Extend(decl) => gen_member(&decl.members),
+                ast::ItemKind::Interface(decl) => gen_member(&decl.members),
+                _ => false,
+            })
     });
     if !any {
         return None;
     }
     let mut out = modules.to_vec();
     let mut frames = Vec::new();
+    let mut locals = Vec::new();
     for loaded in &mut out {
-        let mut writer = Writer { prefix: loaded.path.join("."), items: Vec::new(), frames: &mut frames, names: HashSet::new(), sink: &mut *sink };
+        let mut writer = Writer {
+            prefix: loaded.path.join("."),
+            items: Vec::new(),
+            frames: &mut frames,
+            locals: &mut locals,
+            names: HashSet::new(),
+            sink: &mut *sink,
+        };
+        // `[GRM-28]` — the generators written in blocks first, innermost first, so a generator's
+        // body holds none when it is written out.
+        if loaded.module.local_generators {
+            for item in &mut loaded.module.items {
+                writer.lift_in_item(item);
+            }
+        }
         for item in &mut loaded.module.items {
             let ast::Item { attrs, vis, kind, .. } = item;
             match kind {
-                ast::ItemKind::Fn(decl) if decl.is_gen => writer.generator(decl, attrs, *vis, None),
+                ast::ItemKind::Fn(decl) if decl.is_gen => {
+                    writer.generator(decl, attrs, *vis, None, None, true);
+                }
                 ast::ItemKind::Struct(decl) => {
                     let owner = Owner::named(decl.name, &decl.generics, &decl.where_clause);
                     writer.members(&mut decl.members, &owner);
@@ -130,7 +176,7 @@ pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> O
         let generated = std::mem::take(&mut writer.items);
         loaded.module.items.extend(generated);
     }
-    Some(Desugared { modules: out, frames })
+    Some(Desugared { modules: out, frames, locals })
 }
 
 /// The declaration a generator method belongs to: its type, written as the
@@ -148,12 +194,22 @@ impl Owner {
     }
 }
 
+/// What a generator written in a block is inside: the type parameters of the declarations around
+/// it, outermost first, with their bounds, and what `Self` names there.
+#[derive(Clone, Default)]
+struct Enclosing {
+    generics: Vec<ast::GenericParam>,
+    where_clause: Vec<ast::Bound>,
+    self_ty: Option<ast::TypeExpr>,
+}
+
 struct Writer<'s> {
     /// The module's path, `a.b`, empty for the root module: the frame is
     /// named by its qualified name, which resolves wherever it is written.
     prefix: String,
     items: Vec<ast::Item>,
     frames: &'s mut Vec<(Symbol, Vec<FrameParam>)>,
+    locals: &'s mut Vec<(Span, LocalLift)>,
     names: HashSet<String>,
     sink: &'s mut Sink,
 }
@@ -165,15 +221,383 @@ impl Writer<'_> {
             if let ast::MemberKind::Fn(decl) = kind
                 && decl.is_gen
             {
-                self.generator(decl, attrs, *vis, Some(owner));
+                self.generator(decl, attrs, *vis, Some(owner), None, true);
             }
         }
     }
 
+    /// `[GRM-28]` — lift each generator written in a block of `item`'s functions.
+    fn lift_in_item(&mut self, item: &mut ast::Item) {
+        let (members, owner) = match &mut item.kind {
+            ast::ItemKind::Fn(decl) => return self.lift_in_fn(decl, &Enclosing::default()),
+            ast::ItemKind::Struct(decl) => (&mut decl.members, Some(Owner::named(decl.name, &decl.generics, &decl.where_clause))),
+            ast::ItemKind::Class(decl) => (&mut decl.members, Some(Owner::named(decl.name, &decl.generics, &decl.where_clause))),
+            ast::ItemKind::Enum(decl) => (&mut decl.members, Some(Owner::named(decl.name, &decl.generics, &[]))),
+            ast::ItemKind::Extend(decl) => {
+                let owner = Owner {
+                    name: target_name(&decl.target),
+                    ty: decl.target.clone(),
+                    generics: decl.generics.clone(),
+                    where_clause: decl.where_clause.clone(),
+                };
+                (&mut decl.members, Some(owner))
+            }
+            // An interface's `Self` is each implementation's, which a lifted body cannot name.
+            ast::ItemKind::Interface(decl) => (&mut decl.members, None),
+            _ => return,
+        };
+        let enclosing = owner.map_or_else(Enclosing::default, |owner| Enclosing {
+            generics: owner.generics,
+            where_clause: owner.where_clause,
+            self_ty: Some(owner.ty),
+        });
+        for member in members.iter_mut() {
+            if let ast::MemberKind::Fn(decl) = &mut member.kind {
+                self.lift_in_fn(decl, &enclosing);
+            }
+        }
+    }
+
+    fn lift_in_fn(&mut self, decl: &mut ast::FnDecl, outer: &Enclosing) {
+        let Some(body) = &mut decl.body else { return };
+        let mut enclosing = outer.clone();
+        enclosing.generics.extend(decl.generics.iter().cloned());
+        enclosing.where_clause.extend(decl.where_clause.iter().cloned());
+        self.lift_block(body, &mut enclosing);
+    }
+
+    fn lift_block(&mut self, block: &mut ast::Block, enclosing: &mut Enclosing) {
+        for stmt in &mut block.stmts {
+            self.lift_stmt(stmt, enclosing);
+        }
+    }
+
+    fn lift_stmt(&mut self, stmt: &mut ast::Stmt, enclosing: &mut Enclosing) {
+        match &mut stmt.kind {
+            ast::StmtKind::Decl { init, .. } => {
+                if let Some(init) = init {
+                    self.lift_expr(init, enclosing);
+                }
+            }
+            ast::StmtKind::Assign { targets, value, .. } => {
+                for target in targets {
+                    self.lift_expr(target, enclosing);
+                }
+                self.lift_expr(value, enclosing);
+            }
+            ast::StmtKind::Expr(e) => self.lift_expr(e, enclosing),
+            ast::StmtKind::Pass => {}
+            ast::StmtKind::If(branch) => self.lift_if(branch, enclosing),
+            ast::StmtKind::While { cond, body, else_block, .. } => {
+                self.lift_condition(cond, enclosing);
+                self.lift_block(body, enclosing);
+                if let Some(block) = else_block {
+                    self.lift_block(block, enclosing);
+                }
+            }
+            ast::StmtKind::For { iter, body, else_block, .. } => {
+                self.lift_expr(iter, enclosing);
+                self.lift_block(body, enclosing);
+                if let Some(block) = else_block {
+                    self.lift_block(block, enclosing);
+                }
+            }
+            ast::StmtKind::Match { scrutinee, arms } => {
+                self.lift_expr(scrutinee, enclosing);
+                self.lift_arms(arms, enclosing);
+            }
+            ast::StmtKind::With { items, body } => {
+                for item in items {
+                    self.lift_expr(&mut item.value, enclosing);
+                }
+                self.lift_block(body, enclosing);
+            }
+            ast::StmtKind::Defer(block) | ast::StmtKind::Unsafe(block) | ast::StmtKind::Comptime(block) => {
+                self.lift_block(block, enclosing);
+            }
+            ast::StmtKind::LocalFn(decl) => {
+                let (generics, bounds) = (enclosing.generics.len(), enclosing.where_clause.len());
+                enclosing.generics.extend(decl.generics.iter().cloned());
+                enclosing.where_clause.extend(decl.where_clause.iter().cloned());
+                if let Some(body) = &mut decl.body {
+                    self.lift_block(body, enclosing);
+                }
+                enclosing.generics.truncate(generics);
+                enclosing.where_clause.truncate(bounds);
+                if decl.is_gen {
+                    self.lift_local(decl, enclosing);
+                }
+            }
+        }
+    }
+
+    fn lift_if(&mut self, branch: &mut ast::IfStmt, enclosing: &mut Enclosing) {
+        self.lift_condition(&mut branch.cond, enclosing);
+        self.lift_block(&mut branch.then_block, enclosing);
+        match branch.else_block.as_deref_mut() {
+            Some(ast::ElseBranch::Block(block)) => self.lift_block(block, enclosing),
+            Some(ast::ElseBranch::If(inner)) => self.lift_if(inner, enclosing),
+            None => {}
+        }
+    }
+
+    fn lift_condition(&mut self, cond: &mut ast::Condition, enclosing: &mut Enclosing) {
+        match cond {
+            ast::Condition::Expr(e) | ast::Condition::Pattern { value: e, .. } => self.lift_expr(e, enclosing),
+        }
+    }
+
+    fn lift_arms(&mut self, arms: &mut [ast::MatchArm], enclosing: &mut Enclosing) {
+        for arm in arms {
+            if let Some(guard) = &mut arm.guard {
+                self.lift_expr(guard, enclosing);
+            }
+            match &mut arm.body {
+                ast::MatchArmBody::Block(block) => self.lift_block(block, enclosing),
+                ast::MatchArmBody::Expr(e) => self.lift_expr(e, enclosing),
+            }
+        }
+    }
+
+    /// The blocks an expression holds are its lambdas' and its `match` arms'.
+    fn lift_expr(&mut self, e: &mut ast::Expr, enclosing: &mut Enclosing) {
+        match &mut e.kind {
+            ast::ExprKind::Lambda(lambda) => match &mut lambda.body {
+                ast::LambdaBody::Expr(body) => self.lift_expr(body, enclosing),
+                ast::LambdaBody::Block(body) => self.lift_block(body, enclosing),
+            },
+            ast::ExprKind::Match { scrutinee, arms } => {
+                self.lift_expr(scrutinee, enclosing);
+                self.lift_arms(arms, enclosing);
+            }
+            ast::ExprKind::Ternary { then_expr, cond, else_expr } => {
+                for e in [cond, then_expr, else_expr] {
+                    self.lift_expr(e, enclosing);
+                }
+            }
+            ast::ExprKind::Yield(Some(base))
+            | ast::ExprKind::Jump(ast::Jump::Return(Some(base)))
+            | ast::ExprKind::Cast { expr: base, .. }
+            | ast::ExprKind::Downcast { expr: base, .. }
+            | ast::ExprKind::Field { base, .. }
+            | ast::ExprKind::TupleField { base, .. }
+            | ast::ExprKind::Try(base)
+            | ast::ExprKind::Paren(base)
+            | ast::ExprKind::Owned(base)
+            | ast::ExprKind::Comptime(base)
+            | ast::ExprKind::AssumeNoalloc(base)
+            | ast::ExprKind::Unary { operand: base, .. }
+            | ast::ExprKind::RefOf { place: base, .. } => self.lift_expr(base, enclosing),
+            ast::ExprKind::IndexOrInstantiate { base, args } => {
+                self.lift_expr(base, enclosing);
+                for arg in args {
+                    if let ast::TypeOrExpr::Expr(e) = arg {
+                        self.lift_expr(e, enclosing);
+                    }
+                }
+            }
+            ast::ExprKind::Call { callee: base, args } | ast::ExprKind::MethodCall { recv: base, args, .. } => {
+                self.lift_expr(base, enclosing);
+                for arg in args {
+                    self.lift_expr(&mut arg.value, enclosing);
+                }
+            }
+            ast::ExprKind::OptChain { base, args, .. } => {
+                self.lift_expr(base, enclosing);
+                for arg in args.iter_mut().flatten() {
+                    self.lift_expr(&mut arg.value, enclosing);
+                }
+            }
+            ast::ExprKind::Binary { lhs, rhs, .. } | ast::ExprKind::Logical { lhs, rhs, .. } => {
+                self.lift_expr(lhs, enclosing);
+                self.lift_expr(rhs, enclosing);
+            }
+            ast::ExprKind::CompareChain { first, rest } => {
+                self.lift_expr(first, enclosing);
+                for (_, e) in rest {
+                    self.lift_expr(e, enclosing);
+                }
+            }
+            ast::ExprKind::Range { lo, hi, .. } => {
+                for e in [lo, hi].into_iter().flatten() {
+                    self.lift_expr(e, enclosing);
+                }
+            }
+            ast::ExprKind::Tuple(items) | ast::ExprKind::ArrayLit(items) | ast::ExprKind::SetLit(items) => {
+                for item in items {
+                    self.lift_expr(item, enclosing);
+                }
+            }
+            ast::ExprKind::MapLit(pairs) => {
+                for (key, value) in pairs {
+                    self.lift_expr(key, enclosing);
+                    self.lift_expr(value, enclosing);
+                }
+            }
+            ast::ExprKind::Comprehension { element, clauses, .. } => {
+                self.lift_expr(element, enclosing);
+                for clause in clauses {
+                    match clause {
+                        ast::CompClause::For { iter: e, .. } | ast::CompClause::If(e) => self.lift_expr(e, enclosing),
+                    }
+                }
+            }
+            ast::ExprKind::ArrayRepeat { value, count } => {
+                self.lift_expr(value, enclosing);
+                self.lift_expr(count, enclosing);
+            }
+            ast::ExprKind::FString(parts) => {
+                for part in parts {
+                    if let ast::FStringPart::Expr { expr: e, .. } = part {
+                        self.lift_expr(e, enclosing);
+                    }
+                }
+            }
+            ast::ExprKind::Yield(None)
+            | ast::ExprKind::Jump(_)
+            | ast::ExprKind::Lit(_)
+            | ast::ExprKind::Path { .. }
+            | ast::ExprKind::SelfExpr
+            | ast::ExprKind::Error => {}
+        }
+    }
+
+    /// `[GRM-28]`, `[GRM-21]` (ODR-268) — a generator written in a block: its body, each `yield`
+    /// the call the transform suspends at, stays where it is, for the checker to check as the
+    /// named closure it is ([CLO-12]) and so find what it captures; and it is written out at module
+    /// level twice (`LocalLift`), generic over the environment its calls pass and over the
+    /// enclosing declarations' type parameters, `Self` written out as what it names here.
+    fn lift_local(&mut self, decl: &mut ast::FnDecl, enclosing: &Enclosing) {
+        let span = decl.name.span;
+        let refused = match generator_types(decl.ret.as_ref()) {
+            None => Some(
+                Diagnostic::error(codes::E2020, decl.ret.as_ref().map_or(span, |ty| ty.span), "a `gen fn` returns `Generator[Y]` or `Generator[Y, R]`")
+                    .note("`Y` is the type each `yield` produces and `R` (by default `void`) the type of the final `return` [CORO-1]"),
+            ),
+            Some(_) if decl.abi.is_some() => Some(
+                Diagnostic::error(codes::E2222, span, "a `gen fn` cannot be `extern` or `@export`ed")
+                    .note("calling a generator builds its frame, a value only Ember code resumes; C calls an ordinary function [CORO-10]"),
+            ),
+            Some(_) => None,
+        };
+        if let Some(diagnostic) = refused {
+            // Reported: what is left is a local function that does nothing.
+            self.sink.emit(diagnostic);
+            decl.is_gen = false;
+            decl.abi = None;
+            decl.ret = None;
+            decl.body = Some(block(vec![stmt(ast::StmtKind::Pass, span)], span));
+            return;
+        }
+        let Some((yielded, _)) = generator_types(decl.ret.as_ref()) else { return };
+        // A missing body is the parser's error; what is left is a local function without one.
+        let Some(body) = &mut decl.body else {
+            decl.is_gen = false;
+            return;
+        };
+        let mut rewriter = Rewriter {
+            yielded: &yielded,
+            owner: None,
+            receiver: false,
+            count: 0,
+            lambdas: 0,
+            parallel: false,
+            deferred: false,
+            sink: &mut *self.sink,
+        };
+        rewriter.block(body);
+        if rewriter.count == 0 {
+            self.sink.emit(
+                Diagnostic::lint(codes::L2004, span, format!("`gen fn {}` never yields", decl.name.name))
+                    .note("a generator with no `yield` produces no items; an ordinary `fn` does the same work [LNT-4]"),
+            );
+        }
+        let mut stem = format!("{}.local", decl.name.name);
+        let mut counter = 1;
+        while self.names.contains(&format!("{stem}.env")) {
+            counter += 1;
+            stem = format!("{}.local{counter}", decl.name.name);
+        }
+        let hidden = ast::GenericParam {
+            id: ast::NodeId::DUMMY,
+            name: ast::Ident { name: Symbol::intern(LOCAL_ENV_TYPE), span },
+            bounds: Vec::new(),
+            default: None,
+            const_ty: None,
+            span,
+        };
+        let mut lifted_names = Vec::new();
+        for form in ["env", "plain"] {
+            let name = format!("{stem}.{form}");
+            self.names.insert(name.clone());
+            let mut lifted = decl.clone();
+            // Each callable is told apart by its span (`[BLD-2]`): the second form's are the
+            // empty ones where the first's start.
+            let at = |span: Span| if form == "env" { span } else { Span::new(span.file, span.start, span.start) };
+            lifted.name = ast::Ident { name: Symbol::intern(&name), span: at(span) };
+            if let Some(ret) = &mut lifted.ret {
+                ret.span = at(ret.span);
+            }
+            lifted.generics = enclosing.generics.iter().cloned().chain([hidden.clone()]).chain(decl.generics.iter().cloned()).collect();
+            for param in &mut lifted.generics {
+                param.default = None;
+            }
+            lifted.where_clause = enclosing.where_clause.iter().cloned().chain(decl.where_clause.iter().cloned()).collect();
+            if form == "env" {
+                lifted.params.insert(
+                    0,
+                    ast::Param {
+                        id: ast::NodeId::DUMMY,
+                        mode: ast::Mode::Owned,
+                        kind: ast::ParamKind::Named {
+                            name: ast::Ident { name: Symbol::intern(LOCAL_ENV_PARAM), span },
+                            ty: named_type(LOCAL_ENV_TYPE, span),
+                        },
+                        default: None,
+                        span,
+                    },
+                );
+            }
+            let item_span = lifted.name.span;
+            let frame = self.generator(&mut lifted, &mut Vec::new(), ast::Visibility::private(), None, enclosing.self_ty.as_ref(), false);
+            lifted_names.push((Symbol::intern(&name), frame.unwrap_or(Symbol::intern(&name))));
+            self.items.push(ast::Item {
+                id: ast::NodeId::DUMMY,
+                attrs: Vec::new(),
+                vis: ast::Visibility::private(),
+                doc: None,
+                kind: ast::ItemKind::Fn(lifted),
+                span: item_span,
+            });
+        }
+        let [(env_fn, env_frame), (plain_fn, plain_frame)] = [lifted_names[0], lifted_names[1]];
+        self.locals.push((
+            span,
+            LocalLift {
+                name: decl.name.name,
+                env_fn,
+                plain_fn,
+                env_frame,
+                plain_frame,
+                enclosing: enclosing.generics.iter().map(|param| param.name.name).collect(),
+            },
+        ));
+    }
+
     /// Write out one `gen fn`: the frame, its implementations and the body
     /// become items of the module, and `decl` becomes the function building
-    /// the frame.
-    fn generator(&mut self, decl: &mut ast::FnDecl, attrs: &mut Vec<ast::Attribute>, vis: ast::Visibility, owner: Option<&Owner>) {
+    /// the frame, whose qualified name this gives. `self_ty` is what `Self`
+    /// names where a lifted local generator was written (`lift_local`), and
+    /// `lint` whether a body with no `yield` is reported here.
+    fn generator(
+        &mut self,
+        decl: &mut ast::FnDecl,
+        attrs: &mut Vec<ast::Attribute>,
+        vis: ast::Visibility,
+        owner: Option<&Owner>,
+        self_ty: Option<&ast::TypeExpr>,
+        lint: bool,
+    ) -> Option<Symbol> {
         decl.is_gen = false;
         let span = decl.name.span;
         let Some((yielded, result)) = generator_types(decl.ret.as_ref()) else {
@@ -183,7 +607,7 @@ impl Writer<'_> {
             );
             decl.body = None;
             decl.ret = None;
-            return;
+            return None;
         };
         let foreign = decl.abi.is_some() || has_attribute(attrs, "export");
         if foreign {
@@ -210,12 +634,12 @@ impl Writer<'_> {
             decl.dispatch = ast::Dispatch::Static;
             decl.ret = None;
             decl.body = Some(block(vec![stmt(ast::StmtKind::Pass, span)], span));
-            return;
+            return None;
         }
         let Some(mut body) = decl.body.take() else {
             self.sink.emit(Diagnostic::error(codes::E2020, span, "a `gen fn` needs a body"));
             decl.ret = None;
-            return;
+            return None;
         };
 
         // The frame's name: the function's, and its type's for a method. A
@@ -234,7 +658,7 @@ impl Writer<'_> {
             true => base.clone(),
             false => format!("{}.{base}", self.prefix),
         };
-        let owner_ty = owner.map(|owner| &owner.ty);
+        let owner_ty = owner.map(|owner| &owner.ty).or(self_ty);
         let yielded = substitute_self(&yielded, owner_ty);
         let result = result.map(|ty| substitute_self(&ty, owner_ty));
 
@@ -337,7 +761,8 @@ impl Writer<'_> {
         // The body, checked as the function it is.
         let mut rewriter = Rewriter {
             yielded: &yielded,
-            owner: owner.map(|owner| (owner.name, &owner.ty)),
+            owner: owner.map(|owner| (owner.name, &owner.ty)).or(self_ty.map(|ty| (target_name(ty), ty))),
+            receiver: owner.is_some(),
             count: 0,
             lambdas: 0,
             parallel: false,
@@ -345,7 +770,7 @@ impl Writer<'_> {
             sink: &mut *self.sink,
         };
         rewriter.block(&mut body);
-        if rewriter.count == 0 {
+        if lint && rewriter.count == 0 {
             self.sink.emit(
                 Diagnostic::lint(codes::L2004, span, format!("`gen fn {}` never yields", decl.name.name))
                     .note("a generator with no `yield` produces no items; an ordinary `fn` does the same work [LNT-4]"),
@@ -374,11 +799,12 @@ impl Writer<'_> {
         let literal = call(path(Symbol::intern(&qualified), span), args, span);
         decl.ret = Some(frame_ty);
         decl.body = Some(block(vec![stmt(ast::StmtKind::Expr(expr(ast::ExprKind::Jump(ast::Jump::Return(Some(Box::new(literal)))), span)), span)], span));
+        Some(Symbol::intern(&qualified))
     }
 }
 
 /// `Generator[Y]` or `Generator[Y, R]`: `(Y, Some(R))`.
-fn generator_types(ret: Option<&ast::TypeExpr>) -> Option<(ast::TypeExpr, Option<ast::TypeExpr>)> {
+pub(crate) fn generator_types(ret: Option<&ast::TypeExpr>) -> Option<(ast::TypeExpr, Option<ast::TypeExpr>)> {
     let ast::TypeKind::Path { segments, args } = &ret?.kind else { return None };
     if !(segments.len() == 1 && segments[0].name.is("Generator")) {
         return None;
@@ -473,7 +899,11 @@ enum Place {
 /// generator method, `self` is the body's `__self` and `Self` the owner.
 struct Rewriter<'a> {
     yielded: &'a ast::TypeExpr,
+    /// What `Self` names, and its name.
     owner: Option<(Symbol, &'a ast::TypeExpr)>,
+    /// A generator method's: `self` is the body's `__self`. A lifted local generator's `self` is
+    /// its enclosing method's, which it captures.
+    receiver: bool,
     count: usize,
     /// How many lambdas and local functions deep the walk is.
     lambdas: usize,
@@ -710,7 +1140,7 @@ impl Rewriter<'_> {
                 };
             }
             ast::ExprKind::SelfExpr => {
-                if self.owner.is_some() {
+                if self.receiver {
                     e.kind = ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern(RECEIVER), span }] };
                 }
             }

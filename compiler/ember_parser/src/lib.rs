@@ -57,6 +57,8 @@ pub(crate) struct Parser<'a> {
     damaged_signatures: Vec<Span>,
     /// `[UNS-8]` — see `Module::unsafe_sites`.
     unsafe_sites: Vec<Span>,
+    /// `[GRM-28]` — see `Module::local_generators`.
+    local_generators: bool,
     /// `[DIA-21]` P11 — whether the module imports `std.fs`, and where an import line goes: after
     /// the last import (`true`) or before the first statement or item (`false`).
     fs_imported: bool,
@@ -86,6 +88,7 @@ impl<'a> Parser<'a> {
             in_extern_block: false,
             damaged_signatures: Vec::new(),
             unsafe_sites: Vec::new(),
+            local_generators: false,
             fs_imported: false,
             import_at: None,
             no_send_suffix: false,
@@ -638,7 +641,7 @@ impl<'a> Parser<'a> {
         });
 
         let unsafe_sites = std::mem::take(&mut self.unsafe_sites);
-        Module { directives, imports, items, script, unsafe_sites, span: start.to(self.prev_span()) }
+        Module { directives, imports, items, script, unsafe_sites, local_generators: self.local_generators, span: start.to(self.prev_span()) }
     }
 
     fn parse_directive(&mut self) -> Option<ember_ast::Directive> {

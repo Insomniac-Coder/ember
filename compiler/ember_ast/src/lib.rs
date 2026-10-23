@@ -40,6 +40,9 @@ pub struct Module {
     /// `[UNS-8]` — the `unsafe` keyword of each `unsafe:` block and each
     /// `unsafe fn` with a body, in source order: each needs a safety note.
     pub unsafe_sites: Vec<Span>,
+    /// `[GRM-28]`, `[GRM-21]` — whether a block holds a `gen fn`, which the coroutine desugaring
+    /// lifts to the module (ODR-268).
+    pub local_generators: bool,
     pub span: Span,
 }
 
