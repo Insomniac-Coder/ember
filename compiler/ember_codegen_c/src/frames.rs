@@ -14,9 +14,10 @@
 use super::*;
 
 impl Emitter<'_> {
-    /// Whether this image keeps frame records: a reloadable build whose instances migrate.
+    /// Whether this image keeps frame records: a reloadable build whose instances migrate, in its
+    /// main unit and in each module's (`[BLD-4]`); a relaxed unit keeps none.
     pub(crate) fn frames_on(&self) -> bool {
-        self.unit.is_none() && self.reload.as_ref().is_some_and(|reload| reload.instances)
+        matches!(self.unit, None | Some(FpMode::Strict)) && self.reload.as_ref().is_some_and(|reload| reload.instances)
     }
 
     /// The package types whose layout a value of `ty` held by value depends on: its own and what it

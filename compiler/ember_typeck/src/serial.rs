@@ -470,14 +470,15 @@ pub(crate) fn desugar(modules: &[LoadedModule], sink: &mut Sink) -> Option<Vec<L
     }
     let ranges = range_types(modules);
     let mut out = modules.to_vec();
-    for loaded in &mut out {
+    for loaded in out.iter_mut().filter(|loaded| loaded.module.items.iter().any(wanted)) {
+        let module = std::sync::Arc::make_mut(&mut loaded.module);
         let mut generated = Vec::new();
-        for item in &mut loaded.module.items {
+        for item in &mut module.items {
             if wanted(item) {
                 generated.extend(serialisation(item, &ranges, sink));
             }
         }
-        loaded.module.items.extend(generated);
+        module.items.extend(generated);
     }
     Some(out)
 }

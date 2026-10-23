@@ -457,6 +457,7 @@ fn check(modules: &[ember_typeck::LoadedModule], types: &mut TypeTable, common: 
         None,
         exports,
         &HashSet::new(),
+        None,
     );
     // What a pass that asks for values reports is the next pass's to say (as in `compile`).
     if !checked.comptime.is_empty() {

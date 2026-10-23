@@ -29,7 +29,50 @@ pub fn lower(
     common: &CommonTypes,
     map: &SourceMap,
 ) -> Vec<Body> {
-    program.functions.iter().map(|f| lower_function(f, program, types, common, map)).collect()
+    lower_with(program, types, common, map, &std::collections::HashSet::new())
+}
+
+/// `[IDE-3]` — `lower`, with each function of `unreached` (by symbol), one whose check failed,
+/// lowered as a body that is never reached: its signature, and one block that ends unreachable.
+/// It has no effect and borrows nothing, so the checks of the functions that call it report
+/// nothing of it, and its own errors are the type checker's.
+pub fn lower_with(
+    program: &hir::Program,
+    types: &TypeTable,
+    common: &CommonTypes,
+    map: &SourceMap,
+    unreached: &std::collections::HashSet<String>,
+) -> Vec<Body> {
+    // `[BLD-7]` — each function lowered on the driver's threads: lowering reads the checked program
+    // and the type table and writes only its own body; the bodies come back in the program's order.
+    let functions: Vec<&hir::Function> = program.functions.iter().filter(|f| !program.reused.contains(&f.def)).collect();
+    crate::parallel::each(&functions, &mut ember_diag::Sink::new(), |&f, _| {
+        if unreached.contains(&f.symbol) {
+            unreached_function(f, program, types, common, map)
+        } else {
+            lower_function(f, program, types, common, map)
+        }
+    })
+    .into_iter()
+    .map(|(body, _)| body)
+    .collect()
+}
+
+/// A function's signature as a body that is never reached: its return slot and parameters, and
+/// its entry block, which ends unreachable.
+fn unreached_function(
+    function: &hir::Function,
+    program: &hir::Program,
+    types: &TypeTable,
+    common: &CommonTypes,
+    map: &SourceMap,
+) -> Body {
+    // The body is never lowered: what the builder made for its locals goes, the parameters stay.
+    let mut body = Builder::new(function, program, types, common, map).finish();
+    body.locals.truncate(body.arg_count + 1);
+    body.for_iterators.clear();
+    body.loop_notes = LoopNotes::default();
+    body
 }
 
 /// One function of `program`, lowered as `lower` lowers each.
@@ -487,6 +530,7 @@ impl<'a> Builder<'a> {
             stack_buffers: Vec::new(),
             frame_objects: Vec::new(),
             loop_notes,
+            kept: false,
         }
     }
 
@@ -2263,7 +2307,7 @@ impl<'a> Builder<'a> {
         };
         self.push(StmtKind::Assign {
             place: line_place,
-            rvalue: Rvalue::Use(Operand::Const(Const::Int { value: line as u128, ty: line_ty })),
+            rvalue: Rvalue::Use(Operand::Const(line(line_ty))),
         });
         self.push(StmtKind::Assign {
             place: place.clone(),
@@ -2397,7 +2441,7 @@ impl<'a> Builder<'a> {
         };
         self.push(StmtKind::Assign {
             place: line_place,
-            rvalue: Rvalue::Use(Operand::Const(Const::Int { value: line as u128, ty: line_ty })),
+            rvalue: Rvalue::Use(Operand::Const(line(line_ty))),
         });
         let guard_temp = self.temp_unowned(guard_ty, span);
         self.push(StmtKind::Assign {
@@ -2420,18 +2464,14 @@ impl<'a> Builder<'a> {
     }
 
     /// The current borrow's source location for the cell's location fields:
-    /// `(path, line)`. Paths use `/` separators so the panic reads the same
-    /// on every host. A dummy span (synthesised nodes) stores no location.
-    fn borrow_location(&self, span: ember_span::Span) -> (String, u32) {
-        if span.is_dummy() {
-            return (String::new(), 0);
-        }
-        let Some(file) = self.map.get(span.file) else {
-            return (String::new(), 0);
-        };
+    /// its path, and its line as a constant of the type given. Paths use `/`
+    /// separators so the panic reads the same on every host. A dummy span
+    /// (synthesised nodes) stores no location.
+    fn borrow_location(&self, span: ember_span::Span) -> (String, impl Fn(Ty) -> Const + use<>) {
+        let known = !span.is_dummy() && self.map.get(span.file).is_some();
         // `[BLD-13]` — relative to the package, as every location the program holds.
-        let path = self.map.artefact_path(span.file);
-        let line = file.line_col(span.start).line;
+        let path = if known { self.map.artefact_path(span.file) } else { String::new() };
+        let line = move |ty| if known { Const::SourceLine { at: span, ty } } else { Const::Int { value: 0, ty } };
         (path, line)
     }
 

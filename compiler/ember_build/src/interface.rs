@@ -67,6 +67,11 @@ impl InterfaceHash {
     pub fn of_bytes(bytes: &[u8]) -> Self {
         Self(*blake3::hash(bytes).as_bytes())
     }
+
+    /// A hash as [`Self::bytes`] gave it (a kept record's, `[BLD-1]`).
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
 }
 
 /// The passing mode of one callable parameter. This is deliberately separate
@@ -312,27 +317,36 @@ impl PreparedInterfaceCache {
         &self.artifacts
     }
 
-    pub fn commit(self) -> Result<InterfaceCacheReport, InterfaceArtifactError> {
-        for (path, bytes) in self.writes {
-            // D-189 — compilations running side by side share this directory.
-            // Each writes aside and renames into place, so a reader sees the
-            // old record or the new one, never a half-written file.
-            let temp = path.with_extension(format!("tmp{}", std::process::id()));
-            std::fs::write(&temp, bytes).map_err(|source| InterfaceArtifactError::Io {
-                path: temp.clone(),
-                source,
-            })?;
-            if let Err(source) = std::fs::rename(&temp, &path) {
-                let _ = std::fs::remove_file(&temp);
-                // Another compilation replaced it at the same moment; its
-                // record is complete, and the next read checks its key.
-                if !path.exists() {
-                    return Err(InterfaceArtifactError::Io { path, source });
-                }
-            }
-        }
+    /// Write the records, each a file of its own, on `jobs` threads (`[BLD-7]`).
+    pub fn commit(self, jobs: usize) -> Result<InterfaceCacheReport, InterfaceArtifactError> {
+        let per_thread = self.writes.len().div_ceil(jobs.max(1)).max(1);
+        std::thread::scope(|scope| {
+            let writers: Vec<_> = self
+                .writes
+                .chunks(per_thread)
+                .map(|writes| scope.spawn(move || writes.iter().try_for_each(|(path, bytes)| write_record(path, bytes))))
+                .collect();
+            writers.into_iter().try_for_each(|writer| writer.join().expect("a record's writer does not panic"))
+        })?;
         Ok(self.report)
     }
+}
+
+/// D-189 — compilations running side by side share the cache's directory. Each writes a record
+/// aside and renames it into place, so a reader sees the old record or the new one, never a
+/// half-written file.
+fn write_record(path: &Path, bytes: &[u8]) -> Result<(), InterfaceArtifactError> {
+    let temp = path.with_extension(format!("tmp{}", std::process::id()));
+    std::fs::write(&temp, bytes).map_err(|source| InterfaceArtifactError::Io { path: temp.clone(), source })?;
+    if let Err(source) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        // Another compilation replaced it at the same moment; its record is complete, and the
+        // next read checks its key.
+        if !path.exists() {
+            return Err(InterfaceArtifactError::Io { path: path.to_path_buf(), source });
+        }
+    }
+    Ok(())
 }
 
 /// Build every module's current interface artifact. Interface hashes are
@@ -342,6 +356,24 @@ impl PreparedInterfaceCache {
 /// `[LT-40]`, including through an import chain.
 pub fn build_artifacts(
     inputs: &[ModuleInterfaceInput],
+    compiler_version: &str,
+) -> Result<Vec<ModuleInterfaceArtifact>, InterfaceArtifactError> {
+    build_artifacts_known(inputs, &BTreeMap::new(), compiler_version)
+}
+
+/// `[BLD-1]` — a module this build does not check again, as its kept record knows its artifact:
+/// what it imports, directly or not, and its interface hash.
+#[derive(Clone, Debug)]
+pub struct KnownInterface {
+    pub dependencies: Vec<String>,
+    pub interface_hash: InterfaceHash,
+}
+
+/// [`build_artifacts`] for the modules `inputs` holds, where the modules `known` names (which a
+/// build did not check again) are dependencies as their kept records know them.
+pub fn build_artifacts_known(
+    inputs: &[ModuleInterfaceInput],
+    known: &BTreeMap<String, KnownInterface>,
     compiler_version: &str,
 ) -> Result<Vec<ModuleInterfaceArtifact>, InterfaceArtifactError> {
     let mut inputs_by_module = BTreeMap::new();
@@ -397,16 +429,17 @@ pub fn build_artifacts(
             &input.module,
             &input.direct_dependencies,
             &inputs_by_module,
+            known,
             &mut reachable,
         )?;
         reachable.remove(&input.module);
         let dependencies = reachable
             .into_iter()
             .map(|module| {
-                let interface_hash = preliminary
-                    .get(&module)
-                    .expect("dependency existence was checked during graph traversal")
-                    .interface_hash;
+                let interface_hash = match preliminary.get(&module) {
+                    Some(artifact) => artifact.interface_hash,
+                    None => known.get(&module).expect("dependency existence was checked during graph traversal").interface_hash,
+                };
                 (module, interface_hash)
             })
             .collect();
@@ -530,6 +563,45 @@ pub fn prepare_interface_cache(
         writes,
         report,
     })
+}
+
+/// `[BLD-1]`, `[BLD-2]` — the stored records of the modules a build kept whole (`known`), keyed as
+/// a clean build keys them: each one's dependencies at the interface hashes this build's modules
+/// have (`fresh`'s, or another kept one's), and its cache key from them. A kept module's own facts
+/// are its record's; only what it imports may have changed. The records to write, added to
+/// `prepared`'s writes.
+pub fn refresh_known_records(
+    prepared: &mut PreparedInterfaceCache,
+    directory: &Path,
+    known: &BTreeMap<String, KnownInterface>,
+) -> Result<(), InterfaceArtifactError> {
+    let hash_of = |module: &str| {
+        prepared
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.module == module)
+            .map(|artifact| artifact.interface_hash)
+            .or_else(|| known.get(module).map(|known| known.interface_hash))
+    };
+    let mut writes = Vec::new();
+    for module in known.keys() {
+        let path = artifact_path(directory, module);
+        let Ok(bytes) = read_record(&path) else { continue };
+        let Ok(mut record) = ModuleInterfaceArtifact::from_bytes(&bytes) else { continue };
+        if record.module != *module {
+            continue;
+        }
+        let dependencies: BTreeMap<String, InterfaceHash> =
+            record.dependencies.keys().map(|dependency| (dependency.clone(), hash_of(dependency).unwrap_or(record.dependencies[dependency]))).collect();
+        if dependencies == record.dependencies {
+            continue;
+        }
+        record.cache_key = cache_key(record.source_hash, &record.compiler_version, &record.language_version, &record.package_config, &dependencies);
+        record.dependencies = dependencies;
+        writes.push((path, record.to_bytes()?));
+    }
+    prepared.writes.extend(writes);
+    Ok(())
 }
 
 /// A stored record's bytes. D-383 — while another compilation renames its
@@ -697,6 +769,7 @@ fn collect_transitive_dependencies(
     owner: &str,
     direct_dependencies: &[String],
     inputs: &BTreeMap<&str, &ModuleInterfaceInput>,
+    known: &BTreeMap<String, KnownInterface>,
     out: &mut BTreeSet<String>,
 ) -> Result<(), InterfaceArtifactError> {
     let mut pending: Vec<String> = direct_dependencies.to_vec();
@@ -704,13 +777,16 @@ fn collect_transitive_dependencies(
         if module == owner || !out.insert(module.clone()) {
             continue;
         }
-        let Some(input) = inputs.get(module.as_str()) else {
-            return Err(InterfaceArtifactError::UnknownDependency {
-                owner: owner.to_string(),
-                module,
-            });
-        };
-        pending.extend(input.direct_dependencies.iter().cloned());
+        match (inputs.get(module.as_str()), known.get(&module)) {
+            (Some(input), _) => pending.extend(input.direct_dependencies.iter().cloned()),
+            (None, Some(known)) => pending.extend(known.dependencies.iter().cloned()),
+            (None, None) => {
+                return Err(InterfaceArtifactError::UnknownDependency {
+                    owner: owner.to_string(),
+                    module,
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -1440,7 +1516,7 @@ mod tests {
             std::fs::write(&path, &damaged).unwrap();
             let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
             assert_eq!(prepared.artifacts(), fresh.as_slice());
-            assert_eq!(prepared.commit().unwrap().invalidated, 1);
+            assert_eq!(prepared.commit(1).unwrap().invalidated, 1);
             assert_eq!(std::fs::read(&path).unwrap(), whole);
         }
         let _ = std::fs::remove_dir_all(&directory);
@@ -1462,10 +1538,10 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let fresh = build_artifacts(&[input("root", "root", &[], 0)], "test").unwrap();
         let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
-        assert_eq!(prepared.commit().unwrap().created, 1);
+        assert_eq!(prepared.commit(1).unwrap().created, 1);
         let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
-        assert_eq!(prepared.commit().unwrap().reused, 1);
+        assert_eq!(prepared.commit(1).unwrap().reused, 1);
 
         let mut stale = fresh.clone();
         stale[0]
@@ -1510,7 +1586,7 @@ mod tests {
 
         let prepared = prepare_interface_cache(&directory, &fresh).unwrap();
         assert_eq!(prepared.artifacts(), fresh.as_slice());
-        assert_eq!(prepared.commit().unwrap().invalidated, 1);
+        assert_eq!(prepared.commit(1).unwrap().invalidated, 1);
         let rewritten = ModuleInterfaceArtifact::from_bytes(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(rewritten, fresh[0]);
         let _ = std::fs::remove_dir_all(&directory);

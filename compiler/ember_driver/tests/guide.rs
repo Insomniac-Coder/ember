@@ -40,6 +40,25 @@ fn every_sample_of_the_guide_runs_and_prints_what_the_guide_says() {
     assert!(passed >= 50, "the guide's samples were not all found: {passed} ran\n{stdout}");
 }
 
+/// `[DOC-4]`, `[FFI-37]` (D-882) — an error page whose code only an instrumented test run reports
+/// is run as one: its failing program's `ember test --instrument-ffi` reports the code, its fixed
+/// program's passes without it.
+#[test]
+fn the_pages_of_the_codes_an_instrumented_run_reports_run_their_examples_instrumented() {
+    let root = workspace_root();
+    for code in ["E5053", "W5054"] {
+        let out = temporary_directory("instrumented-pages");
+        let run = Command::new(EMBER)
+            .args(["test", "--doc", code, "--out-dir", &out.to_string_lossy()])
+            .current_dir(&root)
+            .output()
+            .expect("ember runs");
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        assert!(run.status.success(), "{code}'s page fails:\n{stdout}\n{}", String::from_utf8_lossy(&run.stderr));
+        assert!(stdout.contains("example result: ok. 2 passed"), "{code}'s page did not run both examples:\n{stdout}");
+    }
+}
+
 fn python() -> &'static str {
     if Command::new("python3").arg("--version").output().is_ok_and(|out| out.status.success()) { "python3" } else { "python" }
 }

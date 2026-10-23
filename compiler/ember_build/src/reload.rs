@@ -26,7 +26,8 @@ pub struct SharedRuntime {
 }
 
 /// The preprocessor definitions of a reloadable build.
-fn reload_defines(instances: bool) -> Vec<String> {
+/// The C definitions a reloadable build's units are compiled with.
+pub fn reload_defines(instances: bool) -> Vec<String> {
     let upper = ember_branding::SYMBOL_PREFIX.to_uppercase();
     let mut defines = vec![format!("{upper}_RELOAD")];
     if instances {

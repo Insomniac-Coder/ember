@@ -30,10 +30,10 @@ const CHECKED: [&str; 2] = ["Eq", "Debug"];
 pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Option<Vec<LoadedModule>>, Vec<DeriveRequest>) {
     let mut requests = Vec::new();
     let named = |item: &ast::Item| matches!(item.kind, ast::ItemKind::Struct(_) | ast::ItemKind::Enum(_));
-    let any = modules.iter().any(|loaded| {
-        loaded.module.items.iter().any(|item| named(item) && WRITTEN.iter().chain(&CHECKED).any(|derive| derive_span(&item.attrs, derive).is_some()))
-    });
-    if !any {
+    let wanted = |module: &ast::Module| {
+        module.items.iter().any(|item| named(item) && WRITTEN.iter().chain(&CHECKED).any(|derive| derive_span(&item.attrs, derive).is_some()))
+    };
+    if !modules.iter().any(|loaded| wanted(&loaded.module)) {
         return (None, requests);
     }
     let mut out = modules.to_vec();
@@ -41,9 +41,13 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
     let mut registry: Vec<(String, u64, bool)> = Vec::new();
     let ecs_loaded = modules.iter().any(|loaded| loaded.path == ["std", "ecs"]);
     for (module, loaded) in out.iter_mut().enumerate() {
+        if !wanted(&loaded.module) {
+            continue;
+        }
         let mut generated = Vec::new();
         let module_path = loaded.path.join(".");
-        for item in &mut loaded.module.items {
+        let written = std::sync::Arc::make_mut(&mut loaded.module);
+        for item in &mut written.items {
             if !named(item) {
                 continue;
             }
@@ -108,12 +112,12 @@ pub(crate) fn desugar_derives(modules: &[LoadedModule], sink: &mut Sink) -> (Opt
                 }
             }
         }
-        loaded.module.items.extend(generated);
+        written.items.extend(generated);
     }
     if !registry.is_empty()
         && let Some(ecs) = out.iter_mut().find(|loaded| loaded.path == ["std", "ecs"])
     {
-        write_registry(&mut ecs.module, &registry);
+        write_registry(std::sync::Arc::make_mut(&mut ecs.module), &registry);
     }
     // `@component` with no `@derive(Component)` beside it.
     for loaded in &out {
@@ -559,7 +563,9 @@ pub(crate) fn desugar_reflect(modules: &[LoadedModule]) -> Option<Vec<LoadedModu
             let reflect = named_type("std.ser.Reflect", item.span);
             generated.push(extend_item(generics, owner_type(name, generics), vec![reflect], Vec::new(), item.span));
         }
-        loaded.module.items.extend(generated);
+        if !generated.is_empty() {
+            std::sync::Arc::make_mut(&mut loaded.module).items.extend(generated);
+        }
     }
     Some(out)
 }

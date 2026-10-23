@@ -98,6 +98,21 @@ impl fmt::Display for Code {
     }
 }
 
+/// `[BLD-1]` — a code in a kept record is written by its name and read back from this compiler's
+/// registry ([`lookup`]).
+impl serde::Serialize for Code {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Code {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Code, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        lookup(&name).ok_or_else(|| serde::de::Error::custom(format!("no diagnostic code `{name}`")))
+    }
+}
+
 impl fmt::Debug for Code {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self}")

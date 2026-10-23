@@ -46,7 +46,7 @@ pub(crate) fn command(args: &[String]) -> Result<ExitCode, String> {
         } else if arg == "--instrument-ffi" {
             instrument_ffi = true;
         } else if arg.starts_with('-') {
-            skip_value = matches!(arg.as_str(), "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D");
+            skip_value = matches!(arg.as_str(), "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D" | "-j" | "--jobs");
             rest.push(arg.clone());
         } else if filter.is_none() {
             filter = Some(arg.clone());
@@ -542,21 +542,36 @@ fn ember_on(
     options: &Options,
 ) -> Result<(bool, String, String), String> {
     std::fs::create_dir_all(work).map_err(|error| format!("cannot create `{}`: {error}", work.display()))?;
-    let file = work.join(ember_branding::source_file("example"));
-    std::fs::write(&file, source_bytes(source)).map_err(|error| error.to_string())?;
     let manifest_path = work.join(ember_branding::MANIFEST);
+    // `ember test` tests a package: the example is its `src/main`, under the page's manifest or one
+    // of its own.
+    let package = command[0] == "test";
+    let file = if package {
+        std::fs::create_dir_all(work.join("src")).map_err(|error| error.to_string())?;
+        work.join("src").join(ember_branding::source_file("main"))
+    } else {
+        work.join(ember_branding::source_file("example"))
+    };
+    std::fs::write(&file, source_bytes(source)).map_err(|error| error.to_string())?;
     match manifest {
         Some(text) => std::fs::write(&manifest_path, text).map_err(|error| error.to_string())?,
+        None if package => std::fs::write(&manifest_path, "[package]\nname = \"example\"\nversion = \"0.1.0\"\n").map_err(|error| error.to_string())?,
         None => {
             let _ = std::fs::remove_file(&manifest_path);
         }
     }
     let mut child = Command::new(exe);
-    child.args(command).arg(&file).args(["--profile", options.profile.name()]).stdin(Stdio::null());
+    child.args(command);
+    if package {
+        child.current_dir(work);
+    } else {
+        child.arg(&file);
+    }
+    child.args(["--profile", options.profile.name()]).stdin(Stdio::null());
     if let Some(cc) = &options.cc {
         child.args(["--cc", cc]);
     }
-    if matches!(command[0], "run" | "build") {
+    if matches!(command[0], "run" | "build" | "test") {
         child.arg("--out-dir").arg(work.join("out"));
     }
     if command[0] == "run" && options.no_leak_check {
@@ -599,6 +614,31 @@ fn run_example(
 ) -> Result<Attempt, String> {
     Ok(match example {
         Example::Missing { what } => Attempt::fail(format!("the page has no ```ember,{what} block [DIA-6]"), ""),
+        // `[FFI-37]` — a code only an instrumented test run reports (D-882): the failing program's
+        // `ember test --instrument-ffi` reports it (an error's fails), the fixed one's passes
+        // without it.
+        Example::Fails { code, source, manifest, files, .. } if crate::foreign::reported_by_an_instrumented_run(code) => {
+            write_files(work, files)?;
+            let (passed, output, _) = ember_on(exe, work, source, manifest.as_deref(), &["test", "--instrument-ffi"], options)?;
+            if !output.contains(&format!("[{code}]")) {
+                Attempt::fail(format!("the failing program's instrumented test run did not report {code}"), &output)
+            } else if code.starts_with('E') && passed {
+                Attempt::fail(format!("the failing program's instrumented test run reported {code} and passed"), &output)
+            } else {
+                Attempt::pass()
+            }
+        }
+        Example::Fixed { code, source, manifest, files } if crate::foreign::reported_by_an_instrumented_run(code) => {
+            write_files(work, files)?;
+            let (passed, output, _) = ember_on(exe, work, source, manifest.as_deref(), &["test", "--instrument-ffi"], options)?;
+            if !passed {
+                Attempt::fail("the fixed program's instrumented test run fails", &output)
+            } else if output.contains(&format!("[{code}]")) {
+                Attempt::fail(format!("the fixed program's instrumented test run still reports {code}"), &output)
+            } else {
+                Attempt::pass()
+            }
+        }
         Example::Fails { code, source, manifest, toolchain, files } => {
             write_files(work, files)?;
             let tag = format!("[{code}]");

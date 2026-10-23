@@ -12,6 +12,7 @@ use std::fmt;
 
 use ember_span::{Span, Symbol};
 
+pub mod codec;
 mod const_norm;
 pub use const_norm::{ConstAtom, ConstError, ConstNorm, ConstOp};
 
@@ -76,7 +77,7 @@ pub struct NewtypeId(pub u32);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct InferId(pub u32);
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum IntTy {
     I8,
     I16,
@@ -91,7 +92,7 @@ pub enum IntTy {
     Isize,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum UintTy {
     U8,
     U16,
@@ -104,7 +105,7 @@ pub enum UintTy {
     Usize,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum FloatTy {
     F16,
     F32,
@@ -114,7 +115,7 @@ pub enum FloatTy {
 /// `[FN-6a]` — one callable parameter's ordinary Ember passing mode. This is
 /// part of canonical function-type identity and compile-time metadata, never
 /// a runtime field or a separate ownership model.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum FnParamMode {
     Borrow,
     Mut,
@@ -292,7 +293,7 @@ impl Layout {
 
 /// `[MOD-2]`, `[MOD-7]` — how far a field is visible. Kept here rather than
 /// taken from the AST so that `ember_types` does not depend on it.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FieldVis {
     /// The default: readable and writable from the declaring module only.
     Private,
@@ -918,6 +919,39 @@ impl TypeTable {
         }
     }
 
+    /// `[IDE-3]` — whether `ty` holds the placeholder of a type that did not resolve, anywhere in it:
+    /// through references, elements, a function's signature, and the fields and arguments of the
+    /// nominal types it names.
+    pub fn mentions_error(&self, ty: Ty) -> bool {
+        self.mentions_error_in(ty, &mut HashSet::new())
+    }
+
+    fn mentions_error_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        match self.kind(ty) {
+            TyKind::Error => true,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.mentions_error_in(*inner, seen),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.mentions_error_in(*elem, seen),
+            TyKind::Tuple(items) => items.iter().any(|&t| self.mentions_error_in(t, seen)),
+            TyKind::Fn { params, ret, .. } => params.iter().any(|param| self.mentions_error_in(param.ty, seen)) || self.mentions_error_in(*ret, seen),
+            TyKind::Struct(id) => {
+                seen.insert(ty)
+                    && (self.struct_def(*id).fields.iter().any(|field| self.mentions_error_in(field.ty, seen))
+                        || self.struct_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error_in(arg, seen))))
+            }
+            TyKind::Class(id) => {
+                seen.insert(ty)
+                    && (self.class_def(*id).fields.iter().any(|field| self.mentions_error_in(field.ty, seen))
+                        || self.class_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error_in(arg, seen))))
+            }
+            TyKind::Enum(id) => {
+                seen.insert(ty)
+                    && (self.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| self.mentions_error_in(field.ty, seen)))
+                        || self.enum_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error_in(arg, seen))))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether `ty` contains an unsized component in a by-value position.
     /// References/pointers are the intentional indirection boundary for
     /// `[TYP-22]`; owning wrappers such as `Box[dyn I]` are represented by a
@@ -1418,6 +1452,10 @@ impl TypeTable {
 
     pub fn ranges(&self) -> impl Iterator<Item = (RangeId, &RangeDef)> {
         self.ranges.iter().enumerate().map(|(i, d)| (RangeId(i as u32), d))
+    }
+
+    pub fn newtypes(&self) -> impl Iterator<Item = (NewtypeId, &NewtypeDef)> {
+        self.newtypes.iter().enumerate().map(|(i, d)| (NewtypeId(i as u32), d))
     }
 
     pub fn add_newtype(&mut self, def: NewtypeDef) -> NewtypeId {
@@ -3161,6 +3199,30 @@ impl TypeTable {
         self.instance_origins.entry(instance).or_insert_with(|| (generic, args.to_vec()));
     }
 
+    /// `[BLD-1]` — the generic the struct `id` is an instance of, and its arguments: what makes the
+    /// same struct again in another run. `None` for a struct that is no instance.
+    pub fn struct_instance(&self, id: StructId) -> Option<(Symbol, Vec<Ty>)> {
+        let def = self.struct_def(id);
+        self.instance_of(def.name, def.origin.as_ref().or(self.written_as.get(&id)))
+    }
+
+    /// [`Self::struct_instance`] of an enum.
+    pub fn enum_instance(&self, id: EnumId) -> Option<(Symbol, Vec<Ty>)> {
+        let def = self.enum_def(id);
+        self.instance_of(def.name, def.origin.as_ref())
+    }
+
+    /// [`Self::struct_instance`] of a class.
+    pub fn class_instance(&self, id: ClassId) -> Option<(Symbol, Vec<Ty>)> {
+        let def = self.class_def(id);
+        self.instance_of(def.name, def.origin.as_ref())
+    }
+
+    fn instance_of(&self, name: Symbol, origin: Option<&(Symbol, Vec<Ty>)>) -> Option<(Symbol, Vec<Ty>)> {
+        let (generic, args) = self.nominal_origin(name, origin);
+        (generic != name || !args.is_empty()).then(|| (generic, args.to_vec()))
+    }
+
     /// The generic a nominal type (or interface) named `name` instantiates and its arguments
     /// (none for one that is no instance), by what the checker recorded (`note_instance`), else
     /// by the type's own origin.
@@ -3523,7 +3585,7 @@ pub fn align_to(offset: u64, align: u64) -> u64 {
 /// Panic is the default in every profile. An explicit function attribute or
 /// module directive selects wrapping or saturation for arithmetic operators;
 /// shift-amount checks and named integer methods have fixed contracts.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum OverflowPolicy {
     /// Overflowing arithmetic operators panic.
     #[default]
@@ -3559,7 +3621,7 @@ impl OverflowPolicy {
 /// with every relaxation `@fastmath` allows. `[CG-C-11]` emits each relaxed
 /// function in a translation unit of its own, compiled with the matching
 /// flags.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub enum FpMode {
     #[default]
     Strict,

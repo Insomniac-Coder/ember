@@ -273,6 +273,12 @@ fn read_counts(files: &[std::path::PathBuf], functions: usize, sites: usize) -> 
     observed
 }
 
+/// `[FFI-37]` — the codes only an instrumented test run (`ember test --instrument-ffi`) reports:
+/// what the documentation's examples of them are run with (D-882).
+pub(crate) fn reported_by_an_instrumented_run(code: &str) -> bool {
+    [ember_diag::codes::E5053, ember_diag::codes::W5054].iter().any(|known| known.to_string() == code)
+}
+
 /// `[FFI-37]`–`[FFI-37d]`, `[TCB-5]` — grade each declared effect fact by what the runs observed:
 /// a fact a run contradicted is `E5053`; one whose function no test called is `W5054` and counts
 /// for nothing; the rest are `instrumented` — no counterexample on the paths exercised, partial

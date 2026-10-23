@@ -437,6 +437,12 @@ pub fn no_compile_cache_var() -> String {
     format!("{}_NO_COMPILE_CACHE", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// `[BLD-1]` — the environment variable that makes a build check every module, using and keeping
+/// no module's checked form (`target/<profile>/incremental/`): a clean build, to compare with.
+pub fn no_incremental_var() -> String {
+    format!("{}_NO_INCREMENTAL", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// The environment variable that chooses the C compiler when `--cc` does not:
 /// `msvc`, `clang-cl`, `clang`, `gcc` or `auto`. CI's compiler matrix sets it.
 /// `[TST-27]` — set to `1`, the program's own C is compiled with warnings as errors (`/WX`,
@@ -452,6 +458,12 @@ pub fn cc_var() -> String {
 /// D-755 — the code layout `ember bench` builds a program at (`ember_build::LAYOUTS`).
 pub fn bench_layout_var() -> String {
     format!("{}_BENCH_LAYOUT", SYMBOL_PREFIX.to_uppercase())
+}
+
+/// `[BEN-6]` — set to `1`, a program reports at its end how many allocations it made, which an
+/// `@noalloc` path's benchmark asserts exactly (`ember bench`).
+pub fn allocations_var() -> String {
+    format!("{}_ALLOCATIONS", SYMBOL_PREFIX.to_uppercase())
 }
 
 /// Where `std`'s sources live, or `None` where they cannot be found.

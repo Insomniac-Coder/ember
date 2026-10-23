@@ -1,11 +1,14 @@
 name: release
 
-# `[BLD-10]` — the compile-time budgets of `[BUD-2]` are release gates: a release tag is cut only
-# when `tools/compile_budgets.py` passes over `bench/bigpkg`. Its times are normalised by a fixed
-# calibration workload against the reference machine's (`[BUD-3a]`), so a runner's speed does not
-# decide the gate; a run whose calibration moves more than 10 % is inconclusive (exit 2), not
-# failed, and is run again. Every step a release adds goes after `compile-budgets` (`needs:`).
+# `[BLD-10]` (ODR-242) — the compiler's speed is published with each release: this release's
+# compiler against the release before it, on one runner, each figure's rounds through the two
+# interleaved (`tools/compile_budgets.py`: `[BUD-2]`'s operations over `bench/bigpkg`, `[HR-1]`'s
+# edit running in a live program, `[HR-9]`'s reload overhead). A runner is not the reference laptop,
+# so the job reports and does not gate: the gate of record, that no change makes the compiler
+# slower, is the run on the laptop before each push.
 
+# A release is made only from a tag the owner pushes. A manual run builds and tests everything and
+# publishes nothing (every publishing step is `if: startsWith(github.ref, 'refs/tags/')`).
 on:
   push:
     tags: ["v*"]
@@ -18,30 +21,54 @@ permissions:
   contents: read
 
 jobs:
-  compile-budgets:
+  compiler-speed:
     runs-on: windows-latest
-    name: compile-time budgets (release gate)
+    name: the compiler's speed against the release before
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/msvc-dev-cmd@v1
+      # `[BLD-4]` (ODR-258) — a program's C is compiled through Ninja, which a source checkout finds
+      # on `PATH`.
+      - name: Ninja
+        shell: bash
+        run: |
+          if ! command -v ninja >/dev/null; then
+            if [ "$RUNNER_OS" = "Windows" ]; then choco install ninja -y; elif [ "$RUNNER_OS" = "macOS" ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
+          fi
+          ninja --version
       - name: Build
         run: cargo build --locked --release -p ember_driver --bin ember
-      - name: the budgets
-        run: python tools/compile_budgets.py --ember target/release/ember.exe --json budgets.json
-      - name: the report
+      # The compiler of the release before this one, built from its tag in a worktree of its own (it
+      # finds its own `std` and runtime beside its `target/`); none for the first release.
+      - name: the release before
+        shell: bash
+        run: |
+          before=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$before" ]; then
+            git worktree add ../before "$before"
+            (cd ../before && cargo build --locked --release -p ember_driver --bin ember)
+            echo "BEFORE=--before ../before/target/release/ember.exe" >> "$GITHUB_ENV"
+            echo "the release before: $before"
+          fi
+      - name: the figures
+        shell: bash
+        run: |
+          python tools/compile_budgets.py --after target/release/ember.exe $BEFORE --json compiler-speed.json --markdown compiler-speed.md \
+            || echo "::warning title=compiler speed::a figure is slower, or over its bound, on this runner; reported only, the gate of record is the reference laptop's"
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: compile-budgets
-          path: budgets.json
+          name: compiler-speed
+          path: compiler-speed.*
 
   # `[DOC-2]`, `[DOC-4]` — the guide, the error pages and the specification are published together,
   # for this release: the guide's samples and the pages' examples must all run first
   # (`ember test --doc`), then one archive of the three (`tools/doc_bundle.py`) is attached to the
   # release.
   documentation:
-    needs: compile-budgets
     runs-on: ubuntu-latest
     name: the guide, the error pages and the specification
     permissions:
@@ -49,6 +76,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # `[BLD-4]` (ODR-258) — a program's C is compiled through Ninja, which a source checkout finds
+      # on `PATH`.
+      - name: Ninja
+        shell: bash
+        run: |
+          if ! command -v ninja >/dev/null; then
+            if [ "$RUNNER_OS" = "Windows" ]; then choco install ninja -y; elif [ "$RUNNER_OS" = "macOS" ]; then brew install ninja; else sudo apt-get update && sudo apt-get install -y ninja-build; fi
+          fi
+          ninja --version
       - name: Build
         run: cargo build --locked --release -p ember_driver --bin ember
       - name: every example runs
@@ -64,3 +100,64 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" --verify-tag --title "${GITHUB_REF_NAME}" --notes-file docs/RELEASE-NOTES.md dist/ember-docs-*.zip || gh release upload "${GITHUB_REF_NAME}" dist/ember-docs-*.zip --clobber
+
+  # `[TOOL-1]`, `[TOOL-2]` (ODR-222, ODR-223, ODR-224, ODR-258) — each host's self-contained archive:
+  # `ember`, the runtime, `std`, and the pinned Clang, LLD and Ninja the compiler finds beside itself
+  # (`tools/toolchain-pins.json`, each download checked against its recorded SHA-256). Each is built
+  # on its own host — the macOS one on GitHub's macOS machines — and tested there as a new user
+  # meets it (`tools/release_smoke.py`: unpacked with nothing else on `PATH`, `ember --version` names
+  # the archive's Clang, and `ember new hello` then `ember run` print `hello, world` within
+  # `[TOOL-4]`'s five minutes).
+  archives:
+    needs: documentation
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, host: windows-x64, archive: ember-windows-x64.zip, ninja: ninja.exe }
+          - { os: ubuntu-latest, host: linux-x64, archive: ember-linux-x64.tar.gz, ninja: ninja }
+          - { os: macos-14, host: macos-arm64, archive: ember-macos-arm64.tar.gz, ninja: ninja }
+    runs-on: ${{ matrix.os }}
+    name: the ${{ matrix.host }} archive
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The Windows SDK's libraries, which the archive does not carry (`[TOOL-2]`), come with the
+      # Build Tools the runner has.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build
+        run: cargo build --locked --release -p ember_driver --bin ember
+      - name: the pinned Clang, LLD and Ninja
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/fetch_toolchain.py ${{ matrix.host }} toolchain-download
+      - name: the archive
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/release_archive.py --host ${{ matrix.host }} --version "${{ github.ref_name }}" --llvm toolchain-download/llvm --ninja toolchain-download/ninja/${{ matrix.ninja }}
+      - name: the archive works on a clean machine
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/release_smoke.py target/release-archive/${{ matrix.archive }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.host }}
+          path: |
+            target/release-archive/${{ matrix.archive }}
+            target/release-archive/${{ matrix.archive }}.sha256
+
+  # `[TOOL-1]` — the archives, their checksums and the one-line installers, on the release's page,
+  # with the compiler's speed against the release before (`[BLD-10]`). Only a tag the owner pushed
+  # publishes; a manual run stops at the artifacts above.
+  publish:
+    needs: [archives, compiler-speed]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: published on the release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: attached to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" dist/ember-* dist/compiler-speed.* tools/install.sh tools/install.ps1 --clobber

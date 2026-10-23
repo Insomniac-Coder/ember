@@ -73,6 +73,7 @@ dependencies = [
  "ember_mir",
  "ember_span",
  "ember_types",
+ "serde",
 ]
 
 [[package]]
@@ -129,6 +130,7 @@ name = "ember_diag"
 version = "0.1.0"
 dependencies = [
  "ember_span",
+ "serde",
  "serde_json",
 ]
 
@@ -136,6 +138,7 @@ dependencies = [
 name = "ember_driver"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "clang-sys",
  "ember_analysis",
  "ember_ast",
@@ -153,6 +156,7 @@ dependencies = [
  "ember_span",
  "ember_typeck",
  "ember_types",
+ "serde",
  "serde_json",
 ]
 
@@ -171,6 +175,7 @@ version = "0.1.0"
 dependencies = [
  "ember_span",
  "ember_types",
+ "serde",
 ]
 
 [[package]]
@@ -203,6 +208,7 @@ dependencies = [
  "ember_hir",
  "ember_span",
  "ember_types",
+ "serde",
 ]
 
 [[package]]
@@ -219,6 +225,9 @@ dependencies = [
 [[package]]
 name = "ember_span"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "ember_typeck"
@@ -230,6 +239,7 @@ dependencies = [
  "ember_hir",
  "ember_span",
  "ember_types",
+ "serde",
 ]
 
 [[package]]
@@ -239,6 +249,7 @@ dependencies = [
  "ember_branding",
  "ember_diag",
  "ember_span",
+ "serde",
 ]
 
 [[package]]
@@ -306,6 +317,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]

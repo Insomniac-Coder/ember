@@ -97,9 +97,9 @@ const BODY_ATTRIBUTES: &[&str] = &[
 
 pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> Option<Desugared> {
     let gen_member = |members: &[ast::Member]| members.iter().any(|m| matches!(&m.kind, ast::MemberKind::Fn(f) if f.is_gen));
-    let any = modules.iter().any(|loaded| {
-        loaded.module.local_generators
-            || loaded.module.items.iter().any(|item| match &item.kind {
+    let wanted = |module: &ast::Module| {
+        module.local_generators
+            || module.items.iter().any(|item| match &item.kind {
                 ast::ItemKind::Fn(decl) => decl.is_gen,
                 ast::ItemKind::Struct(decl) => gen_member(&decl.members),
                 ast::ItemKind::Class(decl) => gen_member(&decl.members),
@@ -108,14 +108,14 @@ pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> O
                 ast::ItemKind::Interface(decl) => gen_member(&decl.members),
                 _ => false,
             })
-    });
-    if !any {
+    };
+    if !modules.iter().any(|loaded| wanted(&loaded.module)) {
         return None;
     }
     let mut out = modules.to_vec();
     let mut frames = Vec::new();
     let mut locals = Vec::new();
-    for loaded in &mut out {
+    for loaded in out.iter_mut().filter(|loaded| wanted(&loaded.module)) {
         let mut writer = Writer {
             prefix: loaded.path.join("."),
             items: Vec::new(),
@@ -124,14 +124,15 @@ pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> O
             names: HashSet::new(),
             sink: &mut *sink,
         };
+        let module = std::sync::Arc::make_mut(&mut loaded.module);
         // `[GRM-28]` — the generators written in blocks first, innermost first, so a generator's
         // body holds none when it is written out.
-        if loaded.module.local_generators {
-            for item in &mut loaded.module.items {
+        if module.local_generators {
+            for item in &mut module.items {
                 writer.lift_in_item(item);
             }
         }
-        for item in &mut loaded.module.items {
+        for item in &mut module.items {
             let ast::Item { attrs, vis, kind, .. } = item;
             match kind {
                 ast::ItemKind::Fn(decl) if decl.is_gen => {
@@ -175,7 +176,7 @@ pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> O
             }
         }
         let generated = std::mem::take(&mut writer.items);
-        loaded.module.items.extend(generated);
+        module.items.extend(generated);
     }
     Some(Desugared { modules: out, frames, locals })
 }

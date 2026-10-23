@@ -73,7 +73,7 @@ impl Callables {
 fn operand_ty(m: &Module<'_>, body: &Body, operand: &Operand) -> Option<Ty> {
     match operand {
         Operand::Copy(place) | Operand::Move(place) => Some(crate::func::place_type(m, body, place)),
-        Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. }) => Some(*ty),
+        Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. } | Const::SourceLine { ty, .. }) => Some(*ty),
         _ => None,
     }
 }

@@ -1149,17 +1149,40 @@ fn load_libclang() -> Result<(), String> {
     if clang_sys::is_loaded() {
         return Ok(());
     }
-    clang_sys::load().map_err(|error| {
+    // The load `prefetch_libclang` began, else one now.
+    let prefetched = PREFETCHED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+    let library = match prefetched {
+        Some(loading) => loading.join().unwrap_or_else(|_| Err("loading libclang failed".to_string())),
+        None => clang_sys::load_manually(),
+    }
+    .map_err(|error| {
         format!(
             "{error}\n  = help: install LLVM (it provides libclang: `winget install LLVM.LLVM` on Windows, \
              `apt install libclang-dev` on Debian and Ubuntu), or set LIBCLANG_PATH to the folder that holds it"
         )
     })?;
+    clang_sys::set_library(Some(std::sync::Arc::new(library)));
     // D-751 — never unloaded: clang-sys keeps the library in a thread-local, and freeing libclang
     // as that is destroyed at exit crashed the compiler (an access violation after its work was
     // done) with the LLVM of the Windows CI image. One reference is kept for the process's life.
     std::mem::forget(clang_sys::get_library());
     Ok(())
+}
+
+/// libclang being loaded on a thread of its own (`prefetch_libclang`).
+#[allow(clippy::type_complexity)]
+static PREFETCHED: std::sync::Mutex<Option<std::thread::JoinHandle<Result<clang_sys::SharedLibrary, String>>>> =
+    std::sync::Mutex::new(None);
+
+/// `[FFI-6]` — the program imports C: libclang (an import's key names it, even when its binding is
+/// read from its `.embind`) is loaded on a thread of its own while the program's other modules are
+/// read, the imports being made once all of them are. Loading it takes as long as reading a few
+/// hundred modules.
+pub(crate) fn prefetch_libclang() {
+    let mut prefetched = PREFETCHED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if prefetched.is_none() && !clang_sys::is_loaded() {
+        *prefetched = Some(std::thread::spawn(clang_sys::load_manually));
+    }
 }
 
 /// The arguments libclang parses with: C11, as the generated C is compiled, for the host target.

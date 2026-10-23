@@ -1003,7 +1003,9 @@ pub(crate) fn desugar_status_errors(modules: &[LoadedModule]) -> Option<Vec<Load
                 generated.push(extend_item(&[], owner_type(status.error, &[]), vec![named_type("std.ffi.ForeignFailure", span)], Vec::new(), span));
             }
         }
-        loaded.module.items.extend(generated);
+        if !generated.is_empty() {
+            std::sync::Arc::make_mut(&mut loaded.module).items.extend(generated);
+        }
     }
     Some(out)
 }
@@ -1012,19 +1014,20 @@ pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -
     let marked = |attrs: &[ast::Attribute]| {
         has_derive(attrs, "Error") || attrs.iter().any(|attr| error_attribute(attr).is_some())
     };
-    let any = modules.iter().any(|loaded| {
-        loaded.module.items.iter().any(|item| {
+    let wanted = |module: &ast::Module| {
+        module.items.iter().any(|item| {
             marked(&item.attrs)
                 || matches!(&item.kind, ast::ItemKind::Enum(decl) if decl.variants.iter().any(|variant| marked(&variant.attrs)))
         })
-    });
-    if !any {
+    };
+    if !modules.iter().any(|loaded| wanted(&loaded.module)) {
         return None;
     }
     let mut out = modules.to_vec();
-    for loaded in &mut out {
+    for loaded in out.iter_mut().filter(|loaded| wanted(&loaded.module)) {
+        let module = std::sync::Arc::make_mut(&mut loaded.module);
         let mut generated = Vec::new();
-        for item in &mut loaded.module.items {
+        for item in &mut module.items {
             let ast::Item { attrs, kind, span, .. } = item;
             let derives = has_derive(attrs, "Error");
             if derives {
@@ -1059,7 +1062,7 @@ pub(crate) fn desugar_error_derives(modules: &[LoadedModule], sink: &mut Sink) -
                 }
             }
         }
-        loaded.module.items.extend(generated);
+        module.items.extend(generated);
     }
     Some(out)
 }

@@ -986,7 +986,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     pub(crate) fn operand_ty(&self, operand: &Operand) -> Option<Ty> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => Some(self.place_ty(place)),
-            Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. }) => Some(*ty),
+            Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. } | Const::SourceLine { ty, .. }) => Some(*ty),
             _ => None,
         }
     }
@@ -1023,6 +1023,12 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     fn constant(&mut self, constant: &Const) -> Result<Val> {
         Ok(match constant {
+            // `[CELL-5]` — the line `at` begins on, as it is now (a body an incremental build kept
+            // names its line so, `[BLD-8]`).
+            Const::SourceLine { at, ty } => {
+                let line = self.m.map.get(at.file).map_or(0, |file| file.line_col(at.start).line);
+                return self.constant(&Const::Int { value: u128::from(line), ty: *ty });
+            }
             Const::Int { value, ty } => match self.m.ty.repr(*ty) {
                 Repr::Scalar(Sc::Bool) => Val::Imm(Sc::Bool, if *value != 0 { "true" } else { "false" }.to_string()),
                 Repr::Scalar(Sc::I(bits)) => Val::Imm(Sc::I(bits), int_literal(*value, bits)),

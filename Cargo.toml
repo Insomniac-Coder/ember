@@ -29,6 +29,8 @@ repository = "https://github.com/Insomniac-Coder/ember"
 
 [workspace.dependencies]
 blake3 = "1"
+# `[BLD-1]` — the records a module's check leaves for the next build (`ember_span::codec`).
+serde = { version = "1", features = ["derive"] }
 ember_branding = { path = "compiler/ember_branding" }
 ember_span = { path = "compiler/ember_span" }
 ember_diag = { path = "compiler/ember_diag" }

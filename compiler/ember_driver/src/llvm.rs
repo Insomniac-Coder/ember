@@ -2,7 +2,8 @@
 //! (`ember_codegen_llvm`), which Clang compiles and links with the runtime as the C backend's C
 //! is. The C backend stays the default.
 
-use super::{ExitCode, Layout, LinkRequest, Options, Path, PathBuf, Profile, SourceMap, Toolchain, manifest_string};
+use super::{ExitCode, Layout, Options, Path, PathBuf, Profile, SourceMap, Toolchain, manifest_string};
+use ember_build::LinkRequest;
 
 /// Whether this build uses the LLVM backend: `--backend` first, else the manifest's
 /// `[build] backend`.

@@ -107,7 +107,7 @@ const ALL_REGION_ACCESSES: &[RegionAccessKind] = &[
     RegionAccessKind::Publish,
 ];
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum CallResultContract {
     /// One-region elision, or the conservative fallback while a multi-region
     /// result relation cannot be inferred.
@@ -128,7 +128,7 @@ pub type ArgSlot = (usize, Vec<Projection>);
 /// which the caller treats as that store. A body that can be called where no
 /// summary is read (a virtual method, a closure, a function value, a `dyn`
 /// adapter) publishes nothing and is held to the rule by itself.
-#[derive(Clone, Default, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default, PartialEq, Eq, Debug)]
 pub struct StoreSummary {
     pub static_slots: BTreeSet<ArgSlot>,
     pub flows: BTreeSet<(ArgSlot, ArgSlot)>,
@@ -181,7 +181,7 @@ pub struct CallerPlaceFact {
 }
 
 /// The complete region information available at one call boundary.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct CallRegionContract {
     pub access: CallAccessContract,
     pub result: CallResultContract,
@@ -2780,7 +2780,7 @@ fn is_growing_arena(types: &TypeTable, ty: ember_types::Ty) -> bool {
 }
 
 /// `[LT-1]` — which of a callee's arguments its returned view may point into.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Eq, Debug)]
 pub enum Elision {
     /// The callee returns no view, so its result borrows nothing.
     Nothing,

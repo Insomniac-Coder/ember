@@ -93,7 +93,7 @@ enum Access {
 
 pub fn check_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) {
     install_callable_regions_all(bodies, types);
-    check_all_with_installed_callable_regions(bodies, types, sink);
+    let _ = check_all_with_installed_callable_regions(bodies, types, sink, &BorrowFacts::default());
 }
 
 /// `[MIR-REG-1]` — derive and install the canonical callable contract before
@@ -102,31 +102,58 @@ pub fn check_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) {
 /// [`check_all_with_installed_callable_regions`]; this producer stays separate
 /// so a cache artifact cannot be confused with a second inference table.
 pub fn install_callable_regions_all(bodies: &mut [Body], types: &TypeTable) {
+    install_callable_regions_kept(bodies, types, &HashMap::new());
+}
+
+/// `[BLD-1]`, `[BLD-2]` — as [`install_callable_regions_all`], where the bodies `kept` names are an
+/// earlier build's, kept with their summaries installed: each one's contract is `kept`'s, never
+/// inferred again, and the others' are inferred with them. Every body's contract, for the next
+/// build to keep.
+pub fn install_callable_regions_kept(
+    bodies: &mut [Body],
+    types: &TypeTable,
+    kept: &HashMap<String, CallRegionContract>,
+) -> HashMap<String, CallRegionContract> {
     // `[LT-1]` is a property of the *callee's* signature, so a call in one
     // body is read against another's. The table is built once.
     let mut signatures: HashMap<String, Elision> = HashMap::new();
     for body in &*bodies {
         signatures.insert(body.symbol.clone(), elision_of(body, types));
     }
-    let inferred = infer_callable_summaries(bodies, types, &signatures);
-    for body in &mut *bodies {
+    let inferred = infer_callable_summaries(bodies, types, &signatures, kept);
+    for body in bodies.iter_mut().filter(|body| !kept.contains_key(&body.symbol)) {
         let contract = inferred
             .get(&body.symbol)
             .expect("callable summary inference omitted a MIR body");
         body.callable_regions = Some(metadata_from_contract(contract));
     }
+    inferred
 }
 
 /// Consume only the callable-region metadata already installed on MIR. A
 /// missing or corrupt record is an internal compiler failure: `[LT-40]` does
 /// not permit treating stale metadata as an optimisation hint or silently
 /// widening it to an unknown call.
+///
+/// `[BLD-1]` — a kept body (`Body::kept`) is not checked again, and what the checks infer of it for
+/// its callers is `kept`'s (an earlier build's, with the same callees); for each body checked, the
+/// range of the sink's diagnostics its check reported, and what the checks infer of every body.
 pub fn check_all_with_installed_callable_regions(
     bodies: &[Body],
     types: &TypeTable,
     sink: &mut Sink,
-) {
-    run_checks(bodies, types, sink, None);
+    kept: &BorrowFacts,
+) -> (Vec<(usize, std::ops::Range<usize>)>, BorrowFacts) {
+    run_checks(bodies, types, sink, None, kept)
+}
+
+/// `[BLD-1]`, `[BLD-2]` — what borrow checking infers of each body for its callers' checks: what it
+/// stores where its caller's regions do not reach (D-352), and whether its result is one no
+/// caller's regions can follow.
+#[derive(Clone, Debug, Default)]
+pub struct BorrowFacts {
+    pub stores: HashMap<String, crate::regions::StoreSummary>,
+    pub invalid: HashSet<String>,
 }
 
 /// `[DIA-8]` — one loan as the checker holds it (`[BCK-1]`): the place it borrows, whether mutably,
@@ -146,7 +173,7 @@ pub struct LoanReport {
 /// the program was checked already.
 pub fn explain_loans(bodies: &[Body], types: &TypeTable) -> Vec<LoanReport> {
     let mut reports = Vec::new();
-    run_checks(bodies, types, &mut Sink::new(), Some(&mut reports));
+    let _ = run_checks(bodies, types, &mut Sink::new(), Some(&mut reports), &BorrowFacts::default());
     reports
 }
 
@@ -154,8 +181,9 @@ fn run_checks(
     bodies: &[Body],
     types: &TypeTable,
     sink: &mut Sink,
-    mut reports: Option<&mut Vec<LoanReport>>,
-) {
+    reports: Option<&mut Vec<LoanReport>>,
+    kept: &BorrowFacts,
+) -> (Vec<(usize, std::ops::Range<usize>)>, BorrowFacts) {
     let signatures: HashMap<String, Elision> = bodies
         .iter()
         .map(|body| (body.symbol.clone(), elision_of(body, types)))
@@ -180,6 +208,7 @@ fn run_checks(
     let store_summaries = stores::infer_store_summaries(
         bodies,
         types,
+        &kept.stores,
         &base_contract,
         &|body: &Body| capture_borrow_paths(body, &capture_contracts),
         &dynamic,
@@ -229,28 +258,59 @@ fn run_checks(
         .filter(|environment| !scoped_task_environments.contains(environment))
         .collect();
     let invalid_result_bodies =
-        infer_invalid_result_bodies(bodies, types, &call_contract, &capture_contracts);
+        infer_invalid_result_bodies(bodies, types, &call_contract, &capture_contracts, &kept.invalid);
     let is_method = |func: &FuncRef| match func {
         FuncRef::Direct { symbol, .. } => methods.contains(symbol.as_str()),
         FuncRef::Interface { .. } | FuncRef::Virtual { .. } => true,
         _ => false,
     };
-    for body in &*bodies {
-        let capture_paths = capture_borrow_paths(body, &capture_contracts);
-        check_body(
-            body,
-            types,
-            &call_contract,
-            &capture_paths,
-            &owned_closure_environments,
-            &invalid_result_bodies,
-            &is_method,
-            dynamic.contains(&body.symbol),
-            &names,
-            sink,
-            reports.as_deref_mut(),
-        );
+    let mut ranges = Vec::new();
+    if let Some(reports) = reports {
+        for (index, body) in bodies.iter().enumerate() {
+            if body.kept {
+                continue;
+            }
+            let start = sink.mark();
+            let capture_paths = capture_borrow_paths(body, &capture_contracts);
+            check_body(
+                body,
+                types,
+                &call_contract,
+                &capture_paths,
+                &owned_closure_environments,
+                &invalid_result_bodies,
+                &is_method,
+                dynamic.contains(&body.symbol),
+                &names,
+                sink,
+                Some(&mut *reports),
+            );
+            ranges.push((index, start..sink.mark()));
+        }
+    } else {
+        // `[BLD-7]` — each body on the driver's threads, reported in the bodies' order.
+        let checked: Vec<usize> = (0..bodies.len()).filter(|&index| !bodies[index].kept).collect();
+        let done = crate::parallel::each(&checked, sink, |&index, sink| {
+            let body = &bodies[index];
+            let capture_paths = capture_borrow_paths(body, &capture_contracts);
+            check_body(
+                body,
+                types,
+                &call_contract,
+                &capture_paths,
+                &owned_closure_environments,
+                &invalid_result_bodies,
+                &is_method,
+                dynamic.contains(&body.symbol),
+                &names,
+                sink,
+                None,
+            );
+            index
+        });
+        ranges.extend(done);
     }
+    (ranges, BorrowFacts { stores: store_summaries, invalid: invalid_result_bodies })
 }
 
 /// `[HEAP-4]`, `[HEAP-5]`, `[RC-5]`, `[EXC-1]` — materialize the dynamic
@@ -287,27 +347,15 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
         &slots,
     );
 
-    bodies
-        .iter_mut()
-        .map(|body| {
-            let capture_paths = capture_borrow_paths(body, &capture_contracts);
-            let regions = Regions::infer_with_capture_borrow_paths(
-                body,
-                types,
-                &call_contract,
-                &capture_paths,
-            );
-            insert_shared_accesses(
-                body,
-                types,
-                &regions,
-                &returned_accesses,
-                &returning_accesses,
-                &field_returns,
-                &slots,
-            )
-        })
-        .sum()
+    // Each body on the driver's threads (`[BLD-7]`): it reads only the summaries above.
+    crate::parallel::each_mut(bodies, &mut ember_diag::Sink::new(), |body, _| {
+        let capture_paths = capture_borrow_paths(body, &capture_contracts);
+        let regions = Regions::infer_with_capture_borrow_paths(body, types, &call_contract, &capture_paths);
+        insert_shared_accesses(body, types, &regions, &returned_accesses, &returning_accesses, &field_returns, &slots)
+    })
+    .into_iter()
+    .map(|(inserted, _)| inserted)
+    .sum()
 }
 
 /// Per (class, virtual slot), the symbols of the bodies that class declares
@@ -340,7 +388,7 @@ struct SharedReturnAccess {
 fn infer_shared_return_accesses(
     bodies: &[Body],
     types: &TypeTable,
-    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    call_contract: &(dyn Fn(&FuncRef) -> CallRegionContract + Sync),
     capture_contracts: &CaptureContracts,
     slots: &VirtualSlots,
 ) -> (HashMap<String, SharedReturnAccess>, HashSet<String>, FieldReturns) {
@@ -351,20 +399,18 @@ fn infer_shared_return_accesses(
         let mut next = HashMap::new();
         let mut next_returning = HashSet::new();
         let mut next_fields = FieldReturns::new();
-        for body in bodies {
+        // Each round reads only the last one's summaries: its bodies on the driver's threads
+        // (`[BLD-7]`).
+        let found = crate::parallel::each(bodies, &mut ember_diag::Sink::new(), |body, _| {
             let capture_paths = capture_borrow_paths(body, capture_contracts);
-            let regions = Regions::infer_with_capture_borrow_paths(
-                body,
-                types,
-                call_contract,
-                &capture_paths,
-            );
+            let regions = Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths);
             let fields = field_return_accesses(body, types, &regions, &field_returns, slots);
+            (fields, shared_return_access(body, types, &regions, &summaries, &returning))
+        });
+        for (body, ((fields, (summary, returns_shared_access)), _)) in bodies.iter().zip(found) {
             if !fields.is_empty() {
                 next_fields.insert(body.symbol.clone(), fields);
             }
-            let (summary, returns_shared_access) =
-                shared_return_access(body, types, &regions, &summaries, &returning);
             if returns_shared_access {
                 next_returning.insert(body.symbol.clone());
             }
@@ -510,22 +556,24 @@ fn virtual_result_accesses<'s>(
     };
     let fields = types.class_field_count(owner);
     let mut out: Vec<&FieldReturnAccess> = Vec::new();
-    let mut reached = false;
-    for ((class, at), symbols) in slots {
-        if *at != slot || !(within(owner, *class) || within(*class, owner)) {
-            continue;
-        }
-        for symbol in symbols {
-            reached = true;
-            for access in summaries.get(symbol.as_str()).into_iter().flatten() {
-                let named = access.argument == 0
-                    && matches!(access.projection.as_slice(), [Projection::Deref, Projection::Field(index), ..] if *index < fields);
-                if !named {
-                    return None;
-                }
-                if !out.contains(&access) {
-                    out.push(access);
-                }
+    // The bodies by name: the accesses are begun in the order found, which neither the table's
+    // hash order nor the classes' order in the type table may decide.
+    let mut reaching: Vec<&String> = slots
+        .iter()
+        .filter(|((class, at), _)| *at == slot && (within(owner, *class) || within(*class, owner)))
+        .flat_map(|(_, symbols)| symbols)
+        .collect();
+    reaching.sort();
+    let reached = !reaching.is_empty();
+    for symbol in reaching {
+        for access in summaries.get(symbol.as_str()).into_iter().flatten() {
+            let named = access.argument == 0
+                && matches!(access.projection.as_slice(), [Projection::Deref, Projection::Field(index), ..] if *index < fields);
+            if !named {
+                return None;
+            }
+            if !out.contains(&access) {
+                out.push(access);
             }
         }
     }
@@ -2433,7 +2481,7 @@ pub fn verify_callable_regions_all(
         .iter()
         .map(|body| (body.symbol.clone(), elision_of(body, types)))
         .collect();
-    let expected = infer_callable_summaries(bodies, types, &signatures);
+    let expected = infer_callable_summaries(bodies, types, &signatures, &HashMap::new());
     let mut violations = verify_closure_environments(bodies, types);
     for body in bodies {
         let Some(actual) = &body.callable_regions else {
@@ -2716,6 +2764,7 @@ fn infer_callable_summaries(
     bodies: &[Body],
     types: &TypeTable,
     signatures: &HashMap<String, Elision>,
+    kept: &HashMap<String, CallRegionContract>,
 ) -> HashMap<String, CallRegionContract> {
     let callees: Vec<HashSet<&str>> = bodies
         .iter()
@@ -2729,14 +2778,22 @@ fn infer_callable_summaries(
                 .collect()
         })
         .collect();
-    let mut summaries: HashMap<String, CallRegionContract> = HashMap::new();
+    let mut summaries: HashMap<String, CallRegionContract> = kept.clone();
     // The symbols whose summary the last round changed; `None` for every body.
     let mut changed: Option<HashSet<String>> = None;
     for _ in 0..=bodies.len() {
         let contract = |func: &FuncRef| contract_for(func, &summaries, signatures);
         let capture_contracts = closure_capture_contracts(bodies, &summaries);
         let mut next = HashMap::new();
+        // Each round reads only the last round's summaries, so its bodies are inferred on the
+        // driver's threads (`[BLD-7]`), each independently of the others.
+        let mut inferring = Vec::new();
         for (index, body) in bodies.iter().enumerate() {
+            // `[BLD-1]` — a kept body's contract is what its build inferred, with these callees.
+            if let Some(contract) = kept.get(&body.symbol) {
+                next.insert(body.symbol.clone(), contract.clone());
+                continue;
+            }
             let unchanged = changed
                 .as_ref()
                 .is_some_and(|changed| !callees[index].iter().any(|callee| changed.contains(*callee)));
@@ -2746,17 +2803,16 @@ fn infer_callable_summaries(
             }
             #[cfg(test)]
             INFERRED.with(|inferred| inferred.borrow_mut().push(body.symbol.clone()));
+            inferring.push(index);
+        }
+        let inferred = crate::parallel::each(&inferring, &mut ember_diag::Sink::new(), |&index, _| {
+            let body = &bodies[index];
             let capture_paths = capture_borrow_paths(body, &capture_contracts);
-            let regions = Regions::infer_with_capture_borrow_paths(
-                body,
-                types,
-                &contract,
-                &capture_paths,
-            );
-            next.insert(
-                body.symbol.clone(),
-                inferred_callable_summary(body, types, &regions),
-            );
+            let regions = Regions::infer_with_capture_borrow_paths(body, types, &contract, &capture_paths);
+            inferred_callable_summary(body, types, &regions)
+        });
+        for (&index, (summary, _)) in inferring.iter().zip(inferred) {
+            next.insert(bodies[index].symbol.clone(), summary);
         }
         if next == summaries {
             return summaries;
@@ -2870,24 +2926,30 @@ fn inferred_result_summary(
 /// at the first opaque boundary; callers of an already-invalid body are not
 /// flooded with the same recovery error. A direct recursive cycle with no
 /// opaque root is deliberately not included and remains diagnosable.
+/// `[BLD-1]` — a kept body is invalid as `kept_invalid` says (its regions are not inferred again).
 fn infer_invalid_result_bodies(
     bodies: &[Body],
     types: &TypeTable,
-    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    call_contract: &(dyn Fn(&FuncRef) -> CallRegionContract + Sync),
     capture_contracts: &CaptureContracts,
+    kept_invalid: &HashSet<String>,
 ) -> HashSet<String> {
     let known: HashSet<&str> = bodies.iter().map(|body| body.symbol.as_str()).collect();
-    let regions: Vec<Regions> = bodies
-        .iter()
-        .map(|body| {
-            let capture_paths = capture_borrow_paths(body, capture_contracts);
-            Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths)
-        })
-        .collect();
-    let mut invalid = HashSet::new();
+    let bodies: Vec<&Body> = bodies.iter().filter(|body| !body.kept).collect();
+    // Each body's calls whose result no caller's regions can follow, its regions inferred on the
+    // driver's threads (`[BLD-7]`); what follows reads only these.
+    let calls: Vec<Vec<FuncRef>> = crate::parallel::each(&bodies, &mut ember_diag::Sink::new(), |body, _| {
+        let capture_paths = capture_borrow_paths(body, capture_contracts);
+        let regions = Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths);
+        unresolved_multi_result_calls(body, &regions, call_contract).cloned().collect()
+    })
+    .into_iter()
+    .map(|(calls, _)| calls)
+    .collect();
+    let mut invalid = kept_invalid.clone();
 
-    for (body, regions) in bodies.iter().zip(&regions) {
-        if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
+    for (body, calls) in bodies.iter().zip(&calls) {
+        if calls.iter().any(|func| {
             !matches!(
                 func,
                 FuncRef::Direct { symbol, .. } if known.contains(symbol.as_str())
@@ -2900,11 +2962,11 @@ fn infer_invalid_result_bodies(
     let mut changed = true;
     while changed {
         changed = false;
-        for (body, regions) in bodies.iter().zip(&regions) {
+        for (body, calls) in bodies.iter().zip(&calls) {
             if invalid.contains(&body.symbol) {
                 continue;
             }
-            if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
+            if calls.iter().any(|func| {
                 matches!(
                     func,
                 FuncRef::Direct { symbol, .. } if invalid.contains(symbol.as_str())
@@ -4977,6 +5039,12 @@ fn keeper(
     loan: &Loan,
     conflict: Span,
 ) -> (Option<String>, Option<Span>) {
+    // The holder read soonest after the conflict; of two read there, one the program named before
+    // one the compiler made (`$…`), then the first declared: the same one in every run (`[BLD-13]`).
+    let rank = |holder: LocalId, span: Span| {
+        let made = body.local(holder).name.as_deref().is_some_and(|name| name.starts_with('$'));
+        (span.start, made, holder.0)
+    };
     let mut best: Option<(LocalId, Span)> = None;
     for holder in regions.holders(loan.capability.validity_interval.0) {
         if body.local(*holder).name.is_none() || body.for_iterators.contains(holder) {
@@ -4989,7 +5057,7 @@ fn keeper(
             if span.file != conflict.file || span.start <= conflict.start {
                 continue;
             }
-            if best.is_none_or(|(_, b)| span.start < b.start) {
+            if best.is_none_or(|(b_holder, b)| rank(*holder, *span) < rank(b_holder, b)) {
                 best = Some((*holder, *span));
             }
         }
@@ -5403,7 +5471,7 @@ mod callable_region_metadata_tests {
             uncounted_handles: Vec::new(),
             removed_checks: Vec::new(),
             restrict_views: false,
-            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(),
+            stack_buffers: Vec::new(), frame_objects: Vec::new(), loop_notes: Default::default(), kept: false,
         }
     }
 
@@ -5432,7 +5500,7 @@ mod callable_region_metadata_tests {
         let signatures: HashMap<String, Elision> =
             bodies.iter().map(|body| (body.symbol.clone(), elision_of(body, &types))).collect();
         INFERRED.with(|inferred| inferred.borrow_mut().clear());
-        let _ = infer_callable_summaries(&bodies, &types, &signatures);
+        let _ = infer_callable_summaries(&bodies, &types, &signatures, &HashMap::new());
         let inferred = INFERRED.with(|inferred| inferred.borrow().clone());
         let count = |symbol: &str| inferred.iter().filter(|each| *each == symbol).count();
         assert_eq!((count("leaf"), count("caller")), (1, 2), "inferred: {inferred:?}");

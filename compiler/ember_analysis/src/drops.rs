@@ -482,6 +482,7 @@ pub fn check_drop_self_escapes_all(bodies: &[Body], types: &TypeTable, sink: &mu
         .collect();
     bodies
         .iter()
+        .filter(|body| !body.kept)
         .map(|body| check_drop_self_escapes(body, types, &owned_closure_environments, sink))
         .sum()
 }
@@ -1761,7 +1762,8 @@ fn is_collection(types: &TypeTable, ty: Ty) -> bool {
 
 /// Run over every body.
 pub fn elaborate_all(bodies: &mut [Body], types: &TypeTable, sink: &mut Sink) -> usize {
-    bodies.iter_mut().map(|body| elaborate(body, types, sink)).sum()
+    // `[BLD-7]` — each body on the driver's threads, reported in the bodies' order.
+    crate::parallel::each_mut(bodies, sink, |body, sink| elaborate(body, types, sink)).into_iter().map(|(count, _)| count).sum()
 }
 
 /// `[THR-5]` — a `Scope` binding may not be moved (`E3014`): its threads borrow the block's places,
