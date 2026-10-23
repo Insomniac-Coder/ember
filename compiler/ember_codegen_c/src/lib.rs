@@ -2482,7 +2482,7 @@ impl Emitter<'_> {
             self.line(&format!("    {RT}vec buffer = {RT}vec_empty();"));
             self.line(&format!("    {symbol}(&buffer, v);"));
             self.line(&format!("    {RT}str text = {RT}vec_as_str(&buffer);"));
-            self.line(&format!("    if (to_stderr) {RT}eprint_str(text); else {RT}print_str(text);"));
+            self.line(&format!("    if (to_stderr) {RT}eprint_str_held(text); else {RT}print_str_held(text);"));
             self.line(&format!("    {RT}vec_free(&buffer, 1);"));
             self.line("}");
             self.line("");
@@ -9342,7 +9342,7 @@ impl Emitter<'_> {
                 let mut rendered = rendered;
                 let mut printed = *arg_ty;
                 let printing = match which {
-                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint => Some(0),
+                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint | Builtin::PrintPiece { .. } => Some(0),
                     Builtin::Format | Builtin::FormatWith(_) => Some(1),
                     _ => None,
                 };
@@ -10710,32 +10710,41 @@ impl Emitter<'_> {
                     Builtin::RangeChecked(_) => {
                         unreachable!("[RNG-3] `checked` is lowered in MIR")
                     }
-                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint => {}
+                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint | Builtin::PrintPiece { .. } => {}
                     Builtin::Panic | Builtin::Assert => {
                         unreachable!("VI.6 — panics and assertions are MIR assertions")
                     }
                 }
-                if let Some(name) = self.unit_display(&rendered[0], *arg_ty) {
-                    let printer = match which {
-                        Builtin::Println => "println",
-                        Builtin::EPrintln => "eprintln",
-                        Builtin::EPrint => "eprint",
-                        _ => "print",
-                    };
-                    return format!("{RT}{printer}_str({name})");
-                }
-                if self.is_display_aggregate(*arg_ty) {
-                    let to_stderr = u8::from(matches!(which, Builtin::EPrint | Builtin::EPrintln));
-                    return format!("{}(&({}), {to_stderr})", self.fmt_print_fn(*arg_ty), rendered[0]);
-                }
-                let suffix = self.builtin_suffix(*arg_ty);
+                // D-900 — a print statement's piece is written with its stream held: its first
+                // piece takes it, its last lets it go (`_held` printers between). `print(x)` on its
+                // own holds it for itself.
+                let to_stderr = u8::from(matches!(which, Builtin::EPrint | Builtin::EPrintln | Builtin::PrintPiece { stderr: true, .. }));
+                let (piece, first, last) = match which {
+                    Builtin::PrintPiece { first, last, .. } => (true, *first, *last),
+                    _ => (false, false, false),
+                };
                 let name = match which {
                     Builtin::Println => "println",
                     Builtin::EPrintln => "eprintln",
-                    Builtin::EPrint => "eprint",
+                    _ if to_stderr == 1 => "eprint",
                     _ => "print",
                 };
-                format!("{RT}{name}_{suffix}({})", rendered.join(", "))
+                let held = if piece { "_held" } else { "" };
+                let call = if let Some(text) = self.unit_display(&rendered[0], *arg_ty) {
+                    format!("{RT}{name}_str{held}({text})")
+                } else if self.is_display_aggregate(*arg_ty) {
+                    // Its printer writes held: one on its own holds the stream for itself.
+                    let print = format!("{}(&({}), {to_stderr})", self.fmt_print_fn(*arg_ty), rendered[0]);
+                    if piece { print } else { format!("({RT}print_hold({to_stderr}), {print}, {RT}print_release({to_stderr}))") }
+                } else {
+                    format!("{RT}{name}_{}{held}({})", self.builtin_suffix(*arg_ty), rendered.join(", "))
+                };
+                match (first, last) {
+                    (false, false) => call,
+                    (true, false) => format!("({RT}print_hold({to_stderr}), {call})"),
+                    (false, true) => format!("({call}, {RT}print_release({to_stderr}))"),
+                    (true, true) => format!("({RT}print_hold({to_stderr}), {call}, {RT}print_release({to_stderr}))"),
+                }
             }
         }
     }

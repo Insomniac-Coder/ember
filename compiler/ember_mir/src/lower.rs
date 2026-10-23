@@ -3358,16 +3358,21 @@ impl<'a> Builder<'a> {
             // `print` whose arguments are the pieces in order. Every argument
             // is evaluated first, as in Python, and then each piece is printed
             // through the printer for its own type.
+            // D-900 — the pieces are written with the stream held from the first to the last, so
+            // two threads' prints do not mix.
             hir::ExprKind::Builtin { which: which @ (hir::Builtin::Print | hir::Builtin::EPrint), args }
-                if args.len() > 1 =>
+                if !args.is_empty() =>
             {
                 let which = *which;
                 let pieces: Vec<(Operand, Ty, ember_span::Span)> =
                     args.iter().map(|a| self.lower_print_argument(a)).collect();
-                for (operand, arg_ty, span) in pieces {
+                let stderr = which == hir::Builtin::EPrint;
+                let count = pieces.len();
+                for (index, (operand, arg_ty, span)) in pieces.into_iter().enumerate() {
                     // Each piece is used where it is written.
                     self.at(span);
                     let next = self.new_block();
+                    let which = hir::Builtin::PrintPiece { stderr, first: index == 0, last: index + 1 == count };
                     self.terminate(Terminator::Call {
                         func: FuncRef::Builtin { which, arg_ty },
                         args: vec![operand],

@@ -283,6 +283,11 @@ pub fn check(
     let expanded_foreign = expand_extern_blocks(modules, sink);
     let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
+    for (span, lift) in generators.iter().flat_map(|written| written.locals.iter()) {
+        checker.local_frames.insert(lift.env_frame, (true, *span));
+        checker.local_frames.insert(lift.plain_frame, (false, *span));
+        checker.local_lifts.insert(*span, lift.clone());
+    }
     checker.default_overflow = default_overflow;
     checker.active_overflow = default_overflow;
     checker.debug_assertions = debug_assertions;
@@ -1313,6 +1318,48 @@ struct GenericLocalFn {
     /// The instances whose bodies are made.
     built: HashSet<DefId>,
     span: Span,
+}
+
+/// `[GRM-28]` (ODR-268) — a generator written in a block, as one check of its declaration found it
+/// (`check_local_generator`, which gives its name a marker type of no value naming this entry):
+/// what its body captured, and the environment a call makes of it.
+#[derive(Clone)]
+struct LocalGenerator {
+    name: Symbol,
+    /// The lifted constructors, with an environment and without (`coroutines::LocalLift`).
+    env_fn: DefId,
+    plain_fn: DefId,
+    /// The enclosing declarations' type parameters, which the constructors take first.
+    enclosing: Vec<Symbol>,
+    /// The environment's type, or `None` when it captures nothing; and for each of its fields, the
+    /// name captured, the name a call reads it by, and whether it is `ref mut`.
+    env: Option<Ty>,
+    fields: Vec<(Symbol, Symbol, bool)>,
+    /// What a closure there reaches, and what the body captured, in the environment's order.
+    outer: HashMap<Symbol, Ty>,
+    owned_loop_borrowed_handles: HashSet<Symbol>,
+    captured: Vec<(Symbol, Ty)>,
+    /// Its declaration's check reported an error: a call makes no instance.
+    failed: bool,
+    /// Its parameters as written, for the closure its name read as a value is; and whether it has
+    /// type parameters of its own.
+    params: Vec<ast::Param>,
+    generic: bool,
+}
+
+/// `[GRM-28]` — a local generator's own name in its body: in its declaration's check, typed as a
+/// frame over an opaque environment (`entry: None`); in an instance's, the call made with the
+/// environment the instance was given (`LOCAL_ENV_PARAM`) made again, of type `env_ty`.
+#[derive(Clone)]
+struct LocalGeneratorSelf {
+    name: Symbol,
+    env_fn: DefId,
+    plain_fn: DefId,
+    enclosing: Vec<Symbol>,
+    /// The environment's type the instance takes (`void` for the form without one, the opaque one
+    /// of the declaration's check), and the local generator whose environment it is.
+    env_ty: Ty,
+    entry: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -2515,6 +2562,17 @@ struct Checker<'a> {
     /// `[GRM-28]` — the generic local functions, and each one's environment struct.
     generic_local_fns: Vec<GenericLocalFn>,
     generic_local_by_env: HashMap<StructId, usize>,
+    /// `[GRM-28]` (ODR-268) — each generator written in a block as the desugaring lifted it, by
+    /// its name's span; the lifted frames, by name, with whether each is the form with an
+    /// environment, and the lift it is of; each check of such a declaration, by its marker type;
+    /// the environments the calls being checked pass, checked (`LOCAL_ENV_VALUE`); and the local
+    /// generators whose bodies are being checked, innermost last.
+    local_lifts: HashMap<Span, coroutines::LocalLift>,
+    local_frames: HashMap<Symbol, (bool, Span)>,
+    local_generators: Vec<LocalGenerator>,
+    local_generator_by_marker: HashMap<StructId, usize>,
+    local_generator_env_values: Vec<Expr>,
+    local_generator_self: Vec<LocalGeneratorSelf>,
     /// `[GRM-28]` — the generic local function a call is reading the environment of, and the
     /// call's span, which its read of the name has: that read is the call's, every other one a
     /// value use.
@@ -3433,6 +3491,12 @@ impl<'a> Checker<'a> {
             generic_local_fns: Vec::new(),
             generic_local_by_env: HashMap::new(),
             generic_local_callee: None,
+            local_lifts: HashMap::new(),
+            local_frames: HashMap::new(),
+            local_generators: Vec::new(),
+            local_generator_by_marker: HashMap::new(),
+            local_generator_env_values: Vec::new(),
+            local_generator_self: Vec::new(),
             written_attributes: HashMap::new(),
             attribute_structs: HashSet::new(),
             pending_user_attributes: Vec::new(),
@@ -8514,7 +8578,9 @@ impl<'a> Checker<'a> {
             .collect();
         extensions.sort_by_key(|(target, extension)| (target.as_str().to_string(), extension.span.start));
         for (target, extension) in extensions {
-            if self.refused_derives.contains(&extension.span) {
+            // `[GRM-28]` — a lifted local generator's body is checked per instance only, its free
+            // names being what its declaration captured (`enter_local_generator_body`).
+            if self.refused_derives.contains(&extension.span) || self.local_frames.contains_key(&target) {
                 continue;
             }
             let args = self.opaque_arguments(&extension.params);
@@ -20392,7 +20458,9 @@ impl<'a> Checker<'a> {
                     self.type_params.insert(*param, *ty);
                 }
 
-                let generic = self.generically_checked.contains(&job.source);
+                // `[GRM-28]` — a lifted local generator's declaration's check is the one that
+                // reports.
+                let generic = self.generically_checked.contains(&job.source) || self.is_local_frame(job.owner);
                 let first = !generic && reported.insert((job.report_owner, fn_decl.name.name));
                 let quiet_before = (!first).then(|| quiet.diagnostics().len());
                 let saved = if first {
@@ -23493,8 +23561,13 @@ impl<'a> Checker<'a> {
         let signature_params = self.signatures[def.0 as usize].params.clone();
         self.check_declared_defaults(def, decl, &signature_params);
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, decl.is_unsafe);
+        let local_generator = self.enter_local_generator_body(owner, decl);
         let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
+        if let Some(watch) = local_generator {
+            self.captures = watch;
+            self.local_generator_self.pop();
+        }
         self.in_unsafe = outer_unsafe;
         if self.class_init.is_some() {
             self.report_missing_class_init_fields(span);
@@ -24954,6 +25027,8 @@ impl<'a> Checker<'a> {
     /// a normal closure reads through its shared-borrow field, while an
     /// `owned fn` reads its directly stored move/copy capture.
     fn resolve_capture(&mut self, name: Symbol, span: Span) -> Option<Expr> {
+        // `[GRM-28]` — in the closure it was made in, an alias is the capture it names.
+        let name = self.captures.as_ref().and_then(|watch| watch.aliases.get(&name).copied()).unwrap_or(name);
         let (source_ty, captures_by_move, owned_loop_borrowed_handle) = {
             let watch = self.captures.as_ref()?;
             (
@@ -36026,8 +36101,15 @@ impl<'a> Checker<'a> {
 
             ast::ExprKind::Path { segments } if segments.len() == 1 => {
                 let name = segments[0].name;
+                // `[GRM-28]` — the environment a local generator's call passes, already checked.
+                if let Some(value) = self.local_generator_env_values.last()
+                    && name.is(LOCAL_ENV_VALUE)
+                {
+                    return value.clone();
+                }
                 if let Some(local) = self.lookup(name) {
                     let value = self.read_local_expecting(local, span, expected);
+                    let value = self.local_generator_value(value, name);
                     return self.generic_local_value(value, name);
                 }
                 // `[CLO-2]` — inside a closure, a local of the enclosing function is a capture, and
@@ -36035,6 +36117,7 @@ impl<'a> Checker<'a> {
                 if self.is_capture_candidate(name)
                     && let Some(captured) = self.resolve_capture(name, span)
                 {
+                    let captured = self.local_generator_value(captured, name);
                     return self.generic_local_value(captured, name);
                 }
                 if let Some(value) = self.const_param_value(name, span) {
@@ -36102,6 +36185,7 @@ impl<'a> Checker<'a> {
                 // declares is a capture. Saying "cannot find it" would be
                 // false and would send the reader looking for a typo.
                 if let Some(captured) = self.resolve_capture(name, span) {
+                    let captured = self.local_generator_value(captured, name);
                     return self.generic_local_value(captured, name);
                 }
                 if self.report_ambiguous_glob(name, span) {
@@ -37427,13 +37511,29 @@ impl<'a> Checker<'a> {
             ast::ExprKind::IndexOrInstantiate { base, args }
                 if matches!(&base.kind, ast::ExprKind::Path { segments }
                     if !(segments.len() == 1 && self.lookup(segments[0].name).is_some())
-                        || segments.len() == 1 && self.generic_local_named(segments[0].name).is_some()) =>
+                        || segments.len() == 1 && self.generic_local_named(segments[0].name).is_some()
+                        || segments.len() == 1 && self.local_generator_named(segments[0].name).is_some()) =>
             {
                 let tys = self.explicit_type_arguments(args);
                 (base.as_ref(), tys)
             }
             _ => (callee, Vec::new()),
         };
+        // `[GRM-28]` (ODR-268) — a local generator, in its own body, in its block, or captured.
+        if let ast::ExprKind::Path { segments } = &callee.kind
+            && let [name] = segments.as_slice()
+            && !self.local_generator_self.is_empty()
+            && self.lookup(name.name).is_none()
+            && let Some(own) = self.local_generator_self.iter().rev().find(|own| own.name == name.name).cloned()
+        {
+            return self.synth_local_generator_self_call(own, args, explicit, span);
+        }
+        if let ast::ExprKind::Path { segments } = &callee.kind
+            && let [name] = segments.as_slice()
+            && let Some(index) = self.local_generator_named(name.name)
+        {
+            return self.synth_local_generator_call(index, args, explicit, span);
+        }
         // `[GRM-28]` — in a local function's own body, its name is itself,
         // unless a local there shadows it.
         if let ast::ExprKind::Path { segments } = &callee.kind
@@ -39410,19 +39510,17 @@ impl<'a> Checker<'a> {
     /// may call itself. Its function is reserved before the body is checked,
     /// which is what a call to itself names.
     fn check_local_fn(&mut self, decl: &ast::FnDecl, span: Span, out: &mut Vec<Stmt>) {
+        if decl.is_gen
+            && let Some(lift) = self.local_lifts.get(&decl.name.span).cloned()
+        {
+            return self.check_local_generator(decl, lift, span);
+        }
         if !decl.generics.is_empty() && !decl.is_gen && decl.abi.is_none() {
             return self.check_generic_local_fn(decl, span, out);
         }
-        let unbuilt = if decl.is_gen {
-            Some("a local generator")
-        } else if decl.abi.is_some() {
-            Some("a local function with a foreign ABI")
-        } else {
-            None
-        };
-        if let Some(what) = unbuilt {
+        if decl.abi.is_some() {
             self.sink.emit(
-                Diagnostic::error(codes::E0900, decl.name.span, format!("{what} is not supported yet"))
+                Diagnostic::error(codes::E0900, decl.name.span, "a local function with a foreign ABI is not supported yet")
                     .note("a local function is a named closure [GRM-28]; declare this one at module level"),
             );
             // Its uses are this error's, not each one another.
@@ -39747,6 +39845,7 @@ impl<'a> Checker<'a> {
             found: entry.captured.clone(),
             env: Some((LocalId(0), entry.env)),
             captures_by_move: false,
+            aliases: HashMap::new(),
         };
         self.local_fn_self.push(LocalFnSelf { name: entry.name, def, depth: self.lambda_depth + 1, env: Some(entry.env_mode), probing: false });
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, entry.in_unsafe);
@@ -39792,6 +39891,382 @@ impl<'a> Checker<'a> {
         if let Some(function) = self.lambdas.last_mut().filter(|function| function.def == def) {
             function.closure_environment = None;
         }
+    }
+
+    /// `[GRM-28]`, `[GRM-21]` (ODR-268) — a generator written in a block. Its body, each `yield` the
+    /// transform's call (`coroutines::LocalLift`), is checked here as the named closure it is
+    /// (`[CLO-12]`), its own type parameters opaque, its own name a frame over an opaque
+    /// environment: the check that reports, and that finds what it captures and how (`[CLO-2]`).
+    /// The closure is never emitted. The name then holds that environment, or, when it captures
+    /// nothing, a marker of no value; a call makes an instance of the lifted generator
+    /// (`synth_local_generator_call`), passing `ref` or `ref mut` of the environment, so what it
+    /// captures stays borrowed while a generator made of it lives (`[BRW-2]`).
+    fn check_local_generator(&mut self, decl: &ast::FnDecl, lift: coroutines::LocalLift, span: Span) {
+        let error = self.common.error;
+        let Some(body) = &decl.body else {
+            self.declare(Some(decl.name.name), error, decl.name.span);
+            return;
+        };
+        if decl.params.iter().any(|param| matches!(param.kind, ast::ParamKind::Receiver { .. })) {
+            self.error(codes::E2020, decl.name.span, "a local function has no receiver");
+            self.declare(Some(decl.name.name), error, decl.name.span);
+            return;
+        }
+        let (Some(&env_fn), Some(&plain_fn)) =
+            (self.fn_ids.get(&self.qualified(lift.env_fn)), self.fn_ids.get(&self.qualified(lift.plain_fn)))
+        else {
+            self.declare(Some(decl.name.name), error, decl.name.span);
+            return;
+        };
+        let result = coroutines::generator_types(decl.ret.as_ref()).and_then(|(_, result)| result);
+        // Its own type parameters, opaque, after the enclosing ones, then its environment's.
+        let type_params = self.type_params.clone();
+        let base = self.current_generics.len();
+        let declared = self.declare_generics_from(&decl.generics, base);
+        self.current_generics.extend(declared);
+        let hidden = Symbol::intern(coroutines::LOCAL_ENV_TYPE);
+        self.current_generics.push(GenericParam {
+            name: hidden,
+            bounds: Vec::new(),
+            callable: None,
+            default: None,
+            projection: None,
+            count_op: None,
+            bindings: Vec::new(),
+            const_ty: None,
+        });
+        let opaque_env = self.types.intern(TyKind::Param { index: (self.current_generics.len() - 1) as u32, name: hidden });
+        let mut param_tys = Vec::new();
+        for param in &decl.params {
+            if let ast::ParamKind::Named { ty, .. } = &param.kind {
+                param_tys.push(FnParam { ty: self.resolve_type(ty), mode: fn_param_mode(param.mode) });
+            }
+        }
+        let ret = result.as_ref().map_or(self.common.void, |ty| self.resolve_type(ty));
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, send: false, params: param_tys, ret });
+        let lambda = ast::Lambda { is_owned: false, params: decl.params.clone(), ret: result, body: ast::LambdaBody::Block(body.clone()) };
+        // What a closure here reaches, as `synth_lambda_fresh` finds it.
+        let mut outer: HashMap<Symbol, Ty> =
+            self.scopes.iter().flat_map(|scope| scope.iter()).map(|(name, local)| (*name, self.locals[local.0 as usize].ty)).collect();
+        if let Some(watch) = &self.captures {
+            for (name, ty) in &watch.outer {
+                outer.entry(*name).or_insert(*ty);
+            }
+        }
+        let owned_loop_borrowed_handles: HashSet<Symbol> = outer
+            .keys()
+            .filter(|name| self.lookup(**name).is_some_and(|local| self.locals[local.0 as usize].loop_borrowed_handle))
+            .copied()
+            .collect();
+        let errors = self.sink.error_count();
+        let lambdas = self.lambdas.len();
+        self.local_generator_self.push(LocalGeneratorSelf {
+            name: decl.name.name,
+            env_fn,
+            plain_fn,
+            enclosing: lift.enclosing.clone(),
+            env_ty: opaque_env,
+            entry: None,
+        });
+        let in_unsafe = self.in_unsafe || decl.is_unsafe;
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, in_unsafe);
+        let value = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
+        self.in_unsafe = outer_unsafe;
+        self.local_generator_self.pop();
+        // What runs is an instance of the lifted generator: this closure, and those in it, are checked only.
+        for function in &self.lambdas[lambdas..] {
+            self.opaque_lambdas.insert(function.def);
+        }
+        let failed = self.sink.error_count() != errors || value.ty == error;
+        self.current_generics.truncate(base);
+        self.type_params = type_params;
+        // Its environment, or, capturing nothing, a marker naming this declaration.
+        // A marker naming this declaration, which its name holds: it holds nothing and is never
+        // read (a call names the lifted generator, so `[LNT-1]` does not ask for its reads).
+        let marker = self.types.add_struct(StructDef {
+            name: Symbol::intern(&format!("{}_local_generator{}", decl.name.name, self.local_generators.len())),
+            fields: Vec::new(),
+            span,
+            derives_copy: true,
+            has_drop: false,
+            drops_fields: true,
+            origin: None,
+            declaring_module: self.current_module,
+        });
+        // What it captures, each under a name of its own that a call reads it by (`local_generator_env`):
+        // a local of this body under another name in its scope; a capture of the closure this body is
+        // under another name in that closure's reach, which a closure here can capture by it.
+        let (env, fields) = match &value.kind {
+            ExprKind::StructLit { struct_id, .. } => {
+                let mut fields = Vec::new();
+                for field in self.types.struct_def(*struct_id).fields.clone() {
+                    let mutable = matches!(*self.types.kind(field.ty), TyKind::Ref { mutable: true, .. });
+                    let alias = Symbol::intern(&format!("\u{b7}{}\u{b7}{}", marker.0, field.name));
+                    match self.lookup(field.name) {
+                        Some(local) => {
+                            if let Some(scope) = self.scopes.last_mut() {
+                                scope.insert(alias, local);
+                            }
+                        }
+                        None => {
+                            if let Some(watch) = &mut self.captures
+                                && let Some(&ty) = watch.outer.get(&field.name)
+                            {
+                                watch.outer.insert(alias, ty);
+                                watch.aliases.insert(alias, field.name);
+                            }
+                        }
+                    }
+                    fields.push((field.name, alias, mutable));
+                }
+                (Some(value.ty), fields)
+            }
+            _ => (None, Vec::new()),
+        };
+        let captured: Vec<(Symbol, Ty)> = match env.map(|ty| self.types.kind(ty).clone()) {
+            Some(TyKind::Struct(id)) => self
+                .types
+                .struct_def(id)
+                .fields
+                .iter()
+                .map(|field| match *self.types.kind(field.ty) {
+                    TyKind::Ref { inner, .. } => (field.name, inner),
+                    _ => (field.name, field.ty),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        self.local_generator_by_marker.insert(marker, self.local_generators.len());
+        self.local_generators.push(LocalGenerator {
+            name: decl.name.name,
+            env_fn,
+            plain_fn,
+            enclosing: lift.enclosing,
+            env,
+            fields,
+            outer,
+            owned_loop_borrowed_handles,
+            captured,
+            failed,
+            params: decl.params.clone(),
+            generic: !decl.generics.is_empty(),
+        });
+        let ty = self.types.intern(TyKind::Struct(marker));
+        self.declare(Some(decl.name.name), ty, Span::DUMMY);
+    }
+
+    /// `[GRM-28]` — the local generator a name is, where it is read: a local of the block, or a
+    /// capture of a closure there (or of a local generator's body).
+    fn local_generator_named(&self, name: Symbol) -> Option<usize> {
+        if self.local_generators.is_empty() {
+            return None;
+        }
+        let ty = match self.lookup(name) {
+            Some(local) => self.locals[local.0 as usize].ty,
+            None => *self.captures.as_ref()?.outer.get(&name)?,
+        };
+        match *self.types.kind(ty) {
+            TyKind::Struct(id) => self.local_generator_by_marker.get(&id).copied(),
+            _ => None,
+        }
+    }
+
+    /// The enclosing declarations' type arguments a lifted local generator takes first: what each
+    /// of their type parameters is where the call is (itself in an opaque check, an instance's
+    /// argument in an instance's).
+    fn local_generator_enclosing(&mut self, names: &[Symbol], span: Span) -> Option<Vec<Ty>> {
+        let found: Option<Vec<Ty>> = names.iter().map(|name| self.type_params.get(name).copied()).collect();
+        if found.is_none() {
+            self.sink.emit(
+                Diagnostic::error(codes::E0900, span, "a local generator inside a declaration whose type parameters are not all types is not supported yet")
+                    .note("a generator written in a block is generic over the type parameters around it [GRM-28]"),
+            );
+        }
+        found
+    }
+
+    /// `[GRM-28]` (ODR-268), `[CLO-2]` — the environment a call of a local generator passes: `ref`
+    /// or `ref mut` of each place it captures, made here, so each is borrowed while the generator
+    /// made of it lives (`[BRW-2]`), not while the name does. In its block and in a closure there,
+    /// each place is read by its own name (`check_local_generator`), so a later local of the same
+    /// name is not it; in an instance's body (`own`), through the environment it was given.
+    fn local_generator_env(&mut self, index: usize, own: bool, span: Span) -> Option<Expr> {
+        let env_ty = self.local_generators[index].env?;
+        let TyKind::Struct(env_id) = *self.types.kind(env_ty) else { return None };
+        let field_tys: Vec<Ty> = self.types.struct_def(env_id).fields.iter().map(|field| field.ty).collect();
+        let fields = self.local_generators[index].fields.clone();
+        let mut values = Vec::with_capacity(fields.len());
+        for ((capture, alias, mutable), ty) in fields.into_iter().zip(field_tys) {
+            let place = if own {
+                self.resolve_capture(capture, span)?
+            } else {
+                match self.lookup(alias) {
+                    Some(local) => Expr { ty: self.locals[local.0 as usize].ty, kind: ExprKind::Local(local), span },
+                    None => self.resolve_capture(alias, span)?,
+                }
+            };
+            values.push(Expr { ty, kind: ExprKind::Ref { place: Box::new(place), mutable }, span });
+        }
+        Some(Expr { ty: env_ty, kind: ExprKind::StructLit { struct_id: env_id, fields: values }, span })
+    }
+
+    /// `[GRM-28]` (ODR-268) — a call of a local generator: an instance of the lifted constructor
+    /// over the enclosing type arguments, its environment's type, and its own (written or
+    /// inferred), given that environment first (`local_generator_env`); or, when it captures
+    /// nothing, the form without one.
+    fn synth_local_generator_call(&mut self, index: usize, args: &[ast::Arg], written: Vec<Ty>, span: Span) -> Expr {
+        let entry = self.local_generators[index].clone();
+        if entry.failed {
+            for arg in args {
+                let _ = self.synth(&arg.value);
+            }
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let Some(mut explicit) = self.local_generator_enclosing(&entry.enclosing, span) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        let (def, env) = match entry.env {
+            Some(env_ty) => {
+                explicit.push(env_ty);
+                let Some(env) = self.local_generator_env(index, false, span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                (entry.env_fn, Some(env))
+            }
+            None => {
+                explicit.push(self.common.void);
+                (entry.plain_fn, None)
+            }
+        };
+        explicit.extend(written);
+        self.call_local_generator(def, entry.name, env, explicit, args, span)
+    }
+
+    /// `[GRM-28]` — a local generator's own name in its body: in its declaration's check, a frame
+    /// over the opaque environment; in an instance's, the instance it is in, given the environment
+    /// it was given again.
+    fn synth_local_generator_self_call(&mut self, own: LocalGeneratorSelf, args: &[ast::Arg], written: Vec<Ty>, span: Span) -> Expr {
+        let Some(mut explicit) = self.local_generator_enclosing(&own.enclosing, span) else {
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        };
+        explicit.push(own.env_ty);
+        explicit.extend(written);
+        let (def, env) = match own.entry {
+            Some(index) => {
+                let Some(env) = self.local_generator_env(index, true, span) else {
+                    return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+                };
+                (own.env_fn, Some(env))
+            }
+            None => (own.plain_fn, None),
+        };
+        self.call_local_generator(def, own.name, env, explicit, args, span)
+    }
+
+    /// The call of a lifted constructor, the environment first when it takes one: a checked value,
+    /// which the call's first argument reads (`LOCAL_ENV_VALUE`).
+    fn call_local_generator(&mut self, def: DefId, name: Symbol, env: Option<Expr>, explicit: Vec<Ty>, args: &[ast::Arg], span: Span) -> Expr {
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        let given = env.is_some();
+        if let Some(env) = env {
+            // Its own parameters are what a program counts.
+            let declared = self.signatures[def.0 as usize].params.len();
+            if !self.arity_fits(def, args.len() + 1, declared) {
+                self.report_arity(def, format!("`{name}`"), declared - 1, args.len(), span);
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
+            let value = ast::Expr {
+                id: ast::NodeId::DUMMY,
+                kind: ast::ExprKind::Path { segments: vec![ast::Ident { name: Symbol::intern(LOCAL_ENV_VALUE), span }] },
+                span,
+            };
+            call_args.push(ast::Arg { name: None, value, span });
+            self.local_generator_env_values.push(env);
+        }
+        call_args.extend(args.iter().cloned());
+        let call = self.synth_generic_call(def, name, &call_args, explicit, None, span);
+        if given {
+            self.local_generator_env_values.pop();
+        }
+        call
+    }
+
+    /// `[GRM-28]`, `[CLO-1]` — a local generator's name read as a value: the closure that calls it,
+    /// `fn(n: int) => count(n)`, as a local function's name is its closure; one with type
+    /// parameters of its own is no one function (`E2060`).
+    fn local_generator_value(&mut self, value: Expr, name: Symbol) -> Expr {
+        let TyKind::Struct(id) = *self.types.kind(value.ty) else { return value };
+        let Some(&index) = self.local_generator_by_marker.get(&id) else { return value };
+        let span = value.span;
+        let entry = self.local_generators[index].clone();
+        if entry.generic {
+            self.sink.emit(
+                Diagnostic::error(codes::E2060, span, format!("`{name}` is generic, so it is not one function"))
+                    .help(format!("call it, `{name}(x)`, or wrap a call in a lambda, `fn(x: int) => {name}(x)`"))
+                    .note("a generic is a recipe; each instantiation is its own function [TYP-16], [GRM-28]"),
+            );
+            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        }
+        let path = |name: Symbol| ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Path { segments: vec![ast::Ident { name, span }] }, span };
+        let args = entry
+            .params
+            .iter()
+            .filter_map(|param| match &param.kind {
+                ast::ParamKind::Named { name, .. } => Some(ast::Arg { name: None, value: path(name.name), span }),
+                ast::ParamKind::Receiver { .. } => None,
+            })
+            .collect();
+        let call = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Call { callee: Box::new(path(name)), args }, span };
+        let lambda = ast::Lambda { is_owned: false, params: entry.params.clone(), ret: None, body: ast::LambdaBody::Expr(Box::new(call)) };
+        self.synth(&ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Lambda(lambda), span })
+    }
+
+    /// `[GRM-28]` (ODR-268) — the body of an instance of a lifted local generator's frame: its free
+    /// names are what its declaration captured, read through the environment the instance was given
+    /// (`·env`), as a closure's are through its own; `self` is its enclosing method's, not the
+    /// frame; and its own name is the instance it is in. Returns what to restore.
+    fn enter_local_generator_body(&mut self, owner: Ty, decl: &ast::FnDecl) -> Option<Option<CaptureWatch>> {
+        if self.local_frames.is_empty() || !decl.name.name.is("body") {
+            return None;
+        }
+        let TyKind::Struct(id) = *self.types.kind(owner) else { return None };
+        let (origin, _) = self.types.struct_def(id).origin.clone()?;
+        let &(with_env, at) = self.local_frames.get(&origin)?;
+        let lift = self.local_lifts.get(&at)?.clone();
+        let env_fn = *self.fn_ids.get(&self.qualified(lift.env_fn))?;
+        let plain_fn = *self.fn_ids.get(&self.qualified(lift.plain_fn))?;
+        let env_ty = *self.type_params.get(&Symbol::intern(coroutines::LOCAL_ENV_TYPE))?;
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.remove(&Symbol::intern("self"));
+        }
+        let mut entry = None;
+        let mut watch = None;
+        if with_env
+            && let TyKind::Struct(env_id) = *self.types.kind(env_ty)
+            && let Some(index) = self.local_generators.iter().position(|entry| entry.env == Some(env_ty))
+            && let Some(env_local) = self.lookup(Symbol::intern(coroutines::LOCAL_ENV_PARAM))
+        {
+            let found = &self.local_generators[index];
+            entry = Some(index);
+            watch = Some(CaptureWatch {
+                outer: found.outer.clone(),
+                owned_loop_borrowed_handles: found.owned_loop_borrowed_handles.clone(),
+                found: found.captured.clone(),
+                env: Some((env_local, env_id)),
+                captures_by_move: false,
+                aliases: HashMap::new(),
+            });
+        }
+        self.local_generator_self.push(LocalGeneratorSelf { name: lift.name, env_fn, plain_fn, enclosing: lift.enclosing, env_ty, entry });
+        Some(std::mem::replace(&mut self.captures, watch))
+    }
+
+    /// Whether `ty` is an instance of a lifted local generator's frame (`[GRM-28]`), whose methods'
+    /// checks report only what its declaration's did not.
+    fn is_local_frame(&self, ty: Ty) -> bool {
+        !self.local_frames.is_empty()
+            && matches!(*self.types.kind(ty), TyKind::Struct(id)
+                if self.types.struct_def(id).origin.as_ref().is_some_and(|(origin, _)| self.local_frames.contains_key(origin)))
     }
 
     /// `[GRM-28]`, `[UNS-1]` — a call to an `unsafe` local function that captures (one that does not
@@ -46956,6 +47431,7 @@ impl<'a> Checker<'a> {
             found: Vec::new(),
             env: None,
             captures_by_move: lambda.is_owned,
+            aliases: HashMap::new(),
         };
         let (_, _, _, probe) = self.check_lambda_body(lambda, &params, ret, probe, None);
         let _discarded = self.sink.take();
@@ -46985,6 +47461,7 @@ impl<'a> Checker<'a> {
                 found: Vec::new(),
                 env: None,
                 captures_by_move: lambda.is_owned,
+                aliases: HashMap::new(),
             };
             let (body, body_ty, locals, _) =
                 self.check_lambda_body(lambda, &params, ret, watch, None);
@@ -47054,6 +47531,7 @@ impl<'a> Checker<'a> {
                 found: captured.clone(),
                 env: Some((LocalId(0), probe_id)),
                 captures_by_move: lambda.is_owned,
+                aliases: HashMap::new(),
             };
             // The probe checks the body only to learn what it writes; the
             // final check below reports ([DIA-14]: one error, not two).
@@ -47161,6 +47639,7 @@ impl<'a> Checker<'a> {
             found: captured.clone(),
             env: Some((LocalId(0), struct_id)),
             captures_by_move: owned,
+            aliases: HashMap::new(),
         };
         let body_env_mode = if probe_once {
             Mode::Owned
@@ -60732,6 +61211,10 @@ fn field_vis(kind: ast::VisKind) -> FieldVis {
 /// `[CLO-6]` — this syntax creates the implicit `CallableOnce` bound. The
 /// callable's own `fn(...)` type records its argument modes; the outer
 /// `owned` mode selects consumption of the callee value.
+/// `[GRM-28]` — the name a local generator's call reads its checked environment by
+/// (`call_local_generator`); no program can write it.
+const LOCAL_ENV_VALUE: &str = "\u{b7}env\u{b7}value";
+
 /// `[GRM-28]` — the hidden name a local function's environment has in its body.
 fn local_fn_env_name(name: Symbol) -> Symbol {
     Symbol::intern(&format!("\u{b7}env\u{b7}{name}"))
@@ -60791,6 +61274,9 @@ struct CaptureWatch {
     /// shared borrow. This is carried across both body-check passes so capture
     /// discovery and the final body use the same representation.
     captures_by_move: bool,
+    /// `[GRM-28]` — names this closure's reach holds for its captures, each the capture it names
+    /// here: a local generator's, for a closure inside to capture by (`check_local_generator`).
+    aliases: HashMap<Symbol, Symbol>,
 }
 
 /// An expression without the parentheses around it: `(0..10)` is `0..10`.

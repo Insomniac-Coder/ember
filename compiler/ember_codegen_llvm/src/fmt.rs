@@ -437,19 +437,21 @@ impl<'a> FnCx<'_, 'a> {
         (at, align, ty)
     }
 
-    /// `[STD-9]` — `print` and its kin of `value` of `ty`.
-    pub(crate) fn print_value(&mut self, printer: &str, value: Val, ty: Ty) -> Result<()> {
+    /// `[STD-9]` — `print` and its kin of `value` of `ty`; `held` for a print statement's piece,
+    /// written with its stream already held (D-900).
+    pub(crate) fn print_value(&mut self, printer: &str, held: bool, value: Val, ty: Ty) -> Result<()> {
+        let held = if held { "_held" } else { "" };
         let (size, align) = self.m.ty.size_align(ty);
         let (at, at_align) = self.spill(&value, size, align);
         let (at, at_align, ty) = self.unwrap_printed(at, at_align, ty);
         let table = self.m.ty.table;
         let through = self.m.ty.through_range(ty);
         if let Some(name) = self.unit_display(&at, at_align, through)? {
-            self.call_rt(&format!("{printer}_str"), vec![name], None);
+            self.call_rt(&format!("{printer}_str{held}"), vec![name], None);
             return Ok(());
         }
         if let Some(text) = self.text_at(&at, ty) {
-            self.call_rt(&format!("{printer}_str"), vec![text], None);
+            self.call_rt(&format!("{printer}_str{held}"), vec![text], None);
             return Ok(());
         }
         if is_display_aggregate(self.m, ty) {
@@ -460,7 +462,7 @@ impl<'a> FnCx<'_, 'a> {
             self.emit(format!("call void {function}(ptr {buffer}, ptr {at})"));
             let text = self.text_at(&buffer, table.find(&TyKind::Str).unwrap_or(ty)).expect("a buffer is text");
             let to_stderr = printer.starts_with('e');
-            self.call_rt(if to_stderr { "eprint_str" } else { "print_str" }, vec![text], None);
+            self.call_rt(&format!("{}_str{held}", if to_stderr { "eprint" } else { "print" }), vec![text], None);
             self.call_rt("vec_free", vec![Val::Imm(Sc::Ptr, buffer), Val::Imm(Sc::I(64), "1".to_string())], None);
             return Ok(());
         }
@@ -470,7 +472,7 @@ impl<'a> FnCx<'_, 'a> {
         }
         let value = self.value_at(&at, at_align, through);
         let value = self.formatter_value(value, through, suffix)?;
-        self.call_rt(&format!("{printer}_{suffix}"), vec![value], None);
+        self.call_rt(&format!("{printer}_{suffix}{held}"), vec![value], None);
         Ok(())
     }
 

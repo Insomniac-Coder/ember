@@ -1796,6 +1796,10 @@ pub enum Builtin {
     /// `[STD-9]` — `eprintln(x)` and `eprint(x)`: the same, to standard error.
     EPrintln,
     EPrint,
+    /// `[STD-9]` (D-900) — one piece of a print statement, as MIR writes it: the first takes its
+    /// stream (standard error with `stderr`), the last lets it go, and each is written with it
+    /// held, so another thread's print is written before or after the statement, never into it.
+    PrintPiece { stderr: bool, first: bool, last: bool },
     /// VI.6, `[PAN-1]` (0.9.9) — `panic(msg)`, `todo()`, `unreachable()`:
     /// type `Never`; its one argument is the `str` message.
     Panic,
@@ -2363,6 +2367,7 @@ impl Builtin {
             Builtin::Print => "print",
             Builtin::EPrintln => "eprintln",
             Builtin::EPrint => "eprint",
+            Builtin::PrintPiece { .. } => "print_piece",
             Builtin::Panic => "panic",
             Builtin::Assert => "assert",
             Builtin::TotalLess => "cmp",

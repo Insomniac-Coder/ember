@@ -2777,7 +2777,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
     fn builtin(&mut self, which: &Builtin, arg_ty: Ty, args: &[Operand], dest: &Place, span: ember_span::Span) -> Result<()> {
         let _ = span;
         match which {
-            Builtin::Print | Builtin::Println | Builtin::EPrint | Builtin::EPrintln => self.print(which, arg_ty, args),
+            Builtin::Print | Builtin::Println | Builtin::EPrint | Builtin::EPrintln | Builtin::PrintPiece { .. } => self.print(which, arg_ty, args),
             // `[CLS-1]` — the object's header from the runtime; `[OPT-1]` in the frame when the
             // compiler proved no handle outlives the function.
             Builtin::ClassNew { class_id, .. } => {
@@ -2860,16 +2860,27 @@ impl<'m, 'a> FnCx<'m, 'a> {
         Ok(())
     }
 
-    /// `[STD-9]` — `print` and its kin through the runtime's printer for the argument's type.
+    /// `[STD-9]` — `print` and its kin through the runtime's printer for the argument's type. A
+    /// print statement's piece (D-900) is written with its stream held: its first piece takes it,
+    /// its last lets it go; a printer of its own holds it for itself.
     fn print(&mut self, which: &Builtin, arg_ty: Ty, args: &[Operand]) -> Result<()> {
-        let printer = match which {
-            Builtin::Println => "println",
-            Builtin::EPrintln => "eprintln",
-            Builtin::EPrint => "eprint",
-            _ => "print",
+        let (printer, piece) = match *which {
+            Builtin::Println => ("println", None),
+            Builtin::EPrintln => ("eprintln", None),
+            Builtin::EPrint => ("eprint", None),
+            Builtin::PrintPiece { stderr, first, last } => (if stderr { "eprint" } else { "print" }, Some((first, last))),
+            _ => ("print", None),
         };
+        let stream = Val::Imm(Sc::I(32), u8::from(printer.starts_with('e')).to_string());
         let value = self.operand(&args[0])?;
-        self.print_value(printer, value, arg_ty)
+        if let Some((true, _)) = piece {
+            self.call_rt("print_hold", vec![stream.clone()], None);
+        }
+        self.print_value(printer, piece.is_some(), value, arg_ty)?;
+        if let Some((_, true)) = piece {
+            self.call_rt("print_release", vec![stream], None);
+        }
+        Ok(())
     }
 }
 

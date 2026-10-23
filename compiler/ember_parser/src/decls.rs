@@ -879,7 +879,7 @@ impl Parser<'_> {
     }
 
     /// `fn`, or `gen fn`, `n` tokens ahead: `fn_header`'s last two words.
-    fn at_fn_at(&self, n: usize) -> bool {
+    pub(crate) fn at_fn_at(&self, n: usize) -> bool {
         self.at_kw_at(n, Kw::Fn) || self.at_gen_fn_at(n)
     }
 

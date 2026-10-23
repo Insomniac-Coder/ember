@@ -235,7 +235,8 @@ fn retain_referenced_standard_bodies(
                             ember_mir::Builtin::Format
                             | ember_mir::Builtin::FormatWith(_)
                             | ember_mir::Builtin::Print
-                            | ember_mir::Builtin::EPrint,
+                            | ember_mir::Builtin::EPrint
+                            | ember_mir::Builtin::PrintPiece { .. },
                         arg_ty,
                     },
                 ..

@@ -1169,7 +1169,7 @@ impl SiteBuilder<'_> {
                     }
                     // ADR-186 — formatting a value runs the written `Debug`
                     // of each part of it that has one.
-                    Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint => {
+                    Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint | Builtin::PrintPiece { .. } => {
                         for writer in self.types.debug_writers_reached(*arg_ty) {
                             if let Some(&callee) = self.index.get(writer) {
                                 sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(callee) });
@@ -1394,7 +1394,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
     const ALLOC: Effects = Effects(Effects::ALLOC.0 | Effects::PANIC.0);
     use Builtin as B;
     match which {
-        B::Println | B::EPrintln | B::EPrint | B::Print => (Effects::IO, "console output"),
+        B::Println | B::EPrintln | B::EPrint | B::Print | B::PrintPiece { .. } => (Effects::IO, "console output"),
         B::Input => (Effects::IO | Effects::BLOCK | ALLOC, "`input`, which reads the console"),
         B::Panic => (Effects::PANIC, "`panic`"),
         B::Assert => (Effects::PANIC, "`assert`"),

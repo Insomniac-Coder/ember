@@ -3873,6 +3873,7 @@ fn builtin_cannot_reach_a_cell(func: &FuncRef) -> bool {
             | Builtin::EPrint
             | Builtin::Println
             | Builtin::EPrintln
+            | Builtin::PrintPiece { .. }
             | Builtin::Format
             | Builtin::FormatWith(_)
             | Builtin::StringNew
