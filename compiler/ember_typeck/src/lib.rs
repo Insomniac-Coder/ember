@@ -34664,8 +34664,23 @@ impl<'a> Checker<'a> {
             return system;
         }
         let mut found = self.synth_with_expectation(expr, Some(expected));
-        while borrowed && found.ty != expected && self.box_inner(found.ty).is_some() {
-            found = self.read_box_through(found);
+        while borrowed && found.ty != expected {
+            if self.box_inner(found.ty).is_some() {
+                found = self.read_box_through(found);
+                continue;
+            }
+            // A reference to a `Box` is read through too, the reference first (`for b in boxes:
+            // f(b)` with `f(s: ref dyn Shape)`): `[TYP-14]` reads through both.
+            if let TyKind::Ref { inner, .. } = *self.types.kind(found.ty)
+                && self.box_inner(inner).is_some()
+                && inner != expected
+                && !matches!(*self.types.kind(expected), TyKind::Ref { inner: wanted, .. } if wanted == inner)
+            {
+                let span = found.span;
+                found = Expr { ty: inner, kind: ExprKind::Deref(Box::new(found)), span };
+                continue;
+            }
+            break;
         }
         let coerced = self.coerce(found, expected);
         self.warn_if_literal_loses_precision(expr, coerced.ty);
@@ -42515,6 +42530,17 @@ impl<'a> Checker<'a> {
     /// silence. It is rejected here, where the type alone answers the
     /// question and no flow analysis is needed.
     fn reject_write_through_shared_ref(&mut self, place: &Expr, span: Span) -> bool {
+        self.reject_shared_ref_access(place, span, false)
+    }
+
+    /// `[CLO-2]`, `[BRW-1]` — a call of an owned callable value reached through a shared
+    /// reference (`for handler in handlers: handler(e)`): it may write its captured state, so it
+    /// is called from a mutable place, and the help says how to borrow it so.
+    fn reject_call_through_shared_ref(&mut self, callee: &Expr, span: Span) -> bool {
+        self.reject_shared_ref_access(callee, span, true)
+    }
+
+    fn reject_shared_ref_access(&mut self, place: &Expr, span: Span, call: bool) -> bool {
         let mut current = place;
         loop {
             // D-747, `[FN-9]` — a class object's field is written through its handle, however the
@@ -42539,7 +42565,9 @@ impl<'a> Checker<'a> {
                 // reference is never re-pointed (ADR-010): `ref mut` would write `v` into what `r`
                 // refers to. The value it means is a copy or an index.
                 let rebinding = matches!(&place.kind, ExprKind::Deref(inner) if matches!(inner.kind, ExprKind::Local(_)));
-                let help = if rebinding {
+                let help = if call {
+                    "a callable value may change what it captured, so it is called from a mutable place [CLO-2]: borrow it as `ref mut`, and iterate a collection of them with `.iter_mut()` (`for f in fs.iter_mut():`)"
+                } else if rebinding {
                     "a reference is not pointed elsewhere: this writes through it, into what it refers to; to keep another value, keep a copy of it (`.clone()`), or its index"
                 } else {
                     "take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference"
@@ -46053,7 +46081,7 @@ impl<'a> Checker<'a> {
         if !stateless && !once && is_place(&callee.kind) {
             if !self.is_lent_callable(&callee) {
                 self.reject_readonly_write(&callee, span);
-                if !self.reject_write_through_shared_ref(&callee, span) {
+                if !self.reject_call_through_shared_ref(&callee, span) {
                     self.reject_borrowed_parameter_write(&callee, span, false);
                 }
             }
