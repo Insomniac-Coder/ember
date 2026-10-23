@@ -380,9 +380,11 @@ fn emit_with(
         out: String::new(),
         unit,
         defines: None,
-        deferred: false,
+        deferred: true,
         type_filter: None,
         prototype_filter: None,
+        named_in_unit: BTreeSet::new(),
+        unit_bodies: None,
         split,
         for_msvc,
         payload_zeros: BTreeMap::new(),
@@ -535,7 +537,6 @@ fn emit_with(
         emitter.ffi_instrument = Some(FfiInstrument::new(bodies));
     }
     write(&mut emitter);
-    check_split_views(&emitter.split_views, &emitter.out);
     // `[BLD-FFI-5a]` — what C and C++ call of the `@sync` classes the exports hand them.
     let class_plans = class_exports::plan(&emitter, bodies, package_name);
     let class_definitions = class_exports::definitions(&emitter, &class_plans);
@@ -543,18 +544,25 @@ fn emit_with(
     let header_source = header::render(&emitter, bodies, package_name);
     let visualisers = visualisers::render(&emitter);
     let mut direct_calls = emitter.direct_calls.take();
-    // `[BLD-4]` (ODR-244) — each module's unit, written by one emitter in turn.
+    // What a unit may name of the program, for each unit's declarations (`finish_declarations`).
+    let names = UnitNames {
+        functions: bodies.iter().enumerate().map(|(index, body)| (body.symbol.clone(), index)).collect(),
+        types: emitter.order.clone().into_iter().map(|node| (emitter.node_name(node), node)).collect(),
+    };
+    // `[BLD-4]` (ODR-244) — each module's unit, written by one emitter in turn from one preamble.
     let module_units: Vec<(String, String)> = match units {
         Some(units) => {
             let mut unit = make(Some(FpMode::Strict));
             unit.collect_native_fn_values(bodies);
-            let names = UnitNames {
-                functions: bodies.iter().map(|body| body.symbol.clone()).collect(),
-                types: unit.order.clone().into_iter().map(|node| (unit.node_name(node), node)).collect(),
-            };
+            let preamble = unit.module_preamble(bodies, module_name, leak_check);
+            let place: BTreeMap<&str, usize> = bodies.iter().enumerate().map(|(index, body)| (body.symbol.as_str(), index)).collect();
             let written = units
                 .iter()
-                .map(|(name, symbols)| (name.clone(), unit.emit_module_unit(bodies, module_name, leak_check, symbols.clone(), &lazy_statics, &names)))
+                .map(|(name, symbols)| {
+                    let mut defines: Vec<usize> = symbols.iter().filter_map(|symbol| place.get(symbol.as_str()).copied()).collect();
+                    defines.sort_unstable();
+                    (name.clone(), unit.emit_module_unit(bodies, leak_check, defines, &preamble, &lazy_statics, &names))
+                })
                 .collect();
             direct_calls.append(&mut unit.direct_calls.take());
             written
@@ -565,9 +573,11 @@ fn emit_with(
     for mode in modes {
         let mut unit = make(Some(mode));
         write(&mut unit);
-        check_split_views(&unit.split_views, &unit.out);
+        let text = std::mem::take(&mut unit.out);
+        let text = unit.finish_declarations(bodies, text, &names);
+        check_split_views(&unit.split_views, &text);
         direct_calls.append(&mut unit.direct_calls.take());
-        relaxed_units.push((mode, unit.out));
+        relaxed_units.push((mode, text));
     }
     // `[FFI-37]` — the program's table of foreign functions (the address of each one it calls,
     // which names its library) and how many call sites it counts.
@@ -590,6 +600,10 @@ fn emit_with(
             sites,
         }
     });
+    // The main unit's declarations, now that its text is whole.
+    let text = std::mem::take(&mut emitter.out);
+    emitter.out = emitter.finish_declarations(bodies, text, &names);
+    check_split_views(&emitter.split_views, &emitter.out);
     // `[CG-C-11]` — a library split into relaxed units names its functions, statics and private
     // types under its package's namespace, since they are external to link the units together.
     let (c_source, relaxed_units, header_source) = if library_mode && !relaxed_units.is_empty() {
@@ -619,10 +633,25 @@ fn emit_with(
     }
 }
 
+/// `[BLD-4]` — what a unit asked for while it was written: the helpers it calls, which it defines
+/// after its functions, and the foreign statics it reads.
+#[derive(Default, Clone)]
+struct UnitRequests {
+    drop_glue: Vec<Ty>,
+    retain_glue: Vec<Ty>,
+    eq_fns: Vec<Ty>,
+    clone_parts_fns: Vec<Ty>,
+    array_helpers: Vec<(ArrayHelper, Ty)>,
+    fmt_fns: Vec<Ty>,
+    fmt_prints: Vec<Ty>,
+    fmt_specs: Vec<Ty>,
+    foreign_statics: BTreeMap<String, (Ty, bool, bool)>,
+}
+
 /// `[BLD-4]` — what a module's unit may name of the program: every function's symbol, and each
 /// type's C name with the type.
 struct UnitNames {
-    functions: BTreeSet<String>,
+    functions: BTreeMap<String, usize>,
     types: BTreeMap<String, TypeNode>,
 }
 
@@ -779,7 +808,13 @@ struct Emitter<'a> {
     /// names (`type_filter`, `prototype_filter`).
     deferred: bool,
     type_filter: Option<BTreeSet<TypeNode>>,
-    prototype_filter: Option<BTreeSet<String>>,
+    /// The functions whose prototypes a unit writes, by their places in the program's bodies.
+    prototype_filter: Option<Vec<usize>>,
+    /// The identifiers a deferred unit's text names, while its declarations are written.
+    named_in_unit: BTreeSet<String>,
+    /// `[BLD-4]` — a module unit's bodies, by their places in the program's (`emit_definitions`
+    /// takes them, for one unit).
+    unit_bodies: Option<Vec<usize>>,
     /// `[CG-C-11]` — the program has relaxed units besides the main one.
     split: bool,
     /// The C is for MSVC, whose loop optimiser wants some shapes clang and
@@ -1238,6 +1273,26 @@ impl Emitter<'_> {
     }
 
     /// `[MNG-4]` — a class's type information: `em_ti_6Animal`.
+    /// The program's classes with objects at run time, by name: the type table's order is the
+    /// order the classes were made in, which a build that keeps checked forms (`[BLD-8]`) does not
+    /// share, and what is written for each class is written in this order.
+    fn runtime_classes_by_name(&self) -> Vec<ClassId> {
+        let mut classes: Vec<(String, ClassId)> = self.types.runtime_classes().map(|(id, _)| (self.class_type_info(id), id)).collect();
+        classes.sort();
+        classes.into_iter().map(|(_, id)| id).collect()
+    }
+
+    /// Each `Shared[T]` and its `T`, by name, as the classes (`runtime_classes_by_name`).
+    fn shared_structs_by_name(&self) -> Vec<(StructId, Ty)> {
+        let mut shareds: Vec<(String, StructId, Ty)> = self
+            .types
+            .structs()
+            .filter_map(|(id, _)| self.shared_inner_id(id).map(|inner| (self.shared_type_info_symbol(id), id, inner)))
+            .collect();
+        shareds.sort();
+        shareds.into_iter().map(|(_, id, inner)| (id, inner)).collect()
+    }
+
     fn class_type_info(&self, id: ClassId) -> String {
         ember_branding::type_info(&self.mangled_type(TypeNode::Class(id)))
     }
@@ -1405,27 +1460,73 @@ impl Emitter<'_> {
     fn emit_module_unit(
         &mut self,
         bodies: &[Body],
-        module_name: &str,
         leak_check: bool,
-        defines: BTreeSet<String>,
+        defines: Vec<usize>,
+        preamble: &(String, UnitRequests),
         lazy_statics: &BTreeMap<String, (Ty, String)>,
         names: &UnitNames,
     ) -> String {
-        self.begin_unit(defines);
-        self.deferred = true;
-        self.emit_preamble(bodies, module_name, leak_check);
+        self.begin_unit(&preamble.1);
+        self.out = preamble.0.clone();
+        self.unit_bodies = Some(defines);
         self.emit_definitions(bodies, false, leak_check);
-        self.deferred = false;
         self.declare_foreign_statics(lazy_statics);
         let text = std::mem::take(&mut self.out);
+        self.finish_declarations(bodies, text, names)
+    }
+
+    /// `[BLD-4]` — every module unit's preamble, written once: its text (its declarations left to
+    /// each unit, `deferred`) and what writing it asked for (helpers its tables call), which each
+    /// unit starts from.
+    fn module_preamble(&mut self, bodies: &[Body], module_name: &str, leak_check: bool) -> (String, UnitRequests) {
+        self.begin_unit(&UnitRequests::default());
+        self.emit_preamble(bodies, module_name, leak_check);
+        (std::mem::take(&mut self.out), self.unit_requests())
+    }
+
+    /// What the unit written so far asked for.
+    fn unit_requests(&self) -> UnitRequests {
+        UnitRequests {
+            drop_glue: self.drop_glue.borrow().clone(),
+            retain_glue: self.retain_glue.borrow().clone(),
+            eq_fns: self.eq_fns.borrow().clone(),
+            clone_parts_fns: self.clone_parts_fns.borrow().clone(),
+            array_helpers: self.array_helpers.borrow().clone(),
+            fmt_fns: self.fmt_fns.borrow().clone(),
+            fmt_prints: self.fmt_prints.borrow().clone(),
+            fmt_specs: self.fmt_specs.borrow().clone(),
+            foreign_statics: self.foreign_statics.borrow().clone(),
+        }
+    }
+
+    /// `[BLD-1]`, `[BLD-4]`, `[BLD-13]` — a unit written with its type declarations and prototypes
+    /// left out (`deferred`), with them: the prototypes of the functions its text names, and the
+    /// declarations of the types its text and those prototypes name and every type those name in
+    /// turn, planned from them in name order. A unit's C is then a function of the functions it
+    /// defines and of what they reach, never of what else the type table holds (a build that kept
+    /// some checked forms holds other types than one that checked everything) or of the order
+    /// they were made in.
+    fn finish_declarations(&mut self, bodies: &[Body], text: String, names: &UnitNames) -> String {
         let named: BTreeSet<&str> = c_identifiers(&text).map(|(_, name)| name).collect();
-        self.prototype_filter = Some(names.functions.iter().filter(|symbol| named.contains(symbol.as_str())).cloned().collect());
+        self.deferred = false;
+        let mut wanted_functions: Vec<usize> = named.iter().filter_map(|name| names.functions.get(*name).copied()).collect();
+        // The program's own unit declares every foreign function, called or not: each declaration
+        // is checked against the others by the C compiler (`[FFI-30]`), and is the program's word
+        // on how the function crosses (`[FFI-11]`).
+        if self.unit.is_none() {
+            wanted_functions.extend(bodies.iter().enumerate().filter(|(_, body)| body.is_extern_declaration).map(|(index, _)| index));
+        }
+        wanted_functions.sort_unstable();
+        wanted_functions.dedup();
+        self.prototype_filter = Some(wanted_functions);
+        let saved = std::mem::take(&mut self.out);
         self.emit_prototypes(bodies);
         let prototypes = std::mem::take(&mut self.out);
         // The types the unit names, and those their definitions name, to a fixed point.
         let mut wanted: BTreeSet<TypeNode> = BTreeSet::new();
+        let mut also_named: BTreeSet<String> = c_identifiers(&prototypes).map(|(_, name)| name.to_string()).collect();
         let mut pending: Vec<TypeNode> =
-            named.iter().copied().chain(c_identifiers(&prototypes).map(|(_, name)| name)).filter_map(|name| names.types.get(name).copied()).collect();
+            named.iter().copied().chain(also_named.iter().map(String::as_str)).filter_map(|name| names.types.get(name).copied()).collect();
         while let Some(node) = pending.pop() {
             if !wanted.insert(node) {
                 continue;
@@ -1435,33 +1536,42 @@ impl Emitter<'_> {
                 Definition::Alias(underlying) => underlying,
                 Definition::FnPointer { ret, args, .. } => format!("{ret} {args}"),
             };
-            pending.extend(c_identifiers(&parts).filter_map(|(_, name)| names.types.get(name).copied()));
+            for (_, name) in c_identifiers(&parts) {
+                pending.extend(names.types.get(name).copied());
+                also_named.insert(name.to_string());
+            }
         }
         self.type_filter = Some(wanted);
+        // What the unit names, in its text, its prototypes and its types' definitions: which opaque C
+        // structs it declares, and whether it needs the callable values' types.
+        self.named_in_unit = named.iter().map(|name| name.to_string()).chain(also_named).collect();
         self.emit_type_declarations();
         let types = std::mem::take(&mut self.out);
         self.type_filter = None;
         self.prototype_filter = None;
+        self.named_in_unit.clear();
+        self.out = saved;
+        self.deferred = true;
         text.replacen(TYPES_MARKER, types.trim_end(), 1).replacen(PROTOTYPES_MARKER, prototypes.trim_end(), 1)
     }
 
     /// `[BLD-4]` — the start of another unit written by this emitter: what the last one asked for
-    /// (its helpers, its foreign statics) is forgotten.
-    fn begin_unit(&mut self, defines: BTreeSet<String>) {
-        self.defines = Some(defines);
+    /// (its helpers, its foreign statics) is forgotten, and the unit starts from `requests` (what
+    /// its preamble asked for).
+    fn begin_unit(&mut self, requests: &UnitRequests) {
         self.out.clear();
         self.current_line = None;
         self.current_line_used = false;
         self.statement_span.set(ember_span::Span::DUMMY);
-        self.drop_glue.borrow_mut().clear();
-        self.retain_glue.borrow_mut().clear();
-        self.eq_fns.borrow_mut().clear();
-        self.clone_parts_fns.borrow_mut().clear();
-        self.array_helpers.borrow_mut().clear();
-        self.fmt_fns.borrow_mut().clear();
-        self.fmt_prints.borrow_mut().clear();
-        self.fmt_specs.borrow_mut().clear();
-        self.foreign_statics.borrow_mut().clear();
+        *self.drop_glue.borrow_mut() = requests.drop_glue.clone();
+        *self.retain_glue.borrow_mut() = requests.retain_glue.clone();
+        *self.eq_fns.borrow_mut() = requests.eq_fns.clone();
+        *self.clone_parts_fns.borrow_mut() = requests.clone_parts_fns.clone();
+        *self.array_helpers.borrow_mut() = requests.array_helpers.clone();
+        *self.fmt_fns.borrow_mut() = requests.fmt_fns.clone();
+        *self.fmt_prints.borrow_mut() = requests.fmt_prints.clone();
+        *self.fmt_specs.borrow_mut() = requests.fmt_specs.clone();
+        *self.foreign_statics.borrow_mut() = requests.foreign_statics.clone();
     }
 
     /// The foreign statics the unit's functions named, and each lazily initialised static's
@@ -1651,7 +1761,11 @@ impl Emitter<'_> {
     /// module (`defines`) — then, in the main unit, the entry point and the program's tables, and
     /// the helpers its functions asked for.
     fn emit_definitions(&mut self, bodies: &[Body], has_main: bool, leak_check: bool) {
-        for body in bodies {
+        let own: Vec<&Body> = match self.unit_bodies.take() {
+            Some(indices) => indices.into_iter().map(|index| &bodies[index]).collect(),
+            None => bodies.iter().collect(),
+        };
+        for body in own {
             if body.is_abstract || body.is_extern_declaration {
                 continue;
             }
@@ -2905,7 +3019,15 @@ impl Emitter<'_> {
         // address first, and `drop` (NULL when there is nothing to drop) ends
         // it. The entry is copied into the value so that a call loads it from
         // the value itself, as a C struct of state and function pointer does.
-        if self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi: None, .. })) {
+        // In a unit written from what it names (`finish_declarations`), when it names one.
+        let callable = match &self.type_filter {
+            Some(wanted) => {
+                wanted.iter().any(|node| matches!(node, TypeNode::Structural(ty) if matches!(self.types.kind(*ty), TyKind::Fn { abi: None, .. })))
+                    || self.named_in_unit.iter().any(|name| name.starts_with(&format!("{RT}fn_value")) || name.starts_with(&format!("{RT}job_")) || name == &format!("{RT}native_fn_descriptor"))
+            }
+            None => self.types.all().any(|(_, kind)| matches!(kind, TyKind::Fn { abi: None, .. })),
+        };
+        if callable {
             self.line(&format!("struct {RT}native_fn_descriptor {{"));
             self.line("    void (*native)(void);");
             self.line("    void (*c)(void);");
@@ -2970,15 +3092,23 @@ impl Emitter<'_> {
         let opaque: BTreeSet<String> = self.types.all().filter_map(|(_, kind)| match kind {
             TyKind::Opaque(name) => Some(name.as_str().rsplit('.').next().unwrap_or(name.as_str()).to_string()),
             _ => None,
-        }).collect();
+        })
+        .filter(|name| self.type_filter.is_none() || self.named_in_unit.contains(name))
+        .collect();
         for name in opaque {
             self.line(&format!("struct {name};"));
         }
-        let plan: Vec<(String, Definition, TypeNode)> = self
-            .order
-            .clone()
+        // A unit's own types planned from them in name order: each after the types it holds.
+        let order = match &self.type_filter {
+            Some(wanted) => {
+                let mut roots: Vec<(String, TypeNode)> = wanted.iter().map(|node| (self.node_name(*node), *node)).collect();
+                roots.sort();
+                plan_subset(self.types, &self.type_namespace, roots.into_iter().map(|(_, node)| node), wanted)
+            }
+            None => self.order.clone(),
+        };
+        let plan: Vec<(String, Definition, TypeNode)> = order
             .into_iter()
-            .filter(|node| self.type_filter.as_ref().is_none_or(|wanted| wanted.contains(node)))
             .map(|node| (self.node_name(node), self.definition(node), node))
             .collect();
 
@@ -3003,9 +3133,44 @@ impl Emitter<'_> {
                 _ => {}
             }
         }
+        // A unit's own types (`finish_declarations`): every alias first, each after the aliases its
+        // type names (a `typedef` cannot be declared ahead, a struct can and is, above), then the
+        // structs, each after those it holds by value.
+        let aliases_first = self.type_filter.is_some();
+        if aliases_first {
+            let aliases: BTreeMap<String, String> = plan
+                .iter()
+                .filter_map(|(name, definition, _)| match definition {
+                    Definition::Alias(underlying) if *underlying != callable => Some((name.clone(), format!("typedef {underlying} {name};"))),
+                    Definition::FnPointer { ret, convention, args } => Some((name.clone(), format!("typedef {ret} ({convention}*{name})({args});"))),
+                    _ => None,
+                })
+                .collect();
+            let mut written: BTreeSet<String> = BTreeSet::new();
+            let mut lines: Vec<String> = Vec::new();
+            fn write_alias(name: &str, aliases: &BTreeMap<String, String>, written: &mut BTreeSet<String>, lines: &mut Vec<String>) {
+                if !written.insert(name.to_string()) {
+                    return;
+                }
+                let line = &aliases[name];
+                for (_, named) in c_identifiers(line) {
+                    if named != name && aliases.contains_key(named) {
+                        write_alias(named, aliases, written, lines);
+                    }
+                }
+                lines.push(line.clone());
+            }
+            for name in aliases.keys() {
+                write_alias(name, &aliases, &mut written, &mut lines);
+            }
+            for line in lines {
+                self.line(&line);
+            }
+        }
         for (name, definition, node) in &plan {
             match definition {
                 Definition::Alias(underlying) if *underlying == callable => {}
+                Definition::Alias(_) | Definition::FnPointer { .. } if aliases_first => {}
                 Definition::Alias(underlying) => {
                     self.line(&format!("typedef {underlying} {name};"));
                 }
@@ -3111,7 +3276,7 @@ impl Emitter<'_> {
     /// emitted first, so this wrapper remains valid C11 without relying on an
     /// implicit declaration or an incompatible function-pointer conversion.
     fn emit_class_drop_adapters(&mut self, bodies: &[Body]) {
-        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
+        let classes: Vec<ClassId> = self.runtime_classes_by_name();
         for id in classes {
             let def = self.types.class_def(id);
             if !self.class_has_user_drop(id) {
@@ -3297,11 +3462,14 @@ impl Emitter<'_> {
     }
 
     fn emit_soa_helpers(&mut self) {
-        let soas: Vec<(StructId, Ty)> = self
+        // By name, as the thread helpers (`emit_thread_helpers`).
+        let soas: BTreeMap<String, (StructId, Ty)> = self
             .types
             .structs()
             .filter_map(|(id, def)| match &def.origin {
-                Some((origin, args)) if matches!(origin.as_str(), "SoA" | "ArenaSoA") && args.len() == 1 => Some((id, args[0])),
+                Some((origin, args)) if matches!(origin.as_str(), "SoA" | "ArenaSoA") && args.len() == 1 => {
+                    Some((self.c_named(TypeNode::Struct(id)), (id, args[0])))
+                }
                 _ => None,
             })
             .collect();
@@ -3309,7 +3477,7 @@ impl Emitter<'_> {
             return;
         }
         self.line("/* [SOA-1] SoA helpers */");
-        for (id, element) in soas {
+        for (id, element) in soas.into_values() {
             // A generic body's `SoA[T]` is never emitted; each use is checked again concretely.
             let TyKind::Struct(element_id) = *self.types.kind(element) else { continue };
             let name = self.c_named(TypeNode::Struct(id));
@@ -3565,14 +3733,16 @@ impl Emitter<'_> {
     /// (it calls the value, keeps the result and drops the value), a drop for a result nobody
     /// took, and the spawn and join the builtins call. Static in every unit that needs them.
     fn emit_thread_helpers(&mut self) {
-        let handles: Vec<(String, Ty, bool)> = self
+        // By name: the type table's order is the order the types were made in, which a build that
+        // keeps checked forms (`[BLD-8]`) does not share.
+        let handles: BTreeMap<String, (Ty, bool)> = self
             .types
             .structs()
             .filter_map(|(id, def)| match &def.origin {
                 Some((origin, args))
                     if matches!(origin.as_str(), "std.thread.JoinHandle" | "std.thread.ScopedJoinHandle") && args.len() == 1 =>
                 {
-                    Some((self.c_named(TypeNode::Struct(id)), args[0], origin.as_str() == "std.thread.ScopedJoinHandle"))
+                    Some((self.c_named(TypeNode::Struct(id)), (args[0], origin.as_str() == "std.thread.ScopedJoinHandle")))
                 }
                 _ => None,
             })
@@ -3581,7 +3751,7 @@ impl Emitter<'_> {
             return;
         }
         self.line("/* [THR-10] threads */");
-        for (name, result, scoped) in handles {
+        for (name, (result, scoped)) in handles {
             let packet = format!("{name}_packet");
             let void = matches!(self.types.kind(result), TyKind::Void);
             let result_c = if void { "void".to_string() } else { self.c_type(result) };
@@ -3750,7 +3920,7 @@ impl Emitter<'_> {
     /// can reach the generated object fields. The callback walks the most
     /// derived fields first and each declaration list in reverse order.
     fn emit_class_field_drop_glue(&mut self) {
-        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
+        let classes: Vec<ClassId> = self.runtime_classes_by_name();
         for id in classes {
             if !self.class_has_dropping_fields(id) {
                 continue;
@@ -3818,7 +3988,7 @@ impl Emitter<'_> {
             })
             .collect();
         let mut layouts = BTreeMap::new();
-        let ids: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
+        let ids: Vec<ClassId> = self.runtime_classes_by_name();
         for id in ids {
             let layout = self.build_virtual_layout(id, &declared, &mut layouts);
             for slot in 0..layout.len() {
@@ -4033,7 +4203,7 @@ impl Emitter<'_> {
     /// `slot`; empty when any of them has no function in that slot.
     fn interface_implementers(&self, interface: &str, slot: usize) -> Vec<(String, String)> {
         let mut known = Vec::new();
-        for (id, _) in self.types.runtime_classes() {
+        for id in self.runtime_classes_by_name() {
             let Some((_, concrete)) = self.class_itable_entries(id).into_iter().find(|(name, _)| name == interface)
             else {
                 continue;
@@ -4412,7 +4582,9 @@ impl Emitter<'_> {
                 self.line("}");
                 name
             });
-            self.line(&format!("static const struct {table_type} {table} = {{"));
+            // `[BLD-4]` — static in each unit that may make the value; one whose upcast is in
+            // another module's unit makes none here.
+            self.line(&format!("static const struct {table_type} {table} EMBER_MAYBE_UNUSED = {{"));
             self.line(&format!("    {drop},"));
             self.line(&format!("    {size},"));
             self.line(&format!("    {align},"));
@@ -4519,12 +4691,14 @@ impl Emitter<'_> {
     /// tables. Each derived table begins with the exact base-slot prefix, so a
     /// base-typed call can inspect a derived object's `type_info` safely.
     fn emit_virtual_tables(&mut self) {
-        let tables: Vec<(ClassId, Vec<Option<VirtualMethod>>)> = self
+        // By name, as the classes (`runtime_classes_by_name`).
+        let mut tables: Vec<(ClassId, Vec<Option<VirtualMethod>>)> = self
             .virtual_tables
             .iter()
             .filter(|(_, slots)| !slots.is_empty())
             .map(|(id, slots)| (*id, slots.clone()))
             .collect();
+        tables.sort_by_cached_key(|(id, _)| self.class_vtable(*id));
         if tables.is_empty() {
             return;
         }
@@ -4628,7 +4802,7 @@ impl Emitter<'_> {
     /// record in a translation unit containing only class field reads, while
     /// keeping the generated names compiler-owned and deterministic.
     fn emit_class_type_infos(&mut self) {
-        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
+        let classes: Vec<ClassId> = self.runtime_classes_by_name();
         if classes.is_empty() {
             return;
         }
@@ -4784,12 +4958,8 @@ impl Emitter<'_> {
     /// runtime's live-object SCC pass without giving the runtime permission to
     /// mutate the graph or to infer an edge from an untyped pointer.
     fn emit_debug_edge_enumerators(&mut self) {
-        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
-        let shareds: Vec<(StructId, Ty)> = self
-            .types
-            .structs()
-            .filter_map(|(id, _)| self.shared_inner_id(id).map(|inner| (id, inner)))
-            .collect();
+        let classes: Vec<ClassId> = self.runtime_classes_by_name();
+        let shareds: Vec<(StructId, Ty)> = self.shared_structs_by_name();
         if classes.is_empty() && shareds.is_empty() {
             return;
         }
@@ -5053,11 +5223,7 @@ impl Emitter<'_> {
     /// control block, with a compiler-owned `TypeInfo` that describes the
     /// aligned payload and runs ordinary `T` destruction at final release.
     fn emit_shared_type_infos(&mut self) {
-        let shareds: Vec<(StructId, Ty)> = self
-            .types
-            .structs()
-            .filter_map(|(id, _)| self.shared_inner_id(id).map(|inner| (id, inner)))
-            .collect();
+        let shareds: Vec<(StructId, Ty)> = self.shared_structs_by_name();
         if shareds.is_empty() {
             return;
         }
@@ -5912,8 +6078,9 @@ impl Emitter<'_> {
                 }
             }
         }
-        for ty in self.payload_zeros.values().copied().collect::<Vec<_>>() {
-            let c_type = self.c_type(ty);
+        // By name, as the thread helpers (`emit_thread_helpers`).
+        let zeros: BTreeSet<String> = self.payload_zeros.values().map(|&ty| self.c_type(ty)).collect();
+        for c_type in zeros {
             self.line(&format!("static EMBER_MAYBE_UNUSED const {c_type} {};", payload_zero_name(&c_type)));
         }
     }
@@ -5932,13 +6099,9 @@ impl Emitter<'_> {
             self.line(PROTOTYPES_MARKER);
             return;
         }
-        let filtered: Vec<Body>;
-        let bodies = match &self.prototype_filter {
-            Some(wanted) => {
-                filtered = bodies.iter().filter(|body| wanted.contains(&body.symbol)).cloned().collect();
-                &filtered[..]
-            }
-            None => bodies,
+        let bodies: Vec<&Body> = match &self.prototype_filter {
+            Some(wanted) => wanted.iter().map(|&index| &bodies[index]).collect(),
+            None => bodies.iter().collect(),
         };
         self.line("/* prototypes */");
         // `[FFI-37]` — the instrumentation unit's entry points.
@@ -5948,7 +6111,7 @@ impl Emitter<'_> {
             self.line(&format!("void {RT}ffi_instrument_begin(void);"));
             self.line(&format!("void {RT}ffi_instrument_end(void);"));
         }
-        for body in bodies {
+        for &body in &bodies {
             if let Some(counted) = &body.ffi_counted {
                 let declaration = format!("extern {}", self.ffi_counted_signature(body));
                 match ember_branding::export_alias_symbol(&counted.foreign_symbol) {
@@ -6146,6 +6309,10 @@ impl Emitter<'_> {
             let Some(body) = bodies.iter().find(|body| body.symbol == closure) else { continue };
             let Some(linkage) = self.shared_definition() else {
                 self.line(&format!("extern const struct {RT}native_fn_descriptor {descriptor};"));
+                // `[BLD-4]` — a module's unit submits jobs of its own: their entries are its own too.
+                if self.unit == Some(FpMode::Strict) {
+                    self.emit_job_entries(&closure, &descriptor, env, body);
+                }
                 continue;
             };
             let env_c = self.c_type(env);
@@ -6224,27 +6391,35 @@ impl Emitter<'_> {
             self.line(&format!("{linkage}const struct {RT}native_fn_descriptor {descriptor} = {{"));
             self.line(&format!("    (void (*)(void)){descriptor}_native, NULL, {descriptor}_drop{captures}, (void (*)(void)){descriptor}_once"));
             self.line("};");
-            // `[JOB-1]` — the job's entry and drop, on the state its slot holds as it is.
-            if self.job_closures.contains(&closure) {
-                let job_argument = if env_argument == "_e" { "(_e)" } else { "(*_e)" };
-                self.line(&format!("static EMBER_MAYBE_UNUSED void {descriptor}_job(void* _state) {{"));
-                self.line(&format!("    {env_c}* _e = ({env_c}*)_state;"));
-                self.line(&format!("    {closure}({job_argument});"));
-                self.line("}");
-                let mut job_drops = Vec::new();
-                match self.drop_glue_call("(*_e)", env) {
-                    Some(call) => job_drops.push(call),
-                    None => self.drop_lines("(*_e)", env, &mut job_drops),
-                }
-                self.line(&format!("static EMBER_MAYBE_UNUSED void {descriptor}_job_drop(void* _state) {{"));
-                self.line(&format!("    {env_c}* _e = ({env_c}*)_state;"));
-                self.line("    (void)_e;");
-                for line in job_drops {
-                    self.line(&format!("    {line}"));
-                }
-                self.line("}");
-            }
+            self.emit_job_entries(&closure, &descriptor, env, body);
         }
+    }
+
+    /// `[JOB-1]` — a job's entry and drop, on the state its slot holds as it is, for a closure a job
+    /// is given: static in each unit that submits one.
+    fn emit_job_entries(&mut self, closure: &str, descriptor: &str, env: Ty, body: &Body) {
+        if !self.job_closures.contains(closure) {
+            return;
+        }
+        let env_c = self.c_type(env);
+        let by_reference = body.args().next().is_some_and(|(_, param)| matches!(self.types.kind(param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. }));
+        let job_argument = if by_reference { "(_e)" } else { "(*_e)" };
+        self.line(&format!("static EMBER_MAYBE_UNUSED void {descriptor}_job(void* _state) {{"));
+        self.line(&format!("    {env_c}* _e = ({env_c}*)_state;"));
+        self.line(&format!("    {closure}({job_argument});"));
+        self.line("}");
+        let mut job_drops = Vec::new();
+        match self.drop_glue_call("(*_e)", env) {
+            Some(call) => job_drops.push(call),
+            None => self.drop_lines("(*_e)", env, &mut job_drops),
+        }
+        self.line(&format!("static EMBER_MAYBE_UNUSED void {descriptor}_job_drop(void* _state) {{"));
+        self.line(&format!("    {env_c}* _e = ({env_c}*)_state;"));
+        self.line("    (void)_e;");
+        for line in job_drops {
+            self.line(&format!("    {line}"));
+        }
+        self.line("}");
     }
 
     fn signature(&self, body: &Body) -> String {
@@ -8811,7 +8986,7 @@ impl Emitter<'_> {
     fn operand_type(&self, operand: &Operand, body: &Body) -> Option<Ty> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => Some(self.place_ty(place, body)),
-            Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. }) => Some(*ty),
+            Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. } | Const::SourceLine { ty, .. }) => Some(*ty),
             Operand::Const(_) => None,
         }
     }
@@ -11077,6 +11252,10 @@ impl Emitter<'_> {
                 let shift = format!("{}_OVERFLOW_SHIFT", ember_branding::SYMBOL_PREFIX.to_uppercase());
                 if *per_word { shift } else { format!("(63 - {shift})") }
             }
+            Const::SourceLine { at, ty } => {
+                let line = self.map.get(at.file).map_or(0, |file| file.line_col(at.start).line);
+                self.constant(&Const::Int { value: u128::from(line), ty: *ty })
+            }
         }
     }
 
@@ -12171,7 +12350,9 @@ impl Emitter<'_> {
     /// reductions stored to `partial`), and for each combiner the fold of one chunk's reductions
     /// into the running ones (`<combine>_fold`).
     fn emit_parallel_helpers(&mut self, bodies: &[Body]) {
-        if self.unit.is_some() {
+        // Static in each unit whose functions run a parallel loop: the main unit and, written one
+        // unit per module (`[BLD-4]`), each module's; a relaxed unit's functions run none.
+        if matches!(self.unit, Some(FpMode::Contract | FpMode::Fast)) {
             return;
         }
         let mut chunks: BTreeSet<String> = BTreeSet::new();
@@ -12595,16 +12776,12 @@ impl Emitter<'_> {
     }
 
     fn emit_debug_edge_registrations(&mut self) {
-        let classes: Vec<ClassId> = self.types.runtime_classes().map(|(id, _)| id).collect();
-        for id in classes {
+        for id in self.runtime_classes_by_name() {
             let info = self.class_type_info(id);
             let edges = self.class_helper("debug_edges", id);
             self.line(&format!("    {RT}debug_register_type_edges(&{info}, &{edges});"));
         }
-        for (id, _) in self.types.structs() {
-            let Some(_) = self.shared_inner_id(id) else {
-                continue;
-            };
+        for (id, _) in self.shared_structs_by_name() {
             let info = self.shared_type_info_symbol(id);
             let edges = self.shared_debug_edges_symbol(id);
             self.line(&format!("    {RT}debug_register_type_edges(&{info}, &{edges});"));
@@ -12653,6 +12830,25 @@ fn plan_types(types: &TypeTable, type_namespace: &str) -> (Vec<TypeNode>, BTreeM
         planner.visit(TypeNode::Structural(ty));
     }
     (planner.order, planner.names)
+}
+
+/// `[BLD-13]` — the order of `wanted`'s types for a unit: visited from `roots` in that order, each
+/// after the types it holds by value (which `wanted` holds: it is closed under them).
+fn plan_subset(types: &TypeTable, type_namespace: &str, roots: impl Iterator<Item = TypeNode>, wanted: &BTreeSet<TypeNode>) -> Vec<TypeNode> {
+    let mut planner = Planner {
+        types,
+        type_namespace: type_namespace.to_string(),
+        order: Vec::new(),
+        names: BTreeMap::new(),
+        done: BTreeSet::new(),
+        active: BTreeSet::new(),
+        taken: BTreeSet::new(),
+    };
+    for root in roots {
+        planner.visit(root);
+    }
+    planner.order.retain(|node| wanted.contains(node));
+    planner.order
 }
 
 struct Planner<'a> {
@@ -12764,9 +12960,10 @@ impl Planner<'_> {
         }
     }
 
-    /// A readable name derived from how the type prints, made unique against
-    /// every name already used. The suffix only ever appears when a user type
-    /// happens to be named like a generated one.
+    /// A readable name derived from how the type prints, then the type's own hash: two types that
+    /// print alike (one call's modes or a function's kind dropped) differ in it, and the name is the
+    /// type's whatever else the program holds (`[BLD-1]`, `[BLD-13]`: a build that kept checked forms
+    /// names each type as one that kept none). The `_N` suffix after it is a hash collision's.
     fn fresh_name(&mut self, ty: Ty) -> String {
         let stem = identifier_from(&self.types.symbol_name(ty));
         // `[MNG-5]` — the generated-type prefixes are the mangled prefix
@@ -12776,7 +12973,12 @@ impl Planner<'_> {
             TyKind::Fn { .. } => "fn_",
             _ => "arr_",
         };
-        let base = format!("{}{}{kind}{stem}", self.type_namespace, ember_branding::mangle_prefix());
+        let base = format!(
+            "{}{}{kind}{stem}{}",
+            self.type_namespace,
+            ember_branding::mangle_prefix(),
+            ember_branding::instance_suffix(&structural_key(self.types, ty))
+        );
         if self.taken.insert(base.clone()) {
             return base;
         }
@@ -12789,6 +12991,31 @@ impl Planner<'_> {
             n += 1;
         }
     }
+}
+
+/// `[BLD-13]` — a structural type whole, as its C name's hash reads it: its canonical spelling
+/// (`[MNG-6]`), each function type with every one of its marks.
+fn structural_key(types: &TypeTable, ty: Ty) -> String {
+    let mut out = types.spelling(ty);
+    let mut pending = vec![ty];
+    let mut seen = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if !seen.insert(ty) {
+            continue;
+        }
+        match types.kind(ty) {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
+                out.push_str(&format!("|{abi:?}{latebound}{stateless}{is_unsafe}{once}"));
+                pending.extend(params.iter().map(|param| param.ty));
+                pending.push(*ret);
+            }
+            TyKind::Tuple(items) => pending.extend(items.iter().copied()),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => pending.push(*elem),
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => pending.push(*inner),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Turn a printed type such as `(i32, f32)` or `[f32; 4]` into the readable
@@ -14394,6 +14621,8 @@ mod string_descriptor_view_parts_tests {
             deferred: false,
             type_filter: None,
             prototype_filter: None,
+            named_in_unit: BTreeSet::new(),
+            unit_bodies: None,
             split: false,
             for_msvc: false,
             payload_zeros: BTreeMap::new(),

@@ -556,6 +556,45 @@ pub fn prepare_interface_cache(
     })
 }
 
+/// `[BLD-1]`, `[BLD-2]` — the stored records of the modules a build kept whole (`known`), keyed as
+/// a clean build keys them: each one's dependencies at the interface hashes this build's modules
+/// have (`fresh`'s, or another kept one's), and its cache key from them. A kept module's own facts
+/// are its record's; only what it imports may have changed. The records to write, added to
+/// `prepared`'s writes.
+pub fn refresh_known_records(
+    prepared: &mut PreparedInterfaceCache,
+    directory: &Path,
+    known: &BTreeMap<String, KnownInterface>,
+) -> Result<(), InterfaceArtifactError> {
+    let hash_of = |module: &str| {
+        prepared
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.module == module)
+            .map(|artifact| artifact.interface_hash)
+            .or_else(|| known.get(module).map(|known| known.interface_hash))
+    };
+    let mut writes = Vec::new();
+    for module in known.keys() {
+        let path = artifact_path(directory, module);
+        let Ok(bytes) = read_record(&path) else { continue };
+        let Ok(mut record) = ModuleInterfaceArtifact::from_bytes(&bytes) else { continue };
+        if record.module != *module {
+            continue;
+        }
+        let dependencies: BTreeMap<String, InterfaceHash> =
+            record.dependencies.keys().map(|dependency| (dependency.clone(), hash_of(dependency).unwrap_or(record.dependencies[dependency]))).collect();
+        if dependencies == record.dependencies {
+            continue;
+        }
+        record.cache_key = cache_key(record.source_hash, &record.compiler_version, &record.language_version, &record.package_config, &dependencies);
+        record.dependencies = dependencies;
+        writes.push((path, record.to_bytes()?));
+    }
+    prepared.writes.extend(writes);
+    Ok(())
+}
+
 /// A stored record's bytes. D-383 — while another compilation renames its
 /// record into place, Windows refuses a reader (`PermissionDenied`) for a
 /// moment; the read is tried again a few times before that is believed.

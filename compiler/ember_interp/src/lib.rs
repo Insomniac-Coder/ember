@@ -421,7 +421,7 @@ impl<'a, 'io> Interp<'a, 'io> {
     pub fn operand_ty(&self, body: &Body, operand: &Operand) -> Option<Ty> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => Some(self.place_ty(body, place)),
-            Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. }) => Some(*ty),
+            Operand::Const(Const::Int { ty, .. } | Const::Float { ty, .. } | Const::SourceLine { ty, .. }) => Some(*ty),
             Operand::Const(Const::Bool(_)) => Some(self.common.bool_),
             Operand::Const(Const::Str(_)) => Some(self.common.str_),
             Operand::Const(_) => None,
@@ -696,6 +696,10 @@ impl<'a, 'io> Interp<'a, 'io> {
             }
             Const::Void => Vec::new(),
             Const::OverflowShift { .. } => 0u64.to_le_bytes().to_vec(),
+            Const::SourceLine { at, ty } => {
+                let line = self.map.get(at.file).map_or(0, |file| file.line_col(at.start).line);
+                return self.constant(&Const::Int { value: u128::from(line), ty: *ty }, want);
+            }
         })
     }
 

@@ -1173,6 +1173,26 @@ fn help_lists_every_command_and_flag_of_the_specification() {
     assert!(missing.is_empty(), "`ember --help` omits {missing:?}:\n{shown}");
 }
 
+/// `[BLD-4]` (ODR-244) — a `debug` or `development` program is written one C unit per module
+/// (`<stem>.c`, and `<stem>.m.<module>.c` for each module): the text of the unit in `c_dir` that
+/// holds `definition`.
+fn unit_defining(c_dir: &Path, stem: &str, definition: &str) -> String {
+    let mut units: Vec<PathBuf> = std::fs::read_dir(c_dir)
+        .unwrap_or_else(|error| panic!("{}: {error}", c_dir.display()))
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name == format!("{stem}.c") || (name.starts_with(&format!("{stem}.m.")) && name.ends_with(".c")))
+        })
+        .collect();
+    units.sort();
+    units
+        .iter()
+        .map(|unit| std::fs::read_to_string(unit).unwrap_or_else(|error| panic!("{}: {error}", unit.display())))
+        .find(|text| text.contains(definition))
+        .unwrap_or_else(|| panic!("no unit of `{stem}` in {} holds `{definition}`: {units:?}", c_dir.display()))
+}
+
 fn ember(args: &[&str], root: &Path) -> Run {
     let (mut command, _output_directory) = test_command(args, root);
     let output = command
@@ -3498,21 +3518,12 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
             "{profile} hoisted loop lacks its proof record:\n{json}"
         );
 
-        let c_path = out_dir
-            .join(profile)
-            .join("c")
-            .join("accept_stable_class_receiver_loop.c");
-        let c = std::fs::read_to_string(&c_path)
-            .unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
+        // `main`'s definition, to its end: the C writes the bodies where the source has them.
         let main_symbol = ember_branding::entry_symbol();
-        let bump_symbol = ember_branding::item_symbol("Counter.bump");
-        let main_start = c
-            .find(&format!("void {main_symbol}(void)"))
-            .expect("main is emitted");
-        let bump_start = c
-            .rfind(&format!("void {bump_symbol}("))
-            .expect("method is emitted");
-        let main_c = &c[main_start..bump_start];
+        let definition = format!("void {main_symbol}(void) {{");
+        let c = unit_defining(&out_dir.join(profile).join("c"), "accept_stable_class_receiver_loop", &definition);
+        let main_start = c.find(&definition).expect("main is emitted");
+        let main_c = &c[main_start..main_start + c[main_start..].find("\n}\n").expect("main ends")];
         let begin_write = ember_branding::runtime("object_begin_write");
         let end_write = ember_branding::runtime("object_end_write");
         assert_eq!(
@@ -3995,8 +4006,7 @@ fn exit_drops_that_only_free_memory_go_in_release() {
         let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
         assert_eq!(run.exit, 0, "{profile} build failed:
 {}", run.stderr);
-        let c_path = out_dir.join(profile).join("c").join("accept_drops_at_the_end_of_main.c");
-        let c = std::fs::read_to_string(&c_path).unwrap_or_else(|error| panic!("{}: {error}", c_path.display()));
+        let c = unit_defining(&out_dir.join(profile).join("c"), "accept_drops_at_the_end_of_main", &format!("void {main_symbol}(void) {{"));
         let start = c.find(&format!("void {main_symbol}(void) {{")).expect("main is emitted");
         let main_c = &c[start..start + c[start..].find("
 }
@@ -4707,56 +4717,147 @@ fn timings_report_each_stage_and_module() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-/// `[BLD-10]` — the compile-time budgets are release gates. `tools/compile_budgets.py` holds
-/// `[BUD-2]`'s table as the specification writes it; it measures each figure over `bench/bigpkg`
-/// (here a small one, one run each, through this compiler), and the gate fails when a figure is
-/// over its budget and passes when none is (a run whose calibration moved is inconclusive, never
-/// passed). The release workflow runs it on every release tag.
+/// `[BLD-10]`, `[BUD-2]`, `[BUD-3b]` (ODR-242), `[HR-1]`, `[HR-9]` — the compiler's speed is measured
+/// on one machine before and after a change and published, and a change may not make it slower.
+/// `tools/compile_budgets.py` holds `[BUD-2]`'s operations with no time limits (B9's 3 GB and
+/// HR-9's 3 % are no times, and stand); it runs each figure's rounds through both compilers
+/// interleaved (here a small bigpkg, one round, this compiler on both sides) and publishes both
+/// medians and spreads, every run, and a Markdown table. `[HR-1]`'s figure is an edit to one function
+/// body of the reloadable package from the save to the new body's first result in the running
+/// program, its 10,000 instances all kept; `[HR-9]`'s is `ember bench --reload`'s overhead. A
+/// published report is judged again from its runs: an after compiler slower in every one of 15
+/// rounds fails, one slower in half of them has no measurable change.
 #[test]
-fn the_compile_time_budgets_are_a_release_gate() {
+fn the_compilers_speed_is_measured_before_and_after_a_change_and_published() {
     let root = workspace_root();
     let python = if cfg!(windows) { "python" } else { "python3" };
     let tool = root.join("tools").join("compile_budgets.py");
     let listed = Command::new(python).arg(&tool).arg("--list").output().expect("python runs");
-    let table: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("the budgets as JSON");
-    let budgets: Vec<(&str, u64)> = vec![("B1", 250), ("B2", 1000), ("B3", 1500), ("B4", 2500), ("B5", 8000),
-        ("B6", 40_000), ("B7", 90_000), ("B8", 3000), ("B9", 3 * 1024)];
-    for (figure, budget) in &budgets {
-        assert_eq!(table[*figure]["budget"].as_u64(), Some(*budget), "[BLD-10] {figure}: {table}");
+    let table: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("the figures as JSON");
+    for figure in ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "HR-1", "HR-9"] {
+        assert!(table[figure]["operation"].is_string(), "[BLD-10] {figure}: {table}");
     }
-    assert_eq!(table.as_object().map(|figures| figures.len()), Some(budgets.len()), "{table}");
+    // ODR-242 — no time limits: only B9's memory and HR-9's ratio are bounded.
+    let bounded: Vec<&String> = table.as_object().expect("figures").iter().filter(|(_, figure)| figure.get("bound").is_some()).map(|(name, _)| name).collect();
+    assert_eq!(bounded, ["B9", "HR-9"], "{table}");
+    assert_eq!((table["B9"]["bound"].as_u64(), table["HR-9"]["bound"].as_f64()), (Some(3 * 1024), Some(3.0)), "{table}");
 
     let work = temporary_directory("budgets");
-    let none = work.join("none.json");
-    let measure = |budgets: &str, only: &str| {
-        let file = work.join("budgets.json");
-        std::fs::write(&file, budgets).unwrap();
-        let report = work.join("report.json");
-        let output = ember_build::output_started(Command::new(python).arg(&tool)
-            .args(["--ember", EMBER, "--modules", "4", "--lines", "300", "--header-lines", "100", "--runs", "1", "--warmups", "0"])
-            .arg("--only").arg(only).arg("--work").arg(work.join("work")).arg("--budgets").arg(&file)
-            .arg("--baseline").arg(&none).arg("--reference").arg(&none).arg("--json").arg(&report))
-            .expect("python runs");
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let report: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report)
-            .unwrap_or_else(|_| panic!("no report:\n{stdout}{}", String::from_utf8_lossy(&output.stderr)))).unwrap();
-        (output.status.code(), stdout, report)
-    };
-    let (status, stdout, report) = measure("{\"B1\": 600000, \"B3\": 600000, \"B9\": 100000}", "B1,B3,B9");
-    for figure in ["B1", "B3", "B9"] {
-        assert_eq!(report["figures"][figure]["verdict"], "pass", "{stdout}");
-        assert!(report["figures"][figure]["median"].as_f64().is_some_and(|value| value > 0.0), "{stdout}");
+    let report = work.join("report.json");
+    let markdown = work.join("report.md");
+    let output = ember_build::output_started(
+        Command::new(python)
+            .arg(&tool)
+            .args(["--before", EMBER, "--after", EMBER, "--modules", "4", "--lines", "300", "--header-lines", "100", "--runs", "1", "--warmups", "0"])
+            .args(["--only", "B1,B3,B9,HR-1,HR-9", "--hr9-only", "a05_structs", "--hr9-runs", "2"])
+            .arg("--work")
+            .arg(work.join("work"))
+            .arg("--json")
+            .arg(&report)
+            .arg("--markdown")
+            .arg(&markdown),
+    )
+    .expect("python runs");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let published: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report).unwrap_or_else(|_| panic!("no report:\n{stdout}{stderr}"))).unwrap();
+    for figure in ["B1", "B3", "B9", "HR-1"] {
+        let measured = &published["figures"][figure];
+        for side in ["before", "after"] {
+            assert!(measured[side]["median"].as_f64().is_some_and(|value| value > 0.0), "{figure} {side}: {stdout}");
+            assert_eq!(measured[side]["runs"].as_array().map(Vec::len), Some(1), "{figure} {side}: {stdout}");
+            assert!(measured[side]["spread"].is_number(), "[BUD-3b] {figure}: {stdout}");
+        }
+        assert_eq!(measured["change"], "no measurable change", "one round measures no change: {figure}: {stdout}");
+        assert_eq!(measured["verdict"], "pass", "{figure}: {stdout}");
     }
-    assert!(status == Some(0) && stdout.contains("release gate: passed")
-        || status == Some(2) && stdout.contains("inconclusive"), "{status:?}\n{stdout}");
-    let (status, stdout, report) = measure("{\"B1\": 0}", "B1");
-    assert_eq!(report["figures"]["B1"]["verdict"], "fail", "{stdout}");
-    assert!(status == Some(1) && stdout.contains("release gate: FAILED (B1)")
-        || status == Some(2) && stdout.contains("inconclusive"), "[BLD-10] a figure over its budget passed: {status:?}\n{stdout}");
+    assert!(published["figures"]["HR-9"]["after"]["median"].is_number(), "[HR-9] {stdout}");
+    assert!(published["hr9"].as_str().is_some_and(|configuration| configuration.contains("`development` profile") && configuration.contains("on core")), "[HR-9] the configuration: {stdout}");
+    let shown = std::fs::read_to_string(&markdown).expect("the Markdown table");
+    assert!(shown.contains("| HR-1 |") && shown.contains("| B1 |") && shown.contains("spread"), "{shown}");
+    let hr9_within = published["figures"]["HR-9"]["verdict"] == "pass";
+    assert_eq!(output.status.code(), Some(if hr9_within { 0 } else { 1 }), "{stdout}{stderr}");
+
+    // A published report's verdicts, judged again from its runs.
+    let judged = |before: Vec<f64>, after: Vec<f64>| {
+        let file = work.join("judged.json");
+        let figure = serde_json::json!({ "operation": "", "after": { "runs": after }, "before": { "runs": before } });
+        let mut again = published.clone();
+        again["figures"] = serde_json::json!({ "B3": figure });
+        std::fs::write(&file, again.to_string()).unwrap();
+        let output = Command::new(python).arg(&tool).arg("--judge").arg(&file).output().expect("python runs");
+        (output.status.code(), String::from_utf8_lossy(&output.stdout).into_owned())
+    };
+    let before: Vec<f64> = (0..15).map(|n| 1000.0 + f64::from(n)).collect();
+    let (status, stdout) = judged(before.clone(), before.iter().map(|ms| ms * 1.2).collect());
+    assert!(status == Some(1) && stdout.contains("FAILED (B3)") && stdout.contains("slower in 15 of 15 rounds"), "[BLD-10] {stdout}");
+    let (status, stdout) = judged(before.clone(), before.iter().enumerate().map(|(n, ms)| if n % 2 == 0 { ms * 1.2 } else { ms * 0.8 }).collect());
+    assert!(status == Some(0) && stdout.contains("no measurable change"), "{stdout}");
 
     let workflow = std::fs::read_to_string(root.join(".github").join("workflows").join("release.yml")).expect("the release workflow");
-    assert!(workflow.contains("tags: [\"v*\"]") && workflow.contains("tools/compile_budgets.py"), "{workflow}");
+    assert!(workflow.contains("tags: [\"v*\"]") && workflow.contains("tools/compile_budgets.py") && workflow.contains("--before"), "{workflow}");
     let _ = std::fs::remove_dir_all(&work);
+}
+
+/// `[BLD-10]`, `[HR-1]` (ODR-242, ODR-261) — the measurement of record, run by hand on the reference
+/// laptop before a push (`cargo test --test milestones -- --ignored the_compilers_speed_over_bigpkg
+/// --nocapture`): `tools/compile_budgets.py` over the full `bench/bigpkg`, the compiler before the
+/// change (`EMBER_SPEED_BEFORE`) against the one after it (`EMBER_SPEED_AFTER`, default this one;
+/// release builds for figures of record), `EMBER_SPEED_ROUNDS` rounds (15) of `EMBER_SPEED_ONLY`'s
+/// figures (all). The report goes to `build/budgets/report.json` and `.md`, and is printed; the
+/// test fails as the tool does, when a figure is slower or over its bound.
+#[test]
+#[ignore = "the measurement of record: minutes to hours, by hand on the reference machine"]
+fn the_compilers_speed_over_bigpkg() {
+    let root = workspace_root();
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let before = std::env::var("EMBER_SPEED_BEFORE").expect("EMBER_SPEED_BEFORE names the compiler before the change");
+    let after = std::env::var("EMBER_SPEED_AFTER").unwrap_or_else(|_| EMBER.to_string());
+    let rounds = std::env::var("EMBER_SPEED_ROUNDS").unwrap_or_else(|_| "15".to_string());
+    let out = root.join("build").join("budgets");
+    let mut command = Command::new(python);
+    command
+        .arg(root.join("tools").join("compile_budgets.py"))
+        .args(["--before", &before, "--after", &after, "--runs", &rounds])
+        .arg("--work")
+        .arg(out.join("work"))
+        .arg("--json")
+        .arg(out.join("report.json"))
+        .arg("--markdown")
+        .arg(out.join("report.md"));
+    if let Ok(only) = std::env::var("EMBER_SPEED_ONLY") {
+        command.args(["--only", &only]);
+    }
+    let output = ember_build::output_started(&mut command).expect("python runs");
+    println!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let _ = std::fs::remove_dir_all(out.join("work"));
+    assert!(output.status.success(), "[BLD-10] a figure is slower, or over its bound");
+}
+
+/// `[BEN-6]` — a direct FFI call executes the instructions C's own call does: in the generated C the
+/// call is a plain call of an extern declaration bound to the C function's own symbol (an alias the
+/// linker resolves to it: `/ALTERNATENAME` for MSVC, an `asm` label for gcc and clang), with the
+/// arguments as they are, and nothing defines a body under that name: no wrapper, no marshalling.
+/// `tests/perf/ffi_direct_call.em` times the same call against C's (`ember bench --compare`).
+#[test]
+fn a_direct_ffi_call_is_the_c_functions_own_call() {
+    let root = workspace_root();
+    let built = ember(&["build", "tests/perf/ffi_direct_call.em", "--emit", "c", "--profile", "release"], &root);
+    assert_eq!(built.exit, 0, "{}", built.stderr);
+    let c = &built.stdout;
+    let alias = c
+        .lines()
+        .find_map(|line| line.strip_prefix("extern int64_t ").and_then(|rest| rest.split('(').next()).filter(|name| name.ends_with("ffi_mix") && *name != "ffi_mix"))
+        .unwrap_or_else(|| panic!("no declaration of the C function:\n{c}"));
+    assert!(c.contains(&format!("/ALTERNATENAME:{alias}=ffi_mix")), "the MSVC alias:\n{c}");
+    assert!(
+        c.lines().any(|line| line.starts_with(&format!("extern int64_t {alias}(")) && line.contains("__asm__(") && line.ends_with("\"ffi_mix\");")),
+        "the gcc and clang label:\n{c}"
+    );
+    let calls: Vec<&str> = c.lines().map(str::trim).filter(|line| line.contains(&format!("{alias}("))).filter(|line| !line.starts_with("extern") && !line.starts_with('{')).collect();
+    assert_eq!(calls.len(), 1, "one call:\n{calls:?}");
+    assert!(calls[0].ends_with(&format!("= {alias}(i, 3LL);")), "the call, its arguments as they are: {}", calls[0]);
+    assert!(!c.contains(&format!("{alias}(int64_t _1, int64_t _2) {{")), "a body under the C function's name:\n{c}");
 }
 
 /// `[DSP-5]` — `ember build --emit-optimization-report` lists, on standard

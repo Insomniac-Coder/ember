@@ -7,6 +7,7 @@
 mod bench;
 mod cimport;
 mod comptime;
+mod cores;
 mod foreign;
 mod incremental;
 mod packages;
@@ -24,7 +25,7 @@ use ember_build::interface::{
     cache_directory, compiler_identity, prepare_interface_cache,
     round_trip_artifacts,
 };
-use ember_build::{Layout, LinkRequest, Profile, Toolchain};
+use ember_build::{Layout, Profile, Toolchain};
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_span::{LoadError, SourceMap, Span};
 use ember_types::TypeTable;
@@ -42,14 +43,14 @@ this compiler does not have yet):
     ember build [file.em|package-dir] [--profile <name>] [--target <triple>] [--backend c|llvm]
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
-                [--build-id] [--reload [--explain]] [-D warnings]
+                [--build-id] [--reload [--explain]] [-D warnings] [-j N]
                                                    compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
                                                    --explain predicts that reload; --build-id prints
                                                    the hash of the build's inputs; --report=engine
                                                    what the build did to the program (--target and
                                                    --backend llvm are not built yet)
-    ember check [file.em] [--syntax-only] [--timings]
+    ember check [file.em] [--syntax-only] [--timings] [-j N]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
                                                    run the package's @test functions, each in a process
@@ -61,6 +62,10 @@ this compiler does not have yet):
                                                    one core, each at its fastest code layout; fails
                                                    past a threshold ([TST-28]), or only reports
                                                    (--report, off the reference machine)
+    ember bench [filter] --reload [--dir D] [--runs N] [--core N] [--report]
+                                                   what reload costs a program that is not reloading:
+                                                   each program built plain and reloadable, timed
+                                                   interleaved; fails over 3 % ([HR-9])
     ember fmt <file.em> [--check | --write | --migrate] [--json]
                                                    print the file in the canonical layout
                                                    (--migrate: 0.9.8 source rewritten into 0.9.9)
@@ -108,6 +113,8 @@ options:
     --syntax-only                     lex and parse only; report E00xx/E01xx
     --backend c                       the only backend in v1
     --cc msvc|clang|gcc|clang-cl      override C compiler detection
+    -j, --jobs <n>                    the threads checking and C compilation use
+                                      (default: the physical cores)
     --out-dir <dir>                   default: target/; libraries and headers in <profile>/lib/
     --leak-check                      `run` and `test`: report leaked ownership cycles at exit
                                       (the default for both in the debug profile)
@@ -498,6 +505,9 @@ struct Options {
     generics_report: bool,
     /// `[DOC-3]` — `ember doc`: check, then print each view contract.
     doc_report: bool,
+    /// `[BLD-7]` — `-j N`: the threads the front end's per-body analyses and the C compiles use
+    /// (default: the physical cores).
+    jobs: Option<usize>,
 }
 
 /// What `ember calls --foreign` prints: JSON or text, for one item.
@@ -670,7 +680,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 if arg.starts_with('-') {
                     skip_value = matches!(
                         arg.as_str(),
-                        "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D"
+                        "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D" | "-j" | "--jobs"
                     );
                     rest.push(arg.clone());
                 } else if input.is_none() {
@@ -3377,6 +3387,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--build-id" => options.build_id = true,
             "--require-evidence" => options.require_evidence = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
+            "-j" | "--jobs" => {
+                let given = value(&mut index, arg)?;
+                options.jobs = Some(given.parse::<usize>().ok().filter(|&jobs| jobs > 0).ok_or_else(|| format!("`{arg}` takes a number of threads, at least 1, not `{given}`"))?);
+            }
             "--out-dir" => options.out_dir = Some(PathBuf::from(value(&mut index, arg)?)),
             "--backend" => {
                 let backend = value(&mut index, arg)?;
@@ -3407,7 +3421,51 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         }
         index += 1;
     }
+    // `[BLD-7]` — the front end's threads: `-j`, else one per physical core.
+    ember_analysis::parallel::set_jobs(options.jobs.unwrap_or_else(cores::physical_cores));
     Ok(options)
+}
+
+/// `[IDE-3]` — the functions the checks after type checking pass by in a program with errors: those
+/// the type checker failed (`CheckOutput::failed`); those an error was reported in, or on the
+/// attributes written above (a character the lexer rejected, an `@borrows` naming no parameter):
+/// what was checked of it is not what was written; and those holding what an error left behind, a
+/// placeholder expression or a value whose type did not resolve.
+fn failed_functions(checked: &ember_typeck::CheckOutput, types: &TypeTable, sink: &ember_diag::Sink, map: &SourceMap) -> std::collections::HashSet<String> {
+    let mut failed = checked.failed.clone();
+    // Where each error was reported, and for one on an attribute, the line of what it is written on.
+    let mut erred: Vec<(ember_span::FileId, u32, u32)> = Vec::new();
+    for diagnostic in sink.diagnostics().iter().filter(|diagnostic| diagnostic.severity == ember_diag::Severity::Error) {
+        let span = diagnostic.primary.span;
+        let Some(file) = map.get(span.file).filter(|_| !span.is_dummy()) else { continue };
+        erred.push((span.file, span.start, span.end));
+        let mut line = file.line_of(span.start);
+        if !file.line_text(line).trim_start().starts_with('@') {
+            continue;
+        }
+        while line < file.line_count() {
+            line += 1;
+            let text = file.line_text(line).trim_start();
+            if !(text.is_empty() || text.starts_with('@') || text.starts_with('#')) {
+                let (start, end) = file.line_range(line);
+                erred.push((span.file, start, end));
+                break;
+            }
+        }
+    }
+    for function in &checked.program.functions {
+        if failed.contains(&function.symbol) {
+            continue;
+        }
+        let span = function.span;
+        let reported = erred.iter().any(|&(file, start, end)| file == span.file && start <= span.end && span.start <= end);
+        let mut placeholder = false;
+        ember_hir::visit_block(&function.body, &mut |expr: &ember_hir::Expr| placeholder |= matches!(expr.kind, ember_hir::ExprKind::Error));
+        if reported || placeholder || types.mentions_error(function.ret) || function.locals.iter().any(|local| types.mentions_error(local.ty)) {
+            failed.insert(function.symbol.clone());
+        }
+    }
+    failed
 }
 
 /// `[DIA-7]` — `target/<profile>/unclassified-borrow-errors.log`.
@@ -3827,8 +3885,14 @@ fn prepare_callable_interface_cache(
     options: &Options,
     kept: &std::collections::HashMap<String, ember_analysis::CallRegionContract>,
     kept_modules: &std::collections::BTreeMap<String, ember_build::interface::KnownInterface>,
-) -> Result<(PreparedInterfaceCache, std::collections::HashMap<String, ember_analysis::CallRegionContract>), String> {
+    type_errors: bool,
+) -> Result<(Option<PreparedInterfaceCache>, std::collections::HashMap<String, ember_analysis::CallRegionContract>), String> {
     let contracts = ember_analysis::install_callable_regions_kept(bodies, types, kept);
+    // `[IDE-3]` — a program with errors is checked on with the summaries as inferred: it makes no
+    // interface artifact, whose declarations may hold what did not resolve.
+    if type_errors {
+        return Ok((None, contracts));
+    }
 
     // `[BLD-1]` — a module this build does not check again keeps its artifact; the others' name it
     // by what its kept record knows of it.
@@ -3855,15 +3919,19 @@ fn prepare_callable_interface_cache(
         .to_string_lossy()
         .replace('\\', "/");
     let directory = cache_directory(&profile_root, &package_identity);
-    let prepared = prepare_interface_cache(&directory, &fresh).map_err(|error| {
+    let mut prepared = prepare_interface_cache(&directory, &fresh).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot load interface cache: {error}")
+    })?;
+    // `[BLD-1]` — the records of the modules kept whole, keyed by what they import as it is now.
+    ember_build::interface::refresh_known_records(&mut prepared, &directory, kept_modules).map_err(|error| {
+        format!("internal compiler error: [LT-40] cannot refresh a kept interface record: {error}")
     })?;
     install_callable_metadata_from_artifacts(
         bodies,
         prepared.artifacts(),
         &import_visible_contracts,
     )?;
-    Ok((prepared, contracts))
+    Ok((Some(prepared), contracts))
 }
 
 fn module_interface_inputs(
@@ -5117,15 +5185,18 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         print!("{}", ember_hir::dump(program, &types));
         return Ok(finish(&sink, &map, options));
     }
-    if sink.has_errors() {
-        return Ok(finish(&sink, &map, options));
-    }
+    // `[IDE-3]` — a program with errors is checked on: the checks after type checking run on each
+    // function whose check found nothing wrong, every failed one a body that is never reached
+    // (`failed_functions`), so each error is reported once and what the rest of the program holds
+    // is reported too; nothing is generated.
+    let type_errors = sink.has_errors();
+    let failed = if type_errors { failed_functions(&checked, &types, &sink, &map) } else { std::collections::HashSet::new() };
 
     // Lower. `ember check` runs the MIR analyses too — Part XIX §1 defines it
     // as "type-check + borrow-check without codegen", so it cannot stop here.
     // `[IMP-11]` — from here to code generation the bodies change only through
     // `mir.pass`, which in a debug build of the compiler verifies them after each pass.
-    let mut lowered = ember_mir::lower(program, &types, &common, &map);
+    let mut lowered = ember_mir::lower_with(program, &types, &common, &map, &failed);
     // `[BLD-1]` — the kept modules' MIR, after the program's: what only checks a body passes it by.
     let kept_facts = plan.as_mut().map(|plan| plan.inject(&mut lowered)).unwrap_or_default();
     let mut mir = ember_mir::verify::Pipeline::new(lowered, &types);
@@ -5144,8 +5215,9 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     }
     // `[COST-1]` — an implicit `clone` nothing calls is not emitted.
     mir.pass("pruning unused implicit bodies", &mut types, |bodies, types| ember_mir::prune_unused_implicit(bodies, types, &checked.std_instances));
-    // Annex B — which functions the image reaches through thunks; `[HR-9a]`, none is inlined.
-    let reload_image = (reload != ReloadMode::None).then(|| {
+    // Annex B — which functions the image reaches through thunks; `[HR-9a]`, none is inlined. A
+    // program with errors makes no image.
+    let reload_image = (reload != ReloadMode::None && !type_errors).then(|| {
         let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
         reload::plan(reload, &package, &modules, &map, mir.bodies(), reload_additions.as_ref().expect("made with the mode"))
     });
@@ -5169,15 +5241,20 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let initialization_facts = ember_analysis::analyze_definite_init_all(&mir.bodies()[..fresh]);
     // `[IMP-7]` — the fact verifier proves that the canonical initialization
     // fixpoint describes this initial MIR before diagnostics consume it and
-    // before drop elaboration transforms the CFG.
-    ember_analysis::verify_initialization_facts_all(&mir.bodies()[..fresh], &initialization_facts);
+    // before drop elaboration transforms the CFG. `[IMP-11]`: in the compiler's own debug
+    // builds (the `ci` profile every test uses), as the MIR verifier runs.
+    if cfg!(debug_assertions) {
+        ember_analysis::verify_initialization_facts_all(&mir.bodies()[..fresh], &initialization_facts);
+    }
     ember_analysis::check_definite_init_all_with_facts(&mir.bodies()[..fresh], &initialization_facts, &mut sink);
     // `[LAY-2]` — a reference to a field of a `@packed` value is `E2170`.
     ember_analysis::check_packed_references_all(&mir.bodies()[..fresh], &types, &mut sink);
+    mark("initialisation checks", "all modules");
     // `[OWN-3]`, Part XVIII §4.9 — moves are tracked, a use after a move is
     // `E3040`, and the drops lowering inserted are removed where the value was
     // moved away or made conditional on a drop flag where it may have been.
     mir.pass("drop elaboration", &mut types, |bodies, types| ember_analysis::elaborate_drops_all(&mut bodies[..fresh], types, &mut sink));
+    mark("drop elaboration", "all modules");
     // `[LNT-3]` — `L1001`/`L1002` are emitted by `build` and `check`, not only
     // by `ember lint`. A lint that fires on a separate command does not close
     // the footgun `[GRM-4]` opens.
@@ -5196,7 +5273,9 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         options,
         &kept_facts.contracts,
         &kept_facts.interfaces,
+        type_errors,
     ))?;
+    mark("callable region summaries", "all modules");
     // `[CLS-7a]` — reject a class destructor's own handle entering visible
     // storage before code generation can expose a resurrection path.
     ember_analysis::check_drop_self_escapes_all(mir.bodies(), &types, &mut sink);
@@ -5209,8 +5288,9 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // elaboration, so the drops it sees are the ones that will exist.
     let (mut checked_ranges, borrow_facts) =
         ember_analysis::check_all_with_installed_callable_regions(mir.bodies(), &types, &mut sink, &kept_facts.borrow);
-    // `[DIA-8]` — read the loans where the checker read them.
-    if let Some(line) = options.borrow_report {
+    mark("borrow checks", "all modules");
+    // `[DIA-8]` — read the loans where the checker read them (in a program that type-checks).
+    if let Some(line) = options.borrow_report.filter(|_| !type_errors) {
         report(&sink, &map, options);
         print_borrow_report(&map, file, line, mir.bodies(), &types);
         return Ok(ExitCode::SUCCESS);
@@ -5239,10 +5319,11 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     if let Some(plan) = plan.as_mut() {
         plan.replay_bodies(&mut sink, &map);
     }
-    mark("move, drop, borrow checks", "all modules");
+    mark("the other body checks", "all modules");
     if sink.has_errors() {
         return Ok(finish(&sink, &map, options));
     }
+    let interface_cache = interface_cache.expect("a program without errors prepares its interface artifacts");
     // `[BLD-1]` — the checked forms: those the clean modules were kept against must still hold; each
     // module checked here is kept for the next build; and what the clean ones reported is reported.
     if let Some(plan) = plan.as_mut() {
@@ -5250,10 +5331,22 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         if !plan.verify(&checks, &contracts, &borrow_facts, attempts) {
             return Ok(ExitCode::FAILURE);
         }
-        if !checked.closure_names_unstable {
+        if !answers.is_empty() {
+            plan.forget();
+        } else if !checked.closure_names_unstable {
             plan.keep(&checks, interface_cache.artifacts(), mir.bodies(), &contracts, &borrow_facts, &sink, &types, &|id| checked.made_structs.get(&id).cloned(), &map)?;
         }
         mark("kept checked forms", "all modules");
+    }
+    // `[BLD-1]` — from here on the bodies are in one order whichever were kept: by module, then
+    // where each is written, then by symbol (a generic's instances share their generic's place).
+    // What the passes below make, and the C, are then the same as a build that kept nothing makes.
+    {
+        let module_of: std::collections::HashMap<ember_span::FileId, String> =
+            modules.iter().map(|loaded| (loaded.module.span.file, module_identity(&loaded.path))).collect();
+        mir.pass("putting the bodies in one order", &mut types, |bodies, _| {
+            bodies.sort_by_cached_key(|body| (module_of.get(&body.span.file).cloned(), body.span.start, body.span.end, body.symbol.clone()));
+        });
     }
     // `[CORO-4]` — each generator's body, checked, becomes its frame's state
     // machine; what borrow checking read of the stubs is made again.
@@ -5637,6 +5730,14 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     if let Some(engine) = engine.as_mut() {
         engine.gather_final(&bodies, &types, &modules, &map);
     }
+    // `[BLD-4]` (ODR-244) — a `debug` or `development` program is written one C unit per module, so
+    // a build compiles again only the units whose text changed; a `release` one is one unit, which
+    // the C compiler optimises across (the program ships at its speed). `[FFI-37]` — an
+    // instrumented test is one unit: its call sites are numbered across the whole program.
+    let instrumented = command == "test" && options.ffi_evidence.is_some();
+    let unit_plan: Option<Vec<(String, std::collections::BTreeSet<String>)>> =
+        (options.emit.is_none() && !library && reload_image.is_none() && options.profile != Profile::Release && !instrumented)
+            .then(|| module_units(&modules, &bodies));
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
@@ -5650,8 +5751,8 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         c_for_msvc(&options),
         (command == "test").then(|| tests.iter().map(|test| test.symbol.clone()).collect()),
         reload_image.as_ref(),
-        command == "test" && options.ffi_evidence.is_some(),
-        None,
+        instrumented,
+        unit_plan.as_deref(),
     );
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
@@ -5750,7 +5851,25 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         .unwrap_or_else(|| PathBuf::from("target"));
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     let c_path = layout.c.join(format!("{module_name}.c"));
-    std::fs::write(&c_path, &emitted.c_source).map_err(|e| e.to_string())?;
+    // `[BLD-4]` — each unit written only when its text changed, so the C build compiles again only
+    // those that did; a module's unit from an earlier build that this one has not is removed.
+    ember_build::ninja::write_if_changed(&c_path, &emitted.c_source).map_err(|e| e.to_string())?;
+    let mut module_unit_paths = Vec::new();
+    for (name, source) in &emitted.module_units {
+        let path = layout.c.join(module_unit_file(&module_name, name));
+        ember_build::ninja::write_if_changed(&path, source).map_err(|e| e.to_string())?;
+        module_unit_paths.push(path);
+    }
+    if let Ok(entries) = std::fs::read_dir(&layout.c) {
+        let prefix = module_unit_file(&module_name, "");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&prefix) && name.ends_with(".c") && !module_unit_paths.contains(&path) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
     let safety_path = layout.inspect.join(format!("{module_name}.safety.json"));
     let safety_json = {
         let table = emitted.safety_json.trim_end();
@@ -5776,13 +5895,15 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     std::fs::write(layout.bin.join(format!("{exe_name}-gdb.py")), &emitted.visualisers.gdb).map_err(|e| e.to_string())?;
     std::fs::write(layout.bin.join(format!("{module_name}.lldb.py")), &emitted.visualisers.lldb).map_err(|e| e.to_string())?;
 
-    // `--cc`, else the variable `cc_var()` names (CI's compiler matrix, D-251).
-    // `[BLD-FFI-2]` — between the two, the compiler of the CMake build whose target's flags it takes.
+    // `--cc`, else the variable `cc_var()` names (CI's compiler matrix, D-251), else the manifest's
+    // `[build] c_compiler` (`[MAN-1]`; `"bundled"`, the archive's Clang, `[TOOL-2]`).
+    // `[BLD-FFI-2]` — after `--cc`, the compiler of the CMake build whose target's flags it takes.
     let requested = options
         .cc
         .clone()
         .or_else(|| options.cc_flags_target.as_ref().and_then(|_| cimport::cmake_c_compiler(Path::new(".")).map(str::to_string)))
-        .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
+        .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()))
+        .or_else(|| nearest_manifest_text(input).ok().flatten().and_then(|text| manifest_string(&text, "build", "c_compiler")));
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
     // `[BLD-FFI-1b]` — the C++ projects' runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which
     // every translation unit of the target is compiled with; with GCC or Clang, libstdc++'s debug
@@ -6033,14 +6154,21 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     }
     retained_symbols.sort();
     retained_symbols.dedup();
-    ember_build::compile_and_link_program(
+    // `[BLD-4]` — compiled and linked through Ninja: the C units (the program's, its modules', the
+    // runtime's where it is not an object yet), and the objects as they are.
+    let (mut units, objects): (Vec<PathBuf>, Vec<PathBuf>) =
+        sources.into_iter().partition(|path| path.extension().is_some_and(|extension| extension == "c"));
+    units.extend(module_unit_paths);
+    ember_build::ninja::build(
         &toolchain,
-        &LinkRequest {
-            sources: &sources,
+        &ember_build::ninja::Program {
+            units: &units,
+            objects: &objects,
             include_dirs: &includes,
             output: exe.clone(),
             profile: options.profile,
-            obj_dir: layout.obj.clone(),
+            dir: layout.obj.clone(),
+            jobs: options.jobs,
         },
         &retained_symbols,
         &libraries,
@@ -6972,6 +7100,27 @@ fn manifest_section_keys(section: &str) -> Option<Option<&'static [&'static str]
     }))
 }
 
+/// `[BLD-4]` (ODR-244) — the program's bodies by module, for one C unit each: a body is its module's
+/// whose file its span is in (a generic's instance its generic's module's, a closure its function's);
+/// one of no module's file is the main unit's.
+fn module_units(modules: &[ember_typeck::LoadedModule], bodies: &[ember_mir::Body]) -> Vec<(String, std::collections::BTreeSet<String>)> {
+    let by_file: std::collections::HashMap<ember_span::FileId, usize> = modules.iter().enumerate().map(|(index, loaded)| (loaded.module.span.file, index)).collect();
+    let mut units: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = std::collections::BTreeMap::new();
+    for body in bodies {
+        if body.is_abstract || body.is_extern_declaration || body.span.is_dummy() {
+            continue;
+        }
+        let Some(&module) = by_file.get(&body.span.file) else { continue };
+        units.entry(module_identity(&modules[module].path)).or_default().insert(body.symbol.clone());
+    }
+    units.into_iter().collect()
+}
+
+/// A module's C unit's file: `<program>.m.<module>.c`.
+fn module_unit_file(program: &str, module: &str) -> String {
+    if module.is_empty() { format!("{program}.m.") } else { format!("{program}.m.{module}.c") }
+}
+
 /// Where `ember_rt`'s sources live. Found relative to the compiler executable
 /// during development; an installed toolchain will carry them alongside the
 /// binary.
@@ -7072,7 +7221,10 @@ fn report_timings(options: &Options) {
             .iter()
             .map(|(stage, module, took)| serde_json::json!({ "stage": stage, "module": module, "ms": ms(*took) }))
             .collect();
-        eprintln!("{}", serde_json::json!({ "timings": stages, "total_ms": ms(last - start), "peak_memory_mb": peak_memory_mb() }));
+        eprintln!(
+            "{}",
+            serde_json::json!({ "timings": stages, "total_ms": ms(last - start), "peak_memory_mb": peak_memory_mb(), "jobs": ember_analysis::parallel::jobs() })
+        );
         return;
     }
     eprintln!("timings (ms):");
@@ -7080,6 +7232,8 @@ fn report_timings(options: &Options) {
         eprintln!("  {stage:<22}{:>10.2}  {module}", ms(*took));
     }
     eprintln!("  {:<22}{:>10.2}", "total", ms(last - start));
+    // `[BLD-7]` — the threads the per-body analyses ran on.
+    eprintln!("threads: {}", ember_analysis::parallel::jobs());
     if let Some(peak) = peak_memory_mb() {
         eprintln!("peak memory: {peak:.1} MB");
     }

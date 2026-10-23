@@ -221,11 +221,12 @@ pub(crate) struct Plan {
     kept_functions: HashSet<String>,
 }
 
-/// Whether a command, with these options, may use and keep checked forms: a plain check. A report,
-/// an output of a stage, the evaluator, `ember lint` and the like read more than a check reports,
-/// so they check every module.
+/// Whether a command, with these options, may use and keep checked forms: a plain check, build or
+/// run (ODR-257: one checked form serves the three, the program's checks being the same in each).
+/// A report, an output of a stage, the evaluator, `ember lint`, a test build (whose tests are marked
+/// before the checks) and the like read more than a check reports, so they check every module.
 pub(crate) fn applies(command: &str, plain: bool) -> bool {
-    command == "check" && plain && std::env::var_os(ember_branding::no_incremental_var()).is_none()
+    matches!(command, "check" | "build" | "run") && plain && std::env::var_os(ember_branding::no_incremental_var()).is_none()
 }
 
 impl Plan {
@@ -249,6 +250,8 @@ impl Plan {
         let sources: Vec<Hash> = modules.iter().map(|loaded| hash(map.file(loaded.module.span.file).text.as_bytes())).collect();
         let shapes: Vec<Shape> = modules.iter().map(|loaded| declarations(loaded, map)).collect();
         let open: Vec<String> = shapes.iter().map(|shape| shape.open.clone()).collect();
+        // `ember check`, `ember build` and `ember run` check alike (`applies`): one key.
+        let command = if matches!(command, "build" | "run") { "check" } else { command };
         let key = hash(
             format!(
                 "{SCHEMA}\0{}\0{command}\0{options}\0{}\0{}",
@@ -600,6 +603,13 @@ impl Plan {
             }
         }
         !attempts.again
+    }
+
+    /// A program whose check asked the compile-time evaluator for a value keeps nothing, and drops
+    /// what was kept before: a value reads what no source says (a file, a variable, `[CT-4]`), which
+    /// no record holds, and the modules that name it would keep the old one.
+    pub(crate) fn forget(&self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 
     /// Keep each module checked here, whole or in part, for the next build. `bodies` — the

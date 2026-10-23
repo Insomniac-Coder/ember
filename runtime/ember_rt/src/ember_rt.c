@@ -1060,6 +1060,14 @@ void ember_rt_shutdown(void) {
         return;
     }
     rt_run_exit_hooks();
+    /* [BEN-6] `ember bench` asks how many allocations the program made (`EMBER_ALLOCATIONS=1`): an
+     * `@noalloc` path's benchmark asserts the count exactly. The main thread's count, which ran it. */
+    {
+        const char* allocations = getenv("EMBER_ALLOCATIONS");
+        if (allocations != NULL && allocations[0] == '1') {
+            fprintf(stderr, "ember: %llu allocations [BEN-6]\n", (unsigned long long)g_stats.total_allocations);
+        }
+    }
     if (debug_objects_enabled()) {
         /* [THR-16] Another thread still running may still own, change or free objects: say so
          * rather than report its objects as leaks or free the table under it. */

@@ -13,6 +13,7 @@ use std::process::Command;
 
 pub mod cdylib;
 pub mod interface;
+pub mod ninja;
 pub mod reload;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -171,9 +172,13 @@ impl Toolchain {
     /// Clang, the one the driver names.
     pub fn linker(&self) -> String {
         match self {
-            Toolchain::Msvc { .. } => self.compiler_path().parent().map(|dir| dir.join("link.exe"))
-                .filter(|path| path.is_file())
-                .map_or_else(|| "link.exe".to_string(), |path| path.display().to_string()),
+            // clang-cl links with LLVM's `lld-link` beside it (`-fuse-ld=lld`), cl with `link.exe`.
+            Toolchain::Msvc { cl, .. } => {
+                let name = if is_clang_cl(cl) { "lld-link.exe" } else { "link.exe" };
+                self.compiler_path().parent().map(|dir| dir.join(name))
+                    .filter(|path| path.is_file())
+                    .map_or_else(|| name.to_string(), |path| path.display().to_string())
+            }
             Toolchain::Clang(_) | Toolchain::Gcc(_) => {
                 let named = output_started(compiler_command(self).arg("-print-prog-name=ld")).ok()
                     .filter(|output| output.status.success())
@@ -235,8 +240,12 @@ impl Toolchain {
         text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or(self.name()).to_string()
     }
 
+    /// `[TOOL-2]` — the C compiler: the one `requested` names (`bundled`: the Clang Ember's archive
+    /// carries); else the archive's Clang, found beside the compiler before anything on `PATH`;
+    /// else MSVC, Clang or gcc as the host has them.
     pub fn detect(requested: Option<&str>) -> Result<Toolchain, BuildError> {
         match requested {
+            Some("bundled") => Self::find_bundled().ok_or(BuildError::NoToolchain("bundled")),
             Some("msvc") => Self::find_msvc().ok_or(BuildError::NoToolchain("msvc")),
             Some("clang-cl") => Self::find_clang_cl().ok_or(BuildError::NoToolchain("clang-cl")),
             Some("clang") => Self::find_on_path("clang")
@@ -246,11 +255,39 @@ impl Toolchain {
                 .map(Toolchain::Gcc)
                 .ok_or(BuildError::NoToolchain("gcc")),
             Some(other) if other != "auto" => Err(BuildError::UnknownToolchain(other.to_string())),
-            _ => Self::find_msvc()
+            _ => Self::find_bundled()
+                .or_else(Self::find_msvc)
                 .or_else(|| Self::find_on_path("clang").map(Toolchain::Clang))
                 .or_else(|| Self::find_on_path("gcc").map(Toolchain::Gcc))
                 .ok_or(BuildError::NoToolchain("any")),
         }
+    }
+
+    /// `[TOOL-2]` — the archive's Clang (`toolchain/llvm/bin/` beside the compiler's `bin/`), which
+    /// links with the archive's LLD. On Windows it is `clang-cl` in MSVC's environment: the Windows
+    /// SDK's libraries, which their licence keeps out of the archive, come with the Build Tools.
+    fn find_bundled() -> Option<Toolchain> {
+        let bin = bundled_dir()?.join("llvm").join("bin");
+        if cfg!(windows) {
+            let cl = bin.join("clang-cl.exe");
+            if !cl.is_file() {
+                return None;
+            }
+            let Toolchain::Msvc { env, .. } = Self::find_msvc()? else { return None };
+            Some(Toolchain::Msvc { cl, env })
+        } else {
+            let clang = bin.join("clang");
+            clang.is_file().then_some(Toolchain::Clang(clang))
+        }
+    }
+
+    /// Whether this is the archive's own Clang (`find_bundled`).
+    pub fn is_bundled(&self) -> bool {
+        let path = match self {
+            Toolchain::Msvc { cl, .. } => cl,
+            Toolchain::Clang(path) | Toolchain::Gcc(path) => path,
+        };
+        bundled_dir().is_some_and(|dir| path.starts_with(dir))
     }
 
     fn find_on_path(name: &str) -> Option<PathBuf> {
@@ -480,6 +517,8 @@ fn capture_environment(vcvars: &Path) -> Option<BTreeMap<String, String>> {
 #[derive(Debug)]
 pub enum BuildError {
     NoToolchain(&'static str),
+    /// `[BLD-4]` (ODR-258) — no Ninja to run the build through: the message names how to get one.
+    NoNinja(String),
     UnknownToolchain(String),
     Io(std::io::Error),
     /// The C compiler ran and failed. Its own output is carried through, since
@@ -517,6 +556,7 @@ impl std::fmt::Display for BuildError {
   = help: {}", toolchain_remedy())
             }
             BuildError::UnknownToolchain(name) => write!(f, "unknown C compiler `{name}`"),
+            BuildError::NoNinja(message) => f.write_str(message),
             BuildError::Io(e) => write!(f, "{e}"),
             BuildError::CompilerFailed { command, output } => {
                 write!(f, "the C compiler failed\n  command: {command}\n{output}")
@@ -530,6 +570,38 @@ impl std::fmt::Display for BuildError {
             }
         }
     }
+}
+
+/// `[TOOL-2]` — the toolchain Ember's archive carries (`toolchain/` beside the compiler's `bin/`:
+/// `llvm/bin/`'s Clang and LLD, `ninja/`), or `None` for a compiler run from elsewhere (a source
+/// checkout's `target/`).
+pub fn bundled_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.parent()?.join("toolchain");
+    dir.is_dir().then_some(dir)
+}
+
+/// `[BLD-4]` (ODR-258) — the Ninja a build runs: the one Ember's archive carries beside the
+/// compiler; else one on `PATH` (a build from a source checkout); else an error naming how to
+/// install it on this host.
+pub fn ninja() -> Result<PathBuf, String> {
+    let name = if cfg!(windows) { "ninja.exe" } else { "ninja" };
+    if let Some(bundled) = bundled_dir().map(|dir| dir.join("ninja").join(name)).filter(|path| path.is_file()) {
+        return Ok(bundled);
+    }
+    if let Some(found) = program_file(Path::new(name), std::env::var_os("PATH")) {
+        return Ok(found);
+    }
+    let install = if cfg!(windows) {
+        "winget install Ninja-build.Ninja"
+    } else if cfg!(target_os = "macos") {
+        "brew install ninja"
+    } else {
+        "sudo apt install ninja-build"
+    };
+    Err(format!(
+        "error[E9002]: no Ninja was found: a build runs the C compiler through it [BLD-4]\n  = help: Ember's release archive carries one; in a source checkout, install it (`{install}`) and put it on PATH"
+    ))
 }
 
 /// `[TOOL-3]` — what installs a C compiler on this host.
@@ -793,13 +865,26 @@ fn compile_and_link_impl(
     cache: Option<&Path>,
     layout: usize,
 ) -> Result<(), BuildError> {
-    let mut command = compiler_command(toolchain);
+    // `[BEN-6]` — a C++ program (a counted-object benchmark's twin, `ember bench`): the same flags,
+    // with the C++ driver and standard in place of C's.
+    let cpp = request.sources.iter().any(|source| source.extension().is_some_and(|extension| extension == "cpp"));
+    let mut command = match toolchain {
+        Toolchain::Clang(path) | Toolchain::Gcc(path) if cpp => {
+            let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+            let driver = if name.contains("clang") { name.replacen("clang", "clang++", 1) } else { name.replacen("gcc", "g++", 1) };
+            Command::new(path.with_file_name(driver))
+        }
+        _ => compiler_command(toolchain),
+    };
     let (layout_compile, layout_link) = layout_flags(toolchain, layout);
     let lto = build_lto(toolchain, request.profile, Link::Here);
     match toolchain {
         Toolchain::Msvc { cl, .. } => {
             let clang_cl = is_clang_cl(cl);
-            command.args(msvc_flags(request.profile)).args(lto_compile_flags(toolchain, lto, Link::Here));
+            command.args(msvc_flags(request.profile).into_iter().filter(|flag| !cpp || *flag != "/std:c11")).args(lto_compile_flags(toolchain, lto, Link::Here));
+            if cpp {
+                command.args(["/EHsc", "/std:c++17"]);
+            }
             if warnings_as_errors() {
                 command.arg("/WX");
             }
@@ -827,7 +912,14 @@ fn compile_and_link_impl(
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(request.profile)).args(gcc_flags(toolchain, request.profile));
+            command.args(gnu_flags(request.profile).into_iter().filter(|flag| !cpp || *flag != "-std=c11")).args(gcc_flags(toolchain, request.profile));
+            if cpp {
+                command.arg("-std=c++17");
+            }
+            // `[TOOL-2]` — the archive's Clang links with the archive's LLD, beside it.
+            if toolchain.is_bundled() {
+                command.arg("-fuse-ld=lld");
+            }
             match inherited_gnu_lto() {
                 // `[BLD-FFI-4]` — the C++ project's link-time optimisation, for the program's C and
                 // its link; an empty one is the project's `-fno-lto`.
@@ -1082,6 +1174,11 @@ impl CachedProgram {
                 }
             }
         }
+        self.store_files(request, files, started);
+    }
+
+    /// `store`, given the files the compile included (`[BLD-4]`: as Ninja recorded them).
+    fn store_files(&self, request: &LinkRequest, mut files: Vec<PathBuf>, started: std::time::SystemTime) {
         files.sort();
         files.dedup();
         let compiles_c = request.sources.iter().any(|source| source.extension().is_some_and(|ext| ext == "c"));

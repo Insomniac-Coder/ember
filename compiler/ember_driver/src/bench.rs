@@ -1,4 +1,6 @@
-//! `ember bench [filter] [--compare]` — the performance gate (`[TST-28]`, `[BEN-1]`..`[BEN-6]`).
+//! `ember bench [filter] [--compare]` — the performance gate (`[TST-28]`, `[BEN-1]`..`[BEN-6]`);
+//! `ember bench [filter] --reload [--dir D] [--runs N]` — what reload costs a program that is not
+//! reloading (`[HR-9]`, `reload_overhead`).
 //!
 //! `tests/perf/<name>.em` is a benchmark program and `tests/perf/<name>.c` its equivalent C program
 //! (`.cpp` for counted-object code, `[BEN-6]`). The `.em` file's `#$ perf: <category>` annotation
@@ -146,6 +148,9 @@ struct Pair {
     category: Category,
     threshold: f64,
     stdin: Option<String>,
+    /// `[BEN-6]` — `#$ allocations: N`: an `@noalloc` path's benchmark asserts how many allocations
+    /// its program makes, exactly.
+    allocations: Option<u64>,
 }
 
 /// The pairs under `dir` whose names contain `filter`; an `.em` file with no twin, or with no
@@ -184,7 +189,11 @@ fn pairs(dir: &Path, filter: Option<&str>) -> Result<Vec<Pair>, String> {
         if !twin.exists() {
             return Err(format!("{} has no equivalent program {} [TST-28]", path.display(), twin.display()));
         }
-        found.push(Pair { name, ember: path, twin, category, threshold, stdin: annotation("stdin") });
+        let allocations = match annotation("allocations") {
+            Some(written) => Some(written.parse::<u64>().map_err(|_| format!("{}: `#$ allocations: {written}` is not a count [BEN-6]", path.display()))?),
+            None => None,
+        };
+        found.push(Pair { name, ember: path, twin, category, threshold, stdin: annotation("stdin"), allocations });
     }
     Ok(found)
 }
@@ -312,6 +321,30 @@ fn run_once(exe: &Path, stdin: Option<&str>) -> Result<(String, f64), String> {
     Ok((String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), millis))
 }
 
+/// `[BEN-6]` — how many allocations the program at `exe` makes, as its runtime counts them
+/// (`ember_branding::allocations_var`).
+fn allocations_made(exe: &Path, stdin: Option<&str>) -> Result<u64, String> {
+    let mut child = Command::new(exe)
+        .env(ember_branding::allocations_var(), "1")
+        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot run {}: {error}", exe.display()))?;
+    if let (Some(text), Some(mut input)) = (stdin, child.stdin.take()) {
+        use std::io::Write;
+        let _ = input.write_all(format!("{text}
+").as_bytes());
+    }
+    let output = child.wait_with_output().map_err(|error| format!("{}: {error}", exe.display()))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr
+        .lines()
+        .find_map(|line| line.strip_suffix(" allocations [BEN-6]").and_then(|rest| rest.rsplit(' ').next()).and_then(|count| count.parse().ok()))
+        .ok_or_else(|| format!("{} reported no allocation count:
+{stderr}", exe.display()))
+}
+
 /// The Ember program, built for release by this compiler: the path it printed.
 fn build_ember(source: &Path, out_dir: &Path, layout: usize) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -383,13 +416,20 @@ fn fastest_layouts(ember: &[PathBuf], twin: &[PathBuf], stdin: Option<&str>) -> 
 pub fn command(args: &[String]) -> Result<ExitCode, String> {
     let mut filter = None;
     let mut compare = false;
+    let mut reload = false;
     let mut report = false;
     let mut core = 1usize;
+    let mut runs = TIMED;
     let mut dir = PathBuf::from("tests/perf");
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--compare" => compare = true,
+            "--reload" => reload = true,
+            "--runs" => {
+                let value = rest.next().ok_or("`--runs` needs a number of timed runs")?;
+                runs = value.parse().ok().filter(|&runs: &usize| runs > 0).ok_or_else(|| format!("`--runs {value}` is not a number of runs"))?;
+            }
             // ODR-154 — on a machine that is not the reference machine (CI's shared runners, whose
             // processor changes from run to run), the gate reports and does not fail.
             "--report" => report = true,
@@ -402,8 +442,14 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
             other => filter = Some(other.to_string()),
         }
     }
+    if reload {
+        return reload_overhead(&dir, filter.as_deref(), core, runs, report);
+    }
     if !compare {
-        return Err("`ember bench` times programs against their C twins: run `ember bench --compare` [TST-28]".to_string());
+        return Err("`ember bench` times programs against their C twins: run `ember bench --compare` [TST-28], or `ember bench --reload` [HR-9]".to_string());
+    }
+    if runs != TIMED {
+        return Err(format!("`ember bench --compare` times {TIMED} runs of each side [BEN-1]; `--runs` is `--reload`'s"));
     }
     let pairs = pairs(&dir, filter.as_deref())?;
     if pairs.is_empty() {
@@ -477,6 +523,16 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
             println!("{}: FAIL — its output differs from the C program's", pair.name);
             failed += 1;
             continue;
+        }
+        // `[BEN-6]` — the allocations an `@noalloc` path's program makes, counted by its runtime.
+        if let Some(expected) = pair.allocations {
+            let made = allocations_made(&embers[0], pair.stdin.as_deref())?;
+            if made != expected {
+                println!("{}: FAIL — the program makes {made} allocations, not the {expected} it asserts [BEN-6]", pair.name);
+                failed += 1;
+                continue;
+            }
+            println!("{}: {made} allocations, as asserted [BEN-6]", pair.name);
         }
         let (e_layout, c_layout) = fastest_layouts(&embers, &twins, pair.stdin.as_deref())?;
         let (ember, twin) = (&embers[e_layout], &twins[c_layout]);
@@ -557,6 +613,123 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
         return Ok(ExitCode::FAILURE);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `[HR-9]` — the bound on what reload costs a program that is not reloading.
+const RELOAD_BOUND: f64 = 0.03;
+
+/// The program `source`, built by this compiler in the `development` profile into `dir` as a
+/// package of its own, reloadable (`[build] reload = "all"`) or not: the program it printed (a
+/// reloadable build's host, which loads the first image beside it).
+fn build_development(source: &Path, dir: &Path, reload: bool) -> Result<PathBuf, String> {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let name = source.file_stem().and_then(|stem| stem.to_str()).ok_or("a program's file has no name")?;
+    let manifest = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nreload = \"{}\"\n", if reload { "all" } else { "none" });
+    std::fs::write(dir.join(ember_branding::MANIFEST), manifest).map_err(|error| error.to_string())?;
+    let copy = dir.join(source.file_name().ok_or("a program's file has no name")?);
+    std::fs::copy(source, &copy).map_err(|error| format!("{}: {error}", source.display()))?;
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let output = Command::new(exe)
+        .arg("build")
+        .arg(&copy)
+        .args(["--profile", "development", "--out-dir"])
+        .arg(dir.join("target"))
+        .output()
+        .map_err(|error| error.to_string())?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        return Err(format!("{} does not build {}:\n{}{stderr}", source.display(), if reload { "reloadable" } else { "plain" }, String::from_utf8_lossy(&output.stdout)));
+    }
+    let built = stderr.lines().find_map(|line| line.trim().strip_prefix("built ")).ok_or("the build printed no program")?;
+    let built = PathBuf::from(built);
+    Ok(if built.is_absolute() { built } else { std::env::current_dir().map_err(|error| error.to_string())?.join(built) })
+}
+
+/// `[HR-9]` — what reload costs a program that is not reloading: each program of `dir` (whose name
+/// holds `filter`) built by this compiler in the `development` profile twice, plain and reloadable
+/// (every function reached through its thunk and none inlined, `[HR-9a]`), the two checked to
+/// print the same, then timed interleaved on the one core `core`, `WARMUP` untimed and `runs` timed
+/// runs of each. Each program's ratio, reloadable over plain, with its 95 % interval (`[BEN-1]`);
+/// the suite's overhead, the geometric mean of the ratios less one, with the configuration it was
+/// measured on. Over 3 % fails, unless `report` (`--report`, a machine that is not the reference).
+fn reload_overhead(dir: &Path, filter: Option<&str>, core: usize, runs: usize, report: bool) -> Result<ExitCode, String> {
+    let mut sources: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(ember_branding::SOURCE_EXT))
+        .filter(|path| filter.is_none_or(|filter| path.file_stem().and_then(|stem| stem.to_str()).is_some_and(|stem| stem.contains(filter))))
+        .collect();
+    sources.sort();
+    if sources.is_empty() {
+        println!("no programs in {}", dir.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
+    let toolchain = ember_build::Toolchain::detect(requested.as_deref()).map_err(|error| error.to_string())?;
+    if on_battery() {
+        println!("void: the machine is on battery power, unfit for timing [BEN-3]");
+        return Ok(ExitCode::SUCCESS);
+    }
+    pin_to_core(core)?;
+    let out_dir = std::env::temp_dir().join(format!("ember-bench-reload-{}", std::process::id()));
+    println!(
+        "[HR-9] reload overhead: {} program(s) of {}, `development` profile, {} ({}) on core {core} of {}, {WARMUP} untimed and {runs} timed runs of each form, interleaved",
+        sources.len(),
+        dir.display(),
+        toolchain.name(),
+        toolchain.compiler_path().display(),
+        processor()
+    );
+    let measured = (|| -> Result<Vec<f64>, String> {
+        let mut ratios = Vec::new();
+        for source in &sources {
+            let name = source.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
+            let text = std::fs::read_to_string(source).map_err(|error| format!("{}: {error}", source.display()))?;
+            let stdin = text.lines().find_map(|line| line.strip_prefix("#$ stdin:").map(|value| value.trim().to_string()));
+            let plain = build_development(source, &out_dir.join(name).join("plain"), false)?;
+            let reloadable = build_development(source, &out_dir.join(name).join("reload"), true)?;
+            if run_once(&plain, stdin.as_deref())?.0 != run_once(&reloadable, stdin.as_deref())?.0 {
+                return Err(format!("{name}: the reloadable program prints otherwise than the plain one"));
+            }
+            let programs = [plain.as_path(), reloadable.as_path()];
+            for _ in 0..WARMUP {
+                for program in programs {
+                    run_once(program, stdin.as_deref())?;
+                }
+            }
+            let mut times = [Vec::with_capacity(runs), Vec::with_capacity(runs)];
+            for rep in 0..runs {
+                for offset in 0..2 {
+                    let which = (rep + offset) % 2;
+                    times[which].push(run_once(programs[which], stdin.as_deref())?.1);
+                }
+            }
+            let (plain_side, reload_side) = (side(&times[0]), side(&times[1]));
+            let to_plain = ratio(reload_side, plain_side);
+            println!(
+                "{name:32} plain {:9.2} ms | reloadable {:9.2} ms | {:.3}x [{:.3}, {:.3}]",
+                plain_side.median, reload_side.median, to_plain.median, to_plain.low, to_plain.high
+            );
+            ratios.push(to_plain.median);
+        }
+        Ok(ratios)
+    })();
+    let _ = std::fs::remove_dir_all(&out_dir);
+    let ratios = measured?;
+    let overhead = (ratios.iter().map(|ratio| ratio.ln()).sum::<f64>() / ratios.len() as f64).exp() - 1.0;
+    let within = overhead <= RELOAD_BOUND;
+    println!(
+        "suite overhead (geometric mean of {} programs): {:+.2} %, {} the 3 % bound [HR-9]",
+        ratios.len(),
+        overhead * 100.0,
+        if within { "within" } else { "over" }
+    );
+    if !within && report {
+        println!("reported only: the run of record is the reference machine's (ODR-154)");
+        return Ok(ExitCode::SUCCESS);
+    }
+    Ok(if within { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 /// `[BEN-1]` — the untimed and timed runs of the three programs, interleaved and rotated.

@@ -1097,7 +1097,7 @@ fn value_data_a_reload_cannot_reach_is_refused() {
 /// function's thunk is one statement, a load of its target from the call table and a call through
 /// it with the thunk's own arguments (a tail call, which an optimising C compiler makes a jump), in
 /// both reloadable profiles; nothing else runs in it (the frame record, `[HR-3b]`, is the body's).
-/// The overhead on the performance suite is measured by `bench/reload_overhead.py`.
+/// The overhead on the performance suite is measured by `ember bench --reload`.
 #[test]
 fn a_thunk_is_one_load_and_one_indirect_jump() {
     let root = workspace_root();
@@ -1127,6 +1127,28 @@ fn a_thunk_is_one_load_and_one_indirect_jump() {
         }
         assert!(thunks >= 3, "{profile}: {thunks} thunks in:\n{c}");
     }
+}
+
+/// `[HR-9]` — `ember bench --reload` measures what reload costs a program that is not reloading:
+/// each program of a folder built in the `development` profile plain and reloadable, checked to
+/// print the same, then timed interleaved on one core; it prints the program's ratio with its
+/// interval, and the suite's overhead with the configuration it was measured on against the
+/// 3 % bound (`--report`: printed, not a gate, off the reference machine).
+#[test]
+fn the_reload_overhead_is_measured_and_reported_with_its_configuration() {
+    let root = workspace_root();
+    let suite = temporary_directory("reload-overhead");
+    let program = "fn step(x: int) -> int:\n    return (x * 7 + 3) % 1009\n\nfn main():\n    total = 0\n    for i in 0..200000:\n        total += step(i)\n    println(total)\n";
+    std::fs::write(suite.join(ember_branding::source_file("calls_a_small_function")), program).expect("the program is writable");
+    let run = ember(&["bench", "--reload", "--dir", &suite.to_string_lossy(), "--runs", "3", "--report"], &root);
+    assert_eq!(run.exit, 0, "{}{}", run.stdout, run.stderr);
+    if run.stdout.starts_with("void:") {
+        return; // on battery: no timing is valid [BEN-3]
+    }
+    assert!(run.stdout.contains("[HR-9] reload overhead: 1 program(s)") && run.stdout.contains("`development` profile") && run.stdout.contains("on core 1"), "{}", run.stdout);
+    let line = run.stdout.lines().find(|line| line.starts_with("calls_a_small_function")).unwrap_or_else(|| panic!("no program line:\n{}", run.stdout));
+    assert!(line.contains("plain") && line.contains("reloadable") && line.contains("x ["), "{line}");
+    assert!(run.stdout.contains("suite overhead (geometric mean of 1 programs): ") && run.stdout.contains("the 3 % bound [HR-9]"), "{}", run.stdout);
 }
 
 /// `[HR-41]` — the failure matrix, row by row, each where it is detected and with its outcome:

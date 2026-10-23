@@ -444,6 +444,12 @@ pub fn bench_layout_var() -> String {
     format!("{}_BENCH_LAYOUT", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// `[BEN-6]` — set to `1`, a program reports at its end how many allocations it made, which an
+/// `@noalloc` path's benchmark asserts exactly (`ember bench`).
+pub fn allocations_var() -> String {
+    format!("{}_ALLOCATIONS", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// Where `std`'s sources live, or `None` where they cannot be found.
 ///
 /// The order is: the environment variable; then `std/src` beside the running

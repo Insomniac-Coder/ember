@@ -342,6 +342,10 @@ pub struct CheckOutput {
     /// The symbols of the functions whose check reported an error or used a
     /// compile-time value not known yet: the evaluator builds none of them.
     pub incomplete: HashSet<String>,
+    /// `[IDE-3]` — the symbols of the functions whose check reported an error (with the closures
+    /// made in them), and of the generic instances only such functions asked for: what the checks
+    /// after type checking pass by in a program with errors.
+    pub failed: HashSet<String>,
 }
 
 /// `[LEX-15a]` — a module's item-level aliases, to resolve: the generic ones first, since a plain
@@ -829,6 +833,7 @@ pub fn check(
     if !comptime.is_empty() {
         functions.extend(std::mem::take(&mut checker.comptime_functions));
     }
+    let failed = checker.failed_bodies(&functions);
     CheckOutput {
         found,
         made_structs: checker.closure_env_spans.keys().map(|&id| (id, checker.made_call(id))).collect(),
@@ -843,6 +848,7 @@ pub fn check(
         std_instances: std::mem::take(&mut checker.std_instances),
         comptime,
         incomplete: std::mem::take(&mut checker.incomplete),
+        failed,
     }
 }
 
@@ -2648,9 +2654,15 @@ struct Checker<'a> {
     /// The bodies being checked, innermost last (an instance's body may be
     /// checked inside another's): the error count and `comptime_unresolved`
     /// at each one's start, and the closures made inside it.
-    body_marks: Vec<(usize, usize, Vec<String>)>,
+    body_marks: Vec<(usize, usize, Vec<String>, Vec<DefId>)>,
     /// The symbols of incomplete bodies (`CheckOutput::incomplete`).
     incomplete: HashSet<String>,
+    /// `[IDE-3]` — the bodies whose check reported an error, and the closures made in them.
+    erred: HashSet<String>,
+    /// `[IDE-3]` — each body checked: its symbol, the generic instances it asked for and the
+    /// closures made in it; and the instances asked for outside any body.
+    asked: Vec<(String, Vec<DefId>, Vec<String>)>,
+    asked_outside: HashSet<DefId>,
     /// D-257 — the number the next closure is named with (`closureN`, and its
     /// environment `closureN_env`). It never goes back, so a dropped or
     /// re-checked lambda never lets two closures share a name in the C.
@@ -3583,6 +3595,9 @@ impl<'a> Checker<'a> {
             comptime_outer_names: None,
             body_marks: Vec::new(),
             incomplete: HashSet::new(),
+            erred: HashSet::new(),
+            asked: Vec::new(),
+            asked_outside: HashSet::new(),
             closure_numbers: 0,
             closure_scope: None,
             closure_names_unstable: false,
@@ -8197,18 +8212,71 @@ impl<'a> Checker<'a> {
     /// `[BODY]` — where a body's check starts: what an incomplete body is
     /// measured against.
     fn begin_body_marks(&mut self) {
-        self.body_marks.push((self.sink.error_count(), self.comptime_unresolved, Vec::new()));
+        self.body_marks.push((self.sink.error_count(), self.comptime_unresolved, Vec::new(), Vec::new()));
     }
 
     /// Where a body's check ends: the body, and the closures made in it, are
     /// incomplete when its check reported an error or used a compile-time
-    /// value not known yet.
+    /// value not known yet. `[IDE-3]` — what it asked for is noted, and whether it erred.
     fn end_body_marks(&mut self, symbol: &str) {
-        if let Some((errors, unresolved, closures)) = self.body_marks.pop()
-            && (self.sink.error_count() != errors || self.comptime_unresolved != unresolved)
-        {
+        let Some((errors, unresolved, closures, asked)) = self.body_marks.pop() else { return };
+        let erred = self.sink.error_count() != errors;
+        if erred || self.comptime_unresolved != unresolved {
             self.incomplete.insert(symbol.to_string());
-            self.incomplete.extend(closures);
+            self.incomplete.extend(closures.iter().cloned());
+        }
+        if erred {
+            self.erred.insert(symbol.to_string());
+            self.erred.extend(closures.iter().cloned());
+        }
+        self.asked.push((symbol.to_string(), asked, closures));
+    }
+
+    /// `[IDE-3]` — a generic instance asked for by the body being checked, or by none.
+    fn note_asked(&mut self, instance: DefId) {
+        match self.body_marks.last_mut() {
+            Some((_, _, _, asked)) => asked.push(instance),
+            None => {
+                self.asked_outside.insert(instance);
+            }
+        }
+    }
+
+    /// `[IDE-3]` — the functions the checks after type checking pass by: those whose check
+    /// reported an error, with the closures made in them, and each generic instance every body
+    /// that asked for it is among them (the instance a wrong argument made, `CLO-6`'s), with its
+    /// closures. An instance asked for outside any body is kept.
+    fn failed_bodies(&self, functions: &[Function]) -> HashSet<String> {
+        let symbol_of: HashMap<DefId, &str> = functions.iter().map(|function| (function.def, function.symbol.as_str())).collect();
+        let mut askers: HashMap<&str, Vec<Option<&str>>> = HashMap::new();
+        let mut closures: HashMap<&str, &[String]> = HashMap::new();
+        for (asker, instances, made) in &self.asked {
+            closures.insert(asker.as_str(), made);
+            for instance in instances {
+                if let Some(&symbol) = symbol_of.get(instance) {
+                    askers.entry(symbol).or_default().push(Some(asker.as_str()));
+                }
+            }
+        }
+        for instance in &self.asked_outside {
+            if let Some(&symbol) = symbol_of.get(instance) {
+                askers.entry(symbol).or_default().push(None);
+            }
+        }
+        let mut failed = self.erred.clone();
+        loop {
+            let newly: Vec<&str> = askers
+                .iter()
+                .filter(|(instance, by)| !failed.contains(**instance) && by.iter().all(|asker| asker.is_some_and(|asker| failed.contains(asker))))
+                .map(|(instance, _)| *instance)
+                .collect();
+            if newly.is_empty() {
+                return failed;
+            }
+            for instance in newly {
+                failed.insert(instance.to_string());
+                failed.extend(closures.get(instance).into_iter().flat_map(|made| made.iter().cloned()));
+            }
         }
     }
 
@@ -24295,6 +24363,11 @@ impl<'a> Checker<'a> {
     /// symbols would collide.
     /// A generic method's instance's symbol carries its own arguments' spelling too.
     fn method_symbol_for(&mut self, owner: Ty, name: Symbol, def: DefId, span: Span) -> String {
+        // ADR-186 — a universal implementation offering `name` (`From[T]` for every `T`) offers it
+        // to `owner` whether or not a body checked before this one asked `owner` for it: the
+        // symbol is the program's, not the order its bodies are checked in, which an incremental
+        // build's kept bodies (`[BLD-8]`) do not share.
+        self.apply_universal_member(owner, name);
         let own = self.instance_spellings.get(&def).cloned();
         let own = own.as_deref();
         // D-440 — an associated function of several instances (`from_iter`
@@ -40589,6 +40662,7 @@ impl<'a> Checker<'a> {
     ) -> DefId {
         let key = Instance { def, args: args.to_vec(), callable_values };
         if let Some(&existing) = self.instances.get(&key) {
+            self.note_asked(existing);
             return existing;
         }
         let generic = &self.signatures[def.0 as usize];
@@ -40632,6 +40706,7 @@ impl<'a> Checker<'a> {
             self.record_request(&key, false);
             self.pending.push((key, instance));
         }
+        self.note_asked(instance);
         let _ = (name, span);
         instance
     }
@@ -40745,6 +40820,7 @@ impl<'a> Checker<'a> {
     ) -> DefId {
         let key = Instance { def, args: args.to_vec(), callable_values: Vec::new() };
         if let Some(&existing) = self.instances.get(&key) {
+            self.note_asked(existing);
             return existing;
         }
         let generic = &self.signatures[def.0 as usize];
@@ -40787,6 +40863,7 @@ impl<'a> Checker<'a> {
             self.record_request(&key, true);
             self.pending_generic_methods.push((key, instance));
         }
+        self.note_asked(instance);
         let _ = (name, span);
         instance
     }
@@ -46490,6 +46567,15 @@ impl<'a> Checker<'a> {
                     return Ok(());
                 }
                 let kind = kind.kind(&*finding).ok_or("a type's part not found")?;
+                // `[TYP-22]` (ODR-237) — a kept body's `dyn` table copies its value as the check
+                // that formed it recorded (`dyn_vtable_layout`).
+                if let TyKind::Dyn { interfaces } = &kind {
+                    for &interface in interfaces {
+                        if self.requires_clone(interface) {
+                            self.types.declare_dyn_clone(interface);
+                        }
+                    }
+                }
                 finding.tys[n as usize] = Some(self.types.intern(kind));
             }
             Part::Struct(n) | Part::Enum(n) | Part::Class(n) => {
@@ -47569,7 +47655,7 @@ impl<'a> Checker<'a> {
             None => self.signatures.push(signature),
         }
         let symbol = ember_branding::generated(&format!("closure{number}"));
-        if let Some((_, _, closures)) = self.body_marks.last_mut() {
+        if let Some((_, _, closures, _)) = self.body_marks.last_mut() {
             closures.push(symbol.clone());
         }
         // `[FFI-21]` — a trampoline calls a lambda by its symbol.

@@ -9,9 +9,10 @@ use ember_span::{Span, Symbol};
 use ember_types::{EnumId, OverflowPolicy, StructId, Ty};
 
 pub mod lower;
+pub mod parallel;
 pub mod verify;
 
-pub use lower::{lower, lower_one};
+pub use lower::{lower, lower_one, lower_with};
 /// Exact source-level parameter mode retained by MIR for callable contracts.
 /// Consumers of MIR should name this boundary fact rather than depending on
 /// HIR solely to construct or inspect a MIR body.
@@ -1124,6 +1125,10 @@ pub enum Const {
     /// of 63). It differs by C compiler (`EMBER_OVERFLOW_SHIFT` in the runtime
     /// header): each runs these loops fastest one way (ADR-070 item 7).
     OverflowShift { per_word: bool },
+    /// `[CELL-5]` — the line `at` begins on, an integer of `ty`: a `RefCell` borrow's line, which
+    /// its panic names. A span rather than its line, so a body kept by an incremental build
+    /// (`[BLD-8]`) and moved by an edit above it names its line as it now is.
+    SourceLine { at: ember_span::Span, ty: Ty },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
@@ -1867,6 +1872,7 @@ fn dump_operand(operand: &Operand, types: &ember_types::TypeTable) -> String {
             Const::OverflowShift { per_word } => {
                 format!("const overflow_shift({})", if *per_word { "word" } else { "flag" })
             }
+            Const::SourceLine { at, ty } => format!("const line_of({}:{})_{}", at.file.0, at.start, types.symbol_name(*ty)),
         },
     }
 }

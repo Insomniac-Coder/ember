@@ -1,7 +1,8 @@
 //! `[BLD-1]`, `[BLD-2]`, `[BLD-8]` — the module as the unit of front-end caching and the function as
 //! the unit of checking within it: a package checked clean and checked again after each of a run
 //! of edits reports exactly what a clean check of it reports, while checking again only the
-//! functions an edit reaches.
+//! functions an edit reaches. `[BLD-4]`: built through Ninja one C unit per module, as a clean build
+//! writes it. `[BLD-7]`: on one thread or several, alike.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -220,12 +221,12 @@ fn an_edited_package_checks_as_a_clean_one_does_and_checks_again_what_the_edit_r
     assert_eq!(agree(&dir, "the subclass removed", true).0, all);
 
     // An error in one module: the kept modules' warnings are reported as a clean check reports them —
-    // a type error stops a clean check before it checks bodies (`L1001` is a body check's), an
-    // error a body check finds does not.
+    // the body checks run on every function a type error is not in (`[IDE-3]`: `L1001` is a body
+    // check's, in `geom`'s `helper`), and on all of them after an error a body check finds.
     write(&dir, "main.em", &MAIN.replace("extra.leaf_value(3)", "extra.leaf_value(\"three\")"));
     assert_eq!(agree(&dir, "a type error", false).0, vec!["main.em"]);
     let errored = check(&dir, "target-incremental", false);
-    assert!(errored.report.contains("E2020") && !errored.report.contains("L1001"), "{}", errored.report);
+    assert!(errored.report.contains("E2020") && errored.report.contains("L1001"), "{}", errored.report);
     write(&dir, "main.em", &MAIN.replace("    p = geom.Pt(3, 4)\n", "    p = geom.Pt(3, 4)\n    xs: Array[int] = [1]\n    ys = xs\n    println(xs.len(), ys.len())\n"));
     assert_eq!(agree(&dir, "a body check's error", false).0, vec!["main.em"]);
     let errored = check(&dir, "target-incremental", false);
@@ -235,5 +236,158 @@ fn an_edited_package_checks_as_a_clean_one_does_and_checks_again_what_the_edit_r
     // `main` had before the errors holds, and nothing is checked again.
     write(&dir, "main.em", MAIN);
     assert_eq!(agree(&dir, "the error mended", true), (vec![], vec![]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A build: its status, what it reported, and each C unit it left (name and text), and when each
+/// object was last written.
+struct Built {
+    ok: bool,
+    report: String,
+    units: std::collections::BTreeMap<String, Vec<u8>>,
+    objects: std::collections::BTreeMap<String, std::time::SystemTime>,
+}
+
+fn build(dir: &Path, out: &str, clean: bool) -> Built {
+    let mut command = Command::new(EMBER);
+    command.args(["build", "--out-dir", out]).current_dir(dir).env(ember_branding::no_compile_cache_var(), "1");
+    if clean {
+        command.env(ember_branding::no_incremental_var(), "1");
+    } else {
+        command.env_remove(ember_branding::no_incremental_var());
+    }
+    let output = ember_build::output_started(&mut command).expect("ember starts");
+    let report = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n").replace(out, "<out>");
+    let listed = |folder: &str| -> Vec<(String, PathBuf)> {
+        std::fs::read_dir(dir.join(out).join("debug").join(folder))
+            .map(|entries| entries.flatten().map(|entry| (entry.file_name().to_string_lossy().into_owned(), entry.path())).collect())
+            .unwrap_or_default()
+    };
+    let units = listed("c").into_iter().filter(|(name, _)| name.ends_with(".c")).map(|(name, path)| (name, std::fs::read(path).expect("a unit reads"))).collect();
+    let objects = listed("obj")
+        .into_iter()
+        .filter(|(name, _)| name.ends_with(".obj") || name.ends_with(".o"))
+        .map(|(name, path)| (name, std::fs::metadata(path).and_then(|meta| meta.modified()).expect("an object's time")))
+        .collect();
+    Built { ok: output.status.success(), report, units, objects }
+}
+
+/// What the program built in `out` prints (the harness runs it).
+fn runs(dir: &Path, out: &str) -> String {
+    let exe = dir.join(out).join("debug").join("bin").join(if cfg!(windows) { "main.exe" } else { "main" });
+    let output = ember_build::output_started(&mut Command::new(exe)).expect("the program starts");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+}
+
+/// `[BLD-1]`, `[BLD-4]`, ODR-244, ODR-257 — `ember build` keeps the checked forms as `ember check`
+/// does, writes a `debug` program one C unit per module, and compiles them through Ninja: after each
+/// edit, every C unit is the one a clean build writes, byte for byte, the program prints what the
+/// clean build's prints, and only the units whose text changed are compiled again.
+#[test]
+fn an_edited_package_builds_as_a_clean_one_does_and_compiles_again_what_the_edit_changed() {
+    let dir = scratch();
+    std::fs::write(dir.join("ember.toml"), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, "geom.em", GEOM);
+    write(&dir, "shapes.em", SHAPES);
+    write(&dir, "extra.em", EXTRA);
+    write(&dir, "main.em", MAIN);
+    let mut before = build(&dir, "target-incremental", false);
+    assert!(before.ok, "{}", before.report);
+    let units: Vec<&String> = before.units.keys().collect();
+    for module in ["main.m.geom.c", "main.m.shapes.c", "main.m.extra.c"] {
+        assert!(units.iter().any(|unit| *unit == module), "one C unit per module: {units:?}");
+    }
+    let edits = [
+        ("a body", GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2"), "geom.em", Some(vec!["main.m.geom"])),
+        ("a body above a generic", GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2").replace("return x + 1", "return x + 1000"), "geom.em", None),
+        ("a leaf's signature", EXTRA.replace("(x: int) -> int", "(x: i64) -> i64"), "extra.em", None),
+        ("a widely imported type", GEOM.replace("    pub y: int\n", "    pub y: int\n    pub z: int = 0\n"), "geom.em", None),
+    ];
+    for (step, text, file, recompiled) in edits {
+        write(&dir, file, &text);
+        let incremental = build(&dir, "target-incremental", false);
+        let clean = build(&dir, "target-clean", true);
+        assert!(incremental.ok && clean.ok, "{step}:\n{}\n{}", incremental.report, clean.report);
+        assert_eq!(incremental.report, clean.report, "{step}: what the builds report");
+        assert_eq!(incremental.units.keys().collect::<Vec<_>>(), clean.units.keys().collect::<Vec<_>>(), "{step}: the C units");
+        for (name, text) in &incremental.units {
+            assert!(clean.units[name] == *text, "{step}: `{name}` is not the clean build's");
+        }
+        assert_eq!(runs(&dir, "target-incremental"), runs(&dir, "target-clean"), "{step}: what the programs print");
+        if let Some(recompiled) = recompiled {
+            let compiled: Vec<&str> = incremental
+                .objects
+                .iter()
+                .filter(|(name, time)| before.objects.get(*name) != Some(*time))
+                .map(|(name, _)| name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem))
+                .collect();
+            assert_eq!(compiled, recompiled, "{step}: the objects compiled again");
+        }
+        before = incremental;
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A clean `ember <command>` on `jobs` threads: its status, what it reported (the timings line taken
+/// out), the threads the timings say it ran on, and each C unit it left.
+fn on_threads(dir: &Path, command: &str, jobs: usize, out: &str) -> (bool, String, u64, std::collections::BTreeMap<String, Vec<u8>>) {
+    let mut run = Command::new(EMBER);
+    run.args([command, "--out-dir", out, "--timings=json", "-j", &jobs.to_string()])
+        .current_dir(dir)
+        .env(ember_branding::no_incremental_var(), "1")
+        .env(ember_branding::no_compile_cache_var(), "1");
+    let output = ember_build::output_started(&mut run).expect("ember starts");
+    let stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n").replace(out, "<out>");
+    let mut report = String::new();
+    let mut threads = 0;
+    for line in stderr.lines() {
+        if line.starts_with("{\"") && line.contains("\"timings\"") {
+            let timings: serde_json::Value = serde_json::from_str(line).expect("timings are JSON");
+            threads = timings["jobs"].as_u64().expect("the timings name the threads");
+        } else {
+            report.push_str(line);
+            report.push('\n');
+        }
+    }
+    let units = std::fs::read_dir(dir.join(out).join("debug").join("c"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".c"))
+                .map(|entry| (entry.file_name().to_string_lossy().into_owned(), std::fs::read(entry.path()).expect("a unit reads")))
+                .collect()
+        })
+        .unwrap_or_default();
+    (output.status.success(), report, threads, units)
+}
+
+/// `[BLD-7]` — the front end's per-body analyses run on `-j` threads (by default one per physical
+/// core): on one thread and on several, a check reports the same diagnostics in the same order and
+/// a build writes the same C, byte for byte.
+#[test]
+fn a_package_checks_and_builds_alike_on_one_thread_and_on_several() {
+    let dir = scratch();
+    std::fs::write(dir.join("ember.toml"), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, "geom.em", GEOM);
+    write(&dir, "shapes.em", SHAPES);
+    write(&dir, "extra.em", EXTRA);
+    // Warnings in several modules and a body check's error, each reported where its body is.
+    write(&dir, "main.em", &MAIN.replace("    p = geom.Pt(3, 4)\n", "    p = geom.Pt(3, 4)\n    xs: Array[int] = [1]\n    ys = xs\n    println(xs.len(), ys.len())\n"));
+    let one = on_threads(&dir, "check", 1, "target-one");
+    let several = on_threads(&dir, "check", 4, "target-several");
+    assert!(!one.0 && one.1.contains("E3040") && one.1.contains("L1001"), "{}", one.1);
+    assert_eq!((one.0, &one.1), (several.0, &several.1), "a check's report on one thread and on four");
+    assert_eq!((one.2, several.2), (1, 4), "the threads the timings name");
+
+    write(&dir, "main.em", MAIN);
+    let one = on_threads(&dir, "build", 1, "target-one");
+    let several = on_threads(&dir, "build", 4, "target-several");
+    assert!(one.0 && several.0, "{}\n{}", one.1, several.1);
+    assert_eq!(one.1, several.1, "a build's report on one thread and on four");
+    assert!(!one.3.is_empty() && one.3.keys().eq(several.3.keys()), "the C units: {:?} {:?}", one.3.keys(), several.3.keys());
+    for (name, text) in &one.3 {
+        assert!(several.3[name] == *text, "`{name}` differs between one thread and four");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

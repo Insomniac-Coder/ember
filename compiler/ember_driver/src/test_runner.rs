@@ -46,7 +46,7 @@ pub(crate) fn command(args: &[String]) -> Result<ExitCode, String> {
         } else if arg == "--instrument-ffi" {
             instrument_ffi = true;
         } else if arg.starts_with('-') {
-            skip_value = matches!(arg.as_str(), "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D");
+            skip_value = matches!(arg.as_str(), "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D" | "-j" | "--jobs");
             rest.push(arg.clone());
         } else if filter.is_none() {
             filter = Some(arg.clone());

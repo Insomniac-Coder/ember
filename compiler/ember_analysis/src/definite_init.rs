@@ -418,7 +418,8 @@ fn read_rvalue(rvalue: &Rvalue, state: &[State], span: Span, reporter: &mut Opti
 
 /// Produce canonical initialization facts for every initial MIR body.
 pub fn analyze_all(bodies: &[Body]) -> Vec<InitializationFacts> {
-    bodies.iter().map(analyze_definite_init).collect()
+    // `[BLD-7]` — each body on the driver's threads.
+    crate::parallel::each(bodies, &mut Sink::new(), |body, _| analyze_definite_init(body)).into_iter().map(|(facts, _)| facts).collect()
 }
 
 /// Diagnose every body from a previously verified canonical fact set.
@@ -432,10 +433,10 @@ pub fn check_all_with_facts(
         facts.len(),
         "initialization fact count does not match the MIR body count"
     );
-    bodies
-        .iter()
-        .zip(facts)
-        .map(|(body, facts)| check_definite_init_with_facts(body, facts, sink))
+    let pairs: Vec<(&Body, &InitializationFacts)> = bodies.iter().zip(facts).collect();
+    crate::parallel::each(&pairs, sink, |(body, facts), sink| check_definite_init_with_facts(body, facts, sink))
+        .into_iter()
+        .map(|(count, _)| count)
         .sum()
 }
 

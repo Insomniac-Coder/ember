@@ -294,6 +294,15 @@ impl Sink {
         self.error_count > 0 || (self.deny_warnings && self.warning_count > 0)
     }
 
+    /// `[BLD-7]` — what `other` holds, after what this sink holds: its diagnostics, in its order,
+    /// and the borrow errors it could not place.
+    pub fn absorb(&mut self, other: Sink) {
+        for diagnostic in other.diagnostics {
+            self.emit(diagnostic);
+        }
+        self.unclassified.extend(other.unclassified);
+    }
+
     pub fn take(&mut self) -> Vec<Diagnostic> {
         self.error_count = 0;
         self.warning_count = 0;

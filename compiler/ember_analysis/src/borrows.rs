@@ -181,7 +181,7 @@ fn run_checks(
     bodies: &[Body],
     types: &TypeTable,
     sink: &mut Sink,
-    mut reports: Option<&mut Vec<LoanReport>>,
+    reports: Option<&mut Vec<LoanReport>>,
     kept: &BorrowFacts,
 ) -> (Vec<(usize, std::ops::Range<usize>)>, BorrowFacts) {
     let signatures: HashMap<String, Elision> = bodies
@@ -265,26 +265,50 @@ fn run_checks(
         _ => false,
     };
     let mut ranges = Vec::new();
-    for (index, body) in bodies.iter().enumerate() {
-        if body.kept {
-            continue;
+    if let Some(reports) = reports {
+        for (index, body) in bodies.iter().enumerate() {
+            if body.kept {
+                continue;
+            }
+            let start = sink.mark();
+            let capture_paths = capture_borrow_paths(body, &capture_contracts);
+            check_body(
+                body,
+                types,
+                &call_contract,
+                &capture_paths,
+                &owned_closure_environments,
+                &invalid_result_bodies,
+                &is_method,
+                dynamic.contains(&body.symbol),
+                &names,
+                sink,
+                Some(&mut *reports),
+            );
+            ranges.push((index, start..sink.mark()));
         }
-        let start = sink.mark();
-        let capture_paths = capture_borrow_paths(body, &capture_contracts);
-        check_body(
-            body,
-            types,
-            &call_contract,
-            &capture_paths,
-            &owned_closure_environments,
-            &invalid_result_bodies,
-            &is_method,
-            dynamic.contains(&body.symbol),
-            &names,
-            sink,
-            reports.as_deref_mut(),
-        );
-        ranges.push((index, start..sink.mark()));
+    } else {
+        // `[BLD-7]` — each body on the driver's threads, reported in the bodies' order.
+        let checked: Vec<usize> = (0..bodies.len()).filter(|&index| !bodies[index].kept).collect();
+        let done = crate::parallel::each(&checked, sink, |&index, sink| {
+            let body = &bodies[index];
+            let capture_paths = capture_borrow_paths(body, &capture_contracts);
+            check_body(
+                body,
+                types,
+                &call_contract,
+                &capture_paths,
+                &owned_closure_environments,
+                &invalid_result_bodies,
+                &is_method,
+                dynamic.contains(&body.symbol),
+                &names,
+                sink,
+                None,
+            );
+            index
+        });
+        ranges.extend(done);
     }
     (ranges, BorrowFacts { stores: store_summaries, invalid: invalid_result_bodies })
 }
@@ -546,22 +570,24 @@ fn virtual_result_accesses<'s>(
     };
     let fields = types.class_field_count(owner);
     let mut out: Vec<&FieldReturnAccess> = Vec::new();
-    let mut reached = false;
-    for ((class, at), symbols) in slots {
-        if *at != slot || !(within(owner, *class) || within(*class, owner)) {
-            continue;
-        }
-        for symbol in symbols {
-            reached = true;
-            for access in summaries.get(symbol.as_str()).into_iter().flatten() {
-                let named = access.argument == 0
-                    && matches!(access.projection.as_slice(), [Projection::Deref, Projection::Field(index), ..] if *index < fields);
-                if !named {
-                    return None;
-                }
-                if !out.contains(&access) {
-                    out.push(access);
-                }
+    // The bodies by name: the accesses are begun in the order found, which neither the table's
+    // hash order nor the classes' order in the type table may decide.
+    let mut reaching: Vec<&String> = slots
+        .iter()
+        .filter(|((class, at), _)| *at == slot && (within(owner, *class) || within(*class, owner)))
+        .flat_map(|(_, symbols)| symbols)
+        .collect();
+    reaching.sort();
+    let reached = !reaching.is_empty();
+    for symbol in reaching {
+        for access in summaries.get(symbol.as_str()).into_iter().flatten() {
+            let named = access.argument == 0
+                && matches!(access.projection.as_slice(), [Projection::Deref, Projection::Field(index), ..] if *index < fields);
+            if !named {
+                return None;
+            }
+            if !out.contains(&access) {
+                out.push(access);
             }
         }
     }
@@ -2773,6 +2799,9 @@ fn infer_callable_summaries(
         let contract = |func: &FuncRef| contract_for(func, &summaries, signatures);
         let capture_contracts = closure_capture_contracts(bodies, &summaries);
         let mut next = HashMap::new();
+        // Each round reads only the last round's summaries, so its bodies are inferred on the
+        // driver's threads (`[BLD-7]`), each independently of the others.
+        let mut inferring = Vec::new();
         for (index, body) in bodies.iter().enumerate() {
             // `[BLD-1]` — a kept body's contract is what its build inferred, with these callees.
             if let Some(contract) = kept.get(&body.symbol) {
@@ -2788,17 +2817,16 @@ fn infer_callable_summaries(
             }
             #[cfg(test)]
             INFERRED.with(|inferred| inferred.borrow_mut().push(body.symbol.clone()));
+            inferring.push(index);
+        }
+        let inferred = crate::parallel::each(&inferring, &mut ember_diag::Sink::new(), |&index, _| {
+            let body = &bodies[index];
             let capture_paths = capture_borrow_paths(body, &capture_contracts);
-            let regions = Regions::infer_with_capture_borrow_paths(
-                body,
-                types,
-                &contract,
-                &capture_paths,
-            );
-            next.insert(
-                body.symbol.clone(),
-                inferred_callable_summary(body, types, &regions),
-            );
+            let regions = Regions::infer_with_capture_borrow_paths(body, types, &contract, &capture_paths);
+            inferred_callable_summary(body, types, &regions)
+        });
+        for (&index, (summary, _)) in inferring.iter().zip(inferred) {
+            next.insert(bodies[index].symbol.clone(), summary);
         }
         if next == summaries {
             return summaries;
@@ -2916,23 +2944,26 @@ fn inferred_result_summary(
 fn infer_invalid_result_bodies(
     bodies: &[Body],
     types: &TypeTable,
-    call_contract: &dyn Fn(&FuncRef) -> CallRegionContract,
+    call_contract: &(dyn Fn(&FuncRef) -> CallRegionContract + Sync),
     capture_contracts: &CaptureContracts,
     kept_invalid: &HashSet<String>,
 ) -> HashSet<String> {
     let known: HashSet<&str> = bodies.iter().map(|body| body.symbol.as_str()).collect();
     let bodies: Vec<&Body> = bodies.iter().filter(|body| !body.kept).collect();
-    let regions: Vec<Regions> = bodies
-        .iter()
-        .map(|body| {
-            let capture_paths = capture_borrow_paths(body, capture_contracts);
-            Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths)
-        })
-        .collect();
+    // Each body's calls whose result no caller's regions can follow, its regions inferred on the
+    // driver's threads (`[BLD-7]`); what follows reads only these.
+    let calls: Vec<Vec<FuncRef>> = crate::parallel::each(&bodies, &mut ember_diag::Sink::new(), |body, _| {
+        let capture_paths = capture_borrow_paths(body, capture_contracts);
+        let regions = Regions::infer_with_capture_borrow_paths(body, types, call_contract, &capture_paths);
+        unresolved_multi_result_calls(body, &regions, call_contract).cloned().collect()
+    })
+    .into_iter()
+    .map(|(calls, _)| calls)
+    .collect();
     let mut invalid = kept_invalid.clone();
 
-    for (body, regions) in bodies.iter().zip(&regions) {
-        if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
+    for (body, calls) in bodies.iter().zip(&calls) {
+        if calls.iter().any(|func| {
             !matches!(
                 func,
                 FuncRef::Direct { symbol, .. } if known.contains(symbol.as_str())
@@ -2945,11 +2976,11 @@ fn infer_invalid_result_bodies(
     let mut changed = true;
     while changed {
         changed = false;
-        for (body, regions) in bodies.iter().zip(&regions) {
+        for (body, calls) in bodies.iter().zip(&calls) {
             if invalid.contains(&body.symbol) {
                 continue;
             }
-            if unresolved_multi_result_calls(body, regions, call_contract).any(|func| {
+            if calls.iter().any(|func| {
                 matches!(
                     func,
                 FuncRef::Direct { symbol, .. } if invalid.contains(symbol.as_str())

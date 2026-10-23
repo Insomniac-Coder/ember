@@ -888,6 +888,39 @@ impl TypeTable {
         }
     }
 
+    /// `[IDE-3]` — whether `ty` holds the placeholder of a type that did not resolve, anywhere in it:
+    /// through references, elements, a function's signature, and the fields and arguments of the
+    /// nominal types it names.
+    pub fn mentions_error(&self, ty: Ty) -> bool {
+        self.mentions_error_in(ty, &mut HashSet::new())
+    }
+
+    fn mentions_error_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
+        match self.kind(ty) {
+            TyKind::Error => true,
+            TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => self.mentions_error_in(*inner, seen),
+            TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.mentions_error_in(*elem, seen),
+            TyKind::Tuple(items) => items.iter().any(|&t| self.mentions_error_in(t, seen)),
+            TyKind::Fn { params, ret, .. } => params.iter().any(|param| self.mentions_error_in(param.ty, seen)) || self.mentions_error_in(*ret, seen),
+            TyKind::Struct(id) => {
+                seen.insert(ty)
+                    && (self.struct_def(*id).fields.iter().any(|field| self.mentions_error_in(field.ty, seen))
+                        || self.struct_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error_in(arg, seen))))
+            }
+            TyKind::Class(id) => {
+                seen.insert(ty)
+                    && (self.class_def(*id).fields.iter().any(|field| self.mentions_error_in(field.ty, seen))
+                        || self.class_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error_in(arg, seen))))
+            }
+            TyKind::Enum(id) => {
+                seen.insert(ty)
+                    && (self.enum_def(*id).variants.iter().any(|variant| variant.fields.iter().any(|field| self.mentions_error_in(field.ty, seen)))
+                        || self.enum_def(*id).origin.as_ref().is_some_and(|(_, args)| args.iter().any(|&arg| self.mentions_error_in(arg, seen))))
+            }
+            _ => false,
+        }
+    }
+
     /// Whether `ty` contains an unsized component in a by-value position.
     /// References/pointers are the intentional indirection boundary for
     /// `[TYP-22]`; owning wrappers such as `Box[dyn I]` are represented by a
