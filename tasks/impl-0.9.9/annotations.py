@@ -10,6 +10,11 @@ each, for the check), `#$ exit:` and `#$ panics:`. A test uses its first listed 
 runs on the evaluator too (`ember run --interp`), which must print, exit and panic as the compiled
 program does (`[IMP-11]`). Files are checked side by side, one per core, and reported in order.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
+
+`EMBER_BACKEND=llvm` builds every run test with `--backend llvm` (`[CG-LL-1]`) and checks only
+those: what a program prints, its exit and its panic. The diagnostics and the evaluator do not
+depend on the backend, so the C run covers them. With it, `EMBER_PROFILES=all` runs each test in
+every profile it lists, as the cargo harness does, not only the first.
 """
 import glob
 import hashlib
@@ -24,6 +29,8 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.exe')
 OUT = None  # Set only while the main run owns its TemporaryDirectory.
+BACKEND = os.environ.get('EMBER_BACKEND') or 'c'
+ALL_PROFILES = os.environ.get('EMBER_PROFILES') == 'all'
 
 if os.name == 'nt':
     # SEM_NOGPFAULTERRORBOX, inherited by every program this starts: a test program that
@@ -143,8 +150,15 @@ def check(path):
     text = open(path, encoding='utf-8').read()
     kind = (re.search(r'^#\$ test:\s*(\S+)', text, re.M) or [None, ''])[1]
     if kind in ('parse-pass', 'parse-fail'):
-        return []
+        return [] if BACKEND == 'c' else None
     profile = (re.search(r'^#\$ profiles:\s*([a-z]+)', text, re.M) or [None, 'debug'])[1]
+    if BACKEND != 'c':
+        if kind not in ('run-pass', 'run-fail'):
+            return None
+        listed = re.search(r'^#\$ profiles:\s*(.*)$', text, re.M)
+        profiles = [p.strip() for p in listed[1].split(',') if p.strip()] if listed and ALL_PROFILES else [profile]
+        return [f'{each}: {problem}' if len(profiles) > 1 else problem
+                for each in profiles for problem in run_problems(path, text, each, kind)[0]]
     problems = []
     exit_code, found = produced(path, profile, compiler_flags(text), checking_command(text))
     claimed = [False] * len(found)
@@ -168,22 +182,32 @@ def check(path):
     if kind == 'compile-fail' and exit_code == 0:
         problems.append('expected compilation to fail')
     if kind in ('run-pass', 'run-fail'):
-        code, out, err = run(['run', '--profile', profile, '--out-dir', out_dir(path)], path,
-                             expected_stdin(text), program_args(text))
-        exit_line = re.search(r'^#\$ exit:\s*(-?\d+)\s*$', text, re.M)
-        expected_exit = int(exit_line[1]) if exit_line else 0
-        stdout = expected_stdout(text)
-        if stdout is not None and out.rstrip('\n').split('\n') != stdout:
-            problems.append(f'stdout {out.rstrip()!r} is not {stdout!r}')
-        problems += [f'stderr lacks {needle.strip()!r}: {err.strip()[:200]!r}'
-                     for needle in re.findall(r'^\s*#\$ stderr:(.*)$', text, re.M) if needle.strip() not in err]
-        panics = re.search(r'^#\$ panics:\s*(.*)$', text, re.M)
-        if kind == 'run-fail' and (code == 0 or (panics and panics[1].strip() not in err)):
-            problems.append(f'expected a panic {panics[1].strip() if panics else ""!r}, got exit {code}: {err.strip()[:160]!r}')
-        if kind == 'run-pass' and code != expected_exit:
-            problems.append(f'exit {code}, not {expected_exit}: {err.strip()[:200]!r}')
+        run_found, code, out, err = run_problems(path, text, profile, kind)
+        problems += run_found
         problems += evaluator_disagrees(path, text, profile, code, out, err)
     return problems
+
+
+def run_problems(path, text, profile, kind):
+    """The compiled run's problems against the test's `stdout`, `stderr`, `exit` and `panics`,
+    and the run's status and output."""
+    problems = []
+    backend = ['--backend', BACKEND] if BACKEND != 'c' else []
+    code, out, err = run(['run', '--profile', profile, *backend, '--out-dir', out_dir(path)], path,
+                         expected_stdin(text), program_args(text))
+    exit_line = re.search(r'^#\$ exit:\s*(-?\d+)\s*$', text, re.M)
+    expected_exit = int(exit_line[1]) if exit_line else 0
+    stdout = expected_stdout(text)
+    if stdout is not None and out.rstrip('\n').split('\n') != stdout:
+        problems.append(f'stdout {out.rstrip()!r} is not {stdout!r}')
+    problems += [f'stderr lacks {needle.strip()!r}: {err.strip()[:200]!r}'
+                 for needle in re.findall(r'^\s*#\$ stderr:(.*)$', text, re.M) if needle.strip() not in err]
+    panics = re.search(r'^#\$ panics:\s*(.*)$', text, re.M)
+    if kind == 'run-fail' and (code == 0 or (panics and panics[1].strip() not in err)):
+        problems.append(f'expected a panic {panics[1].strip() if panics else ""!r}, got exit {code}: {err.strip()[:160]!r}')
+    if kind == 'run-pass' and code != expected_exit:
+        problems.append(f'exit {code}, not {expected_exit}: {err.strip()[:200]!r}')
+    return problems, code, out, err
 
 
 def evaluator_disagrees(path, text, profile, code, out, err):
@@ -218,20 +242,26 @@ def main():
             found = dict(zip(everything, pool.map(check, everything)))
 
         failures = 0
+        checked = 0
         for directory, paths in directories:
             # `[TST-4a]` — the harness stops at a conformance directory with no accept case.
-            if 'conformance' in os.path.normpath(directory).split(os.sep) \
+            if BACKEND == 'c' and 'conformance' in os.path.normpath(directory).split(os.sep) \
                     and not any(os.path.basename(p).startswith('accept_') for p in paths):
                 failures += 1
                 print(os.path.relpath(directory, ROOT))
                 print('    no accept_* case ([TST-4a])')
             for path in paths:
                 problems = found[path]
+                if problems is None:
+                    continue
+                checked += 1
                 if problems:
                     failures += 1
                     print(os.path.relpath(path, ROOT))
                     for problem in problems:
                         print('   ', problem)
+        if BACKEND != 'c':
+            print(f'backend {BACKEND}: {checked} run tests, {checked - failures} passing')
         print('failing', failures)
 
 

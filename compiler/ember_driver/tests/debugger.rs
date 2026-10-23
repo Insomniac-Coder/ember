@@ -190,6 +190,17 @@ fn a_collection_held_in_a_local_shows_its_elements() {
 
 #[test]
 fn a_debugger_session_stops_at_an_ember_line_steps_and_shows_locals_by_their_ember_names() {
+    debugger_session("c");
+}
+
+/// `[TST-5]`, `[CG-LL-3]` — the same session on a program the LLVM backend built: its debug
+/// information (CodeView or DWARF) names the Ember file, lines and locals.
+#[test]
+fn the_llvm_backends_program_gives_the_same_debugger_session() {
+    debugger_session("llvm");
+}
+
+fn debugger_session(backend: &str) {
     let Some((debugger, path)) = find_debugger() else {
         let required = std::env::var_os("EMBER_DEBUGGER_REQUIRED").is_some();
         match waiver() {
@@ -204,7 +215,7 @@ fn a_debugger_session_stops_at_an_ember_line_steps_and_shows_locals_by_their_emb
     std::fs::write(dir.join(&source_name), PROGRAM).expect("the program is written");
     let out = dir.join("out");
     let built = Command::new(EMBER)
-        .args(["build", &source_name, "--profile", "debug", "--out-dir", &out.to_string_lossy()])
+        .args(["build", &source_name, "--profile", "debug", "--backend", backend, "--out-dir", &out.to_string_lossy()])
         .current_dir(&dir)
         .output()
         .expect("ember runs");

@@ -541,11 +541,12 @@ fn cachegrind_instructions(exe: &Path, stdin: Option<&str>) -> Result<Option<u64
     Ok(cachegrind_refs(&report))
 }
 
-/// The Ember program, built for release by this compiler: the path it printed.
-fn build_ember(source: &Path, out_dir: &Path, layout: usize) -> Result<PathBuf, String> {
+/// The Ember program, built for release by this compiler, with `backend` (`[CG-LL-1]`): the path it
+/// printed.
+fn build_ember(source: &Path, out_dir: &Path, layout: usize, backend: &str) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let output = Command::new(exe)
-        .args(["build", "--profile", "release"])
+        .args(["build", "--profile", "release", "--backend", backend])
         .arg(source)
         .arg("--out-dir")
         .arg(out_dir.join(format!("layout{layout}")))
@@ -616,10 +617,19 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
     let mut record = false;
     let mut core = 1usize;
     let mut dir = PathBuf::from("tests/perf");
+    let mut backend = "c".to_string();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--compare" => compare = true,
+            // `[CG-LL-1]` — the Ember programs built by the LLVM backend, their C twins by the Clang
+            // that compiles its IR.
+            "--backend" => {
+                backend = rest.next().ok_or("`--backend` needs `c` or `llvm`")?.clone();
+                if !matches!(backend.as_str(), "c" | "llvm") {
+                    return Err(format!("`--backend {backend}`: the backends are `c` and `llvm`"));
+                }
+            }
             // ODR-154 — on a machine that is not the reference machine (CI's shared runners, whose
             // processor changes from run to run), the gate reports and does not fail.
             "--report" => report = true,
@@ -650,7 +660,7 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
     };
     let out_dir = std::env::temp_dir().join(format!("ember-bench-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).map_err(|error| error.to_string())?;
-    let result = compare_all(&pairs, &baseline, &mut instructions, record, &out_dir, core, report);
+    let result = compare_all(&pairs, &baseline, &mut instructions, record, &out_dir, core, report, &backend);
     let _ = std::fs::remove_dir_all(&out_dir);
     if record && result.is_ok() {
         std::fs::write(&instructions_file, render_instructions(&instructions)).map_err(|error| format!("cannot write {}: {error}", instructions_file.display()))?;
@@ -681,8 +691,12 @@ pub(crate) fn gate_state(cases: usize, baselined: usize) -> &'static str {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut Vec<Recorded>, record: bool, out_dir: &Path, core: usize, report: bool) -> Result<ExitCode, String> {
-    let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
+fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut Vec<Recorded>, record: bool, out_dir: &Path, core: usize, report: bool, backend: &str) -> Result<ExitCode, String> {
+    let requested = if backend == "llvm" {
+        Some("clang".to_string())
+    } else {
+        std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty())
+    };
     let toolchain = ember_build::Toolchain::detect(requested.as_deref()).map_err(|error| error.to_string())?;
     if on_battery() {
         println!("void: the machine is on battery power, unfit for gating [BEN-3]");
@@ -696,7 +710,7 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut
         ember_build::LAYOUTS
     };
     println!(
-        "{} benchmark(s), {} on core {core}, each side at its fastest of {layouts} code layout(s), then {WARMUP} untimed and {TIMED} timed runs [BEN-1]",
+        "{} benchmark(s), {} on core {core}, the {backend} backend, each side at its fastest of {layouts} code layout(s), then {WARMUP} untimed and {TIMED} timed runs [BEN-1]",
         pairs.len(),
         toolchain.name()
     );
@@ -712,7 +726,7 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut
     let mut summary: Vec<String> = Vec::new();
     for pair in pairs {
         let pair_dir = out_dir.join(&pair.name);
-        let embers = (0..layouts).map(|layout| build_ember(&pair.ember, &pair_dir, layout)).collect::<Result<Vec<_>, _>>()?;
+        let embers = (0..layouts).map(|layout| build_ember(&pair.ember, &pair_dir, layout, backend)).collect::<Result<Vec<_>, _>>()?;
         let twins = (0..layouts).map(|layout| build_twin(&toolchain, &pair.twin, out_dir, &pair.name, layout)).collect::<Result<Vec<_>, _>>()?;
         // `[TST-28]` — a checker of identical output.
         let (ember_out, _) = run_once(&embers[0], pair.stdin.as_deref())?;

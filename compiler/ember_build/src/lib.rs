@@ -849,6 +849,11 @@ fn compile_and_link_impl(
             if warnings_as_errors() {
                 command.arg("-Werror");
             }
+            // `[CG-LL-1]` — the LLVM backend's module: Clang compiles it for its own target (the
+            // module names none), and it reads none of the C flags the command shares.
+            if request.sources.iter().any(|source| source.extension().is_some_and(|ext| ext == "ll")) {
+                command.args(["-Wno-override-module", "-Wno-unused-command-line-argument"]);
+            }
             folder_names(&mut command, request.sources, request.include_dirs);
             let section_flags = executable_section_flags(toolchain, retained_symbols.is_some());
             command.args(section_flags);
