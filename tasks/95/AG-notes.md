@@ -132,6 +132,101 @@ folder below is one module; another overlay is a second module sharing `Counter`
 `reject_an_entry_for_a_member_another_import_wrote.em` (`overlays/classes_counted.em`). `main`'s
 compiler gives the accept test six `E1030`s.
 
+## AG3. `[TST-9]` — the first week — done (30 of 30 after the helps)
+
+Every chain of the seven programs still marked rejected after the helps (01, 04, 05, 08, 10, 16, 23)
+was replayed with this compiler, round by round: each round's fix-its applied as the compiler
+gives them (`ember check --json`'s first suggestion of each error), then each text help applied
+literally (a scratch replayer, `scratchpad/rounds.py`, with the text edits per round). Five
+needed nothing more: W's and X's gaps are closed (string patterns, `ref T: Ord`, tuples `Ord`,
+G5's "best so far"), and their chains end clean with the catalogue's helps (O2's `ref`/`.clone()`,
+B12's owned copies, X1's "shorten its last use"). Two needed the compiler:
+
+- **04** (`for handler in self.subscribers[topic]: handler(event)`): `[CLO-2]` calls an owned
+  callable value from a mutable place, so `E3021` is right, but its help was the B4 rebinding help
+  ("a reference is not pointed elsewhere…"), which does not apply: nothing is assigned. A call
+  through a shared reference now gets B3's help, "borrow it as `ref mut`, and iterate a collection
+  of them with `.iter_mut()`" (`reject_call_through_shared_ref`); applied, it compiles (W's G4).
+  Test: `tests/conformance/CLO-2/reject_a_callable_value_called_through_a_shared_reference.em`.
+- **16** (P22's help: `Box[dyn Shape]` in the collection, `ref dyn Shape` for the parameter): the
+  loop's `ref Box[dyn Shape]` was not read through to `ref dyn Shape` (`E2020`), though `[TYP-14]`
+  reads a reference and a `Box` through wherever a `T` is wanted, an argument to a borrowed
+  parameter among them: `check_expr_through` now reads a reference to a `Box` through, the
+  reference first. Then a second defect: a `Box[dyn I]`'s contents borrowed as a `ref dyn I` were
+  emitted as `ember_void_place()` (the C did not compile; `measure(boxed)` of a `Box[dyn I]` local
+  too) and refused by the evaluator ("a 8-byte value written to a 16-byte `ref dyn Shape`"): both
+  now give the box's data and table (`dyn_box_of`, the interpreter's `Rvalue::Ref`). Its
+  comprehension of boxes takes O2's help, `for s in owned shapes`, as built. Test:
+  `tests/conformance/TYP-14/accept_a_reference_to_a_box_is_read_through.em` (three profiles, and
+  the evaluator).
+
+`marks.json` re-recorded for the seven (`after_helps: accepted`, their chains and round-one shapes),
+`helped/` their literal chains, README `0 of 30 as written, 30 of 30 after the helps` with a history
+line. All 30 helped copies were also *built* (`ember build`, the C gate on): every one compiles.
+`TST-9`'s `unfinished` entry is removed. `cargo test --test firstweek`: passes.
+
+## AG4. `[CG-C-9]` (ODR-178) — a collection held in a local — done
+
+A local holding a collection (`Array[T]`, `String`, `Span[T]`, `MutSpan[T]`; not a parameter) is
+declared as its type's own C struct around the runtime's buffer,
+`typedef struct em_coll_Array_i64 { ember_vec v; } em_coll_Array_i64;`, and named `x.v` wherever the
+function names it (`wrap_collection_locals`, a pass over the function's C as `name_locals` is; its
+declaration excepted). The `.natvis`, the GDB and the LLDB scripts describe each such struct
+(`Described::Collection`): its elements of their C type, or a `String`'s text. Only names change:
+the program's code is the same (MSVC's `/Brepro` gives the same image hash before and after), and
+the wrapper names are a function of the type, the same in every unit of a build. The structs of a
+build: `collection_wrappers` (from every body's locals), written once every body is emitted
+(`COLLECTION_WRAPPERS`).
+
+Tests: milestone `build_writes_debugger_visualisers_beside_the_program` (the natvis's and the
+scripts' entries for a local `Array[int]` and `String`); `tests/debugger` (`cdb`):
+`a_collection_held_in_a_local_shows_its_elements` — cdb, with the build's `.natvis` loaded, shows
+`numbers : [0x3] [Type: em_coll_Array_i64]` and `[0] : 3`, `[1] : 4`, `[2] : 5` (it showed the
+length only before). The whole conformance tree passes with it.
+
+**Not built: a collection parameter** (`values: Array[int]`) is the runtime's buffer itself, or a
+pointer to it, as the function's C signature carries it, so it shows its length only. Giving a
+parameter the struct would change every call (a caller's `ember_vec` is not the struct, and a
+pointer to a buffer that is not a struct's first member may not be read as the struct's). Question
+Q-AG4. `CG-C-9`'s entry says so.
+
+**Defect found and fixed (test environment):** the debugger session read the program database from
+cdb's symbol cache (`C:\ProgramData\dbg\sym`) when one with the program's signature was there: with
+`/Brepro`, a build whose code is unchanged (as here) has an earlier build's signature, so the old
+database (without the new types) was taken. Both sessions now name the program's folder (`-y`).
+
+## AG5. `[BEN-4]` (ODR-262) — retired instructions — done
+
+`ember bench --compare` records each benchmark's Ember program's retired instructions (its first
+code layout, the same build every run): on Linux from the processor's counter (`perf_event_open`,
+user mode only: a counter this process opens on itself, disabled, inherited by the child and
+enabled at its `exec`, read once the child has ended; the median of three runs), else from
+Cachegrind's exact count (`valgrind --tool=cachegrind --cache-sim=no`, `I refs`); a host with
+neither (Windows, macOS, Linux without Valgrind or a counter) reports "instructions unavailable",
+never a pass. `tests/perf/instructions` holds the baseline, `name kind compiler: count` a line
+(`hardware`/`cachegrind`, the C compiler's name); a count more than 0.5 % from the line of its
+kind and compiler fails the benchmark whatever its time; one with no line is "unrecorded";
+`--record-instructions` writes this run's counts. The summary line counts the four.
+
+Tests: `bench::tests::retired_instructions_are_checked_against_the_baseline_of_their_kind`,
+`cachegrind_reports_its_instruction_count`, and on Linux
+`a_program_s_retired_instructions_are_counted_on_linux` (`/bin/true`: WSL has no counter, so
+Cachegrind, 167,577 instructions, the same on a second run). In WSL, `ember bench --compare --report
+a05_structs`: "1202199826 instructions (cachegrind), none recorded for clang"; with
+`--record-instructions` the line was written; again "+0.000 %, within 0.5 %"; with the line set
+1 % lower, "FAIL — retired instructions moved: … +1.025 % … beyond 0.5 %". (Timings from that WSL
+run are not results: no pinning to the performance cores there.)
+
+No baseline is recorded in `tests/perf/instructions`: the counts are the WSL toolchain's (clang
+there), and which machine's counts are of record is the lead's choice. To record them in WSL:
+`ember bench --compare --report --record-instructions` (Valgrind is installed there).
+
+**Observed, not investigated:** in WSL the first `ember bench` of a session twice failed to link
+because `~/.cache/ember/runtime/<hash>.o` vanished between its build and the link ("no such file
+or directory"; once clang's own temporary in that folder); the next run built. Another process
+cleaning that cache concurrently is the likely cause (other helpers use WSL); the runtime cache's
+build-then-use is not atomic against it.
+
 ## Spec questions (options + recommendation)
 
 - **Q-AG1. `handle` on a result** (`[FFI-11]`, ODR-247 says it is a word of a result's contract):
@@ -151,3 +246,15 @@ compiler gives the accept test six `E1030`s.
   parameter the call was lent (`bus: ref mut Bus`) is not kept, since the token outlives the loan
   and the bus may be gone when it ends. Options: (a) as built; (b) keep it, the token borrowing the
   parameter (a region on `Retained`). Recommendation: (a).
+- **Q-AG4. A collection parameter in a debugger** (`[CG-C-9]`; ODR-178 rules the local): options:
+  (a) leave it, its length shown (as built); (b) in `debug` and `development` only, a second
+  local per collection parameter, its type's struct pointer to the parameter's buffer, which the
+  code never reads (no cost where it is not emitted, but the debugger shows two names); (c) a
+  struct per instance in function signatures too, every caller converting (the C of every call
+  changes). Recommendation: (a) until the LLVM backend (phase 9), whose debug information carries
+  the Ember type of every value directly.
+- **Q-AG5. Where `[BEN-4]`'s counts are of record**: the reference machine for timing is Windows,
+  which gives no count (`unavailable`); WSL gives Cachegrind's. Options: (a) WSL's Cachegrind counts
+  (one compiler, recorded there) are the baseline; (b) CI's Linux runners with Valgrind installed;
+  (c) per machine, the file keyed by host too. Recommendation: (a), recorded by the lead with
+  `--record-instructions`, the compiler in the key keeping another toolchain's counts apart.
