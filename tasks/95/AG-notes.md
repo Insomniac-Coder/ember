@@ -187,6 +187,10 @@ scripts' entries for a local `Array[int]` and `String`); `tests/debugger` (`cdb`
 `a_collection_held_in_a_local_shows_its_elements` — cdb, with the build's `.natvis` loaded, shows
 `numbers : [0x3] [Type: em_coll_Array_i64]` and `[0] : 3`, `[1] : 4`, `[2] : 5` (it showed the
 length only before). The whole conformance tree passes with it.
+`tests/conformance/CG-C-7/accept_locals_keep_their_ember_names_in_the_c.em` checked the C *type* of
+its local `numbers` (`ember_vec numbers;`): it now names the struct (`em_coll_Array_i64 numbers;`);
+its rule, the local's name, is unchanged (the milestone suite checks `assert-c`; `annotations.py`
+does not).
 
 **Not built: a collection parameter** (`values: Array[int]`) is the runtime's buffer itself, or a
 pointer to it, as the function's C signature carries it, so it shows its length only. Giving a

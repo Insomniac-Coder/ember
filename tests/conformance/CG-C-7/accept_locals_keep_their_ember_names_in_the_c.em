@@ -9,7 +9,7 @@
 #$ assert-c: contains("ember_span values")
 #$ assert-c: contains("    int64_t running_sum;")
 #$ assert-c: contains("    int64_t gr_u00F6__u00DF_e;")
-#$ assert-c: contains("    ember_vec numbers;")
+#$ assert-c: contains("    em_coll_Array_i64 numbers;")
 #$ assert-c: contains("    int64_t register_")
 #$ assert-c: contains("    int64_t size_t_")
 #$ assert-c: !contains("    int64_t size_t;")
@@ -17,8 +17,8 @@
 #$ assert-c: contains("    int64_t i_")
 # `[CG-C-7]`: locals keep their Ember names in the C, so a debugger shows them: a parameter
 # (`values`; a view parameter Windows passes as two words is rebuilt under its name at entry), a
-# local (`running_sum`, `numbers`), a non-ASCII name transliterated as `[MNG-3]` says
-# (`größe` is `gr_u00F6__u00DF_e`). A name C would read as something else keeps the name with the
+# local (`running_sum`, `numbers`, whose C type is its collection's own struct, `[CG-C-9]`), a
+# non-ASCII name transliterated as `[MNG-3]` says (`größe` is `gr_u00F6__u00DF_e`). A name C would read as something else keeps the name with the
 # local's number after it: a C keyword (`register`), or a name the function's C already uses
 # (`size_t`, the type of its indices). Two locals of one name in one function (each loop's `i`)
 # are the name and the name with its number.
