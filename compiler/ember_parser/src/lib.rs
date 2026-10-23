@@ -61,6 +61,9 @@ pub(crate) struct Parser<'a> {
     /// the last import (`true`) or before the first statement or item (`false`).
     fs_imported: bool,
     import_at: Option<(Span, bool)>,
+    /// ODR-264 — the next type read may not end in `+ Send`: it is a bound in a list, where `+`
+    /// separates bounds, or a callable type's return type, whose `+ Send` is the callable's.
+    no_send_suffix: bool,
 }
 
 pub use ember_ast::NESTING_LIMIT;
@@ -85,6 +88,7 @@ impl<'a> Parser<'a> {
             unsafe_sites: Vec::new(),
             fs_imported: false,
             import_at: None,
+            no_send_suffix: false,
         }
     }
 

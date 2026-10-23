@@ -1360,7 +1360,7 @@ impl Printer<'_> {
                 format!("{path}[{}]", args.join(", "))
             }
             // Printed from the tree, as every type whose text a long line may be broken inside.
-            ast::TypeKind::Fn { abi, latebound: false, once, is_unsafe, params, ret } => {
+            ast::TypeKind::Fn { abi, latebound: false, once, is_unsafe, params, ret, send } => {
                 let once = if *once { "once " } else { "" };
                 let unsafe_ = if *is_unsafe { "unsafe " } else { "" };
                 let abi = abi.as_ref().map(|abi| format!("extern \"{abi}\" ")).unwrap_or_default();
@@ -1376,7 +1376,8 @@ impl Printer<'_> {
                     })
                     .collect();
                 let ret = ret.as_ref().map(|ret| format!(" -> {}", self.type_expr(ret))).unwrap_or_default();
-                format!("{once}{unsafe_}{abi}fn({}){ret}", params.join(", "))
+                let send = if *send { " + Send" } else { "" };
+                format!("{once}{unsafe_}{abi}fn({}){ret}{send}", params.join(", "))
             }
             ast::TypeKind::Dyn(bounds) => {
                 format!("dyn {}", bounds.iter().map(|bound| self.type_expr(bound)).collect::<Vec<_>>().join(" + "))

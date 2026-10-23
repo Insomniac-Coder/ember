@@ -546,6 +546,8 @@ pub enum TypeKind {
         is_unsafe: bool,
         params: Vec<CallableTypeParam>,
         ret: Option<Box<TypeExpr>>,
+        /// `[CLO-10]`, `[THR-8]` (ODR-264) — `fn(A) -> R + Send`: a value of it is `Send`.
+        send: bool,
     },
     Dyn(Vec<TypeExpr>),
     /// `[GRM-31]`, `[TYP-32]` — `some I`: one concrete type the function body chooses, which

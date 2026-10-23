@@ -496,9 +496,9 @@ impl Parser<'_> {
         let generics = self.parse_generic_params();
         let mut bounds = Vec::new();
         if self.eat_punct(Punct::Colon) {
-            bounds.push(self.parse_type());
+            bounds.push(self.parse_bound());
             while self.eat_punct(Punct::Plus) {
-                bounds.push(self.parse_type());
+                bounds.push(self.parse_bound());
             }
         }
         let value = self.eat_punct(Punct::Eq).then(|| self.parse_type());
@@ -1184,7 +1184,7 @@ impl Parser<'_> {
         if self.at_punct(Punct::Colon) && !self.at_newline_at(1) {
             self.bump();
             loop {
-                supertraits.push(self.parse_type());
+                supertraits.push(self.parse_bound());
                 if !self.eat_punct(Punct::Plus) {
                     break;
                 }
@@ -1259,9 +1259,9 @@ impl Parser<'_> {
             let start = self.span();
             let subject = self.parse_type();
             self.expect_punct(Punct::Colon);
-            let mut list = vec![self.parse_type()];
+            let mut list = vec![self.parse_bound()];
             while self.eat_punct(Punct::Plus) {
-                list.push(self.parse_type());
+                list.push(self.parse_bound());
             }
             bounds.push(Bound { subject, bounds: list, span: start.to(self.prev_span()) });
             if !self.eat_punct(Punct::Comma) {
@@ -1302,9 +1302,9 @@ impl Parser<'_> {
             let name = self.expect_ident();
             let mut bounds = Vec::new();
             if self.eat_punct(Punct::Colon) {
-                bounds.push(self.parse_type());
+                bounds.push(self.parse_bound());
                 while self.eat_punct(Punct::Plus) {
-                    bounds.push(self.parse_type());
+                    bounds.push(self.parse_bound());
                 }
             }
             let default = self.eat_punct(Punct::Eq).then(|| self.parse_type());
@@ -1431,17 +1431,27 @@ impl Parser<'_> {
     // -- types -----------------------------------------------------------------
 
     pub(crate) fn parse_type(&mut self) -> TypeExpr {
+        let suffix = !std::mem::take(&mut self.no_send_suffix);
         if !self.enter_nesting() {
             self.leave_nesting();
             let span = self.span();
             return TypeExpr { id: self.next_id(), kind: TypeKind::Infer, span };
         }
-        let ty = self.parse_type_nested();
+        let ty = self.parse_type_nested(suffix);
         self.leave_nesting();
         ty
     }
 
-    fn parse_type_nested(&mut self) -> TypeExpr {
+    /// One bound of a list (`T: A + B`, `dyn A + B`), where `+` separates bounds: `F: fn() +
+    /// Send` bounds `F` by the callable type and by `Send`, as it always has.
+    fn parse_bound(&mut self) -> TypeExpr {
+        self.no_send_suffix = true;
+        self.parse_type()
+    }
+
+    /// `suffix`: whether a callable type here may end in `+ Send` (ODR-264); a prefix (`ref`,
+    /// `once`) passes it on to the type it prefixes.
+    fn parse_type_nested(&mut self, suffix: bool) -> TypeExpr {
         let start = self.span();
         let id = self.next_id();
 
@@ -1469,11 +1479,13 @@ impl Parser<'_> {
             TokenKind::Keyword(Kw::Ref) => {
                 self.bump();
                 let mutable = self.eat_kw(Kw::Mut);
+                self.no_send_suffix = !suffix;
                 TypeKind::Ref { mutable, inner: Box::new(self.parse_type()) }
             }
             TokenKind::Punct(Punct::Star) => {
                 self.bump();
                 let mutable = self.eat_kw(Kw::Mut);
+                self.no_send_suffix = !suffix;
                 TypeKind::Ptr { mutable, inner: Box::new(self.parse_type()) }
             }
             TokenKind::Punct(Punct::Bang) => {
@@ -1495,9 +1507,9 @@ impl Parser<'_> {
             }
             TokenKind::Keyword(Kw::Dyn) => {
                 self.bump();
-                let mut bounds = vec![self.parse_type()];
+                let mut bounds = vec![self.parse_bound()];
                 while self.eat_punct(Punct::Plus) {
-                    bounds.push(self.parse_type());
+                    bounds.push(self.parse_bound());
                 }
                 TypeKind::Dyn(bounds)
             }
@@ -1528,9 +1540,10 @@ impl Parser<'_> {
                 if word.is("once") && matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn | Kw::Unsafe)) =>
             {
                 self.bump();
+                self.no_send_suffix = !suffix;
                 match self.parse_type().kind {
-                    TypeKind::Fn { abi, latebound, is_unsafe, params, ret, .. } => {
-                        TypeKind::Fn { abi, latebound, once: true, is_unsafe, params, ret }
+                    TypeKind::Fn { abi, latebound, is_unsafe, params, ret, send, .. } => {
+                        TypeKind::Fn { abi, latebound, once: true, is_unsafe, params, ret, send }
                     }
                     other => other,
                 }
@@ -1541,9 +1554,10 @@ impl Parser<'_> {
                 if matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn | Kw::Extern)) =>
             {
                 self.bump();
+                self.no_send_suffix = !suffix;
                 match self.parse_type().kind {
-                    TypeKind::Fn { abi, latebound, once, params, ret, .. } => {
-                        TypeKind::Fn { abi, latebound, once, is_unsafe: true, params, ret }
+                    TypeKind::Fn { abi, latebound, once, params, ret, send, .. } => {
+                        TypeKind::Fn { abi, latebound, once, is_unsafe: true, params, ret, send }
                     }
                     other => other,
                 }
@@ -1583,8 +1597,12 @@ impl Parser<'_> {
                     }
                 }
                 self.expect_punct(Punct::RParen);
-                let ret = self.eat_punct(Punct::Arrow).then(|| Box::new(self.parse_type()));
-                TypeKind::Fn { abi, latebound, once: false, is_unsafe: false, params, ret }
+                let ret = self.eat_punct(Punct::Arrow).then(|| {
+                    self.no_send_suffix = true;
+                    Box::new(self.parse_type())
+                });
+                let send = suffix && self.parse_send_suffix();
+                TypeKind::Fn { abi, latebound, once: false, is_unsafe: false, params, ret, send }
             }
             _ => {
                 let segments = self.parse_dotted_path();
@@ -1594,6 +1612,34 @@ impl Parser<'_> {
         };
 
         TypeExpr { id, kind, span: start.to(self.prev_span()) }
+    }
+
+    /// `[CLO-10]`, `[THR-8]` (ODR-264) — `+ Send` after a callable type: its values are `Send`.
+    /// After a return type it is the callable's whose return type it ends (`fn() -> fn() + Send`
+    /// is a `Send` callable giving a `fn()`), as in a bound (`F: fn() -> fn() + Send`). A callable
+    /// value is never `Sync`.
+    fn parse_send_suffix(&mut self) -> bool {
+        if !self.at_punct(Punct::Plus) {
+            return false;
+        }
+        let word = match self.peek_at(1) {
+            TokenKind::Ident(word) if word.is("Send") || word.is("Sync") => *word,
+            _ => return false,
+        };
+        let start = self.span();
+        self.bump();
+        self.bump();
+        if word.is("Sync") {
+            let span = start.to(self.prev_span());
+            self.report(
+                Diagnostic::error(codes::E7005, span, "a callable type is never `Sync`")
+                    .primary_label("written here")
+                    .note("a call may change what the value captured, so two threads may not call one value at once [CLO-10], [THR-9]")
+                    .help("delete `+ Sync`; `+ Send` lets the value move to another thread"),
+            );
+            return false;
+        }
+        true
     }
 
     /// `[T]`, `[T, U]`, `[Item = i32]`, `[N]` for a const argument.

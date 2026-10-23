@@ -209,7 +209,9 @@ pub enum TyKind {
     /// (`[CLO-3]`): it may hold captured state, so it moves and drops. Both
     /// have one representation, and the first converts to the second.
     /// `is_unsafe` (ODR-115): `unsafe fn(A) -> R`, whose call needs `unsafe`; the same value.
-    Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, once: bool, params: Vec<FnParam>, ret: Ty },
+    /// `send` (ODR-264): `fn(A) -> R + Send`, an owned callable value holding only what is
+    /// `Send`; the same value, and it converts to the one without.
+    Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, once: bool, send: bool, params: Vec<FnParam>, ret: Ty },
     /// `[TYP-22]` — an unsized interface value. The interface identities are
     /// retained in declaration order; runtime fat-pointer/vtable lowering is
     /// a later backend slice, so this kind must never acquire a guessed
@@ -986,7 +988,7 @@ impl TypeTable {
                     items.iter().map(|&t| self.substitute_self(t, concrete)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -995,7 +997,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute_self(ret, concrete);
-                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret })
             }
             _ => ty,
         }
@@ -1062,7 +1064,7 @@ impl TypeTable {
                 let items: Vec<Ty> = items.iter().map(|&t| self.substitute(t, args)).collect();
                 self.intern(TyKind::Tuple(items))
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret } => {
                 let params = params
                     .iter()
                     .map(|param| FnParam {
@@ -1071,7 +1073,7 @@ impl TypeTable {
                     })
                     .collect();
                 let ret = self.substitute(ret, args);
-                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret })
+                self.intern(TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret })
             }
             _ => ty,
         }
@@ -1710,9 +1712,10 @@ impl TypeTable {
         let result = match self.kind(ty) {
             // `[TYP-41]` — a number, sent and shared as one is.
             TyKind::Const(_) => (true, true),
-            // ODR-102 — an owned callable value hides what it captured, so it
-            // stays on the thread that made it.
-            TyKind::Fn { abi: None, stateless: false, .. } => (false, false),
+            // ODR-102 — an owned callable value hides what it captured, so it stays on the
+            // thread that made it, unless its type says it holds only what is `Send` (ODR-264).
+            // A call may change what it captured, so it is never `Sync` (`[THR-9]`).
+            TyKind::Fn { abi: None, stateless: false, send, .. } => (*send, false),
             // `[FFI-8]` — read on the thread C passed it to.
             TyKind::VaList => (false, false),
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
@@ -2938,7 +2941,7 @@ impl TypeTable {
             TyKind::Array { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
             TyKind::ArrayN { elem, len } => format!("[{}; {len}]", self.render(*elem, user)),
             TyKind::Const(value) => value.to_string(),
-            TyKind::Fn { abi, latebound, is_unsafe, once, params, ret, .. } => {
+            TyKind::Fn { abi, latebound, is_unsafe, once, send, params, ret, .. } => {
                 let inner: Vec<String> = params
                     .iter()
                     .map(|param| {
@@ -2952,12 +2955,13 @@ impl TypeTable {
                     .collect();
                 let is_unsafe = if *is_unsafe { "unsafe " } else { "" };
                 format!(
-                    "{}fn({}) -> {}",
+                    "{}fn({}) -> {}{}",
                     if let Some(abi) = abi { format!("{is_unsafe}extern \"{abi}\" ") }
                     else if *latebound { format!("@latebound {is_unsafe}") }
                     else if *once { format!("{is_unsafe}once ") } else { is_unsafe.to_string() },
                     inner.join(", "),
-                    self.render(*ret, user)
+                    self.render(*ret, user),
+                    if *send { " + Send" } else { "" },
                 )
             }
             TyKind::Infer(_) => "_".into(),
@@ -3061,7 +3065,7 @@ impl TypeTable {
             TyKind::Const(value) => format!("const {value}"),
             TyKind::Vec { text: true, .. } => "String".to_string(),
             TyKind::Vec { elem, .. } => format!("Array[{}]", self.canonical_name(*elem)?),
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret } => {
                 let mut out = if let Some(abi) = abi {
                     format!("extern \"{abi}\" fn(")
                 } else if *latebound {
@@ -3089,6 +3093,9 @@ impl TypeTable {
                 }
                 out.push_str(")->");
                 out.push_str(&self.canonical_name(*ret)?);
+                if *send {
+                    out.push_str("+Send");
+                }
                 out
             }
             TyKind::Param { index, .. } => format!("$P{index}"),
@@ -3340,7 +3347,7 @@ impl TypeTable {
                 out.push_str(if *mutable { "*mut " } else { "*" });
                 self.spell(*inner, out);
             }
-            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, params, ret } => {
+            TyKind::Fn { abi, latebound, stateless, is_unsafe, once, send, params, ret } => {
                 if *is_unsafe {
                     out.push_str("unsafe ");
                 }
@@ -3367,6 +3374,9 @@ impl TypeTable {
                 }
                 out.push_str(") -> ");
                 self.spell(*ret, out);
+                if *send {
+                    out.push_str(" + Send");
+                }
             }
             TyKind::Dyn { interfaces } => {
                 out.push_str("dyn ");
@@ -3888,6 +3898,7 @@ mod tests {
             latebound: false,
             stateless: false,
             is_unsafe: false,
+            send: false,
             params: vec![FnParam { ty: i64_ty, mode: FnParamMode::Borrow }],
             ret: i64_ty,
         });

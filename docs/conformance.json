@@ -19,9 +19,8 @@
         "XV.6"
       ],
       "rules": 386,
-      "done": 384,
+      "done": 385,
       "missing": [
-        "CLO-10",
         "GRM-28"
       ]
     },
@@ -37,11 +36,9 @@
         "XV.7"
       ],
       "rules": 576,
-      "done": 573,
+      "done": 575,
       "missing": [
-        "CLO-10",
-        "GRM-28",
-        "THR-8"
+        "GRM-28"
       ]
     },
     {
@@ -50,13 +47,11 @@
         "XVI"
       ],
       "rules": 633,
-      "done": 628,
+      "done": 630,
       "missing": [
-        "CLO-10",
         "FFI-11",
         "FFI-8",
-        "GRM-28",
-        "THR-8"
+        "GRM-28"
       ]
     },
     {
@@ -65,16 +60,14 @@
         "Annex B"
       ],
       "rules": 692,
-      "done": 684,
+      "done": 686,
       "missing": [
-        "CLO-10",
         "FFI-11",
         "FFI-8",
         "GRM-28",
         "HR-1",
         "HR-24",
-        "HR-9",
-        "THR-8"
+        "HR-9"
       ]
     }
   ]
