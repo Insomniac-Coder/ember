@@ -14480,6 +14480,7 @@ mod string_descriptor_view_parts_tests {
             lazy_statics: BTreeMap::new(),
             reload_bodies: Vec::new(),
             mangled_types: std::cell::RefCell::new(BTreeMap::new()),
+            collection_wrappers: BTreeMap::new(),
         }
     }
 
