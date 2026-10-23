@@ -363,6 +363,7 @@ fn emit_with(
     let make = |unit: Option<FpMode>| -> Emitter<'_> {
     let type_namespace = if library_mode { package_type_namespace(package_name) } else { String::new() };
     let (order, structural) = plan_types(types, &type_namespace);
+    let wrappers = collection_wrappers(bodies, types, &type_namespace);
     let usize_ty = types
         .all()
         .find(|(_, k)| matches!(k, TyKind::Uint(UintTy::Usize)))
@@ -489,6 +490,7 @@ fn emit_with(
             Vec::new()
         },
         mangled_types: std::cell::RefCell::new(BTreeMap::new()),
+        collection_wrappers: wrappers,
         array_helpers: std::cell::RefCell::new(Vec::new()),
         global_allocator: None,
         clone_fns: bodies
@@ -536,6 +538,8 @@ fn emit_with(
             foreign_declarations.push_str(&format!("{}* {init}_static(void);\n", emitter.c_type(*ty)));
         }
         emitter.out = emitter.out.replace(FOREIGN_STATIC_DECLARATIONS, &foreign_declarations);
+        let wrappers = emitter.collection_wrapper_definitions();
+        emitter.out = emitter.out.replace(COLLECTION_WRAPPERS, &wrappers);
         if emitter.unit.is_none() {
             let definitions = emitter.lazy_static_definitions(&lazy_statics);
             emitter.out.push_str(&definitions);
@@ -944,6 +948,10 @@ struct Emitter<'a> {
     /// `[MNG-1]` — each type's mangled form (`TypeTable::mangled`), made once: a type is named
     /// wherever a value of it is.
     mangled_types: std::cell::RefCell<BTreeMap<TypeNode, String>>,
+    /// `[CG-C-9]` (ODR-178) — each collection type a local holds (`Array[T]`, `String`, `Span[T]`,
+    /// `MutSpan[T]`), with the C struct of its own a local of it is declared as
+    /// (`collection_wrappers`).
+    collection_wrappers: BTreeMap<Ty, String>,
 }
 
 struct NativeFnValue {
@@ -955,6 +963,8 @@ struct NativeFnValue {
 /// Replaced, once every body has been emitted, by the drop-glue prototypes.
 const DROP_GLUE_PROTOTYPES: &str = "/* @@drop-glue-prototypes@@ */";
 const FOREIGN_STATIC_DECLARATIONS: &str = "/* @@foreign-static-declarations@@ */";
+/// Replaced, once every body has been emitted, by the collection locals' structs (`[CG-C-9]`).
+const COLLECTION_WRAPPERS: &str = "/* @@collection-wrappers@@ */";
 
 /// Replaced the same way by the D-187 equality-function prototypes.
 const EQ_FN_PROTOTYPES: &str = "/* @@eq-fn-prototypes@@ */";
@@ -1471,6 +1481,7 @@ impl Emitter<'_> {
         self.plan_reload_slots(bodies);
         self.plan_frame_layouts(bodies);
         self.emit_type_declarations();
+        self.line(COLLECTION_WRAPPERS);
         self.line(FOREIGN_STATIC_DECLARATIONS);
         self.collect_virtual_methods(bodies);
         self.collect_interface_methods(bodies);
@@ -7075,6 +7086,7 @@ impl Emitter<'_> {
         self.line("");
         self.interface_caches.clear();
         self.rl_frame_active = false;
+        wrap_collection_locals(&mut self.out, start, body, &self.collection_wrappers);
         name_locals(&mut self.out, start, body);
     }
 
@@ -7385,12 +7397,34 @@ impl Emitter<'_> {
         }
     }
 
+    /// `[CG-C-9]` (ODR-178) — the struct of each collection type a local holds: its one member the
+    /// runtime's buffer (`ember_vec`, `ember_span`, `ember_mutspan`), so the C is the same but for
+    /// the local's type's name, which a debugger shows the local by (CodeView keeps no `typedef`).
+    /// `[CG-C-9]` — the collection locals' structs, by their types (`visualisers`).
+    pub(crate) fn collection_wrappers(&self) -> &BTreeMap<Ty, String> {
+        &self.collection_wrappers
+    }
+
+    fn collection_wrapper_definitions(&self) -> String {
+        let mut out = String::new();
+        for (&ty, name) in &self.collection_wrappers {
+            let buffer = self.c_type(ty);
+            out.push_str(&format!("/* `{}`, for a debugger [CG-C-9] */\ntypedef struct {name} {{ {buffer} v; }} {name};\n", self.types.display(ty)));
+        }
+        out
+    }
+
     fn local_declaration(&self, index: usize, decl: &ember_mir::LocalDecl) -> String {
         let comment = match &decl.name {
             Some(name) => format!("  /* {name} */"),
             None => String::new(),
         };
-        let declaration = format!("    {} _{index};{comment}", self.c_type(decl.ty));
+        // `[CG-C-9]` — a collection local is its type's own struct, read as its one member.
+        let c_type = match self.collection_wrappers.get(&decl.ty) {
+            Some(wrapper) if decl.kind != LocalKind::Arg => wrapper.clone(),
+            _ => self.c_type(decl.ty),
+        };
+        let declaration = format!("    {c_type} _{index};{comment}");
         match self.types.kind(decl.ty) {
             TyKind::Ref { inner, .. } if self.upcast_copies.contains(&index) => {
                 format!("{declaration}\n    {} _{index}_up;", self.c_type(*inner))
@@ -14005,6 +14039,76 @@ fn runtime_header_macros() -> &'static std::collections::HashMap<&'static str, V
 fn follows_member_access(text: &str, at: usize) -> bool {
     let before = text[..at].trim_end();
     before.ends_with('.') || before.ends_with("->")
+}
+
+/// `[CG-C-9]` (ODR-178) — the collection types the locals of `bodies` hold (not a parameter, a C
+/// parameter as it is), each with its struct's name: `<prefix>coll_` and the type as it prints, a
+/// hash of its symbol added where two print alike. The same type has the same name in every unit
+/// of a build, for the `.natvis` written from one of them.
+fn collection_wrappers(bodies: &[Body], types: &TypeTable, namespace: &str) -> BTreeMap<Ty, String> {
+    let mut wrappers = BTreeMap::new();
+    let mut taken: BTreeMap<String, Ty> = BTreeMap::new();
+    let held = bodies.iter().flat_map(|body| &body.locals).filter(|decl| decl.kind != LocalKind::Arg).map(|decl| decl.ty);
+    let mut collections: Vec<Ty> = held
+        .filter(|&ty| matches!(types.kind(ty), TyKind::Vec { .. } | TyKind::Span { .. }))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    collections.sort_by_key(|&ty| types.symbol_name(ty));
+    for ty in collections {
+        let symbol = types.symbol_name(ty);
+        let base = format!("{namespace}{}coll_{}", ember_branding::mangle_prefix(), identifier_from(&symbol));
+        let name = match taken.get(&base) {
+            None => base,
+            Some(_) => format!("{base}_{}", &ember_build_hash(&symbol)[..12]),
+        };
+        taken.insert(name.clone(), ty);
+        wrappers.insert(ty, name);
+    }
+    wrappers
+}
+
+/// A stable hash of `text`, in hexadecimal.
+fn ember_build_hash(text: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// `[CG-C-9]` — in a function's C from `start`, each collection local (`collection_wrappers`) is
+/// its struct's member wherever it is named: `_N.v`, but in its declaration.
+fn wrap_collection_locals(out: &mut String, start: usize, body: &Body, wrappers: &BTreeMap<Ty, String>) {
+    let wrapped: BTreeMap<usize, &str> = body
+        .locals
+        .iter()
+        .enumerate()
+        .filter(|(_, decl)| decl.kind != LocalKind::Arg)
+        .filter_map(|(index, decl)| wrappers.get(&decl.ty).map(|name| (index, name.as_str())))
+        .collect();
+    if wrapped.is_empty() {
+        return;
+    }
+    let text = &out[start..];
+    let mut rewritten = String::with_capacity(text.len() + text.len() / 16);
+    let mut copied = 0;
+    for (at, identifier) in c_identifiers(text) {
+        let Some(index) = local_index(identifier) else { continue };
+        let Some(wrapper) = wrapped.get(&index) else { continue };
+        let before = text[..at].trim_end();
+        if follows_member_access(text, at) || before.ends_with(wrapper) {
+            continue;
+        }
+        let end = at + identifier.len();
+        rewritten.push_str(&text[copied..end]);
+        rewritten.push_str(".v");
+        copied = end;
+    }
+    rewritten.push_str(&text[copied..]);
+    out.truncate(start);
+    out.push_str(&rewritten);
 }
 
 /// `_N`, the name every local is written with until `name_locals` gives it its own.
