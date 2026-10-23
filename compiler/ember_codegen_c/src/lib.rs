@@ -10683,6 +10683,16 @@ impl Emitter<'_> {
 
     // -- places, operands, rvalues -------------------------------------------
 
+    /// `[TYP-14]`, `[TYP-22]` — the `Box[dyn I]` a place reads through (`(*b.0)`, the checker's
+    /// spelling of a box's contents): the box's own place, whose `data` and `vtable` a borrow of the
+    /// contents is.
+    fn dyn_box_of(&self, place: &Place, body: &Body) -> Option<Place> {
+        let [.., Projection::Field(0), Projection::Deref] = place.projection.as_slice() else { return None };
+        let boxed = Place { local: place.local, projection: place.projection[..place.projection.len() - 2].to_vec() };
+        let TyKind::Struct(id) = *self.types.kind(self.place_ty(&boxed, body)) else { return None };
+        self.box_inner_id(id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })).then_some(boxed)
+    }
+
     fn place_in(&self, place: &Place, body: &Body) -> String {
         let mut out = format!("_{}", place.local.0);
         let mut at = Cursor { ty: body.local(place.local).ty, variant: None };
@@ -11253,6 +11263,13 @@ impl Emitter<'_> {
             // A `void` place has no C object (a `void` local is never
             // declared, and `*p` of a `void*` is not C): its borrow takes
             // the runtime's one byte for them (ADR-062, D-449).
+            // `[TYP-14]`, `[TYP-22]` — a `Box[dyn I]` read through and borrowed (a `ref dyn I`
+            // argument): its value's address and its table, as the box holds them.
+            Rvalue::Ref { place, .. } if self.dyn_box_of(place, body).is_some() => {
+                let boxed = self.dyn_box_of(place, body).expect("matched above");
+                let boxed = self.place_in(&boxed, body);
+                format!("(({RT}dyn){{ ({boxed}).data, ({boxed}).vtable }})")
+            }
             Rvalue::Ref { place, .. } if self.is_void(self.place_ty(place, body)) => format!("{RT}void_place()"),
             Rvalue::Ref { place, .. } => {
                 let address = format!("&{}", self.place_in(place, body));

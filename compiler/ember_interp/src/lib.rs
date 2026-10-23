@@ -985,6 +985,17 @@ impl<'a, 'io> Interp<'a, 'io> {
                 Ok(tag.to_le_bytes()[..size].to_vec())
             }
             Rvalue::Ref { place, .. } => {
+                // `[TYP-14]`, `[TYP-22]` — a `Box[dyn I]`'s contents borrowed are the box's value's
+                // address and its table: the box's own two words, as a `ref dyn I` holds them.
+                if let [.., Projection::Field(0), Projection::Deref] = place.projection.as_slice() {
+                    let boxed = Place { local: place.local, projection: place.projection[..place.projection.len() - 2].to_vec() };
+                    let loc = self.place(&boxed)?;
+                    if let TyKind::Struct(id) = *self.types.kind(loc.ty)
+                        && self.types.compiler_box_inner(id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. }))
+                    {
+                        return self.load(loc);
+                    }
+                }
                 let loc = self.place(place)?;
                 if self.is_void(loc.ty) {
                     return Ok(self.void_place.to_le_bytes().to_vec());
