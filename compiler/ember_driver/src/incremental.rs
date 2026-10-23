@@ -218,7 +218,7 @@ pub(crate) struct Plan {
     kept_bodies: HashMap<FileId, Vec<(u32, u32)>>,
     /// Each clean module's parts this build uses, read by `kept`: its module part (kept whole), its
     /// kept own units, its instances; each with its form.
-    read: std::cell::RefCell<Vec<Option<Vec<(Used, Form, Option<String>)>>>>,
+    read: std::sync::Mutex<Vec<Option<Vec<(Used, Form, Option<String>)>>>>,
     /// The kept parts this build uses, after `inject`: own parts by their first body's symbol,
     /// instances by theirs.
     used_parts: HashMap<String, Used>,
@@ -370,7 +370,7 @@ impl Plan {
         for bodies in plan.kept_bodies.values_mut() {
             bodies.sort_unstable();
         }
-        plan.read = std::cell::RefCell::new((0..plan.clean.len()).map(|_| None).collect());
+        plan.read = std::sync::Mutex::new((0..plan.clean.len()).map(|_| None).collect());
         plan
     }
 
@@ -499,14 +499,14 @@ impl Plan {
                 kept.holders.extend(part.kept.holders.iter().copied());
             }
         }
-        self.read.borrow_mut()[n] = Some(parts);
+        self.read.lock().unwrap_or_else(|e| e.into_inner())[n] = Some(parts);
         Ok(kept)
     }
 
     /// After the check: each clean module whose types were not found again, or whose parts could
     /// not be read, is checked whole by the next attempt. Whether this attempt can go on.
     pub(crate) fn found(&self, checked: &CheckOutput, attempts: &mut Attempts) -> bool {
-        let read = self.read.borrow();
+        let read = self.read.lock().unwrap_or_else(|e| e.into_inner());
         for ((clean, found), parts) in self.clean.iter().zip(&checked.found).zip(read.iter()) {
             if found.is_err() || parts.is_none() {
                 attempts.forced.insert(clean.record.name.clone());
@@ -533,7 +533,7 @@ impl Plan {
                 },
             );
         }
-        let parts: Vec<(Used, Form, Option<String>)> = self.read.get_mut().iter_mut().flatten().flat_map(std::mem::take).collect();
+        let parts: Vec<(Used, Form, Option<String>)> = self.read.get_mut().unwrap_or_else(|e| e.into_inner()).iter_mut().flatten().flat_map(std::mem::take).collect();
         let instances: HashSet<String> = parts.iter().filter_map(|(_, _, instance)| instance.clone()).collect();
         bodies.retain(|body| !instances.contains(&body.symbol));
         let mut present: HashSet<String> = bodies.iter().map(|body| body.symbol.clone()).collect();
@@ -582,7 +582,7 @@ impl Plan {
     /// reported by this build already.
     pub(crate) fn replay(&mut self, sink: &mut Sink, map: &SourceMap) {
         let diagnostics: Vec<Diagnostic> =
-            self.read.get_mut().iter_mut().flatten().flatten().flat_map(|(used, _, _)| std::mem::take(&mut used.diagnostics)).collect();
+            self.read.get_mut().unwrap_or_else(|e| e.into_inner()).iter_mut().flatten().flatten().flat_map(|(used, _, _)| std::mem::take(&mut used.diagnostics)).collect();
         report_again(diagnostics, sink, map);
     }
 
@@ -641,7 +641,7 @@ impl Plan {
         borrow: &BorrowFacts,
         sink: &Sink,
         types: &TypeTable,
-        made: &dyn Fn(ember_types::StructId) -> Option<Option<ember_types::codec::MadeCall>>,
+        made: &(dyn Fn(ember_types::StructId) -> Option<Option<ember_types::codec::MadeCall>> + Sync),
         map: &SourceMap,
     ) -> Result<(), String> {
         let by_symbol: HashMap<&str, &Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
@@ -649,9 +649,12 @@ impl Plan {
             artifacts.iter().map(|artifact| (artifact.module.as_str(), artifact)).collect();
         let reported = |places: &[usize]| -> Vec<Diagnostic> { places.iter().map(|&at| sink.diagnostics()[at].clone()).collect() };
         std::fs::create_dir_all(&self.dir).map_err(|error| format!("cannot write `{}`: {error}", self.dir.display()))?;
-        for (index, module) in checks.modules.iter().enumerate() {
-            let Some(module) = module else { continue };
-            let Some(artifact) = artifacts.get(checks.interface_names[index].as_str()) else { continue };
+        // `[BLD-7]`, ODR-281 — each module's record is made from what this build read of it alone,
+        // and written to a file of its own: the records are made on the `-j` threads.
+        let checked: Vec<usize> = (0..checks.modules.len()).filter(|&index| checks.modules[index].is_some()).collect();
+        let written = ember_analysis::parallel::each(&checked, &mut Sink::new(), |&index, _| -> Result<(), String> {
+            let Some(module) = &checks.modules[index] else { return Ok(()) };
+            let Some(artifact) = artifacts.get(checks.interface_names[index].as_str()) else { return Ok(()) };
             let interface = (artifact.module.clone(), artifact.dependencies.keys().cloned().collect(), artifact.interface_hash.bytes());
             // Each part: its symbols, and its form; a kept one's as its record had it.
             let form = |symbols: &[String], kept: Kept, diagnostics: Vec<Diagnostic>, body_diagnostics: Vec<Diagnostic>| Form {
@@ -704,7 +707,9 @@ impl Plan {
                         form(&unit.functions, fresh.kept.clone(), reported(&fresh.diagnostics), reported(&fresh.body_diagnostics)),
                     ),
                     None => {
-                        let Some(used) = self.used_parts.get(&format!("{index}\0{}", unit.functions.first().map_or("", String::as_str))) else { continue };
+                        let Some(used) = self.used_parts.get(&format!("{index}\0{}", unit.functions.first().map_or("", String::as_str))) else {
+                            continue;
+                        };
                         let symbols: Vec<String> = used.facts.iter().map(|(symbol, _)| symbol.clone()).collect();
                         (
                             Some(unit.body),
@@ -739,7 +744,7 @@ impl Plan {
                 let record = ember_types::codec::record(types, &mut numbering, made);
                 (written, record.map(|record| ember_span::codec::to_bytes(&record)))
             });
-            let (Ok(written), Ok(Ok(types_bytes))) = (written, types_bytes) else { continue };
+            let (Ok(written), Ok(Ok(types_bytes))) = (written, types_bytes) else { return Ok(()) };
             let ((files, at), pieces_of) = self.file_refs(extents, map);
             let mut records = parts.into_iter().zip(written).map(|((body, facts, uses, _), (bytes, scoped))| {
                 let mut pieces: Vec<(u32, u32)> =
@@ -771,8 +776,9 @@ impl Plan {
             if std::fs::rename(&partial, &path).is_err() {
                 let _ = std::fs::remove_file(&partial);
             }
-        }
-        Ok(())
+            Ok(())
+        });
+        written.into_iter().try_for_each(|(result, _)| result)
     }
 
     /// The files a record's spans point into (`ember_span::codec::encode`'s extents), as the record

@@ -229,9 +229,8 @@ fn readable(body: &Body, block: usize, locals: &[LocalId]) -> bool {
     let facts = analyze_definite_init(body);
     verify_initialization_facts(body, &facts).is_empty()
         && facts.block_entry(block).is_some_and(|s| {
-            locals
-                .iter()
-                .all(|l| s.get(l.0 as usize).is_some_and(|v| v.is_readable()))
+            // A local the body has not is `Uninit`, so not readable.
+            locals.iter().all(|l| s.get(l.0 as usize).is_readable())
         })
 }
 
@@ -1684,7 +1683,7 @@ fn reads_initialized(body: &Body, blocks: &BTreeSet<usize>) -> bool {
         let Some(entry) = facts.block_entry(b) else {
             return false;
         };
-        let mut state = entry.to_vec();
+        let mut state = entry.dense(body.locals.len());
         for stmt in &body.blocks[b].stmts {
             match &stmt.kind {
                 StmtKind::Assign {

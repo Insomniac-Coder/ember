@@ -17,7 +17,13 @@ The figures, each the median of `--runs` rounds after `--warmups` (15 and 3, `[B
 
     B1-B8  [BUD-2]'s operations over bigpkg (B6 with a new, empty global cache; B7 without the
            program cache);
-    B9     the compiler's peak memory in a clean build; [BUD-2]'s 3 GB stands, being no time;
+    B9     the compiler's peak memory in a clean build, gated as the times are: more memory than
+           before, beyond chance, fails ([BUD-3]); no fixed bound (ODR-281);
+    B9-curve  the compiler's peak memory against project size (ODR-281, `tools/memory_curve.py`:
+           packages of `--curve-sizes` lines, a clean build and `--curve-edits` edit builds each,
+           both compilers interleaved): it passes when the after compiler's curve is flat, its
+           peak at the largest size within 10 % of its peak at the smallest; its figure is the
+           curve's slope, in MB per 1,000 lines;
     HR-1   an edit to one function body of the reloadable bigpkg, running in its process: from
            the save, through `ember build --reload` (B2) and the runtime's load, plan, prepare
            and commit, to the program's first result from the new body, with [BEN-8]'s 10,000
@@ -26,12 +32,13 @@ The figures, each the median of `--runs` rounds after `--warmups` (15 and 3, `[B
            `ember bench --reload` over the performance suite; [HR-9]'s 3 % stands, being a
            ratio, no time (`--hr9-dir`, `--hr9-only`, `--hr9-runs`, `--hr9-core`).
 
-Without `--before` the after compiler's figures are measured and published, and only B9's and
-HR-9's bounds are gates. The release workflow publishes the figures of each release against the
+Without `--before` the after compiler's figures are measured and published, and only HR-9's bound
+and B9-curve's flatness are gates. The release workflow publishes the figures of each release against the
 one before it; the gate of record is the run on the reference laptop before a push.
 
     python tools/compile_budgets.py [--after EXE] [--before EXE] [--work DIR] [--runs N]
         [--warmups N] [--modules N] [--lines N] [--header-lines N] [--only B1,HR-1]
+        [--curve-sizes 50000,...] [--curve-edits N] [--curve-fanout N]
         [--json FILE] [--markdown FILE] [--judge REPORT] [--list]
 
 Exit status: 0 no figure is slower and every bound holds; 1 otherwise.
@@ -69,14 +76,16 @@ FIGURES = {
     "B7": "clean `development` build",
     "B8": "`.embind` regeneration for a Vulkan-sized header",
     "B9": "compiler peak memory, clean build",
+    "B9-curve": "compiler peak memory against project size, clean and after edits (flat, ODR-281)",
     "HR-1": "an edit to one function body running in the live process, 10,000 instances kept",
     "HR-9": "the performance suite's overhead with reload on (`ember bench --reload`)",
 }
-# The bounds that are no time limits: B9's 3 GB ([BUD-2]) and HR-9's 3 % ([HR-9]).
-BOUNDS = {"B9": 3 * 1024, "HR-9": 3.0}
-UNITS = {"B9": "MB", "HR-9": "%"}
-# Measured once, by the after compiler: a bound, not a comparison.
-ONCE = {"HR-9"}
+# The bound that is no time limit: HR-9's 3 % ([HR-9]). B9 has none (ODR-281).
+BOUNDS = {"HR-9": 3.0}
+UNITS = {"B9": "MB", "B9-curve": "MB per 1,000 lines", "HR-9": "%"}
+# Measured once, by the after compiler: a bound, not a comparison (B9-curve measures both compilers
+# once each, interleaved, and judges the after one's curve).
+ONCE = {"HR-9", "B9-curve"}
 SIGNIFICANCE = 0.01
 
 
@@ -281,6 +290,33 @@ def hr9(ember, args):
     return float(found.group(1)), configuration
 
 
+def curve(sides, args, work):
+    """ODR-281 — B9-curve: `tools/memory_curve.py` over both compilers, interleaved. The figure is the
+    slope of each compiler's clean-build curve (MB per 1,000 lines); the verdict is the after
+    compiler's curve's, flat after the clean builds and after the edits, or not."""
+    spec = importlib.util.spec_from_file_location("memory_curve", os.path.join(ROOT, "tools", "memory_curve.py"))
+    memory_curve = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(memory_curve)
+    sizes = [int(size) for size in args.curve_sizes.split(",") if size.strip()]
+    before = sides["before"].ember if "before" in sides else None
+    report = memory_curve.run(sides["after"].ember, before, sizes, args.curve_fanout, args.curve_edits, 1, None, work, False, 0.10)
+    slope = lambda side: report["verdicts"][side]["clean"]["slope_mb_per_1000_lines"]
+    peaks = lambda side: [row[side]["clean"]["peak_mb"] for row in report["sizes"]]
+    result = {"operation": FIGURES["B9-curve"], "unit": UNITS["B9-curve"],
+              "after": {"median": slope("after"), "spread": 0.0, "runs": peaks("after")}, "curve": report}
+    if before:
+        result["before"] = {"median": slope("before"), "spread": 0.0, "runs": peaks("before")}
+    verdict = report["verdicts"]["after"]
+    if report["flat"]:
+        result["verdict"] = "pass"
+    else:
+        result["verdict"] = "fail"
+        grows = [f"{kind}: {verdict[kind]['largest_over_smallest']:.2f}x from {sizes[0]:,} to {sizes[-1]:,} lines"
+                 for kind in ("clean", "edits") if kind in verdict and not verdict[kind]["flat"]]
+        result["why"] = "the peak grows with the project (" + "; ".join(grows) + ")"
+    return result
+
+
 def spread(samples):
     """`[BUD-3b]` — the interquartile range over the median."""
     median = statistics.median(samples)
@@ -312,10 +348,13 @@ def judge(name, before, after):
         result["before"] = {"median": statistics.median(before), "spread": spread(before), "runs": before}
         result.update({"ratio": ratio, "rounds slower": slower, "rounds faster": faster, "p": min(p_slower, p_faster)})
         if p_slower < SIGNIFICANCE and ratio > 1:
-            result["change"] = "slower" if name != "B9" else "more memory"
-            # Memory is no speed: B9's gate is its bound (ODR-242 is about time).
+            # `[BUD-3]` — a figure worse than before fails, memory as time (ODR-281: no bound).
             if name != "B9":
+                result["change"] = "slower"
                 reasons.append(f"slower in {slower} of {len(rounds)} rounds (p {p_slower:.4f} < {SIGNIFICANCE}), {ratio:.3f}x")
+            else:
+                result["change"] = "more memory"
+                reasons.append(f"more memory in {slower} of {len(rounds)} rounds (p {p_slower:.4f} < {SIGNIFICANCE}), {ratio:.3f}x")
         elif p_faster < SIGNIFICANCE and ratio < 1:
             result["change"] = "faster" if name != "B9" else "less memory"
         else:
@@ -390,6 +429,9 @@ def main(argv):
     parser.add_argument("--hr9-only")
     parser.add_argument("--hr9-runs", type=int, default=30)
     parser.add_argument("--hr9-core", type=int, default=1)
+    parser.add_argument("--curve-sizes", default="50000,100000,200000,400000,800000")
+    parser.add_argument("--curve-edits", type=int, default=9)
+    parser.add_argument("--curve-fanout", type=int, default=64)
     parser.add_argument("--json")
     parser.add_argument("--markdown")
     parser.add_argument("--judge", help="a published report: its verdicts again, from its runs")
@@ -402,7 +444,8 @@ def main(argv):
     if args.judge:
         with open(args.judge, encoding="utf-8") as f:
             report = json.load(f)
-        report["figures"] = {name: judge(name, result.get("before", {}).get("runs"), result["after"]["runs"])
+        # B9-curve's verdict is its curve's (`curve`), kept as published.
+        report["figures"] = {name: result if name == "B9-curve" else judge(name, result.get("before", {}).get("runs"), result["after"]["runs"])
                              for name, result in report["figures"].items()}
         return show(report)
 
@@ -433,6 +476,11 @@ def main(argv):
         return report
 
     for name in wanted:
+        if name == "B9-curve":
+            figures[name] = curve(sides, args, os.path.join(work, "curve"))
+            print(f"{name}: measured", flush=True)
+            publish()
+            continue
         if name == "HR-9":
             overhead, hr9_configuration = hr9(sides["after"].ember, args)
             figures[name] = judge(name, None, [overhead])

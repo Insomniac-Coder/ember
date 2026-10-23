@@ -408,6 +408,7 @@ pub fn check(
     let expanded_foreign = expand_extern_blocks(modules, sink);
     let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
+    checker.module_asts = modules.iter().map(|loaded| loaded.module.clone()).collect();
     for (span, lift) in generators.iter().flat_map(|written| written.locals.iter()) {
         checker.local_frames.insert(lift.env_frame, (true, *span));
         checker.local_frames.insert(lift.plain_frame, (false, *span));
@@ -1415,7 +1416,7 @@ impl ParallelWalk {
             return false;
         }
         let Some(def) = self.callee_def(checker, callee) else { return false };
-        let Some((module, decl)) = checker.inline_fns.get(&def) else { return false };
+        let Some((module, decl)) = checker.inline_fn(def) else { return false };
         let Some(body) = &decl.body else { return false };
         let name = decl.name.name;
         if self.frames.iter().any(|frame| frame.def == def) {
@@ -1439,7 +1440,7 @@ impl ParallelWalk {
             }
         }
         let saved_loops = std::mem::replace(&mut self.loops, 0);
-        self.frames.push(CalleeFrame { def, module: *module, name, args: mapped, declared: HashSet::new(), foreign: false });
+        self.frames.push(CalleeFrame { def, module, name, args: mapped, declared: HashSet::new(), foreign: false });
         self.block(checker, body);
         let frame = self.frames.pop().expect("the callee's frame");
         self.loops = saved_loops;
@@ -3120,8 +3121,12 @@ struct Checker<'a> {
     /// parameter's name and declaration, the secondary span of a mismatch on the argument.
     argument_of: Option<(Span, Symbol, Span)>,
     /// `[PAR-2b]`, `[CG-C-3]` — each function the inline header would hold (`@inline`, or a short
-    /// one), with the module it is written in, for the parallel analysis to read through.
-    inline_fns: HashMap<DefId, (usize, ast::FnDecl)>,
+    /// one), by the module it is written in and its place among the module's items, for the
+    /// parallel analysis to read through (`inline_fn`). ODR-281: a place, not a copy of the
+    /// declaration, which held every short function's body twice.
+    inline_fns: HashMap<DefId, (usize, usize)>,
+    /// The modules being checked (each shared with the caller's list), where `inline_fns` points.
+    module_asts: Vec<std::sync::Arc<ast::Module>>,
     /// `[GRM-34]` (ADR-191) — each method a universal extension gave a type, with the extension's
     /// index: a blanket parameter only its result names is the one the type's implementation fixes.
     universal_method_defs: HashMap<DefId, usize>,
@@ -3810,6 +3815,7 @@ impl<'a> Checker<'a> {
             dyn_debug_holders: Vec::new(),
             argument_of: None,
             inline_fns: HashMap::new(),
+            module_asts: Vec::new(),
             universal_method_defs: HashMap::new(),
             universal_interfaces: Vec::new(),
             applied_universal: HashSet::new(),
@@ -5455,6 +5461,16 @@ impl<'a> Checker<'a> {
     /// diagnostic names what the programmer wrote.
     fn resolve_name(&self, name: Symbol) -> Symbol {
         self.resolve_name_in(self.current_module, name)
+    }
+
+    /// `[PAR-2b]` — a function the inline header would hold (`inline_fns`): the module it is written
+    /// in, and its declaration there.
+    fn inline_fn(&self, def: DefId) -> Option<(usize, &ast::FnDecl)> {
+        let &(module, item) = self.inline_fns.get(&def)?;
+        match &self.module_asts.get(module)?.items.get(item)?.kind {
+            ast::ItemKind::Fn(decl) => Some((module, decl)),
+            _ => None,
+        }
     }
 
     /// What a name written in `module` means there.
@@ -9914,7 +9930,7 @@ impl<'a> Checker<'a> {
     /// Resolve aliases, fields, variants, constants, statics, and function
     /// signatures after every type header and generic recipe exists.
     fn collect(&mut self, module: &ast::Module) {
-        for item in &module.items {
+        for (item_index, item) in module.items.iter().enumerate() {
             match &item.kind {
                 ast::ItemKind::Struct(decl) => {
                     let Some(&id) = self.struct_ids.get(&self.qualified(decl.name.name)) else { continue };
@@ -10507,7 +10523,7 @@ impl<'a> Checker<'a> {
                         && !has_attribute(&item.attrs, "noinline")
                         && (has_attribute(&item.attrs, "inline") || statement_count(body) <= INLINE_STATEMENTS)
                     {
-                        self.inline_fns.insert(def, (self.current_module, decl.clone()));
+                        self.inline_fns.insert(def, (self.current_module, item_index));
                     }
                     let abi = if count_witnesses.is_empty() && callbacks.is_empty() {
                         decl.abi.as_deref().or_else(|| has_attribute(&item.attrs, "export").then_some("C"))
@@ -25519,6 +25535,9 @@ impl<'a> Checker<'a> {
             self.check_stmt(stmt, &mut stmts);
         }
         let scope = self.scopes.pop().unwrap_or_default();
+        // ODR-281 — the checked statements at their count: the program's checked bodies are held
+        // until they are lowered, and a list grown one at a time has room for as many again.
+        stmts.shrink_to_fit();
         (Block { stmts, span: block.span }, scope)
     }
 

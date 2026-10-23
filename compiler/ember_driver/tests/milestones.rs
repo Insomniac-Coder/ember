@@ -4724,16 +4724,18 @@ fn timings_report_each_stage_and_module() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
-/// `[BLD-10]`, `[BUD-2]`, `[BUD-3b]` (ODR-242), `[HR-1]`, `[HR-9]` — the compiler's speed is measured
-/// on one machine before and after a change and published, and a change may not make it slower.
-/// `tools/compile_budgets.py` holds `[BUD-2]`'s operations with no time limits (B9's 3 GB and
-/// HR-9's 3 % are no times, and stand); it runs each figure's rounds through both compilers
-/// interleaved (here a small bigpkg, one round, this compiler on both sides) and publishes both
-/// medians and spreads, every run, and a Markdown table. `[HR-1]`'s figure is an edit to one function
-/// body of the reloadable package from the save to the new body's first result in the running
-/// program, its 10,000 instances all kept; `[HR-9]`'s is `ember bench --reload`'s overhead. A
-/// published report is judged again from its runs: an after compiler slower in every one of 15
-/// rounds fails, one slower in half of them has no measurable change.
+/// `[BLD-10]`, `[BUD-2]`, `[BUD-3]`, `[BUD-3b]` (ODR-242, ODR-281), `[HR-1]`, `[HR-9]` — the compiler's
+/// speed and memory are measured on one machine before and after a change and published, and a
+/// change may make neither worse. `tools/compile_budgets.py` holds `[BUD-2]`'s operations with no
+/// time limits and no memory bound (ODR-281: B9's 3 GB goes; HR-9's 3 % is no time, and stands); it
+/// runs each figure's rounds through both compilers interleaved (here a small bigpkg, one round,
+/// this compiler on both sides) and publishes both medians and spreads, every run, and a Markdown
+/// table. `[HR-1]`'s figure is an edit to one function body of the reloadable package from the save
+/// to the new body's first result in the running program, its 10,000 instances all kept; `[HR-9]`'s
+/// is `ember bench --reload`'s overhead; B9-curve is the compiler's peak memory against project size
+/// (`tools/memory_curve.py`), which passes when it is flat. A published report is judged again from
+/// its runs: an after compiler slower, or using more memory, in every one of 15 rounds fails, one
+/// slower in half of them has no measurable change.
 #[test]
 fn the_compilers_speed_is_measured_before_and_after_a_change_and_published() {
     let root = workspace_root();
@@ -4741,13 +4743,13 @@ fn the_compilers_speed_is_measured_before_and_after_a_change_and_published() {
     let tool = root.join("tools").join("compile_budgets.py");
     let listed = Command::new(python).arg(&tool).arg("--list").output().expect("python runs");
     let table: serde_json::Value = serde_json::from_slice(&listed.stdout).expect("the figures as JSON");
-    for figure in ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "HR-1", "HR-9"] {
+    for figure in ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B9-curve", "HR-1", "HR-9"] {
         assert!(table[figure]["operation"].is_string(), "[BLD-10] {figure}: {table}");
     }
-    // ODR-242 — no time limits: only B9's memory and HR-9's ratio are bounded.
+    // ODR-242, ODR-281 — no time limits and no memory bound: only HR-9's ratio is bounded.
     let bounded: Vec<&String> = table.as_object().expect("figures").iter().filter(|(_, figure)| figure.get("bound").is_some()).map(|(name, _)| name).collect();
-    assert_eq!(bounded, ["B9", "HR-9"], "{table}");
-    assert_eq!((table["B9"]["bound"].as_u64(), table["HR-9"]["bound"].as_f64()), (Some(3 * 1024), Some(3.0)), "{table}");
+    assert_eq!(bounded, ["HR-9"], "{table}");
+    assert_eq!(table["HR-9"]["bound"].as_f64(), Some(3.0), "{table}");
 
     let work = temporary_directory("budgets");
     let report = work.join("report.json");
@@ -4756,7 +4758,8 @@ fn the_compilers_speed_is_measured_before_and_after_a_change_and_published() {
         Command::new(python)
             .arg(&tool)
             .args(["--before", EMBER, "--after", EMBER, "--modules", "4", "--lines", "300", "--header-lines", "100", "--runs", "1", "--warmups", "0"])
-            .args(["--only", "B1,B3,B9,HR-1,HR-9", "--hr9-only", "a05_structs", "--hr9-runs", "2"])
+            .args(["--only", "B1,B3,B9,B9-curve,HR-1,HR-9", "--hr9-only", "a05_structs", "--hr9-runs", "2"])
+            .args(["--curve-sizes", "600,1200", "--curve-edits", "3", "--curve-fanout", "4"])
             .arg("--work")
             .arg(work.join("work"))
             .arg("--json")
@@ -4780,10 +4783,24 @@ fn the_compilers_speed_is_measured_before_and_after_a_change_and_published() {
     }
     assert!(published["figures"]["HR-9"]["after"]["median"].is_number(), "[HR-9] {stdout}");
     assert!(published["hr9"].as_str().is_some_and(|configuration| configuration.contains("`development` profile") && configuration.contains("on core")), "[HR-9] the configuration: {stdout}");
+    // ODR-281 — the curve: each size's clean build and edit builds through both compilers, published
+    // with the slope of each one's peaks; its verdict is the after compiler's curve's flatness.
+    let curve = &published["figures"]["B9-curve"];
+    for side in ["before", "after"] {
+        assert!(curve[side]["median"].is_number(), "B9-curve {side}: {stdout}");
+        let sizes = curve["curve"]["sizes"].as_array().expect("the curve's sizes");
+        assert_eq!(sizes.len(), 2, "{stdout}");
+        for size in sizes {
+            assert!(size[side]["clean"]["peak_mb"].as_f64().is_some_and(|mb| mb > 0.0), "B9-curve {side}: {stdout}");
+            assert_eq!(size[side]["edits"]["runs"].as_array().map(Vec::len), Some(3), "B9-curve {side}: {stdout}");
+        }
+    }
+    let flat = curve["curve"]["flat"].as_bool().expect("the curve's verdict");
+    assert_eq!(curve["verdict"], if flat { "pass" } else { "fail" }, "{stdout}");
     let shown = std::fs::read_to_string(&markdown).expect("the Markdown table");
-    assert!(shown.contains("| HR-1 |") && shown.contains("| B1 |") && shown.contains("spread"), "{shown}");
+    assert!(shown.contains("| HR-1 |") && shown.contains("| B1 |") && shown.contains("| B9-curve |") && shown.contains("spread"), "{shown}");
     let hr9_within = published["figures"]["HR-9"]["verdict"] == "pass";
-    assert_eq!(output.status.code(), Some(if hr9_within { 0 } else { 1 }), "{stdout}{stderr}");
+    assert_eq!(output.status.code(), Some(if hr9_within && flat { 0 } else { 1 }), "{stdout}{stderr}");
 
     // A published report's verdicts, judged again from its runs.
     let judged = |before: Vec<f64>, after: Vec<f64>| {
@@ -4800,6 +4817,15 @@ fn the_compilers_speed_is_measured_before_and_after_a_change_and_published() {
     assert!(status == Some(1) && stdout.contains("FAILED (B3)") && stdout.contains("slower in 15 of 15 rounds"), "[BLD-10] {stdout}");
     let (status, stdout) = judged(before.clone(), before.iter().enumerate().map(|(n, ms)| if n % 2 == 0 { ms * 1.2 } else { ms * 0.8 }).collect());
     assert!(status == Some(0) && stdout.contains("no measurable change"), "{stdout}");
+    // `[BUD-3]`, ODR-281 — memory as time: more of it in every round fails, with no bound to pass under.
+    let file = work.join("judged-memory.json");
+    let peaks: Vec<f64> = (0..15).map(|n| 300.0 + f64::from(n) / 10.0).collect();
+    let mut again = published.clone();
+    again["figures"] = serde_json::json!({ "B9": { "operation": "", "before": { "runs": peaks.clone() }, "after": { "runs": peaks.iter().map(|mb| mb * 1.05).collect::<Vec<f64>>() } } });
+    std::fs::write(&file, again.to_string()).unwrap();
+    let output = Command::new(python).arg(&tool).arg("--judge").arg(&file).output().expect("python runs");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.code() == Some(1) && stdout.contains("FAILED (B9)") && stdout.contains("more memory in 15 of 15 rounds"), "[BUD-3] {stdout}");
 
     let workflow = std::fs::read_to_string(root.join(".github").join("workflows").join("release.yml")).expect("the release workflow");
     assert!(workflow.contains("tags: [\"v*\"]") && workflow.contains("tools/compile_budgets.py") && workflow.contains("--before"), "{workflow}");

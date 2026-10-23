@@ -15,7 +15,7 @@ use ember_mir::{
 };
 use ember_span::Span;
 
-use crate::facts::{InitializationFacts, InitializationState as State};
+use crate::facts::{InitializationFacts, InitializationState as State, InitializationStates as States};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct InitializationFactViolation {
@@ -45,7 +45,7 @@ pub fn analyze_definite_init(body: &Body) -> InitializationFacts {
     // Per-block entry states, refined until they stop changing. Bodies are
     // small and reducible, so a plain worklist converges quickly; there is no
     // need for the dominator machinery a larger analysis would want.
-    let mut block_entry: Vec<Option<Vec<State>>> = vec![None; body.blocks.len()];
+    let mut block_entry: Vec<Option<States>> = vec![None; body.blocks.len()];
     if body.blocks.is_empty() {
         return InitializationFacts {
             body_symbol: body.symbol.clone(),
@@ -62,8 +62,7 @@ pub fn analyze_definite_init(body: &Body) -> InitializationFacts {
         for successor in successors(body, index) {
             let merged = match &block_entry[successor] {
                 Some(existing) => {
-                    let joined: Vec<State> =
-                        existing.iter().zip(&exit).map(|(a, b)| a.join(*b)).collect();
+                    let joined = existing.join(&exit);
                     if joined == *existing {
                         continue;
                     }
@@ -96,7 +95,7 @@ pub fn check_definite_init_with_facts(
         Reporter { body, facts, sink, errors: 0, reported: vec![false; body.locals.len()] };
     for index in 0..body.blocks.len() {
         if let Some(state) = facts.block_entry(index) {
-            transfer(body, index, state.to_vec(), Some(&mut reporter));
+            transfer(body, index, state.clone(), Some(&mut reporter));
         }
     }
     reporter.errors
@@ -148,10 +147,9 @@ pub fn verify_initialization_facts(
             }
             continue;
         };
-        if entry.len() != body.locals.len() {
+        if let Some(highest) = entry.highest().filter(|&highest| highest >= body.locals.len()) {
             fail(format!(
-                "bb{index} has {} entry facts for {} locals",
-                entry.len(),
+                "bb{index} has an entry fact for local {highest} of {} locals",
                 body.locals.len()
             ));
             continue;
@@ -162,16 +160,14 @@ pub fn verify_initialization_facts(
         }
     }
 
-    let mut expected_entries: Vec<Option<Vec<State>>> = vec![None; body.blocks.len()];
+    let mut expected_entries: Vec<Option<States>> = vec![None; body.blocks.len()];
     expected_entries[0] = Some(expected_seed);
     for (predecessor, exit) in facts.block_exit.iter().enumerate() {
         let Some(exit) = exit else { continue };
         for successor in successors(body, predecessor) {
             let slot = &mut expected_entries[successor];
             *slot = Some(match slot.take() {
-                Some(existing) => {
-                    existing.iter().zip(exit).map(|(a, b)| a.join(*b)).collect()
-                }
+                Some(existing) => existing.join(exit),
                 None => exit.clone(),
             });
         }
@@ -238,7 +234,7 @@ impl Reporter<'_> {
     /// to the branch that chose it (`if c:` with no `else`: the condition).
     fn unassigned_branch(&self, local: LocalId, read: Span) -> Option<Span> {
         let index = local.0 as usize;
-        let uninit_at_exit = |block: usize| self.facts.block_exit(block).is_some_and(|exit| exit[index] == State::Uninit);
+        let uninit_at_exit = |block: usize| self.facts.block_exit(block).is_some_and(|exit| exit.get(index) == State::Uninit);
         let found = (0..self.body.blocks.len())
             .filter(|&block| uninit_at_exit(block))
             // A call whose result is the local gives it its value on the way out.
@@ -248,7 +244,7 @@ impl Reporter<'_> {
             .find(|&block| {
                 successors(self.body, block)
                     .into_iter()
-                    .any(|next| self.facts.block_entry(next).is_some_and(|entry| entry[index] == State::Maybe))
+                    .any(|next| self.facts.block_entry(next).is_some_and(|entry| entry.get(index) == State::Maybe))
             })?;
         let mut block = found;
         for _ in 0..self.body.blocks.len() {
@@ -268,26 +264,27 @@ impl Reporter<'_> {
 }
 
 /// Parameters arrive initialised; every other local starts empty.
-fn initial_state(body: &Body) -> Vec<State> {
-    body.locals
-        .iter()
-        .map(|decl| match decl.kind {
-            LocalKind::Arg => State::Init,
+fn initial_state(body: &Body) -> States {
+    let mut state = States::default();
+    for (index, decl) in body.locals.iter().enumerate() {
+        match decl.kind {
+            LocalKind::Arg => state.set(index, State::Init),
             // The return slot is written before `Return` on any path that
             // returns a value, and a void function never writes it at all.
-            LocalKind::Return => State::Init,
-            _ => State::Uninit,
-        })
-        .collect()
+            LocalKind::Return => state.set(index, State::Init),
+            _ => {}
+        }
+    }
+    state
 }
 
 /// Walk one block, updating `state`. With a reporter, also diagnose reads.
 fn transfer(
     body: &Body,
     index: usize,
-    mut state: Vec<State>,
+    mut state: States,
     mut reporter: Option<&mut Reporter>,
-) -> Vec<State> {
+) -> States {
     let block = &body.blocks[index];
 
     for stmt in &block.stmts {
@@ -311,7 +308,7 @@ fn transfer(
             // value. Re-entering a loop must clear it, or a value assigned on
             // the previous iteration would look live on the next.
             StmtKind::StorageLive(local) | StmtKind::StorageDead(local) => {
-                state[local.0 as usize] = State::Uninit;
+                state.set(local.0 as usize, State::Uninit);
             }
             // A drop is not a read (Part XVIII §4.6): an empty place is not
             // dropped, and a `Maybe` one gets a drop flag. Drop elaboration
@@ -355,21 +352,21 @@ fn successors(body: &Body, index: usize) -> Vec<usize> {
     }
 }
 
-fn write_place(place: &Place, state: &mut [State]) {
+fn write_place(place: &Place, state: &mut States) {
     // A write through a projection leaves the whole local initialised only if
     // it already was; Phase 2's per-field paths make this precise.
     if place.projection.is_empty() {
-        state[place.local.0 as usize] = State::Init;
+        state.set(place.local.0 as usize, State::Init);
     }
 }
 
-fn read_place(place: &Place, state: &[State], span: Span, reporter: &mut Option<&mut Reporter>) {
+fn read_place(place: &Place, state: &States, span: Span, reporter: &mut Option<&mut Reporter>) {
     // `a[i]` reads `i` as well as `a`. The lowering only ever puts a freshly
     // assigned temporary there today, but the projection is a read either way
     // and the analysis should not depend on who built it.
     for projection in &place.projection {
         if let Projection::Index(local) = projection {
-            let current = state[local.0 as usize];
+            let current = state.get(local.0 as usize);
             if !current.is_readable() {
                 if let Some(reporter) = reporter {
                     reporter.report(*local, current, span);
@@ -377,7 +374,7 @@ fn read_place(place: &Place, state: &[State], span: Span, reporter: &mut Option<
             }
         }
     }
-    let current = state[place.local.0 as usize];
+    let current = state.get(place.local.0 as usize);
     if current.is_readable() {
         return;
     }
@@ -386,14 +383,14 @@ fn read_place(place: &Place, state: &[State], span: Span, reporter: &mut Option<
     }
 }
 
-fn read_operand(operand: &Operand, state: &[State], span: Span, reporter: &mut Option<&mut Reporter>) {
+fn read_operand(operand: &Operand, state: &States, span: Span, reporter: &mut Option<&mut Reporter>) {
     match operand {
         Operand::Copy(place) | Operand::Move(place) => read_place(place, state, span, reporter),
         Operand::Const(_) => {}
     }
 }
 
-fn read_rvalue(rvalue: &Rvalue, state: &[State], span: Span, reporter: &mut Option<&mut Reporter>) {
+fn read_rvalue(rvalue: &Rvalue, state: &States, span: Span, reporter: &mut Option<&mut Reporter>) {
     match rvalue {
         Rvalue::Use(o) | Rvalue::UnaryOp { operand: o, .. } => {
             read_operand(o, state, span, reporter)
@@ -624,16 +621,54 @@ mod tests {
         let body = branch_body();
         let facts = analyze_definite_init(&body);
         assert_eq!(facts.block_count(), body.blocks.len());
-        assert_eq!(facts.block_entry(0), Some(&[State::Init, State::Init, State::Uninit][..]));
-        assert_eq!(facts.block_entry(3), Some(&[State::Init, State::Init, State::Maybe][..]));
+        assert_eq!(facts.block_entry(0).map(|state| state.dense(3)), Some(vec![State::Init, State::Init, State::Uninit]));
+        assert_eq!(facts.block_entry(3).map(|state| state.dense(3)), Some(vec![State::Init, State::Init, State::Maybe]));
         assert!(verify_initialization_facts(&body, &facts).is_empty());
+    }
+
+    /// ODR-281 — the sparse states join, set and read as the dense ones they stand for (brute force
+    /// over small random states).
+    #[test]
+    fn sparse_states_are_the_dense_ones() {
+        let mut seed = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        let all = [State::Uninit, State::Init, State::Maybe];
+        for _ in 0..2000 {
+            let locals = 1 + next(12) as usize;
+            let mut dense = [Vec::new(), Vec::new()];
+            let mut sparse = [States::default(), States::default()];
+            for side in 0..2 {
+                for _ in 0..locals {
+                    dense[side].push(all[next(3) as usize]);
+                }
+                // Set in a scrambled order, some twice: what is left is the last write.
+                for _ in 0..locals * 2 {
+                    let local = next(locals as u64) as usize;
+                    sparse[side].set(local, all[next(3) as usize]);
+                }
+                for (local, &state) in dense[side].iter().enumerate() {
+                    sparse[side].set(local, state);
+                }
+                assert_eq!(sparse[side].dense(locals), dense[side]);
+                assert!((0..locals).all(|local| sparse[side].get(local) == dense[side][local]));
+            }
+            let joined: Vec<State> = dense[0].iter().zip(&dense[1]).map(|(a, b)| a.join(*b)).collect();
+            assert_eq!(sparse[0].join(&sparse[1]).dense(locals), joined);
+            // Equal states are equal values, whatever the order they were written in.
+            assert_eq!(sparse[0].join(&sparse[1]), sparse[1].join(&sparse[0]));
+        }
     }
 
     #[test]
     fn the_fact_verifier_rejects_a_stale_transfer_result() {
         let body = branch_body();
         let mut facts = analyze_definite_init(&body);
-        facts.block_exit[1].as_mut().unwrap()[2] = State::Uninit;
+        facts.block_exit[1].as_mut().unwrap().set(2, State::Uninit);
         let violations = verify_initialization_facts(&body, &facts);
         assert!(
             violations.iter().any(|v| v.message.contains("exit facts")),
@@ -645,7 +680,7 @@ mod tests {
     fn the_fact_verifier_rejects_a_wrong_predecessor_join() {
         let body = branch_body();
         let mut facts = analyze_definite_init(&body);
-        facts.block_entry[3].as_mut().unwrap()[2] = State::Init;
+        facts.block_entry[3].as_mut().unwrap().set(2, State::Init);
         let violations = verify_initialization_facts(&body, &facts);
         assert!(
             violations.iter().any(|v| v.message.contains("predecessor exits")),
