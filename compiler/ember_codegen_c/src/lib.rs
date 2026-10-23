@@ -1770,6 +1770,7 @@ impl Emitter<'_> {
             || match self.types.kind(ty) {
                 TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char => true,
                 TyKind::Range(id) => self.equal_means_identical(self.types.range_def(*id).repr),
+                TyKind::Newtype(id) => self.equal_means_identical(self.types.newtype_def(*id).repr),
                 _ => false,
             }
     }
@@ -8863,6 +8864,7 @@ impl Emitter<'_> {
     fn through_range(&self, ty: Ty) -> Ty {
         match self.types.kind(ty) {
             TyKind::Range(id) => self.types.range_def(*id).repr,
+            TyKind::Newtype(id) => self.types.newtype_def(*id).repr,
             _ => ty,
         }
     }
@@ -10773,6 +10775,10 @@ impl Emitter<'_> {
         // ODR-093 — a range value formats as its representation.
         if let TyKind::Range(id) = *self.types.kind(ty) {
             return self.builtin_suffix(self.types.range_def(id).repr);
+        }
+        // ODR-270 — a newtype formats as its representation.
+        if let TyKind::Newtype(id) = *self.types.kind(ty) {
+            return self.builtin_suffix(self.types.newtype_def(id).repr);
         }
         if let Some(suffix) = self.wide_int(ty) {
             return suffix;

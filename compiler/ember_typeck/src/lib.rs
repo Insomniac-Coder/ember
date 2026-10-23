@@ -15286,6 +15286,8 @@ impl<'a> Checker<'a> {
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_) | TyKind::Str
             | TyKind::Class(_) | TyKind::ClassInterface(_) | TyKind::Void | TyKind::Error => None,
             TyKind::Range(id) => self.unformattable_part(self.types.range_def(*id).repr, seen),
+            // ODR-270 — a newtype's `Debug` is its representation's.
+            TyKind::Newtype(id) => self.unformattable_part(self.types.newtype_def(*id).repr, seen),
             TyKind::Vec { text: true, .. } => None,
             // [TYP-39], [STR-5] — aggregate formatting depends on its parts.
             TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => {
@@ -15337,6 +15339,7 @@ impl<'a> Checker<'a> {
         }
         match self.types.kind(ty).clone() {
             TyKind::Range(id) => self.dyn_parts(self.types.range_def(id).repr, seen, out),
+            TyKind::Newtype(id) => self.dyn_parts(self.types.newtype_def(id).repr, seen, out),
             TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } | TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.dyn_parts(elem, seen, out),
             TyKind::Tuple(items) => {
                 for item in items {
@@ -15547,6 +15550,8 @@ impl<'a> Checker<'a> {
 
     fn has_implicit_eq_in(&self, ty: Ty, seen: &mut HashSet<Ty>) -> bool {
         match self.types.kind(ty) {
+            // ODR-270 — a newtype compares as its representation does.
+            TyKind::Newtype(id) => self.has_implicit_eq_in(self.types.newtype_def(*id).repr, seen),
             TyKind::Void
             | TyKind::Bool
             | TyKind::Char
@@ -51929,6 +51934,8 @@ impl<'a> Checker<'a> {
             TyKind::Void => true,
             // D-318 — as its representation: not a float range.
             TyKind::Range(id) => self.hashes(self.types.range_def(*id).repr, seen),
+            // ODR-270 — a newtype hashes as its representation does.
+            TyKind::Newtype(id) => self.hashes(self.types.newtype_def(*id).repr, seen),
             TyKind::Tuple(items) => items.clone().iter().all(|&item| self.hashes(item, seen)),
             // D-489 — std's structural Hash is for shared Span only. MutSpan
             // reaches the explicit-implementation fallback below.
@@ -52079,6 +52086,11 @@ impl<'a> Checker<'a> {
             TyKind::Void => {}
             TyKind::Range(id) => {
                 let repr = self.types.range_def(id).repr;
+                let value = Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(receiver)), span };
+                stmts.push(Stmt::Expr(self.synth_hash_of(value, recv_span, args, span)));
+            }
+            TyKind::Newtype(id) => {
+                let repr = self.types.newtype_def(id).repr;
                 let value = Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(receiver)), span };
                 stmts.push(Stmt::Expr(self.synth_hash_of(value, recv_span, args, span)));
             }
@@ -52253,7 +52265,7 @@ impl<'a> Checker<'a> {
     /// The kinds whose `hash` `synth_hash_of` builds rather than calls.
     fn hash_provided(&self, ty: Ty) -> bool {
         match self.types.kind(ty) {
-            TyKind::Void | TyKind::Range(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Class(_) => true,
+            TyKind::Void | TyKind::Range(_) | TyKind::Newtype(_) | TyKind::Tuple(_) | TyKind::Array { .. } | TyKind::ArrayN { .. } | TyKind::Class(_) => true,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only() || self.derives_hash(ty),
             TyKind::Struct(_) => self.derives_hash(ty),
             _ => false,
@@ -52435,6 +52447,9 @@ impl<'a> Checker<'a> {
             | TyKind::Str
             | TyKind::Vec { .. }
             | TyKind::Span { .. } => false,
+            // ODR-270 — a newtype has `==` and `!=` (its representation's, compared before this)
+            // and no order: `<` on one is `Ord`'s, which it does not implement.
+            TyKind::Newtype(_) => false,
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
             _ => true,
         }
@@ -52589,6 +52604,7 @@ impl<'a> Checker<'a> {
             // D-318 — a range type hashes as its representation does, so a
             // float range does not (`[TYP-36]`); its `Eq` is the implicit one.
             TyKind::Range(id) => self.has_builtin_eq_hash(self.types.range_def(*id).repr),
+            TyKind::Newtype(id) => self.has_builtin_eq_hash(self.types.newtype_def(*id).repr),
             TyKind::Enum(id) => self.types.enum_def(*id).is_unit_only(),
             _ => false,
         }
@@ -57153,6 +57169,19 @@ impl<'a> Checker<'a> {
                 }
                 _ => equal,
             };
+        }
+
+        // ODR-270 — `==` and `!=` on two values of one newtype compare their representations; a
+        // newtype has no other operator (`(a as R) < (b as R)` says it).
+        if matches!(op, ast::BinOp::Eq | ast::BinOp::Ne)
+            && lhs.ty == rhs.ty
+            && let TyKind::Newtype(id) = *self.types.kind(lhs.ty)
+            && self.has_implicit_eq(lhs.ty)
+        {
+            let repr = self.types.newtype_def(id).repr;
+            let (left, right) = (lhs.span, rhs.span);
+            lhs = Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(lhs)), span: left };
+            rhs = Expr { ty: repr, kind: ExprKind::EraseRange(Box::new(rhs)), span: right };
         }
 
         // `[RNG-5]`/`[RNG-5a1]` — operators on range types. This runs before

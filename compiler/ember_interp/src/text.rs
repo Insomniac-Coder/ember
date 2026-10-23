@@ -421,6 +421,7 @@ impl Interp<'_, '_> {
             TyKind::Bool => out.extend_from_slice(if self.mem.read(addr, 1)?[0] != 0 { b"true" } else { b"false" }),
             TyKind::Char => out.extend_from_slice(&encode_char(self.mem.read_u32(addr)?)),
             TyKind::Range(id) => return self.scalar_text(out, addr, self.types.range_def(*id).repr),
+            TyKind::Newtype(id) => return self.scalar_text(out, addr, self.types.newtype_def(*id).repr),
             _ => {
                 if let Some(bits) = self.float_bits(ty) {
                     let bytes = self.mem.read(addr, self.size(ty))?;
@@ -489,6 +490,7 @@ impl Interp<'_, '_> {
                 spec_text(out, &c, debug, spec);
             }
             TyKind::Range(id) => return self.display_with(out, addr, self.types.range_def(*id).repr, spec),
+            TyKind::Newtype(id) => return self.display_with(out, addr, self.types.newtype_def(*id).repr, spec),
             _ => {
                 if let Some(bits) = self.float_bits(ty) {
                     let bytes = self.mem.read(addr, self.size(ty))?;
