@@ -6,7 +6,7 @@
 #$ warning[W5002]: `Fixed` is imported from `nttp.hpp` only as an opaque type, usable behind a pointer: `Fixed<Point{1, 2}>`: `Fixed` has a non-type template parameter of class type (`Point P`)
 # `[FFI-48]` — the unsupported rows, each `E5034` naming its row where the program names it: a
 # coroutine (its result's class declares `promise_type`), a template with a non-type parameter of
-# class type, and a cast across a C++ hierarchy (`as?` between classes Ember holds as C++ objects).
+# class type, and a cast across a C++ hierarchy (`cast … if` between classes Ember holds as C++ objects).
 # Of two methods that differ only in their result (`int& value()`, `const int& value() const`), the
 # first is imported and the import says why the other is not.
 
@@ -14,7 +14,7 @@ import cpp "unsupported.hpp"
 import cpp "nttp.hpp" with (project = "nttp") as n
 
 fn narrow(shape: ref cpp.Shape) -> i32:
-    square = shape as? cpp.Square    #$ error[E5034]: a cast across a C++ hierarchy
+    square = cast shape if cpp.Square    #$ error[E5034]: a cast across a C++ hierarchy
     return 0
 
 fn main():

@@ -1042,6 +1042,14 @@ impl Parser<'_> {
             };
         }
 
+        // `[TYP-6]` (ODR-280) — `cast x as D` and `cast x if D`; `cast` is a keyword only here,
+        // directly before a name (`[LEX-15]`).
+        if self.at_contextual("cast")
+            && matches!(self.peek_at(1), TokenKind::Ident(_) | TokenKind::RawIdent(_) | TokenKind::Keyword(Kw::SelfValue))
+        {
+            return self.parse_cast(start, allow_block_lambda);
+        }
+
         if self.at_kw(Kw::Ref) {
             self.bump();
             let mutable = self.eat_kw(Kw::Mut);
@@ -1055,6 +1063,47 @@ impl Parser<'_> {
         }
 
         self.parse_atom(allow_block_lambda)
+    }
+
+    /// `[TYP-6]` (ODR-280) — `cast x as D` (the `D`, or a panic) and `cast x if D` (`Some(d)` or
+    /// `None`), `cast` the current token: `cast(p)` stays a call and `cast` a name elsewhere. A
+    /// function of its own, off the recursion `parse_prefix` is on.
+    #[inline(never)]
+    fn parse_cast(&mut self, start: ember_span::Span, allow_block_lambda: bool) -> Expr {
+        self.bump();
+        let operand = self.parse_expr_bp(BP_POSTFIX, allow_block_lambda);
+        let forced = if self.eat_kw(Kw::As) {
+            true
+        } else if self.eat_kw(Kw::If) {
+            false
+        } else {
+            let found = self.peek().to_string();
+            let span = self.span();
+            self.report(
+                Diagnostic::error(codes::E0100, span, "expected `as` or `if` after `cast` and its value")
+                    .primary_label(format!("found {found}"))
+                    .help("`cast x as D` gives the `D` and panics if `x` is not one; `cast x if D` gives `Some(d)` or `None`"),
+            );
+            return operand;
+        };
+        let ty = self.parse_type();
+        let id = self.next_id();
+        Expr { id, kind: ExprKind::Downcast { expr: Box::new(operand), ty, forced }, span: start.to(self.prev_span()) }
+    }
+
+    /// ODR-280 — `x as? D` or `x as! D`, the `?` or `!` the current token: an error naming the
+    /// spelling that replaced it, and the downcast it meant, so checking goes on.
+    #[inline(never)]
+    fn old_downcast(&mut self, expr: Expr) -> ExprKind {
+        let (forced, written, word) = if self.at_punct(Punct::Bang) { (true, "as!", "as") } else { (false, "as?", "if") };
+        let span = self.span();
+        self.bump();
+        self.report(
+            Diagnostic::error(codes::E0100, span, format!("`{written}` is not Ember: a downcast is written `cast x {word} D`"))
+                .primary_label(format!("write `cast` before the value and `{word}` here"))
+                .help("`cast x as D` gives the `D` and panics if `x` is not one; `cast x if D` gives `Some(d)` or `None`"),
+        );
+        ExprKind::Downcast { expr: Box::new(expr), ty: self.parse_type(), forced }
     }
 
     fn parse_atom(&mut self, allow_block_lambda: bool) -> Expr {
@@ -1486,19 +1535,9 @@ impl Parser<'_> {
                 }
                 TokenKind::Keyword(Kw::As) if min_bp <= BP_CAST => {
                     self.bump();
-                    // `as?` and `as!` are downcasts of a class handle.
-                    if self.eat_punct(Punct::Question) {
-                        ExprKind::Downcast {
-                            expr: Box::new(expr),
-                            ty: self.parse_type(),
-                            forced: false,
-                        }
-                    } else if self.eat_punct(Punct::Bang) {
-                        ExprKind::Downcast {
-                            expr: Box::new(expr),
-                            ty: self.parse_type(),
-                            forced: true,
-                        }
+                    // ODR-280 — `as?` and `as!` are gone: a downcast is `cast x if D` or `cast x as D`.
+                    if self.at_punct(Punct::Question) || self.at_punct(Punct::Bang) {
+                        self.old_downcast(expr)
                     } else {
                         ExprKind::Cast { expr: Box::new(expr), ty: self.parse_type() }
                     }

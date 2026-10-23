@@ -1199,9 +1199,10 @@ impl Printer<'_> {
             ast::ExprKind::Cast { expr: inner, ty } => {
                 format!("{} as {}", self.expr_pure(inner), self.type_expr(ty))
             }
+            // ODR-280 — `cast x as D`, `cast x if D`.
             ast::ExprKind::Downcast { expr: inner, ty, forced } => {
-                let mark = if *forced { "!" } else { "?" };
-                format!("{} as{mark} {}", self.expr_pure(inner), self.type_expr(ty))
+                let word = if *forced { "as" } else { "if" };
+                format!("cast {} {word} {}", self.expr_pure(inner), self.type_expr(ty))
             }
             ast::ExprKind::Try(inner) => format!("{}?", self.expr_pure(inner)),
             ast::ExprKind::Tuple(items) => {

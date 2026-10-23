@@ -1075,7 +1075,7 @@ impl SiteBuilder<'_> {
                     | AssertKind::ShiftTooLarge => (Effects::CHECK_ARITHMETIC, "an arithmetic check"),
                     AssertKind::Bounds { .. } => (Effects::CHECK_BOUNDS, "a bounds check"),
                     AssertKind::RefCellBorrow { .. } => (Effects::CHECK_ALIASING, "a `RefCell` borrow check"),
-                    AssertKind::Downcast => (Effects::PANIC, "`as!`"),
+                    AssertKind::Downcast => (Effects::PANIC, "`cast … as`"),
                     AssertKind::Panic { .. } => (Effects::PANIC, "a panic"),
                 };
                 own(effects, *span, operation, sites);
@@ -1398,7 +1398,7 @@ fn builtin_effects(which: &Builtin) -> (Effects, &'static str) {
         B::Input => (Effects::IO | Effects::BLOCK | ALLOC, "`input`, which reads the console"),
         B::Panic => (Effects::PANIC, "`panic`"),
         B::Assert => (Effects::PANIC, "`assert`"),
-        B::ClassDowncast { forced: true, .. } => (Effects::PANIC, "`as!`"),
+        B::ClassDowncast { forced: true, .. } => (Effects::PANIC, "`cast … as`"),
         B::ClassDowncast { .. } => (Effects::NONE, ""),
         B::RangeChecked(_) => (Effects::PANIC, "a checked range conversion"),
         B::FixedArenaAlloc { .. } => (Effects::PANIC, "`FixedArena.alloc`, which panics when full"),

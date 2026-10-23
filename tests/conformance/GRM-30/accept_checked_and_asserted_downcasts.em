@@ -2,8 +2,8 @@
 #$ rules: GRM-30, TYP-6
 #$ stdout: 7
 #$ stdout: 7
-## `[GRM-30]` — `as?` and `as!` are single tokens: `a as? Dog` is a checked
-## downcast to `Option[Dog]`, `a as! Dog` one that panics on failure.
+## `[GRM-30]` — `cast a if Dog` is a checked downcast to `Option[Dog]`,
+## `cast a as Dog` one that panics on failure (ODR-280).
 
 open class Animal:
     fn name(self) -> int:
@@ -15,9 +15,9 @@ class Dog(Animal):
 
 fn main():
     a: Animal = Dog()
-    match a as? Dog:
+    match cast a if Dog:
         Some(dog):
             println(dog.bark())
         None:
             println("no")
-    println((a as! Dog).bark())
+    println((cast a as Dog).bark())

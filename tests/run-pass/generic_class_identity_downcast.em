@@ -31,19 +31,19 @@ fn main():
         println(1)
     else:
         println(0)
-    hit: Option[Child[bool]] = base as? Child[bool]
+    hit: Option[Child[bool]] = cast base if Child[bool]
     match hit:
         Some(value):
             println(value.value)
         None:
             println(0)
-    miss: Option[Other[bool]] = base as? Other[bool]
+    miss: Option[Other[bool]] = cast base if Other[bool]
     match miss:
         Some(_):
             println(1)
         None:
             println(0)
-    forced: Child[bool] = base as! Child[bool]
+    forced: Child[bool] = cast base as Child[bool]
     if forced is child:
         println(1)
     else:

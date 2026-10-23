@@ -265,7 +265,7 @@ pub class World:
         if T.component_soa():
             match self.storages.get(key):
                 Some(found):
-                    storage = found as! SoaStorage[T]
+                    storage = cast found as SoaStorage[T]
                     storage.insert(e, value)
                 None:
                     made = SoaStorage[T]()
@@ -274,7 +274,7 @@ pub class World:
         else:
             match self.storages.get(key):
                 Some(found):
-                    storage = found as! AosStorage[T]
+                    storage = cast found as AosStorage[T]
                     storage.insert(e, value)
                 None:
                     made = AosStorage[T]()
@@ -487,7 +487,7 @@ fn aos_storage[T: Component](world: World) -> AosStorage[T]:
     key = T.component_hash()
     if not world.storages.contains_key(key):
         _none = world.storages.insert(key, AosStorage[T]())
-    return world.storages[key] as! AosStorage[T]
+    return cast world.storages[key] as AosStorage[T]
 
 ## `[ECS-3]` — a component `T` (`aos`) read by a query: `ref T`.
 pub struct Read[T]:
@@ -575,7 +575,7 @@ fn soa_storage[T: Component](world: World) -> SoaStorage[T]:
     key = T.component_hash()
     if not world.storages.contains_key(key):
         _none = world.storages.insert(key, SoaStorage[T]())
-    return world.storages[key] as! SoaStorage[T]
+    return cast world.storages[key] as SoaStorage[T]
 
 ## `[ECS-3]`, `[SOA-6]` — a component `T` stored as an `SoA` (`@component(layout=soa)`) read by a
 ## query: its element proxy `SoARef[T]`, whose fields are places in the columns.

@@ -455,7 +455,7 @@ impl Printer {
                 self.nest(&format!("Cast as {}", type_str(ty)), |p| p.expr(expr))
             }
             ExprKind::Downcast { expr, ty, forced } => {
-                let op = if *forced { "as!" } else { "as?" };
+                let op = if *forced { "cast as" } else { "cast if" };
                 self.nest(&format!("Downcast {op} {}", type_str(ty)), |p| p.expr(expr))
             }
             ExprKind::Try(e) => self.nest("Try", |p| p.expr(e)),

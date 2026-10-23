@@ -726,7 +726,7 @@ pub enum ExprKind {
     Ternary { then_expr: Box<Expr>, cond: Box<Expr>, else_expr: Box<Expr> },
     Range { lo: Option<Box<Expr>>, hi: Option<Box<Expr>>, inclusive: bool },
     Cast { expr: Box<Expr>, ty: TypeExpr },
-    /// `h as? D` and `h as! D` — a dynamic downcast of a class handle.
+    /// `cast h if D` and `cast h as D` (ODR-280) — a dynamic downcast of a class handle.
     Downcast { expr: Box<Expr>, ty: TypeExpr, forced: bool },
     /// `e?` — early return on `None`/`Err` (`[ERR-2]`).
     Try(Box<Expr>),

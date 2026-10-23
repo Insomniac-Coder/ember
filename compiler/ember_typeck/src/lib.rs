@@ -37641,7 +37641,7 @@ impl<'a> Checker<'a> {
                                 codes::E2020,
                                 span,
                                 format!(
-                                    "`as?`/`as!` requires related class handles, found `{from}` and `{target}`"
+                                    "`cast … as` and `cast … if` need related class handles, found `{from}` and `{target}`"
                                 ),
                             );
                         }

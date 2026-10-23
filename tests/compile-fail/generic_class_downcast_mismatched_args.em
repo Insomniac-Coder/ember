@@ -8,4 +8,4 @@ class Child[T]:
 
 fn main():
     value = Child[bool](true)
-    bad: Option[Child[i32]] = value as? Child[i32]
+    bad: Option[Child[i32]] = cast value if Child[i32]

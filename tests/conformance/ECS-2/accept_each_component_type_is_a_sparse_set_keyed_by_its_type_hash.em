@@ -49,7 +49,7 @@ fn main():
     println(w.entities_with[Velocity]())
     match w.storage[Position]():
         Some(any):
-            positions = any as! AosStorage[Position]
+            positions = cast any as AosStorage[Position]
             println(count(positions), w.len())
         None:
             println("none")

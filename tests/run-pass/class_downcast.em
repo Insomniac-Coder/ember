@@ -22,19 +22,19 @@ class Other(Base):
 fn main():
     child = Child(7)
     base: Base = child
-    hit: Option[Child] = base as? Child
+    hit: Option[Child] = cast base if Child
     match hit:
         Some(value):
             println(value.value)
         None:
             println(0)
-    miss: Option[Other] = base as? Other
+    miss: Option[Other] = cast base if Other
     match miss:
         Some(_):
             println(0)
         None:
             println(0)
-    forced: Child = base as! Child
+    forced: Child = cast base as Child
     if forced is child:
         println(1)
     else:

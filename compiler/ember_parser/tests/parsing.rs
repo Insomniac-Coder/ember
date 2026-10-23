@@ -438,10 +438,10 @@ fn try_and_optional_chaining_parse() {
 
 #[test]
 fn casts_and_downcasts_are_distinct() {
-    let out = dump("fn f():\n    a = x as u8\n    b = h as? Door\n    c = h as! Door\n");
+    let out = dump("fn f():\n    a = x as u8\n    b = cast h if Door\n    c = cast h as Door\n");
     assert!(out.contains("Cast as u8"), "{out}");
-    assert!(out.contains("Downcast as? Door"), "{out}");
-    assert!(out.contains("Downcast as! Door"), "{out}");
+    assert!(out.contains("Downcast cast if Door"), "{out}");
+    assert!(out.contains("Downcast cast as Door"), "{out}");
 }
 
 #[test]

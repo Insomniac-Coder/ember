@@ -9,4 +9,4 @@ class B:
 
 fn main():
     value = A()
-    bad: Option[B] = value as? B
+    bad: Option[B] = cast value if B

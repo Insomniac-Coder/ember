@@ -869,8 +869,8 @@ fn value_data_migrates_through_its_container() {
                @derive(Copy, Component)\n@component(layout=soa)\nstruct Velocity:\n    dx: int\n\n\
                fn setup(w: World):\n    for k in 0..3:\n        e = w.create()\n        w.add(e, Position(k))\n        w.add(e, Velocity(10))\n\n\
                fn report(w: World) -> int:\n    total = 0\n    match w.storage[Position]():\n        Some(any):\n            \
-               ps = any as! AosStorage[Position]\n            for p in ps.dense:\n                total += p.x\n        None:\n            pass\n    \
-               match w.storage[Velocity]():\n        Some(any):\n            vs = any as! SoaStorage[Velocity]\n            \
+               ps = cast any as AosStorage[Position]\n            for p in ps.dense:\n                total += p.x\n        None:\n            pass\n    \
+               match w.storage[Velocity]():\n        Some(any):\n            vs = cast any as SoaStorage[Velocity]\n            \
                for i in 0..vs.dense.len():\n                total += vs.dense[i].dx\n        None:\n            pass\n    return total\n\n\
                fn main():\n    w = World()\n    setup(w)\n    for i in 0..2:\n        println(report(w))\n        hot.checkpoint()\n";
     let grown_ecs = ecs
