@@ -62,7 +62,7 @@ this compiler does not have yet):
                                                    one core, each at its fastest code layout; fails
                                                    past a threshold ([TST-28]), or only reports
                                                    (--report, off the reference machine)
-    ember bench [filter] --reload [--dir D] [--runs N] [--core N] [--report]
+    ember bench [filter] --reload [--tier all|bodies] [--dir D] [--runs N] [--core N] [--report]
                                                    what reload costs a program that is not reloading:
                                                    each program built plain and reloadable, timed
                                                    interleaved; fails over 3 % ([HR-9])

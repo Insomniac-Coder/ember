@@ -1,6 +1,6 @@
 //! `ember bench [filter] [--compare]` — the performance gate (`[TST-28]`, `[BEN-1]`..`[BEN-6]`);
-//! `ember bench [filter] --reload [--dir D] [--runs N]` — what reload costs a program that is not
-//! reloading (`[HR-9]`, `reload_overhead`).
+//! `ember bench [filter] --reload [--tier all|bodies] [--dir D] [--runs N]` — what reload costs a
+//! program that is not reloading (`[HR-9]`, `reload_overhead`).
 //!
 //! `tests/perf/<name>.em` is a benchmark program and `tests/perf/<name>.c` its equivalent C program
 //! (`.cpp` for counted-object code, `[BEN-6]`). The `.em` file's `#$ perf: <category>` annotation
@@ -420,6 +420,7 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
     let mut report = false;
     let mut core = 1usize;
     let mut runs = TIMED;
+    let mut tier = "all".to_string();
     let mut dir = PathBuf::from("tests/perf");
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -438,18 +439,27 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
                 core = value.parse().map_err(|_| format!("`--core {value}` is not a core number"))?;
             }
             "--dir" => dir = PathBuf::from(rest.next().ok_or("`--dir` needs a folder")?),
+            // `[HR-19]`, `[HR-25]` — the reloadable form's `[build] reload`: `all` (instances migrate,
+            // so every function keeps a frame record, `[HR-3b]`) or `bodies`.
+            "--tier" => {
+                let value = rest.next().ok_or("`--tier` needs `all` or `bodies`")?;
+                if !matches!(value.as_str(), "all" | "bodies") {
+                    return Err(format!("`--tier {value}`: the reloadable form is built with `reload = \"all\"` or `\"bodies\"`"));
+                }
+                tier = value.clone();
+            }
             other if other.starts_with('-') => return Err(format!("unknown `ember bench` option `{other}`")),
             other => filter = Some(other.to_string()),
         }
     }
     if reload {
-        return reload_overhead(&dir, filter.as_deref(), core, runs, report);
+        return reload_overhead(&dir, filter.as_deref(), core, runs, &tier, report);
     }
     if !compare {
         return Err("`ember bench` times programs against their C twins: run `ember bench --compare` [TST-28], or `ember bench --reload` [HR-9]".to_string());
     }
-    if runs != TIMED {
-        return Err(format!("`ember bench --compare` times {TIMED} runs of each side [BEN-1]; `--runs` is `--reload`'s"));
+    if runs != TIMED || tier != "all" {
+        return Err(format!("`ember bench --compare` times {TIMED} runs of each side [BEN-1]; `--runs` and `--tier` are `--reload`'s"));
     }
     let pairs = pairs(&dir, filter.as_deref())?;
     if pairs.is_empty() {
@@ -619,16 +629,26 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], out_dir: &Path, co
 const RELOAD_BOUND: f64 = 0.03;
 
 /// The program `source`, built by this compiler in the `development` profile into `dir` as a
-/// package of its own, reloadable (`[build] reload = "all"`) or not: the program it printed (a
+/// package of its own, reloadable (`[build] reload = "<tier>"`) or not: the program it printed (a
 /// reloadable build's host, which loads the first image beside it).
-fn build_development(source: &Path, dir: &Path, reload: bool) -> Result<PathBuf, String> {
+fn build_development(source: &Path, dir: &Path, reload: Option<&str>) -> Result<PathBuf, String> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
     let name = source.file_stem().and_then(|stem| stem.to_str()).ok_or("a program's file has no name")?;
-    let manifest = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nreload = \"{}\"\n", if reload { "all" } else { "none" });
+    let manifest = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[build]\nreload = \"{}\"\n", reload.unwrap_or("none"));
     std::fs::write(dir.join(ember_branding::MANIFEST), manifest).map_err(|error| error.to_string())?;
     let copy = dir.join(source.file_name().ok_or("a program's file has no name")?);
-    std::fs::copy(source, &copy).map_err(|error| format!("{}: {error}", source.display()))?;
+    // The program and the files named after it beside it (`ffi_direct_call_mix.c`, which it
+    // imports): the package's sources.
+    let folder = source.parent().filter(|folder| !folder.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    for entry in std::fs::read_dir(folder).map_err(|error| format!("{}: {error}", folder.display()))?.flatten() {
+        let file = entry.file_name();
+        let file = file.to_string_lossy();
+        let named = file.strip_prefix(name).is_some_and(|rest| rest.starts_with('.') || rest.starts_with('_'));
+        if named && entry.path().is_file() {
+            std::fs::copy(entry.path(), dir.join(&*file)).map_err(|error| format!("{}: {error}", entry.path().display()))?;
+        }
+    }
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
     let output = Command::new(exe)
         .arg("build")
@@ -639,7 +659,7 @@ fn build_development(source: &Path, dir: &Path, reload: bool) -> Result<PathBuf,
         .map_err(|error| error.to_string())?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() {
-        return Err(format!("{} does not build {}:\n{}{stderr}", source.display(), if reload { "reloadable" } else { "plain" }, String::from_utf8_lossy(&output.stdout)));
+        return Err(format!("{} does not build {}:\n{}{stderr}", source.display(), if reload.is_some() { "reloadable" } else { "plain" }, String::from_utf8_lossy(&output.stdout)));
     }
     let built = stderr.lines().find_map(|line| line.trim().strip_prefix("built ")).ok_or("the build printed no program")?;
     let built = PathBuf::from(built);
@@ -653,7 +673,7 @@ fn build_development(source: &Path, dir: &Path, reload: bool) -> Result<PathBuf,
 /// runs of each. Each program's ratio, reloadable over plain, with its 95 % interval (`[BEN-1]`);
 /// the suite's overhead, the geometric mean of the ratios less one, with the configuration it was
 /// measured on. Over 3 % fails, unless `report` (`--report`, a machine that is not the reference).
-fn reload_overhead(dir: &Path, filter: Option<&str>, core: usize, runs: usize, report: bool) -> Result<ExitCode, String> {
+fn reload_overhead(dir: &Path, filter: Option<&str>, core: usize, runs: usize, tier: &str, report: bool) -> Result<ExitCode, String> {
     let mut sources: Vec<PathBuf> = std::fs::read_dir(dir)
         .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -674,7 +694,7 @@ fn reload_overhead(dir: &Path, filter: Option<&str>, core: usize, runs: usize, r
     pin_to_core(core)?;
     let out_dir = std::env::temp_dir().join(format!("ember-bench-reload-{}", std::process::id()));
     println!(
-        "[HR-9] reload overhead: {} program(s) of {}, `development` profile, {} ({}) on core {core} of {}, {WARMUP} untimed and {runs} timed runs of each form, interleaved",
+        "[HR-9] reload overhead: {} program(s) of {}, `development` profile, reloadable with `reload = \"{tier}\"`, {} ({}) on core {core} of {}, {WARMUP} untimed and {runs} timed runs of each form, interleaved",
         sources.len(),
         dir.display(),
         toolchain.name(),
@@ -687,8 +707,8 @@ fn reload_overhead(dir: &Path, filter: Option<&str>, core: usize, runs: usize, r
             let name = source.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
             let text = std::fs::read_to_string(source).map_err(|error| format!("{}: {error}", source.display()))?;
             let stdin = text.lines().find_map(|line| line.strip_prefix("#$ stdin:").map(|value| value.trim().to_string()));
-            let plain = build_development(source, &out_dir.join(name).join("plain"), false)?;
-            let reloadable = build_development(source, &out_dir.join(name).join("reload"), true)?;
+            let plain = build_development(source, &out_dir.join(name).join("plain"), None)?;
+            let reloadable = build_development(source, &out_dir.join(name).join("reload"), Some(tier))?;
             if run_once(&plain, stdin.as_deref())?.0 != run_once(&reloadable, stdin.as_deref())?.0 {
                 return Err(format!("{name}: the reloadable program prints otherwise than the plain one"));
             }

@@ -419,11 +419,25 @@ def main(argv):
     ops = {side: operations(runner, generator, size) for side, runner in sides.items()}
     figures = {}
     hr9_configuration = None
+
+    def publish():
+        """The report as far as it is measured, written after each figure: a figure that fails to
+        measure loses none before it."""
+        report = {"schema": 2, "machine": machine(), "size": {"modules": size[0], "lines": size[1], "header_lines": size[2]},
+                  "rounds": args.runs, "warmups": args.warmups, "after": sides["after"].ember,
+                  "before": sides["before"].ember if "before" in sides else None, "hr9": hr9_configuration, "figures": figures}
+        if args.json:
+            write(args.json, json.dumps(report, indent=2) + "\n")
+        if args.markdown:
+            write(args.markdown, table(report))
+        return report
+
     for name in wanted:
         if name == "HR-9":
             overhead, hr9_configuration = hr9(sides["after"].ember, args)
             figures[name] = judge(name, None, [overhead])
             print(f"{name}: measured", flush=True)
+            publish()
             continue
         order = list(sides)
         runs = {side: [] for side in sides}
@@ -441,14 +455,8 @@ def main(argv):
                 ops[side][name][2]()
         figures[name] = judge(name, runs.get("before"), runs["after"])
         print(f"{name}: measured", flush=True)
-    report = {"schema": 2, "machine": machine(), "size": {"modules": size[0], "lines": size[1], "header_lines": size[2]},
-              "rounds": args.runs, "warmups": args.warmups, "after": sides["after"].ember,
-              "before": sides["before"].ember if "before" in sides else None, "hr9": hr9_configuration, "figures": figures}
-    if args.json:
-        write(args.json, json.dumps(report, indent=2) + "\n")
-    if args.markdown:
-        write(args.markdown, table(report))
-    return show(report)
+        publish()
+    return show(publish())
 
 
 if __name__ == "__main__":
