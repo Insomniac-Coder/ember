@@ -9239,7 +9239,7 @@ impl Emitter<'_> {
                 let mut rendered = rendered;
                 let mut printed = *arg_ty;
                 let printing = match which {
-                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint => Some(0),
+                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint | Builtin::PrintPiece { .. } => Some(0),
                     Builtin::Format | Builtin::FormatWith(_) => Some(1),
                     _ => None,
                 };
@@ -10503,12 +10503,6 @@ impl Emitter<'_> {
                     Builtin::TypeIsSync => {
                         return if self.types.is_sync(*arg_ty) { "true" } else { "false" }.to_string();
                     }
-                    // `[STD-9]` (D-900) — a print statement's stream held from its first piece to
-                    // its last, each piece written with it held (`_held`).
-                    Builtin::PrintHold { stderr, start } => {
-                        let what = if *start { "hold" } else { "release" };
-                        return format!("{RT}print_{what}({})", u8::from(*stderr));
-                    }
                     // `[RNG-3a]` — total: no failure mode, no `Panic`, no
                     // `RuntimeCheck(k)`. "On the C backend it lowers to two
                     // compares or the target's `min`/`max` instruction pair,
@@ -10613,40 +10607,41 @@ impl Emitter<'_> {
                     Builtin::RangeChecked(_) => {
                         unreachable!("[RNG-3] `checked` is lowered in MIR")
                     }
-                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint => {}
+                    Builtin::Println | Builtin::Print | Builtin::EPrintln | Builtin::EPrint | Builtin::PrintPiece { .. } => {}
                     Builtin::Panic | Builtin::Assert => {
                         unreachable!("VI.6 — panics and assertions are MIR assertions")
                     }
                 }
-                // D-900 — a print statement's piece is written with its stream held (MIR's
-                // `PrintHold` around the pieces).
-                let held = if matches!(which, Builtin::Print | Builtin::EPrint) { "_held" } else { "" };
-                if let Some(name) = self.unit_display(&rendered[0], *arg_ty) {
-                    let printer = match which {
-                        Builtin::Println => "println",
-                        Builtin::EPrintln => "eprintln",
-                        Builtin::EPrint => "eprint",
-                        _ => "print",
-                    };
-                    return format!("{RT}{printer}_str{held}({name})");
-                }
-                if self.is_display_aggregate(*arg_ty) {
-                    let to_stderr = u8::from(matches!(which, Builtin::EPrint | Builtin::EPrintln));
-                    let print = self.fmt_print_fn(*arg_ty);
-                    // A held stream is the piece's; `println(x)` of one holds its own.
-                    return match held {
-                        "" => format!("({RT}print_hold({to_stderr}), {print}(&({}), {to_stderr}), {RT}print_release({to_stderr}))", rendered[0]),
-                        _ => format!("{print}(&({}), {to_stderr})", rendered[0]),
-                    };
-                }
-                let suffix = self.builtin_suffix(*arg_ty);
+                // D-900 — a print statement's piece is written with its stream held: its first
+                // piece takes it, its last lets it go (`_held` printers between). `print(x)` on its
+                // own holds it for itself.
+                let to_stderr = u8::from(matches!(which, Builtin::EPrint | Builtin::EPrintln | Builtin::PrintPiece { stderr: true, .. }));
+                let (piece, first, last) = match which {
+                    Builtin::PrintPiece { first, last, .. } => (true, *first, *last),
+                    _ => (false, false, false),
+                };
                 let name = match which {
                     Builtin::Println => "println",
                     Builtin::EPrintln => "eprintln",
-                    Builtin::EPrint => "eprint",
+                    _ if to_stderr == 1 => "eprint",
                     _ => "print",
                 };
-                format!("{RT}{name}_{suffix}{held}({})", rendered.join(", "))
+                let held = if piece { "_held" } else { "" };
+                let call = if let Some(text) = self.unit_display(&rendered[0], *arg_ty) {
+                    format!("{RT}{name}_str{held}({text})")
+                } else if self.is_display_aggregate(*arg_ty) {
+                    // Its printer writes held: one on its own holds the stream for itself.
+                    let print = format!("{}(&({}), {to_stderr})", self.fmt_print_fn(*arg_ty), rendered[0]);
+                    if piece { print } else { format!("({RT}print_hold({to_stderr}), {print}, {RT}print_release({to_stderr}))") }
+                } else {
+                    format!("{RT}{name}_{}{held}({})", self.builtin_suffix(*arg_ty), rendered.join(", "))
+                };
+                match (first, last) {
+                    (false, false) => call,
+                    (true, false) => format!("({RT}print_hold({to_stderr}), {call})"),
+                    (false, true) => format!("({call}, {RT}print_release({to_stderr}))"),
+                    (true, true) => format!("({RT}print_hold({to_stderr}), {call}, {RT}print_release({to_stderr}))"),
+                }
             }
         }
     }

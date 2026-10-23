@@ -1602,7 +1602,7 @@ pub fn reached_bodies(
             // ADR-186 — formatting a value runs the written `Debug` of
             // each part of it that has one, which the backend calls.
             FuncRef::Builtin {
-                which: Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint,
+                which: Builtin::Format | Builtin::FormatWith(_) | Builtin::Print | Builtin::EPrint | Builtin::PrintPiece { .. },
                 arg_ty,
             } => reached.extend(
                 types.debug_writers_reached(*arg_ty).into_iter().filter_map(|writer| by_symbol.get(writer).copied()),

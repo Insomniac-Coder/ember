@@ -58,16 +58,20 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
 * **D-900 `[STD-9]` — two threads' multi-argument `println`s interleaved their pieces.** Each piece
   (argument, separator, end) was its own `fwrite`, each taking the stream's lock; another thread's
   piece could come between. Now a print statement holds its stream from its first piece to its last:
-  MIR brackets the pieces with `Builtin::PrintHold { stderr, start }` (`ember_print_hold`,
-  `ember_print_release`: the C library's own recursive lock, `_lock_file` / `flockfile`), and each
-  piece is written with a `_held` printer that does not take the lock again (`_fwrite_nolock`,
-  `fwrite_unlocked` on Linux; elsewhere the plain call, which takes the held lock again): one lock
-  a statement where there was one a piece, so a `println(a, b)` takes one lock, not four. A
-  `Display` a piece runs may print (the lock is recursive). `ember_print_T`/`ember_println_T`
-  hold the stream for their own piece (the prompt of `input` uses it). The evaluator runs one
-  thread: `PrintHold` is nothing there. Test: `STD-9/accept_a_print_is_one_write_between_threads.em`
-  (four threads print one 37-piece line six times each; every line whole; `assert-c` for the hold;
-  with the compiler before the change its lines mixed). C gate: clang, MSVC.
+  MIR writes each piece as `Builtin::PrintPiece { stderr, first, last }`, the first taking the
+  stream (`ember_print_hold`, the C library's own recursive lock: `_lock_file` / `flockfile`) and
+  the last letting it go (`ember_print_release`), each written with a `_held` printer that does
+  not take the lock again (`_fwrite_nolock`, `fwrite_unlocked` on Linux; elsewhere the plain call,
+  which takes the held lock again): one lock a statement where there was one a piece, so a
+  `println(a, b)` takes one lock, not four, and the statement's blocks are as many as before (a
+  hold of its own made a loop that prints two blocks longer, which cost gcc's written-out steps of
+  a text loop, `milestones` `progress_reduction_…`). A `Display` a piece runs may print (the lock
+  is recursive). `ember_print_T`/`ember_println_T` hold the stream for their own piece (`input`'s
+  prompt uses it). The evaluator runs one thread: a piece is written as itself. A piece runs no
+  Ember code (`L3011` and check hoisting read it as a print). Test:
+  `STD-9/accept_a_print_is_one_write_between_threads.em` (four threads print one 37-piece line six
+  times each; every line whole; `assert-c` for the hold; with the compiler before the change its
+  lines mixed). C gate: clang, MSVC.
 * **D-899 `[CLI-21]`, `[ECS-4]` — the evaluator's "invalid downcast" in `run_parallel`.** Not a
   null storage: the storage's handle was right and of the right class, but the evaluator read an
   `Assert`'s condition as a `bool`, its low byte, and a `Downcast`'s condition is the class handle,
@@ -153,9 +157,10 @@ Branch `worktree-agent-af62646ba2cbe7004`, from `main` at 4fd9acfb (after helper
   `synth_generic_call` as an argument already checked, `LOCAL_ENV_VALUE`),
   `local_generator_value`, `enter_local_generator_body`; `CaptureWatch::aliases`, read by
   `resolve_capture`.
-* `ember_hir`, `ember_mir` (lowering), `ember_analysis` (effects), `ember_codegen_c`, `ember_interp`:
-  `Builtin::PrintHold`; the runtime's `ember_print_hold`/`ember_print_release`, the `_held`
-  printers, `EMBER_OUT_*` (templates, regenerated).
+* `ember_hir`, `ember_mir` (lowering), `ember_analysis` (effects, borrows, check hoisting, access),
+  `ember_codegen_c`, `ember_interp`, `ember_driver`: `Builtin::PrintPiece`; the runtime's
+  `ember_print_hold`/`ember_print_release`, the `_held` printers, `EMBER_OUT_*` (templates,
+  regenerated).
 * `ember_interp`: an `Assert`'s condition read at its own type.
 
 ## Defects found

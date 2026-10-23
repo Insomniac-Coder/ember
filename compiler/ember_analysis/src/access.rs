@@ -460,7 +460,8 @@ fn program_bodies(bodies: &[Body], types: &TypeTable) -> Vec<bool> {
                         ember_mir::Builtin::Format
                         | ember_mir::Builtin::FormatWith(_)
                         | ember_mir::Builtin::Print
-                        | ember_mir::Builtin::EPrint,
+                        | ember_mir::Builtin::EPrint
+                        | ember_mir::Builtin::PrintPiece { .. },
                     arg_ty,
                 } => reached.extend(types.debug_writers_reached(*arg_ty)),
                 _ => {}

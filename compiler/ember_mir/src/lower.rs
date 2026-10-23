@@ -3367,12 +3367,12 @@ impl<'a> Builder<'a> {
                 let pieces: Vec<(Operand, Ty, ember_span::Span)> =
                     args.iter().map(|a| self.lower_print_argument(a)).collect();
                 let stderr = which == hir::Builtin::EPrint;
-                self.at(expr.span);
-                self.print_hold(stderr, true, &place);
-                for (operand, arg_ty, span) in pieces {
+                let count = pieces.len();
+                for (index, (operand, arg_ty, span)) in pieces.into_iter().enumerate() {
                     // Each piece is used where it is written.
                     self.at(span);
                     let next = self.new_block();
+                    let which = hir::Builtin::PrintPiece { stderr, first: index == 0, last: index + 1 == count };
                     self.terminate(Terminator::Call {
                         func: FuncRef::Builtin { which, arg_ty },
                         args: vec![operand],
@@ -3381,8 +3381,6 @@ impl<'a> Builder<'a> {
                     });
                     self.current = next;
                 }
-                self.at(expr.span);
-                self.print_hold(stderr, false, &place);
             }
             // VI.6, `[PAN-1]` — a panic ends control: the assertion that cannot
             // hold aborts, and whatever follows lowers into a block nothing
@@ -7256,18 +7254,6 @@ impl<'a> Builder<'a> {
     /// the value but does not take it, so the caller still owns it and still
     /// drops it. Only an `owned` parameter consumes — `xs.len()` must not move
     /// `xs` away.
-    /// `[STD-9]` (D-900) — a print statement's stream held (`start`) or let go.
-    fn print_hold(&mut self, stderr: bool, start: bool, place: &Place) {
-        let next = self.new_block();
-        self.terminate(Terminator::Call {
-            func: FuncRef::Builtin { which: hir::Builtin::PrintHold { stderr, start }, arg_ty: self.void_ty },
-            args: Vec::new(),
-            dest: place.clone(),
-            next,
-        });
-        self.current = next;
-    }
-
     /// D-286, `[EXP-1]` — one argument of `print`, evaluated where it is
     /// written: a borrowed place (the checker's `ref`) is borrowed now and
     /// printed through the reference, and a `Copy` place is read now, so a
