@@ -1481,6 +1481,9 @@ fn compile_c_object(
             if shared_library && !cfg!(windows) {
                 command.arg("-fPIC");
             }
+            if shared_library {
+                command.args(clang_windows_runtime(toolchain));
+            }
             folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(output);
@@ -1503,6 +1506,7 @@ pub fn compile_cpp_object(
     output: &Path,
     profile: Profile,
     standard: &str,
+    shared_library: bool,
 ) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = match toolchain {
@@ -1531,6 +1535,9 @@ pub fn compile_cpp_object(
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).args(lto).arg(format!("-std={standard}")).arg("-c");
             command.args(inherited_gnu_runtime()).args(flags);
+            if shared_library {
+                command.args(clang_windows_runtime(toolchain));
+            }
             // D-790 — position-independent, for a reloadable image's shared library too (Annex B):
             // the thunks' `thread_local` record of a caught exception is otherwise reached as an
             // executable's, which a shared object cannot be linked with.
@@ -1865,6 +1872,20 @@ fn lto_link_flags(toolchain: &Toolchain, lto: Lto) -> &'static [&'static str] {
 /// `[BLD-FFI-1b]` — `/MD`, or the runtime switch the build inherits.
 pub fn msvc_runtime_switch() -> &'static str {
     inherited_msvc_runtime().into_iter().find(|flag| flag.starts_with("/M")).unwrap_or("/MD")
+}
+
+/// Clang's driver on Windows takes the C runtime `msvc_runtime_switch` names (the DLL one, `/MD`'s,
+/// unless a C++ project says otherwise) for a shared library and what loads it: a reloadable
+/// program's runtime, images and host, a `cdylib`, so one C runtime's heap and streams serve them
+/// all, as MSVC's `/MD` has them. (Clang's own default is the static one, a copy per library.)
+/// `None` for any other toolchain or host.
+pub(crate) fn clang_windows_runtime(toolchain: &Toolchain) -> Option<&'static str> {
+    (cfg!(windows) && matches!(toolchain, Toolchain::Clang(_))).then(|| match msvc_runtime_switch() {
+        "/MDd" => "-fms-runtime-lib=dll_dbg",
+        "/MT" => "-fms-runtime-lib=static",
+        "/MTd" => "-fms-runtime-lib=static_dbg",
+        _ => "-fms-runtime-lib=dll",
+    })
 }
 
 /// clang's and gcc's flags for a profile, shared by the program's compile and

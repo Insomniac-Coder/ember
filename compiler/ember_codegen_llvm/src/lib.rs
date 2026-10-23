@@ -27,6 +27,7 @@ mod func;
 mod glue;
 mod leaks;
 mod ranges;
+mod reload;
 mod runtime;
 mod simd;
 mod soa;
@@ -68,6 +69,8 @@ pub struct Options<'a> {
     /// `[TST-3]` — a test binary's tests, by symbol, in the runner's order: its entry runs the one
     /// its argument numbers.
     pub tests: Option<Vec<String>>,
+    /// Annex B — a reloadable image's functions, statics and mode, as the driver decides them.
+    pub reload: Option<&'a ember_codegen_c::ReloadImage>,
 }
 
 pub struct Output {
@@ -112,6 +115,8 @@ pub(crate) struct Module<'a> {
     pub fns: String,
     /// The glue the functions asked for, written after them (`glue::emit_pending`).
     pub pending: Vec<glue::Pending>,
+    /// The glue written so far, each once however often asked for.
+    pub pending_done: BTreeSet<glue::Pending>,
     /// The helper functions written so far, by symbol.
     helpers: BTreeSet<String>,
     /// What the program's MIR says about dynamic dispatch.
@@ -133,6 +138,14 @@ pub(crate) struct Module<'a> {
     pub callback_closures: BTreeSet<String>,
     /// D-569 — on Windows x64, the functions whose views go as two words (`fold::split_view_functions`).
     pub split_views: BTreeSet<String>,
+    /// Annex B — a reloadable image's functions, statics and mode (`reload.rs`), and what the image
+    /// says of itself (`ember_codegen_c::image`'s planner, taken while it writes).
+    pub reload: Option<ember_codegen_c::ReloadImage>,
+    pub reload_plan: Option<ember_codegen_c::image::Planner<'a>>,
+    /// The interface identities the image defines.
+    pub reload_ids: BTreeSet<String>,
+    /// A function the planner's writer could not write (`reload::LlvmWriter`).
+    pub reload_error: Option<Unsupported>,
 }
 
 impl<'a> Module<'a> {
@@ -206,6 +219,7 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         globals: Vec::new(),
         fns: String::new(),
         pending: Vec::new(),
+        pending_done: BTreeSet::new(),
         helpers: BTreeSet::new(),
         dispatch: dispatch::Dispatch::default(),
         shims: BTreeSet::new(),
@@ -226,14 +240,34 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
             })
             .collect(),
         debug: debug::Debug::new(map, options.module_name, options.profile != Profile::Debug, options.profile == Profile::Debug),
-        inline_bodies: ember_codegen_c::inline_header_symbols(bodies, mir.types()),
+        // `[HR-9a]` — a reloadable function is never inlined: its callers see only its thunk.
+        inline_bodies: ember_codegen_c::inline_header_symbols(bodies, mir.types())
+            .into_iter()
+            .filter(|(symbol, _)| !options.reload.is_some_and(|reload| reload.reloadable.contains(symbol)))
+            .collect(),
         callback_closures: bodies
             .iter()
             .filter_map(|body| body.ffi_counted.as_ref())
             .flat_map(|counted| counted.callbacks.iter().filter_map(|callback| callback.closure.clone()))
             .collect(),
-        split_views: if options.target == Target::Win64 { fold::split_view_functions(bodies) } else { BTreeSet::new() },
+        // A reloadable function's body is named by the reload manifest, not only called.
+        split_views: if options.target == Target::Win64 {
+            fold::split_view_functions(bodies)
+                .into_iter()
+                .filter(|symbol| !options.reload.is_some_and(|reload| reload.reloadable.contains(symbol)))
+                .collect()
+        } else {
+            BTreeSet::new()
+        },
+        reload: options.reload.cloned(),
+        reload_plan: options.reload.map(|reload| ember_codegen_c::image::Planner::new(mir.types(), reload, bodies, &ember_codegen_c::image::lazy_statics(bodies))),
+        reload_ids: BTreeSet::new(),
+        reload_error: None,
     };
+    if let Some(reload) = options.reload {
+        module.ty.header = reload.header_bytes();
+        reload::tables(&mut module);
+    }
     module.dispatch = dispatch::Dispatch::collect(&module, bodies);
     module.callables = closures::Callables::collect(&module, bodies);
     let defined: BTreeSet<&str> = bodies
@@ -257,6 +291,10 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         func::emit_entry(&mut module, bodies, options, None)?;
     }
     glue::emit_pending(&mut module)?;
+    // Annex B — the image's manifest and what it names (`[HR-8]`).
+    if module.reload.is_some() {
+        reload::emit_manifest(&mut module, bodies, options.has_main)?;
+    }
     // `[FFI-26]` — each export table: a constant of its struct holding each field's function, under
     // a symbol carrying its protocol version (ODR-129).
     for table in module.ty.table.export_tables().to_vec() {
@@ -301,6 +339,10 @@ pub fn emit(mir: VerifiedMir<'_>, map: &SourceMap, options: &Options<'_>) -> std
         let _ = writeln!(ir, "target triple = \"{}\"", escape(triple.as_bytes()));
     }
     ir.push('\n');
+    if module.reload.is_some() {
+        ir.push_str(&reload::type_declarations());
+        ir.push('\n');
+    }
     let mut strings: Vec<(&Vec<u8>, &usize)> = module.strings.iter().collect();
     strings.sort_by_key(|(_, index)| **index);
     for (bytes, index) in strings {

@@ -67,6 +67,32 @@ fn shape(m: &Module<'_>, soa: Ty) -> Result<Shape> {
     })
 }
 
+/// `[HR-13]` — `size_t f(size_t cap, size_t* at)`: an `SoA`'s one block laid out for `cap`
+/// elements, each column's start in `at`, its size returned; a reload rebuilding the block calls it
+/// (the C backend's `<SoA>_layout`).
+pub(crate) fn layout_fn(m: &mut Module<'_>, soa: Ty) -> Result<String> {
+    let symbol = format!("ember.soa.layout.{}", m.ty.table.mangled(soa));
+    if m.helper_defined(&symbol) {
+        return Ok(symbol);
+    }
+    let shape = shape(m, soa)?;
+    let mut cx = FnCx::glue(m);
+    let (offsets, size) = cx.soa_layout(&shape, "%p0");
+    for (index, offset) in offsets.iter().enumerate() {
+        let at = cx.gep("%p1", 8 * index as u64);
+        cx.emit(format!("store i64 {offset}, ptr {at}, align 8"));
+    }
+    let attrs = crate::func::fn_attrs(cx.m);
+    let text = format!(
+        "define internal i64 {}(i64 %p0, ptr %p1) {attrs} {{\nentry:\n{}  br label %start\nstart:\n{}  ret i64 {size}\n}}\n\n",
+        global_name(&symbol),
+        cx.allocas_text(),
+        cx.out_text()
+    );
+    cx.m.fns.push_str(&text);
+    Ok(symbol)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Helper {
     Grow,

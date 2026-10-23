@@ -60,6 +60,8 @@ pub(crate) struct FnCx<'m, 'a> {
     locations: HashMap<(u32, u32), usize>,
     /// `[GRM-39]` — the literals written straight into the next literal's field (`fold`).
     folded: HashMap<LocalId, Rvalue>,
+    /// `[HR-3b]` — in a reloadable image whose instances migrate, the body's frame record.
+    frame_record: Option<crate::reload::FrameRecord>,
 }
 
 /// A literal's operand: its value, or a folded literal's temporary (`[GRM-39]`).
@@ -229,7 +231,7 @@ pub(crate) fn ir_params(sig: &Signature, named: bool) -> Vec<String> {
 }
 
 /// The result's type with its extension (`zeroext i1`).
-fn ret_with_attr(sig: &Signature) -> String {
+pub(crate) fn ret_with_attr(sig: &Signature) -> String {
     match ret_attr(sig) {
         "" => sig.ret.ir(),
         ext => format!("{} {}", ext.trim(), sig.ret.ir()),
@@ -268,11 +270,22 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
         return unsupported(format!("the calling convention `{}`", body.abi.as_deref().unwrap_or_default()));
     }
     let sums = ember_codegen_c::byte_sum_loops(body, m.ty.table, |place| place_type(m, body, place));
+    // `[HR-3b]` (A1) — what a checkpoint's frames of this body still use, described beside it.
+    let frames = m.reload.as_ref().is_some_and(|reload| reload.instances).then(|| crate::reload::frame_info(m, body));
     define_body(m, body, |cx| {
+        if let Some(info) = frames {
+            cx.push_frame_record(&info);
+        }
         for index in block_order(body) {
             let block = &body.blocks[index];
             cx.start(&format!("bb{index}"));
             cx.stmts(&block.stmts)?;
+            // `[HR-3b]` — the call this frame is in, for a checkpoint reached below it.
+            if let Some(site) = cx.frame_record.as_ref().and_then(|record| record.sites.get(&index).copied()) {
+                let record = cx.frame_record.as_ref().map(|record| record.record.clone()).expect("a frame record");
+                let at = cx.gep(&record, 16);
+                cx.emit(format!("store i32 {site}, ptr {at}, align 8"));
+            }
             match sums.iter().find(|sum| sum.header == index) {
                 Some(sum) => cx.byte_sum(sum)?,
                 None => cx.terminator(&block.terminator, block.terminator_span)?,
@@ -332,7 +345,10 @@ fn block_order(body: &Body) -> Vec<usize> {
 pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl FnOnce(&mut FnCx<'_, 'a>) -> Result<()>) -> Result<()> {
     let sig = body_signature(m, body);
     let optimized = m.profile != Profile::Debug;
-    let link = crate::link_symbol(&body.symbol);
+    // `[HR-6]` — a reloadable function's symbol is its thunk's; its body has a name of its own.
+    let reloadable = crate::reload::is_reloadable(m, &body.symbol);
+    let defined = if reloadable { ember_codegen_c::image::body_symbol(&body.symbol) } else { body.symbol.clone() };
+    let link = crate::link_symbol(&defined);
     let (subprogram, line) = m.debug.subprogram(m.map, &link, body.span, optimized);
     let folded = crate::fold::foldable(m.ty.table, body);
     let mut cx = FnCx {
@@ -349,6 +365,7 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
         scope: Some((subprogram, line)),
         locations: HashMap::new(),
         folded,
+        frame_record: None,
     };
     cx.frame()?;
     cx.declare_locals(subprogram, line);
@@ -369,15 +386,19 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
     if body.inline.hot {
         attrs.push_str(" hot");
     }
-    let linkage = if body.abi.is_some() { "" } else { "internal " };
+    let linkage = if body.abi.is_some() && !reloadable { "" } else { "internal " };
     let header = format!(
         "define {linkage}{} {}({}) {attrs} !dbg !{subprogram} {{",
         ret_with_attr(&cx.sig),
-        global_name(&body.symbol),
+        global_name(&defined),
         ir_params(&cx.sig, true).join(", ")
     );
     let text = format!("{header}\nentry:\n{}{}  br label %bb0\n{}}}\n\n", cx.allocas, cx.prologue, cx.out);
+    let sig = cx.sig.clone();
     cx.m.fns.push_str(&text);
+    if reloadable {
+        crate::reload::emit_thunk(m, body, &sig);
+    }
     Ok(())
 }
 
@@ -530,6 +551,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             scope: None,
             locations: HashMap::new(),
             folded: HashMap::new(),
+            frame_record: None,
         }
     }
 
@@ -778,6 +800,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
             if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
                 self.prologue_rt("rt_check_main_thread");
             }
+            // `[HR-42]` — entering Ember code from a foreign caller: this thread's depth counter.
+            if self.m.reload.is_some() {
+                self.prologue_rt("reload_enter");
+            }
         }
         // ADR-141 — each list's frame buffer, aligned for any element it may hold.
         for index in 0..body.stack_buffers.len() {
@@ -876,7 +902,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     let field_ty = table.struct_def(id).fields[*index].ty;
                     let header = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
                     let (_, align) = self.m.ty.size_align(inner);
-                    let payload = self.gep(&header, crate::glue::payload_offset(align));
+                    let payload = self.gep(&header, self.m.ty.payload_offset(align));
                     let slot = self.alloca(8, 8);
                     self.emit(format!("store ptr {payload}, ptr {slot}, align 8"));
                     return Ok(PlaceRef { ptr: slot, ty: field_ty, variant: None, align: 8 });
@@ -897,7 +923,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let field_ty = field.ty;
                 // The object: after the handle's pointer, the runtime's header, then the fields.
                 let object = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
-                let offset = 24 + table.class_field_offsets(id)[*index];
+                let offset = self.m.ty.object_field_offsets(id)[*index];
                 let ptr = self.gep(&object, offset);
                 PlaceRef { ptr, ty: field_ty, variant: None, align: self.natural_align(field_ty).min(offset_align(offset).min(16)) }
             }
@@ -1063,6 +1089,9 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Const::Fn(symbol) => {
                 // `[FN-6]` — a native value of the function; one a C pointer holds is its address.
                 if let Some(signature) = self.m.callables.natives.get(symbol.as_str()).copied() {
+                    if let Some(value) = crate::reload::fn_value(self, symbol) {
+                        return Ok(value);
+                    }
                     return self.native_fn_value(symbol, signature);
                 }
                 let symbol = symbol.clone();
@@ -1125,7 +1154,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let operation = if *mutable { "access_end_write" } else { "access_end_read" };
                 let at = self.place(place)?;
                 let (_, align) = self.m.ty.size_align(at.ty);
-                let offset = (24 + align - 1) & !(align - 1);
+                let offset = self.m.ty.payload_offset(align);
                 let object = self.value(format!("getelementptr i8, ptr {}, i64 -{offset}", at.ptr));
                 let what = self.mir().symbol.clone();
                 let what = self.m.bytes(what.as_bytes());
@@ -1232,9 +1261,9 @@ impl<'m, 'a> FnCx<'m, 'a> {
     /// a class field with its own word nor a class object.
     fn access_check(&mut self, place: &Place, mutable: bool, span: ember_span::Span) -> Result<bool> {
         let ty = self.place_ty(place);
-        if self.is_dyn_place(ty) {
-            return Ok(false);
-        }
+        // A class field with its own word is checked there, a `dyn` one too, as the C backend's
+        // `field_check_call` does: the pair brackets a store into the field (D-911: through the
+        // table it read the box the store had not yet written).
         let operation = if mutable { "check_write" } else { "check_read" };
         if let Some((word, what)) = self.field_word(place)? {
             let loc = self.loc(span);
@@ -2374,6 +2403,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     pub(crate) fn ret(&mut self) -> Result<()> {
+        // `[HR-42]` — leaving Ember code for the foreign caller of an export.
+        if self.m.reload.is_some() && self.body.is_some_and(|body| body.abi.is_some()) {
+            self.call_rt("reload_leave", Vec::new(), None);
+        }
+        // `[HR-3b]` — this frame's record off its thread's chain.
+        if let Some(record) = self.frame_record.as_ref().map(|record| (record.head.clone(), record.record.clone())) {
+            let (head, record) = record;
+            let head = self.load(Sc::Ptr, &head, 8);
+            let previous = self.load(Sc::Ptr, &record, 8);
+            self.emit(format!("store ptr {previous}, ptr {head}, align 8"));
+        }
         match self.sig.ret.clone() {
             Return::Void | Return::Sret { .. } => self.emit("ret void"),
             Return::Direct(parts) => {
@@ -2814,8 +2854,35 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.zero(&at.ptr, 8, 24);
                 Ok(())
             }
+            // `[HR-33]` — a poll the program makes itself; a runtime without reload answers that it
+            // has none.
+            Builtin::HotCheckpoint => {
+                let status = self.alloca(4, 4);
+                self.call_rt("reload_checkpoint", Vec::new(), Some((&status, 4)));
+                Ok(())
+            }
             other => self.builtin_call(other, arg_ty, args, dest, span),
         }
+    }
+
+    /// `[HR-3b]` — this body's frame record pushed on its thread's chain as the body starts:
+    /// `{ prev, &info, site }`, the head of the chain `ember_reload_frames()`'s.
+    fn push_frame_record(&mut self, info: &ember_codegen_c::image::FrameInfo) {
+        let record = self.alloca(24, 8);
+        let head = self.alloca(8, 8);
+        let body = std::mem::take(&mut self.out);
+        self.call_rt("reload_frames", Vec::new(), Some((&head, 8)));
+        let chain = self.load(Sc::Ptr, &head, 8);
+        let previous = self.load(Sc::Ptr, &chain, 8);
+        self.emit(format!("store ptr {previous}, ptr {record}, align 8"));
+        let info_at = self.gep(&record, 8);
+        self.emit(format!("store ptr {}, ptr {info_at}, align 8", global_name(&info.symbol)));
+        let site_at = self.gep(&record, 16);
+        self.emit(format!("store i32 0, ptr {site_at}, align 8"));
+        self.emit(format!("store ptr {record}, ptr {chain}, align 8"));
+        let pushed = std::mem::replace(&mut self.out, body);
+        self.prologue.push_str(&pushed);
+        self.frame_record = Some(crate::reload::FrameRecord { head, record, sites: info.by_block.clone() });
     }
 
     /// ADR-141 — `ember_stack_vec(buffer, cap)`: the list in its frame buffer where the runtime
@@ -2981,6 +3048,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         scope: Some((subprogram, line)),
         locations: HashMap::new(),
         folded: HashMap::new(),
+        frame_record: None,
     };
     // `[TST-3]` — a test binary runs the test its one argument numbers (`2` for anything else),
     // its crash a status rather than Windows' error window (D-252).
@@ -3036,7 +3104,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         cx.call_rt("rt_shutdown", Vec::new(), None);
         cx.emit("ret i32 0");
         let attrs = fn_attrs(cx.m);
-        let text = format!("define i32 @main(i32 %argc, ptr %argv) {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", cx.allocas, cx.out);
+        let text = format!("define {} {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", entry_head(cx.m), cx.allocas, cx.out);
         cx.m.fns.push_str(&text);
         return Ok(());
     }
@@ -3059,12 +3127,19 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     cx.call_rt("rt_shutdown", Vec::new(), None);
     cx.emit(format!("ret i32 {status}"));
     let attrs = fn_attrs(cx.m);
-    let text = format!(
-        "define i32 @main(i32 %argc, ptr %argv) {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n",
-        cx.allocas, cx.out
-    );
+    let text = format!("define {} {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", entry_head(cx.m), cx.allocas, cx.out);
     cx.m.fns.push_str(&text);
     Ok(())
+}
+
+/// The C entry's name and parameters: `main`, or in a reloadable image the image's own entry, which
+/// the runtime calls (`[HR-33]`).
+fn entry_head(m: &Module<'_>) -> String {
+    if m.reload.is_some() {
+        format!("internal i32 {}(i32 %argc, ptr %argv)", global_name(&ember_codegen_c::image::entry_symbol()))
+    } else {
+        "i32 @main(i32 %argc, ptr %argv)".to_string()
+    }
 }
 
 /// `[TST-3]` — a test binary's argument: the number of the test it runs, in decimal, below

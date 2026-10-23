@@ -167,16 +167,16 @@ impl Debug {
                 let object = self.node(String::new());
                 let at = self.pointer(object);
                 self.types.insert(ty, at);
-                let offsets = table.class_field_offsets(id);
+                let offsets = types.object_field_offsets(id);
                 let mut members = Vec::new();
                 for index in 0..table.class_field_count(id) {
                     if let Some(field) = table.class_field_at(id, index) {
                         let (field_size, _) = types.size_align(field.ty);
                         let described = self.describe(types, field.ty);
-                        members.push((field.name.to_string(), described, field_size, 24 + offsets[index]));
+                        members.push((field.name.to_string(), described, field_size, offsets[index]));
                     }
                 }
-                let object_size = members.iter().map(|(_, _, size, offset)| offset + size).max().unwrap_or(24);
+                let object_size = members.iter().map(|(_, _, size, offset)| offset + size).max().unwrap_or(types.header);
                 self.structure(object, &table.class_def(id).name.to_string(), object_size, &members);
                 return at;
             }

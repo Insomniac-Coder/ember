@@ -68,6 +68,9 @@ pub struct Types<'a> {
     pub table: &'a TypeTable,
     pub target: Target,
     pub usize_ty: Ty,
+    /// `[OBJ-1]`, `[HR-12]` — every object's header, in bytes: 24, or 40 in a reloadable image
+    /// whose instances migrate (its live-instance links).
+    pub header: u64,
 }
 
 impl<'a> Types<'a> {
@@ -75,7 +78,17 @@ impl<'a> Types<'a> {
         let usize_ty = table
             .find(&TyKind::Uint(UintTy::Usize))
             .expect("the interner always holds `usize`");
-        Types { table, target, usize_ty }
+        Types { table, target, usize_ty, header: 24 }
+    }
+
+    /// Each field's offset from a class object's start, after the header.
+    pub fn object_field_offsets(&self, id: ember_types::ClassId) -> Vec<u64> {
+        self.table.class_field_offsets_after(id, self.header)
+    }
+
+    /// `EMBER_OBJ_PAYLOAD_OFFSET` — where a shared value's payload starts after its object's header.
+    pub fn payload_offset(&self, align: u64) -> u64 {
+        (self.header + align - 1) & !(align - 1)
     }
 
     pub fn kind(&self, ty: Ty) -> &TyKind {

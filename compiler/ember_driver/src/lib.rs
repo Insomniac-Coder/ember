@@ -5548,14 +5548,17 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
             has_main: program.main.is_some() && !library && command != "test",
             command,
             library,
-            reload: reload_image.is_some(),
+            reload: reload_image.as_ref(),
+            additions: reload_additions.as_ref(),
+            started,
+            inspect: [safety_table(&ember_codegen_c::safety_json(&bodies, &map), &safety_functions, &safety_costs), counts_json(&bodies, &types, &map)],
             bodies: &bodies,
             input,
             manifest: manifest.as_deref(),
             modules: &modules,
             tests: &tests,
         };
-        return llvm::build(request, options, &sink);
+        return llvm::build(request, options, &mut sink);
     }
     let emitted = ember_codegen_c::emit(
         verified_mir,
@@ -5670,17 +5673,7 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     let c_path = layout.c.join(format!("{module_name}.c"));
     std::fs::write(&c_path, &emitted.c_source).map_err(|e| e.to_string())?;
-    let safety_path = layout.inspect.join(format!("{module_name}.safety.json"));
-    let safety_json = {
-        let table = emitted.safety_json.trim_end();
-        let table = table.strip_suffix('}').unwrap_or(table);
-        format!("{table},\"functions\":{safety_functions},\"costs\":{safety_costs}}}\n")
-    };
-    std::fs::write(&safety_path, safety_json).map_err(|e| e.to_string())?;
-    // `[RC-6]` — the count operations left inside loops, read from the same
-    // final MIR the backend was given.
-    let counts_path = layout.inspect.join(format!("{module_name}.counts.json"));
-    std::fs::write(&counts_path, counts_json(&bodies, &types, &map)).map_err(|e| e.to_string())?;
+    write_inspect(&layout, &module_name, &[safety_table(&emitted.safety_json, &safety_functions, &safety_costs), counts_json(&bodies, &types, &map)])?;
 
     let runtime = runtime_dir()?;
     let exe_name = if cfg!(windows) {
@@ -5728,52 +5721,21 @@ fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, S
     }
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
-    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it. The
-    // image holds the imports' shims and thunks (`[FFI-39a]`: a trampoline's object keeps calling
-    // through the permanent thunks of the entries it was given).
+    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.
     if let Some(image) = &reload_image {
-        let c_toolchain = match manifest.as_deref().and_then(|text| manifest_string(text, "c", "compiler")) {
-            Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
-            None => toolchain.clone(),
+        let program = ReloadProgram {
+            toolchain: &toolchain,
+            layout: &layout,
+            module_name: &module_name,
+            units: std::slice::from_ref(&c_path),
+            relaxed_units: &emitted.relaxed_units,
+            image,
+            additions: reload_additions.as_ref(),
+            modules: &modules,
+            manifest: manifest.as_deref(),
+            started,
         };
-        let foreign = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, true)?;
-        let built = match reload::build(&toolchain, &layout, &module_name, &c_path, &runtime_source, &includes,
-            options.profile, image, &emitted.relaxed_units, &foreign, options.reload, options.explain, started)
-        {
-            Ok(built) => built,
-            Err(reload::Failure::Other(message)) => return Err(message),
-            // `[HR-12a]` — the process's header is fixed when it starts: an image built for the other
-            // header cannot join it.
-            Err(reload::Failure::Header { running, built }) => {
-                sink.emit(
-                    Diagnostic::error(codes::E9035, Span::DUMMY, format!(
-                        "the running program's objects have {running}-byte headers, and this image's would have {built}"))
-                        .note("whether reload migrates instances (`[build] reload`) is the whole process's to agree on: it fixes the object header [HR-12a]")
-                        .help("build the program again with `ember build` and restart it"),
-                );
-                return Ok(finish(&sink, &map, options));
-            }
-        };
-        mark("C compile and link", "all modules");
-        // `[HR-18b]` — the running program's own plan of this image, applying nothing.
-        if options.explain {
-            report(&sink, &map, options);
-            let (apply, text) = reload::explain(&layout.bin, &module_name, &built.image)?;
-            println!("{}", if apply { "the reload would apply" } else { "the reload would be refused" });
-            print!("{text}");
-            return Ok(if apply { ExitCode::SUCCESS } else { ExitCode::FAILURE });
-        }
-        // `[HR-16]` — this build's schema, which the next build's `Old<Name>` structs are made from.
-        if let Some(additions) = &reload_additions {
-            let schema = serde_json::Value::Object(additions.schema.clone());
-            std::fs::write(layout.bin.join(format!("{module_name}.schema.json")), schema.to_string()).map_err(|e| e.to_string())?;
-        }
-        report(&sink, &map, options);
-        if command == "run" {
-            return run_program(&built.host, options);
-        }
-        eprintln!("built {}", if options.reload { built.image.display() } else { built.host.display() });
-        return Ok(ExitCode::SUCCESS);
+        return build_reload_program(program, command, options, &mut sink, &map);
     }
     // `[CG-C-11]` — a library's relaxed units, each compiled with its own flags into an object of its
     // own: the archive or the shared library takes them beside the package's main unit.
@@ -6127,6 +6089,89 @@ fn run_hot(input: &Path, options: &Options) -> Result<ExitCode, String> {
             }
         }
     }
+}
+
+/// `[HR-28]`, `[EFF-16]` — the safety side table: the checks the program keeps, with what each
+/// function's contracts say and the costs the checks do not show.
+fn safety_table(checks: &str, functions: &str, costs: &str) -> String {
+    let table = checks.trim_end();
+    let table = table.strip_suffix('}').unwrap_or(table);
+    format!("{table},\"functions\":{functions},\"costs\":{costs}}}\n")
+}
+
+/// `ember inspect`'s tables beside the program: the safety side table and `[RC-6]`'s count
+/// operations left inside loops, read from the final MIR the backend was given.
+pub(crate) fn write_inspect(layout: &Layout, module_name: &str, [safety, counts]: &[String; 2]) -> Result<(), String> {
+    std::fs::write(layout.inspect.join(format!("{module_name}.safety.json")), safety).map_err(|e| e.to_string())?;
+    std::fs::write(layout.inspect.join(format!("{module_name}.counts.json")), counts).map_err(|e| e.to_string())
+}
+
+/// Annex B — what a reloadable program is built from: the image's units (C, or the LLVM backend's IR
+/// and its C), the relaxed units, what the driver decided of the image and wrote into the program.
+pub(crate) struct ReloadProgram<'a> {
+    pub toolchain: &'a Toolchain,
+    pub layout: &'a Layout,
+    pub module_name: &'a str,
+    pub units: &'a [PathBuf],
+    pub relaxed_units: &'a [(ember_types::FpMode, String)],
+    pub image: &'a ember_codegen_c::ReloadImage,
+    pub additions: Option<&'a reload::Additions>,
+    pub modules: &'a [ember_typeck::LoadedModule],
+    pub manifest: Option<&'a str>,
+    pub started: std::time::Instant,
+}
+
+/// Annex B — a reloadable program: the shared runtime, an image and the host that runs it, whichever
+/// backend wrote the image. The image holds the imports' shims and thunks (`[FFI-39a]`: a
+/// trampoline's object keeps calling through the permanent thunks of the entries it was given).
+/// Then `--explain`'s prediction, the schema the next build reads, and for `ember run` the host.
+pub(crate) fn build_reload_program(program: ReloadProgram<'_>, command: &str, options: &Options, sink: &mut Sink, map: &SourceMap) -> Result<ExitCode, String> {
+    let ReloadProgram { toolchain, layout, module_name, units, relaxed_units, image, additions, modules, manifest, started } = program;
+    let runtime = runtime_dir()?;
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let includes = vec![runtime.join("include")];
+    let c_toolchain = match manifest.and_then(|text| manifest_string(text, "c", "compiler")) {
+        Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+        None => toolchain.clone(),
+    };
+    let foreign = cimport::build_objects(modules, &c_toolchain, toolchain, &layout.c, &layout.obj, options.profile, true)?;
+    let built = match reload::build(toolchain, layout, module_name, units, &runtime_source, &includes,
+        options.profile, image, relaxed_units, &foreign, options.reload, options.explain, started)
+    {
+        Ok(built) => built,
+        Err(reload::Failure::Other(message)) => return Err(message),
+        // `[HR-12a]` — the process's header is fixed when it starts: an image built for the other
+        // header cannot join it.
+        Err(reload::Failure::Header { running, built }) => {
+            sink.emit(
+                Diagnostic::error(codes::E9035, Span::DUMMY, format!(
+                    "the running program's objects have {running}-byte headers, and this image's would have {built}"))
+                    .note("whether reload migrates instances (`[build] reload`) is the whole process's to agree on: it fixes the object header [HR-12a]")
+                    .help("build the program again with `ember build` and restart it"),
+            );
+            return Ok(finish(sink, map, options));
+        }
+    };
+    mark("C compile and link", "all modules");
+    // `[HR-18b]` — the running program's own plan of this image, applying nothing.
+    if options.explain {
+        report(sink, map, options);
+        let (apply, text) = reload::explain(&layout.bin, module_name, &built.image)?;
+        println!("{}", if apply { "the reload would apply" } else { "the reload would be refused" });
+        print!("{text}");
+        return Ok(if apply { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+    }
+    // `[HR-16]` — this build's schema, which the next build's `Old<Name>` structs are made from.
+    if let Some(additions) = additions {
+        let schema = serde_json::Value::Object(additions.schema.clone());
+        std::fs::write(layout.bin.join(format!("{module_name}.schema.json")), schema.to_string()).map_err(|e| e.to_string())?;
+    }
+    report(sink, map, options);
+    if command == "run" {
+        return run_program(&built.host, options);
+    }
+    eprintln!("built {}", if options.reload { built.image.display() } else { built.host.display() });
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The options of one of `ember run --hot`'s builds: the first, or the next image (`--reload`).

@@ -1016,6 +1016,9 @@ impl<'a> FnCx<'_, 'a> {
             }
             // `[FFI-39]` (ODR-221) — the object's class overrides the method when its table's slot
             // is not the owner's own.
+            // In a reloadable image, where a reload may add an override (`[HR-9a]`), every one is
+            // taken as overridden.
+            Builtin::CppOverrides { .. } if self.m.reload.is_some() => self.store_result(dest, "true", Sc::Bool, false),
             Builtin::CppOverrides { owner, slot } => {
                 let own = self.m.dispatch.virtual_layouts.get(owner).and_then(|slots| slots.get(*slot)).and_then(|method| method.clone());
                 let Some(own) = own.filter(|method| !method.is_abstract) else {
@@ -1097,7 +1100,12 @@ impl<'a> FnCx<'_, 'a> {
             }
             // `[CT-5]` — the constant data the evaluator computed.
             Builtin::ConstStatic { name, ty } => {
-                let address = crate::statics::constant_static(self.m, name.as_str(), *ty)?;
+                // `[HR-4a]` — a reloadable image's statics are the runtime's.
+                let address = if self.m.reload.is_some() {
+                    crate::reload::static_storage(self, name.as_str())
+                } else {
+                    crate::statics::constant_static(self.m, name.as_str(), *ty)?
+                };
                 self.store_result(dest, &address, Sc::Ptr, false)
             }
             // `[STA-3]` — the accessor that runs the initialiser the first time any thread asks.

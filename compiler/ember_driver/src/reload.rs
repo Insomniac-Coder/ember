@@ -269,7 +269,7 @@ pub fn build(
     toolchain: &Toolchain,
     layout: &Layout,
     module: &str,
-    c_path: &Path,
+    units: &[PathBuf],
     runtime_source: &Path,
     includes: &[PathBuf],
     profile: Profile,
@@ -345,7 +345,7 @@ pub fn build(
     relaxed.extend(foreign.0.iter().cloned());
     ember_build::reload::link_image(
         toolchain,
-        c_path,
+        units,
         includes,
         profile,
         image.instances,

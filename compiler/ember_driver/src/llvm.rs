@@ -62,7 +62,13 @@ pub(crate) struct Build<'a> {
     pub has_main: bool,
     pub command: &'a str,
     pub library: bool,
-    pub reload: bool,
+    /// Annex B — a reloadable program's image, as the driver decides it, and what it wrote into the
+    /// program (the next build's `Old<Name>` structs are made from its schema).
+    pub reload: Option<&'a ember_codegen_c::ReloadImage>,
+    pub additions: Option<&'a super::reload::Additions>,
+    pub started: std::time::Instant,
+    /// `ember inspect`'s tables (`super::write_inspect`), which no backend changes.
+    pub inspect: [String; 2],
     pub bodies: &'a [ember_mir::Body],
     pub input: &'a Path,
     pub manifest: Option<&'a str>,
@@ -80,13 +86,11 @@ fn profile(profile: Profile) -> ember_codegen_llvm::Profile {
     }
 }
 
-/// The module emitted, written, compiled and linked; run for `ember run`.
-pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Sink) -> Result<ExitCode, String> {
+/// The module emitted, written, compiled and linked; run for `ember run`. A reloadable program's
+/// module is its image, which the shared runtime loads beside the host (Annex B).
+pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag::Sink) -> Result<ExitCode, String> {
     if request.library {
         return Err("the LLVM backend does not build a library package yet".to_string());
-    }
-    if request.reload {
-        return Err("the LLVM backend does not build a reloadable program yet".to_string());
     }
     let testing = request.command == "test";
     match options.emit.as_deref() {
@@ -101,6 +105,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         target: ember_codegen_llvm::Target::host(),
         triple: None,
         tests: testing.then(|| request.tests.iter().map(|test| test.symbol.clone()).collect()),
+        reload: request.reload,
     };
     let output = ember_codegen_llvm::emit(request.mir, request.map, &emit_options).map_err(|error| error.to_string())?;
     super::mark("LLVM IR generation", "all modules");
@@ -119,6 +124,7 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
     }
     let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
+    super::write_inspect(&layout, request.module_name, &request.inspect)?;
     let ll_path = layout.c.join(format!("{}.ll", request.module_name));
     std::fs::write(&ll_path, &output.ir).map_err(|e| e.to_string())?;
     let mut sources = vec![ll_path];
@@ -129,8 +135,26 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         sources.push(shim_path);
     }
     let toolchain = clang(options)?;
-    // `[BLD-6]` — the build record: the IR goes through the same Clang link, ThinLTO's included.
-    super::write_build_record(&layout, request.module_name, options.profile, &toolchain, ember_build::Link::Here, false)?;
+    // `[BLD-6]` — the build record: the IR goes through the same Clang link, ThinLTO's included (a
+    // hot-reload image without it).
+    super::write_build_record(&layout, request.module_name, options.profile, &toolchain, ember_build::Link::Here, request.reload.is_some())?;
+    // Annex B — the image: the IR and its C, compiled with the reload definitions, as a shared
+    // library beside the shared runtime and the host.
+    if let Some(image) = request.reload {
+        let program = super::ReloadProgram {
+            toolchain: &toolchain,
+            layout: &layout,
+            module_name: request.module_name,
+            units: &sources,
+            relaxed_units: &[],
+            image,
+            additions: request.additions,
+            modules: request.modules,
+            manifest: request.manifest,
+            started: request.started,
+        };
+        return super::build_reload_program(program, request.command, options, sink, request.map);
+    }
     let runtime = super::runtime_dir()?;
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];

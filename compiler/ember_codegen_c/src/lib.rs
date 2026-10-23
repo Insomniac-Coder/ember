@@ -626,7 +626,7 @@ pub const FP_CONTRACT: [&str; 6] = [
 /// as compiler metadata on the body. The JSON is deliberately written without
 /// a serialization dependency: this artifact is a compiler output with a
 /// fixed, small schema rather than a user-facing data model.
-fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
+pub fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
     let mut entries = Vec::new();
     for body in bodies {
         for (block_index, block) in body.blocks.iter().enumerate() {

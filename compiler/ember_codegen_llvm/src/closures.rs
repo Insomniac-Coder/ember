@@ -90,10 +90,26 @@ pub(crate) fn param_of(m: &Module<'_>, param: FnParam, c_abi: bool) -> Param {
     }
 }
 
+/// The symbol of the descriptor of the named function `symbol` as a value.
+pub(crate) fn native_descriptor_symbol(symbol: &str) -> String {
+    format!("ember.native_fn_value.{symbol}")
+}
+
+/// A descriptor's fields after `native`, `c` and `drop`: in a reloadable image, what the captured
+/// state holds (`[HR-15]`), then `once`.
+fn descriptor_type(m: &Module<'_>) -> &'static str {
+    if m.reload.is_some() { "{ ptr, ptr, ptr, ptr, ptr }" } else { "{ ptr, ptr, ptr, ptr }" }
+}
+
+/// Where a descriptor's `once` entry is.
+fn once_offset(m: &Module<'_>) -> u64 {
+    if m.reload.is_some() { 32 } else { 24 }
+}
+
 /// The descriptor of the named function `symbol` as a value of `signature`: its `native` thunk
 /// ignores the (empty) state; its `c` entry exists where the program gives the type to C.
-fn native_descriptor(m: &mut Module<'_>, symbol: &str, signature: Ty) -> Result<String> {
-    let descriptor = format!("ember.native_fn_value.{symbol}");
+pub(crate) fn native_descriptor(m: &mut Module<'_>, symbol: &str, signature: Ty) -> Result<String> {
+    let descriptor = native_descriptor_symbol(symbol);
     if !m.callables.written.insert(descriptor.clone()) {
         return Ok(global_name(&descriptor));
     }
@@ -126,6 +142,11 @@ fn native_descriptor(m: &mut Module<'_>, symbol: &str, signature: Ty) -> Result<
         let symbol_owned = symbol.to_string();
         define_c_fn(m, &entry, "internal ", Some(ret), &c_params, "", |cx, values, result| {
             cx.call_rt("rt_thread_attach", Vec::new(), None);
+            // `[HR-42]` — C calling back into Ember code: this thread's depth counter.
+            let reload = cx.m.reload.is_some();
+            if reload {
+                cx.call_rt("reload_enter", Vec::new(), None);
+            }
             let mut arguments = Vec::with_capacity(values.len());
             for (value, by_address) in values.iter().zip(&by_address) {
                 match by_address {
@@ -138,16 +159,22 @@ fn native_descriptor(m: &mut Module<'_>, symbol: &str, signature: Ty) -> Result<
                 }
             }
             let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
-            cx.call_body(&symbol_owned, arguments, dest)
+            cx.call_body(&symbol_owned, arguments, dest)?;
+            if reload {
+                cx.call_rt("reload_leave", Vec::new(), None);
+            }
+            Ok(())
         })?;
         global_name(&entry)
     } else {
         "null".to_string()
     };
     let thunk = global_name(&thunk);
+    let captures = if m.reload.is_some() { "ptr null, " } else { "" };
     m.global(format!(
-        "{} = internal constant {{ ptr, ptr, ptr, ptr }} {{ ptr {thunk}, ptr {c_entry}, ptr null, ptr {thunk} }}, align 8",
-        global_name(&descriptor)
+        "{} = internal constant {} {{ ptr {thunk}, ptr {c_entry}, ptr null, {captures}ptr {thunk} }}, align 8",
+        global_name(&descriptor),
+        descriptor_type(m)
     ));
     Ok(global_name(&descriptor))
 }
@@ -253,9 +280,12 @@ fn closure_descriptor(m: &mut Module<'_>, closure: &str) -> Result<String> {
         }
         Ok(())
     })?;
+    // `[HR-15]` — in a reloadable image, what the captured state holds, for a reload to follow.
+    let captures = if m.reload.is_some() { format!("ptr {}, ", crate::reload::captures(m, env)) } else { String::new() };
     m.global(format!(
-        "{} = internal constant {{ ptr, ptr, ptr, ptr }} {{ ptr {native_name}, ptr null, ptr {drop_name}, ptr {} }}, align 8",
+        "{} = internal constant {} {{ ptr {native_name}, ptr null, ptr {drop_name}, {captures}ptr {} }}, align 8",
         global_name(&descriptor),
+        descriptor_type(m),
         global_name(&once)
     ));
     Ok(global_name(&descriptor))
@@ -364,7 +394,7 @@ impl<'a> FnCx<'_, 'a> {
         let entry = if once {
             let descriptor_at = self.gep(&value_at, 8);
             let descriptor = self.load(Sc::Ptr, &descriptor_at, 8);
-            let once_at = self.gep(&descriptor, 24);
+            let once_at = self.gep(&descriptor, once_offset(self.m));
             self.load(Sc::Ptr, &once_at, 8)
         } else {
             self.load(Sc::Ptr, &value_at, 8)

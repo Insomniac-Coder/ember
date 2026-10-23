@@ -187,6 +187,10 @@ impl Dispatch {
     /// program is here, so the receiver's class and those below it are every class its object
     /// can be.
     fn only_implementation(&self, m: &Module<'_>, receiver: ClassId, slot: usize) -> Option<String> {
+        // `[HR-9a]` — a reloadable image is never devirtualised: a reload may add an override.
+        if m.reload.is_some() {
+            return None;
+        }
         let mut only: Option<&VirtualMethod> = None;
         for (class, slots) in &self.virtual_layouts {
             if !m.ty.table.class_is_subclass_of(*class, receiver) {
@@ -208,7 +212,7 @@ impl Dispatch {
     }
 
     /// `[DSP-3]` — a class's interface entries: its own, then each base's it does not replace.
-    fn class_itable_entries(&self, m: &Module<'_>, id: ClassId) -> Vec<(String, Ty)> {
+    pub(crate) fn class_itable_entries(&self, m: &Module<'_>, id: ClassId) -> Vec<(String, Ty)> {
         let mut entries: Vec<(String, Ty)> = Vec::new();
         let mut current = Some(id);
         while let Some(class) = current {
@@ -264,11 +268,18 @@ pub(crate) fn class_itables(m: &mut Module<'_>, id: ClassId) -> Result<(String, 
     Ok((global_name(&symbol), entries.len()))
 }
 
-/// `[DSP-3]` — an interface's identity in the runtime's tables: the address of a byte of its own.
+/// `[DSP-3]` — an interface's identity in the runtime's tables: the address of a byte of its own;
+/// in a reloadable image, a record the runtime makes one across images (`ember_rl_identity`).
 pub(crate) fn interface_id(m: &mut Module<'_>, identity: &str) -> String {
     let symbol = format!("{}{identity}", ember_branding::generated("interface_id"));
     if m.dispatch.emitted.insert(symbol.clone()) {
-        m.global(format!("{} = internal constant i8 0, align 1", global_name(&symbol)));
+        if m.reload.is_some() {
+            let name = m.bytes(symbol.as_bytes());
+            m.global(format!("{} = internal global %ember.rl_identity {{ ptr {name}, ptr null }}, align 8", global_name(&symbol)));
+            m.reload_ids.insert(symbol.clone());
+        } else {
+            m.global(format!("{} = internal constant i8 0, align 1", global_name(&symbol)));
+        }
     }
     global_name(&symbol)
 }
@@ -744,6 +755,21 @@ fn itable_lookup(m: &mut Module<'_>) -> String {
     cx.start(&body);
     let id = cx.load(Sc::Ptr, &at, 8);
     let same = cx.value(format!("icmp eq ptr {id}, {interface}"));
+    // `ember_same_identity` — in a reloadable image two records are one identity when the runtime
+    // made them one: their canonical records, each image having its own. Neither is null: an
+    // entry and the marker asked for are both an interface's record.
+    let same = if cx.m.reload.is_some() {
+        let canonical_at = cx.gep(&id, 8);
+        let canonical = cx.load(Sc::Ptr, &canonical_at, 8);
+        let wanted_at = cx.gep(interface, 8);
+        let wanted = cx.load(Sc::Ptr, &wanted_at, 8);
+        let one = cx.value(format!("icmp eq ptr {canonical}, {wanted}"));
+        let made = cx.value(format!("icmp ne ptr {canonical}, null"));
+        let one = cx.value(format!("and i1 {one}, {made}"));
+        cx.value(format!("or i1 {same}, {one}"))
+    } else {
+        same
+    };
     cx.emit(format!("br i1 {same}, label %{found}, label %{next}"));
     cx.start(&found);
     let table_at = cx.gep(&at, 8);

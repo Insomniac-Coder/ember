@@ -186,6 +186,11 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
         }
         let others: Vec<(usize, ember_types::FnParam)> = params.iter().copied().enumerate().filter(|(at, _)| *at != callback.slot).collect();
         let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+        // `[HR-42]` — C calling back into Ember code: this thread's depth counter.
+        let reload = cx.m.reload.is_some();
+        if reload {
+            cx.call_rt("reload_enter", Vec::new(), None);
+        }
         let consumed = match closure {
             Some(closure) => {
                 let mut closure_args = closure.args();
@@ -227,6 +232,9 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
                 false
             }
         };
+        if reload {
+            cx.call_rt("reload_leave", Vec::new(), None);
+        }
         if callback.mode == FfiCallbackMode::Once {
             // Its one call is over: the callable ends (unless the call took it), and so does what
             // held it.

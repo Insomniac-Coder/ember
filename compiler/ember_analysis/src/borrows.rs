@@ -30,7 +30,7 @@
 //! handing one back — and `regions.rs` is what replaced it.
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
@@ -273,7 +273,7 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
     // The bodies that implement each virtual slot, by the class declaring them.
-    let mut slots: VirtualSlots = HashMap::new();
+    let mut slots: VirtualSlots = BTreeMap::new();
     for body in bodies.iter().filter(|body| !body.is_abstract) {
         if let (Some(owner), Some(slot)) = (body.class_owner, body.class_virtual_slot) {
             slots.entry((owner, slot)).or_default().push(body.symbol.clone());
@@ -312,7 +312,7 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
 
 /// Per (class, virtual slot), the symbols of the bodies that class declares
 /// for the slot.
-type VirtualSlots = HashMap<(ClassId, usize), Vec<String>>;
+type VirtualSlots = BTreeMap<(ClassId, usize), Vec<String>>;
 
 /// A dynamic `Shared.get()`/`Shared.get_mut()` interval that crosses a direct call. This is
 /// kept separate from callable-region metadata: it affects compiler-internal

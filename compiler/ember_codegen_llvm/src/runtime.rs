@@ -198,6 +198,12 @@ pub const FNS: &[RtFn] = &[
     f("weak_retain", "void", &["$obj_header*"]),
     f("weak_release", "void", &["$obj_header*"]),
     f("downcast", "void*", &["$obj_header*", "const $type_info*"]),
+    // -- hot reload (Annex B): a poll the program makes ([HR-33]), entering and leaving Ember code
+    // from foreign code ([HR-42]), and the thread's chain of frame records ([HR-3b])
+    f("reload_checkpoint", "int", &[]),
+    f("reload_enter", "void", &[]),
+    f("reload_leave", "void", &[]),
+    f("reload_frames", "$rl_frame**", &[]),
     f("itable_lookup_slow", "const void*", &["const $type_info*", "const void*"]),
     f("box_new_copy", "void*", &["size_t", "size_t", "const void*"]),
     f("free", "void", &["void*", "size_t", "size_t"]),

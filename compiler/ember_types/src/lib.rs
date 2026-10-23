@@ -2392,12 +2392,18 @@ impl TypeTable {
     /// a zero word after an odd count (`[EXC-19]`), each field at its natural alignment, as the C
     /// backend declares them.
     /// ponytail: placed after a 24-byte header; a field aligned to 32 or more sits elsewhere in a
-    /// reloadable build's object.
+    /// reloadable build's object (`class_field_offsets_after` places them after either).
     pub fn class_field_offsets(&self, id: ClassId) -> Vec<u64> {
+        self.class_field_offsets_after(id, 24).into_iter().map(|offset| offset - 24).collect()
+    }
+
+    /// `[OBJ-1]`, `[HR-12]` — each field's offset from the object's start, after a header of
+    /// `header` bytes (24, or 40 in a reloadable build whose instances migrate).
+    pub fn class_field_offsets_after(&self, id: ClassId, header: u64) -> Vec<u64> {
         let count = self.class_field_count(id);
         let owner = |index: usize| self.class_field_at_info(id, index).map(|(owner, _)| owner);
         let mut offsets = Vec::with_capacity(count);
-        let mut at = 24u64;
+        let mut at = header;
         let mut start = 0;
         while start < count {
             let mut end = start + 1;
@@ -2410,7 +2416,7 @@ impl TypeTable {
                 if let Some(field) = self.class_field_at(id, index) {
                     let layout = self.layout(field.ty);
                     at = align_to(at, layout.align);
-                    offsets.push(at - 24);
+                    offsets.push(at);
                     at += layout.size;
                 }
             }
