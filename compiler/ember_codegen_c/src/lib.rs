@@ -6856,6 +6856,10 @@ impl Emitter<'_> {
             }
             None => (format!("(({env_c}*){data})"), None),
         };
+        // ODR-278 — a function item holds no state: where it is kept is not read.
+        if matches!(self.types.kind(callback.callable), TyKind::FnItem { .. }) {
+            self.line(&format!("    (void){};", if record.is_some() { "_record".to_string() } else { format!("_cb{}", callback.slot) }));
+        }
         let thread = thread.or_else(|| (callback.threads == ExportThreadPolicy::Main).then(|| format!("EMBER_FFI_MAIN_THREAD")));
         if let Some(thread) = thread {
             self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
