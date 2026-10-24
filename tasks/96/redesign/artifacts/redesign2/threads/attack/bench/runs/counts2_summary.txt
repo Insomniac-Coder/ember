@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+counts-4s-atomic-always             5    392.372   388.359   399.507   1.00    26100  1.00 ['17155376036']
+counts-6s-flag-shared-inline        5    482.737   454.022   541.104   1.23    26096  1.00 ['17155376036']
+counts-7s-flag-shared-inline-ovf    5    527.783   472.105   547.459   1.35    26096  1.00 ['17155376036']

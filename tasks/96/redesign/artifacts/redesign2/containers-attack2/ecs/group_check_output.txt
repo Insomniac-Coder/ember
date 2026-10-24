@@ -1,0 +1,6 @@
+== group_check.c (remove_vel with the cursor rule)
+group-check ok
+exit=0
+== -DREMOVE_AS_DESTROY_WITHOUT_CURSOR
+seed 2: entity 63 joined during the loop and was visited
+exit=1

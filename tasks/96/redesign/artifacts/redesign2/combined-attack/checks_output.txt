@@ -1,0 +1,12 @@
+== w3_beside_poison.exe
+poison check ok: 20 blocks freed, none read after free; chunks with a weak-count array 17
+w3-weak-beside ms=432.476 peak_kb=9828 checksum=9288233970
+exit=0
+== w3_beside.exe
+w3-weak-beside ms=416.852 peak_kb=9752 checksum=9288233970
+exit=0
+== share_weak_N.exe, one run each (checksums)
+share-plain-slab ms=238.849 peak_kb=53852 checksum=80363660820
+share-lean-no-weak ms=282.036 peak_kb=55904 checksum=80363660820
+share-lean-weak-side-record ms=359.075 peak_kb=60000 checksum=80363660820
+share-lean-weak-count-beside ms=275.688 peak_kb=56932 checksum=80363660820

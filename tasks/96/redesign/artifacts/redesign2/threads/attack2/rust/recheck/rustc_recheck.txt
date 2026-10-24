@@ -1,0 +1,15 @@
+=== r01_configure_then_share.rs
+exit=0
+=== r02_helper_under_lock.rs
+exit=0
+=== r03_static_read_thread.rs
+exit=0
+=== r04_results_borrow_inputs.rs
+exit=0
+=== r05_object_in_two_mutexes.rs
+error[E0594]: cannot assign to data in an `Arc`
+error[E0594]: cannot assign to data in an `Arc`
+error: aborting due to 2 previous errors
+exit=1
+=== r06_raw_ref_borrows_self.rs
+exit=0

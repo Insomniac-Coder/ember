@@ -1,0 +1,94 @@
+ember 0.1.0
+language: 0.9.10
+=== x05_guard_in_two_tasks.em
+error[E7004]: the task borrows mutably `g`, a `std.sync.MutexGuard[Array[i64]]`, which is not Send
+  --> x05_guard_in_two_tasks.em:10:25
+   |
+10 |             scope.spawn(fn(): g.push(1))
+   |                         ^^^^^^^^^^^^^^^
+   |
+   = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error[E7004]: the task borrows mutably `g`, a `std.sync.MutexGuard[Array[i64]]`, which is not Send
+  --> x05_guard_in_two_tasks.em:11:25
+   |
+11 |             scope.spawn(fn(): g.push(2))
+   |                         ^^^^^^^^^^^^^^^
+   |
+   = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== x05b_guard_in_one_task.em
+error[E7004]: the task borrows mutably `g`, a `std.sync.MutexGuard[Array[i64]]`, which is not Send
+  --> x05b_guard_in_one_task.em:10:25
+   |
+10 |             scope.spawn(fn(): g.push(1))
+   |                         ^^^^^^^^^^^^^^^
+   |
+   = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x06_reentrant_callback.em
+warning[L1001]: `token` is never read
+  --> x06_reentrant_callback.em:18:5
+   |
+18 |     token = on_event(owned fn(): game.log.push("event".to_string()))
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ declared here and never used
+   |
+   = help: remove it, or rename it `_token` if that is deliberate
+
+exit=0
+=== x06b_reentrant_callback_declared.em
+warning[L1001]: `token` is never read
+  --> x06b_reentrant_callback_declared.em:20:5
+   |
+20 |     token = on_event(owned fn(): game.log.push("event".to_string()))
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ declared here and never used
+   |
+   = help: remove it, or rename it `_token` if that is deliberate
+
+exit=0
+=== x07_gen_consumer_yields.em
+error[E2229]: a borrow of a field of a class object is held across this `yield`
+ --> x07_gen_consumer_yields.em:9:19
+  |
+9 |             yield entry.len()
+  |                   ^^^^^ the generator suspends here
+  |
+  = help: copy what is needed out of the field before the `yield`, or iterate by index
+  = note: a long-term access to an object's field may not span a suspension, when any other code may run [CORO-12]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x08_nested_spawn.em
+error[E7005]: the task borrows `scope`, a `std.thread.Scope`, which is not Sync
+ --> x08_nested_spawn.em:7:21
+  |
+7 |         scope.spawn(fn(): scope.spawn(fn(): println(xs[0])))
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error[E7004]: the task returns a `std.thread.ScopedJoinHandle[void]`, which is not Send
+ --> x08_nested_spawn.em:7:21
+  |
+7 |         scope.spawn(fn(): scope.spawn(fn(): println(xs[0])))
+  |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `join` takes the result on another thread [THR-11]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== x09_rawptr_wrapper_to_thread.em
+error[E7004]: the thread's function captures `w`, a `Window`, which is not Send
+  --> x09_rawptr_wrapper_to_thread.em:25:22
+   |
+25 |     h = thread.spawn(owned fn(): w.swap())
+   |                      ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: what a thread's function captures moves to that thread [THR-10]
+
+error: could not compile due to 1 error(s)
+exit=1

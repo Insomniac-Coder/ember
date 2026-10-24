@@ -1,0 +1,3 @@
+﻿program                      runs  median ms       min       max  spread  peak KB    t/graph-plain    m/graph-plain  checksums
+graph-plain                     5     71.218    70.422    79.285   12.6%    32680            1.000            1.000  383684462149
+graph-ember                     5     76.987    74.212    79.823    7.6%    34104            1.081            1.044  383684462149

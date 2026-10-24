@@ -1,0 +1,9 @@
+﻿w1 exit=: combined-w1 peak_kb=39156 checksum=2111831520 
+w2 exit=: combined-w2 peak_kb=76684 checksum=647034814 
+w3 exit=: combined-w3 peak_kb=9132 checksum=9288233970 
+w3_registration exit=: combined-w3-registration peak_kb=13800 checksum=9288233970 
+w4 exit=: combined-w4 peak_kb=4268 checksum=34946993000 
+w1_cursor_check exit=: cursor-check ok 
+w2_link_check exit=: link check ok | combined-w2 peak_kb=77124 checksum=647034814 
+w3_poison exit=: poison check ok: 20 blocks freed, none read after free | combined-w3 peak_kb=9564 checksum=9288233970 
+w4_poison exit=: poison check ok: no box used after it was freed | combined-w4 peak_kb=4644 checksum=34946993000 

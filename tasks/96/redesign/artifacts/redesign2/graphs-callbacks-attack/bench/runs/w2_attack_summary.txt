@@ -1,0 +1,9 @@
+program                      runs  median ms       min       max  spread  peak KB   t/w2-plain-sla   m/w2-plain-sla   t/w2-plain-kee   m/w2-plain-kee  checksums
+w2-plain-keep                   5    603.042   597.221   785.993   31.6%    54944            0.864            0.717            1.000            1.000  647034814
+w2-plain-slab-array24           5    697.915   664.619   863.775   30.0%    76676            1.000            1.000            1.157            1.396  647034814
+w2-ember-backlink-slab          5    896.655   735.358   964.817   31.2%    84556            1.285            1.103            1.487            1.539  647034814
+w2-ember-backlink-slab-noheader    5    729.648   674.939   869.106   28.8%    76668            1.045            1.000            1.210            1.395  647034814
+w2-backlink-plainnodes          5    815.311   734.661   925.089   25.9%    84504            1.168            1.102            1.352            1.538  647034814
+w2-backlink-nohdr-plainnodes    5    677.873   665.086   851.960   28.1%    76680            0.971            1.000            1.124            1.396  647034814
+w2-backlink-nohdr-plainnodes-plainchild    5    704.715   674.059   888.321   31.8%    76688            1.010            1.000            1.169            1.396  647034814
+w2-rust-index                   5   1319.585   940.374  1382.878   47.1%    52312            1.891            0.682            2.188            0.952  647034814

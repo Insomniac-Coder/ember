@@ -1,0 +1,6 @@
+demo R: reinforce(squads, squads[0].units[0..2]); Python [[1, 2, 3, 1, 2], [4, 1, 2]]
+  written: [[1, 2, 3, 1, 2], [4, -572662307, -572662307]]
+  saved:   [[1, 2, 3, 1, 2], [4, 1, 2]]
+demo C: regroup(s, s): a view kept across a.units.clear(); Python ['ann', 'bob']
+  written: first_two names: <freed>, <freed>   (reads of freed memory: 2)
+  saved:   first_two names: ann, bob   (reads of freed memory: 0)

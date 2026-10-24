@@ -1,0 +1,6 @@
+program                                      runs  median ms     min     max  ratio  peak KB  checksums
+view-owned-plainC-deferred-spawns               5    179.527   166.3   197.9  1.000    61416  ['56628502']
+view-owned-pending-group-entry                  5    169.077   162.1   178.3  0.942    61576  ['56628502']
+view-owned-plainC-copy-of-ids                   5    228.972   224.5   238.1  1.275    65372  ['56628502']
+view-owned-copy-of-ids                          5    254.965   243.4   262.2  1.420    65324  ['56628502']
+view-owned-cursor-as-written-NOT-same-work      5    169.453   155.7   177.0  0.944    61020  ['170232906']

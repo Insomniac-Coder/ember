@@ -1,5 +1,8 @@
 # Ember's memory model: what the research found (2026-10-24)
 
+> **Phase 3 was done again on the owner's job ([JOB.md](JOB.md)); its findings are in
+> [FINDINGS-phase3b.md](FINDINGS-phase3b.md) and replace section 3 and 4 below.**
+
 The owner, 2026-10-23: the language needs a rework of its memory model. Three goals at once:
 **C-like performance** (speed and memory against plain C), **memory safety without Rust's annoying
 parts**, **Python-like syntax**. An annoying part can go in two ways: (a) a more Pythonic spelling of

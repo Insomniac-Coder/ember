@@ -1,0 +1,5 @@
+program                      runs  median ms       min       max  spread  peak KB   t/w2v-plain-sl   m/w2v-plain-sl   t/w2v-backlink   m/w2v-backlink  checksums
+w2v-plain-slab-array24          5   1031.118   886.378  1075.965   21.4%    76636            1.000            1.000            0.971            0.907  722575054
+w2v-backlink                    5   1062.047  1037.551  1196.933   15.4%    84528            1.030            1.103            1.000            1.000  722575054
+w2v-backlink-retain             5   1370.168  1284.621  1566.133   21.9%    84556            1.329            1.103            1.290            1.000  722575054
+w2v-backlink-hazard             5   1344.183  1305.054  1419.317    8.8%    84536            1.304            1.103            1.266            1.000  722575054

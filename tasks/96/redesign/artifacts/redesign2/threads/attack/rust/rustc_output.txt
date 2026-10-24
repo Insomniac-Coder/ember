@@ -1,0 +1,32 @@
+rustc 1.98.1 (48a229cea 2026-09-01)
+=== r01_configure_then_share.rs
+exit=0
+=== r02_helper_under_lock.rs
+exit=0
+=== r03_static_read_thread.rs
+exit=0
+=== r04_results_borrow_inputs.rs
+exit=0
+=== r05_object_in_two_mutexes.rs
+error[E0594]: cannot assign to data in an `Arc`
+ --> r05_object_in_two_mutexes.rs:9:53
+  |
+9 |         s.spawn(|| { let mut g = a.lock().unwrap(); g[0].hp -= 1; });
+  |                                                     ^^^^^^^^^^^^ cannot assign
+  |
+  = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `Arc<Player>`
+
+error[E0594]: cannot assign to data in an `Arc`
+  --> r05_object_in_two_mutexes.rs:10:53
+   |
+10 |         s.spawn(|| { let mut g = b.lock().unwrap(); g[0].hp -= 1; });
+   |                                                     ^^^^^^^^^^^^ cannot assign
+   |
+   = help: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `Arc<Player>`
+
+error: aborting due to 2 previous errors
+
+For more information about this error, try `rustc --explain E0594`.
+exit=1
+=== r06_raw_ref_borrows_self.rs
+exit=0

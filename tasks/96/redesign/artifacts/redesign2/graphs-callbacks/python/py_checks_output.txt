@@ -1,0 +1,19 @@
+tree_path: 'root/leaf'
+root_kept_alive_by_child_parent: 'r'
+reparent_forgot_remove_in_both: [1, 1]
+dom_appendChild_moves: [0, 'p2']
+cycle_freed_by_gc: ['a', 'b']
+button_score: 1
+counter_factory: 2
+two_closures_share: 2
+read_after_capture: 2
+loop_capture_late_binding: [2, 2, 2]
+handler_added_during_dispatch_runs_same_dispatch: 2
+remove_self_skips_next_in_same_dispatch: [('once', 5), ('always', 7)]
+reentrant_handler: [0, 1, 2, 3]
+isinstance_filter: 1.0
+dict_keyed_by_type: [10]
+duck_sum: [6, 4.0]
+duck_sum_error_at_run_time: "unsupported operand type(s) for +: 'object' and 'object'"
+singledispatch_most_specific: ['int 3', "'a'", 'int True']
+all Python checks passed

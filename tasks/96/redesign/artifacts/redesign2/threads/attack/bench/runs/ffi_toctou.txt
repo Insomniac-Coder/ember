@@ -1,0 +1,4 @@
+FIX=0: the callback wrote into freed state: YES
+ffi-toctou-0-as-proposed ms=204.708 peak_kb=4084 checksum=1
+FIX=1: the callback wrote into freed state: no
+ffi-toctou-1-fixed ms=200.679 peak_kb=4080 checksum=0

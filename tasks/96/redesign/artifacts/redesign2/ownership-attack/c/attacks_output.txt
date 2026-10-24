@@ -1,0 +1,73 @@
+=== attacks.exe 1
+=================================================================
+==118656==ERROR: AddressSanitizer: heap-use-after-free on address 0x12025dba0120 at pc 0x7ff7fec4309d bp 0x0009f46ff500 sp 0x0009f46ff548
+WRITE of size 8 at 0x12025dba0120 thread T0
+    #0 0x7ff7fec4309c in store_pop_use C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:75
+    #1 0x7ff7fec429c7 in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:193
+
+0x12025dba0120 is located 32 bytes inside of 128-byte region [0x12025dba0100,0x12025dba0180)
+freed by thread T0 here:
+    #0 0x7ff97617c81f in _asan_wrap_memcpy+0x62f (C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff7fec42433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+
+previously allocated by thread T0 here:
+    #0 0x7ff97617c92f in _asan_wrap_memcpy+0x73f (C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c92f)
+    #1 0x7ff7fec42493 in malloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:64
+exit=1
+=== attacks.exe 2
+store_pop_use(fixed): 2 0
+exit=0
+=== attacks.exe 3
+=================================================================
+==84548==ERROR: AddressSanitizer: heap-use-after-free on address 0x11b17dba0150 at pc 0x7ff7511a2bcc bp 0x0090f52ffc60 sp 0x0090f52ffca8
+READ of size 4 at 0x11b17dba0150 thread T0
+    #0 0x7ff7511a2bcb in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:195
+    #1 0x7ff7511a3fee in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+
+0x11b17dba0150 is located 0 bytes inside of 4-byte region [0x11b17dba0150,0x11b17dba0154)
+freed by thread T0 here:
+    #0 0x7ff97617c81f in _asan_wrap_memcpy+0x62f (C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff7511a2433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+
+previously allocated by thread T0 here:
+    #0 0x7ff97617c92f in _asan_wrap_memcpy+0x73f (C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c92f)
+    #1 0x7ff7511a2493 in malloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:64
+exit=1
+=== attacks.exe 4
+=================================================================
+==51548==ERROR: AddressSanitizer: heap-use-after-free on address 0x11ddfb2a07f8 at pc 0x7ff7511a35eb bp 0x00c3fc6ff9d0 sp 0x00c3fc6ffa18
+READ of size 8 at 0x11ddfb2a07f8 thread T0
+    #0 0x7ff7511a35ea in drop_order C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:147
+    #1 0x7ff7511a2a3e in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:196
+
+0x11ddfb2a07f8 is located 8 bytes inside of 24-byte region [0x11ddfb2a07f0,0x11ddfb2a0808)
+freed by thread T0 here:
+    #0 0x7ff97617c81f in _asan_wrap_memcpy+0x62f (C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff7511a2433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+
+previously allocated by thread T0 here:
+    #0 0x7ff97617ca46 in _asan_wrap_memcpy+0x856 (C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004ca46)
+    #1 0x7ff7511a24fd in calloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:77
+exit=1
+=== attacks.exe 5
+drop_order(detach first): the drops walked 0 elements
+exit=0
+=== attacks.exe 6
+=================================================================
+==110084==ERROR: AddressSanitizer: access-violation on unknown address 0xffffffffffffffff (pc 0x7ff7511a390e bp 0x00048135ff45 sp 0x002409aff990 T0)
+==110084==The signal is caused by a READ memory access.
+    #0 0x7ff7511a390d in game_load C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:175
+    #1 0x7ff7511a2a8c in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:198
+
+==110084==Register values:
+rax = 17d7d7d7d7d7d7d7  rbx = 2409affa30  rcx = bebebebebebebebe  rdx = 0  
+rdi = 120789ba0150  rsi = 2409affa20  rbp = 48135ff45  rsp = 2409aff990  
+r8  = 0  r9  = 0  r10 = 0  r11 = 2  
+r12 = 48135ff46  r13 = 0  r14 = 2409affa28  r15 = 20389b80000  
+AddressSanitizer can not provide additional info.
+SUMMARY: AddressSanitizer: access-violation C:\Users\ism19\Code\ember\target\redesign2\ownership-attack\c\attacks.c:175 in game_load
+==110084==ABORTING
+exit=1
+=== attacks.exe 7
+init_helper(init copy): atlas@640px
+exit=0

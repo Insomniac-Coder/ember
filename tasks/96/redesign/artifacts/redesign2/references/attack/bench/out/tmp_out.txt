@@ -1,0 +1,1 @@
+work_ms=360.388 get-rust ms=366.842 peak_kb=16164 checksum=16779647745309

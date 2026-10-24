@@ -1,0 +1,103 @@
+=== ember.exe check x_best_clear.em
+error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+ --> x_best_clear.em:7:24
+  |
+7 |             words.push(w)
+  |                        ^ stored here
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `low`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_copy_loop.em
+error[E3021]: cannot write through a shared reference
+ --> x_copy_loop.em:8:9
+  |
+8 |         e.hp -= 1
+  |         ^^^^ this is `ref Enemy`, which only reads
+  |
+  = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+  = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_copy_loop_clone.em
+error[E3021]: cannot write through a shared reference
+ --> x_copy_loop_clone.em:8:9
+  |
+8 |         e.hp -= 1
+  |         ^^^^ this is `ref Enemy`, which only reads
+  |
+  = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+  = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_copy_loop_view.em
+error[E3020]: cannot mutate `*enemies` while it is borrowed by this loop
+ --> x_copy_loop_view.em:8:21
+  |
+6 |     for e in enemies[..]:
+  |              ------- `*enemies` borrowed here for the whole loop
+7 |         if e.hp <= 0:
+8 |             _gone = enemies.remove(0)
+  |                     ^^^^^^^^^^^^^^^^^ mutable borrow here
+  |
+  = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+  = help: or iterate over a fixed index range and mutate only after taking the current value
+  = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error[E3020]: cannot mutate `*enemies` while it is borrowed by this loop
+ --> x_copy_loop_view.em:9:13
+  |
+6 |     for e in enemies[..]:
+  |              ------- `*enemies` borrowed here for the whole loop
+...
+9 |             enemies.push(Enemy(hp=9))
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+  |
+  = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+  = help: or iterate over a fixed index range and mutate only after taking the current value
+  = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember.exe check x_nested_walk.em
+error[E3021]: cannot write through a shared reference
+  --> x_nested_walk.em:19:13
+   |
+19 |             u.hp -= 1
+   |             ^^^^ this is `ref Unit`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_regroup_clear.em
+error[E3021]: `s` is borrowed here and mutably borrowed elsewhere
+  --> x_regroup_clear.em:16:24
+   |
+16 |     println(regroup(s, s))
+   |                        ^ conflicting access here
+   |                        - borrow of `s` starts here
+   |
+   = help: bind the borrow of `s` to a local and finish with it before this line, or copy the value out first
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_reinforce.em
+error[E3021]: `squads[0].units` is borrowed here and mutably borrowed elsewhere
+  --> x_reinforce.em:12:23
+   |
+12 |     reinforce(squads, squads[0].units[0..2])
+   |                       ^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+   |                              - borrow of `squads[0].units` starts here
+   |
+   = help: bind the borrow of `squads[0].units` to a local and finish with it before this line, or copy the value out first
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1

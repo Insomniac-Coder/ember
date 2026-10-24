@@ -1,0 +1,5 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+hist-1-element-reduction            5      2.264     1.548     2.797   1.00    36360  1.00 ['14917129627462785292']
+hist-0-plainC-one-thread            5      8.019     7.639     8.137   3.54    36224  1.00 ['14917129627462785292']
+hist-2-shared-atomic                5    205.210   204.059   206.535  90.64    36364  1.00 ['14917129627462785292']
+hist-3-shared-lock                  5   1615.658  1392.718  1849.246 713.63    36364  1.00 ['14917129627462785292']

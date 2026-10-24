@@ -1,0 +1,49 @@
+=== attacks.exe 1
+==104528==ERROR: AddressSanitizer: heap-use-after-free on address 0x1254229a0120 at pc 0x7ff7bdbb30cd bp 0x00a04ff9f820 sp 0x00a04ff9f868
+WRITE of size 8 at 0x1254229a0120 thread T0
+    #0 0x7ff7bdbb30cc in store_pop_use C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:86
+    #1 0x7ff7bdbb29c7 in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:282
+exit=1
+=== attacks.exe 2
+store_pop_use(fixed): 2 0
+exit=0
+=== attacks.exe 3
+==56388==ERROR: AddressSanitizer: heap-use-after-free on address 0x12967c4a0150 at pc 0x7ff683e72c06 bp 0x0094a07bf840 sp 0x0094a07bf888
+READ of size 4 at 0x12967c4a0150 thread T0
+    #0 0x7ff683e72c05 in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:284
+exit=1
+=== attacks.exe 4
+==71016==ERROR: AddressSanitizer: heap-use-after-free on address 0x11f4730a07f8 at pc 0x7ff683e7361b bp 0x005c267efc80 sp 0x005c267efcc8
+READ of size 8 at 0x11f4730a07f8 thread T0
+    #0 0x7ff683e7361a in drop_order C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:158
+    #1 0x7ff683e72a4a in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:285
+exit=1
+=== attacks.exe 5
+drop_order(detach first): the drops walked 0 elements
+exit=0
+=== attacks.exe 6
+==102996==ERROR: AddressSanitizer: access-violation on unknown address 0xffffffffffffffff (pc 0x7ff683e73d6e bp 0x00121dc37f13 sp 0x0090ee1bf800 T0)
+    #0 0x7ff683e73d6d in game_load C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:186
+    #1 0x7ff683e72a93 in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:287
+exit=1
+=== attacks.exe 7
+init_helper(init copy): atlas@640px
+exit=0
+=== attacks.exe 8
+==102108==ERROR: AddressSanitizer: heap-use-after-free on address 0x11ffcdba00a8 at pc 0x7ff683e7396b bp 0x000920cffd50 sp 0x000920cffd98
+WRITE of size 8 at 0x11ffcdba00a8 thread T0
+    #0 0x7ff683e7396a in map_name_after_growth C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:231
+    #1 0x7ff683e72a56 in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:289
+exit=1
+=== attacks.exe 9
+map_name_after_growth(position): d["a"].x = 5
+exit=0
+=== attacks.exe 10
+==87208==ERROR: AddressSanitizer: heap-use-after-free on address 0x11aa27ea0158 at pc 0x7ff683e73ae4 bp 0x0036b111f800 sp 0x0036b111f848
+READ of size 8 at 0x11aa27ea0158 thread T0
+    #0 0x7ff683e73ae3 in generator_across_store C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:274
+    #1 0x7ff683e729e2 in main C:\Users\ism19\Code\ember\target\redesign2\ownership-attack2\c\attacks.c:291
+exit=1
+=== attacks.exe 11
+generator(saved): 1 2 99
+exit=0

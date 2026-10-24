@@ -1,0 +1,23 @@
+words_plain            n=5 work_med=  524.168 spread=  1.3% total_med=  573.587 peak_kb_med=  99360 checksums=1 11949232456339631932
+words_ember            n=5 work_med=  548.358 spread=  3.3% total_med=  597.731 peak_kb_med=  99364 checksums=1 11949232456339631932
+words_rust_vecstr      n=5 work_med=  538.244 spread=  1.6% total_med=  581.084 peak_kb_med=  99748 checksums=1 11949232456339631932
+state                  n=5 work_med=  475.109 spread= 16.0% total_med=  475.109 peak_kb_med= 113688 checksums=1 8398665211
+state_checked          n=5 work_med=  490.957 spread= 15.8% total_med=  490.957 peak_kb_med= 113684 checksums=1 8398665211
+state_inplace          n=5 work_med=  482.251 spread= 13.9% total_med=  482.251 peak_kb_med= 113684 checksums=1 8398665211
+state_rust             n=5 work_med=  572.097 spread=  5.9% total_med=  572.097 peak_kb_med= 114028 checksums=1 8398665211
+state_rust_inplace     n=5 work_med=  472.949 spread= 11.4% total_med=  472.949 peak_kb_med= 114028 checksums=1 8398665211
+keep_reuse_short       n=5 work_med=  182.651 spread=  8.6% total_med=  370.667 peak_kb_med= 269532 checksums=1 528296923
+keep_copy_short        n=5 work_med=  173.748 spread=  5.7% total_med=  362.796 peak_kb_med= 186996 checksums=1 528296923
+keep_shrink_short      n=5 work_med=  182.032 spread=  7.1% total_med=  377.852 peak_kb_med= 247520 checksums=1 528296923
+keep_half_short        n=5 work_med=  170.711 spread=  7.8% total_med=  365.639 peak_kb_med= 188004 checksums=1 528296923
+keep_reuse_trim        n=5 work_med=  173.820 spread= 10.4% total_med=  363.056 peak_kb_med= 269532 checksums=1 2843516733
+keep_copy_trim         n=5 work_med=  211.978 spread= 46.3% total_med=  401.541 peak_kb_med= 266072 checksums=1 2843516733
+keep_half_trim         n=5 work_med=  179.896 spread= 14.7% total_med=  371.717 peak_kb_med= 269528 checksums=1 2843516733
+keep_reuse_long        n=5 work_med=  451.826 spread=  5.0% total_med=  451.858 peak_kb_med= 210080 checksums=1 53017
+keep_copy_long         n=5 work_med=  451.105 spread=  3.2% total_med=  451.135 peak_kb_med=   5504 checksums=1 53017
+keep_half_long         n=5 work_med=  455.551 spread=  3.1% total_med=  455.581 peak_kb_med=   5504 checksums=1 53017
+get_plain              n=5 work_med=   90.020 spread= 19.2% total_med=   95.901 peak_kb_med=  15784 checksums=1 16779647745309
+get_typed              n=5 work_med=  105.373 spread=  9.1% total_med=  111.008 peak_kb_med=  15784 checksums=1 16779647745309
+get_typed_slotvar      n=5 work_med=  113.448 spread= 95.7% total_med=  119.226 peak_kb_med=  15784 checksums=1 16779647745309
+get_cast               n=5 work_med=  109.927 spread=162.0% total_med=  115.749 peak_kb_med=  15784 checksums=1 16779647745309
+get_rust               n=5 work_med=  162.234 spread=159.4% total_med=  168.333 peak_kb_med=  16164 checksums=1 16779647745309

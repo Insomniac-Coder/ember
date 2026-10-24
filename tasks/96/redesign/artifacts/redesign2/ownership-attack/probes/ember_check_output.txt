@@ -1,0 +1,79 @@
+=== ember check alias_name_write.em
+error[E3012]: cannot move out of a class field
+ --> alias_name_write.em:7:11
+  |
+7 |     old = p.name
+  |           ^^^^^^ moved out here
+  |
+  = help: borrow it, `ref` (`ref mut` to change it in the object); leave a value in its place with `mem.take` or `mem.replace`; or clone it
+  = note: the object keeps the field, and every handle to it can still reach it [EXP-6]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check copy_struct_loop.em
+error[E3021]: cannot write through a shared reference
+  --> copy_struct_loop.em:10:9
+   |
+10 |         v.x *= 0.5
+   |         ^^^ this is `ref Vec2`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check copy_struct_name.em
+exit=0
+=== ember check cppvector_span_push.em
+error[E3021]: `*v` is borrowed here and mutably borrowed elsewhere
+ --> cppvector_span_push.em:8:5
+  |
+7 |     s = v.span()            # borrows v: a view of the C++ vector's elements
+  |         - borrow of `*v` starts here
+8 |     v.push_back(7)          # C++ push_back: may reallocate the elements
+  |     ^^^^^^^^^^^^^^ conflicting access here
+9 |     println(s[0])           # reads the old element block
+  |               - borrow later used here
+  |
+  = help: end the borrow before this: `s` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check get_list_default.em
+error[E2072]: `std.collections.Map[String, Array[String], std.collections.DefaultHasher]` has no method named `get_or`
+ --> get_list_default.em:5:20
+  |
+5 |     println(groups.get_or("z", []))
+  |                    ^^^^^^
+  |
+  = note: `get_or` needs `Array[String]` to implement `Copy`
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check inherited_field_loop.em
+exit=0
+=== ember check init_helper_sets.em
+error[E2100]: field `assets` is not definitely initialized by struct `init`
+ --> init_helper_sets.em:7:5
+  |
+7 |     fn init(mut self, width: int):
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+
+error[E2100]: field `sounds` is not definitely initialized by struct `init`
+ --> init_helper_sets.em:7:5
+  |
+7 |     fn init(mut self, width: int):
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+
+error[E2100]: `self` is used before all struct fields are initialized
+ --> init_helper_sets.em:9:9
+  |
+9 |         self.load()                       # sets assets and sounds
+  |         ^^^^^^^^^^^
+  |
+
+error: could not compile due to 3 error(s)
+exit=1

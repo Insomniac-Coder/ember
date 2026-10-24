@@ -1,0 +1,8 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+claim3-0-plainC                     5     55.328    53.016    66.188   1.00    44576  1.00 ['549788844032']
+claim3-1-count-test-sole-owner      5     69.134    65.148    72.907   1.25    44576  1.00 ['549788844032']
+claim3-2-count-test-1in16-shared    5     78.686    77.004    85.616   1.42    44572  1.00 ['549788844032']
+claim3-3-count-test-all-shared      5    192.306   189.667   208.211   3.48    44564  1.00 ['549788844032']
+claim3-4-atomic-claim-every-element    5    116.850   114.330   132.988   2.11    44560  1.00 ['549788844032']
+claim2-0-plainC                     5     64.790    62.910    86.938   1.17    44564  1.00 ['549788844032']
+claim2-7-count-test-tight           5     72.679    69.278    78.777   1.31    44576  1.00 ['549788844032']

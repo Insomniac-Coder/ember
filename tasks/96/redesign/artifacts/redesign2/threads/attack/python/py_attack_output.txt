@@ -1,0 +1,11 @@
+init_escape_reads: '' or 'bob' (either; no crash)
+configure_then_share: 3
+helper_under_lock: 8
+worker_reads_module_constant: True
+generator_over_local_dict: [1, 2]
+results_point_at_inputs: ['p0', 'p1', 'p2', 'p3']
+handle_out_of_lock_field: ann
+module_init_order: ['A', 'B', 'main']
+helper_adds_to_module_total: 6
+duplicate_in_list_both_changes_land: 8
+all Python checks passed

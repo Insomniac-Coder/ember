@@ -1,0 +1,357 @@
+=== ember check probes/a09_fields.em
+exit=0
+=== ember check probes/a09_struct_twin.em
+error[E3020]: cannot mutate `p.inventory` while it is borrowed by this loop
+  --> probes/a09_struct_twin.em:14:9
+   |
+13 |     for item in p.inventory:
+   |                 ----------- `p.inventory` borrowed here for the whole loop
+14 |         p.inventory.push(item.clone())  # the same field: refused (E3020)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a10_box_inferred.em
+
+thread 'main' (13776) has overflowed its stack
+exit=127
+=== ember check probes/a10_dyn_inferred.em
+error[E2020]: expected `Shape`, found `Square`
+  --> probes/a10_dyn_inferred.em:16:29
+   |
+16 |     shapes: Array[Shape] = [Square(side=2.0), Circle(r=1.0)]
+   |                             ^^^^^^^^^^^^^^^^ this is `Square`
+   |
+   = help: hold such a value behind a pointer: `Box[dyn Shape]` in a field or a collection (`Box(v)` makes one), `ref dyn Shape` for a parameter; or take a type parameter, `[T: Shape]`, and pass the value itself
+   = note: an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `Shape` has its own size, which `dyn Shape` keeps behind a pointer (ODR-182)
+
+error[E2020]: expected `Shape`, found `Circle`
+  --> probes/a10_dyn_inferred.em:16:47
+   |
+16 |     shapes: Array[Shape] = [Square(side=2.0), Circle(r=1.0)]
+   |                                               ^^^^^^^^^^^^^ this is `Circle`
+   |
+   = help: hold such a value behind a pointer: `Box[dyn Shape]` in a field or a collection (`Box(v)` makes one), `ref dyn Shape` for a parameter; or take a type parameter, `[T: Shape]`, and pass the value itself
+   = note: an interface's name as a type is a class handle typed by it [OBJ-2]; a value of a type implementing `Shape` has its own size, which `dyn Shape` keeps behind a pointer (ODR-182)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check probes/a10_weak_field.em
+error[E0100]: expected `:`
+ --> probes/a10_weak_field.em:4:10
+  |
+4 |     weak parent: Option[Node] = None
+  |          ^^^^^^ found `parent`
+  |
+
+error[E1010]: cannot find type `parent` in this scope
+ --> probes/a10_weak_field.em:4:10
+  |
+4 |     weak parent: Option[Node] = None
+  |          ^^^^^^
+  |
+
+error[E0100]: expected the end of the line
+ --> probes/a10_weak_field.em:4:16
+  |
+4 |     weak parent: Option[Node] = None
+  |                ^ found `:`
+  |
+
+error: could not compile due to 3 error(s)
+exit=1
+=== ember check probes/a11_names.em
+error[E3040]: `items` is borrowed after it has been moved out of
+  --> probes/a11_names.em:17:5
+   |
+16 |     snapshot = items
+   |                ----- moved here
+17 |     items.push(3)
+   |     ^^^^^^^^^^^^^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+   = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error[E3040]: `row` is borrowed after it has been moved out of
+  --> probes/a11_names.em:33:5
+   |
+32 |     matrix.push(row)
+   |                 --- moved here
+33 |     row.push(1)
+   |     ^^^^^^^^^^^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+   = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error[E3042]: `p` is partially moved
+  --> probes/a11_names.em:39:10
+   |
+37 | fn field_then_give(owned p: Player):
+   |                    --------------- `p` is declared here
+38 |     n = p.name
+39 |     keep(p)
+   |          ^ used here as a whole after one of its fields was moved
+   |
+   = help: reassign the moved field, or destructure the whole struct up front
+   = note: moving a field out leaves the rest of the struct live, but the struct cannot be used as a whole [EXP-6]
+
+error: could not compile due to 3 error(s)
+exit=1
+=== ember check probes/a11_rebind.em
+exit=0
+=== ember check probes/a11_store_then_read.em
+exit=0
+=== ember check probes/a11_store_then_use.em
+exit=0
+=== ember check probes/a18_init_variants.em
+error[E2100]: `self` is used before all struct fields are initialized
+  --> probes/a18_init_variants.em:11:23
+   |
+11 |         self.assets = self.load_assets()        # the Python spelling: a method on self
+   |                       ^^^^^^^^^^^^^^^^^^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a21_spellings.em
+error[E2020]: `std.collections.Map[String, i64, std.collections.DefaultHasher]`'s `get` does not take these arguments
+ --> probes/a21_spellings.em:7:28
+  |
+7 |         counts[w] = counts.get(w, 0) + 1
+  |                            ^^^ Python's `get`
+  |
+  = help: write `get_or`
+  = note: Python's `d.get(k, default)` is `m.get_or(k, default)`; `m.get(k)` gives an `Option` (Appendix E) [STD-13]
+
+error[E2020]: expected `ref i64`, found `an integer`
+  --> probes/a21_spellings.em:19:45
+   |
+19 |         counts[w] = counts.get(w).unwrap_or(0) + 1
+   |                                             ^ this is `an integer`
+   |
+
+error[E2140]: assignment target is not a place
+  --> probes/a21_spellings.em:25:9
+   |
+25 |         counts.entry(w.to_string()).or_default() += 1
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is a value, not somewhere to store one
+   |
+
+error: could not compile due to 3 error(s)
+exit=1
+=== ember check probes/a24_two_places.em
+error[E3040]: `m` has been moved out of
+  --> probes/a24_two_places.em:13:12
+   |
+12 |     a.push(m)
+   |            - moved here
+13 |     b.push(m)
+   |            ^ used here after the move
+   |
+   = help: clone the value, or borrow it instead of moving it
+   = note: a move gives the value away; the old owner cannot use it again
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a31_cached.em
+error[E0104]: `@cached` is not an attribute
+ --> probes/a31_cached.em:5:5
+  |
+5 |     @cached
+  |     ^^^^^^^
+  |
+  = note: the attributes are listed in Part V's table [ATT-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a31_mut_inferred_caller.em
+error[E3023]: cannot mutate borrowed parameter `m`
+  --> probes/a31_mut_inferred_caller.em:15:13
+   |
+14 | fn show(m: Mesh):
+   |         ------- `m` is borrowed here
+15 |     println(m.radius())
+   |             ^ this write needs mutable access
+   |
+   = help: restructure to a single owner and declare this parameter `mut m: Mesh`
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/together.em
+error[E3023]: cannot mutate borrowed parameter `self`
+  --> probes/together.em:21:13
+   |
+16 |     fn radius(self) -> f32:                     # A31: a cache filled by a read-only method
+   |               ---- `self` is borrowed here
+...
+21 |             self.radius_cache = Some(r)
+   |             ^^^^^^^^^^^^^^^^^ this write needs mutable access
+   |
+   = help: restructure to a single owner and declare this parameter `mut self: Mesh`
+   = help: if the value is genuinely shared, use `RefCell[T]` for runtime-checked borrows
+   = help: if the value has identity, make it a `class`
+   = note: `RefCell` adds a one-word runtime borrow-state check in every profile (CELL-5, CELL-9); a class adds a heap allocation, a 24-byte header, reference counting and dynamic exclusivity, and is not `@static_safe` (OBJ-1, RC-1, EXC-1, EFF-13)
+
+error[E2100]: `self` is used before all struct fields are initialized
+  --> probes/together.em:40:20
+   |
+40 |         self.log = self.first_lines()
+   |                    ^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2020]: `std.collections.Map[String, i64, std.collections.DefaultHasher]`'s `get` does not take these arguments
+  --> probes/together.em:54:49
+   |
+54 |                 self.kills[p.name] = self.kills.get(p.name, 0) + 1   # A21
+   |                                                 ^^^ Python's `get`
+   |
+   = help: write `get_or`
+   = note: Python's `d.get(k, default)` is `m.get_or(k, default)`; `m.get(k)` gives an `Option` (Appendix E) [STD-13]
+
+error[E3040]: `g` is borrowed after it has been moved out of
+  --> probes/together.em:69:5
+   |
+68 |     snapshot = g.log                            # A11: a second name for one list
+   |                ----- moved here
+69 |     g.log.push("end")
+   |     ^^^^^^^^^^^^^^^^^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+
+error: could not compile due to 4 error(s)
+exit=1
+=== (cd probes/a1_one_package && ember check)
+exit=0
+=== (cd probes/a1_two_packages/app && ember check)
+error[E3020]: cannot mutate `*g.players` while it is borrowed by this loop
+ --> C:\Users\ism19\Code\ember\target\redesign2\ownership\probes\a1_two_packages\app\src\main.em:8:13
+  |
+5 |     for p in g.players.iter_mut():
+  |              --------- `*g.players` borrowed here for the whole loop
+...
+8 |             g.note(f"{p.name} died")
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+  |
+  = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+  = help: or iterate over a fixed index range and mutate only after taking the current value
+  = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== (cd probes/a09_emit && ember check)
+exit=0
+=== (cd probes/a11_emit && ember check)
+exit=0
+=== ember check /c/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e01d_whole_object_class_mut.em
+error[E3020]: cannot mutate `self.players` while it is borrowed by this loop
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e01d_whole_object_class_mut.em:18:17
+   |
+15 |         for p in self.players:
+   |                  ------------ `self.players` borrowed here for the whole loop
+...
+18 |                 self.note(f"{p.name} died")
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check /c/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e11_moves.em
+error[E3040]: `m` is borrowed after it has been moved out of
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e11_moves.em:14:9
+   |
+13 |     send(m)
+   |          - moved here
+14 |     log(m)
+   |         ^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+
+error[E3042]: `p` is partially moved
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e11_moves.em:26:10
+   |
+23 | fn rename(owned p: Player):
+   |           --------------- `p` is declared here
+...
+26 |     keep(p)
+   |          ^ used here as a whole after one of its fields was moved
+   |
+   = help: reassign the moved field, or destructure the whole struct up front
+   = note: moving a field out leaves the rest of the struct live, but the struct cannot be used as a whole [EXP-6]
+
+error[E3041]: `template` is moved in a loop
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e11_moves.em:31:16
+   |
+31 |         v.push(template)
+   |                ^^^^^^^^ moved here, and the loop comes back
+   |
+   = help: move the declaration inside the loop, clone it for each iteration, or use `mem.take` when replacing it on every pass
+   = note: the first iteration moves it and the second finds it gone; a value moved in a loop must be put back before the next iteration [OWN-4]
+
+error[E3040]: `items` is borrowed after it has been moved out of
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e11_moves.em:37:5
+   |
+36 |     snapshot = items
+   |                ----- moved here
+37 |     items.push(3)
+   |     ^^^^^^^^^^^^^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+   = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 4 error(s)
+exit=1
+=== ember check /c/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e18_init.em
+error[E2100]: `self` is used before all struct fields are initialized
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/borrowing/e18_init.em:12:23
+   |
+12 |         self.assets = self.load_assets()
+   |                       ^^^^^^^^^^^^^^^^^^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check /c/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/sharing/a31_lazy_cache.em
+error[E3023]: cannot mutate borrowed parameter `self`
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/sharing/a31_lazy_cache.em:12:13
+   |
+ 7 |     fn radius(self) -> f32:
+   |               ---- `self` is borrowed here
+...
+12 |             self.radius_cache = Some(r)
+   |             ^^^^^^^^^^^^^^^^^ this write needs mutable access
+   |
+   = help: restructure to a single owner and declare this parameter `mut self: Mesh`
+   = help: if the value is genuinely shared, use `RefCell[T]` for runtime-checked borrows
+   = help: if the value has identity, make it a `class`
+   = note: `RefCell` adds a one-word runtime borrow-state check in every profile (CELL-5, CELL-9); a class adds a heap allocation, a 24-byte header, reference counting and dynamic exclusivity, and is not `@static_safe` (OBJ-1, RC-1, EXC-1, EFF-13)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check /c/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/sharing/a34_clone_dance.em
+exit=0
+=== ember check /c/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/sharing/a10_ownership_kinds.em
+error[E3040]: `m` has been moved out of
+  --> C:/Users/ism19/Code/ember/tasks/96/redesign/artifacts/phase1/sharing/a10_ownership_kinds.em:12:9
+   |
+11 |     a = Entity(m)
+   |         --------- moved here
+12 |     b = Entity(m)
+   |         ^^^^^^^^^ used here after the move
+   |
+   = help: clone the value, or borrow it instead of moving it
+   = note: a move gives the value away; the old owner cannot use it again
+
+error: could not compile due to 1 error(s)
+exit=1

@@ -1,0 +1,7 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+gen2-0-plainC                       5     69.943    69.662    73.004   1.00     4472  1.00 ['11481907200']
+gen2-2-position-inlined             5     82.222    80.850    83.039   1.18     4472  1.00 ['11481907200']
+gen2-5-pointer-inlined              5     82.020    79.649    83.360   1.17     4472  1.00 ['11481907200']
+gen2-6-field-position-inlined       5     71.308    70.040    72.222   1.02     4472  1.00 ['11481907200']
+gen2-1-position-call                5    208.907   207.881   226.287   2.99     4468  1.00 ['11481907200']
+gen2-7-field-position-call          5    145.834   133.275   147.063   2.09     4472  1.00 ['11481907200']

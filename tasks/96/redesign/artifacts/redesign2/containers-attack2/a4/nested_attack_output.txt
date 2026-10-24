@@ -1,0 +1,11 @@
+demo (i): the callback replaces squads[0], which holds the walked list
+    panic: list changed under the loop
+  written: double frees 2, reads of freed memory 0
+    panic: squads[0] holds a list a loop is walking
+  saved:   double frees 0, reads of freed memory 0
+demo (ii): the callback appends to squads, moving the walked list's header
+    the loop read its list's header from freed memory
+    after the loop: squads[0].units has 3 units: hp 0, hp -1, hp 2
+  written: double frees 0, reads of freed memory 1
+    after the loop: squads[0].units has 1 units: hp 2
+  saved:   double frees 0, reads of freed memory 0

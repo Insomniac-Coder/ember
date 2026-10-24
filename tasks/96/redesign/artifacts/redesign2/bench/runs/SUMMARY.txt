@@ -1,0 +1,98 @@
+== w1  (known checksum 2111831520; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+plain_w1_group.exe | 5 | 91.787 | 11.8% | 1.000 | 0.866 | 1.024 | 39120 | 1.000 | True
+rust_w1.exe | 5 | 105.957 | 10.1% | 1.154 | 1.000 | 1.182 | 39504 | 1.010 | True
+combined_w1.exe | 5 | 88.811 | 11.2% | 0.968 | 0.838 | 0.990 | 39120 | 1.000 | True
+plain_w1_group_local.exe | 5 | 89.671 | 15.8% | 0.977 | 0.846 | 1.000 | 39168 | 1.001 | True
+d1_w1.exe | 5 | 115.646 | 11.2% | 1.260 | 1.091 | 1.290 | 37320 | 0.954 | True
+d2_w1.exe | 5 | 110.755 | 22.9% | 1.207 | 1.045 | 1.235 | 37872 | 0.968 | True
+d3_w1.exe | 5 | 103.560 | 11.9% | 1.128 | 0.977 | 1.155 | 36224 | 0.926 | True
+plain_w1_arch.exe | 5 | 43.965 | 11.1% | 0.479 | 0.415 | 0.490 | 17116 | 0.438 | True
+== w2  (known checksum 647034814; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+plain_w2.exe | 5 | 622.214 | 27.6% | 1.000 | 0.576 | 0.870 | 54940 | 1.000 | True
+rust_w2.exe | 5 | 1080.578 | 43.7% | 1.737 | 1.000 | 1.511 | 52288 | 0.952 | True
+combined_w2.exe | 5 | 720.306 | 35.2% | 1.158 | 0.667 | 1.007 | 76724 | 1.397 | True
+plain_w2_same.exe | 5 | 715.065 | 43.1% | 1.149 | 0.662 | 1.000 | 76664 | 1.395 | True
+plain_w2_emberlist.exe | 5 | 743.626 | 45.7% | 1.195 | 0.688 | 1.040 | 68664 | 1.250 | True
+d1_w2.exe | 5 | 873.448 | 43.0% | 1.404 | 0.808 | 1.221 | 77112 | 1.404 | True
+d2_w2.exe | 5 | 850.547 | 35.4% | 1.367 | 0.787 | 1.189 | 76580 | 1.394 | True
+d2_w2_checked.exe | 5 | 1165.614 | 50.1% | 1.873 | 1.079 | 1.630 | 76580 | 1.394 | True
+d3_w2.exe | 5 | 705.206 | 47.6% | 1.133 | 0.653 | 0.986 | 76612 | 1.394 | True
+d3_w2_unproven.exe | 5 | 1371.966 | 51.9% | 2.205 | 1.270 | 1.919 | 102364 | 1.863 | True
+== w3  (known checksum 9288233970; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+plain_w3.exe | 5 | 440.911 | 3.1% | 1.000 | 0.768 | - | 9756 | 1.000 | True
+rust_w3.exe | 5 | 574.123 | 1.7% | 1.302 | 1.000 | - | 11544 | 1.183 | True
+combined_w3.exe | 5 | 411.637 | 1.5% | 0.934 | 0.717 | - | 9488 | 0.973 | True
+combined_w3_beside.exe | 5 | 423.238 | 4.2% | 0.960 | 0.737 | - | 9200 | 0.943 | True
+combined_w3_registration.exe | 5 | 364.586 | 1.6% | 0.827 | 0.635 | - | 11948 | 1.225 | True
+d1_w3.exe | 5 | 352.080 | 5.7% | 0.799 | 0.613 | - | 8364 | 0.857 | True
+d2_w3.exe | 5 | 419.823 | 1.9% | 0.952 | 0.731 | - | 9272 | 0.950 | True
+d3_w3.exe | 5 | 424.036 | 2.0% | 0.962 | 0.739 | - | 8268 | 0.847 | True
+== w4  (known checksum 34946993000; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+plain_w4.exe | 5 | 23.285 | 5.8% | 1.000 | 0.731 | 1.077 | 4076 | 1.000 | True
+rust_w4.exe | 5 | 31.864 | 5.6% | 1.368 | 1.000 | 1.474 | 4480 | 1.099 | True
+combined_w4.exe | 5 | 21.251 | 15.1% | 0.913 | 0.667 | 0.983 | 4268 | 1.047 | True
+plain_w4_same.exe | 5 | 21.614 | 6.0% | 0.928 | 0.678 | 1.000 | 4080 | 1.001 | True
+d1_w4.exe | 5 | 24.384 | 1.6% | 1.047 | 0.765 | 1.128 | 4548 | 1.116 | True
+d2_w4.exe | 5 | 23.032 | 19.1% | 0.989 | 0.723 | 1.066 | 4344 | 1.066 | True
+d3_w4.exe | 5 | 22.641 | 12.1% | 0.972 | 0.711 | 1.048 | 4260 | 1.045 | True
+rust_w4_return.exe | 5 | 16.817 | 4.3% | 0.722 | 0.528 | 0.778 | 4476 | 1.098 | True
+
+== w1b  (known checksum 2111831520; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+plain_w1_arch.exe | 5 | 43.977 | 8.2% | 0.459 | 0.395 | 0.526 | 17116 | 0.437 | True
+d3_w1.exe | 5 | 102.326 | 14.4% | 1.068 | 0.918 | 1.225 | 36256 | 0.926 | True
+d2_w1.exe | 5 | 109.173 | 8.3% | 1.139 | 0.980 | 1.307 | 37828 | 0.966 | True
+d1_w1.exe | 5 | 113.968 | 13.3% | 1.189 | 1.023 | 1.364 | 37344 | 0.953 | True
+plain_w1_group_local.exe | 5 | 83.548 | 12.1% | 0.872 | 0.750 | 1.000 | 39180 | 1.000 | True
+combined_w1.exe | 5 | 87.123 | 5.8% | 0.909 | 0.782 | 1.043 | 39124 | 0.999 | True
+rust_w1.exe | 5 | 111.452 | 10.0% | 1.163 | 1.000 | 1.334 | 39484 | 1.008 | True
+plain_w1_group.exe | 5 | 95.812 | 9.6% | 1.000 | 0.860 | 1.147 | 39172 | 1.000 | True
+== w2b  (known checksum 647034814; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+d3_w2_unproven.exe | 5 | 1401.853 | 9.6% | 2.263 | 1.167 | 1.942 | 102424 | 1.864 | True
+d3_w2.exe | 5 | 722.579 | 17.1% | 1.166 | 0.601 | 1.001 | 76620 | 1.395 | True
+d2_w2_checked.exe | 5 | 1318.682 | 21.9% | 2.128 | 1.098 | 1.827 | 76560 | 1.394 | True
+d2_w2.exe | 5 | 899.041 | 15.6% | 1.451 | 0.748 | 1.245 | 76560 | 1.394 | True
+d1_w2.exe | 5 | 936.567 | 13.0% | 1.512 | 0.780 | 1.297 | 77128 | 1.404 | True
+plain_w2_emberlist.exe | 5 | 738.010 | 12.5% | 1.191 | 0.614 | 1.022 | 68664 | 1.250 | True
+plain_w2_same.exe | 5 | 721.916 | 13.9% | 1.165 | 0.601 | 1.000 | 76648 | 1.395 | True
+combined_w2.exe | 5 | 749.978 | 16.6% | 1.211 | 0.624 | 1.039 | 76700 | 1.396 | True
+rust_w2.exe | 5 | 1201.366 | 25.5% | 1.939 | 1.000 | 1.664 | 52288 | 0.952 | True
+plain_w2.exe | 5 | 619.543 | 18.6% | 1.000 | 0.516 | 0.858 | 54940 | 1.000 | True
+== w3b  (known checksum 9288233970; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+d3_w3.exe | 5 | 438.366 | 3.8% | 0.975 | 0.741 | - | 8244 | 0.845 | True
+d2_w3.exe | 5 | 438.348 | 15.6% | 0.975 | 0.741 | - | 9244 | 0.948 | True
+d1_w3.exe | 5 | 373.666 | 2.3% | 0.831 | 0.632 | - | 8368 | 0.858 | True
+combined_w3_registration.exe | 5 | 372.867 | 1.9% | 0.830 | 0.630 | - | 11940 | 1.224 | True
+combined_w3_beside.exe | 5 | 423.269 | 3.5% | 0.942 | 0.716 | - | 9208 | 0.944 | True
+combined_w3.exe | 5 | 421.582 | 2.4% | 0.938 | 0.713 | - | 9488 | 0.973 | True
+rust_w3.exe | 5 | 591.473 | 8.4% | 1.316 | 1.000 | - | 11508 | 1.180 | True
+plain_w3.exe | 5 | 449.446 | 1.2% | 1.000 | 0.760 | - | 9756 | 1.000 | True
+== w4b  (known checksum 34946993000; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+rust_w4_return.exe | 5 | 17.351 | 4.8% | 0.716 | 0.521 | 0.790 | 4476 | 1.099 | True
+d3_w4.exe | 5 | 23.724 | 15.1% | 0.979 | 0.713 | 1.080 | 4264 | 1.047 | True
+d2_w4.exe | 5 | 22.758 | 6.8% | 0.939 | 0.684 | 1.036 | 4340 | 1.066 | True
+d1_w4.exe | 5 | 25.934 | 9.9% | 1.070 | 0.779 | 1.180 | 4544 | 1.116 | True
+plain_w4_same.exe | 5 | 21.974 | 2.9% | 0.907 | 0.660 | 1.000 | 4076 | 1.001 | True
+combined_w4.exe | 5 | 22.299 | 12.3% | 0.920 | 0.670 | 1.015 | 4264 | 1.047 | True
+rust_w4.exe | 5 | 33.289 | 5.7% | 1.373 | 1.000 | 1.515 | 4476 | 1.099 | True
+plain_w4.exe | 5 | 24.238 | 4.5% | 1.000 | 0.728 | 1.103 | 4072 | 1.000 | True
+
+== w2c  (known checksum 647034814; unparsed lines: 0)
+program | runs | median ms | spread | x plain C | x safe Rust | x same-layout C | median peak KB | mem x plain C | checksum ok
+plain_w2.exe | 5 | 622.295 | 18.5% | 1.000 | 0.572 | 0.870 | 54940 | 1.000 | True
+plain_w2_same.exe | 5 | 715.276 | 16.2% | 1.149 | 0.657 | 1.000 | 76652 | 1.395 | True
+combined_w2.exe | 5 | 737.778 | 14.5% | 1.186 | 0.678 | 1.031 | 76688 | 1.396 | True
+rust_w2.exe | 5 | 1087.976 | 26.1% | 1.748 | 1.000 | 1.521 | 52288 | 0.952 | True
+plain_w2_emberlist.exe | 5 | 685.205 | 21.4% | 1.101 | 0.630 | 0.958 | 68664 | 1.250 | True
+d1_w2.exe | 5 | 874.714 | 10.9% | 1.406 | 0.804 | 1.223 | 77108 | 1.403 | True
+d2_w2.exe | 5 | 866.305 | 6.1% | 1.392 | 0.796 | 1.211 | 76552 | 1.393 | True
+d2_w2_checked.exe | 5 | 1175.798 | 7.0% | 1.889 | 1.081 | 1.644 | 76584 | 1.394 | True
+d3_w2.exe | 5 | 738.374 | 5.4% | 1.187 | 0.679 | 1.032 | 76604 | 1.394 | True
+d3_w2_unproven.exe | 5 | 1414.161 | 9.0% | 2.272 | 1.300 | 1.977 | 102396 | 1.864 | True

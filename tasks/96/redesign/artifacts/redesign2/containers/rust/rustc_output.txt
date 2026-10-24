@@ -1,0 +1,13 @@
+################ a25_oneliner.rs
+error[E0716]: temporary value dropped while borrowed
+ --> a25_oneliner.rs:3:28
+help: consider using a `let` binding to create a longer lived value
+error: aborting due to 1 previous error
+exit=1
+################ a25_return.rs
+error[E0515]: cannot return value referencing local variable `lower`
+ --> a25_return.rs:5:5
+error: aborting due to 1 previous error
+exit=1
+################ a25_param.rs
+exit=0

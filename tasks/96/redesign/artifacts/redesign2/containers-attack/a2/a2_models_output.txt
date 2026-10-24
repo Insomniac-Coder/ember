@@ -1,0 +1,4 @@
+1. swap, rules as written (Python: [E2, E1]):  [E2, E2]
+1. swap, saved:                                [E2, E1]
+2. hit + purge, rules as written (Python: [E40, E70]): [E50, E40]
+2. hit + purge, saved:                         [E40, E70]

@@ -1,0 +1,325 @@
+=== attacks.exe 1
+len 1, first child: =================================================================
+==114900==ERROR: AddressSanitizer: heap-use-after-free on address 0x116e2eaa0918 at pc 0x7ff6921f3d50 bp 0x0014d694f980 sp 0x0014d694f9c8
+READ of size 8 at 0x116e2eaa0918 thread T0
+    #0 0x7ff6921f3d4f in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:269
+    #1 0x7ff6921f56de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #2 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #3 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+0x116e2eaa0918 is located 8 bytes inside of 48-byte region [0x116e2eaa0910,0x116e2eaa0940)
+freed by thread T0 here:
+    #0 0x7ff97617c81f in _asan_wrap_memcpy+0x62f (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff6921f2433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+    #2 0x7ff6921f35e5 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:269
+    #3 0x7ff6921f56de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #4 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #5 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+previously allocated by thread T0 here:
+    #0 0x7ff97617ca46 in _asan_wrap_memcpy+0x856 (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004ca46)
+    #1 0x7ff6921f24fd in calloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:77
+    #2 0x7ff6921f2ab8 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:269
+    #3 0x7ff6921f56de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #4 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #5 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+SUMMARY: AddressSanitizer: heap-use-after-free C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:269 in main
+Shadow bytes around the buggy address:
+  0x116e2eaa0680: fa fa 00 00 00 00 00 01 fa fa 00 00 00 00 00 fa
+  0x116e2eaa0700: fa fa 00 00 00 00 07 fa fa fa 00 00 00 00 06 fa
+  0x116e2eaa0780: fa fa 00 00 00 00 06 fa fa fa 00 00 00 00 03 fa
+  0x116e2eaa0800: fa fa 00 00 00 00 02 fa fa fa 00 00 00 00 02 fa
+  0x116e2eaa0880: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+=>0x116e2eaa0900: fa fa fd[fd]fd fd fd fd fa fa 00 00 00 00 00 00
+  0x116e2eaa0980: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x116e2eaa0a00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x116e2eaa0a80: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x116e2eaa0b00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x116e2eaa0b80: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==114900==ABORTING
+exit=1
+=== attacks.exe 2
+panics here (the demo goes on): a is already at children[0]; a node has one place: use swap(), insert() or push()
+p.children = [c, b, a]
+exit=0
+=== attacks.exe 3
+p.children = [a, b]
+p.children = [c, b]
+panic: index out of range
+exit=101
+=== attacks.exe 4
+=================================================================
+==69912==ERROR: AddressSanitizer: heap-use-after-free on address 0x121b4fda0158 at pc 0x7ff7dca34208 bp 0x005b648ff6a0 sp 0x005b648ff6e8
+WRITE of size 8 at 0x121b4fda0158 thread T0
+    #0 0x7ff7dca34207 in a8_weak C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:154
+    #1 0x7ff7dca33226 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:272
+    #2 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #3 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #4 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+0x121b4fda0158 is located 8 bytes inside of 16-byte region [0x121b4fda0150,0x121b4fda0160)
+freed by thread T0 here:
+    #0 0x7ff97617c81f in _asan_wrap_memcpy+0x62f (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff7dca32433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+    #2 0x7ff7dca34048 in a8_weak C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:153
+    #3 0x7ff7dca33226 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:272
+    #4 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #5 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #6 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+previously allocated by thread T0 here:
+    #0 0x7ff97617ca46 in _asan_wrap_memcpy+0x856 (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004ca46)
+    #1 0x7ff7dca324fd in calloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:77
+    #2 0x7ff7dca33e63 in a8_weak C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:151
+    #3 0x7ff7dca33226 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:272
+    #4 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #5 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #6 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+SUMMARY: AddressSanitizer: heap-use-after-free C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:154 in a8_weak
+Shadow bytes around the buggy address:
+  0x121b4fd9fe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x121b4fd9ff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x121b4fd9ff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x121b4fda0000: fa fa 00 05 fa fa 00 07 fa fa 00 00 fa fa 00 05
+  0x121b4fda0080: fa fa 00 00 fa fa 00 06 fa fa 00 fa fa fa 00 07
+=>0x121b4fda0100: fa fa 00 07 fa fa 00 00 fa fa fd[fd]fa fa 00 00
+  0x121b4fda0180: fa fa fd fa fa fa 02 fa fa fa 00 00 fa fa fd fa
+  0x121b4fda0200: fa fa fd fa fa fa fd fa fa fa fd fa fa fa fd fa
+  0x121b4fda0280: fa fa fd fa fa fa fd fa fa fa 00 00 fa fa 00 00
+  0x121b4fda0300: fa fa 00 00 fa fa fd fa fa fa fd fa fa fa fd fa
+  0x121b4fda0380: fa fa fd fa fa fa fd fa fa fa fd fa fa fa fd fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==69912==ABORTING
+exit=1
+=== attacks.exe 5
+player and camera both gone; registered fields left: none written after free
+exit=0
+=== attacks.exe 6
+icon: =================================================================
+==39992==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x1170c4ba0900 at pc 0x7ff7dca3469e bp 0x002abceff610 sp 0x002abceff658
+READ of size 8 at 0x1170c4ba0900 thread T0
+    #0 0x7ff7dca3469d in a13_narrow C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:173
+    #1 0x7ff7dca3350c in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:274
+    #2 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #3 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #4 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+0x1170c4ba0900 is located 0 bytes after 48-byte region [0x1170c4ba08d0,0x1170c4ba0900)
+allocated by thread T0 here:
+    #0 0x7ff97617ca46 in _asan_wrap_memcpy+0x856 (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004ca46)
+    #1 0x7ff7dca324fd in calloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:77
+    #2 0x7ff7dca3437b in a13_narrow C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:166
+    #3 0x7ff7dca3350c in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:274
+    #4 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #5 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #6 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:173 in a13_narrow
+Shadow bytes around the buggy address:
+  0x1170c4ba0680: fa fa 00 00 00 00 00 01 fa fa 00 00 00 00 00 fa
+  0x1170c4ba0700: fa fa 00 00 00 00 07 fa fa fa 00 00 00 00 06 fa
+  0x1170c4ba0780: fa fa 00 00 00 00 06 fa fa fa 00 00 00 00 03 fa
+  0x1170c4ba0800: fa fa 00 00 00 00 02 fa fa fa 00 00 00 00 02 fa
+  0x1170c4ba0880: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+=>0x1170c4ba0900:[fa]fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x1170c4ba0980: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x1170c4ba0a00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x1170c4ba0a80: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x1170c4ba0b00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x1170c4ba0b80: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==39992==ABORTING
+exit=1
+=== attacks.exe 7
+n.parent is other, not a Folder
+exit=0
+=== attacks.exe 8
+=================================================================
+==79032==ERROR: AddressSanitizer: heap-use-after-free on address 0x11a1418a0150 at pc 0x7ff976171d04 bp 0x009c042ff4e0 sp 0x009c042ff528
+READ of size 2 at 0x11a1418a0150 thread T0
+    #0 0x7ff976171d03 in _asan_wrap_strlen+0x253 (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x180041d03)
+    #1 0x7ff7dca3481a in a12_boxed_loop C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:205
+    #2 0x7ff7dca33232 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:276
+    #3 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #4 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #5 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+0x11a1418a0150 is located 0 bytes inside of 3-byte region [0x11a1418a0150,0x11a1418a0153)
+freed by thread T0 here:
+    #0 0x7ff97617c81f in _asan_wrap_memcpy+0x62f (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff7dca32433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+    #2 0x7ff7dca34fcf in bus_emit C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:186
+    #3 0x7ff7dca34804 in a12_boxed_loop C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:205
+    #4 0x7ff7dca33232 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:276
+    #5 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #6 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #7 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+previously allocated by thread T0 here:
+    #0 0x7ff976178e66 in _asan_wrap__strdup+0x2e6 (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x180048e66)
+    #1 0x7ff7dca34732 in a12_boxed_loop C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:200
+    #2 0x7ff7dca33232 in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:276
+    #3 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #4 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #5 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+SUMMARY: AddressSanitizer: heap-use-after-free C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:205 in a12_boxed_loop
+Shadow bytes around the buggy address:
+  0x11a14189fe80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x11a14189ff00: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x11a14189ff80: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x11a1418a0000: fa fa 00 05 fa fa 00 07 fa fa 00 00 fa fa 00 05
+  0x11a1418a0080: fa fa 00 00 fa fa 00 06 fa fa 00 fa fa fa 00 07
+=>0x11a1418a0100: fa fa 00 07 fa fa 00 00 fa fa[fd]fa fa fa fd fa
+  0x11a1418a0180: fa fa fd fa fa fa 00 00 fa fa fd fa fa fa 02 fa
+  0x11a1418a0200: fa fa 00 00 fa fa fd fa fa fa fd fa fa fa fd fa
+  0x11a1418a0280: fa fa fd fa fa fa fd fa fa fa fd fa fa fa fd fa
+  0x11a1418a0300: fa fa 00 00 fa fa 00 00 fa fa 00 00 fa fa fd fa
+  0x11a1418a0380: fa fa fd fa fa fa fd fa fa fa fd fa fa fa fd fa
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==79032==ABORTING
+exit=1
+=== attacks.exe 9
+panic: xs changed while a loop over it was running (line 6)
+exit=101
+=== attacks.exe 10
+=================================================================
+==122940==ERROR: AddressSanitizer: heap-use-after-free on address 0x11220e7a0898 at pc 0x7ff7dca35206 bp 0x00150416fc70 sp 0x00150416fcb8
+READ of size 8 at 0x11220e7a0898 thread T0
+    #0 0x7ff7dca35205 in tick_fn C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:251
+    #1 0x7ff7dca32c6b in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:278
+    #2 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #3 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #4 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+0x11220e7a0898 is located 8 bytes inside of 40-byte region [0x11220e7a0890,0x11220e7a08b8)
+freed by thread T0 here:
+    #0 0x7ff97617c81f in _asan_wrap_memcpy+0x62f (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff7dca32433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+    #2 0x7ff7dca35121 in tick_fn C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:250
+    #3 0x7ff7dca32c6b in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:278
+    #4 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #5 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #6 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+previously allocated by thread T0 here:
+    #0 0x7ff97617ca46 in _asan_wrap_memcpy+0x856 (C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\clang_rt.asan_dynamic-x86_64.dll+0x18004ca46)
+    #1 0x7ff7dca324fd in calloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:77
+    #2 0x7ff7dca34919 in a32_captured_closure C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:258
+    #3 0x7ff7dca32c6b in main C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:278
+    #4 0x7ff7dca356de in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #5 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #6 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+SUMMARY: AddressSanitizer: heap-use-after-free C:\Users\ism19\Code\ember\target\redesign2\graphs-callbacks-attack\c\attacks.c:251 in tick_fn
+Shadow bytes around the buggy address:
+  0x11220e7a0600: fa fa 00 00 00 00 01 fa fa fa 00 00 00 00 00 01
+  0x11220e7a0680: fa fa 00 00 00 00 00 01 fa fa 00 00 00 00 00 fa
+  0x11220e7a0700: fa fa 00 00 00 00 07 fa fa fa 00 00 00 00 06 fa
+  0x11220e7a0780: fa fa 00 00 00 00 06 fa fa fa 00 00 00 00 03 fa
+  0x11220e7a0800: fa fa 00 00 00 00 02 fa fa fa 00 00 00 00 02 fa
+=>0x11220e7a0880: fa fa fd[fd]fd fd fd fa fa fa 00 00 00 00 00 00
+  0x11220e7a0900: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x11220e7a0980: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x11220e7a0a00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x11220e7a0a80: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x11220e7a0b00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==122940==ABORTING
+exit=1
+=== attacks.exe 11
+first
+exit=0

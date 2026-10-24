@@ -1,0 +1,663 @@
+=== p15a_loopvar_read.em
+exit=0
+=== p15b_class_read.em
+error[E7004]: the task captures `cfg`, a `Config`, which is not Send
+ --> p15b_class_read.em:9:25
+  |
+9 |         a = scope.spawn(fn() => xs[0] * cfg.scale)
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: declare it `@sync class Config`: its fields are all `Send` and `Sync` [THR-1]
+  = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error[E7004]: the task captures `cfg`, a `Config`, which is not Send
+  --> p15b_class_read.em:10:25
+   |
+10 |         b = scope.spawn(fn() => xs[1] * cfg.scale)
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: declare it `@sync class Config`: its fields are all `Send` and `Sync` [THR-1]
+   = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p15c_struct_elems.em
+error[E3022]: the `for` loop's iterator is already mutably borrowed
+  --> p15c_struct_elems.em:9:9
+   |
+ 9 |         for p in players.iter_mut():
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+   |         ---------------------------- mutable borrow of the `for` loop's iterator starts here
+10 |             scope.spawn(fn(): p.hp -= 1)
+   |             ---------------------------- borrow later used here
+   |
+   = help: use `__xs.get_pair_mut(i, j)` for two elements at once (`None` when they are the same), or `__xs.as_mut_span().split_at(k)` for two non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover other patterns
+   = note: computed indices may overlap; a structural split proves non-overlap (BRW-5)
+
+error[E3021]: `p` cannot be written while it is borrowed
+  --> p15c_struct_elems.em:9:9
+   |
+ 9 |         for p in players.iter_mut():
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+10 |             scope.spawn(fn(): p.hp -= 1)
+   |                         --------------- mutable borrow of `p` starts here
+   |             ---------------------------- borrow later used here
+   |
+   = help: end the borrow before this: `scope` is what keeps it alive, so shorten its last use or put it in a block of its own
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3022]: `p` is already mutably borrowed
+  --> p15c_struct_elems.em:10:25
+   |
+10 |             scope.spawn(fn(): p.hp -= 1)
+   |                         ^^^^^^^^^^^^^^^ conflicting access here
+   |                         --------------- mutable borrow of `p` starts here
+   |
+   = help: use one mutable access rather than borrowing the same place twice; split the owner's mutable view with `split_at` when the intended operands are disjoint parts of it
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3060]: `p` does not live long enough
+  --> p15c_struct_elems.em:10:25
+   |
+10 |             scope.spawn(fn(): p.hp -= 1)
+   |                         ^^^^^^^^^^^^^^^ this borrow remains live after its source's scope ends
+   |             ---------------------------- `p` ends its scope here
+   |
+   = help: declare the borrowed value in an enclosing scope, or drop its borrower before leaving this scope
+   = note: borrowed storage must remain valid through every use, including a destructor [DRP-7]
+
+error: could not compile due to 4 error(s)
+exit=1
+=== p15d_parent_writes.em
+error[E3021]: `xs` is borrowed here and mutably borrowed elsewhere
+ --> p15d_parent_writes.em:8:9
+  |
+7 |         s.spawn(fn() => println(xs[0] + xs[1]))
+  |                 ------------------------------ borrow of `xs` starts here
+8 |         xs.push(4)
+  |         ^^^^^^^^^^ conflicting access here
+  |                 - borrow later used here
+  |
+  = help: end the borrow before this: `s` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p15e_push.em
+error[E3021]: `i` cannot be written while it is borrowed
+ --> p15e_push.em:8:13
+  |
+8 |             scope.spawn(fn(): results.push(i * i))
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+  |                         ------------------------- borrow of `i` starts here
+  |
+  = help: bind the borrow of `i` to a local and finish with it before this line, or copy the value out first
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3022]: `results` is already mutably borrowed
+ --> p15e_push.em:8:25
+  |
+8 |             scope.spawn(fn(): results.push(i * i))
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+  |                         ------------------------- mutable borrow of `results` starts here
+  |
+  = help: use one mutable access rather than borrowing the same place twice; split the owner's mutable view with `split_at` when the intended operands are disjoint parts of it
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p15f_sync_class.em
+error[E7004]: the thread's function captures `ps`, a `PlainStats`, which is not Send
+  --> p15f_sync_class.em:18:23
+   |
+18 |     h2 = thread.spawn(owned fn(): ps.words += 1)
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: declare it `@sync class PlainStats`: its fields are all `Send` and `Sync` [THR-1]
+   = note: what a thread's function captures moves to that thread [THR-10]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p19a_var.em
+error[E0100]: `var` is not needed: assigning a name declares it
+ --> p19a_var.em:2:1
+  |
+2 | var FRAME: int = 0
+  | ^^^
+  |
+  = help: remove `var`
+  = note: `x = 5` declares `x` where no `x` is in scope, and assigns it where one is [GRM-4]
+
+error[E1030]: `main` is already declared in this module
+ --> p19a_var.em:2:5
+  |
+2 | var FRAME: int = 0
+  |     ^^^^^^^^^^^^^^
+  |
+
+error[E0100]: `var` is not needed: assigning a name declares it
+ --> p19a_var.em:3:1
+  |
+3 | var LOG: Array[String] = []
+  | ^^^
+  |
+  = help: remove `var`
+  = note: `x = 5` declares `x` where no `x` is in scope, and assigns it where one is [GRM-4]
+
+error[E1010]: cannot find `FRAME` in this scope
+ --> p19a_var.em:6:5
+  |
+6 |     FRAME += 1
+  |     ^^^^^
+  |
+
+error[E1010]: cannot find `LOG` in this scope
+ --> p19a_var.em:7:5
+  |
+7 |     LOG.push("tick".to_string())
+  |     ^^^
+  |
+
+error: could not compile due to 5 error(s)
+exit=1
+=== p33a_clone_fix.em
+exit=0
+=== p33b_return_place.em
+error[E3011]: cannot move out of an element
+ --> p33b_return_place.em:6:16
+  |
+6 |         return g[0]
+  |                ^^^^ moved out here
+  |
+  = help: borrow it, `ref xs[i]` (`ref mut` to change it in place); take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`; or clone it
+  = note: the container still holds the element and drops it with the rest [EXP-6]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p33c_local_escape.em
+error[E3060]: this temporary is dropped at the end of its statement while it is still borrowed
+ --> p33c_local_escape.em:6:25
+  |
+6 |     r: ref String = ref m.lock()[0]
+  |                         ^^^^^^^^ a temporary value, dropped at the end of this statement
+...
+9 |     println(r)
+  |             - borrow later used here
+  |
+  = help: bind the value to a variable first, so it lives as long as the borrow
+  = note: a temporary lives to the end of the statement that makes it [EXP-4]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p33d_rwlock.em
+exit=0
+=== p14a_heap_contents.em
+error[E2221]: a borrow of `s`, a local of this generator, is held across this `yield`
+ --> p14a_heap_contents.em:5:15
+  |
+5 |         yield c
+  |               ^ the generator suspends here
+  |
+  = help: iterate the collection `owned` (`for x in owned xs:`), or by index; borrows of the generator's parameters may be held
+  = note: a suspended frame is a value that may move, which would leave the borrow pointing where the local was [CORO-6]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p14b_inline_local.em
+error[E2221]: a borrow of `n`, a local of this generator, is held across this `yield`
+ --> p14b_inline_local.em:5:11
+  |
+5 |     yield 1
+  |           ^ the generator suspends here
+  |
+  = help: iterate the collection `owned` (`for x in owned xs:`), or by index; borrows of the generator's parameters may be held
+  = note: a suspended frame is a value that may move, which would leave the borrow pointing where the local was [CORO-6]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p14c_async.em
+error[E0005]: `async` is reserved for v2
+ --> p14c_async.em:2:1
+  |
+2 | async fn fetch() -> int:
+  | ^^^^^
+  |
+  = help: rename the item, or write `r#async` to use the word as an identifier
+
+error[E0005]: `async` is reserved for v2
+ --> p14c_async.em:5:1
+  |
+5 | async fn serve():
+  | ^^^^^
+  |
+  = help: rename the item, or write `r#async` to use the word as an identifier
+
+error[E0005]: `await` is reserved for v2
+ --> p14c_async.em:7:9
+  |
+7 |     n = await fetch()
+  |         ^^^^^
+  |
+  = help: write `r#await` to use the word as an identifier
+
+error[E0100]: expected the end of the line
+ --> p14c_async.em:7:15
+  |
+7 |     n = await fetch()
+  |               ^^^^^ found `fetch`
+  |
+
+error: could not compile due to 4 error(s)
+exit=1
+=== p15g_write_only.em
+warning[L1001]: `t` is never read
+ --> p15g_write_only.em:7:13
+  |
+7 |         for t in texts:
+  |             ^ declared here and never used
+  |
+  = help: remove it, or rename it `_t` if that is deliberate
+
+error[E3022]: `total` is already mutably borrowed
+ --> p15g_write_only.em:8:25
+  |
+8 |             scope.spawn(fn(): total += 1)
+  |                         ^^^^^^^^^^^^^^^^ conflicting access here
+  |                         ---------------- mutable borrow of `total` starts here
+  |
+  = help: use one mutable access rather than borrowing the same place twice; split the owner's mutable view with `split_at` when the intended operands are disjoint parts of it
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p15h_read_t_atomic.em
+error[E1010]: cannot find `t` in this scope
+ --> p15h_read_t_atomic.em:9:47
+  |
+9 |             scope.spawn(fn(): total.fetch_add(t.split_whitespace().count()))
+  |                                               ^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p15i_join_sum.em
+exit=0
+=== p15j_guarded_lock.em
+error[E1061]: module 'std.sync' has no item named `Lock`
+ --> p15j_guarded_lock.em:3:22
+  |
+3 | from std.sync import Lock
+  |                      ^^^^
+  |
+
+error[E1010]: cannot find type `Lock` in this scope
+ --> p15j_guarded_lock.em:6:11
+  |
+6 |     lock: Lock = Lock()
+  |           ^^^^
+  |
+
+error[E1010]: cannot find `Lock` in this scope
+ --> p15j_guarded_lock.em:6:18
+  |
+6 |     lock: Lock = Lock()
+  |                  ^^^^
+  |
+
+error[E0106]: a multi-statement closure cannot be written inside brackets
+  --> p15j_guarded_lock.em:21:29
+   |
+21 |             scope.spawn(fn():
+   |                             ^
+   |
+   = help: bind it on a preceding line: `h = fn(e): …` then pass `h`
+   = note: indentation is not significant inside brackets [LEX-6]
+
+error[E0100]: expected an expression
+  --> p15j_guarded_lock.em:22:17
+   |
+22 |                 for w in t.split_whitespace():
+   |                 ^^^ found `for`
+   |
+
+error: could not compile due to 5 error(s)
+exit=1
+=== p19b_var_reduce.em
+error[E0100]: `var` is not needed: assigning a name declares it
+ --> p19b_var_reduce.em:4:1
+  |
+4 | var WORDS: int = 0
+  | ^^^
+  |
+  = help: remove `var`
+  = note: `x = 5` declares `x` where no `x` is in scope, and assigns it where one is [GRM-4]
+
+error[E1030]: `main` is already declared in this module
+ --> p19b_var_reduce.em:4:5
+  |
+4 | var WORDS: int = 0
+  |     ^^^^^^^^^^^^^^
+  |
+
+error[E1010]: cannot find `WORDS` in this scope
+ --> p19b_var_reduce.em:9:31
+  |
+9 |             scope.spawn(fn(): WORDS += t.split_whitespace().count())
+  |                               ^^^^^
+  |
+
+error[E1010]: cannot find `WORDS` in this scope
+  --> p19b_var_reduce.em:13:13
+   |
+13 |     println(WORDS)
+   |             ^^^^^
+   |
+
+error: could not compile due to 4 error(s)
+exit=1
+=== p33e_accessor.em
+error[E2182]: this function returns `ref String` but can reach the end of its body
+ --> p33e_accessor.em:4:4
+  |
+4 | fn top(scores: Mutex[Array[String]]) -> ref String:
+  |    ^^^ a path through the body ends without a `return`
+  |
+  = help: add a `return` on every path, or end with `panic(…)` where no value exists
+  = note: only `void` and `Result[void, E]` functions have an implicit value [FN-10]
+
+error[E2220]: `yield` outside a `gen fn`
+ --> p33e_accessor.em:6:9
+  |
+6 |         yield g[0]
+  |         ^^^^^^^^^^ this function is not a generator
+  |
+  = help: declare the function `gen fn … -> Generator[Y]` [CORO-1]; a lambda or a local function inside a generator is a function of its own, and cannot yield for it [CORO-2]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p20b_inferred.em
+error[E2020]: `register_cb` takes 2 arguments, found 1
+  --> p20b_inferred.em:10:13
+   |
+ 7 |     fn register_cb(cb: extern "C" fn(*mut void), ud: *mut void)
+   |        ----------- `register_cb` is declared here
+...
+10 |     token = register_cb(fn(): game.score += 1)
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E5002]: a foreign call without a complete safe contract requires `unsafe`
+  --> p20b_inferred.em:10:13
+   |
+10 |     token = register_cb(fn(): game.score += 1)
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: state the facts on its declaration: `@ffi(param(ud, TODO(ownership), TODO(count), TODO(nullable)))` over `safe fn register_cb`, each `TODO(…)` replaced by its fact
+   = help: or wrap the call in `unsafe:`, as its caller's own assertion
+   = note: unknown: `register_cb` is not asserted safe to call (`safe fn`)
+   = note: unknown: `cb`: its callback contract (`callback(borrowed | retained | once, user_data=p)`)
+   = note: unknown: `ud`: its ownership, count and nullability
+
+error[E5040]: expected `extern "C" fn(*mut void) -> void`, found a lambda that captures
+  --> p20b_inferred.em:10:25
+   |
+10 |     token = register_cb(fn(): game.score += 1)
+   |                         ^^^^^^^^^^^^^^^^^^^^^ this lambda captures
+   |
+   = help: pass the captured values as arguments, or give C a function that captures nothing
+   = help: where C hands the function a user data pointer back, contract the parameter `callback(borrowed, user_data=p)`: it then takes this lambda
+   = note: a C function pointer has no room for captured state: `extern "C" fn` holds capture-free functions only ([CLO-3], [FFI-21])
+
+error: could not compile due to 3 error(s)
+exit=1
+=== p15j_guarded_lock.em
+error[E1061]: module 'std.sync' has no item named `Lock`
+ --> p15j_guarded_lock.em:3:22
+  |
+3 | from std.sync import Lock
+  |                      ^^^^
+  |
+
+error[E1010]: cannot find type `Lock` in this scope
+ --> p15j_guarded_lock.em:6:11
+  |
+6 |     lock: Lock = Lock()
+  |           ^^^^
+  |
+
+error[E1010]: cannot find `Lock` in this scope
+ --> p15j_guarded_lock.em:6:18
+  |
+6 |     lock: Lock = Lock()
+  |                  ^^^^
+  |
+
+error[E7004]: the task captures `stats`, a `Stats`, which is not Send
+  --> p15j_guarded_lock.em:25:25
+   |
+25 |             scope.spawn(fn() => count_into(stats, t))
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: declare it `@sync class Stats`: its fields are all `Send` and `Sync` [THR-1]
+   = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error[E2020]: expected `str`, found `ref String`
+  --> p15j_guarded_lock.em:25:51
+   |
+16 | fn count_into(stats: Stats, t: str):
+   |                             ------ parameter `t` is declared `str` here
+...
+25 |             scope.spawn(fn() => count_into(stats, t))
+   |                                                   ^ this is `ref String`
+   |
+
+error: could not compile due to 5 error(s)
+exit=1
+=== p15k_guarded_today.em
+error[E2020]: expected `str`, found `ref String`
+  --> p15k_guarded_today.em:25:51
+   |
+16 | fn count_into(stats: Stats, t: str):
+   |                             ------ parameter `t` is declared `str` here
+...
+25 |             scope.spawn(fn() => count_into(stats, t))
+   |                                                   ^ this is `ref String`
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== a33_lock.em
+exit=0
+=== a33_lock_uaf2.em
+exit=0
+=== a33_lock_race.em
+exit=0
+=== a09_refcell_escape.em
+warning[L3011]: a `RefCell` guard for `*c` is live across this call
+ --> a09_refcell_escape.em:9:9
+  |
+8 |     with g = c.borrow_mut():
+  |              -------------- guard borrowed here
+9 |         g.clear()
+  |         ^^^^^^^^^ call happens here
+  |
+  = help: drop the guard before the call, or put the call in a block of its own
+  = note: a guard live across a call that re-enters the same cell panics at run time [CELL-7]
+
+exit=0
+=== a15_threads.em
+error[E3021]: `t` cannot be written while it is borrowed
+ --> a15_threads.em:7:9
+  |
+7 |         for t in texts:
+  |         ^^^^^^^^^^^^^^^ conflicting access here
+8 |             scope.spawn(fn(): total += t.split_whitespace().count())
+  |                         ------------------------------------------- borrow of `t` starts here
+  |             -------------------------------------------------------- borrow later used here
+  |
+  = help: end the borrow before this: `scope` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3022]: `total` is already mutably borrowed
+ --> a15_threads.em:8:25
+  |
+8 |             scope.spawn(fn(): total += t.split_whitespace().count())
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+  |                         ------------------------------------------- mutable borrow of `total` starts here
+  |
+  = help: use one mutable access rather than borrowing the same place twice; split the owner's mutable view with `split_at` when the intended operands are disjoint parts of it
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3060]: `t` does not live long enough
+ --> a15_threads.em:8:25
+  |
+8 |             scope.spawn(fn(): total += t.split_whitespace().count())
+  |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this borrow remains live after its source's scope ends
+  |             -------------------------------------------------------- `t` ends its scope here
+  |
+  = help: declare the borrowed value in an enclosing scope, or drop its borrower before leaving this scope
+  = note: borrowed storage must remain valid through every use, including a destructor [DRP-7]
+
+error[E7004]: the thread's function captures `names`, a `Names`, which is not Send
+  --> a15_threads.em:16:22
+   |
+16 |     h = thread.spawn(owned fn() => names.items.len())
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: declare it `@sync class Names`: its fields are all `Send` and `Sync` [THR-1]
+   = note: what a thread's function captures moves to that thread [THR-10]
+
+error: could not compile due to 4 error(s)
+exit=1
+=== a15_workaround4.em
+exit=0
+=== a19_globals.em
+error[E1010]: cannot find `FRAME` in this scope
+ --> a19_globals.em:7:5
+  |
+7 |     FRAME += 1
+  |     ^^^^^
+  |
+
+error[E3021]: cannot write through a shared reference
+ --> a19_globals.em:8:5
+  |
+8 |     LOG.push("tick".to_string())
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is `ref Array[String]`, which only reads
+  |
+  = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+  = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== a19_workaround.em
+exit=0
+=== a14_generators.em
+error[E2221]: a borrow of `buf`, a local of this generator, is held across this `yield`
+ --> a14_generators.em:7:15
+  |
+7 |         yield s.clone()
+  |               ^ the generator suspends here
+  |
+  = help: iterate the collection `owned` (`for x in owned xs:`), or by index; borrows of the generator's parameters may be held
+  = note: a suspended frame is a value that may move, which would leave the borrow pointing where the local was [CORO-6]
+
+error[E2229]: a borrow of a field of a class object is held across this `yield`
+  --> a14_generators.em:15:19
+   |
+15 |             yield entry.len()
+   |                   ^^^^^ the generator suspends here
+   |
+   = help: copy what is needed out of the field before the `yield`, or iterate by index
+   = note: a long-term access to an object's field may not span a suspension, when any other code may run [CORO-12]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== a20_ffi.em
+error[E5040]: expected `extern "C" fn(*mut void) -> void`, found a lambda that captures
+  --> a20_ffi.em:22:22
+   |
+22 |         register_raw(fn(ud: *mut void): game.score += 1, null[*mut void]())
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this lambda captures
+   |
+   = help: pass the captured values as arguments, or give C a function that captures nothing
+   = help: where C hands the function a user data pointer back, contract the parameter `callback(borrowed, user_data=p)`: it then takes this lambda
+   = note: a C function pointer has no room for captured state: `extern "C" fn` holds capture-free functions only ([CLO-3], [FFI-21])
+
+warning[L1001]: `token` is never read
+  --> a20_ffi.em:26:5
+   |
+26 |     token = register_cb(owned fn(): game.score += 1)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ declared here and never used
+   |
+   = help: remove it, or rename it `_token` if that is deliberate
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p15j_guarded_lock.em (second version: t: ref String)
+error[E1061]: module 'std.sync' has no item named `Lock`
+ --> p15j_guarded_lock.em:3:22
+  |
+3 | from std.sync import Lock
+  |                      ^^^^
+  |
+
+error[E1010]: cannot find type `Lock` in this scope
+ --> p15j_guarded_lock.em:6:11
+  |
+6 |     lock: Lock = Lock()
+  |           ^^^^
+  |
+
+error[E1010]: cannot find `Lock` in this scope
+ --> p15j_guarded_lock.em:6:18
+  |
+6 |     lock: Lock = Lock()
+  |                  ^^^^
+  |
+
+error[E7004]: the task captures `stats`, a `Stats`, which is not Send
+  --> p15j_guarded_lock.em:25:25
+   |
+25 |             scope.spawn(fn() => count_into(stats, t))
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: declare it `@sync class Stats`: its fields are all `Send` and `Sync` [THR-1]
+   = note: a scoped task runs on another thread while the block goes on [THR-11]
+
+error: could not compile due to 4 error(s)
+exit=1
+=== p15k_guarded_today.em (second version: t: ref String)
+exit=0
+=== p19c_module_assign.em
+error[E1030]: `main` is already declared in this module
+ --> p19c_module_assign.em:2:1
+  |
+2 | FRAME = 0
+  | ^^^^^^^^^
+  |
+
+error[E0100]: `global` is Python's; Ember declares no names as shared
+ --> p19c_module_assign.em:6:5
+  |
+6 |     global FRAME
+  |     ^^^^^^
+  |
+  = help: keep shared state in a `static` or a class field; a lambda or a local function captures a name of the function around it without a declaration [CLO-2]
+
+error[E1010]: cannot find `FRAME` in this scope
+ --> p19c_module_assign.em:7:5
+  |
+7 |     FRAME += 1
+  |     ^^^^^
+  |
+
+error[E1010]: cannot find `LOG` in this scope
+ --> p19c_module_assign.em:8:5
+  |
+8 |     LOG.push("tick".to_string())
+  |     ^^^
+  |
+
+error: could not compile due to 4 error(s)
+exit=0

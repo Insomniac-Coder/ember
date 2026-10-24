@@ -1,0 +1,12 @@
+
+round=1 exit= out=[count-push-plain ms=199.756 peak_kb=8616 checksum=479564864] err=[]
+round=1 exit= out=[count-push-masked ms=202.463 peak_kb=8588 checksum=479564864] err=[]
+round=2 exit= out=[count-push-masked ms=202.583 peak_kb=8600 checksum=479564864] err=[]
+round=2 exit= out=[count-push-plain ms=201.524 peak_kb=8592 checksum=479564864] err=[]
+round=3 exit= out=[count-push-plain ms=198.162 peak_kb=8592 checksum=479564864] err=[]
+round=3 exit= out=[count-push-masked ms=196.504 peak_kb=8612 checksum=479564864] err=[]
+round=4 exit= out=[count-push-masked ms=200.321 peak_kb=8616 checksum=479564864] err=[]
+round=4 exit= out=[count-push-plain ms=202.348 peak_kb=8624 checksum=479564864] err=[]
+round=5 exit= out=[count-push-plain ms=198.483 peak_kb=8572 checksum=479564864] err=[]
+round=5 exit= out=[count-push-masked ms=203.268 peak_kb=8576 checksum=479564864] err=[]
+DONE

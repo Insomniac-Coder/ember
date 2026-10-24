@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+reduce2-0-local-accumulator         5     47.693    43.959    54.477   1.00    69120  1.00 ['37278612']
+reduce2-3-through-pointer-packed    5     76.957    72.923    87.998   1.61    69120  1.00 ['37278612']
+reduce2-4-through-pointer-padded    5     51.054    47.141    52.752   1.07    69116  1.00 ['37278612']

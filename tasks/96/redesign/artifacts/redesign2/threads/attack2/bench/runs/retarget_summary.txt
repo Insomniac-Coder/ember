@@ -1,0 +1,13 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+retarget-0-plainC-e64-search        5     60.882    59.829    75.471   1.00    36396  1.00 ['34595762']
+retarget-1-atomic-in-task-e64-search    5    109.709   107.688   110.836   1.80    36396  1.00 ['34595762']
+retarget-2-deferred-to-join-e64-search    5     63.228    60.781    70.745   1.04    52600  1.45 ['34595762']
+retarget-3-netted-e64-search        5     63.668    61.208    85.991   1.05    36592  1.01 ['34595762']
+retarget-0-plainC-e64               5      8.982     7.595    14.459   0.15    36400  1.00 ['34078744']
+retarget-1-atomic-in-task-e64       5    217.763   215.264   228.568   3.58    36396  1.00 ['34078744']
+retarget-2-deferred-to-join-e64     5     55.965    49.329    56.650   0.92    52776  1.45 ['34078744']
+retarget-3-netted-e64               5     18.360    14.652    42.289   0.30    36596  1.01 ['34078744']
+retarget-0-plainC-e65536            5      9.079     6.948    10.800   0.15    38448  1.06 ['34360283120']
+retarget-1-atomic-in-task-e65536    5     28.891    28.502    39.863   0.47    38444  1.06 ['34360283120']
+retarget-2-deferred-to-join-e65536    5     63.604    60.730    68.693   1.04    54832  1.51 ['34360283120']
+retarget-3-netted-e65536            5     32.159    26.270    47.393   0.53    54824  1.51 ['34360283120']

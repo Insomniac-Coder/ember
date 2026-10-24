@@ -1,0 +1,16 @@
+== ecs_view_group_as_written.exe
+as written: view[Position]: 5000 loops, 27911 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 1
+as written: view[Position, Health]: 5000 loops, 12102 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 2
+exit=0
+== ecs_view_group_saved.exe
+saved: view[Position]: 5000 loops, 0 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 0
+saved: view[Position, Health]: 5000 loops, 0 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 0
+exit=0
+== ecs_view_group_spawn_only.exe
+as written: view[Position]: 5000 loops, 39602 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 1
+as written: view[Position, Health]: 5000 loops, 21158 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 1
+exit=0
+== ecs_view_group_spawn_only_saved.exe
+saved: view[Position]: 5000 loops, 0 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 0
+saved: view[Position, Health]: 5000 loops, 0 visits wrong (an entity visited twice, visited after joining, or skipped); first failing seed 0
+exit=0

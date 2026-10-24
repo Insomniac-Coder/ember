@@ -1,0 +1,2 @@
+round=1 exe=affinity_check.exe exit=0 out=[affinity-check ms=0 peak_kb=0 checksum=12598275 | process mask 0xC03C03, system mask 0xFFFFFF]
+DONE

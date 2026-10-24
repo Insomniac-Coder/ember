@@ -1,0 +1,30 @@
+=== a13_generic_cast.em
+exit=0
+=== a16_duck_method.em
+error[E2040]: `T` has no method `weight`; its bounds do not provide one
+  --> a16_duck_method.em:16:15
+   |
+16 |         w = x.weight()
+   |               ^^^^^^
+   |
+   = note: inside a generic body only the bounds' operations are available [TYP-17]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== a16_sum_from_zero.em
+error[E2020]: `+` cannot be applied to `i64` and `T`
+ --> a16_sum_from_zero.em:6:15
+  |
+6 |         acc = acc + x
+  |               ^^^^^^^
+  |
+
+error[E2020]: expected `T`, found `i64`
+ --> a16_sum_from_zero.em:7:12
+  |
+7 |     return acc
+  |            ^^^ this is `i64`
+  |
+
+error: could not compile due to 2 error(s)
+exit=1

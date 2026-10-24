@@ -1,0 +1,71 @@
+=== x05a_refmut_field_named.em
+error[E3062]: the returned view points into `self`, and `@borrows` names only what `self.buf` borrows
+exit=1
+=== x05b_refmut_field_elided.em
+error[E3025]: cannot call a method on `c` while `c.buf` is mutably borrowed
+exit=1
+=== x05c_dyn_box_local_view.em
+error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+exit=1
+=== x05d_swap_erased_slots.em
+exit=0
+=== x05e_swap_dyn_contents.em
+error[E3023]: cannot mutate borrowed parameter `a`
+error[E3023]: cannot mutate borrowed parameter `b`
+error[E2072]: `Box[dyn AnyPool]` has no method named `get`
+error[E2072]: `Box[dyn AnyPool]` has no method named `get`
+exit=1
+=== x06a_class_alias_store_shorter.em
+error[E3063]: `str` is a view, so it may not be passed to `reset`, which stores it where only a `static` view may go
+error[E3063]: `Lexer` is a view, so it may not be stored in a class object unless it is `static`
+exit=1
+=== x06b_upcast_erases_limit.em
+error[E3063]: `Lexer` is a view, so it may not be stored in a class object unless it is `static`
+exit=1
+=== x06c_weak_outlives_limit.em
+warning[L3001]: potential reference cycle: Parser.me -> Parser
+error[E3063]: `Lexer` is a view, so it may not be stored in a class object unless it is `static`
+exit=1
+=== x06d_callee_stores_into_list.em
+error[E3063]: `str` is a view, so it may not be passed to `put`, which stores it where only a `static` view may go
+exit=1
+=== x07a_view_out_then_move.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+exit=1
+=== x07b_alias_handles_write_source.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+exit=1
+=== x07c_mut_call_repoints.em
+error[E3063]: a view of `self` is stored in `self`, which the caller owns, so it would outlive `self`
+error[E3021]: `t.buf` cannot be written while it is borrowed
+error[E3021]: `t.cur` cannot be read while it is mutably borrowed
+exit=1
+=== x22a_mut_call_on_copy.em
+error[E2140]: a `mut self` method needs a variable to write through
+exit=1
+=== x23a_alias_then_overwrite.em
+error[E3013]: cannot move out of a reference
+error[E3040]: `old` is borrowed after it has been moved out of
+exit=1
+=== x23b_overwrite_on_one_path.em
+error[E3013]: cannot move out of a reference
+exit=1
+=== x23c_drop_type_overwrite.em
+error[E3013]: cannot move out of a reference
+exit=1
+=== rust r05a_cursor.rs
+error: lifetime may not live long enough
+error: aborting due to 1 previous error
+=== rust r05c_dyn_any_local_view.rs
+error[E0597]: `text` does not live long enough
+error: aborting due to 1 previous error
+=== rust r06a_invariance.rs
+error[E0597]: `short` does not live long enough
+error: aborting due to 1 previous error
+=== rust r06b_upcast_dyn.rs
+error[E0597]: `text` does not live long enough
+error: aborting due to 1 previous error
+=== rust r06c_weak.rs
+error[E0597]: `text` does not live long enough
+error: aborting due to 1 previous error

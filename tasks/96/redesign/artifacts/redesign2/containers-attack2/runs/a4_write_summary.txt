@@ -1,0 +1,3 @@
+program                      runs  median_ms     min_ms     max_ms  median_kb  checksum
+a4-write-plain                  5    226.098    219.747    229.291      20900  159635288
+a4-write-ember-sel              5    221.462    217.659    225.030      20880  159635288

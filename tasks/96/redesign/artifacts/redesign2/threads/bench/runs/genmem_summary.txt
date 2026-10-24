@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+gen-mem-0-plainC                    5      0.461     0.459     0.474   0.57     3452  0.72 ['1094920']
+gen-mem-1-frame                     5      0.805     0.794     0.824   1.00     4772  1.00 ['1094920']
+gen-mem-3-fiber                     5     30.246    30.118    30.817  37.57    58812 12.32 ['1094920']

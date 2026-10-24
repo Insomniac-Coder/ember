@@ -1,0 +1,13 @@
+store_then_use: 5
+alias_then_push: [1, 2, 3]
+rows: [[1]]
+rebind: [1]
+name_keeps_old_after_call: bow
+append_same_n_times: [7, 7, 7]
+cached_property: 2.0 computed 1 time(s)
+cached_property after verts changed: 2.0
+get_default: {'a': 2, 'b': 1} defaultdict: {'a': 2, 'b': 1}
+missing_key_plus_equals: KeyError 'a'
+transfer: ['k']
+same_object_grows_while_iterating: stopped by hand after 5 steps; len 6
+read_before_set: AttributeError 'Game' object has no attribute 'renderer'

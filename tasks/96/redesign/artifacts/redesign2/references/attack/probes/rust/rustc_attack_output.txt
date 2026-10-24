@@ -1,0 +1,95 @@
+rustc 1.98.1 (48a229cea 2026-09-01)
+=== r05a_cursor.rs
+error: lifetime may not live long enough
+ --> r05a_cursor.rs:4:44
+  |
+3 | impl<'a> Cursor<'a> {
+  |      -- lifetime `'a` defined here
+4 |     pub fn cur(&mut self) -> &'a mut i32 { &mut self.buf[0] }
+  |                -                           ^^^^^^^^^^^^^^^^ method was supposed to return data with lifetime `'a` but it is returning data with lifetime `'1`
+  |                |
+  |                let's call the lifetime of this reference `'1`
+
+error: aborting due to 1 previous error
+
+exit=1
+=== r05c_dyn_any_local_view.rs
+error[E0597]: `text` does not live long enough
+ --> r05c_dyn_any_local_view.rs:6:44
+  |
+5 |     let text = String::from("short lived");
+  |         ---- binding `text` declared here
+6 |     keep.push(Box::new(Pool { dense: vec![&text[0..5]] }));
+  |               -----------------------------^^^^----------
+  |               |                            |
+  |               |                            borrowed value does not live long enough
+  |               coercion requires that `text` is borrowed for `'static`
+7 | }
+  | - `text` dropped here while still borrowed
+  |
+  = note: due to object lifetime defaults, `Box<dyn Any>` actually means `Box<(dyn Any + 'static)>`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0597`.
+exit=1
+=== r06a_invariance.rs
+error[E0597]: `short` does not live long enough
+  --> r06a_invariance.rs:9:14
+   |
+ 7 | fn make_and_reset(p: &Rc<RefCell<Parser<'_>>>) {
+   |                   - has type `&Rc<RefCell<Parser<'1>>>`
+ 8 |     let short = String::from("short lived");
+   |         ----- binding `short` declared here
+ 9 |     reset(p, &short);
+   |     ---------^^^^^^-
+   |     |        |
+   |     |        borrowed value does not live long enough
+   |     argument requires that `short` is borrowed for `'1`
+10 | }
+   | - `short` dropped here while still borrowed
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0597`.
+exit=1
+=== r06b_upcast_dyn.rs
+error[E0597]: `text` does not live long enough
+  --> r06b_upcast_dyn.rs:10:57
+   |
+ 9 |     let text = String::from("let x = 1");
+   |         ---- binding `text` declared here
+10 |     reg.items.push(Rc::new(Parser { lexer: Lexer { src: &text } }));
+   |                    -------------------------------------^^^^^-----
+   |                    |                                    |
+   |                    |                                    borrowed value does not live long enough
+   |                    coercion requires that `text` is borrowed for `'static`
+11 | }
+   | - `text` dropped here while still borrowed
+   |
+   = note: due to object lifetime defaults, `Rc<dyn Named>` actually means `Rc<(dyn Named + 'static)>`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0597`.
+exit=1
+=== r06c_weak.rs
+error[E0597]: `text` does not live long enough
+  --> r06c_weak.rs:7:50
+   |
+ 5 | pub fn add_parser<'k>(seen: &mut Vec<Weak<Parser<'k>>>) {
+   |                   -- lifetime `'k` defined here
+ 6 |     let text = String::from("let x = 1");
+   |         ---- binding `text` declared here
+ 7 |     let p = Rc::new(Parser { lexer: Lexer { src: &text } });
+   |                                                  ^^^^^ borrowed value does not live long enough
+ 8 |     seen.push(Rc::downgrade(&p));
+   |     ---------------------------- argument requires that `text` is borrowed for `'k`
+ 9 |     std::mem::forget(p.clone());
+10 | }
+   | - `text` dropped here while still borrowed
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0597`.
+exit=1

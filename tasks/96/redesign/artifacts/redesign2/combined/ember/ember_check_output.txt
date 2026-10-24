@@ -1,0 +1,196 @@
+ember 0.1.0
+language: 0.9.10
+backend: c
+===== ember check w1_main.em
+error[E2040]: `Position` does not implement `std.ecs.Component`, which `T` requires
+  --> w1_main.em:17:9
+   |
+17 |         reg.add(e, Position(x=(i % 1000) as f32, y=(i // 1000) as f32))
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2040]: `Velocity` does not implement `std.ecs.Component`, which `T` requires
+  --> w1_main.em:19:13
+   |
+19 |             reg.add(e, Velocity(dx=(i % 7) as f32 * 0.5, dy=(i % 5) as f32 * 0.25))
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2072]: `std.ecs.World` has no method named `group`
+  --> w1_main.em:21:32
+   |
+21 |         for e, pos, vel in reg.group[(Position, Velocity)]():
+   |                                ^^^^^
+   |
+
+error: could not compile due to 3 error(s)
+===== ember check w2.em
+error[E1030]: `main` is already declared in this module
+ --> w2.em:3:1
+  |
+3 | state: u64 = 42
+  | ^^^^^^^^^^^^^^^
+  |
+
+error[E0100]: `global` is Python's; Ember declares no names as shared
+ --> w2.em:6:5
+  |
+6 |     global state
+  |     ^^^^^^
+  |
+  = help: keep shared state in a `static` or a class field; a lambda or a local function captures a name of the function around it without a declaration [CLO-2]
+
+error[E1010]: cannot find `state` in this scope
+ --> w2.em:7:13
+  |
+7 |     state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+  |             ^^^^^
+  |
+
+error[E2020]: `<error>` cannot be cast to `i64` with `as`
+ --> w2.em:8:12
+  |
+8 |     return (state >> 33) as int
+  |            ^^^^^^^^^^^^^^^^^^^^
+  |
+
+error[E1010]: cannot find `backlink` in this scope
+  --> w2.em:12:28
+   |
+12 |     parent: Option[Node] = backlink(children)
+   |                            ^^^^^^^^
+   |
+
+error[E2020]: `Option[Node]` has no field `parent`
+  --> w2.em:28:21
+   |
+28 |                 m = m.parent
+   |                     ^^^^^^^^
+   |
+
+error: could not compile due to 6 error(s)
+===== ember check w3.em
+error[E1030]: `main` is already declared in this module
+ --> w3.em:3:1
+  |
+3 | state: u64 = 7
+  | ^^^^^^^^^^^^^^
+  |
+
+error[E0100]: `global` is Python's; Ember declares no names as shared
+ --> w3.em:6:5
+  |
+6 |     global state
+  |     ^^^^^^
+  |
+  = help: keep shared state in a `static` or a class field; a lambda or a local function captures a name of the function around it without a declaration [CLO-2]
+
+error[E1010]: cannot find `state` in this scope
+ --> w3.em:7:13
+  |
+7 |     state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+  |             ^^^^^
+  |
+
+error[E2020]: `<error>` cannot be cast to `i64` with `as`
+ --> w3.em:8:12
+  |
+8 |     return (state >> 33) as int
+  |            ^^^^^^^^^^^^^^^^^^^^
+  |
+
+error[E1010]: cannot find type `weak` in this scope
+  --> w3.em:15:13
+   |
+15 |     target: weak GameObject = None
+   |             ^^^^
+   |
+
+error[E0100]: expected the end of the line
+  --> w3.em:15:18
+   |
+15 |     target: weak GameObject = None
+   |                  ^^^^^^^^^^ found `GameObject`
+   |
+
+error[E2060]: cannot tell which `Option` this `None` is; annotate the type
+  --> w3.em:23:21
+   |
+23 |         if t is not None:
+   |                     ^^^^
+   |
+   = help: `None` is a value of an `Option` only: declare the place `Option[T]` for the `T` it holds
+
+error[E2060]: cannot tell which `Option` this `None` is; annotate the type
+  --> w3.em:34:21
+   |
+34 |         if t is not None and (t.x - self.x).abs() + (t.y - self.y).abs() < 300:
+   |                     ^^^^
+   |
+   = help: `None` is a value of an `Option` only: declare the place `Option[T]` for the `T` it holds
+
+error[E2020]: field `target` of `Ship` has no value
+  --> w3.em:49:16
+   |
+49 |         return Ship(id=id, x=x, y=y, health=health)
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2020]: field `target` of `Rock` has no value
+  --> w3.em:51:16
+   |
+51 |         return Rock(id=id, x=x, y=y, health=health)
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2020]: field `target` of `Turret` has no value
+  --> w3.em:52:12
+   |
+52 |     return Turret(id=id, x=x, y=y, health=health)
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2020]: expected an integer, found `GameObject`
+  --> w3.em:69:32
+   |
+69 |                 objects.remove(o)
+   |                                ^
+   |
+
+error: could not compile due to 12 error(s)
+===== ember check w4.em
+error[E2020]: expected `fn(Dispatcher, i64, i64) -> i64`, found `Callable0`
+ --> w4.em:8:28
+  |
+8 |         self.handlers.push(h)
+  |                            ^ this is `Callable0`
+  |
+
+error[E3012]: cannot move out of a class field
+  --> w4.em:15:13
+   |
+15 |         h = self.handlers[self.current]
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it in the object); leave a value in its place with `mem.take` or `mem.replace`; or clone it
+   = note: the object keeps the field, and every handle to it can still reach it [EXP-6]
+
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn(Dispatcher, i64, i64) -> i64`
+  --> w4.em:30:16
+   |
+30 |         return handler
+   |                ^^^^^^^ stored here
+   |
+   = help: write it `owned fn`, which moves or copies each capture into the value
+   = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error[E3021]: cannot write through a shared reference
+  --> w4.em:38:14
+   |
+38 |         s += h(d, 0, -1)
+   |              ^^^^^^^^^^^ this is `ref fn(Dispatcher, i64, i64) -> i64`, which only reads
+   |
+   = help: a callable value may change what it captured, so it is called from a mutable place [CLO-2]: borrow it as `ref mut`, and iterate a collection of them with `.iter_mut()` (`for f in fs.iter_mut():`)
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 4 error(s)

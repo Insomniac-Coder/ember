@@ -1,0 +1,12 @@
+
+round=1 exe=graph_plain.exe out=[graph-plain ms=70.911 peak_kb=32680 checksum=383684462149]
+round=1 exe=graph_ember.exe out=[graph-ember ms=69.934 peak_kb=34100 checksum=383684462149]
+round=2 exe=graph_ember.exe out=[graph-ember ms=71.653 peak_kb=34104 checksum=383684462149]
+round=2 exe=graph_plain.exe out=[graph-plain ms=84.418 peak_kb=32680 checksum=383684462149]
+round=3 exe=graph_plain.exe out=[graph-plain ms=74.846 peak_kb=32676 checksum=383684462149]
+round=3 exe=graph_ember.exe out=[graph-ember ms=77.484 peak_kb=34100 checksum=383684462149]
+round=4 exe=graph_ember.exe out=[graph-ember ms=72.506 peak_kb=34100 checksum=383684462149]
+round=4 exe=graph_plain.exe out=[graph-plain ms=76.484 peak_kb=32676 checksum=383684462149]
+round=5 exe=graph_plain.exe out=[graph-plain ms=72.266 peak_kb=32676 checksum=383684462149]
+round=5 exe=graph_ember.exe out=[graph-ember ms=74.759 peak_kb=34104 checksum=383684462149]
+DONE

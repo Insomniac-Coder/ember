@@ -1,0 +1,12 @@
+claim3-5: decrements lost = 0, count increments lost = 0 (of 4194304), claims left set = 0
+claim3-5-dups-retains-atomic-drop ms=127.646 peak_kb=45144 checksum=0
+claim3-6: decrements lost = 0, count increments lost = 1387 (of 4194304), claims left set = 0
+claim3-6-dups-retains-plain-drop ms=130.594 peak_kb=45124 checksum=1387
+claim3-5: decrements lost = 0, count increments lost = 0 (of 4194304), claims left set = 0
+claim3-5-dups-retains-atomic-drop ms=134.846 peak_kb=45140 checksum=0
+claim3-6: decrements lost = 0, count increments lost = 1136 (of 4194304), claims left set = 0
+claim3-6-dups-retains-plain-drop ms=125.936 peak_kb=45120 checksum=1136
+claim3-5: decrements lost = 0, count increments lost = 0 (of 4194304), claims left set = 0
+claim3-5-dups-retains-atomic-drop ms=142.078 peak_kb=45116 checksum=0
+claim3-6: decrements lost = 0, count increments lost = 1272 (of 4194304), claims left set = 0
+claim3-6-dups-retains-plain-drop ms=122.683 peak_kb=45132 checksum=1272

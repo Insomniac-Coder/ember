@@ -1,0 +1,10 @@
+assign_same_list: ['a', 'a']
+swap_idiom: ['c', 'b', 'a']
+weak_holder_dies_first: 'no error'
+narrowed_parent_changes: 'AttributeError'
+boxed_list_cleared_in_loop: 2
+closure_replaced_while_running: ['first']
+python_add_writes_both_ends: ('p', ['c'])
+detach_all_loop: [None, None]
+early_exit_isinstance: 'folder.png'
+all Python checks passed

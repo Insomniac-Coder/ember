@@ -1,0 +1,16 @@
+=== rustc --edition 2021 --crate-type lib --emit=metadata x_extend_own.rs
+error[E0502]: cannot borrow `*v` as mutable because it is also borrowed as immutable
+ --> x_extend_own.rs:3:5
+  |
+3 |     v.extend_from_slice(&v[0..2]);
+  |     ^^-----------------^^-^^^^^^^
+  |     | |                  |
+  |     | |                  immutable borrow occurs here
+  |     | immutable borrow later used by call
+  |     mutable borrow occurs here
+
+error: aborting due to 1 previous error
+
+exit=1
+=== rustc --edition 2021 --crate-type lib --emit=metadata x_rename_both.rs
+exit=0

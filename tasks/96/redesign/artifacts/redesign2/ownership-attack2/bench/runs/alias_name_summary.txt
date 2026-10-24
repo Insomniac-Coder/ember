@@ -1,0 +1,6 @@
+﻿program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+alias-name-c-defer-free             5    208.897   205.856   210.832   1.00     3656  1.00 ['27090862489880799']
+alias-name-compare-reg              5    208.017   206.476   209.627   1.00     3656  1.00 ['27090862489880799']
+alias-name-no-compare               5    239.538   238.260   246.697   1.15     3656  1.00 ['27090862892341538']
+alias-name-compare                  5    319.963   316.658   320.235   1.53     3656  1.00 ['27090862489880799']
+alias-name-copy-first               5    267.446   266.232   273.552   1.28     3656  1.00 ['27090862489880799']

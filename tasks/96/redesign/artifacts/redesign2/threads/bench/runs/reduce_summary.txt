@@ -1,0 +1,7 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+reduce-0-plainC-and-reduction       5     43.548    39.683    48.120   1.00    69112  1.00 ['37278612']
+reduce-1-atomic-per-word            5    444.946   428.826   457.079  10.22    69116  1.00 ['37278612']
+reduce-2-lock-per-word              5   1453.022  1387.704  1828.732  33.37    69112  1.00 ['37278612']
+reduce-rust-joinsum                 5     46.888    45.823    48.539   1.08    69564  1.01 ['37278612']
+reduce-rust-atomic                  5    450.761   420.232   454.649  10.35    69580  1.01 ['37278612']
+reduce-rust-mutex                   5   2479.383  2235.324  2535.922  56.93    69576  1.01 ['37278612']

@@ -1,0 +1,11 @@
+A4 append visited: [1, 2, 3]
+A4 remove-current leaves: [E0, E5]
+A4 game loop visited: ['E0', 'E3', 'E5'] left: [E0, E3, E5]
+A4 via method left: [E0, E4] score: 10
+extend self: [1, 2, 1, 2]
+A2 after append: [E50, E50]
+A2 removed but still usable: E50 list: [E50]
+A3 same body twice: 1.0
+A25 returned words: ['a', 'b', 'c']
+ECS dict walk: dictionary keys changed during iteration
+ECS walk a copy: [0, 6, 7]

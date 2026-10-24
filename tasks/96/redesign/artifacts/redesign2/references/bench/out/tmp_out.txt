@@ -1,0 +1,1 @@
+state-rust-inplace ms=487.381 peak_kb=114024 checksum=8398665211

@@ -1,0 +1,9 @@
+== -DDEL_ANSWER
+seed 3: pool broken: ents[21]=262 but sparse says 262
+exit=1
+== -DDEL_ANSWER -DNO_POOL_CHECK
+del: entity 262 has no valid slot (sparse=262, n=156): a correct program panics
+exit=1
+== fixed
+cursor-check2 (del fixed) ok
+exit=0

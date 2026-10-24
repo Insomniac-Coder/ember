@@ -1,0 +1,17 @@
+combined/w1.exe exit=0: combined-w1 ms=101.966 peak_kb=39156 checksum=2111831520
+combined/w2.exe exit=0: combined-w2 ms=1149.345 peak_kb=76724 checksum=647034814
+combined/w3.exe exit=0: combined-w3 ms=424.628 peak_kb=9468 checksum=9288233970
+combined/w3_registration.exe exit=0: combined-w3-registration ms=398.393 peak_kb=11960 checksum=9288233970
+combined/w4.exe exit=0: combined-w4 ms=27.489 peak_kb=4208 checksum=34946993000
+combined/w1_cursor_check.exe exit=0: cursor-check ok
+combined/w1_cursor_check_norule.exe exit=101: panic: check: visited twice, or an entity that joined during the loop was visited
+combined/w2_link_check.exe exit=0: link check ok | combined-w2 ms=1076.700 peak_kb=76684 checksum=647034814
+combined/w3_poison.exe exit=0: poison check ok: 20 blocks freed, none read after free; side records in use at the end 53499, at most 53499 | combined-w3 ms=425.279 peak_kb=9472 checksum=9288233970
+combined/w4_poison.exe exit=0: poison check ok: no box used after it was freed | combined-w4 ms=28.651 peak_kb=4284 checksum=34946993000
+bin/plain_w1_group.exe exit=0: plain-w1-group ms=112.480 peak_kb=39156 checksum=2111831520
+out/w2_plain_slab_array24.exe exit=0: w2-plain-slab-array24 ms=996.347 peak_kb=76684 checksum=647034814
+bin/plain_w3.exe exit=0: plain-w3 ms=455.063 peak_kb=9752 checksum=9288233970
+out/w4_plain_same_slab.exe exit=0: w4-plain-same-slab ms=64.588 peak_kb=4076 checksum=34946993000
+first-run/w2.exe exit=0: combined-w2 ms=1000.140 peak_kb=77056 checksum=647034814
+first-run/w3.exe exit=0: combined-w3 ms=417.620 peak_kb=9428 checksum=9288233970
+first-run/w3_registration.exe exit=0: combined-w3-registration ms=392.262 peak_kb=14272 checksum=9288233970

@@ -1,0 +1,9 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+globals-0-plainC-and-var            5    192.219   189.551   196.530   1.00     3508  1.00 ['4999974450032640']
+globals-4-plain-base-pointer        5    105.666   103.480   108.632   0.55     3512  1.00 ['4999974450032640']
+globals-5-struct-global             5    194.921   190.546   195.671   1.01     3512  1.00 ['4999974450032640']
+globals-1-atomic-mutex-1thread      5    595.569   592.894   607.797   3.10     3508  1.00 ['4999974450032640']
+globals-2-atomic-mutex-threads      5   1374.172  1369.914  1377.996   7.15     3508  1.00 ['4999974450032640']
+globals-3-threadlocal               5    110.600   109.953   118.377   0.58     3512  1.00 ['4999974450032640']
+globals-rust-threadlocal            5    200.234   192.741   204.249   1.04     3852  1.10 ['4999974450032640']
+globals-rust-atomic-mutex           5   1430.346  1427.715  1447.047   7.44     3844  1.10 ['4999974450032640']

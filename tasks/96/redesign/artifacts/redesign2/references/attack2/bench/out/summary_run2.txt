@@ -1,0 +1,10 @@
+get_plain              n=5 work_med=   91.100 spread= 17.9% total_med=   97.010 peak_kb_med=  15784 checksums=1 16779647745309
+get_typed              n=5 work_med=  104.187 spread=  6.5% total_med=  110.040 peak_kb_med=  15784 checksums=1 16779647745309
+get_cast               n=5 work_med=  109.429 spread=  1.4% total_med=  115.112 peak_kb_med=  15784 checksums=1 16779647745309
+get2_table             n=5 work_med=   95.788 spread=  7.9% total_med=  101.511 peak_kb_med=  15784 checksums=1 16779647745309
+get2_table_slotvar     n=5 work_med=  116.684 spread=  4.9% total_med=  123.023 peak_kb_med=  15788 checksums=1 16779647745309
+get2_cast              n=5 work_med=  111.370 spread=  7.1% total_med=  117.226 peak_kb_med=  15780 checksums=1 16779647745309
+get_rust               n=5 work_med=  143.078 spread= 10.9% total_med=  149.117 peak_kb_med=  16160 checksums=1 16779647745309
+keep2_half_len         n=5 work_med=    4.600 spread=  7.4% total_med=    4.600 peak_kb_med=  18784 checksums=1 3244209
+keep2_half_cap         n=5 work_med=    1.171 spread=  4.3% total_med=    1.171 peak_kb_med=   3664 checksums=1 3244209
+keep2_copy             n=5 work_med=    1.154 spread=  6.8% total_med=    1.154 peak_kb_med=   3664 checksums=1 3244209

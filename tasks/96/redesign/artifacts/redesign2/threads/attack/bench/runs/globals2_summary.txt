@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+globals2-4-plain-base-pointer       5    103.376   102.590   109.924   1.00     3512  1.00 ['4999974450032640']
+globals2-6-lazy-accessor            5    153.920   151.944   168.808   1.49     3508  1.00 ['4999974450032640']
+globals2-0-plain-eager              5    194.165   193.485   195.607   1.88     3512  1.00 ['4999974450032640']

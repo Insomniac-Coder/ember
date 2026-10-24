@@ -1,0 +1,345 @@
+ember 0.1.0
+language: 0.9.10
+backend: c
+C compiler: msvc (C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\cl.exe)
+linker: C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\link.exe
+profile: none
+=== x05a_refmut_field_named.em
+error[E3062]: the returned view points into `self`, and `@borrows` names only what `self.buf` borrows
+ --> x05a_refmut_field_named.em:9:33
+  |
+8 |     fn cur(mut self) -> ref mut int:
+  |            -------- `self` is the parameter it points into
+9 |         return ref mut self.buf[0]
+  |                                 ^ returned here
+  |
+  = help: return a view of what `self.buf` borrows, or name `self` in `@borrows`; a view read through a `ref mut` field borrows `self` as well
+  = note: `@borrows` is what ties a return to a parameter elision would not (LT-1a)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x05b_refmut_field_elided.em
+error[E3025]: cannot call a method on `c` while `c.buf` is mutably borrowed
+  --> x05b_refmut_field_elided.em:13:9
+   |
+12 |     a = c.cur()
+   |         ------- mutable borrow of `c.buf` starts here
+13 |     b = c.cur()
+   |         ^^^^^^^ conflicting access here
+14 |     a += 1
+   |          - borrow later used here
+   |
+   = help: inline the field access, take the two fields as separate parameters, or split the method
+   = note: a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x05c_dyn_box_local_view.em
+error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+  --> x05c_dyn_box_local_view.em:16:35
+   |
+16 |     keep.push(Box(Pool[str](dense=[text[0..5]])))
+   |                                   ^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x05d_swap_erased_slots.em
+error[E1061]: module 'std' has no item named `mem`
+ --> x05d_swap_erased_slots.em:5:17
+  |
+5 | from std import mem
+  |                 ^^^
+  |
+
+error[E3025]: cannot call a method on `pools` while `pools` is mutably borrowed
+  --> x05d_swap_erased_slots.em:28:24
+   |
+28 |     mem.swap(pools[1], pools[2])
+   |                        ^^^^^^^^ conflicting access here
+   |              -------- mutable borrow of `pools` starts here
+   |
+   = help: inline the field access, take the two fields as separate parameters, or split the method
+   = note: a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)
+
+error[E0100]: expected a declaration
+  --> C:\Users\ism19\Code\ember\std\src\lib.em:31:1
+   |
+31 | pass
+   | ^^^^ found `pass`
+   |
+   = help: items are `fn`, `struct`, `class`, `enum`, `interface`, `extend`, `const`, `static` or `extern`
+
+error: could not compile due to 3 error(s)
+exit=1
+=== x06a_class_alias_store_shorter.em
+error[E3063]: `str` is a view, so it may not be passed to `reset`, which stores it where only a `static` view may go
+  --> x06a_class_alias_store_shorter.em:15:14
+   |
+15 |     reset(p, short)
+   |              ^^^^^ stored by this call
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `short`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error[E3063]: `Lexer` is a view, so it may not be stored in a class object unless it is `static`
+  --> x06a_class_alias_store_shorter.em:19:22
+   |
+19 |     p = Parser(lexer=Lexer(src=text))
+   |                      ^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== x06b_upcast_erases_limit.em
+error[E3063]: `Lexer` is a view, so it may not be stored in a class object unless it is `static`
+  --> x06b_upcast_erases_limit.em:22:33
+   |
+22 |     reg.items.push(Parser(lexer=Lexer(src=text)))
+   |                                 ^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x06c_weak_outlives_limit.em
+warning[L3001]: potential reference cycle: Parser.me -> Parser
+ --> x06c_weak_outlives_limit.em:8:5
+  |
+8 |     me: Option[Parser] = None
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `Parser.me` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+error[E3063]: `Lexer` is a view, so it may not be stored in a class object unless it is `static`
+  --> x06c_weak_outlives_limit.em:15:22
+   |
+15 |     p = Parser(lexer=Lexer(src=text))
+   |                      ^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x07a_view_out_then_move.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> x07a_view_out_then_move.em:9:38
+  |
+9 |     return Document(text=text, words=text.split_whitespace().collect())
+  |                                      ^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x07b_alias_handles_write_source.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> x07b_alias_handles_write_source.em:9:38
+  |
+9 |     return Document(text=text, words=text.split_whitespace().collect())
+  |                                      ^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+  --> x07b_alias_handles_write_source.em:19:20
+   |
+19 |     h2.doc.words = h2.doc.text.split_whitespace().collect()
+   |                    ^^^^^^^^^^^ stored by this call
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `h2`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== x07c_mut_call_repoints.em
+error[E3063]: a view of `self` is stored in `self`, which the caller owns, so it would outlive `self`
+  --> x07c_mut_call_repoints.em:10:20
+   |
+10 |         self.cur = self.buf[0..5]
+   |                    ^^^^^^^^^^^^^^ stored here
+   |
+   = help: return the view instead, or store an owned copy (`String` for `str`)
+   = note: a `mut` parameter is the caller's place: a `str` stored in it must outlive the call, and `self` ends with it (TYP-15, FN-1)
+
+error[E3021]: `t.buf` cannot be written while it is borrowed
+  --> x07c_mut_call_repoints.em:16:13
+   |
+15 |     t.refill()
+   |     ---------- mutable borrow of `t.buf` starts here
+16 |     t.buf = "x"
+   |             ^^^ conflicting access here
+17 |     println(t.cur)
+   |     -------------- borrow later used here
+   |
+   = help: end the borrow before this: `t` is what keeps it alive, so shorten its last use or put it in a block of its own
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3021]: `t.cur` cannot be read while it is mutably borrowed
+  --> x07c_mut_call_repoints.em:17:13
+   |
+15 |     t.refill()
+   |     ---------- mutable borrow of `t.cur` starts here
+16 |     t.buf = "x"
+17 |     println(t.cur)
+   |             ^^^^^ conflicting access here
+   |
+   = help: bind the borrow of `t.cur` to a local and finish with it before this line, or copy the value out first
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 3 error(s)
+exit=1
+=== x22a_mut_call_on_copy.em
+error[E2140]: a `mut self` method needs a variable to write through
+  --> x22a_mut_call_on_copy.em:20:8
+   |
+20 |     if reg.get(0).heal(100):
+   |        ^^^^^^^^^^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x23a_alias_then_overwrite.em
+error[E3013]: cannot move out of a reference
+ --> x23a_alias_then_overwrite.em:9:11
+  |
+9 |     old = p.name
+  |           ^^^^^^ moved out here
+  |
+  = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+  = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error[E3040]: `old` is borrowed after it has been moved out of
+  --> x23a_alias_then_overwrite.em:13:13
+   |
+10 |     alias = old
+   |             --- moved here
+...
+13 |     println(old)
+   |             ^^^ borrowed here after the move
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+   = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== x23b_overwrite_on_one_path.em
+error[E3013]: cannot move out of a reference
+ --> x23b_overwrite_on_one_path.em:9:11
+  |
+9 |     old = p.name
+  |           ^^^^^^ moved out here
+  |
+  = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+  = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x23c_drop_type_overwrite.em
+error[E3013]: cannot move out of a reference
+  --> x23c_drop_type_overwrite.em:12:11
+   |
+12 |     old = g.name
+   |           ^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1
+=== d01_from_std_import.em
+error[E1061]: module 'std' has no item named `mem`
+ --> d01_from_std_import.em:1:17
+  |
+1 | from std import mem
+  |                 ^^^
+  |
+
+error[E0100]: expected a declaration
+  --> C:\Users\ism19\Code\ember\std\src\lib.em:31:1
+   |
+31 | pass
+   | ^^^^ found `pass`
+   |
+   = help: items are `fn`, `struct`, `class`, `enum`, `interface`, `extend`, `const`, `static` or `extern`
+
+error: could not compile due to 2 error(s)
+exit=1
+=== x05d_swap_erased_slots.em (after fixing the import; the first entry above used a wrong import)
+exit=0
+=== d02_swap_two_elements.em
+error[E3025]: cannot call a method on `pools` while `pools` is mutably borrowed
+  --> d02_swap_two_elements.em:10:24
+   |
+10 |     mem.swap(pools[1], pools[2])
+   |                        ^^^^^^^^ conflicting access here
+   |              -------- mutable borrow of `pools` starts here
+   |
+   = help: inline the field access, take the two fields as separate parameters, or split the method
+   = note: a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x05e_swap_dyn_contents.em
+error[E3023]: cannot mutate borrowed parameter `a`
+  --> x05e_swap_dyn_contents.em:19:14
+   |
+18 | fn swap_contents(a: ref mut dyn AnyPool, b: ref mut dyn AnyPool):
+   |                  ---------------------- `a` is borrowed here
+19 |     mem.swap(a, b)
+   |              ^ this write needs mutable access
+   |
+   = help: bind the new value to a new local (`new_a = …`) and use that from here on; declare the parameter `mut a: ref mut dyn AnyPool` only if the caller is to see the new value, as a single owner passing it `mut`
+   = note: Python rebinds a parameter's name; an Ember parameter is the caller's `ref mut dyn AnyPool`, borrowed [FN-1]
+
+error[E3023]: cannot mutate borrowed parameter `b`
+  --> x05e_swap_dyn_contents.em:19:17
+   |
+18 | fn swap_contents(a: ref mut dyn AnyPool, b: ref mut dyn AnyPool):
+   |                                          ---------------------- `b` is borrowed here
+19 |     mem.swap(a, b)
+   |                 ^ this write needs mutable access
+   |
+   = help: bind the new value to a new local (`new_b = …`) and use that from here on; declare the parameter `mut b: ref mut dyn AnyPool` only if the caller is to see the new value, as a single owner passing it `mut`
+   = note: Python rebinds a parameter's name; an Ember parameter is the caller's `ref mut dyn AnyPool`, borrowed [FN-1]
+
+error[E2072]: `Box[dyn AnyPool]` has no method named `get`
+  --> x05e_swap_dyn_contents.em:24:29
+   |
+24 |     swap_contents(ref mut x.get(), ref mut y.get())
+   |                             ^^^
+   |
+
+error[E2072]: `Box[dyn AnyPool]` has no method named `get`
+  --> x05e_swap_dyn_contents.em:24:46
+   |
+24 |     swap_contents(ref mut x.get(), ref mut y.get())
+   |                                              ^^^
+   |
+
+error: could not compile due to 4 error(s)
+exit=1
+=== d03_box_get.em
+exit=0
+=== x06d_callee_stores_into_list.em
+error[E3063]: `str` is a view, so it may not be passed to `put`, which stores it where only a `static` view may go
+ --> x06d_callee_stores_into_list.em:8:12
+  |
+8 |     put(v, word)
+  |            ^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `word`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1

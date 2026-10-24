@@ -1,0 +1,477 @@
+=== ember check probes/a12_button_owned.em
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> void`
+ --> a12_button_owned.em:6:28
+  |
+6 |         self.handlers.push(f)
+  |                            ^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a12_button_python.em
+error[E2020]: expected `fn() -> void`, found `Callable0`
+ --> a12_button_python.em:6:28
+  |
+6 |         self.handlers.push(f)
+  |                            ^ this is `Callable0`
+  |
+
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> void`
+ --> a12_button_python.em:6:28
+  |
+6 |         self.handlers.push(f)
+  |                            ^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error[E3021]: cannot write through a shared reference
+  --> a12_button_python.em:10:13
+   |
+10 |             h()
+   |             ^^^ this is `ref fn() -> void`, which only reads
+   |
+   = help: a callable value may change what it captured, so it is called from a mutable place [CLO-2]: borrow it as `ref mut`, and iterate a collection of them with `.iter_mut()` (`for f in fs.iter_mut():`)
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 3 error(s)
+exit=1
+=== ember check probes/a12_counter_factory.em
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> i64`
+ --> a12_counter_factory.em:7:12
+  |
+7 |     return inc
+  |            ^^^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a12_local_list.em
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> void`
+ --> a12_local_list.em:5:13
+  |
+5 |     hs.push(fn(): score += 1)
+  |             ^^^^^^^^^^^^^^^^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a12_loop_capture.em
+exit=0
+=== ember check probes/a12_read_later.em
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> i64`
+ --> a12_read_later.em:6:12
+  |
+6 |     return f
+  |            ^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a12_two_closures.em
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> void`
+ --> a12_two_closures.em:8:13
+  |
+8 |     return (inc, get)
+  |             ^^^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error[E3026]: this lambda borrows what it captures, so it may not be stored as `fn() -> i64`
+ --> a12_two_closures.em:8:18
+  |
+8 |     return (inc, get)
+  |                  ^^^ stored here
+  |
+  = help: write it `owned fn`, which moves or copies each capture into the value
+  = note: a `fn` type outside a parameter is an owned callable value; a lambda that borrows is a view, and this place has no bounding region (CLO-3, TYP-15)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check probes/a13_box_cast.em
+error[E2020]: `cast … as` and `cast … if` need related class handles, found `Box[dyn AnyPool]` and `Pool[T]`
+  --> a13_box_cast.em:18:16
+   |
+18 |         pool = cast self.pools[7u128] as Pool[T]
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a13_dyn_generic.em
+error[E2050]: interface `Inspect` is not `dyn`-compatible
+  --> a13_dyn_generic.em:18:23
+   |
+18 | fn walk(xs: Array[Box[dyn Inspect]]) -> int:
+   |                       ^^^^^^^^^^^ method `inspect` is generic
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a13_dyn_param.em
+exit=0
+=== ember check probes/a13_if_cast.em
+error[E2036]: this pattern always matches
+  --> a13_if_cast.em:12:12
+   |
+12 |         if c = cast s if Circle:
+   |            ^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: did you mean `c == cast s if Circle`?
+   = note: to declare `c`, write `c = cast s if Circle` on the line before
+
+error[E2020]: `Option[Circle]` has no field `r`
+  --> a13_if_cast.em:13:18
+   |
+13 |             t += c.r
+   |                  ^^^
+   |
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check probes/a13_isinstance.em
+exit=0
+=== ember check probes/a13_isinstance_narrow.em
+error[E1010]: cannot find `isinstance` in this scope
+  --> a13_isinstance_narrow.em:15:12
+   |
+15 |         if isinstance(s, Circle):
+   |            ^^^^^^^^^^
+   |
+
+error[E1010]: cannot find field `r` on `Shape`
+  --> a13_isinstance_narrow.em:16:20
+   |
+16 |             t += s.r
+   |                    ^
+   |
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check probes/a13_registry_python.em
+error[E2020]: `std.collections.Map` takes 3 type arguments, found 1
+ --> a13_registry_python.em:6:12
+  |
+6 |     pools: Map[type, Pool]
+  |            ^^^^
+  |
+
+error[E0100]: expected a name
+ --> a13_registry_python.em:6:16
+  |
+6 |     pools: Map[type, Pool]
+  |                ^^^^ found `type`
+  |
+
+error[E0100]: expected `]`
+ --> a13_registry_python.em:6:16
+  |
+6 |     pools: Map[type, Pool]
+  |                ^^^^ found `type`
+  |
+
+error[E0100]: expected the end of the line
+ --> a13_registry_python.em:6:16
+  |
+6 |     pools: Map[type, Pool]
+  |                ^^^^ found `type`
+  |
+
+error[E1010]: cannot find type `<error>` in this scope
+ --> a13_registry_python.em:6:16
+  |
+6 |     pools: Map[type, Pool]
+  |                ^^^^
+  |
+
+error: could not compile due to 5 error(s)
+exit=1
+=== ember check probes/a16_bound_misuse.em
+error[E2040]: `Name` does not implement `Add[Name]`, which `T` requires
+  --> a16_bound_misuse.em:12:13
+   |
+12 |     println(sum([Name(s=1), Name(s=2)]).s)
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error[E2040]: `Name` does not implement `Copy`, which `T` requires
+  --> a16_bound_misuse.em:12:13
+   |
+12 |     println(sum([Name(s=1), Name(s=2)]).s)
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check probes/a16_bounds.em
+error[E2040]: `T`'s bounds do not provide a matching `Add` operator
+ --> a16_bounds.em:5:15
+  |
+5 |         acc = acc + x
+  |               ^^^^^^^
+  |
+  = help: add a `Add` bound with the required operand and output types
+  = note: inside a generic body only the bounds' operations are available [TYP-17]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a16_bounds_written.em
+exit=0
+=== ember check probes/a16_orphan.em
+error[E2121]: `Array[Vec3]` and `Neg` are both another package's, so this package cannot implement one for the other
+ --> a16_orphan.em:5:31
+  |
+5 | extend Array[Vec3] implements Neg:
+  |                               ^^^
+  |
+  = help: implement it where `Neg` or `Array[Vec3]` is declared, or wrap the value in a type of this package
+  = note: an implementation lives with its interface or its type, or with a type of its package among the interface's arguments [TYP-20]
+
+error[E2020]: `-` cannot be applied to `Array[Vec3]`
+  --> a16_orphan.em:12:14
+   |
+12 |     println((-v).len())
+   |              ^^
+   |
+   = note: a type has `-` by implementing `Neg` [TYP-21]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check probes/a16_overlap.em
+error[E2041]: `i32` already implements `Describe`
+ --> a16_overlap.em:9:23
+  |
+5 | extend[T: Debug] T implements Describe:
+  | --------------------------------------- every type implements it here
+...
+9 | extend i32 implements Describe:
+  |                       ^^^^^^^^
+  |
+  = note: two implementations of one interface may not apply to one type [TYP-19]; the prelude converts every type from itself [ERR-7]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a32_fire_index.em
+exit=0
+=== ember check probes/a32_fire_python.em
+error[E3021]: cannot write through a shared reference
+ --> a32_fire_python.em:8:13
+  |
+8 |             h(self)
+  |             ^^^^^^^ this is `ref fn(Ui) -> void`, which only reads
+  |
+  = help: a callable value may change what it captured, so it is called from a mutable place [CLO-2]: borrow it as `ref mut`, and iterate a collection of them with `.iter_mut()` (`for f in fs.iter_mut():`)
+  = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a32_fire_python_itermut.em
+error[E3080]: `self.handlers` cannot be read while it is mutably borrowed
+ --> a32_fire_python_itermut.em:8:15
+  |
+7 |         for h in self.handlers.iter_mut():
+  |                  ------------- mutable borrow of `self.handlers` starts here
+8 |             h(self)
+  |               ^^^^ conflicting access here
+  |
+  = help: bind the borrow of `self.handlers` to a local and finish with it before this line, or copy the value out first
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a32_remove_self.em
+exit=0
+=== ember check probes/a32_remove_self_today.em
+exit=0
+=== ember check probes/a32_struct.em
+error[E3021]: cannot write through a shared reference
+ --> a32_struct.em:8:13
+  |
+8 |             h(self)
+  |             ^^^^^^^ this is `ref fn(mut Ui) -> void`, which only reads
+  |
+  = help: a callable value may change what it captured, so it is called from a mutable place [CLO-2]: borrow it as `ref mut`, and iterate a collection of them with `.iter_mut()` (`for f in fs.iter_mut():`)
+  = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a32_uaf_today.em
+exit=0
+=== ember check probes/a8_arena_graph.em
+error[E3090]: `City` needs `drop` and cannot be allocated with `Arena.alloc`
+ --> a8_arena_graph.em:8:17
+  |
+8 |     a = g.alloc(City(name=1, roads=[]))
+  |                 ^^^^^^^^^^^^^^^^^^^^^^ this value's destructor would never run
+  |
+  = help: use `alloc_nodrop` only when intentionally skipping `drop`, or allocate an owned value normally
+  = note: arena values are reclaimed as bytes and are not dropped individually (ARN-2, ARN-3)
+
+error[E3090]: `City` needs `drop` and cannot be allocated with `Arena.alloc`
+ --> a8_arena_graph.em:9:17
+  |
+9 |     b = g.alloc(City(name=2, roads=[]))
+  |                 ^^^^^^^^^^^^^^^^^^^^^^ this value's destructor would never run
+  |
+  = help: use `alloc_nodrop` only when intentionally skipping `drop`, or allocate an owned value normally
+  = note: arena values are reclaimed as bytes and are not dropped individually (ARN-2, ARN-3)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check probes/a8_dlist.em
+warning[L3001]: potential reference cycle: Item.next -> Item
+ --> a8_dlist.em:4:5
+  |
+4 |     next: Option[Item] = None
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `Item.next` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+exit=0
+=== ember check probes/a8_dlist_backlink.em
+error[E1010]: cannot find `backlink` in this scope
+ --> a8_dlist_backlink.em:5:26
+  |
+5 |     prev: Option[Item] = backlink(next)
+  |                          ^^^^^^^^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a8_graph_cycle.em
+warning[L3001]: potential reference cycle: City.roads -> City
+ --> a8_graph_cycle.em:4:5
+  |
+4 |     roads: Array[City] = []
+  |     ^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `City.roads` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+exit=0
+=== ember check probes/a8_graph_links.em
+error[E1010]: cannot find type `weak` in this scope
+ --> a8_graph_links.em:5:18
+  |
+5 |     roads: Array[weak City] = []
+  |                  ^^^^
+  |
+
+error[E0100]: expected `]`
+ --> a8_graph_links.em:5:23
+  |
+5 |     roads: Array[weak City] = []
+  |                       ^^^^ found `City`
+  |
+
+error[E0100]: expected the end of the line
+ --> a8_graph_links.em:5:23
+  |
+5 |     roads: Array[weak City] = []
+  |                       ^^^^ found `City`
+  |
+
+error[E1010]: cannot find type `weak` in this scope
+ --> a8_graph_links.em:6:17
+  |
+6 |     into: Array[weak City] = backlink(roads)
+  |                 ^^^^
+  |
+
+error[E0100]: expected `]`
+ --> a8_graph_links.em:6:22
+  |
+6 |     into: Array[weak City] = backlink(roads)
+  |                      ^^^^ found `City`
+  |
+
+error[E0100]: expected the end of the line
+ --> a8_graph_links.em:6:22
+  |
+6 |     into: Array[weak City] = backlink(roads)
+  |                      ^^^^ found `City`
+  |
+
+error[E2020]: field `roads` of `City` has no value
+ --> a8_graph_links.em:9:15
+  |
+9 |     cities = [City("a"), City("b")]
+  |               ^^^^^^^^^
+  |
+
+error[E2020]: field `into` of `City` has no value
+ --> a8_graph_links.em:9:15
+  |
+9 |     cities = [City("a"), City("b")]
+  |               ^^^^^^^^^
+  |
+
+error[E2020]: field `roads` of `City` has no value
+ --> a8_graph_links.em:9:26
+  |
+9 |     cities = [City("a"), City("b")]
+  |                          ^^^^^^^^^
+  |
+
+error[E2020]: field `into` of `City` has no value
+ --> a8_graph_links.em:9:26
+  |
+9 |     cities = [City("a"), City("b")]
+  |                          ^^^^^^^^^
+  |
+
+error: could not compile due to 10 error(s)
+exit=1
+=== ember check probes/a8_reparent_python.em
+warning[L3001]: potential reference cycle: Node.children -> Node
+ --> a8_reparent_python.em:4:5
+  |
+4 |     children: Array[Node] = []
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `Node.children` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+exit=0
+=== ember check probes/a8_tree_backlink.em
+error[E1010]: cannot find `backlink` in this scope
+ --> a8_tree_backlink.em:5:28
+  |
+5 |     parent: Option[Node] = backlink(children)
+  |                            ^^^^^^^^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check probes/a8_tree_python.em
+warning[L3001]: potential reference cycle: Node.children -> Node
+ --> a8_tree_python.em:4:5
+  |
+4 |     children: Array[Node] = []
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `Node.children` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+exit=0
+=== ember check probes/a8_tree_weak_today.em
+warning[L3001]: potential reference cycle: Node.children -> Node
+ --> a8_tree_weak_today.em:4:5
+  |
+4 |     children: Array[Node] = []
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^ this strong field closes the shortest statically visible cycle
+  |
+  = help: if `Node.children` is a back-reference, make it hold a `Weak` handle
+  = note: every edge in this statically visible cycle is strong; the cycle may leak at run time
+
+exit=0

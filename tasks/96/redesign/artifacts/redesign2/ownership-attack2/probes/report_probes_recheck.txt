@@ -1,0 +1,23 @@
+=== a11_store_then_use.em
+exit=0
+=== a11_store_then_read.em
+exit=0
+=== a10_box_inferred.em
+thread 'main' (71436) has overflowed its stack
+exit=127
+=== a11_names.em
+error[E3040]: `items` is borrowed after it has been moved out of
+error[E3040]: `row` is borrowed after it has been moved out of
+error[E3042]: `p` is partially moved
+error: could not compile due to 3 error(s)
+exit=1
+=== a31_cached.em
+error[E0104]: `@cached` is not an attribute
+error: could not compile due to 1 error(s)
+exit=1
+=== a18_init_variants.em
+error[E2100]: `self` is used before all struct fields are initialized
+error: could not compile due to 1 error(s)
+exit=1
+=== a09_fields.em
+exit=0

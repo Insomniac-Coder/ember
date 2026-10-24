@@ -1,0 +1,5 @@
+program                                      runs  median ms     min     max  ratio  peak KB  checksums
+share-plain-slab                                5    232.175   228.3   242.0  1.000    53284  ['80363660820']
+share-lean-no-weak                              5    269.829   265.4   279.0  1.162    55332  ['80363660820']
+share-lean-weak-side-record                     5    363.225   354.8   367.9  1.564    59432  ['80363660820']
+share-lean-weak-count-beside                    5    270.106   264.9   276.7  1.163    56360  ['80363660820']

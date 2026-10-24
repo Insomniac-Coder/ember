@@ -1,0 +1,15 @@
+1 copy loop: visited [1, 3, 1, 5] list [E2, E4, E9, E9]
+1b value copy: the list after the loop [E1, E3, E1, E5]
+1c one-pass filter, appended visited: [E2, E4, E8, E8]
+1d saved copy loop (the walk, bounded by the original elements): [E2, E4, E9, E9]
+2 Python enumerate + del: [E1, E4]
+2 answer, i = iteration count: panic: index out of bounds after removing [E5] instead of e
+2 answer, i = e's position now: [E4]
+3 write through es[0] in the loop: [E20, E4]
+3 answer as written (only reads compared with r): [E10, E4]
+3 saved (writes compared with r too): [E20, E4]
+4 reinforce: [[1, 2, 3, 1, 2], [4, 1, 2]]
+5 slice across clear: ['ann', 'bob'] squad now []
+6 word kept across clear: alpha
+7 nested walk, outer element replaced: visited [1, 2, 3] now [E7]
+all Python attack checks passed

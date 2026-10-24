@@ -1,0 +1,53 @@
+=== ember.exe check x_a2_swap.em
+error[E3040]: `xs` has been moved out of
+ --> x_a2_swap.em:9:8
+  |
+8 |     tmp = xs[i]
+  |           ----- moved here
+9 |     xs[i] = xs[j]
+  |        ^ used here after the move
+  |
+  = help: clone the value, or borrow it instead of moving it
+  = note: a move gives the value away; the old owner cannot use it again
+  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_a2_hit_purge.em
+error[E3022]: `w` is already mutably borrowed
+  --> x_a2_hit_purge.em:21:21
+   |
+21 |     w.hit(w.enemies[1])
+   |                     ^ conflicting access here
+   |     ------------------- mutable borrow of `w` starts here
+   |
+   = help: bind the borrow of `w` to a local and finish with it before this line, or copy the value out first
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_a3_extend_view.em
+error[E3021]: `squads[0]` is borrowed here and mutably borrowed elsewhere
+  --> x_a3_extend_view.em:10:29
+   |
+10 |     merge(squads[0], squads[0])
+   |                             ^ conflicting access here
+   |                             - borrow of `squads[0]` starts here
+   |
+   = help: bind the borrow of `squads[0]` to a local and finish with it before this line, or copy the value out first
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember.exe check x_a25_lines.em
+error[E3063]: `str` is a view, so it may not be stored in an `Array` unless it is `static`
+ --> x_a25_lines.em:7:28
+  |
+7 |             all_words.push(w)
+  |                            ^ stored here
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `low`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1

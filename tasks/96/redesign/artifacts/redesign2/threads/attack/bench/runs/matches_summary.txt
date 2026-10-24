@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+matches-0-plainC                    5   1103.641  1094.099  1148.772   1.00    94544  1.00 ['61572651155456']
+matches-1-atomic-in-task            5   1217.819  1181.391  1234.800   1.10    94508  1.00 ['61572651155456']
+matches-2-deferred-at-join          5   1341.307  1315.118  1356.070   1.22    94516  1.00 ['61572651155456']

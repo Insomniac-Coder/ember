@@ -1,0 +1,17 @@
+=== x01_scope_param.em
+error[E2072]: `std.thread.Scope` has no method named `spawn`
+ --> x01_scope_param.em:6:11
+error: could not compile due to 1 error(s)
+exit=1
+=== x02_gen_dict.em
+error[E2221]: a borrow of `m`, a local of this generator, is held across this `yield`
+ --> x02_gen_dict.em:7:15
+error: could not compile due to 1 error(s)
+exit=1
+=== x03_static_read_thread.em
+exit=0
+=== x04_sync_init_escape.em
+error[E7003]: cannot write field `name` of an `@sync` class after `init` or after using `self` as a whole
+  --> x04_sync_init_escape.em:10:9
+error: could not compile due to 1 error(s)
+exit=1

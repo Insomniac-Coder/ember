@@ -1,0 +1,265 @@
+ember 0.1.0
+language: 0.9.10
+backend: c
+C compiler: msvc (C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\cl.exe)
+linker: C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\link.exe
+profile: none
+=== y05a_mutspan_field_borrows.em
+error[E3062]: the returned view points into `self`, and `@borrows` names only what `self.buf` borrows
+  --> y05a_mutspan_field_borrows.em:10:33
+   |
+ 9 |     fn cur(mut self) -> ref mut int:
+   |            -------- `self` is the parameter it points into
+10 |         return ref mut self.buf[0]
+   |                                 ^ returned here
+   |
+   = help: return a view of what `self.buf` borrows, or name `self` in `@borrows`; a view read through a `ref mut` field borrows `self` as well
+   = note: `@borrows` is what ties a return to a parameter elision would not (LT-1a)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y05b_mutspan_field_elided.em
+error[E3025]: cannot call a method on `c` while `c.buf` is mutably borrowed
+  --> y05b_mutspan_field_elided.em:12:9
+   |
+11 |     a = c.cur()
+   |         ------- mutable borrow of `c.buf` starts here
+12 |     b = c.cur()
+   |         ^^^^^^^ conflicting access here
+13 |     a += 1
+   |          - borrow later used here
+   |
+   = help: inline the field access, take the two fields as separate parameters, or split the method
+   = note: a call borrows the fields of `self` its method uses (BRW-10); this method uses all of `self`, so the other fields do not stay disjoint across the call (BRW-4)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y05c_inner_view_struct.em
+error[E3013]: cannot move out of a reference
+  --> y05c_inner_view_struct.em:10:16
+   |
+10 |         return ref mut self.inner.r
+   |                ^^^^^^^^^^^^^^^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y05d_return_temporary_place.em
+error[E0111]: only a place can be borrowed
+  --> y05d_return_temporary_place.em:15:20
+   |
+15 |         return ref self.total()
+   |                    ^^^^^^^^^^^^ this is a value, not a place
+   |
+   = help: bind the value to a local first, then borrow the local
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y07a_indexed_source_write.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> y07a_indexed_source_write.em:9:38
+  |
+9 |     return Document(text=text, words=text.split_whitespace().collect())
+  |                                      ^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+  --> y07a_indexed_source_write.em:14:26
+   |
+14 |     docs[i].words = docs[i].text.split_whitespace().collect()
+   |                          ^ stored by this call
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `docs`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error[E3063]: `ref mut Array[Document]` is a view, so it may not be passed to `edit`, which stores it where only a `static` view may go
+  --> y07a_indexed_source_write.em:19:19
+   |
+19 |     edit(docs, 0, 0)
+   |                   ^ stored by this call
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `docs`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 3 error(s)
+exit=1
+=== y22a_owner_beside_param.em
+error[E3021]: `_14` cannot be written while it is borrowed
+ --> y22a_owner_beside_param.em:5:13
+  |
+5 |         w = line.to_lower().trim()
+  |             ^^^^ conflicting access here
+  |             ---- borrow of `_14` starts here
+6 |         if w.len() > best.len():
+  |            - borrow later used here
+  |
+  = help: end the borrow before this: `w` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3060]: this temporary is dropped at the end of its statement while it is still borrowed
+ --> y22a_owner_beside_param.em:5:13
+  |
+5 |         w = line.to_lower().trim()
+  |             ^^^^^^^^^^^^^^^ a temporary value, dropped at the end of this statement
+6 |         if w.len() > best.len():
+  |            - borrow later used here
+  |
+  = help: bind the value to a variable first, so it lives as long as the borrow
+  = note: a temporary lives to the end of the statement that makes it [EXP-4]
+
+error[E3063]: a view of `a local` is stored in `best`, which the caller owns, so it would outlive `a local`
+ --> y22a_owner_beside_param.em:7:20
+  |
+7 |             best = w
+  |                    ^ stored here
+  |
+  = help: return the view instead, or store an owned copy (`String` for `str`)
+  = note: a `mut` parameter is the caller's place: a `str` stored in it must outlive the call, and `a local` ends with it (TYP-15, FN-1)
+
+error: could not compile due to 3 error(s)
+exit=1
+=== y23a_loop_element.em
+error[E3021]: cannot write through a shared reference
+  --> y23a_loop_element.em:17:19
+   |
+17 |             match npc.state:
+   |                   ^^^^^^^^^ this is `ref Npc`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error[E3021]: cannot write through a shared reference
+  --> y23a_loop_element.em:21:25
+   |
+21 |                         npc.state = State.Idle
+   |                         ^^^^^^^^^ this is `ref Npc`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error[E3021]: cannot write through a shared reference
+  --> y23a_loop_element.em:23:25
+   |
+23 |                         npc.state = State.Running(path)
+   |                         ^^^^^^^^^ this is `ref Npc`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 3 error(s)
+exit=1
+=== y23b_assign_to_binding.em
+exit=0
+=== y23c_defer_reads_moved.em
+error[E3040]: `s` is borrowed after it has been moved out of
+ --> y23c_defer_reads_moved.em:8:21
+  |
+8 |             println(s)
+  |                     ^ borrowed here after the move
+9 |         t = s
+  |             - moved here
+  |
+  = help: borrow before the move, or clone the value so the move takes the copy
+  = note: the borrow would point at memory whose owner gave it away
+  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y23d_defer_reads_moved_field.em
+error[E3040]: `p` is borrowed after it has been moved out of
+  --> y23d_defer_reads_moved_field.em:9:21
+   |
+ 9 |             println(p.name)
+   |                     ^^^^^^ borrowed here after the move
+10 |         old = p.name
+   |               ------ moved here
+   |
+   = help: borrow before the move, or clone the value so the move takes the copy
+   = note: the borrow would point at memory whose owner gave it away
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y05c_inner_view_struct.em (rerun)
+error[E3062]: the returned view points into `self`, and `@borrows` names only what `self.inner` borrows
+  --> y05c_inner_view_struct.em:11:37
+   |
+10 |     fn get(mut self) -> ref mut int:
+   |            -------- `self` is the parameter it points into
+11 |         return ref mut self.inner.r[0]
+   |                                     ^ returned here
+   |
+   = help: return a view of what `self.inner` borrows, or name `self` in `@borrows`; a view read through a `ref mut` field borrows `self` as well
+   = note: `@borrows` is what ties a return to a parameter elision would not (LT-1a)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y05e_reborrow_refmut_field.em (rerun)
+error[E3013]: cannot move out of a reference
+ --> y05e_reborrow_refmut_field.em:9:16
+  |
+9 |         return ref mut self.inner.r
+  |                ^^^^^^^^^^^^^^^^^^^^ moved out here
+  |
+  = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+  = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y23a_loop_element.em (rerun)
+error[E3013]: cannot move out of a reference
+  --> y23a_loop_element.em:23:51
+   |
+23 |                         npc.state = State.Running(path)
+   |                                                   ^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y05f_reborrow_refmut_field_plain.em
+error[E3013]: cannot move out of a reference
+ --> y05f_reborrow_refmut_field_plain.em:9:16
+  |
+9 |         return self.inner.r
+  |                ^^^^^^^^^^^^ moved out here
+  |
+  = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+  = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1
+=== y23e_loop_plain_for.em
+error[E3021]: cannot write through a shared reference
+  --> y23e_loop_plain_for.em:17:19
+   |
+17 |             match npc.state:
+   |                   ^^^^^^^^^ this is `ref Npc`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error[E3021]: cannot write through a shared reference
+  --> y23e_loop_plain_for.em:21:25
+   |
+21 |                         npc.state = State.Idle
+   |                         ^^^^^^^^^ this is `ref Npc`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error[E3021]: cannot write through a shared reference
+  --> y23e_loop_plain_for.em:23:25
+   |
+23 |                         npc.state = State.Running(path)
+   |                         ^^^^^^^^^ this is `ref Npc`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 3 error(s)
+exit=1

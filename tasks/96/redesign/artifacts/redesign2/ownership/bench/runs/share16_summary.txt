@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+share-plain                         5    315.302   304.141   364.310   1.00    57352  1.00 ['80363660820']
+share-proposed                      5    353.028   328.633   414.378   1.12    57356  1.00 ['80363660820']
+share-proposed-16b-header           5    398.856   386.904   438.877   1.26    61576  1.07 ['80363660820']

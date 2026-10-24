@@ -1,0 +1,36 @@
+=== ember check gen_push_between.em
+error[E3021]: `items` is borrowed here and mutably borrowed elsewhere
+  --> gen_push_between.em:11:5
+   |
+ 9 |     g = walk(items)
+   |              ----- borrow of `items` starts here
+10 |     println(g.next())
+11 |     items.push(99)
+   |     ^^^^^^^^^^^^^^ conflicting access here
+12 |     println(g.next())
+13 |     println(g.next())
+   |     ----------------- borrow later used here
+   |
+   = help: end the borrow before this: `g` is what keeps it alive, so shorten its last use or put it in a block of its own
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check gen_store_between.em
+error[E3021]: `items` cannot be moved while it is borrowed
+  --> gen_store_between.em:15:15
+   |
+13 |     g = walk(items)
+   |              ----- borrow of `items` starts here
+14 |     println(g.next())
+15 |     w.items = items
+   |               ^^^^^ conflicting access here
+16 |     w.items.push(99)
+17 |     println(g.next())
+   |     ----------------- borrow later used here
+   |
+   = help: end the borrow before this: `g` is what keeps it alive, so shorten its last use or put it in a block of its own
+   = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1

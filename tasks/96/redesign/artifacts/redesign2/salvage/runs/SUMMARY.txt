@@ -1,0 +1,95 @@
+# medians of the final batch (final.ps1): python -I summ.py final_wN.txt <base>
+
+== final_w1.txt plain_w1_group
+program                       n    med ms  x base   med KB  x base  spread checksum
+plain_w1_group                7    88.537   1.000    39172   1.000   11.2% same
+rust_w1_group                 7   103.234   1.166    39484   1.008    9.9% same
+d1_w1_group                   7   107.352   1.213    37284   0.952    9.1% same
+d2_w1_group                   7    97.352   1.100    39272   1.003   16.7% same
+d3_w1_group                   7    93.605   1.057    37052   0.946   11.7% same
+d1_w1_group_proven            7    93.503   1.056    36772   0.939   10.4% same
+d1_w1_group_noinline          7   257.381   2.907    36772   0.939    2.9% same
+d3_w1_group_nobounds          7    89.273   1.008    36256   0.926   27.1% same
+plain_w1_arch                 7    42.523   0.480    17120   0.437   10.1% same
+plain_w1_sparse               7    95.227   1.076    39120   0.999   20.7% same
+orig_D1_w1                    7   132.793   1.500    37276   0.952    8.7% same
+orig_D2_w1                    7   222.481   2.513    41852   1.068   14.0% same
+orig_D3_w1                    7   169.227   1.911    37156   0.949   13.7% same
+
+== final_w1.txt plain_w1_sparse
+program                       n    med ms  x base   med KB  x base  spread checksum
+plain_w1_group                7    88.537   0.930    39172   1.001   11.2% same
+rust_w1_group                 7   103.234   1.084    39484   1.009    9.9% same
+d1_w1_group                   7   107.352   1.127    37284   0.953    9.1% same
+d2_w1_group                   7    97.352   1.022    39272   1.004   16.7% same
+d3_w1_group                   7    93.605   0.983    37052   0.947   11.7% same
+d1_w1_group_proven            7    93.503   0.982    36772   0.940   10.4% same
+d1_w1_group_noinline          7   257.381   2.703    36772   0.940    2.9% same
+d3_w1_group_nobounds          7    89.273   0.937    36256   0.927   27.1% same
+plain_w1_arch                 7    42.523   0.447    17120   0.438   10.1% same
+plain_w1_sparse               7    95.227   1.000    39120   1.000   20.7% same
+orig_D1_w1                    7   132.793   1.394    37276   0.953    8.7% same
+orig_D2_w1                    7   222.481   2.336    41852   1.070   14.0% same
+orig_D3_w1                    7   169.227   1.777    37156   0.950   13.7% same
+
+== final_w2.txt plain_w2
+program                       n    med ms  x base   med KB  x base  spread checksum
+plain_w2                      7   529.304   1.000    54940   1.000   11.4% same
+plain_w2_emberlist            7   578.989   1.094    68664   1.250    7.2% same
+rust_w2                       7   784.209   1.482    52288   0.952   16.1% same
+d1_w2                         7   718.280   1.357    77100   1.403   12.9% same
+d2_w2                         7   719.416   1.359    76564   1.394    9.6% same
+d3_w2                         7   618.619   1.169    76620   1.395   11.3% same
+d1_w2_proven                  7   606.495   1.146    77116   1.404   17.9% same
+d2_w2_checked                 7   912.554   1.724    76568   1.394   11.8% same
+d3_w2_unproven                7  1130.897   2.137   102420   1.864   19.3% same
+orig_D1_w2                    7  1092.361   2.064    92920   1.691    7.2% same
+orig_D2_w2                    7  1014.784   1.917    76568   1.394    7.4% same
+orig_D2_w2_listobj            7   800.203   1.512    92256   1.679    8.2% same
+orig_D3_w2                    7   641.288   1.212    76604   1.394   15.8% same
+
+== final_w2.txt plain_w2_emberlist
+program                       n    med ms  x base   med KB  x base  spread checksum
+plain_w2                      7   529.304   0.914    54940   0.800   11.4% same
+plain_w2_emberlist            7   578.989   1.000    68664   1.000    7.2% same
+rust_w2                       7   784.209   1.354    52288   0.762   16.1% same
+d1_w2                         7   718.280   1.241    77100   1.123   12.9% same
+d2_w2                         7   719.416   1.243    76564   1.115    9.6% same
+d3_w2                         7   618.619   1.068    76620   1.116   11.3% same
+d1_w2_proven                  7   606.495   1.048    77116   1.123   17.9% same
+d2_w2_checked                 7   912.554   1.576    76568   1.115   11.8% same
+d3_w2_unproven                7  1130.897   1.953   102420   1.492   19.3% same
+orig_D1_w2                    7  1092.361   1.887    92920   1.353    7.2% same
+orig_D2_w2                    7  1014.784   1.753    76568   1.115    7.4% same
+orig_D2_w2_listobj            7   800.203   1.382    92256   1.344    8.2% same
+orig_D3_w2                    7   641.288   1.108    76604   1.116   15.8% same
+
+== final_w3.txt plain_w3
+program                       n    med ms  x base   med KB  x base  spread checksum
+plain_w3                      7   444.945   1.000     9756   1.000    2.8% same
+rust_w3                       7   570.841   1.283    11524   1.181    0.6% same
+d1_w3                         7   365.742   0.822     8352   0.856    1.9% same
+d2_w3                         7   417.443   0.938     9280   0.951    3.3% same
+d3_w3                         7   431.267   0.969     8240   0.845    1.3% same
+d1_w3_malloc                  7   450.619   1.013     9336   0.957    2.3% same
+d1_w3_typeptr                 7   388.595   0.873     8368   0.858    2.5% same
+orig_D1_w3                    7   512.748   1.152    11148   1.143    2.3% same
+orig_D2_w3                    7   466.809   1.049     9236   0.947    2.7% same
+orig_D2_w3_scan               7   506.258   1.138     9268   0.950    2.8% same
+orig_D3_w3                    7   431.250   0.969     8232   0.844    1.7% same
+
+== final_w4.txt plain_w4
+program                       n    med ms  x base   med KB  x base  spread checksum
+plain_w4                      7    23.759   1.000     4076   1.000    8.6% same
+rust_w4                       7    16.907   0.712     4476   1.098    4.1% same
+d1_w4                         7    24.649   1.037     4548   1.116    7.1% same
+d2_w4                         7    22.746   0.957     4344   1.066    3.4% same
+d3_w4                         7    22.875   0.963     4260   1.045    5.7% same
+d1_w4_callee                  7    29.800   1.254     4528   1.111    5.8% same
+d1_w4_oneclosure              7    23.623   0.994     4264   1.046    3.6% same
+d1_w4_array3                  7    24.812   1.044     4544   1.115    6.1% same
+plain_w4_env32                7    26.543   1.117     4268   1.047    7.1% same
+orig_D1_w4                    7    33.102   1.393     4532   1.112    6.2% same
+orig_D2_w4                    7    25.580   1.077     4348   1.067    6.0% same
+orig_D2_w4_listobj            7    32.288   1.359     4356   1.069    4.9% same
+orig_D3_w4                    7    24.550   1.033     4284   1.051    2.4% same

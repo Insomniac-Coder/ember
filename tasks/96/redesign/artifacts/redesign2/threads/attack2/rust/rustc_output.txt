@@ -1,0 +1,87 @@
+rustc 1.98.1 (48a229cea 2026-09-01)
+=== r07a_guard_two_tasks.rs
+error[E0499]: cannot borrow `*v` as mutable more than once at a time
+ --> r07a_guard_two_tasks.rs:9:17
+  |
+7 |     thread::scope(|s| {
+  |                    - has type `&'1 Scope<'1, '_>`
+8 |         s.spawn(|| v.push(1));
+  |         ---------------------
+  |         |       |  |
+  |         |       |  first borrow occurs due to use of `*v` in closure
+  |         |       first mutable borrow occurs here
+  |         argument requires that `*v` is borrowed for `'1`
+9 |         s.spawn(|| v.push(2));
+  |                 ^^ - second borrow occurs due to use of `*v` in closure
+  |                 |
+  |                 second mutable borrow occurs here
+  |
+note: requirement that the value outlives `'1` introduced here
+ --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library\std\src\thread\scoped.rs:203:34
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0499`.
+exit=1
+=== r07b_guard_captured.rs
+error[E0277]: `std::sync::MutexGuard<'_, Vec<i32>>` cannot be sent between threads safely
+ --> r07b_guard_captured.rs:7:17
+  |
+7 |         s.spawn(|| g.push(1));
+  |           ----- --^^^^^^^^^^
+  |           |     |
+  |           |     `std::sync::MutexGuard<'_, Vec<i32>>` cannot be sent between threads safely
+  |           |     within this `{closure@r07b_guard_captured.rs:7:17: 7:19}`
+  |           required by a bound introduced by this call
+  |
+  = help: within `{closure@r07b_guard_captured.rs:7:17: 7:19}`, the trait `Send` is not implemented for `std::sync::MutexGuard<'_, Vec<i32>>`
+  = note: required because it appears within the type `&mut std::sync::MutexGuard<'_, Vec<i32>>`
+note: required because it's used within this closure
+ --> r07b_guard_captured.rs:7:17
+  |
+7 |         s.spawn(|| g.push(1));
+  |                 ^^
+note: required by a bound in `Scope::<'scope, 'env>::spawn`
+ --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library\std\src\thread\scoped.rs:201:4
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+exit=1
+=== r07c_guard_one_task_reborrow.rs
+exit=0
+=== r08_rawptr_to_thread.rs
+error[E0277]: `*mut u8` cannot be sent between threads safely
+ --> r08_rawptr_to_thread.rs:6:27
+  |
+6 |     let h = thread::spawn(move || w.swap());
+  |             ------------- -------^^^^^^^^^
+  |             |             |
+  |             |             `*mut u8` cannot be sent between threads safely
+  |             |             within this `{closure@r08_rawptr_to_thread.rs:6:27: 6:34}`
+  |             required by a bound introduced by this call
+  |
+  = help: within `{closure@r08_rawptr_to_thread.rs:6:27: 6:34}`, the trait `Send` is not implemented for `*mut u8`
+note: required because it appears within the type `Window`
+ --> r08_rawptr_to_thread.rs:3:12
+  |
+3 | pub struct Window { raw: *mut u8 }
+  |            ^^^^^^
+note: required because it's used within this closure
+ --> r08_rawptr_to_thread.rs:6:27
+  |
+6 |     let h = thread::spawn(move || w.swap());
+  |                           ^^^^^^^
+note: required by a bound in `spawn`
+ --> /rustc/48a229ceaefd4985c50990b14116b6d856af0985/library\std\src\thread\functions.rs:125:0
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
+exit=1
+=== r09_nested_scoped_spawn.rs
+exit=0
+=== r10_parallel_retarget.rs
+exit=0
+=== r11_static_mutex_workers.rs
+exit=0

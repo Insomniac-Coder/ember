@@ -1,0 +1,40 @@
+=== rust/r05f_conditional_place.rs
+error[E0106]: missing lifetime specifier
+ --> rust/r05f_conditional_place.rs:2:45
+  |
+2 | pub fn smaller(a: &mut i32, b: &mut i32) -> &mut i32 {
+  |                   --------     --------     ^ expected named lifetime parameter
+  |
+  = help: this function's return type contains a borrowed value, but the signature does not say whether it is borrowed from `a` or `b`
+help: consider introducing a named lifetime parameter
+  |
+2 | pub fn smaller<'a>(a: &'a mut i32, b: &'a mut i32) -> &'a mut i32 {
+  |               ++++     ++              ++              ++
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0106`.
+exit=1
+=== rust/r06a_shared_views_in_vec.rs
+exit=0
+=== rust/r06b_rc_holds_view.rs
+exit=0
+=== rust/r22e.rs
+exit=0
+=== rust/r23f_python_shaped.rs
+error[E0507]: cannot move out of `*path` which is behind a mutable reference
+  --> rust/r23f_python_shaped.rs:10:61
+   |
+10 |                 else if hurry { self.state = State::Running(*path); }
+   |                                                             ^^^^^ move occurs because `*path` has type `Vec<i32>`, which does not implement the `Copy` trait
+   |
+help: consider cloning the value if the performance cost is acceptable
+   |
+10 -                 else if hurry { self.state = State::Running(*path); }
+10 +                 else if hurry { self.state = State::Running(path.clone()); }
+   |
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0507`.
+exit=1

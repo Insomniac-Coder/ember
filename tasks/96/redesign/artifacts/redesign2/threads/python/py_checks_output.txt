@@ -1,0 +1,10 @@
+A15 lock total: 6
+A15 appended (this run's order): [0, 1, 4, 9]
+A19 a worker thread sees the main thread's FRAME: 41
+A19 worker reads its own append: 1
+A33 name after clear: ann
+A33 the returned list is the guarded one: ['ann', 'bob']
+A14 generator over its own local list: ['a', 'b']
+A14 task group results: [4, 4]
+A20 callback ran three times, score: 3
+all Python checks passed

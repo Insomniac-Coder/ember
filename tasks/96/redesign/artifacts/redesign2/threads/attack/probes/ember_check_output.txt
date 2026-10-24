@@ -1,0 +1,41 @@
+=== x01_scope_param.em
+error[E2072]: `std.thread.Scope` has no method named `spawn`
+ --> x01_scope_param.em:6:11
+  |
+6 |     scope.spawn(fn(): println(xs[0] + xs[1]))
+  |           ^^^^^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x02_gen_dict.em
+error[E2221]: a borrow of `m`, a local of this generator, is held across this `yield`
+ --> x02_gen_dict.em:7:15
+  |
+7 |         yield k
+  |               ^ the generator suspends here
+  |
+  = help: iterate the collection `owned` (`for x in owned xs:`), or by index; borrows of the generator's parameters may be held
+  = note: a suspended frame is a value that may move, which would leave the borrow pointing where the local was [CORO-6]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== x03_static_read_thread.em
+exit=0
+=== x04_sync_init_escape.em
+error[E7003]: cannot write field `name` of an `@sync` class after `init` or after using `self` as a whole
+  --> x04_sync_init_escape.em:10:9
+   |
+10 |         self.name = name
+   |         ^^^^^^^^^
+   |
+   = help: wrap `name` in `Mutex[String]` for mutation after `init`
+
+error: could not compile due to 1 error(s)
+exit=1
+ember 0.1.0
+language: 0.9.10
+backend: c
+C compiler: msvc (C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\cl.exe)
+linker: C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\link.exe
+profile: none

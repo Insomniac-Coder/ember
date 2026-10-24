@@ -1,0 +1,5 @@
+w2 exit= output=647034814
+w3 exit= output=9288233970
+w4 exit= output=34946993000
+w1_dicts exit= output=2111831520
+w1 exit= output=2111831520

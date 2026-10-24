@@ -1,0 +1,4 @@
+program                                      runs  median ms     min     max  ratio  peak KB  checksums
+plain-w3                                        5    437.693   433.2   442.0  1.000     9756  ['9288233970']
+combined-w3                                     5    412.187   406.3   414.8  0.942     9508  ['9288233970']
+w3-weak-beside                                  5    414.141   410.8   418.5  0.946     9232  ['9288233970']

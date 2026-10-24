@@ -1,0 +1,15 @@
+demo 1: a removed element's slot keeps its pre-update bits (swap-fill mode)
+  written: double frees 2, reads of freed memory 0, elements owned twice 0
+  saved:   double frees 0, reads of freed memory 0, elements owned twice 0
+demo 2: a callback rewrites the current element held in registers
+  written: double frees 3, reads of freed memory 3, elements owned twice 0
+  saved:   double frees 0, reads of freed memory 0, elements owned twice 0
+demo 3: the 8-bit walkers count wraps at 256
+  written: double frees 1, reads of freed memory 0, elements owned twice 0
+    panic: more than 255 loops over one list at once
+  saved:   double frees 0, reads of freed memory 0, elements owned twice 0
+demo 4: a callback moves the walked list out of its field
+    after the loop: walkers byte of the list now in units 255, of the list now in reserve 1
+  written: double frees 1, reads of freed memory 0, elements owned twice 1
+    panic: write access to World.units while a loop walks it
+  saved:   double frees 0, reads of freed memory 0, elements owned twice 0

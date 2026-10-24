@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+walkbuild-0-plain-noshare           5    642.045   607.872   658.079   1.00    18084  1.00 ['16777184']
+walkbuild-1-plain-then-walk         5    661.969   639.446   676.686   1.03    18084  1.00 ['16777184']
+walkbuild-2-atomic-links            5    688.396   646.536   698.761   1.07    18084  1.00 ['16777184']

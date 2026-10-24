@@ -1,0 +1,4 @@
+program                      runs  median_ms     min_ms     max_ms  median_kb  checksum
+a4-cb-plain-logical             5    163.643    161.743    175.358      20880  155569252
+a4-cb-plain-any                 5    218.263    214.715    230.709      20904  155569252
+a4-cb-ember-walker              5    218.509    215.295    227.121      20904  155569252

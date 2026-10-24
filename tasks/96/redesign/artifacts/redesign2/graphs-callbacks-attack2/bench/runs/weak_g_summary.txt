@@ -1,0 +1,8 @@
+program                      runs  median ms       min       max  spread  peak KB   t/weakarr-plai   m/weakarr-plai   t/weakarr-rust   m/weakarr-rust  checksums
+weakarr-plain                   5      8.747     8.557     8.896    4.0%     3496            0.959            0.981            1.044            0.859  104237838987
+weakarr-plain-tracked           5      9.125     8.973     9.246    3.0%     3564            1.000            1.000            1.089            0.875  104237838987
+weakarr-buffer                  5     11.551    11.397    11.660    2.3%     3748            1.266            1.052            1.378            0.920  104237838987
+weakarr-buffer-cache1           5     10.905    10.703    11.112    3.8%     3748            1.195            1.052            1.301            0.920  104237838987
+weakarr-buffer-direct           5      9.945     9.839    10.189    3.6%     3892            1.090            1.092            1.186            0.956  104237838987
+weakarr-rust                    5      8.382     8.232     8.821    7.2%     4072            0.919            1.143            1.000            1.000  104237838987
+weakarr-slots                   5    228.685   228.263   231.033    1.2%     3756           25.061            1.054           27.283            0.922  104237838987

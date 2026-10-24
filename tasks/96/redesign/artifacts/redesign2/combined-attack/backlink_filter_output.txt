@@ -1,0 +1,67 @@
+== backlink_filter_as_remove.exe
+=================================================================
+==121616==ERROR: AddressSanitizer: heap-use-after-free on address 0x11dfb5fa0994 at pc 0x7ff7186f2f9e bp 0x002a8a2ffb80 sp 0x002a8a2ffbc8
+READ of size 4 at 0x11dfb5fa0994 thread T0
+    #0 0x7ff7186f2f9d in main C:\Users\ism19\Code\ember\target\redesign2\combined-attack\backlink_filter.c:76
+    #1 0x7ff7186f383e in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #2 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #3 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+0x11dfb5fa0994 is located 4 bytes inside of 40-byte region [0x11dfb5fa0990,0x11dfb5fa09b8)
+freed by thread T0 here:
+    #0 0x7ff972dbc81f in _asan_wrap_memcpy+0x62f (C:\Program Files\LLVM\lib\clang\22\lib\windows\clang_rt.asan_dynamic-x86_64.dll+0x18004c81f)
+    #1 0x7ff7186f2433 in free S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:52
+    #2 0x7ff7186f2e87 in main C:\Users\ism19\Code\ember\target\redesign2\combined-attack\backlink_filter.c:72
+    #3 0x7ff7186f383e in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #4 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #5 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+previously allocated by thread T0 here:
+    #0 0x7ff972dbca46 in _asan_wrap_memcpy+0x856 (C:\Program Files\LLVM\lib\clang\22\lib\windows\clang_rt.asan_dynamic-x86_64.dll+0x18004ca46)
+    #1 0x7ff7186f24fd in calloc S:\compiler-rt\lib\asan\asan_malloc_win_thunk.cpp:77
+    #2 0x7ff7186f2a8d in main C:\Users\ism19\Code\ember\target\redesign2\combined-attack\backlink_filter.c:64
+    #3 0x7ff7186f383e in __scrt_common_main_seh D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    #4 0x7ffa09a1dda6 in BaseThreadInitThunk+0x16 (C:\Windows\System32\KERNEL32.DLL+0x18002dda6)
+    #5 0x7ffa0b35ee4b in RtlUserThreadStart+0x2b (C:\Windows\SYSTEM32\ntdll.dll+0x18007ee4b)
+
+SUMMARY: AddressSanitizer: heap-use-after-free C:\Users\ism19\Code\ember\target\redesign2\combined-attack\backlink_filter.c:76 in main
+Shadow bytes around the buggy address:
+  0x11dfb5fa0700: fa fa 00 00 00 00 07 fa fa fa 00 00 00 00 06 fa
+  0x11dfb5fa0780: fa fa 00 00 00 00 06 fa fa fa 00 00 00 00 03 fa
+  0x11dfb5fa0800: fa fa 00 00 00 00 02 fa fa fa 00 00 00 00 02 fa
+  0x11dfb5fa0880: fa fa 00 00 00 00 02 fa fa fa 00 00 00 00 00 fa
+  0x11dfb5fa0900: fa fa 00 00 00 00 00 fa fa fa 00 00 00 00 00 fa
+=>0x11dfb5fa0980: fa fa[fd]fd fd fd fd fa fa fa fd fd fd fd fd fa
+  0x11dfb5fa0a00: fa fa 00 00 00 00 00 fa fa fa 00 00 00 00 00 00
+  0x11dfb5fa0a80: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x11dfb5fa0b00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x11dfb5fa0b80: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+  0x11dfb5fa0c00: fa fa 00 00 00 00 00 00 fa fa 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+==121616==ABORTING
+exit=1
+== backlink_filter.exe
+new.children: 7 9   old.children: 3 2
+both trees released
+exit=0
+== python backlink_filter.py
+python, loop over the list itself: [7] [3, 9, 2]
+python, loop over a copy: [7, 9] [3, 2]

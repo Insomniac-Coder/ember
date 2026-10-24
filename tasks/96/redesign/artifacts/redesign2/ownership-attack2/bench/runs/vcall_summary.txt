@@ -1,0 +1,7 @@
+﻿program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+vcall-type-pointer-mixed            5   1336.248  1328.018  1352.897   1.00     7360  1.00 ['602498843']
+vcall-index-table-of-pointers-mixed    5   1349.469  1333.611  1377.288   1.01     7356  1.00 ['602498843']
+vcall-index-records-in-table-mixed    5   1364.147  1354.952  1373.806   1.02     7356  1.00 ['602498843']
+vcall-type-pointer-oneclass         5    228.391   223.302   232.837   0.17     7360  1.00 ['536870912']
+vcall-index-table-of-pointers-oneclass    5    235.738   233.261   259.331   0.18     7360  1.00 ['536870912']
+vcall-index-records-in-table-oneclass    5    225.670   222.352   231.807   0.17     7356  1.00 ['536870912']

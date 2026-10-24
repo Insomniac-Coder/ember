@@ -1,0 +1,12 @@
+
+round=1 exit= out=[a4-write-plain ms=226.098 peak_kb=20864 checksum=159635288] err=[]
+round=1 exit= out=[a4-write-ember-sel ms=220.315 peak_kb=20916 checksum=159635288] err=[]
+round=2 exit= out=[a4-write-ember-sel ms=223.521 peak_kb=20880 checksum=159635288] err=[]
+round=2 exit= out=[a4-write-plain ms=226.433 peak_kb=20876 checksum=159635288] err=[]
+round=3 exit= out=[a4-write-plain ms=229.291 peak_kb=20920 checksum=159635288] err=[]
+round=3 exit= out=[a4-write-ember-sel ms=225.030 peak_kb=20888 checksum=159635288] err=[]
+round=4 exit= out=[a4-write-ember-sel ms=221.462 peak_kb=20872 checksum=159635288] err=[]
+round=4 exit= out=[a4-write-plain ms=219.747 peak_kb=20900 checksum=159635288] err=[]
+round=5 exit= out=[a4-write-plain ms=220.049 peak_kb=20916 checksum=159635288] err=[]
+round=5 exit= out=[a4-write-ember-sel ms=217.659 peak_kb=20864 checksum=159635288] err=[]
+DONE

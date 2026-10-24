@@ -1,0 +1,11 @@
+lock_held_by_parent_threads_append: ['#a', '#b']
+nested_generator_list_cleared: [4] (stops, no crash)
+reentrant_callback_grows_walked_list: ['start', 'key 1', 'key 2', 'key 3']
+two_locks: hits=100 cache=10
+rlock_helper: balance=6; plain Lock taken twice: False
+dict_reduction: {'a': 3, 'b': 2, 'c': 1}; histogram ok
+parallel_retarget: every player has its nearest enemy
+asyncio_shared_state: ['a', 'b', 'c']
+module_lock_worker: [0, 1, 4, 9]
+condition_wait: ['job']
+all Python checks passed

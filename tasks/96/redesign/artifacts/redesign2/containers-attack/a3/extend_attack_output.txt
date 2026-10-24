@@ -1,0 +1,2 @@
+as written (reads freed memory):   [1, 2, 3, -572662307, -572662307]
+saved (Python: [1, 2, 3, 1, 2]):   [1, 2, 3, 1, 2]

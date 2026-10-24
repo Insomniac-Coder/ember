@@ -1,0 +1,7 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+ffi-0-plainC                        5    158.406   151.117   166.324   1.00     3448  1.00 ['200000000']
+ffi-1-today-trampoline              5    233.083   233.018   233.920   1.47     3452  1.00 ['200000000']
+ffi-2-checked-trampoline            5    162.857   161.913   166.904   1.03     3456  1.00 ['200000000']
+ffi-4-checked-running-count         5    204.247   201.532   208.817   1.29     3456  1.00 ['200000000']
+ffi-3-checked-plus-attach           5    258.517   256.247   276.405   1.63     3456  1.00 ['200000000']
+ffi-rust-rawptr                     5    154.223   146.615   160.337   0.97     3796  1.10 ['200000000']

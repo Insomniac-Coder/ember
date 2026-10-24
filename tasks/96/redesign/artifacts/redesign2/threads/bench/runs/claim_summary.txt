@@ -1,0 +1,6 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+claim-0-plainC                      5     75.004    73.081   101.216   1.00    44564  1.00 ['549788844032']
+claim-1-atomic-claims               5    129.658   116.220   150.258   1.73    44572  1.00 ['549788844032']
+claim-2-parent-claims               5    316.701   309.928   359.687   4.22    44576  1.00 ['549788844032']
+claim-rust-refs-chunks              5     58.526    56.709    67.361   0.78    36848  0.83 ['549788844032']
+claim-rust-arc-mutex                5    328.983   306.094   379.055   4.39    86328  1.94 ['549788844032']

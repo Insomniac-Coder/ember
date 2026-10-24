@@ -1,0 +1,12 @@
+narrowed_local_written_by_closure: AttributeError: 'Square' object has no attribute 'r'
+callee_evaluated_before_args: ['first 1']
+closure_lends_its_state: [1]
+link_self_assign: 2
+unlink_two_lines: ([1, 3], 1)
+weak_list_after_shift_and_death: [None, 3, 4, 5, 6]
+list_cleared_by_closure_during_loop: 2
+duck_typed_method: [5, 2]
+filter_idiom_children: ([2, 4, 6], [1, 3, 5], [True, True, True, True, True, True])
+isinstance_generic: ([True, True], 'TypeError: Subscripted generics cannot be used with class and instance checks')
+boxed_variable_hot_loop: 499500
+Python 3.14.2

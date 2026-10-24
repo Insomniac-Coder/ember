@@ -1,0 +1,4 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+matches-0-plainC-hot                5    419.046   406.318   433.000   1.00    94500  1.00 ['66620051423232']
+matches-1-atomic-in-task-hot        5    528.472   509.306   538.287   1.26    94480  1.00 ['66620051423232']
+matches-2-deferred-at-join-hot      5    468.089   455.378   501.711   1.12    94504  1.00 ['66620051423232']

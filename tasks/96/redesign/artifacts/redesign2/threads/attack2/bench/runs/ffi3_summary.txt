@@ -1,0 +1,6 @@
+program                          runs  median ms       min       max  ratio  peak KB   mem checksums
+ffi3-0-plainC                       5    156.179   146.229   173.093   1.00     3452  1.00 ['200000000']
+ffi3-8-checked-typed-one-compare    5    164.575   161.661   165.785   1.05     3460  1.00 ['200000000']
+ffi3-10-checked-tagged              5    163.755   162.444   165.077   1.05     3460  1.00 ['200000000']
+ffi3-9-any-announced-one-compare    5    243.460   241.680   246.155   1.56     3456  1.00 ['200000000']
+ffi3-11-any-announced-tagged        5    246.646   243.526   256.244   1.58     3452  1.00 ['200000000']

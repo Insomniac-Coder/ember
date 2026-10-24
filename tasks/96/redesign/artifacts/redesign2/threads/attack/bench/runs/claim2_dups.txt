@@ -1,0 +1,12 @@
+claim2-5: decrements lost = 0
+claim2-5-dups-checked ms=87.358 peak_kb=45128 checksum=0
+claim2-6: decrements lost = 2988
+claim2-6-dups-unchecked ms=78.074 peak_kb=45136 checksum=2988
+claim2-5: decrements lost = 0
+claim2-5-dups-checked ms=91.937 peak_kb=45116 checksum=0
+claim2-6: decrements lost = 4528
+claim2-6-dups-unchecked ms=75.826 peak_kb=45144 checksum=4528
+claim2-5: decrements lost = 0
+claim2-5-dups-checked ms=90.621 peak_kb=45112 checksum=0
+claim2-6: decrements lost = 6768
+claim2-6-dups-unchecked ms=72.945 peak_kb=45120 checksum=6768

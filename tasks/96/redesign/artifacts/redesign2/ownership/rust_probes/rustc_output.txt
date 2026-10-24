@@ -1,0 +1,57 @@
+=== rustc --edition 2021 --crate-type lib a11_assign_moved_field.rs
+error[E0382]: assign to part of moved value: `child`
+ --> a11_assign_moved_field.rs:7:5
+  |
+5 |     let mut child = Node { value: 1, children: vec![] };
+  |         --------- move occurs because `child` has type `Node`, which does not implement the `Copy` trait
+6 |     root.children.push(child);
+  |                        ----- value moved here
+7 |     child.value = 5;
+  |     ^^^^^^^^^^^^^^^ value partially assigned here after move
+  |
+note: if `Node` implemented `Clone`, you could clone the value
+ --> a11_assign_moved_field.rs:2:1
+  |
+2 | pub struct Node { pub value: i64, pub children: Vec<Node> }
+  | ^^^^^^^^^^^^^^^ consider implementing `Clone` for this type
+...
+6 |     root.children.push(child);
+  |                        ----- you could clone this value
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0382`.
+=== rustc --edition 2021 --crate-type lib leak_lib.rs; rustc --edition 2021 --extern leak_lib=libleak_lib.rlib -L . leak_use.rs
+error[E0277]: `Rc<usize>` cannot be sent between threads safely
+ --> leak_use.rs:2:24
+  |
+2 | fn main() { needs_send(leak_lib::make()); }
+  |             ---------- ^^^^^^^^^^^^^^^^ `Rc<usize>` cannot be sent between threads safely
+  |             |
+  |             required by a bound introduced by this call
+  |
+ ::: leak_lib.rs:4:18
+  |
+4 | pub fn make() -> impl Fn() -> usize {
+  |                  ------------------ within this `impl Fn() -> usize`
+  |
+  = help: within `impl Fn() -> usize`, the trait `Send` is not implemented for `Rc<usize>`
+note: required because it's used within this closure
+ --> leak_lib.rs:6:5
+  |
+6 |     move || *shared
+  |     ^^^^^^^
+note: required because it appears within the type `impl Fn() -> usize`
+ --> leak_lib.rs:4:18
+  |
+4 | pub fn make() -> impl Fn() -> usize {
+  |                  ^^^^^^^^^^^^^^^^^^
+note: required by a bound in `needs_send`
+ --> leak_use.rs:1:18
+  |
+1 | fn needs_send<T: Send>(_t: T) {}
+  |                  ^^^^ required by this bound in `needs_send`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.

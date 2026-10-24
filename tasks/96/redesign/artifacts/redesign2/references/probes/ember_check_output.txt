@@ -1,0 +1,284 @@
+=== p05a_return_place_no_ref.em
+error[E2020]: expected `ref mut i64`, found `i64`
+ --> p05a_return_place_no_ref.em:6:16
+  |
+6 |         return self.dense[i]
+  |                ^^^^^^^^^^^^^ this is `i64`
+  |
+  = help: borrow it explicitly: `ref mut` before the place (TYP-5 rule 7 borrows only as `ref`)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p05b_other_field_while_ref_lives.em
+exit=0
+=== p05c_box_dyn_cast_place.em
+error[E2020]: `cast … as` and `cast … if` need related class handles, found `Box[dyn AnyPool]` and `Pool[T]`
+  --> p05c_box_dyn_cast_place.em:18:16
+   |
+18 |         pool = cast self.pools[7u128] as Pool[T]
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p05d_bind_place_alias.em
+error[E3013]: cannot move out of a reference
+  --> p05d_bind_place_alias.em:11:16
+   |
+11 |         pool = self.pools[7u128]
+   |                ^^^^^^^^^^^^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error[E3060]: `pool.dense[…]` does not live long enough
+  --> p05d_bind_place_alias.em:12:35
+   |
+11 |         pool = self.pools[7u128]
+   |         ------------------------ `pool` is a local, so its storage ends with the frame
+12 |         return ref mut pool.dense[i]
+   |                                   ^ the borrow is still live when the function returns
+   |                                   - `pool.dense[…]` is borrowed here
+   |
+   = help: return an owned value, take the destination as a `mut` parameter, or borrow something the caller owns
+   = note: a returned reference must derive from a parameter (LT-1)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p05e_pub_method_borrows_all.em
+exit=0
+=== p05f_conditional_place.em
+error[E3062]: the returned view points into `a`, which the result does not borrow
+ --> p05f_conditional_place.em:4:16
+  |
+2 | fn smaller(mut a: int, mut b: int) -> ref mut int:
+  |            ---------- `a` is the parameter it points into
+3 |     if a <= b:
+4 |         return ref mut a
+  |                ^^^^^^^^^ returned here
+  |
+  = help: write `@borrows(a)` above the declaration, or return the value instead of a view of it
+  = note: `@borrows` is what ties a return to a parameter elision would not (LT-1a)
+
+error[E3062]: the returned view points into `b`, which the result does not borrow
+ --> p05f_conditional_place.em:5:12
+  |
+2 | fn smaller(mut a: int, mut b: int) -> ref mut int:
+  |                        ---------- `b` is the parameter it points into
+...
+5 |     return ref mut b
+  |            ^^^^^^^^^ returned here
+  |
+  = help: write `@borrows(b)` above the declaration, or return the value instead of a view of it
+  = note: `@borrows` is what ties a return to a parameter elision would not (LT-1a)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p05g_conditional_place_borrows.em
+exit=0
+=== p06a_shared_views_in_local_array.em
+error[E3063]: `View` is a view, so it may not be stored in an `Array` unless it is `static`
+  --> p06a_shared_views_in_local_array.em:15:13
+   |
+15 |     vs.push(View(reg=ref reg, entity=0))
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `reg`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error[E3063]: `View` is a view, so it may not be stored in an `Array` unless it is `static`
+  --> p06a_shared_views_in_local_array.em:16:13
+   |
+16 |     vs.push(View(reg=ref reg, entity=1))
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `reg`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p06b_class_holds_view.em
+error[E3063]: `Lexer` is a view, so it may not be stored in a class object unless it is `static`
+  --> p06b_class_holds_view.em:11:22
+   |
+11 |     p = Parser(lexer=Lexer(src=text))
+   |                      ^^^^^^^^^^^^^^^ stored here
+   |
+   = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+   = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p07a_one_view_of_sibling.em
+error[E3024]: `text` would be moved into this value while another of its fields borrows it
+ --> p07a_one_view_of_sibling.em:8:12
+  |
+8 |     return Doc(text=text, first=first)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `text` and a view of it would both be fields of this value
+  |
+  = help: store an index or a `Handle` into the owner instead of a view of it, or keep the owner outside the value
+  = note: a field cannot borrow another field of the same value: moving the value would move what the view points into (TYP-15)
+
+error[E3060]: `text` does not live long enough
+ --> p07a_one_view_of_sibling.em:8:12
+  |
+6 | fn load(owned text: String) -> Doc:
+  |         ------------------ `text` is `owned`, so it is the callee's own and its storage ends with the frame
+7 |     first = text[0..3]
+  |             ---- `text` is borrowed here
+8 |     return Doc(text=text, first=first)
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ the borrow is still live when the function returns
+  |
+  = help: borrow `text` instead of taking it `owned`, or return an owned value
+  = note: a returned reference must derive from a parameter (LT-1)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p07b_document_python_order.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> p07b_document_python_order.em:7:38
+  |
+7 |     return Document(text=text, words=text.split_whitespace().collect())
+  |                                      ^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `text`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p22a_hand_fix.em
+exit=0
+=== p22b_return_view_of_temp_owned.em
+error[E2020]: expected `String`, found `str`
+ --> p22b_return_view_of_temp_owned.em:3:12
+  |
+3 |     return line.to_lower().trim()
+  |            ^^^^^^^^^^^^^^^^^^^^^^ this is `str`
+  |
+  = help: make a `String` of it: `.to_string()`
+  = note: a `str` value is borrowed text; a `String` owns its text, so keeping one copies it [TXT-9]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p22c_best_in_loop.em
+error[E3021]: `_14` cannot be written while it is borrowed
+ --> p22c_best_in_loop.em:5:13
+  |
+5 |         w = line.to_lower().trim()
+  |             ^^^^ conflicting access here
+  |             ---- borrow of `_14` starts here
+6 |         if w.len() > best.len():
+  |            - borrow later used here
+  |
+  = help: end the borrow before this: `w` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error[E3060]: this temporary is dropped at the end of its statement while it is still borrowed
+ --> p22c_best_in_loop.em:5:13
+  |
+5 |         w = line.to_lower().trim()
+  |             ^^^^^^^^^^^^^^^ a temporary value, dropped at the end of this statement
+6 |         if w.len() > best.len():
+  |            - borrow later used here
+  |
+  = help: bind the value to a variable first, so it lives as long as the borrow
+  = note: a temporary lives to the end of the statement that makes it [EXP-4]
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p22d_best_in_loop_hidden_owner.em
+exit=0
+=== p22e_mut_method_on_temporary.em
+error[E2140]: a `mut self` method needs a variable to write through
+ --> p22e_mut_method_on_temporary.em:3:9
+  |
+3 |     n = line.split(" ").next().unwrap_or("").len()
+  |         ^^^^^^^^^^^^^^^
+  |
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p22f_hand_fix_chain.em
+exit=0
+=== p23a_in_place.em
+error[E3021]: cannot write through a shared reference
+  --> p23a_in_place.em:13:17
+   |
+13 |                 path.pop()
+   |                 ^^^^^^^^^^ this is `ref Array[i64]`, which only reads
+   |
+   = help: a reference is not pointed elsewhere: this writes through it, into what it refers to; to keep another value, keep a copy of it (`.clone()`), or its index
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p23b_transition_carries_payload.em
+error[E3013]: cannot move out of a reference
+  --> p23b_transition_carries_payload.em:12:13
+   |
+12 |             State.Walking(path):
+   |             ^^^^^^^^^^^^^^^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error[E3013]: cannot move out of a reference
+  --> p23b_transition_carries_payload.em:14:13
+   |
+14 |             other:
+   |             ^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p23c_local_partial_move.em
+exit=0
+=== p23d_use_after_reassign.em
+error[E3013]: cannot move out of a reference
+  --> p23d_use_after_reassign.em:12:13
+   |
+12 |             State.Walking(path):
+   |             ^^^^^^^^^^^^^^^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error[E3013]: cannot move out of a reference
+  --> p23d_use_after_reassign.em:16:13
+   |
+16 |             other:
+   |             ^^^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 2 error(s)
+exit=1
+=== p23e_in_place_ref_mut.em
+exit=0
+=== p23f_python_shaped.em
+error[E3013]: cannot move out of a reference
+  --> p23f_python_shaped.em:17:48
+   |
+17 |                     self.state = State.Running(path)
+   |                                                ^^^^ moved out here
+   |
+   = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+   = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1
+=== p23g_keep_old_value.em
+error[E3013]: cannot move out of a reference
+ --> p23g_keep_old_value.em:7:11
+  |
+7 |     old = p.name
+  |           ^^^^^^ moved out here
+  |
+  = help: borrow it, `ref` (`ref mut` to change it where it is); move it out where its owner is held mutably, with `mem.take`, `mem.replace` or `swap`, or `pop`, `swap_remove`, `remove` or `drain` from a container; or copy it, `.clone()`, leaving the owner's value as it is
+  = note: moving out of a `ref`/`ref mut` is forbidden [EXP-6]; the referent still owns the value and drops it
+
+error: could not compile due to 1 error(s)
+exit=1

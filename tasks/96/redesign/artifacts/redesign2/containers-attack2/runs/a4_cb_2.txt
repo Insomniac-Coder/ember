@@ -1,0 +1,17 @@
+
+round=1 exit= out=[a4-cb-plain-logical ms=175.358 peak_kb=20880 checksum=155569252] err=[]
+round=1 exit= out=[a4-cb-plain-any ms=218.263 peak_kb=20908 checksum=155569252] err=[]
+round=1 exit= out=[a4-cb-ember-walker ms=227.121 peak_kb=20904 checksum=155569252] err=[]
+round=2 exit= out=[a4-cb-ember-walker ms=224.672 peak_kb=20876 checksum=155569252] err=[]
+round=2 exit= out=[a4-cb-plain-any ms=230.709 peak_kb=20904 checksum=155569252] err=[]
+round=2 exit= out=[a4-cb-plain-logical ms=164.949 peak_kb=20916 checksum=155569252] err=[]
+round=3 exit= out=[a4-cb-plain-logical ms=163.275 peak_kb=20880 checksum=155569252] err=[]
+round=3 exit= out=[a4-cb-plain-any ms=218.933 peak_kb=20872 checksum=155569252] err=[]
+round=3 exit= out=[a4-cb-ember-walker ms=215.295 peak_kb=20904 checksum=155569252] err=[]
+round=4 exit= out=[a4-cb-ember-walker ms=218.509 peak_kb=20920 checksum=155569252] err=[]
+round=4 exit= out=[a4-cb-plain-any ms=214.715 peak_kb=20908 checksum=155569252] err=[]
+round=4 exit= out=[a4-cb-plain-logical ms=161.743 peak_kb=20876 checksum=155569252] err=[]
+round=5 exit= out=[a4-cb-plain-logical ms=163.643 peak_kb=20896 checksum=155569252] err=[]
+round=5 exit= out=[a4-cb-plain-any ms=214.728 peak_kb=20900 checksum=155569252] err=[]
+round=5 exit= out=[a4-cb-ember-walker ms=216.852 peak_kb=20912 checksum=155569252] err=[]
+DONE

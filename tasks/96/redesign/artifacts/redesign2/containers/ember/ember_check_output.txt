@@ -1,0 +1,249 @@
+=== ember check a25_local_param.em
+exit=0
+=== ember check a25_named.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> a25_named.em:4:25
+  |
+4 |     words: Array[str] = lower.split_whitespace().collect()
+  |                         ^^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `lower`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a25_param.em
+exit=0
+=== ember check a25_param_misuse.em
+error[E3063]: `str` is a view, so it may not be passed to `words_of`, which stores it where only a `static` view may go
+ --> a25_param_misuse.em:8:21
+  |
+8 |     return words_of(t.as_str())      # the words view t, which ends here
+  |                     ^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `t`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a25_param_misuse2.em
+error[E3063]: `str` is a view, so it may not be passed to `words_of`, which stores it where only a `static` view may go
+ --> a25_param_misuse2.em:8:19
+  |
+8 |     ws = words_of(t.as_str())
+  |                   ^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `t`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a25_python.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> a25_python.em:3:25
+  |
+3 |     words: Array[str] = line.to_lower().split_whitespace().collect()
+  |                         ^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: this place has no bounding region, so only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a25_return.em
+error[E3063]: `str` is a view, so it may not be passed to `collect`, which stores it where only a `static` view may go
+ --> a25_return.em:4:25
+  |
+4 |     words: Array[str] = lower.split_whitespace().collect()
+  |                         ^^^^^ stored by this call
+  |
+  = help: store an owned copy — `String` for `str`, `Array[T]` for `Span[T]` — and note that costs one allocation per element; or store a `u32` index or a `Handle[T]` and name the container it indexes
+  = note: the view borrows `lower`, and this place has no bounding region: only a view with the `static` region, such as a string literal, may be stored in it (TYP-15, LT-3)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a2_emitted.em
+exit=0
+=== ember check a2_python.em
+error[E3040]: `enemies` is borrowed after it has been moved out of
+ --> a2_python.em:8:5
+  |
+7 |     boss = enemies[0]
+  |            ---------- moved here
+8 |     enemies.push(Enemy(x=boss.x + 1.0, hp=boss.hp // 2))
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ borrowed here after the move
+  |
+  = help: borrow before the move, or clone the value so the move takes the copy
+  = note: the borrow would point at memory whose owner gave it away
+  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a2_ref.em
+error[E3022]: `*enemies[0]` is already mutably borrowed
+ --> a2_ref.em:8:5
+  |
+7 |     boss = ref mut enemies[0]
+  |                            - mutable borrow of `*enemies[0]` starts here
+8 |     enemies.push(Enemy(x=boss.x + 1.0, hp=boss.hp // 2))
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ conflicting access here
+  |                                   --- borrow later used here
+  |
+  = help: end the borrow before this: `boss` is what keeps it alive, so shorten its last use or put it in a block of its own
+  = note: a borrow lasts until its last use, not to the end of the scope (BRW-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a2_take.em
+error[E3011]: cannot move out of an element
+ --> a2_take.em:7:14
+  |
+7 |     picked = items[i]
+  |              ^^^^^^^^ moved out here
+  |
+  = help: borrow it, `ref xs[i]` (`ref mut` to change it in place); take it out with `mem.take`, `mem.replace`, `swap`, `pop` or `remove`; or clone it
+  = note: the container still holds the element and drops it with the rest [EXP-6]
+
+error[E3040]: `items` is borrowed after it has been moved out of
+ --> a2_take.em:8:5
+  |
+7 |     picked = items[i]
+  |              -------- moved here
+8 |     items.remove(i)
+  |     ^^^^^^^^^^^^^^^ borrowed here after the move
+  |
+  = help: borrow before the move, or clone the value so the move takes the copy
+  = note: the borrow would point at memory whose owner gave it away
+  = note: assigning a list, a map or a set moves it; in Python both names would point at one list (Appendix E)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check a3_heap_view.em
+exit=0
+=== ember check a3_locals.em
+error[E3022]: `*bodies[…]` is already mutably borrowed
+ --> a3_locals.em:8:24
+  |
+7 |     a = ref mut bodies[i]
+  |                        - mutable borrow of `*bodies[…]` starts here
+8 |     b = ref mut bodies[j]
+  |                        ^ conflicting access here
+9 |     t = a.vx
+  |         ---- borrow later used here
+  |
+  = help: use `bodies.get_pair_mut(i, j)` for two elements at once (`None` when they are the same), or `bodies.as_mut_span().split_at(k)` for two non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover other patterns
+  = note: computed indices may overlap; a structural split proves non-overlap (BRW-5)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a3_python.em
+error[E3022]: `*bodies[…]` is already mutably borrowed
+  --> a3_python.em:12:31
+   |
+12 |     collide(bodies[i], bodies[j])
+   |                               ^ conflicting access here
+   |                    - mutable borrow of `*bodies[…]` starts here
+   |
+   = help: use `bodies.get_pair_mut(i, j)` for two elements at once (`None` when they are the same), or `bodies.as_mut_span().split_at(k)` for two non-overlapping mutable spans; `swap`, `chunks_mut` and `iter_mut` cover other patterns
+   = note: computed indices may overlap; a structural split proves non-overlap (BRW-5)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a4_closest.em
+error[E3020]: cannot mutate `*enemies` while it is borrowed by this loop
+  --> a4_closest.em:11:17
+   |
+ 7 |     for i, e in enumerate(enemies.iter_mut()):
+   |                           ------- `*enemies` borrowed here for the whole loop
+...
+11 |                 enemies.push(Enemy(hp=5, splits=false))
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error[E3020]: cannot mutate `*enemies` while it is borrowed by this loop
+  --> a4_closest.em:12:21
+   |
+ 7 |     for i, e in enumerate(enemies.iter_mut()):
+   |                           ------- `*enemies` borrowed here for the whole loop
+...
+12 |             _gone = enemies.remove(i)
+   |                     ^^^^^^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check a4_emitted.em
+exit=0
+=== ember check a4_method.em
+error[E3021]: cannot write through a shared reference
+  --> a4_method.em:20:13
+   |
+20 |             e.hp -= 1
+   |             ^^^^ this is `ref Enemy`, which only reads
+   |
+   = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+   = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a4_method_closest.em
+error[E3020]: cannot mutate `*self.enemies` while it is borrowed by this loop
+  --> a4_method_closest.em:17:17
+   |
+14 |         for i, e in enumerate(self.enemies.iter_mut()):
+   |                               ------------ `*self.enemies` borrowed here for the whole loop
+...
+17 |                 self.kill(i)
+   |                 ^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check a4_python.em
+error[E3021]: cannot write through a shared reference
+ --> a4_python.em:8:9
+  |
+8 |         e.hp -= 1
+  |         ^^^^ this is `ref Enemy`, which only reads
+  |
+  = help: take the borrow as `ref mut` if the callee must write, or assign to the place itself rather than through the reference
+  = note: while a shared borrow is live the owner may read and copy but not write [BRW-1]
+
+error[E2020]: expected an integer, found `Enemy`
+  --> a4_python.em:12:28
+   |
+12 |             enemies.remove(e)
+   |                            ^
+   |
+
+error: could not compile due to 2 error(s)
+exit=1
+=== ember check ecs_for_loop.em
+error[E3020]: cannot mutate `*self.vel.ents` while it is borrowed by this loop
+  --> ecs_for_loop.em:35:17
+   |
+28 |         for j, id in enumerate(self.vel.ents):
+   |                                ------------- `*self.vel.ents` borrowed here for the whole loop
+...
+35 |                 self.vel.del(id)
+   |                 ^^^^^^^^^^^^^^^^ mutable borrow here
+   |
+   = help: collect the indices or values first, then mutate; use `retain` or `drain` when the operation fits
+   = help: or iterate over a fixed index range and mutate only after taking the current value
+   = note: a `for` loop borrows the iterable until the loop ends (CTL-2)
+
+error: could not compile due to 1 error(s)
+exit=1
+=== ember check ecs_index_loop.em
+exit=0
+=== ember check a4_method_emitted.em
+exit=0

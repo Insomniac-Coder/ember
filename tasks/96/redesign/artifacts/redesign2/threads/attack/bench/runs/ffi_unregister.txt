@@ -1,0 +1,5 @@
+FIX=2: the callback wrote into freed state: no | unregister with 7 threads calling callbacks: 3.093 us each | ffi-toctou-2-unregister ms=308.538 peak_kb=4012 checksum=3092
+FIX=2: the callback wrote into freed state: no | unregister with 7 threads calling callbacks: 2.929 us each | ffi-toctou-2-unregister ms=301.601 peak_kb=3616 checksum=2928
+FIX=2: the callback wrote into freed state: no | unregister with 7 threads calling callbacks: 3.169 us each | ffi-toctou-2-unregister ms=297.442 peak_kb=3604 checksum=3169
+FIX=2: the callback wrote into freed state: no | unregister with 7 threads calling callbacks: 4.169 us each | ffi-toctou-2-unregister ms=319.080 peak_kb=3608 checksum=4168
+FIX=2: the callback wrote into freed state: no | unregister with 7 threads calling callbacks: 2.587 us each | ffi-toctou-2-unregister ms=291.147 peak_kb=3604 checksum=2586

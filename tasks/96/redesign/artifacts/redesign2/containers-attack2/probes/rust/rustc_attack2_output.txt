@@ -1,0 +1,13 @@
+=== rustc --edition 2021 --crate-type lib --emit=metadata x_reinforce.rs
+error[E0502]: cannot borrow `*squads` as immutable because it is also borrowed as mutable
+error: aborting due to 1 previous error
+exit=1
+=== rustc --edition 2021 --crate-type lib --emit=metadata x_regroup.rs
+error[E0502]: cannot borrow `*s` as mutable because it is also borrowed as immutable
+error: aborting due to 1 previous error
+exit=1
+=== rustc --edition 2021 --crate-type lib --emit=metadata x_copy_loop.rs
+error[E0499]: cannot borrow `*enemies` as mutable more than once at a time
+error: aborting due to 1 previous error
+exit=1
+rustc 1.98.1 (48a229cea 2026-09-01)

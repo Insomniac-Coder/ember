@@ -1,0 +1,3 @@
+best = words[0]; words.clear(); print(best)   (Python prints alpha)
+  written: print(best) reads FREED memory: <freed>
+  saved:   print(best) reads live memory: alpha
