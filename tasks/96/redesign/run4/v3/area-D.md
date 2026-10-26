@@ -795,10 +795,9 @@ own; Rust's E0373), with the message at the right line and in the program's name
 ## AN-58: A closure stored in a local list that ends first is still E3026
 
 **v3:** the lambda changes `score`, a variable it captured, so it says `changes score`, and the local
-list covers it with `captured`, `hs: Array[fn() changes captured] = []` (verdict 22; a type names no
-captured variable, R12, so the list cannot say `score`; whether a local list in the same function
-could name it is in "For the owner"). `game`, which wrote the lambda and runs it, names nothing: `score`
-is its own local (R5). **Meaning changed:** yes, for two lines: v2's `hs: Array[fn()] = []` with
+list, written where `score` is visible, names it: `hs: Array[fn() changes score] = []` (verdict 40: a
+name visible where the line is written is written by its name; `captured` is for what it cannot see).
+`game`, which wrote the lambda and runs it, names nothing: `score` is its own local (R5). **Meaning changed:** yes, for two lines: v2's `hs: Array[fn()] = []` with
 `hs.push(fn(): score += 1)` is refused (part 6); the program does what it did.
 
 **1. Intent:** collect a few local callbacks in a list and run them.
@@ -834,7 +833,7 @@ exit=1
 ```ember
 fn game() -> int:
     score = 0
-    hs: Array[fn() changes captured] = []
+    hs: Array[fn() changes score] = []
     hs.push(fn() changes score: score += 1)
     for ref mut h in hs:
         h()
@@ -853,7 +852,7 @@ local (R5).
 | name | what it is | may it change it |
 |---|---|---|
 | `score` | none (default: `game`'s own `int`) | its owner may |
-| `hs` | none (default: `game`'s own list; its elements its own function values); its type `fn() changes captured`: each may change the one variable it captured | its owner may |
+| `hs` | none (default: `game`'s own list; its elements its own function values); its type `fn() changes score`: each may change `game`'s `score` | its owner may |
 | `score` in the lambda | none (row 6: the real `score`) | `changes score` on the lambda's first line: yes, the real one (verdict 22) |
 | `h` | `ref mut`: an element of `hs`, the only name for it while used | yes; calling it changes what its body changes (R12) |
 
@@ -873,7 +872,7 @@ provably ends first and R12 places `score` at its address: the C of `c/an53_capt
   function changes `score`, a variable it uses from `game`; say so on its first line: `hs.push(fn()
   changes score: score += 1)`"; then, with that line, E2113: "this function changes `score`, a variable
   it captured (`fn() changes score`), and `hs` holds `fn()`, functions that change nothing; keep it in a
-  list that says so: `hs: Array[fn() changes captured] = []`" (R12).
+  list that says so: `hs: Array[fn() changes score] = []`" (R12).
 
 **7. Cost.** None (the C passes an address).
 
@@ -1316,9 +1315,8 @@ that code: the handler's two words copied out of the list, then called.
   `h = ref mut this.handlers.get_mut(i).unwrap()`" (R12; the `get_mut` row).
 - `h` used again after `h(ref mut this)` (say `h(ref mut this)` twice), E3060: "`h(ref mut this)` (line
   5) lets the handler remove handlers, which may put another handler in the place `h` names (line 4),
-  and `h` is used on line 6; to call the handler now at `i`, give it a new name after the call,
-  `h2 = ref mut this.handlers.get_mut(i).unwrap()`, and write `h2(ref mut this)` in place of line 6"
-  (R8 (a); R2 keeps `h` on its place, so `h = ref mut ...` again would be refused).
+  and `h` is used on line 6; name it again after the call: `h = ref mut this.handlers.get_mut(i).unwrap()`"
+  (R8 (a); a `ref mut` name may be given another ref, verdict 42).
 
 **7. Cost.** As AN-60. The refused form today (a pointer into the list kept across the call and written
 back to) had no cheaper code: the copy back it needs is what made it unsafe.
@@ -2571,9 +2569,7 @@ open class Door:
 
 class SwingDoor(Door):
     override fn on_update(dt: float) changes angle:
-        this.angle += 90.0 * dt
-        if this.angle > 90.0:
-            this.angle = 90.0
+        this.angle = min(this.angle + 90.0 * dt, 90.0)
 ```
 
 Changed from run 4: the virtual says `changes this` (was `ref mut this` after the brackets, R5, verdict
@@ -2631,12 +2627,14 @@ Words an answer would need that `V3/vocabulary.md` has no row for. None is used 
 
 | word | why |
 |---|---|
-| `min` as a function of two values (`min(a, b)`) | AN-70's override (run 3's and run 4's) wrote `this.angle = min(this.angle + 90.0 * dt, 90.0)`. `V3/vocabulary.md` has `min` only in the iterator row, as a method (`xs.iter().min()`), and its prelude row lists `len`, `println`, `panic`, `sorted`, `abs`. The NEW body writes the same with `+=` and an `if`; a row for the prelude function would let the line stay as the programmer wrote it |
-| `changes` on a lambda written with `=>` (`fn(owns s) changes names => names.push(s)`) | AN-56's first lambda, and AN-55's, were written with `=>` in v2. Under verdict 22 they say what they change, and the vocabulary shows `changes` only on a lambda written with `:` (`fn(s) changes LOG: LOG.push(s.name)`). This file writes both with `:`, which says the same; a line in the `fn` row would say whether `=>` takes the clause too (notes, note 3) |
+| `min` as a function of two values (`min(a, b)`) | AN-70's override (run 3's and run 4's) wrote `this.angle = min(this.angle + 90.0 * dt, 90.0)`. `V3/vocabulary.md` has `min` only in the iterator row, as a method (`xs.iter().min()`), and its prelude row lists `len`, `println`, `panic`, `sorted`, `abs`. The NEW body writes the same with `+=` and an `if`; a row for the prelude function would let the line stay as the programmer wrote it. **Settled by the lead: `min`, `max` and `clamp` are prelude functions of two values in today's spec (`[STD-26]`, spec 1538 and 4157); the vocabulary's prelude row now lists them, and the NEW body writes `min` again.** |
+| `changes` on a lambda written with `=>` (`fn(owns s) changes names => names.push(s)`) | AN-56's first lambda, and AN-55's, were written with `=>` in v2. Under verdict 22 they say what they change, and the vocabulary shows `changes` only on a lambda written with `:` (`fn(s) changes LOG: LOG.push(s.name)`). This file writes both with `:`, which says the same; a line in the `fn` row would say whether `=>` takes the clause too (notes, note 3) **Settled by verdict 45: yes, after the parameters.** |
 
 ## For the owner
 
-1. **May a list of functions that a function keeps for itself name the variable they change?** (AN-58,
+1. **Answered by verdict 40: yes, a name visible where the list is written is written by its name
+   (`hs: Array[fn() changes score] = []`, as AN-58 now writes it).** The question as it was put: **may a
+   list of functions that a function keeps for itself name the variable they change?** (AN-58,
    verdict 22.) A field's or a parameter's type cannot name a variable of whoever calls it, which is why
    you chose `captured`. A local list, kept and run inside the one function that wrote the lambdas,
    could name that function's own variable. Meanwhile AN-58 writes the rule as it stands, which allows

@@ -300,9 +300,8 @@ exit=0
      boss.hp -= 1
      ```
      E3060: "`enemies.remove(0)` (line 8) may put another enemy in the place `boss` names (line 7), and
-     `boss` is used on line 9; use `boss` before line 8; or, to change the enemy that is first after the
-     removal, give it a new name after line 8, `first = ref mut enemies[0]`, and write `first.hp -= 1` in
-     place of line 9".
+     `boss` is used on line 9; use `boss` before line 8, or name the enemy again after it:
+     `boss = ref mut enemies[0]`" (a `ref mut` name may be given another ref, verdict 42).
    - a view into a part that a write frees, used after that write (with `name: String` in `Enemy`;
      R8 (b), (g): a change that may reshape what a view points into ends it):
      ```ember
@@ -490,17 +489,17 @@ exit=0
      enemies)` with `on_hit: fn(ref mut Array[Enemy])`; R8 (a), R12), E3060: "`on_hit(ref mut enemies)`
      (line 9) may remove or reorder enemies (its type, `fn(ref mut Array[Enemy])`, lets it change the
      list in any way), which may put another enemy in the place `boss` names (line 7), and `boss` is used
-     on line 10; use `boss` before line 9; or, after line 9, give the enemy now first a new name,
-     `first = ref mut enemies[0]`, and write `first.hp -= 10` in place of line 10".
+     on line 10; use `boss` before line 9, or name the enemy again after it:
+     `boss = ref mut enemies[0]`".
    - a helper the compiler can read that may remove (R8 (a)), E3060: "`kill_weak(ref mut enemies)`
      (line 9) may remove enemies (`kill_weak` line 3: `enemies.remove(i)`), which may put another enemy in
-     the place `boss` names (line 7), and `boss` is used on line 10; use `boss` before line 9; or, after line 9, give the enemy now first a new name,
-     `first = ref mut enemies[0]`, and write `first.hp -= 10` in place of line 10".
+     the place `boss` names (line 7), and `boss` is used on line 10; use `boss` before line 9, or name the enemy again after it:
+     `boss = ref mut enemies[0]`".
    - a helper that reads or writes an element already in the list (R8 (f), verdict 2), with
      `fn heal_all(ref mut enemies: Array[Enemy]):` whose body is `for ref mut e in enemies: e.hp += 1`,
      E3022: "`boss` is the only name for `enemies[0]` until line 10, and `heal_all(ref mut enemies)`
-     (line 9) changes the enemies in it (`heal_all` line 3: `e.hp += 1`); use `boss` before line 9; or, after line 9, give the enemy now first a new name,
-     `first = ref mut enemies[0]`, and write `first.hp -= 10` in place of line 10".
+     (line 9) changes the enemies in it (`heal_all` line 3: `e.hp += 1`); use `boss` before line 9, or name the enemy again after it:
+     `boss = ref mut enemies[0]`".
    - the call without its word (R4), `spawn_minion(enemies, boss.x)`, E3028: "`spawn_minion` may change
      `enemies` (its first line says `ref mut enemies: Array[Enemy]`); say so at the call:
      `spawn_minion(ref mut enemies, boss.x)`".
@@ -3368,8 +3367,7 @@ verdict 21; a lambda naming the captured variable it changes, verdict 22).
 
 | line a message gives (answer) | name | what it is | may it change it |
 |---|---|---|---|
-| `boss = ref mut enemies[0]` (AN-01, AN-02) | `boss` | `ref mut`: element 0 of `enemies` (a position) | `ref mut`: yes, the only name for it until its last use |
-| `first = ref mut enemies[0]` (AN-01, AN-02: a new name after the removal or the call; R2 keeps `boss` on its place) | `first` | `ref mut`: element 0 of `enemies` after that line (a position) | `ref mut`: yes, the only name for it until its last use |
+| `boss = ref mut enemies[0]` (AN-01, AN-02; after the removal or the call it gives `boss` another ref, verdict 42) | `boss` | `ref mut`: element 0 of `enemies` (a position) | `ref mut`: yes, the only name for it until its last use |
 | the same line | `enemies` | `ref mut` on the parameter (`ref mut enemies: Array[Enemy]`): the caller's list | `ref mut`: yes |
 | `boss = copy of enemies[0]` (AN-01) | `boss` | `copy of`: a copy of your own | none (default: its own copy; changing it changes no enemy) |
 | `boss.hp = 1` (AN-01) | none declared | — | — |
@@ -3457,7 +3455,11 @@ and `run_parallel` appear only in prose, as today's `std/src/ecs.em` names, as i
 
 For the owner (one item; the lead raises it):
 
-1. **One word, two rights, on a `MutSpan` parameter** (verdict 34; AN-11, AN-14). `ref mut dst:
+1. **Answered (verdict 42, the owner: "yes, every ref mut name"): plain `ref mut` may be given another
+   ref (a `ref mut dst: MutSpan[float]` parameter may point the caller's `d` elsewhere); `const ref mut
+   dst: MutSpan[float]` writes the elements and is never given another ref, so the caller's `d` is the
+   same span after the call.** The question as it was put: **one word, two rights, on a `MutSpan`
+   parameter** (verdict 34; AN-11, AN-14). `ref mut dst:
    MutSpan[float]` now both writes the caller's elements and may point the caller's span elsewhere,
    because every `ref mut` parameter of a view names the caller's place (R4; `V3/changes.md` section
    2.3). A reader of `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` cannot tell from the

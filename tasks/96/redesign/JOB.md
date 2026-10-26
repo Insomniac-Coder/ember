@@ -321,6 +321,69 @@ acceptable it hurt readability too, if you want something to have a copy use the
     million items, median of 5, cloud container): template 73.3 ms, `std::function` 265.6 ms
     (`run4/v3/probes/q4_template_vs_function.txt`). Owner: "a".
 
+39. **A function that calls C names what C's kept callbacks change** (the rule writer's question 5).
+    With `setup` handing C `fn() with owns game changes Game, LOG: game.add_point()`, a function that calls
+    `poll_events()` says so: `fn tick() changes Game, LOG:`, as does every function that calls `tick`; a
+    C function marked `@ffi(no_callbacks)` is not such a call. Owner: "tick is a" (the question as written
+    in `run4/v3/question-foreign-call.md`).
+40. **`captured` and `captured...` cover whatever a line cannot see by name.** A name visible where the
+    line is written is written by its name (`Array[fn() changes captured, LOG]` when `LOG` is visible);
+    anything not declared in or visible from that scope is covered by `captured` (one) or `captured...`
+    (several): a local of the function that wrote a lambda, or a program's `Game` and `LOG` seen from a
+    library (`pub fn wait_frame() changes captured...:`). Wherever the word stands for something unseen,
+    the compiler fills it in from the whole program (every function value stored into that type, every
+    callback C keeps), so a library `Button` holding a program's `LOG`-changing handler still makes
+    `b.click()` inside a loop over `LOG` refused. Owner: "Then change what captured and captured... [mean]
+    and both should able to pull any variables that need to be captured for change", "Any variables that
+    need to be captured for a change if they are not known to function or declared within that scope
+    right?", then "yes".
+41. **A named change list** (the owner's own proposal): `world: changelist = (Game, LOG)` at module level,
+    used as `fn tick() changes world:`. Strict: a function may say `changes world` only if it changes
+    everything in it. Owner: "we can provide a way to declare the change list and then we can just mention
+    that list after changes <list>", then, on whether a list may name more than a function changes: "no it
+    has to be strict".
+
+42. **Every `ref mut` name may be given another ref; `const ref mut` never is** (areas A and B's
+    questions). `r = ref mut a`, `r = 5` writes `a`, `r = ref mut b` points `r` at `b`; the same for a
+    span, `d = ref mut a.as_mut_span()` then `d = ref mut c.as_mut_span()`; a `ref mut dst:
+    MutSpan[float]` parameter may point the caller's span elsewhere. `const` keeps one meaning, the name
+    itself stays as it is: on a value it cannot be changed, before `ref mut` it cannot be given another
+    ref (`r = const ref mut x`, `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`), as
+    C++'s `const int` and `float* const`. For every `ref mut` name, not only spans. Owner: "How about we
+    add ref mut and const ref mut", "Const should either mean that it cannot be changed or cannot be given
+    another ref", then "yes, every ref mut name".
+
+43. **A call that may take a lock this thread already holds is refused when compiling** (area E's
+    question 2). `flush` holds `log`'s lock (`with log.lock:`) and calls `note()`, a `fn() changes Log`
+    whose `push` takes the same lock: in C++ `m.lock(); m.lock();`, the program freezes. Ember refuses the
+    call (E7018: "call `note()` after the `with log.lock:` block"), with no loop needed; nothing is checked
+    while running. A function that changes a different `Log` is refused too (the compiler cannot tell
+    which). Owner: "B".
+
+44. **`guarded by` stays, and follows the `Mutex`'s rules** (area E's question 1). `lines: Array[String]
+    guarded by lock` is a `Mutex` written as ordinary fields (one lock may cover several fields, no extra
+    struct, no guard name), shown beside the `Mutex`-only version (`struct LogData` inside
+    `Mutex[LogData]`). So a `guarded by` field may be changed through a plain name inside its lock, with
+    no word at the call, and the change is named on the first line, as for a `Mutex` (verdicts 3, 29):
+    `fn add_line(log: Log) changes Log: log.push("hi")`; `fn start(log: thread_shared Log) changes Log:`.
+    Owner: "Keep guarded by and the same way as mutex".
+
+45. **A lambda written with `=>` says what it changes after its parameters, as one written with `:` does**
+    (area D's missing word). `enemies.retain(fn(e) changes removed => keep(e, ref mut removed))`, where
+    the lambda gives back a `bool` and adds to `update`'s `removed`. Owner: "A".
+
+46. **A `dyn` type may say what its values change, as a function type does** (the rule writer's question
+    3). `xs.iter().inspect(fn(x) changes LOG: LOG.push(String("saw")))` given to
+    `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:`; without `changes LOG` on
+    the `dyn` type it is refused with that line. Owner: "B".
+
+47. **A value made in an arena carries a pointer to its arena, accepted for now; lists the same way** (the
+    rule writer's question 6). `lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)`: the mesh keeps a
+    pointer to `current` (8 bytes per arena-made value, as C++'s `std::pmr` and Rust's `Box<T, &A>`), so it
+    goes back to the right arena when it grows or ends; a list is made in an arena the same way,
+    `[String("a")] using current`. Not measured; the measuring phase looks for ways to drop the pointer
+    (an arena that never frees single values; memory laid out so a pointer finds its arena). Owner: "Yes".
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

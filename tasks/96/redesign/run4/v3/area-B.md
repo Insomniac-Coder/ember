@@ -1764,9 +1764,11 @@ exit=0
 **v3:** NEW as in v2. The prose's `first_even` takes its span as `ref mut ps: MutSpan[int]` (verdict
 34: a `MutSpan` parameter that gives write access to its elements says `ref mut`); the prose now says
 how a name holding a `MutSpan` is pointed at another span (R2), and part 6 refuses the plain parameter.
-**Meaning changed:** yes, for one line, by verdict 34: v2's `fn first_even(ps: MutSpan[int]) -> ref mut
-int:`, accepted under v2's exception by type, is refused (E3023); `fn first_even(ref mut ps:
-MutSpan[int]) -> ref mut int:` means what it meant. What the program does is unchanged.
+**Meaning changed:** yes, by verdict 42 (the owner: "yes, every ref mut name"): the OLD's own line,
+`r = ref mut b`, is accepted and points `r` at `b`, which is what the line reads as; v3 had refused it.
+`const ref mut` is the spelling for a name that is never given another ref. And by verdict 34: v2's
+`fn first_even(ps: MutSpan[int]) -> ref mut int:` is refused (E3023); `fn first_even(ref mut ps:
+MutSpan[int]) -> ref mut int:` means what it meant.
 
 **1. Intent:** keep a changeable reference to `a`, later work on `b` too.
 
@@ -1797,35 +1799,35 @@ fn main():
     b = 2
     r = ref mut a
     r = 20
-    rb = ref mut b
-    rb = 30
+    r = ref mut b
+    r = 30
     println(a, b)
 ```
 
-A `ref mut` name stands for the place it was made from (R2; row 8: `path` is the NPC's list for the
-whole arm), so `r = 20` writes into `a`; a second place gets a second name. `println(a, b)` reads `a`
-after `r`'s last use and `b` after `rb`'s, as R8 (f) asks. The same holds for a call whose result is
+A `ref mut` name stands for the place it was made from until it is given another ref (R2, verdict 42):
+`r = 20` writes into `a`; `r = ref mut b` points `r` at `b`, the line saying `ref mut` again; `r = 30`
+then writes into `b`. It prints `20 30`. `a` is free of `r` from the line that gives `r` another ref, and
+`println(a, b)` reads both after `r`'s last use, as R8 (f) asks. A name that must keep its place for
+its whole scope says so: `r = const ref mut a`, after which `r = ref mut b` is refused (part 6). The same holds for a call whose result is
 `ref mut T`: with `fn first_even(ref mut ps: MutSpan[int]) -> ref mut int:`,
 `r = ref mut first_even(ref mut xs.as_mut_span())` then `r = 7` writes the element (R2; the parameter
 says `ref mut`, since what it gives back may write its elements, and the call says `ref mut` before
 the `MutSpan` argument, R4, verdict 34).
 
-A name that holds a `MutSpan` is different: what it stands for is the span, a view of its own, as
-`rest = tail.trim()` holds a view of its own (R2). So `d = ref mut xs.as_mut_span()` then
+A name that holds a `MutSpan` follows the same rule: `d = ref mut xs.as_mut_span()` then
 `d = ref mut ys.as_mut_span()` points `d` at the second span; nothing is written into `xs`, and
-`ref mut` on each line says that `d` may write the elements of the span it then holds (R2, verdict 34).
-`r = ref mut a` names the place `a` itself, so a second `ref mut` line would write into `a`, which is
-why it is refused.
+`ref mut` on each line says that `d` may write the elements of the span it then holds (R2, verdicts 34
+and 42).
 
 **4. The owner's test:**
 
 | name | what it is | may it change |
 |---|---|---|
 | `a`, `b` | none (default: own local) | none (default: own local) |
-| `r` | `ref mut`: a name for `a` | `ref mut`: yes |
-| `rb` | `ref mut`: a name for `b` | `ref mut`: yes |
+| `r` | `ref mut`: a name for `a`, then, after `r = ref mut b`, for `b` (the second `ref mut` says so) | `ref mut`: yes |
 
-**5. Means exactly** (`m28_two_refs.em`, the same code):
+**5. Means exactly** (`m28_two_refs.em`, today's spelling with a second name, `rb = ref mut b`, since
+today's `r = ref mut b` writes `b`'s value into `a`):
 
 ```text
 ===== m28_two_refs.em
@@ -1833,8 +1835,11 @@ exit=0
 ```
 
 **6. Still refused:**
-- `r = ref mut b` (and `r = ref b`) on a `ref mut` name, E3023: "`r` always refers to `a`, so
-  `r = ref mut b` would put `b`'s value into `a`; to refer to `b` use a new name: `rb = ref mut b`".
+- `r = ref mut b` on a `const ref mut` name (`r = const ref mut a`), E3023: "`r` is `const ref mut a`,
+  so it always refers to `a`; to refer to `b` use a new name, `rb = ref mut b`, or make `r` with plain
+  `ref mut`: `r = ref mut a`". And `r = ref b` on a `ref mut` name, E3023: "`r` may change what it
+  refers to, and `ref b` only reads `b`; to point `r` at `b` write `r = ref mut b`, or for a read-only
+  name `rb = ref b`".
 - `a` read through its own name while `r` is still used, with `println(a)` as line 5 between
   `r = ref mut a` (line 4) and `r = 20` (line 6), E3021 (R8 (f)): "`r` is the only name for `a` until its
   last use on line 6, and line 5 reads `a`; read it through `r`, `println(r)`, or read `a` after line 6".
@@ -2499,7 +2504,9 @@ write `+=` instead (`[TXT-11]`: `s += t` appends), so it is not needed.
 
 ## 7. For the owner
 
-1. **Two lines that look alike, one refused and one accepted** (AN-28; verdict 34 and R2). After
+1. **Answered (verdict 42, the owner: "yes, every ref mut name"): every `ref mut` name may be given
+   another ref, `r = ref mut b` included; `const ref mut` is never given one.** The question as it was
+   put: **two lines that look alike, one refused and one accepted** (AN-28; verdict 34 and R2). After
    `r = ref mut a`, the line `r = ref mut b` is refused (it would write `b`'s value into `a`; write
    `rb = ref mut b`). After `d = ref mut xs.as_mut_span()`, the line `d = ref mut ys.as_mut_span()` is
    accepted and points `d` at the other span (R2: a name that holds a `MutSpan` holds a view of its own,

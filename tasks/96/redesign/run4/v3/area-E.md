@@ -1054,12 +1054,10 @@ thread. `exit=0`.
 - `log.lines.push(String("c"))` in `start`, outside the lock: `error[E7013]: \`lines\` is guarded by
   \`lock\`; change it inside \`with log.lock:\`, or call \`log.push("c")\``.
 
-Not refused, and not memory unsafe: `with log.lock:` around `note()` with no walk, where `note` pushes
-to the same log. `push` then waits for the lock its own thread holds, for ever: AN-74's static re-entry
-covers only calls whose body the compiler sees, and the function value's type says `changes Log`, not
-which log. A hang, never a change under a walk or a freed object; C and Rust do the same (Rust's
-`Mutex::lock` does not return when the thread already holds it). Section 4.2, point 2, gives the owner
-the choices.
+`with log.lock:` around `note()` with no walk, where `note` pushes to the same log, would wait for ever
+while running (`push` takes the lock its own thread holds; AN-74's static re-entry covers only calls
+whose body the compiler sees). It is refused when compiling (R15, verdict 43), E7018: "`note()` may change any `Log`, this one included (its type says `changes Log`), and this thread holds `log`'s lock, so taking it again inside `note` would wait for ever; call `note()` after the `with log.lock:` block".
+C and Rust hang there (Rust's `Mutex::lock` does not return when the thread already holds it).
 
 **7. Cost:** one atomic increment per `with thread_shared` capture and one atomic decrement when the
 thread's owner ends: exactly Rust's `Arc::clone` and drop, and what today's `owned fn` does for a
@@ -1710,11 +1708,10 @@ The rules:
   never calls back into Ember, `@ffi(no_callbacks)` (line 13), so its call inside the walk runs no
   callback and is allowed. The mark is a fact the programmer vouches for, listed by `ember tcb` with the
   other asserted facts (`[TCB-1]`); on a function whose own contract takes a callback it is refused
-  (E5069). A missing mark refuses nothing by itself, only a walk, a view or a `ref mut` name that a kept
-  callback's changes would reach across the call, and that message names the mark. The callbacks'
-  changes are on the first lines of the functions that hand them to C (`setup`, and `main` through it),
-  not of the functions that make foreign calls (R12; the rule writer's reading, `V3/changes.md` section
-  11, question 5).
+  (E5069). The callbacks' changes are on the first lines of the functions that hand them to C (`setup`,
+  and `main` through it) and of the functions that make an unmarked foreign call while they are kept
+  (`main`, which calls `poll_events()`, says `changes Game` already; a `fn tick(): poll_events()` would
+  say `fn tick() changes Game:`), and the messages name the mark (R12; verdict 39).
 
 **4. The owner's test:**
 
@@ -2496,8 +2493,10 @@ which is a word of an Ember program. The words v3 adds to this area are all rows
 v2's four points (`V2/area-E.md` section 4.2) are answered by verdicts 29 to 32 and applied (section 2).
 Three new points, one at a time, each with what this file does meanwhile.
 
-1. **May a `guarded by` field be changed under its lock through a plain name, as a `Mutex`'s value
-   is?** (AN-75; section 2.) R4 says "Only a `Mutex`, `RwLock`, `Atomic` or channel end may be changed
+1. **Answered (verdict 44, the owner: "Keep guarded by and the same way as mutex"): yes; `guarded by`
+   stays and follows the `Mutex`'s rules, so AN-75's `fn start(log: thread_shared Log) changes Log:`
+   stands.** The question as it was put: **may a `guarded by` field be changed under its lock through a
+   plain name, as a `Mutex`'s value is?** (AN-75; section 2.) R4 says "Only a `Mutex`, `RwLock`, `Atomic` or channel end may be changed
    through a plain name, by its own operations", and does not name a `guarded by` field, which is this
    area's readable spelling of a `Mutex` around the fields (AN-74). AN-75's `fn start(log: thread_shared
    Log) changes Log:`, the vocabulary's own example of a `thread_shared` parameter, gives each thread
@@ -2508,7 +2507,8 @@ Three new points, one at a time, each with what this file does meanwhile.
    file reads a `guarded by` field as its lock's value, one rule for `Mutex`, `Lock` and `guarded by`
    (verdict 3: their "only me" is the lock's block), and keeps v2's `start`. Either costs nothing while
    running.
-2. **Verdict 29's gain covers a walk, not every call made while a lock is held.** `with log.lock: for
+2. **Answered (verdict 43, the owner: "B"): refused when compiling, E7018.** The question as it was
+   put: **verdict 29's gain covers a walk, not every call made while a lock is held.** `with log.lock: for
    line in log.lines: note()`, where `note` is a `fn() changes Log`, is refused when compiling (E3020,
    AN-75). `with log.lock: note()`, with no walk, where `note` pushes to the same log, is accepted and
    waits for ever while running: `push` takes the lock its own thread holds, and AN-74's static re-entry

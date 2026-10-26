@@ -607,7 +607,7 @@ Two consequences the area updaters will meet: AN-53's `Button.click` runs handle
 `fn() changes captured`, so its first line becomes `fn click() changes handlers, captured:` (R12,
 verdict 35);
 and AN-78's `setup` and `main` say `changes Game` (verdict 31's own example), while a function that
-only calls `poll_events()` names nothing for the kept callback (R12).
+only calls `poll_events()` names the kept callback's changes too (R12; verdict 39).
 
 ## 9. Files
 
@@ -624,6 +624,34 @@ only calls `poll_events()` names nothing for the kept callback (R12).
 All of `V2/changes.md` section 11 and of the "For the owner" sections of `V2/area-D.md`, `V2/area-E.md`
 and `V2/readability.md` are answered by verdicts 21 to 34 (section 5 says where each landed). None is
 carried over.
+
+## 10a. Verdicts 35 to 42 (the owner's answers to this step's questions, applied after phase 2)
+
+- **35** (question 1): a function that runs stored functions repeats their type's word:
+  `fn click() changes handlers, captured:`.
+- **36, 37** (question 2): a send and a receive through a given end are named:
+  `changes Sender[int]`, `changes Receiver[int]`.
+- **38** (question 4): the library takes a function as a template parameter.
+- **39** (question 5): a function that calls C names what C's kept callbacks change:
+  `fn tick() changes Game, LOG:`.
+- **40**: `captured` / `captured...` cover whatever a line cannot see by name, filled in from the whole
+  program (R12, R17).
+- **41**: named change lists, `world: changelist = (Game, LOG)`, strict (R12).
+- **42** (areas A and B's questions): every `ref mut` name may be given another ref (`r = ref mut b`,
+  `d = ref mut ys.as_mut_span()`, a `ref mut` view parameter pointing the caller's span elsewhere);
+  `const ref mut` is never given one; `const` means the name itself stays as it is (R2; E3023's rows
+  reworded; AN-28's NEW and meaning; v2 readability F-01's lines, `boss = ref mut enemies[0]` and
+  `h = ref mut this.handlers.get_mut(i).unwrap()`, compile again, so phase 3 keeps them).
+- **47** (question 6): an arena-made value carries a pointer to its arena, accepted for now; lists made in
+  an arena the same way (R3; not measured).
+- **46** (question 3): a `dyn` type says what its values' methods change, `owns dyn Iterator[Item = int]
+  changes LOG` (R12; E2113 reworded).
+- **45** (area D's missing word): a `=>` lambda says `changes` after its parameters, `fn(e) changes removed =>
+  keep(e, ref mut removed)` (R12; the vocabulary's `fn` row).
+- **44** (area E's question 1): `guarded by` stays and follows the `Mutex`'s rules: its fields may be
+  changed through a plain name, inside the lock, with no word at the call (R4, R5; AN-75's `start`).
+- **43** (area E's question 2): a call through a function value that may take a lock this thread holds
+  is refused when compiling, loop or not (R15; new code **E7018**; AN-75).
 
 ## 11. For the owner
 
@@ -647,7 +675,9 @@ What the verdicts leave open, one at a time, each with what this step does meanw
    Verdict 29 names `Mutex`, `RwLock` and `Atomic`, not channel ends, so a send (`tx.send(v)`) still
    names nothing: it changes only the channel's queue, which no loop walks and no view reaches. "One rule
    with no exception" would name it too (`changes Sender[int]`). Should a send be named?
-3. **Iterator adapters that keep a function** (verdict 21 lists `inspect`, which runs its function
+3. **Answered (verdict 46, the owner: "B"): a `dyn` type may say what it changes, as a function type does,
+   `owns dyn Iterator[Item = int] changes LOG`.** The question as it was put: **iterator adapters that keep
+   a function** (verdict 21 lists `inspect`, which runs its function
    later, at each `next`, not during the call). Meanwhile the adapter carries the function's change list
    as a type parameter (`Inspect[Self, C, F]`, `fn next() changes this, C -> Option[Item]`), driving it
    makes the changes, and an adapter whose list is not empty is not made a `dyn Iterator` (E2113). The
@@ -663,12 +693,17 @@ What the verdicts leave open, one at a time, each with what this step does meanw
    inlined, as Rust's `F: FnMut`. Your `fn for_each[C](f: fn(T) changes C) changes C:` means the same and
    reads shorter, but calls through the function value's two words on every item, slower than C and
    Rust unless the compiler specialises it. Keep the bound?
-5. **A function that only makes a foreign call** (verdict 31: "a missing mark only refuses a loop").
+5. **Answered (verdicts 39 to 41): a function that makes a foreign call names the kept callbacks' changes,
+   `fn tick() changes Game, LOG:` (owner: "tick is a"); what a line cannot see is covered by `captured` /
+   `captured...`, filled in from the whole program (`pub fn wait_frame() changes captured...:`); a named
+   change list, `world: changelist = (Game, LOG)`, strict.** The question as it was put: **a function that
+   only makes a foreign call** (verdict 31: "a missing mark only refuses a loop").
    Meanwhile the kept callbacks' changes are named where they are handed to C (`setup` and `main` say
    `changes Game`), and a function that calls `poll_events()` names nothing for them, though R8 sees
    their changes at that call. The stricter reading puts `changes Game` on every function that makes an
    unmarked foreign call. Which?
-6. **One word in every arena-made value** (verdict 24). Making the line name the instance means the
+6. **Answered (verdict 47, the owner: "Yes"): the pointer is accepted for now, and lists are made in an
+   arena the same way.** The question as it was put: **one word in every arena-made value** (verdict 24). Making the line name the instance means the
    value must find that instance again to grow or to end, so a value whose kind may have several
    instances keeps its address (one word, as Rust's `Box<T, &A>`); a kind with one instance costs
    nothing. The verdict's example is an `owns` field; this step applied the same making-line form to

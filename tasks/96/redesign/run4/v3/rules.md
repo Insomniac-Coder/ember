@@ -43,8 +43,8 @@ No compiler change, no git command, no Ember program run.
 - **first line**: a function's signature with its clauses: what a method does to `this` (`reads`,
   `changes`, `changes this`, `owns this`), everything else the function causes to change (`changes NAME`
   for a module variable or a variable a lambda captured, `changes T` for objects of a type, `changes
-  captured` or `changes captured...` for the variables the functions it runs captured, in the word their
-  type uses, a change list; R5, R12), the result
+  captured` or `changes captured...` for what the functions it runs, or C's kept callbacks, change that
+  this line cannot see by name, a change list, a named change list; R5, R12), the result
   type, `from`.
 - **change list**: what a function changes, as one list (module variables, captured variables, types of
   objects, `captured`); a generic parameter written after `changes` stands for one and is filled from the
@@ -117,13 +117,19 @@ part it is needed only to view a number (`r = ref counts[0]`). A part stored som
 declared with `=` stands for its own place: its old value is replaced (and ends, if it owned
 something), and if the value is a view, the name now views something else (`rest = tail.trim()`,
 `cur = p`), checked by R8 against its new target. A `ref mut` name stands for the place it was made
-from: `r = ref mut a` then `r = 20` writes `a`, and `r = ref mut b` is refused, since it would write
-`b`'s value into `a` (E3023). A name that holds a `MutSpan` holds a view, as `rest` does: `d[i] = v`
-writes an element through it, and `d = ref mut other.as_mut_span()` points it at another span, which
-the line again says it may write. A parameter, a loop name, a pattern name and a name
+from until it is given another ref: `r = ref mut a` then `r = 20` writes `a`, and `r = ref mut b` points
+`r` at `b`, after which `r = 30` writes `b`; the line that gives it another ref says so with `ref mut`
+again, for every type. A name that holds a `MutSpan` likewise: `d[i] = v` writes an element through it,
+and `d = ref mut other.as_mut_span()` points it at another span. A name written **`const ref mut`** is
+never given another ref (`r = const ref mut a` then `r = ref mut b`, E3023), as `const` on a value
+means it never changes: `const` says the name itself stays as it is. A parameter, a loop name, a pattern name and a name
 opened with `exists as` (R13) or named by a kind test (R14) stand for what the caller, the loop, the
 opening or the test gave, and keep it for their whole scope: `=` on one is refused (E3023), unless it is
-`ref mut`, which writes the caller's place.
+`ref mut`, which writes the caller's place, and may be given another ref, as any `ref mut` name may: a
+`ref mut` parameter of a view (`ref mut dst: MutSpan[float]`) given another span points the caller's
+`d` at it, and one of another type (`ref mut c: Counter`) given another ref points `c`, for the rest of
+the call, at that place. `const ref mut dst: MutSpan[float]` writes the caller's elements and is never
+given another ref, so the caller's `d` is the same span after the call.
 
 **R3. Words before a value, in a type, and in a list of names.**
 - Before a value, a word acts on the object the value names (for a link or an owner, on its target):
@@ -198,8 +204,11 @@ opening or the test gave, and keep it for their whole scope: `=` on one is refus
   `setup(shares mut game)`, with `with owns game`. In the same way a `MutSpan` parameter that writes its
   elements says `ref mut` (`fn blend(ref mut dst: MutSpan[float], src: Span[float]):`, called
   `blend(ref mut d, s)`); a plain `dst: MutSpan[float]` only reads them (E3023 at a write). Only a
-  `Mutex`, `RwLock`, `Atomic` or channel end may be changed through a plain name, by its own operations
-  (R5).
+  `Mutex`, `RwLock`, `Atomic` or channel end, and an object whose fields are `guarded by` a lock (for
+  those fields, inside that lock), may be changed through a plain name, by its own operations (R5): a
+  `guarded by` field is a `Mutex` written as ordinary fields, and follows the `Mutex`'s rules, no word in
+  front of the parameter or at the call, the change named on the first line (`fn add_line(log: Log)
+  changes Log: log.push("hi")`; `fn start(log: thread_shared Log) changes Log:`, whose threads push).
   A lambda parameter's mode is what is written on it; a callable type writes the same words
   (`fn(ref mut Ui)`).
 - **A call says `ref mut` before an argument the callee may change**: an argument given to a `ref mut`
@@ -284,7 +293,8 @@ object behind a `shares` link, the elements of a `MutSpan`): E3023, with the lin
 Span[float]):`). Nor does `this` in a method whose line
 says neither `changes` nor `owns this`: a change through it is a body that does not match its first line
 (E2105). The types made to be shared between threads are used through any name, a plain one included,
-by their own operations: a `Mutex`, `RwLock`, `Atomic` or channel end (`with g = m.lock():`;
+by their own operations: a `Mutex`, `RwLock`, `Atomic` or channel end, and the `guarded by` fields of an
+object under their lock (`with g = m.lock():`; `with log.lock: log.lines.push(...)`;
 `total.fetch_add(n)`; `tx.send(v)`). Each orders its own change (the lock's block, an atomic
 instruction), as Rust's `&self` methods of these types do, and handed to a call it takes no word (R4).
 What a function changes under a lock or through an `Atomic` is still on its first line, as every change
@@ -502,13 +512,20 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
   end a function was given (`rx.recv()`, `for v in rx:`): `fn consume(rx: Receiver[int]) changes
   Receiver[int] -> int:`. A function's own local end needs no word, as any own local. No loop walks a channel's queue and no
   view reaches it, so the word refuses nothing more; it says what the function does. A lambda says it on its first line, checked against its body both ways
-  (E2105): `b.on_click(fn() changes score: score += 1)`; `fn() changes score, lives, LOG:`;
+  (E2105): `b.on_click(fn() changes score: score += 1)`; `fn() changes score, lives, LOG:`; a lambda
+  written with `=>` the same, after its parameters, `fn(e) changes removed => keep(e, ref mut removed)`;
   `fn() changes LOG: LOG.push(String("clicked"))`; `fn() with weakref ui changes Ui:`. A named function
   is a value of the type its first line gives (`fn log_click() changes LOG:` is a `fn() changes LOG`).
 - **A field, a list or a parameter that holds functions says it in its type**, naming module variables
-  and types, and covering the variables the functions captured, which that type cannot name, with
-  **`captured`** (each function changes one variable it captured, whichever) or **`captured...`** (each
-  may change several at once):
+  and types, and covering what the functions change that the type cannot see by name, with
+  **`captured`** (each function changes one such variable, whichever) or **`captured...`** (each may
+  change several at once). A name visible where the type is written is written by its name (`LOG` beside
+  `captured` when `LOG` is visible there); what is not declared in or visible from that scope (a local of
+  the function that wrote the lambda; a program's module variable seen from a library) is covered by the
+  word. Wherever the word stands for something its line cannot see, the compiler fills it in from the whole
+  program: every function value stored into that type, every callback C keeps; a call whose line says it
+  makes all of those changes, so a library's `Button` holding a program's `fn() changes LOG` handler makes
+  `b.click()` a change of `LOG` in every function of that program (inside a loop over `LOG`, E3020):
   `handlers: Array[fn() changes LOG]`; `handlers: Array[fn() changes captured]`;
   `Array[fn() changes captured..., LOG]`. A lambda names its own captured variables and does not write
   `captured` (E2105).
@@ -567,12 +584,23 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
   for R8 the call makes every change their types list. A foreign function that never calls back says so
   on its declaration, `@ffi(no_callbacks) safe fn sqrt(x: f64) -> f64`: a fact the programmer vouches
   for, listed by `ember tcb` with the other asserted facts (`[TCB-1]`); on a function whose own contract
-  takes a callback it is refused (E5069). A missing mark refuses nothing by itself, only a loop, a view
-  or a `ref mut` name that a kept callback's changes would reach across the call, and that message
-  names the mark (E3020: with `register_cb(fn() with owns game changes Game: game.add_point())` kept,
-  `for name in game.names: poll_events()` is refused: "call `poll_events()` before or after the loop";
-  with a kept callback that changes nothing it is allowed). The callbacks' changes are on the first lines
-  of the functions that hand them to C (above), not of the functions that make foreign calls.
+  takes a callback it is refused (E5069). A function that makes such a call names the kept callbacks'
+  changes on its first line, as it names what any function it calls changes, and so does every function
+  that calls it (R5): with `register_cb(fn() with owns game changes Game, LOG: game.add_point())` kept,
+  `fn tick() changes Game, LOG: poll_events()` (E2105 without it, naming the mark: "`tick` calls
+  `poll_events()`, a C function that may run the callback `setup` gave C, which changes `Game` and `LOG`;
+  write `fn tick() changes Game, LOG:`, or, if `poll_events` never calls back into Ember, say so on its
+  declaration: `@ffi(no_callbacks) safe fn poll_events()`"), and `for name in game.names: poll_events()`
+  is refused (E3020: "call `poll_events()` before or after the loop"). A function that cannot see what the
+  kept callbacks change (a library's, which never sees the program's `Game` or `LOG`) covers it with
+  `captured` or `captured...`, filled in from the whole program: `pub fn wait_frame() changes
+  captured...: poll_events()`, which in a program whose kept callback changes `Game` and `LOG` is a change
+  of both. With no kept callback, or one that changes nothing, a foreign call changes nothing.
+- **A named change list.** A list written once at module level, `world: changelist = (Game, LOG)`,
+  stands for its names on a first line: `fn tick() changes world:` is the line `fn tick() changes Game,
+  LOG:`, checked the same way both ways. It is strict: a function may say `changes world` only if it
+  changes everything the list names (E2105: "`note` says `changes world`, but it never changes `Game`;
+  write `fn note() changes LOG:`").
 - **A type that keeps a function carries its change list.** An iterator adapter keeps the function it
   is given and runs it at each step: `fn inspect[C, F: fn(Item) changes C](owns f: F) owns this ->
   Inspect[Self, C, F]:`, whose `fn next() changes this, C -> Option[Item]` runs `f`, so driving the
@@ -580,9 +608,11 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
   beyond that method's line, the changes its own type parameters carry (`Inspect`'s `next` beyond
   `Iterator.next`'s `changes this`), since wherever its type is known they are known: a generic body's
   calls of its type parameters' methods make the changes those methods make for the types it is given,
-  worked out for each instance as the body is compiled for each. Such a value becomes a `dyn` value of
-  the interface only when that list is empty (E2113): a `dyn` value does not carry the type that says
-  what it changes.
+  worked out for each instance as the body is compiled for each. A `dyn` type says what its values'
+  methods may change, as a function type does: `owns dyn Iterator[Item = int] changes LOG`, and a
+  function that drives it names the change (`fn show(owns it: owns dyn Iterator[Item = int] changes LOG)
+  changes LOG:`); a value whose methods change more than its `dyn` type says is refused (E2113), and a
+  `dyn` type with no `changes` changes nothing.
 - **The real variables a lambda captures** (a capture not named in its list is the real variable, row
   6) are named on its first line when it changes them, and are checked in the function that writes the
   lambda, which sees every place the function value goes: the value may not outlive them (E3026). There
@@ -668,6 +698,12 @@ its body (a method its bounds' interfaces do not declare is E2072); a `pub` one 
   (`threads(creator)` or `threads(main)`, checked by the trampoline).
 - `guarded by lock` after a field's (or a `static mut`'s) type names the `Lock` that must be held for
   every read and change outside `init` (E7013).
+- **A call that may take a lock this thread holds is refused when compiling.** A call whose body the
+  compiler sees enters the callee past the lock it already holds (static re-entry). A call through a
+  function value whose type says it changes a type whose lock this thread holds (`note()`, a `fn()
+  changes Log`, inside `with log.lock:`) is refused, with no loop needed (E7018: "`note()` may change any `Log`, this one included (its type says `changes Log`), and this thread holds `log`'s lock, so taking it again inside `note` would wait for ever; call `note()` after the `with log.lock:` block"). The
+  compiler cannot tell which `Log` a function value changes, so a function that changes another `Log`
+  is refused too; the way out moves one line.
 - What may go to another thread is inferred from the words: `ThreadShared` and `Send` are inferred and
   written only in bounds; `Send` is declared only by an `unsafe extend` author. A one-thread owner or a
   lent value reaching another thread is E7015; a thread-bound value sent away is E7008.
@@ -702,7 +738,8 @@ file (as today's effect sets, `[EFF-4]`), and a change to it is reported as an i
 `extend`, and reads or writes no element already in the list, so a position of that list stays usable
 across the call, R8 (a), (f)); the effects of scoped tasks; whether a function sets the parent link
 of an object it is given before reading it (R11); and the change lists of the callbacks a package hands
-to C, which every foreign call of a program that uses the package counts (R12). A parent link proves
+to C, which every foreign call of a program that uses the package counts (R12), and the function values a
+package stores into a type that says `captured`, from which a program fills that word in (R12). A parent link proves
 itself only when no other package can change it or the places that own its holders. What a generic
 function changes through its type parameters' methods is worked out for each instance (R12), whose body
 the instantiating package compiles.
@@ -762,7 +799,7 @@ from in brackets, where there is one). Every message follows R18.
 |---|---|---|
 | using a name after it was handed over (row 9) | E3040 | "`items` was handed over to `snapshot` on line 3 and is used on line 4; to keep both, write `snapshot = copy of items` (a copy of your own) or `snapshot = shares items` (two owners of one list)" |
 | a change through a name that only reads (row 8; AN-20) | E3023 | "`path.pop()` changes the list in `n.state`, but `path` only reads it; to change that list through `path`, write `State.Walking(ref mut path):`"; "`tick` sets `s.frame`, but `s` only reads the caller's clock; write `fn tick(ref mut s: Clock):` and call `tick(ref mut clock)`" |
-| `=` on a parameter, a loop, pattern or opened name, or a new view given to a `ref mut` name (R2) | E3023 | "`line` is the text the caller passed and stays that text for the whole call; for a view of your own write `rest = line.trim()`"; "`n` is the number the caller passed; for a number of your own write `count = n` and change `count`"; "`r` always refers to `a`, so `r = ref mut b` would put `b`'s value into `a`; to refer to `b` use a new name: `rb = ref mut b`" |
+| `=` on a parameter, a loop, pattern or opened name, or another ref given to a `const ref mut` name (R2) | E3023 | "`line` is the text the caller passed and stays that text for the whole call; for a view of your own write `rest = line.trim()`"; "`n` is the number the caller passed; for a number of your own write `count = n` and change `count`"; "`r` is `const ref mut a`, so it always refers to `a`; to refer to `b` use a new name, `rb = ref mut b`, or make `r` with plain `ref mut`: `r = ref mut a`" |
 | a method that changes its object called through a read-only name (R5) | E3023 | "`heal` changes the player (its first line says `changes this`), and `p` only reads it; write `for ref mut p in players:`" |
 | an owner made from a read-only owner that may change the value (R3) | E3023 | "`game` only reads the `Game` it shares, so an owner made from it only reads too; write `g2 = shares game`, or make `game` with `shares mut`" |
 | an owner that may change made from a plain parameter of a `shares mut` type (R4; AN-78) | E3023 | "`game` only reads the `Game` that `main` lends to `setup` (`shares mut Game` says what `main`'s game is, not what `setup` may do with it), so an owner made from it only reads too; to hand on an owner that may change the game, take one: write `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`, call it `setup(shares mut game)`, and capture it `with owns game`" |
@@ -791,7 +828,7 @@ from in brackets, where there is one). Every message follows R18.
 | a list changed while a `for` loop walks it through a library call given a function that changes it, a call through a function value that may take a lock this thread holds, a thread started in the loop, or a foreign call that may run a kept callback (R8 (c), R12; AN-75, AN-76, AN-78) | E3020 | "this loop walks `LOG` (line 3), and `scores.for_each(...)` (line 4) changes `LOG` (the function it is given says `changes LOG`); write `scores.for_each(fn(s) changes LOG: LOG.push(s.name))` after the loop"; "this loop walks `log.lines` (line 9) under `log`'s lock, and `note()` (line 11) may change any `Log`, this one included (its type says `changes Log`), so it would change the list during the walk and wait for the lock this thread holds; call `note()` after the `with log.lock:` block"; "this loop walks `RESULTS` (line 5), and `thread.spawn(...)` (line 6) starts a thread whose function changes `RESULTS` (`fn() changes RESULTS: worker(1)`); start the thread after the loop: write `a = thread.spawn(fn() changes RESULTS: worker(1))` after it"; "this loop walks `game.names` (line 20), and `poll_events()` (line 21) is a C function, which may run the callback C keeps from `register_cb` (line 14), and that callback changes `Game` (`fn() with owns game changes Game`), so it may change `game.names`; call `poll_events()` before or after the loop; if `poll_events` never calls back into Ember, say so on its declaration: `@ffi(no_callbacks) safe fn poll_events()`"; for a C function that never calls back, declared without the mark: "this loop walks `game.names` (line 20), and `sqrt(d)` (line 21) is a C function, which may run the callback C keeps from `register_cb` (line 14), and that callback changes `Game`; if `sqrt` never calls back into Ember, say so on its declaration: `@ffi(no_callbacks) safe fn sqrt(x: f64) -> f64`; otherwise call it before or after the loop" |
 | a list changed while a generator that walks it will still be used (R8 (c); AN-77) | E3020 | "`d.log.push("open")` (line 3) changes `d.log`, which `g` walks (`g = d.replay()`, line 1), and `g` is used again on line 4; push after `g`'s last use" |
 | a removal inside a counting loop (R8 (c)) | E3020 | "`enemies.remove(i)` shortens `enemies`, which `for i in 0..enemies.len():` counts over with an end fixed when it started; remove after the loop: `enemies.retain(fn(e) => e.hp > 0)`" |
-| a view used after a change that may reshape what it points into, a position after a removal or reorder (R8 (a), (b); AN-01, AN-35, AN-48, AN-52) | E3060 | "`enemies.remove(0)` (line 8) may put another enemy in the place `boss` names (line 6), and `boss` is used on line 9; use `boss` before line 8; or, to change the enemy that is first after the removal, give it a new name after line 8, `first = ref mut enemies[0]`, and write `first.hp -= 1` in place of line 9"; "`bag.items.push(k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15"; "`m.insert(String("z"), 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your own strings: `ks = sorted(m.keys().copy_each())`" |
+| a view used after a change that may reshape what it points into, a position after a removal or reorder (R8 (a), (b); AN-01, AN-35, AN-48, AN-52) | E3060 | "`enemies.remove(0)` (line 8) may put another enemy in the place `boss` names (line 6), and `boss` is used on line 9; use `boss` before line 8, or name the enemy again after it: `boss = ref mut enemies[0]`"; "`bag.items.push(k)` (line 15) may move the list that `h.view` points into (`pick` may have put a view of `bag` there on line 13), and `h.view` is used on line 16; use `h.view` before line 15"; "`m.insert(String("z"), 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9; use `ks` before line 8, or keep your own strings: `ks = sorted(m.keys().copy_each())`" |
 | a change to a temporary whose change would be lost (R8 (d); AN-10, AN-23) | E2140 | "`heal` changes the enemy that `enemy_at(es, 0)` returns, a copy that ends on this line, so the change would be lost; to heal the enemy in `es` write `es[0].heal()`, or let `enemy_at` give back the enemy itself: `fn enemy_at(ref mut xs: Array[Enemy], i: int) -> ref mut Enemy:` with `return ref mut xs[i]`, called `enemy_at(ref mut es, 0).heal()`" |
 | a view of a temporary returned or kept too long (row 5; AN-09) | E3063 | "`word` is a view of the lowered copy that `line.to_lower()` made on line 2, which ends when `clean` returns; return `String(...)` to hand back your own copy: `return String(word)`, with the result type `String`" |
 | a view leaving a lock's `with` block (row 4; AN-30) | E3063 | "this points into the locked list, which can change once the lock ends; return a copy, or do the work inside the `with` block" |
@@ -811,7 +848,7 @@ from in brackets, where there is one). Every message follows R18.
 | `owns` before a value that is already handed over, or before `fn` (AN-47, AN-54) | E0109 | "`b = a` already hands `a` over; remove `owns`"; "`owns fn` does not say what the function takes or copies; name it on each captured name: `fn() with owns report:`" |
 | a type word that cannot apply to its type: `owns` on a class type, `using` after a type with no heap memory of its own (R3; AN-40) | E2114 | "a `Player` object always lives in its own block; remove `owns`: `p: Player`"; "an `int` has no memory of its own to take from `LevelArena`; remove `using`" |
 | a bare interface name used as a type (AN-66) | E2173 | "say who owns the shapes: `Array[owns dyn Shape]` (the list is their only owner) or `Array[shares dyn Shape]` (other names own them too)" |
-| a function value that may change more than the type it is given to allows, and an override that changes more than the method it overrides says (R5, R12; AN-70) | E2113 | "`log_click` changes `LOG` (`fn() changes LOG`), and `handlers` holds `fn()`, functions that change nothing outside themselves; keep it in a list that says so: `handlers: Array[fn() changes LOG]`"; "`fn() changes score, lives` changes 2 captured variables, and `handlers` allows 1 (`Array[fn() changes captured]`); for functions that change any number write `handlers: Array[fn() changes captured...]`"; "`it` runs a function that changes `LOG` (`inspect(fn(x) changes LOG: LOG.push(x))`, line 4), and a `dyn Iterator` does not carry what it changes; take it as a type parameter: `fn show[I: Iterator](owns it: I):`"; "`SwingDoor.on_update` changes `angle`, but it overrides `Door.on_update`, whose first line changes nothing, and callers of `Door` rely on that; write `virtual fn on_update(dt: float) changes this:` in `Door`" |
+| a function value that may change more than the type it is given to allows, and an override that changes more than the method it overrides says (R5, R12; AN-70) | E2113 | "`log_click` changes `LOG` (`fn() changes LOG`), and `handlers` holds `fn()`, functions that change nothing outside themselves; keep it in a list that says so: `handlers: Array[fn() changes LOG]`"; "`fn() changes score, lives` changes 2 captured variables, and `handlers` allows 1 (`Array[fn() changes captured]`); for functions that change any number write `handlers: Array[fn() changes captured...]`"; "`it` runs a function that changes `LOG` (`inspect(fn(x) changes LOG: LOG.push(x))`, line 4), and `owns dyn Iterator[Item = int]` says its steps change nothing; say what they change: `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:`"; "`SwingDoor.on_update` changes `angle`, but it overrides `Door.on_update`, whose first line changes nothing, and callers of `Door` rely on that; write `virtual fn on_update(dt: float) changes this:` in `Door`" |
 | a lambda parameter whose mode differs from the expected function type; a `weakref` link used as its target without opening it, or an object stored into a `weakref` place without `weakref` (AN-56, AN-65) | E2020 | "`each_name` gives each name read-only, so this function cannot take it over; to keep your own, write `fn(s) changes names: names.push(copy of s)`"; "`cam.target` may be gone; open it: `if cam.target exists as p:`"; "`=` alone would hand `player` over; write `cam.target = weakref player`" |
 | a value given to a `using A` place that was not made in an instance of `A` (R3; AN-40) | E2020 | "`mesh` takes its memory from a `LevelArena` (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in manager; say which arena: `mesh=owns Mesh(points=[0.0, 1.0]) using current`"; "`frame` is a `FrameArena`, and `mesh` takes its memory from a `LevelArena`; make it in one: `mesh=owns Mesh(points=[0.0, 1.0]) using current`" |
 | `@ffi(no_callbacks)` on a foreign function whose contract takes a callback (R12; AN-78) | E5069 | "`register_cb` takes a callback (`param(cb, callback(retained, user_data=ud))`), so it may call back into Ember; remove `no_callbacks` from its `@ffi(...)`" |
@@ -820,6 +857,7 @@ from in brackets, where there is one). Every message follows R18.
 | a call through a stored function value from a name that may not change its holder (R12; AN-53, AN-62) | E2105 (the first line), E3023 (the name) | "`click` calls the handlers stored in `this.handlers`, which may change their own state; say so on its first line, `fn click() changes handlers:`, and walk them with `for ref mut h in this.handlers:`"; "`cb` changes its own copy of `score` each time it runs, and `run` takes it read-only; write `fn run(ref mut f: fn()):` and call `run(ref mut cb)`" |
 | `virtual` in a class that cannot be subclassed (AN-70) | E2112 | "`Door` cannot be subclassed, so `virtual` on `on_update` changes nothing; to let subclasses replace it write `open class Door:`, or remove `virtual`" |
 | a method called in a generic body that no bound's interface declares (AN-69) | E2072 | "`T` has no `weight`: no interface in scope declares `fn weight`; declare one (`interface Weighed: fn weight() -> int`) and the bound follows" |
+| a call through a function value that may take a lock this thread holds (R15; AN-75) | E7018 | "`note()` may change any `Log`, this one included (its type says `changes Log`), and this thread holds `log`'s lock, so taking it again inside `note` would wait for ever; call `note()` after the `with log.lock:` block" |
 | `thread_shared` on a value not created `thread_shared` (R3; AN-71, AN-75) | E7017 | "`names` is `share_and_keep`'s own object, which it may change; to share it between threads, create it shared: `names = thread_shared Names()`" |
 | a `thread_shared` value changed directly (R9; AN-71) | E7014 | "`names` is shared between threads (line 17), so no owner changes it directly; keep the list in a field `guarded by` a lock and change it inside `with names.lock:`" |
 | an unscoped thread or a kept callback using a name with no capture word (R15; AN-71, AN-78) | E7004 | "this thread may outlive `share_plain`, so it cannot use `share_plain`'s `names`; say what the thread holds: `fn() with owns names:` (handed over), or create it shared, `names = thread_shared Names()`, and write `fn() with thread_shared names:` (one more owner)" |
@@ -850,7 +888,8 @@ to handle both cases, write `match check_disjoint(dst, src):`").
 code in bold is the model's own: it is not in today's compiler, and was checked unused in the
 compiler's sources, the spec and the run-4 files (`grep -w`): E2116, E2117 and E2118 by run 4's step 1
 (`target/redesign4/v2-01-rule-writer/free_codes.txt`, on the laptop), E5069 by this step
-(`target/redesign4/v3-01-rule-writer/free_codes.txt`).
+(`target/redesign4/v3-01-rule-writer/free_codes.txt`), E7018 by the lead for verdict 43 (`grep -rlw` over
+`compiler/`, the spec, `std/`, `tests/` and `tasks/96/redesign/run4/`: no file).
 
 | code | means |
 |---|---|
@@ -876,7 +915,7 @@ compiler's sources, the spec and the run-4 files (`grep -w`): E2116, E2117 and E
 | E2107 | `changes this` or `owns this` beside `reads`, beside a field, or beside each other |
 | E2108 | `changes this` or `owns this` on `init` |
 | E2112 | `virtual` in a class that cannot be subclassed (today the warning W2111) |
-| E2113 | a function that may change more than the one it stands in for promises: an override or implementation changing more than the method it overrides or implements (beyond the changes its own type parameters carry); a function value changing more than the function type of the place, parameter or list it is given to (more captured variables than `captured` allows included); a value whose type carries changes made a `dyn` value |
+| E2113 | a function that may change more than the one it stands in for promises: an override or implementation changing more than the method it overrides or implements (beyond the changes its own type parameters carry); a function value changing more than the function type of the place, parameter or list it is given to (more captured variables than `captured` allows included); a value made a `dyn` value whose type says less than its methods change |
 | E2114 | a type word that cannot apply to its type: `owns` on a class type (it always has its own block); `using` after a type with no heap memory of its own |
 | E2115 | `static fn` outside a type body |
 | **E2116** | `copy of` before what it cannot copy as itself: a `weakref` link, a value of a view type, a type with no `Clone`, a value whose views point into its own `let` field |
@@ -890,7 +929,7 @@ compiler's sources, the spec and the run-4 files (`grep -w`): E2116, E2117 and E
 | E3020 | a list changed while it is walked: by a `for` loop, or by a generator that walks it and will still be used; directly, or through a call that may change it (a call through a function value by its type, a library call by the function it is given, a `spawn` by what its thread changes, a foreign call by what the callbacks C keeps change); a removal inside a counting loop |
 | E3021 | a read and a change of one place overlap: a change of what a read-only name reads while it is still used; a `ref mut` name's place read through another name while it is still used; an argument that may reach into a changeable argument of the same call (today's meaning, "a shared and a mutable borrow overlap") |
 | E3022 | one place changed through two names: two changeable arguments of one call naming one place (a function value that changes it counts as one); a function value stored in a place that a variable it changes owns; a `ref mut` name's place changed through another name while it is still used (today's meaning, "two mutable borrows of the same place") |
-| E3023 | a change the name does not allow: a change through a name that only reads (a plain parameter, a loop, pattern, opened or part name, a plain name holding a `MutSpan`, a value made when compiling); `=` on a name that keeps its place for its scope (a parameter, a loop, pattern or opened name, a `ref mut` name given a new view); a method that changes its object called on a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included) |
+| E3023 | a change the name does not allow: a change through a name that only reads (a plain parameter, a loop, pattern, opened or part name, a plain name holding a `MutSpan`, a value made when compiling); `=` on a name that keeps its place for its scope (a parameter, a loop, pattern or opened name, a `const ref mut` name given another ref); a method that changes its object called on a read-only name; an owner that may change made from one that only reads (a plain parameter of a `shares mut` type included) |
 | E3026 | a function value that may outlive a place it uses and does not own (today's) |
 | E3027 | `ref mut` before something this function may not change: an argument, or a loop or pattern name over something it only reads (today's meaning, "a `mut` argument is not a mutable place") |
 | E3028 | a call's word does not match its parameter: no `ref mut` before an argument for a `ref mut` parameter (a `MutSpan` one included), or `ref mut` before one for a parameter that is not `ref mut` |
@@ -912,6 +951,7 @@ compiler's sources, the spec and the run-4 files (`grep -w`): E2116, E2117 and E
 | E7015 | a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) or a lent value reaches another thread |
 | E7016 | a `@parallel` loop over something it cannot split into chunks: neither a range nor a list walked by element |
 | E7017 | `thread_shared` on a name whose value was not created `thread_shared` |
+| **E7018** | a call through a function value whose type says it changes a type whose lock this thread holds, inside that lock's `with` block |
 | L3001 | a type whose `shares` fields can form a cycle of owners (a warning: a leak, not a memory error) |
 | L3015 | an `unsafe fn` with no `@safety` (every one, not only `pub`) |
 | W2190 | an unused `Result` (today's), `check_disjoint`'s included |

@@ -65,4 +65,5 @@ pub fn wait_frame() changes captured...:
 
 ## Status
 
-Not answered. Nothing about it is in the rules yet.
+Answered: (a) (verdict 39), `captured` / `captured...` for what a line cannot see (verdict 40), named
+change lists, strict (verdict 41). In `JOB.md` and the v3 rules.

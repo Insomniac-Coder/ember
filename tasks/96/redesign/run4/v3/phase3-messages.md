@@ -10,8 +10,8 @@ was, and what the message says now.
 
 | item | where | fix |
 |---|---|---|
-| F-01 | area-A AN-01 E3060; rules E3060 row | `boss = ref mut enemies[0]` (refused by R2 on the existing `boss`) -> a new name after the removal, `first = ref mut enemies[0]`, and `first.hp -= 1` in place of line 9 |
-| F-01 | area-A AN-02, three messages (E3060 on_hit, E3060 kill_weak, E3022 heal_all) | the same: `first = ref mut enemies[0]` after line 9, `first.hp -= 10` in place of line 10 |
+| F-01 | area-A AN-01 E3060; rules E3060 row | settled by verdict 42 instead: a `ref mut` name may be given another ref, so v2's line (`boss = ref mut enemies[0]`, `h = ref mut this.handlers.get_mut(i).unwrap()`) compiles and stays; the new-name rewrite was undone |
+| F-01 | area-A AN-02, three messages (E3060 on_hit, E3060 kill_weak, E3022 heal_all) | settled by verdict 42 instead: a `ref mut` name may be given another ref, so v2's line (`boss = ref mut enemies[0]`, `h = ref mut this.handlers.get_mut(i).unwrap()`) compiles and stays; the new-name rewrite was undone |
 | area A (new) | area-A AN-01 E3060 (`n`) | "keep your own copy: `n = String(...)`" -> "write `n = String(boss.name.trim())` in place of line 8" |
 | area A (new) | area-A AN-03 E3022; rules E3022 row | "pass two different bodies, or write a one-body version of `collide`" (words) -> `collide(ref mut bodies[i], ref mut bodies[j])` |
 | F-05 | area-A AN-04 E3020; rules E3020 row | `spawned` declared: `spawned: Array[Enemy] = []` before the loop, the push in place of this line, `enemies.extend(spawned)` after |
@@ -43,4 +43,4 @@ was, and what the message says now.
 | area C (new) | rules E3063 arena row (AN-40) | the caller's lines added, as AN-40's own message has them: `current = LevelArena()`, `boss = load_level(ref mut current)` |
 | F-03 | rules E3026 row; area-D AN-57 and AN-53 E3026 | `count = shares mut Counter()` and `count.n` (a class and field the program does not have; the `Button` lines missing) -> every line: `struct Counter:` with `n: int = 0`; in the caller `count = Counter()` and `register(ref mut b, shares mut count)`; `fn register(ref mut b: Button, owns count: shares mut Counter):` (verdict 32); `b.on_click(fn() with owns count changes Counter: count.n += 1)`; in `Button` `handlers: Array[fn() changes Counter]`, `fn on_click(owns f: fn() changes Counter) changes handlers:`, `fn click() changes handlers, Counter:`; AN-57's prose after the message aligned (`with owns count`) |
 | F-06 | area-D AN-53 and AN-58 E3020 | "or collect what to add and push it after the loop" (words) -> "call it after the loop, as many times as the loop would: `n = xs.len()` before the loop, and `for k in 0..n: hs[0]()` below it instead of `hs[0]()` in it" |
-| F-01 | area-D AN-61 E3060 | `h = ref mut this.handlers.get_mut(i).unwrap()` again on the existing `h` (refused by R2) -> a new name after the call, `h2 = ref mut ...`, and `h2(ref mut this)` in place of line 6 |
+| F-01 | area-D AN-61 E3060 | settled by verdict 42 instead: a `ref mut` name may be given another ref, so v2's line (`boss = ref mut enemies[0]`, `h = ref mut this.handlers.get_mut(i).unwrap()`) compiles and stays; the new-name rewrite was undone |
