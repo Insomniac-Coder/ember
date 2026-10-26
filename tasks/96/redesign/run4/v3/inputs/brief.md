@@ -91,7 +91,8 @@ agreed, in the verdicts' spellings (row 6 now reads `b.on_click(fn() changes sco
 - 01 Rule writer: brings the rules, the vocabulary and the change list up to date with verdicts 21-34.
 - 02-06 Area updaters A-E: bring every answer of their area to the updated rules and words.
 - 07 Readability checker (later, after the lead fixes the error messages flagged in `V2/readability.md`):
-  checks every NEW block against the owner's tests and all 34 verdicts.
+  checks every NEW block against the owner's tests and verdicts 1 to 52 (the owner decided 35 to 52
+  during this step, after phases 1 and 2; they are in `inputs/JOB.md` and already applied by the lead).
 
 ## Machine limits
 

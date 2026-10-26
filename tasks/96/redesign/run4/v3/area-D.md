@@ -2277,8 +2277,9 @@ exit=0
 **6. Still refused.**
 - A generic method whose type parameter is returned or stored by value (`[V: Visitor]` above `fn make() -> V`)
   through `dyn`, E2050: "`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn`
-  value has one entry per method; take the visitor as `ref mut v: V`, or use a type parameter
-  `[I: Inspect]` instead of `dyn Inspect`".
+  value has one entry per method; take the visitor in instead of returning it, `[V: Visitor]` above
+  `fn make(ref mut v: V)`, or keep each list's own type with a type parameter instead of `dyn Inspect`:
+  `[I: Inspect]` above `fn walk(xs: Array[I]) -> int:`".
 - `cast x as D`, and a kind test `x is D`, between unrelated types, E2020, with "`Box[dyn AnyPool]` is
   now `owns dyn AnyPool`" where that is the cause.
 - A plain name from the kind test, `if this.pools[k] is Pool[T] as pool:` with `return ref mut
@@ -2420,8 +2421,9 @@ written as Swift, Kotlin and C# write it, with today's unhelpful help replaced b
 
 ## AN-69: Generics friction (A16)
 
-**v3:** as in v2; verdicts 21 to 34 change nothing here. The E2041 message in part 6 gives one way out
-in words ("narrow the general one's bound"), listed for the lead (notes, note 6). Meaning unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here. The E2041 message in part 6 gives both ways out
+as lines (phase 3: "narrow the general one's bound" could not be written, Ember having no bound that
+leaves one type out). Meaning unchanged.
 
 **1. Intent:** sum any addable values; print a list of vectors; give one type its own description.
 
@@ -2525,8 +2527,8 @@ The orphan exemption is a permission, not code; the overlap stays refused, so it
   and `extend Vecs implements Neg:`".
 - E2041, overlapping implementations (the most specific one winning is unproven for Ember): "`i32`
   already gets `Describe` from `extend[T: Debug] T implements Describe` on line 5, and two
-  implementations may not apply to one type; narrow the general one's bound so it leaves `i32` out, or
-  give `i32` its own function: `fn describe_int(x: i32) -> String:`".
+  implementations may not apply to one type; give `i32` its own description through a function of its
+  own, `fn describe_int(x: i32) -> String:`, or remove line 9 so that `i32` uses the general one".
 - A non-`pub` body calling a method no interface in scope declares, E2072: "`T` has no `weight`: no
   interface in scope declares `fn weight`; declare one (`interface Weighed: fn weight() -> int`) and the
   bound follows" (a duck-typing extension is not taken: it would let a typo surface at a call far away).
@@ -2729,6 +2731,10 @@ this area wrote meanwhile.
      bound, not the line (`[I: Inspect]` above `fn walk(xs: Array[I]) -> int:`) (found in this step).
    - AN-69 part 6, E2041: "narrow the general one's bound so it leaves `i32` out" is a way out in words;
      its second way out is an exact line (found in this step).
+   **Phase 3 (the lead):** all of these are settled. AN-61's line compiles under verdict 42 (a `ref mut`
+   name may be given another ref) and stays; AN-53's and AN-57's E3026, AN-53's and AN-58's E3020, AN-67's
+   E2050 and AN-69's E2041 now give the exact lines; the rules' E3021 walk row (note 5's AN-62 line) lists
+   `if leaf exists as n:` among the lines it replaces. Each fix is in `V3/phase3-messages.md`.
 7. **Verdicts with no code in area D.** No answer of area D calls a C function, so verdict 31 (a C call
    may run the callbacks C keeps; `@ffi(no_callbacks)`) changes none of its lines; area E's AN-78 carries
    it. Verdict 32 lands only in AN-57's added refusal; no NEW block of area D takes a plain parameter of a

@@ -273,7 +273,7 @@ Every other row is v2's text, with "decision N" read as "verdict N".
 | `V2/readability.md` F-12 (`.copied()`) | verdict 33: `.copy_each()` |
 | F-14 (a plain local holding a `MutSpan` writes) | verdict 34: it says `ref mut` (R2, R4, R5) |
 | C-1 (does a plain `fn()` cover a lambda that changes a captured variable?) | verdict 22: no |
-| F-01 to F-11, F-13 (messages) | the lead's (phase 3); left as they are, since no rule this step changed rewrote those messages: F-06's E3023 row ("or make `game` with `shares mut`") is untouched, and verdict 32's message is a separate row |
+| F-01 to F-11, F-13 (messages) | the lead's (phase 3); left as they are, since no rule this step changed rewrote those messages: F-06's E3023 row ("or make `game` with `shares mut`") is untouched, and verdict 32's message is a separate row. **Phase 3 (the lead):** all fixed, F-01 settled by verdict 42 instead; each fix is a row of `phase3-messages.md` |
 | `V2/area-D.md` "For the owner" 1: the walk whose callback may remove nodes | verdict 28 (R10, R11) |
 | `V2/area-D.md` notes for the rule writer | note 1 (a function value stored inside the variable it changes): refused (E3022, R12), now that the lambda names the variable; note 2 (R11's region walk against R8 (g)): settled by verdict 28; note 3 (a view as the argument of a call that may change it): R8 (g); note 4 (a link inside a region needs no weak count): R11, as the compile-time saving verdict 28 asks for; note 5 (a parent-link proof that fails silently): not settled here, a compiler note or `ember inspect` view is the lead's to decide; note 6 (`weakref this` in a method that names only a field): R11 |
 | `V2/area-E.md` section 4.2, point 1 (a change under a lock) | verdict 29 (R12) |

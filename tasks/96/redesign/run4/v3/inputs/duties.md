@@ -85,13 +85,21 @@ spellings (row 6: `b.on_click(fn() changes score: score += 1)`).
 ## 07 Readability checker (phase 4, after the lead's message fixes)
 
 Inputs: `V3/rules.md`, `V3/vocabulary.md`, `V3/changes.md`, the five `V3/area-<letter>.md`,
-`inputs/JOB.md`, `V2/readability.md` (the failures the lead fixed in phase 3).
+`inputs/JOB.md` (verdicts 1 to 52: the owner decided 35 to 52 during this step, after phases 1 and 2),
+`V2/readability.md` (the failures the lead fixed in phase 3) and `V3/phase3-messages.md` (the lead's
+log of every message fixed in phase 3; F-01 was settled by verdict 42 instead of rewritten).
 
 Write `V3/readability.md`: for every NEW block, the owner's test on every declared name, the
-error-message rule on every message, every one of the owner's verdicts 1 to 34 applied everywhere with no
-old spelling left (`holds`, `cast x if T`, `cast x when T`, `.copied()`, a plain `MutSpan` name or
-parameter that writes, `owned`, `shared` as an owner word, `copied`, `self`, `weak` alone, `set by`,
-`Some(...)` in an `if` or `while`, a function type that leaves out a change made under a lock, a function
-that starts a thread without listing its changes), whether `V2/readability.md`'s F-01 to F-11 and F-13
+error-message rule on every message, every one of the owner's verdicts 1 to 52 (25 excepted, replaced by
+27) applied everywhere with no old spelling left (`holds`, `cast x if T`, `cast x when T`, `.copied()`, a
+plain `MutSpan` name or parameter that writes, `owned`, `shared` as an owner word, `copied`, `self`,
+`weak` alone, `set by`, `Some(...)` in an `if` or `while`, a function type that leaves out a change made
+under a lock, a function that starts a thread without listing its changes, a send or a receive through
+a given channel end not named (36, 37), a function that calls C without naming what its kept callbacks
+change (39), a `=>` lambda that changes something without saying so (45), type parameters in brackets
+after a generic function's, method's, struct's or class's name instead of on a line of their own above
+it (50; enums, interfaces and `type` aliases keep the brackets), a `ref mut` name refused another ref
+(42)). Verdict 50 covers every generic function, so it also applies to the examples written in
+verdicts 38 and 49. Whether `V2/readability.md`'s F-01 to F-11 and F-13
 are fixed, and whether the agreed rows are exactly as agreed. List every failure with the block, the test
 it fails and why. Do not fix anything.

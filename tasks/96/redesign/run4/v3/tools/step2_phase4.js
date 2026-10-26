@@ -43,7 +43,7 @@ const READ_SCHEMA = obj({
 phase('Readability')
 const r = await run('07', 'readability', header('07', 'readability', '07 Readability checker'),
   { phase: 'Readability', schema: READ_SCHEMA, effort: 'high' })
-const WANT = Array.from({ length: 34 }, (_, i) => i + 1).filter(n => n !== 25)
+const WANT = Array.from({ length: 52 }, (_, i) => i + 1).filter(n => n !== 25)
 const got = new Set(r.verdicts.map(v => v.number))
 const missing = WANT.filter(n => !got.has(n))
 if (missing.length) log('WARNING the checker did not report verdicts ' + missing.join(' '))

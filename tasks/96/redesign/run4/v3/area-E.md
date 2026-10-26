@@ -378,10 +378,21 @@ written as a struct value moved to the thread, which is what a hand-over of a on
   `error[E7007]: tasks add their parts to \`total\`, which is known only once the \`with\` block (lines
   3 to 5) ends; read \`total\` after it, as line 6 does`.
 - A task changes `total` in a way the compiler cannot add up per task: AN-72's message.
-- A float place one task adds to more than once: `error[E7007]: each task adds to \`sum\` many times;
-  float sums depend on how the adds are grouped, so the result would not be any order of single adds;
-  add up in the task first: \`mine = 0.0\`, \`mine += x\` for each, then \`sum += mine\` once`. (With
-  one add per task the spawn-order result is one order of single adds.)
+- A float place one task adds to more than once, in this refused program:
+
+  ```ember
+  fn total_of(parts: Array[Array[float]]) -> float:
+      sum = 0.0
+      with scope = thread.scope():
+          for p in parts:
+              scope.spawn(fn() changes sum: for x in p: sum += x)
+      return sum
+  ```
+
+  `error[E7007]: each task adds to \`sum\` once per number (line 5); float sums depend on how the adds
+  are grouped, so the result would not be any order of single adds; add up each part in its task and
+  add it to \`sum\` once: \`scope.spawn(fn() changes sum: sum += p.iter().sum())\` instead of line 5`.
+  (With one add per task the spawn-order result is one order of single adds.)
 - Using `names` after `with owns names`: `error[E3040]: \`names\` was handed to the thread at line 13
   (\`with owns names\`); to keep using it here, create it shared, \`names = thread_shared Names()\`,
   and capture it \`with thread_shared names\``.
@@ -393,12 +404,31 @@ written as a struct value moved to the thread, which is what a hand-over of a on
 - `with thread_shared names` on the plain local of line 12: `error[E7017]: \`names\` is
   \`share_plain\`'s own object, which it may change; to share it between threads, create it shared:
   \`names = thread_shared Names()\`` (the same for `keep = thread_shared names`).
-- Handing over a value that holds a one-thread owner: if `Names` had `cache: shares Cache` and the
-  caller another owner of it, `error[E7015]: \`names\` holds \`cache\`, which has other owners on this
-  thread (line 9), whose counts change without atomics; share it between threads:
-  \`cache: thread_shared Cache\``. The same for a class that is the target of a `weakref` field
-  anywhere in the build (its `weakref` links stay on this thread): "share it instead: create it
-  `names = thread_shared Names()` and capture it `with thread_shared names`".
+- Handing over a value that holds a one-thread owner, in this refused program:
+
+  ```ember
+  class Cache:
+      hits: int = 0
+
+  class Names:
+      items: Array[String] = []
+      cache: shares Cache
+
+  fn share_cached():
+      c = shares Cache()
+      names = Names(cache=shares c)
+      h = thread.spawn(fn() with owns names: names.items.len())
+      println(c.hits, h.join())
+  ```
+
+  `error[E7015]: the thread gets \`names\`, which holds \`cache\`, and \`cache\`'s other owner \`c\`
+  (line 9) stays on this thread; \`shares\` owners count without atomics, so two threads would change
+  one count; share the cache between threads: write \`cache: thread_shared Cache\` in \`Names\`,
+  \`c = thread_shared Cache()\` instead of line 9 and \`names = Names(cache=thread_shared c)\` instead
+  of line 10`. The same for a class that is the target of a `weakref` field anywhere in the build (its
+  `weakref` links stay on this thread): if `Names` were one, the NEW's `share_plain` would be refused
+  with "share it instead: write `names = thread_shared Names()` instead of line 12 and `fn() with
+  thread_shared names:` instead of `fn() with owns names:` on line 13".
 - Changing a `thread_shared` value directly: `names.items.push(s)` in `share_and_keep`: `error[E7014]:
   \`names\` is shared between threads (line 17), so no owner changes it directly; keep the list in a
   field \`guarded by\` a lock and change it inside \`with names.lock:\``.
@@ -872,13 +902,11 @@ Found in passing: section 10.)
 - `add_all` without `changes`: `fn add_all(text: StrView):` with the same body: `error[E2105]:
   \`add_all\` changes \`this.words\` and \`this.tags\`; write its first line as \`fn add_all(text:
   StrView) changes words, tags:\``.
-- A field written after `init` by two tasks with no lock and no `guarded by`: `error[E7007]: two
-  tasks change \`stats.total\` (line 19); guard it: \`total: int guarded by lock\`, and change it inside
-  \`with this.lock:\`; or make it \`Atomic[int]\``.
+- A field written after `init` by two tasks with no lock and no `guarded by`: `error[E7007]: two tasks change \`stats.total\` (line 19), each without a lock; count it with an atomic, \`total: Atomic[int] = Atomic(0)\` in \`Stats\` and \`stats.total.fetch_add(1)\` on line 19, or guard it: in \`Stats\` write \`lock: Lock = Lock()\`, \`total: int guarded by lock = 0\` and \`fn add_total(n: int) changes total:\` with \`with this.lock: this.total += n\` as its body, and call \`stats.add_total(1)\` on line 19`.
 - A list whose objects may have a second owner in a parallel loop: `for ref mut p in players` with
   `players: Array[shares mut Player]`: `error[E7010]: \`players\` holds \`shares mut Player\` objects,
-  and one object may be in the list twice, so two chunks could change it at once; give each object one owner
-  (\`Array[Player]\`), or change it under its lock (\`hp: int guarded by lock\`)`.
+  and one object may be in the list twice, so two chunks could change it at once; give each object one owner,
+  \`players: Array[Player]\`, or guard the fields: in \`Player\` write \`lock: Lock = Lock()\`, \`hp: int guarded by lock = 10\` and \`x: int guarded by lock = 0\`, and put the loop's body inside \`with p.lock:\``.
 
 **7. Cost.** A lock where the program writes one, the lock C takes (last run, `phase3b-threads.md:741`,
 `lock-0`, lock-use-unlock in C, 1479.479 ms against safe Rust's `Mutex` 2170.016 ms, PROVISIONAL);
@@ -1324,13 +1352,27 @@ an76_static_mut ms=26.241 peak_kb=27884 checksum=2000014
   `error[E3020]: this loop walks \`LOG\`, and \`tick()\` changes \`LOG\` (\`fn tick() changes FRAME,
   LOG:\`, line 4); call \`tick()\` after the loop`.
 - A worker thread using an unguarded one: `thread.spawn(fn() changes FRAME, LOG: tick())`:
-  `error[E7012]: \`tick\`
-  changes \`FRAME\`, a module variable of the main thread, and this thread runs beside it; guard it:
-  \`static mut FRAME: int guarded by FRAME_LOCK\` and change it inside \`with FRAME_LOCK:\`, or make it
-  \`Atomic[int]\``.
+  `error[E7012]: \`tick\` changes \`FRAME\` and \`LOG\`, module variables of the main thread, and
+  this thread runs beside it; guard both with one lock: write \`static TICK_LOCK: Lock = Lock()\`, then
+  \`static mut FRAME: int guarded by TICK_LOCK = 0\` instead of line 1 and \`static mut LOG:
+  Array[String] guarded by TICK_LOCK = []\` instead of line 2, and put \`tick\`'s body inside \`with
+  TICK_LOCK:\``.
 - `FRAME = 0` at module level (Python's spelling): `error[E1030]: \`FRAME = 0\` at module level is a
   statement, and this file has \`fn main\`; declare a module variable: \`static mut FRAME: int = 0\``.
-- `global FRAME`: today's E0100 help, kept ("`global` is Python's"), pointing at `changes FRAME`.
+- `global FRAME`, Python's spelling, in this refused program:
+
+  ```ember
+  static mut FRAME: int = 0
+
+  fn tick():
+      global FRAME
+      FRAME += 1
+  ```
+
+  today: `error[E0100]: \`global\` is Python's; Ember declares no names as shared` (probed by the
+  lead, `target/redesign4/lead-phase3/global_frame.em`); now: `error[E0100]: \`global\` is Python's;
+  in Ember a function that changes a module variable says so on its first line: remove line 4 and write
+  \`fn tick() changes FRAME:\` instead of line 3`.
 - A thread's function that does not say what it changes: `thread.spawn(fn(): worker(1))`:
   `error[E2105]: this function calls \`worker\`, which changes \`RESULTS\`; say so on its first line:
   \`fn() changes RESULTS: worker(1)\``.
@@ -1547,9 +1589,19 @@ the NEW program compiles: a consumer that changed `d.log` while the generator li
 translation would let see the change, is refused in the NEW program (6).
 
 **6. Still refused:**
-- A reference to the frame's own inline local across `yield` (`r = ref n`, then `yield`, then `r`):
-  `error[E2221]: \`r\` points into this generator's own frame, which may move while it is suspended;
-  keep the value instead (\`m = n\`), or its position`.
+- A reference to the frame's own inline local across `yield`, in this refused program:
+
+  ```ember
+  gen fn numbers() -> Generator[int]:
+      n = 5
+      r = ref n
+      yield 1
+      yield r
+  ```
+
+  `error[E2221]: \`r\` (line 3) points into this generator's own frame, which may move while it is
+  suspended at the \`yield\` on line 4; use \`n\` itself: remove line 3 and write \`yield n\` instead
+  of line 5`.
 - The in-place consumer changing the walked field: `for n in d.replay(): d.log.clear()`:
   `error[E3020]: this loop walks \`d.log\` through \`d.replay()\` (\`from log\`), and \`d.log.clear()\`
   changes it; write \`d.log.clear()\` after the loop`.
@@ -1559,8 +1611,29 @@ translation would let see the change, is refused in the NEW program (6).
   1), and \`g\` is used again on line 3; push after \`g\`'s last use` (R8 (c), verdict 16; the
   message of `V3/rules.md` section 3, in this program's lines; no "walk by position" way out, since a
   position walk is refused the same way).
-- A walk with no position (a linked structure held by views): E2221 as today, with "walk it by an
-  index or a `Handle`".
+- A walk with no position (a linked structure held by views), in this refused program:
+
+  ```ember
+  struct Link:
+      value: int
+      next: Option[owns Link] = None
+
+  gen fn countdown() -> Generator[int]:
+      head = Link(value=2, next=Some(Link(value=1)))
+      cur = ref head
+      while true:
+          yield cur.value
+          if cur.next exists as nx:
+              cur = ref nx
+          else:
+              break
+  ```
+
+  `error[E2221]: \`cur\` (line 7) views \`head\`, a local of this generator's own frame, which may
+  move while it is suspended at the \`yield\` on line 9; a view of what the caller keeps may be held:
+  take the list as a parameter, \`gen fn countdown(head: Link) -> Generator[int] from head:\` instead
+  of line 5, and remove line 6` (today's E2221, whose help says "borrows of the generator's parameters
+  may be held", in this program's lines).
 - `async`: `error[E0005]: \`async\` is planned for a later version; for work that waits, use a
   generator or threads (\`with scope = thread.scope():\`)`.
 
@@ -1938,9 +2011,10 @@ What changes is what is refused.
 
 **6. Still refused:**
 - An unsafe operation in an `unsafe fn` body outside a block: the OLD helper: `error[E3100]:
-  \`read_u32_le\` is an \`unsafe fn\`, which says its callers must vouch; the read at line 4 is this
-  function's own unsafe step: put it in an \`unsafe:\` block with a \`# SAFETY:\` note saying why it
-  holds here`.
+  \`read_u32_le\` is an \`unsafe fn\`, which says its callers must vouch; the reads through \`p\` on
+  line 4 are this function's own unsafe steps, and nothing says why they are sound; above line 4 write
+  \`# SAFETY: <why these reads are sound>\` and \`unsafe:\`, and indent line 4 under \`unsafe:\``
+  (the NEW's lines 3 to 5 are that, with the note written).
 - `unsafe fn` with no `@safety` on any function, not only `pub` ones (today `L3015` for `pub`):
   `warning[L3015]: say what callers of \`read_u32_le\` must make true:
   \`@safety("p points to four readable bytes")\``.
@@ -2103,9 +2177,7 @@ exit=0
   starts a thread whose function changes \`Stats\` (\`fn() with thread_shared st changes Stats:
   st.note(3)\`, line 21); add it to \`main\`'s first line: \`fn main() changes Stats:\`` (R5, R12,
   verdict 30).
-- `@sync class Stats`: `error[E0104]: \`@sync\` is gone: a class needs no mark to be shared between
-  threads; share the object where it is shared, \`st = thread_shared Stats()\`, and say which lock
-  guards each field that changes (\`words: int guarded by lock\`) or make it \`Atomic[int]\``.
+- `@sync class Stats`, on the OLD's class: `error[E0104]: \`@sync\` is gone: a class needs no mark to be shared between threads, and \`Stats\`'s fields are \`Atomic\`, which threads may change as they are; remove \`@sync\` (line 1)`.
 - `T: Sync` in a bound: `error[E1010]: \`Sync\` is the effect \`@nosync\` forbids, not a property of
   a type; for "threads may share it" write \`T: ThreadShared\``.
 - `st.longest = n` outside the lock: `error[E7013]: \`longest\` is guarded by \`lock\`; change it
@@ -2364,7 +2436,7 @@ error[E5013]: C reads the further argument `narrow` as an `int`, and an `i16` wo
 
 ```text
 error[E7012]: `bump` may be called from any thread (`@export(threads=any)`), and it changes `HITS`, a module variable of the main thread
-   = help: guard it: `static mut HITS: int guarded by HITS_LOCK`, and change it inside `with HITS_LOCK:`; or make it `Atomic[int]`
+   = help: guard it with a lock: write `static HITS_LOCK: Lock = Lock()` and `static mut HITS: int guarded by HITS_LOCK = 0`, and put `bump`'s body inside `with HITS_LOCK:`; or count it with an atomic: `static HITS: Atomic[int] = Atomic(0)`, and `HITS.fetch_add(1)` in `bump`
 ```
 
 E7016's message, on the refused program written out (`place` with its loop as a `while` loop):

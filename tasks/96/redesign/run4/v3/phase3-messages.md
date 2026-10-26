@@ -1,9 +1,9 @@
 # Run 4 step 2, phase 3: the lead's message fixes
 
-IN PROGRESS. Done: rules rows from areas A, B, C and part of D; areas A, B, C; area D's AN-53, AN-57,
-AN-58, AN-61. Still to do: area D's AN-62 (rules E3021 row), AN-67 (E2050), AN-69 (E2041); area E
-(AN-71, AN-74, AN-76, AN-77, AN-79, AN-80, AN-84; rules E7007, E7012); the rules' E3023 row (F-06);
-the vocabulary's `from` row (F-13).
+DONE. Every message the phase 3 worklist named is fixed: the rule writer's flags (F-01 to F-06, F-11,
+the `LOG.retain(keep)` row), areas A to E, the rules' E3023 and E3100 rows and the vocabulary's `from`
+row (F-13). Where an area's refused program was not written out, the fix writes it out, so the lines a
+message names can be checked against it.
 
 Each row: the failure (`V2/readability.md` F-xx, the rule writer's, or an area updater's flag), where it
 was, and what the message says now.
@@ -44,3 +44,19 @@ was, and what the message says now.
 | F-03 | rules E3026 row; area-D AN-57 and AN-53 E3026 | `count = shares mut Counter()` and `count.n` (a class and field the program does not have; the `Button` lines missing) -> every line: `struct Counter:` with `n: int = 0`; in the caller `count = Counter()` and `register(ref mut b, shares mut count)`; `fn register(ref mut b: Button, owns count: shares mut Counter):` (verdict 32); `b.on_click(fn() with owns count changes Counter: count.n += 1)`; in `Button` `handlers: Array[fn() changes Counter]`, `fn on_click(owns f: fn() changes Counter) changes handlers:`, `fn click() changes handlers, Counter:`; AN-57's prose after the message aligned (`with owns count`) |
 | F-06 | area-D AN-53 and AN-58 E3020 | "or collect what to add and push it after the loop" (words) -> "call it after the loop, as many times as the loop would: `n = xs.len()` before the loop, and `for k in 0..n: hs[0]()` below it instead of `hs[0]()` in it" |
 | F-01 | area-D AN-61 E3060 | settled by verdict 42 instead: a `ref mut` name may be given another ref, so v2's line (`boss = ref mut enemies[0]`, `h = ref mut this.handlers.get_mut(i).unwrap()`) compiles and stays; the new-name rewrite was undone |
+| area D (AN-62) | rules E3021 walk row | its "instead of" list left out `if leaf exists as n:`, so following it declared `n` twice (E2106) -> the list names it, as AN-62's own message does |
+| area D (new) | area-D AN-67 E2050 | "take the visitor as `ref mut v: V`, or use a type parameter" (a bound, not a line) -> `[V: Visitor]` above `fn make(ref mut v: V)`, or `[I: Inspect]` above `fn walk(xs: Array[I]) -> int:` (verdict 50's spelling) |
+| area D (new) | area-D AN-69 E2041 | "narrow the general one's bound so it leaves `i32` out" (no bound can leave one type out) -> `fn describe_int(x: i32) -> String:`, or remove line 9 so that `i32` uses the general one |
+| F-11 | area-E AN-74 E7007; rules E7007 row | `with this.lock:` advised for line 19, a task in a free function, where there is no `this` -> an atomic, `total: Atomic[int] = Atomic(0)` in `Stats` and `stats.total.fetch_add(1)` on line 19; or, in `Stats`, `lock: Lock = Lock()`, `total: int guarded by lock = 0` and `fn add_total(n: int) changes total:` with `with this.lock: this.total += n`, and `stats.add_total(1)` on line 19 |
+| area E (F-05's kind) | area-E AN-74 E7010 | `hp: int guarded by lock` for a `Player` with no `lock`, and no `with` line -> `players: Array[Player]`; or, in `Player`, `lock: Lock = Lock()`, `hp: int guarded by lock = 10`, `x: int guarded by lock = 0`, and the loop's body inside `with p.lock:` |
+| F-05 | area-E AN-76 E7012; rules E7012 row | `FRAME_LOCK` never declared, and `tick` changes `LOG` too -> one lock for both: `static TICK_LOCK: Lock = Lock()`, then `static mut FRAME: int guarded by TICK_LOCK = 0` instead of line 1 and `static mut LOG: Array[String] guarded by TICK_LOCK = []` instead of line 2, and `tick`'s body inside `with TICK_LOCK:` |
+| area E | area-E AN-76 `global FRAME` | "today's E0100 help, kept" (not written out) -> the refused program written out, today's text probed (`target/redesign4/lead-phase3/global_frame.em`); "remove line 4 and write `fn tick() changes FRAME:` instead of line 3" |
+| F-05 | area-E AN-84 E7012 | `HITS_LOCK` never declared -> `static HITS_LOCK: Lock = Lock()` and `static mut HITS: int guarded by HITS_LOCK = 0`, `bump`'s body inside `with HITS_LOCK:`; or `static HITS: Atomic[int] = Atomic(0)` and `HITS.fetch_add(1)` in `bump` |
+| F-06 | area-E AN-77 E2221 (a frame local) | "keep the value instead (`m = n`), or its position" (words) -> the refused program written out; "use `n` itself: remove line 3 and write `yield n` instead of line 5" |
+| F-06 | area-E AN-77 E2221 (a linked walk) | "walk it by an index or a `Handle`" (words; a linked list has no index) -> the refused program written out (`Link`, `countdown`); "take the list as a parameter, `gen fn countdown(head: Link) -> Generator[int] from head:` instead of line 5, and remove line 6", as today's help allows a parameter's borrow |
+| area E | area-E AN-71 E7007 (float sums) | "`mine += x` for each" (the loop line not given; the program not written out) -> the refused program written out (`total_of`); `scope.spawn(fn() changes sum: sum += p.iter().sum())` instead of line 5 |
+| area E | area-E AN-71 E7015 | `cache: thread_shared Cache` alone does not compile (R3: the caller's other owner must be made `thread_shared` too) -> the refused program written out (`share_cached`); `cache: thread_shared Cache` in `Names`, `c = thread_shared Cache()` instead of line 9, `names = Names(cache=thread_shared c)` instead of line 10; the `weakref` variant names `share_plain`'s lines 12 and 13 |
+| area E | area-E AN-79 E3100; rules E3100 row | "put it in an `unsafe:` block with a `# SAFETY:` note" (words) -> "above line 4 write `# SAFETY: <why these reads are sound>` and `unsafe:`, and indent line 4 under `unsafe:`" |
+| area E | area-E AN-80 E0104; vocabulary `@sync` row | a guarded field with an undeclared lock, and "say which lock guards each field" (words), for a class whose fields are already `Atomic` -> "remove `@sync` (line 1)", with the reason: `Stats`'s fields are `Atomic`, which threads may change as they are |
+| F-06 | rules E3023 row (R3) | "or make `game` with `shares mut`" (an action) -> names the refused line, `g2 = shares mut game`, and gives "write `game = shares mut Game()` instead of line 1" |
+| F-13 | vocabulary `from` row | C's `from(self)` in the "it will mean" column -> `from(this)`, the receiver's region; today's `from(self)` named as today's |
