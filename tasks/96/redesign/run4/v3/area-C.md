@@ -1284,7 +1284,7 @@ by what its views point into (R2, R7).
    m: Map[String, int] = Map()
    for k in sorted(m.keys()):          # views of m's own keys, sorted: no copy
        println(k)
-   names = sorted(m.keys().copied())   # your own strings, kept past changes to m
+   names = sorted(m.keys().copy_each())   # your own strings, kept past changes to m
    ```
 
 4. **The owner's test:**
@@ -1296,7 +1296,7 @@ by what its views point into (R2, R7).
    | `t` | none (default, reads only: a value made when compiling is read-only data; the name is a view of it, never a copy) | none (default: it never changes) |
    | `own` | `copy of`: its own list | none (default, own local) |
    | `k` | none (default, reads only: a loop name; here a view of one of `m`'s keys) | none (default, reads only) |
-   | `names` | `.copied()`: its own strings, each a copy of a key (the `.copied()` row); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
+   | `names` | `.copy_each()`: its own strings, each a copy of a key (the `.copy_each()` row); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
 
 5. **Means exactly:** `an46_tr_static.em` (`static TABLE: Array[int] = comptime(table())`,
    `t = ref TABLE`: no copy, as spec 4040 says): `exit=0`, no output. `an46_tr_copied.em`
@@ -1318,13 +1318,13 @@ by what its views point into (R2, R7).
 
    ```text
    error[E3060]: `m.insert(...)` changes `m`, whose keys `ks` (line 7) still views on line 9
-     = help: use `ks` before this line, or keep your own strings: `ks = sorted(m.keys().copied())`
+     = help: use `ks` before this line, or keep your own strings: `ks = sorted(m.keys().copy_each())`
    ```
 
 7. **Cost:** less than today: no allocation per evaluation of the table (read-only data, as C's
    `static const`), and no string copy per key (an array of pointers, as the C above and Rust's
    `let mut ks: Vec<&String> = m.keys().collect(); ks.sort();`). Copies only where `copy of` or
-   `.copied()` is written.
+   `.copy_each()` is written.
 8. **Kind:** a smarter compile-time solution (the value is placed in read-only data and lent; the
    sorted keys are a local list of views, R7).
 

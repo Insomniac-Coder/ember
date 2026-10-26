@@ -54,7 +54,7 @@ unchanged from `RUN4/area-D.md` (file names in it are relative to `target/redesi
 | AN-62 | rewritten without `set by` (decision 14): the program sets each parent link itself (`child.parent = weakref this`). With a plain `fn(Node)` callback (which changes no node, decision 17) the walk keeps views, needs no protection and no header test per step (R10 point 1, R11's proof). A callback that may change or end nodes says `changes Node`; then no view of a node may live across the call (decision 5), so the walk keeps a link (`up = weakref p`): one header test and one weak-count subtract and add per step, and it stops at the first ended parent (decision 15). Run 4's question (a node visited once after its parent was removed) is gone with `set by` |
 | AN-63 | rewritten without `set by` (decision 14): `add` and `take` set and clear the parent link; reads need no header test where R11 proves the link follows ownership, and every read tests where it cannot. The costs now include a weak count per link |
 | AN-64 | the warning's advice names a `weakref` field, and the parent pair's error names `parent: weakref Node = None` set by the program (no `set by`) |
-| AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if cast s if Circle exists as c:`, instead of today's "did you mean `c == ...`" |
+| AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if s is Circle as c:`, instead of today's "did you mean `c == ...`" |
 
 Spelling changes that do not change meaning (every answer): `owns` for `owned`, `shares` / `shares mut`
 for `shared`, `copy of` for `copied`, `weakref` for `weak`, `if x exists as p:` and `while x exists as p:` for
@@ -1885,7 +1885,7 @@ struct Reg:
     pools: Map[u128, owns dyn AnyPool]
 
     fn get_mut[T](k: u128, i: int) changes pools -> ref mut T:
-        if cast this.pools[k] if Pool[T] exists as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
+        if this.pools[k] is Pool[T] as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
             return ref mut pool.dense[i]
         panic("no pool of this type at this key")
 
@@ -1900,7 +1900,7 @@ fn walk(xs: Array[owns dyn Inspect]) -> int:
 ```
 
 Changed from run 4: `owns dyn` (was `owned dyn`) and the opening
-`if cast this.pools[k] if Pool[T] exists as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+`if this.pools[k] is Pool[T] as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
 R13, R14 (decision 1).
 
 `cast <place> if D` on an `owns dyn` (or `shares dyn`) place tests the value's type and gives a view of
@@ -1959,7 +1959,7 @@ exit=0
 - `cast x as D` / `cast x if D` between unrelated types, E2020, with "`Box[dyn AnyPool]` is now
   `owns dyn AnyPool`" where that is the cause.
 - `if Some(ref mut pool) = cast this.pools[k] if Pool[T]:`, E0115: "an `Option` or a `weakref` link is
-  opened with `exists as`: write `if cast this.pools[k] if Pool[T] exists as ref mut pool:`".
+  opened with `exists as`: write `if this.pools[k] is Pool[T] as ref mut pool:`".
 - `as?` / `as!`, E1010 (today E0100 with the line, pasted in part 2): "a downcast is written
   `cast x if D`, opened with `exists as` (or `cast x as D`, which stops the program if it is not one)".
 
@@ -2010,13 +2010,13 @@ exit=1
 
 ```ember
     for s in shapes:
-        if cast s if Circle exists as c:       # `s` is a Circle: call it `c`
+        if s is Circle as c:       # `s` is a Circle: call it `c`
             t += c.r
 ```
 
 **Meaning changed.** Run 4 accepted the programmer's own line, `if c = cast s if Circle:`, as its opening
 form. The owner chose `exists as` for opening (decision 1), so the opening is
-`if cast s if Circle exists as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
+`if s is Circle as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
 now with a message that gives the line meant (part 6) instead of today's "did you mean
 `c == cast s if Circle`?". The two `if`s in the line are in `V2/changes.md` section 11, question 5, for
 the owner.
@@ -2044,14 +2044,14 @@ Today's compiler does not know the opening word (`V2/changes.md` section 7, `q1_
 **6. Still refused.**
 - `if c = cast s if Circle:` (the OLD line), E2036: "`c = cast s if Circle` always matches, since `c`
   takes any value, here an `Option[Circle]`; to run the block only when `s` is a Circle and call it `c`,
-  write `if cast s if Circle exists as c:`".
+  write `if s is Circle as c:`".
 - `if Some(c) = cast s if Circle:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write
-  `if cast s if Circle exists as c:`".
+  `if s is Circle as c:`".
 - `if s exists as c:`, where `s` always holds a value, E2036: "`s` is a shape, which always holds a value, so
-  this `if` would always run; to test whether it is a Circle write `if cast s if Circle exists as c:`; to
+  this `if` would always run; to test whether it is a Circle write `if s is Circle as c:`; to
   name it write `c = s` on the line before".
-- `if cast s if Circle exists as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
-  name: `if cast s if Circle exists as c:`".
+- `if s is Circle as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
+  name: `if s is Circle as c:`".
 
 **7. Cost.** None beyond the one type-id compare of the cast (AN-67).
 

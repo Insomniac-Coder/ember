@@ -415,3 +415,99 @@ area-E.md:1583: of the game), or \`fn() with weakref game changes Game:\` with \
 area-E.md:1715: holds here`.
 
 Manual corrections by the lead after the script: vocabulary.md (row `exists as`, "today" column) and area-D.md ("Today's compiler does not know ...") quote today's compiler on run 4's probe `q1_holds.em`, which used `holds`; the script had changed the quoted word, so both were restored to say the probe used `holds`.
+
+
+Phase 0, part 2: `if cast X if T exists as n:` -> `if X is T as n:` (verdict 27) and `.copied()` -> `.copy_each()` (verdict 33), in code. 18 lines changed.
+
+rules.md:456
+  - (`if cast s if Circle exists as c:`; `if cast this.pools[k] if Pool[T] exists as ref mut pool:`). A cast of a
+  + (`if s is Circle as c:`; `if this.pools[k] is Pool[T] as ref mut pool:`). A cast of a
+vocabulary.md:117
+  - | `if` | condition; `if pattern = e`; guard; conditional expression; comprehension filter (645-652, 693, 749) | same; and **`if e exists as name:` opens an `Option` or a `weakref` link**: the block runs when `e` holds something, and `name`, with its words, names it there (`if cam.target exists as p:`, `if ui exists as ref mut me:`, `if scores.get(name) exists as copy of v:`, `if cast s if Circle exists as c:`); `else:` runs when it holds nothing (R13). `if Variant(...) = e:` stays the test of another variant (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) | before a condition | `if Some(x) = e:` for opening an `Option`; `w.upgrade()` for a weak link | `if Some(ref mut me) = ui:` (E0115: "an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`"); `if n exists as v:` where `n` always holds a value (E2036: "to name it write `v = n` on the line before; to compare write `if v == n:`"); an opening that names a name already in use (E2106) | keep the word; the opening reads with `exists as` (owner's decision 1: "c, holds reads the best"), the rework of `if Some(ref mut me) = ui:` ("it is so not readable") |
+  + | `if` | condition; `if pattern = e`; guard; conditional expression; comprehension filter (645-652, 693, 749) | same; and **`if e exists as name:` opens an `Option` or a `weakref` link**: the block runs when `e` holds something, and `name`, with its words, names it there (`if cam.target exists as p:`, `if ui exists as ref mut me:`, `if scores.get(name) exists as copy of v:`, `if s is Circle as c:`); `else:` runs when it holds nothing (R13). `if Variant(...) = e:` stays the test of another variant (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) | before a condition | `if Some(x) = e:` for opening an `Option`; `w.upgrade()` for a weak link | `if Some(ref mut me) = ui:` (E0115: "an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`"); `if n exists as v:` where `n` always holds a value (E2036: "to name it write `v = n` on the line before; to compare write `if v == n:`"); an opening that names a name already in use (E2106) | keep the word; the opening reads with `exists as` (owner's decision 1: "c, holds reads the best"), the rework of `if Some(ref mut me) = ui:` ("it is so not readable") |
+vocabulary.md:378
+  - | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `exists as`: `if cast s if Circle exists as c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if cast this.pools[k] if Pool[T] exists as ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if cast s if Circle exists as c:`") | keep: one rule for areas B and D (clash 4) |
+  + | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `exists as`: `if s is Circle as c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if this.pools[k] is Pool[T] as ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if s is Circle as c:`") | keep: one rule for areas B and D (clash 4) |
+area-C.md:1287
+  - names = sorted(m.keys().copied())   # your own strings, kept past changes to m
+  + names = sorted(m.keys().copy_each())   # your own strings, kept past changes to m
+area-C.md:1299
+  - | `names` | `.copied()`: its own strings, each a copy of a key (the `.copied()` row); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
+  + | `names` | `.copy_each()`: its own strings, each a copy of a key (the `.copy_each()` row); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
+area-C.md:1321
+  - = help: use `ks` before this line, or keep your own strings: `ks = sorted(m.keys().copied())`
+  + = help: use `ks` before this line, or keep your own strings: `ks = sorted(m.keys().copy_each())`
+area-C.md:1327
+  - `.copied()` is written.
+  + `.copy_each()` is written.
+area-D.md:57
+  - | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if cast s if Circle exists as c:`, instead of today's "did you mean `c == ...`" |
+  + | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if s is Circle as c:`, instead of today's "did you mean `c == ...`" |
+area-D.md:1888
+  - if cast this.pools[k] if Pool[T] exists as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
+  + if this.pools[k] is Pool[T] as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
+area-D.md:1903
+  - `if cast this.pools[k] if Pool[T] exists as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+  + `if this.pools[k] is Pool[T] as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+area-D.md:1962
+  - opened with `exists as`: write `if cast this.pools[k] if Pool[T] exists as ref mut pool:`".
+  + opened with `exists as`: write `if this.pools[k] is Pool[T] as ref mut pool:`".
+area-D.md:2013
+  - if cast s if Circle exists as c:       # `s` is a Circle: call it `c`
+  + if s is Circle as c:       # `s` is a Circle: call it `c`
+area-D.md:2019
+  - `if cast s if Circle exists as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
+  + `if s is Circle as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
+area-D.md:2047
+  - write `if cast s if Circle exists as c:`".
+  + write `if s is Circle as c:`".
+area-D.md:2049
+  - `if cast s if Circle exists as c:`".
+  + `if s is Circle as c:`".
+area-D.md:2051
+  - this `if` would always run; to test whether it is a Circle write `if cast s if Circle exists as c:`; to
+  + this `if` would always run; to test whether it is a Circle write `if s is Circle as c:`; to
+area-D.md:2053
+  - - `if cast s if Circle exists as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
+  + - `if s is Circle as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
+area-D.md:2054
+  - name: `if cast s if Circle exists as c:`".
+  + name: `if s is Circle as c:`".
+
+A respelled span can sit in a sentence written for the old form (`cast x if D`, "opened with `exists as`", "`exists as` declares a new name"): the rule writer (rules, vocabulary) and area D reword those sentences under verdict 27.
+
+Lines that still contain `.copied()` or `cast ... if` (33), with the reason each was left (check yours):
+
+rules.md:447 [rule writer: rule text or a row to reword]: or `cast x if D` (R14); otherwise the block would always run, which is refused (E2036). The name is
+rules.md:455 [rule writer: rule text or a row to reword]: it is not one; `cast p if D` gives it only if it is one and is opened as R13 says
+vocabulary.md:295 [rule writer: rule text or a row to reword]: | `.copied()` | iterator adapter yielding copies (1451, 4367, 6202) | same: an iterator of copies, each what `copy of` would make | after an iterator | — | as today | keep: the adapter's name is today's (`[STD-19]` 4367), and it means what `copy of` means |
+vocabulary.md:376 [rule writer: rule text or a row to reword]: | `as?` | the spec's checked downcast to `Option` (810, 945, 1164) | nothing: today's compiler refuses it for `cast x if D` (section 5.4) | — | — | `as?`, with today's help (it already gives the line) | **merge** into `cast` (the spec text is behind the compiler, ODR-280) |
+vocabulary.md:378 [rule writer: rule text or a row to reword]: | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `exists as`: `if s is Circle as c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if this.pools[k] is Pool[T] as ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if s is Circle as c:`") | keep: one rule for areas B and D (clash 4) |
+vocabulary.md:485 [rule writer: rule text or a row to reword]: - The downcast opening reads `if cast s if Circle exists as c:`, with two `if`s.
+vocabulary.md:514 [rule writer: rule text or a row to reword]: | `as?`, `as!` | `cast x if D`, `cast x as D` (today's compiler, ODR-280) | 471 476 705 730 810 945 1164 1931 2795 3190 3363 | 471, 476, 705, 730 and 810 are the lexer and grammar entries: they go |
+area-C.md:1264 [area updater: a statement or message to reword]: **v2:** meaning unchanged; `copy of` for `copied` (decision 12). `.copied()` stays: it is the iterator
+area-C.md:1265 [area updater: a statement or message to reword]: adapter whose items are each what `copy of` makes (the `.copied()` row of `V2/vocabulary.md`, kept), not
+area-C.md:1954 [area updater: a statement or message to reword]: | `copy of` for `copied` (decision 12; `.copied()`, the iterator adapter, kept) | AN-34, AN-35, AN-39, AN-43, AN-44, AN-45, AN-46, AN-48, AN-49, AN-50 |
+area-C.md:2001 [area updater: a statement or message to reword]: 4. **`.copied()` beside `copy of`.** The adapter keeps its name by the `.copied()` row ("keep"), while the
+area-C.md:2002 [area updater: a statement or message to reword]: keyword `copied` is renamed; AN-46 uses both `copy of` and `.copied()`. The readability check may want
+area-C.md:2003 [area updater: a statement or message to reword]: to look at whether `.copied()` reads as the old keyword.
+area-D.md:57 [area updater: a statement or message to reword]: | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if s is Circle as c:`, instead of today's "did you mean `c == ...`" |
+area-D.md:1841 [today's Ember (part 2)]: error[E2020]: `cast … as` and `cast … if` need related class handles, found `Box[dyn AnyPool]` and `Pool[T]`
+area-D.md:1869 [today's Ember (part 2)]: error[E0100]: `as?` is not Ember: a downcast is written `cast x if D`
+area-D.md:1875 [today's Ember (part 2)]: = help: `cast x as D` gives the `D` and panics if `x` is not one; `cast x if D` gives `Some(d)` or `None`
+area-D.md:1903 [area updater: a statement or message to reword]: `if this.pools[k] is Pool[T] as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+area-D.md:1906 [area updater: a statement or message to reword]: `cast <place> if D` on an `owns dyn` (or `shares dyn`) place tests the value's type and gives a view of
+area-D.md:1935 [today's Ember (part 5)]: match cast self.pools[k] if Pool[int]:
+area-D.md:1959 [area updater: a statement or message to reword]: - `cast x as D` / `cast x if D` between unrelated types, E2020, with "`Box[dyn AnyPool]` is now
+area-D.md:1961 [area updater: a statement or message to reword]: - `if Some(ref mut pool) = cast this.pools[k] if Pool[T]:`, E0115: "an `Option` or a `weakref` link is
+area-D.md:1964 [area updater: a statement or message to reword]: `cast x if D`, opened with `exists as` (or `cast x as D`, which stops the program if it is not one)".
+area-D.md:1976 [area updater: a statement or message to reword]: ## AN-68: `if c = cast s if Circle:` gets E2036 with a help that is not what was meant
+area-D.md:1984 [today's Ember (part 2)]: if c = cast s if Circle:
+area-D.md:1992 [today's Ember (part 2)]: 12 |         if c = cast s if Circle:
+area-D.md:1995 [today's Ember (part 2)]: = help: did you mean `c == cast s if Circle`?
+area-D.md:1996 [today's Ember (part 2)]: = note: to declare `c`, write `c = cast s if Circle` on the line before
+area-D.md:2017 [area updater: a statement or message to reword]: **Meaning changed.** Run 4 accepted the programmer's own line, `if c = cast s if Circle:`, as its opening
+area-D.md:2021 [area updater: a statement or message to reword]: `c == cast s if Circle`?". The two `if`s in the line are in `V2/changes.md` section 11, question 5, for
+area-D.md:2035 [today's Ember (part 5)]: `if Some(c) = cast s if Circle:`):
+area-D.md:2045 [area updater: a statement or message to reword]: - `if c = cast s if Circle:` (the OLD line), E2036: "`c = cast s if Circle` always matches, since `c`
+area-D.md:2048 [area updater: a statement or message to reword]: - `if Some(c) = cast s if Circle:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write

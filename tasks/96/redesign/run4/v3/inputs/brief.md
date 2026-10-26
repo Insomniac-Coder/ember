@@ -64,9 +64,15 @@ older section of `JOB.md` or a `V2` file says otherwise, the verdicts win:
   `fn blend(ref mut dst: MutSpan[float], src: Span[float]):`.
 
 **Phase 0, already done by the lead:** `V3/rules.md`, `V3/vocabulary.md` and `V3/area-A.md` ..
-`V3/area-E.md` are copies of `V2` in which a script replaced `holds` with `exists as` in code only
-(inline code spans, and `if`/`elif`/`while` lines in code blocks). Every replaced line, and every line
-still containing the word `holds`, is listed in `V3/spelling-changes.txt`. Nothing else was changed.
+`V3/area-E.md` are copies of `V2` in which two scripts changed spellings in code only. First `holds`
+became `exists as` (verdict 26: inline code spans, and `if`/`elif`/`while` lines in code blocks). Then
+v2's opening `if cast X if T exists as n:` became `if X is T as n:` (verdict 27, in all code, since it
+was never today's Ember), and `.copied()` became `.copy_each()` (verdict 33, only in an answer's parts 3
+NEW, 4 the owner's test, 6 Still refused and 7 Cost). `.copied()` and a bare `cast x if D` are today's
+Ember, so they stay in OLD code, today's outputs and the "means exactly" programs; where they are left
+in rule text or in a sentence about v2's choice, the rule writer or the area updater rewords it.
+`V3/spelling-changes.txt` lists every replaced line, every line still containing `holds`, and every line
+still containing `.copied()` or `cast ... if`, with the reason it was left. Nothing else was changed.
 
 ## The owner's test (apply it to every line of NEW code you write or judge)
 

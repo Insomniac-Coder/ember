@@ -23,6 +23,12 @@ pushed to a separate branch so a cloud session can pick it up. Nothing was lost;
     `run4/v3/tools/phase0_spell.py`; every changed line and every line still containing "holds" is in
     `run4/v3/spelling-changes.txt`. Two quotes of today's compiler output (probe `q1_holds.em`) were
     restored by hand. Inputs frozen in `run4/v3/inputs/` (brief, duties, `JOB.md` with the 34 verdicts).
+    **Completed 2026-10-26 in the cloud session:** the first pass left out two of the plan's three
+    spellings. `run4/v3/tools/phase0b_spell.py` did them (18 lines): `if cast X if T exists as n:` ->
+    `if X is T as n:` (verdict 27) in all code, and `.copied()` -> `.copy_each()` (verdict 33) in an
+    answer's parts 3, 4, 6 and 7 only. Today's Ember (OLD code, pasted outputs, "means exactly") keeps
+    `cast x if D` and `.copied()`. The 33 lines left with an old spelling, each with its reason, are in
+    the second part of `run4/v3/spelling-changes.txt`. The brief's phase 0 paragraph says the same.
   - **Phase 1, stopped at its very start:** the rule writer had changed nothing (it had only made an
     empty scratch folder). `run4/v3/` is exactly the phase 0 state; there is no `run4/v3/changes.md` yet.
   - **To resume phases 1 and 2:** run `run4/v3/tools/step2_workflow.js` (a Workflow script: the rule

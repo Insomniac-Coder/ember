@@ -453,7 +453,7 @@ pattern (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) or with `
 **R14. Interface values and downcasts.** `dyn I` as a parameter's type is a read-only view
 (`ref mut v: dyn I` may change it). `cast p as D` names the place `p` as a `D` and stops the program if
 it is not one; `cast p if D` gives it only if it is one and is opened as R13 says
-(`if cast s if Circle exists as c:`; `if cast this.pools[k] if Pool[T] exists as ref mut pool:`). A cast of a
+(`if s is Circle as c:`; `if this.pools[k] is Pool[T] as ref mut pool:`). A cast of a
 place is a place: the name bound from it is read-only unless written `ref mut`
 (`pool = ref mut cast this.pools[k] as Pool[T]`). Each cast is one type-id compare. A generic method
 whose type parameter is only the type of a `ref` or `ref mut` parameter gets one `dyn` entry. A
