@@ -297,13 +297,18 @@ exit=0
   `this.frame`, which its first line does not name; write `fn note(msg: String) changes log, frame:`".
 - `tick` calling `note` without naming `log`, E2105: "`tick` calls `note`, which changes `log`; add it
   to `tick`'s first line: `fn tick() changes players, log:`".
-- Inside the loop, a method that changes the list being walked (`this.add_player(...)`, whose line says
-  `changes players`), E3020: "`this.add_player(...)` (line 17) changes `this.players`, which this loop
-  walks (line 14); collect the new players in `joined` and write `this.players.extend(joined)` after the
-  loop" (the understandable limitation: add or delete after the loop).
+- Inside the loop, a method that changes the list being walked (`this.add_player(Player(name="imp",
+  hp=3))` on line 17, with `fn add_player(owns p: Player) changes players: this.players.push(p)`), E3020:
+  "`this.add_player(...)` (line 17) changes `this.players`, which this loop walks (line 14); collect the
+  new players in a list of your own: write `joined: Array[Player] = []` before the loop,
+  `joined.push(Player(name="imp", hp=3))` in place of line 17, and `this.players.extend(joined)` after
+  the loop" (the understandable limitation: add or delete after the loop).
 - From another package, where `note` is `pub` and says no `reads` (R17), E3021: "`note` may read any
-  field of `Game`, `players` included, which this loop changes through `p` (line 14); if it does not,
-  say what it reads: `fn note(msg: String) reads frame changes log:`".
+  field of `Game`, `players` included, which this loop changes through `p` (line 14); call `note` after
+  the loop: write `died: Array[String] = []` before the loop, `died.push(f"{p.name} died")` in place of
+  `this.note(f"{p.name} died")`, and `for msg in died: this.note(msg)` after the loop (in `note`'s own
+  package, its first line can instead say what it reads: `fn note(msg: String) reads frame changes
+  log:`)".
 - A plain loop name that changes the player (`for p in this.players:` then `p.hp -= 1`), E3023:
   "`p.hp -= 1` changes a player, but `p` only reads it; to change the players through `p`, write
   `for ref mut p in this.players:`".
@@ -1064,7 +1069,8 @@ of an `if` (the store runs when it passes) instead of a stop; no separate progra
   line 19".
 - A parameter and a field of one name (`next_word(src: StrView)` with `from src`), E2118: "`src` is
   both a parameter of `next_word` and a field of `Parser`, so `from src` could mean either; rename the
-  parameter".
+  parameter: for a view of the field write `fn next_word(line: StrView) changes pos -> StrView from src:`,
+  for a view of the parameter `fn next_word(line: StrView) changes pos -> StrView from line:`".
 - `pool = cast this.pools[k] as Pool[T]` (no `ref mut`) followed by `return ref mut pool.dense[...]`,
   E3023: "`pool` reads the pool in `this.pools` and cannot change it; to return a changeable element,
   write `pool = ref mut cast this.pools[k] as Pool[T]`" (R14: a plain name bound from a cast of a place
@@ -1201,8 +1207,10 @@ block writes the call as the place itself.
 **6. Still refused:**
 - A call whose result is a new value, `make_point().y = 1` or `first_value(xs) += 1` (with
   `fn first_value(xs: Array[int]) -> int:`), E2140 (today's code, "assignment target is not a place", in
-  the OLD output above; R8 (d)): "`first_value(xs)` gives a new `int`, so adding to it would be lost; keep
-  it in a name first: `n = first_value(xs)`, then `n += 1`".
+  the OLD output above; R8 (d)): "`first_value(xs)` gives back a new `int`, a copy of the element, so
+  adding to it would be lost; to add 1 to the element in `xs` write `xs[0] += 1`, or let the function
+  give back the element itself: `fn first(ref mut xs: Array[int]) -> ref mut int:` with
+  `return ref mut xs[0]`, called `first(ref mut xs) += 1`".
 - `first(xs) += 1` with no word at the call, E3028: "`first` may change `xs` (its first line says
   `ref mut xs: Array[int]`); say so at the call: `first(ref mut xs) += 1`".
 - The element written through another name while a `ref mut` name of it is used, in the lines
@@ -1341,26 +1349,30 @@ Under AddressSanitizer (`c24_asan.exe`): `30`, `c24_views_list ms=0.040 peak_kb=
 report.
 
 **6. Still refused:**
-- Two kept `ref mut` views of one registry, with `struct Handle:` holding `reg: ref mut Registry` and
-  `entity: int`, and the lines `hs.push(Handle(reg=ref mut reg, entity=0))` (line 1),
-  `hs.push(Handle(reg=ref mut reg, entity=1))` (line 2), E3022: "`reg` is lent to `hs[0].reg`, a
-  `ref mut` field, for as long as `hs` is used, and line 2 lends it to `hs[1].reg` too; if both may
-  change the registry, write `reg: sharedref mut Registry` in `Handle`, and
-  `Handle(reg=sharedref mut reg, entity=0)` on both lines".
+- Two kept `ref mut` views of one registry, with `struct Editor:` holding `reg: ref mut Registry` and
+  `entity: int`, a list `eds: Array[Editor] = []`, and the lines
+  `eds.push(Editor(reg=ref mut reg, entity=0))` (line 1), `eds.push(Editor(reg=ref mut reg, entity=1))`
+  (line 2), E3022: "`reg` is lent to `eds[0].reg`, a `ref mut` field, for as long as `eds` is used, and
+  line 2 lends it to `eds[1].reg` too; if both may change the registry, write
+  `reg: sharedref mut Registry` in `Editor`, and `Editor(reg=sharedref mut reg, entity=0)` and
+  `Editor(reg=sharedref mut reg, entity=1)` on lines 1 and 2".
 - With `reg: sharedref mut Registry`, a view into a part used after another holder reshapes it, in the
-  lines `s = hs[0].reg.hp.as_span()` (line 1), `hs[1].reg.hp.push(5)` (line 2), `println(s[0])` (line
-  3), E3060: "`hs[1].reg.hp.push(5)` (line 2) may move the list `s` points into (`hs[0].reg` and
-  `hs[1].reg` may be the same registry), and `s` is used on line 3; use `s` before line 2, or keep the
-  entity number and read `hs[0].reg.hp[0]` again".
+  lines `s = eds[0].reg.hp.as_span()` (line 1), `eds[1].reg.hp.push(5)` (line 2), `println(s[0])` (line
+  3), E3060: "`eds[1].reg.hp.push(5)` (line 2) may move the list `s` points into (`eds[0].reg` and
+  `eds[1].reg` may be the same registry), and `s` is used on line 3; use `s` before line 2, or read the
+  number again after it: write `println(eds[0].reg.hp[0])` in place of line 3".
 - A change of the registry while the views that read it are still used, in the lines
   `vs.push(View(reg=ref reg, entity=1))` (line 1), `reg.hp[0] = 5` (line 2), `for v in vs:` (line 3),
   E3021 (R8 (g)): "`reg.hp[0] = 5` (line 2) changes the registry that `vs[1].reg` reads
   (`View(reg=ref reg, entity=1)`, line 1), and `vs` is used on line 3; change it after `vs`'s last use,
   or, if the registry must change while the views are kept, write `reg: sharedref mut Registry` in
   `View` and `View(reg=sharedref mut reg, entity=1)`".
-- The list kept longer than `reg` (returned, stored in a field with no `from`, sent to a thread), E3063:
-  "`vs` holds views of `reg`, so it may not outlive it (returned here); keep the entity numbers instead
-  (`Array[int]`), or keep `reg` alive as long as `vs`".
+- The list kept longer than `reg` (returned from `fn views() -> Array[View]:`, which makes
+  `reg = Registry(hp=[10, 20])` and `vs` as above and ends with `return vs`; or stored in a field with no
+  `from`, or sent to a thread), E3063: "`vs` holds views of `reg`, which ends when `views` returns, so it
+  may not be returned; make the registry in the caller and give it to `views`: write
+  `fn views(reg: Registry) -> Array[View] from reg:` without the line that makes `reg`, and call it
+  `reg = Registry(hp=[10, 20])`, then `vs = views(reg)`".
 
 **7. Cost:** none beyond plain C: the C above is the layout; the limit exists only when compiling.
 
@@ -1490,13 +1502,16 @@ checksum=204454`, no report.
   `words` points into it: it is set in `init` and never changed after; for other text, make a new
   document: `d2 = Document(String("the slow fox"))`".
 - `this.words.push(other_word)` with a view of something else, E3063: "`words` holds views of `text`
-  only, and `other_word` points into `line`; keep your own copies: change `words` to `Array[String]` and
-  push `String(other_word)`".
+  only, and `other_word` points into `line`; keep your own copies: write the field as
+  `words: Array[String] = []`, in `init` write `for w in this.text.split_whitespace():
+  this.words.push(String(w))` in place of `this.words = this.text.split_whitespace().collect()`, and
+  write `this.words.push(String(other_word))` in place of this line".
 - `d2 = copy of d`, E2116: "`d.words` points into `d.text`, so a copy's words would point into `d`'s
   text; make the copy from its text: `d2 = Document(String(d.text))`" (re-pointing each view, last run's
   rule 7, stays a good part noted in run 3).
 - `from` on a fixed array or an inline struct field, E2118: "`buf` is
-  stored inside the value, so moving the value moves it; keep the text in a `String`".
+  stored inside the value, so moving the value moves it; keep the text in a `String`, which has a block
+  of its own: write the field as `buf: String`".
 
 **7. Cost:** none beyond plain C: the C above is the layout (pointer and length per word, no count, no
 check). Last run measured this layout against Rust's index-range workaround (1.205 of plain C) and
@@ -2221,7 +2236,7 @@ exit=0
 **6. Still refused:**
 - The call before `this.renderer` is set, E2100 (today's code, "used before all class fields are
   initialized", in the OLD output above, with this help): "`load_assets` reads `renderer`, which `init`
-  has not set yet; set `this.renderer` before this line".
+  has not set yet; write `this.renderer = Renderer(width=width)` before this line".
 - The body reading a field not named, E2105: "`load_assets` reads `this.frame`, which its first line
   does not name; write `fn load_assets() reads renderer, frame -> Array[String]:`".
 - A helper with no `reads` called before every field is set, E2100 with a new help: "`load_assets` may
@@ -2394,11 +2409,12 @@ exit=0
 
 **6. Still refused:**
 - OLD's `this.items.push(v)` on a `let items`, E2104: "`items` is `let`: it is set in `init` and never
-  changed after; to add to it, remove `let` from `items`' declaration".
+  changed after; to add to it, write the field without `let`: `items: Array[int]`".
 - A change through the `let` field `name` (`this.name += "!"`), E2104: "`name` is `let`: it is set in
-  `init` and never changed after; to change it, remove `let` from `name`'s declaration".
+  `init` and never changed after; to change it, write the field without `let`: `name: String`".
 - OLD's `this.items = []` in `clear` on a `let items`, E2104: "`clear` sets `items`, which is `let`:
-  set once in `init`; set it in `init`, or remove `let` from `items`' declaration".
+  set once in `init`; to empty it after `init`, write the field without `let`, `items: Array[int]`,
+  and the method's first line as `fn clear() changes items:`".
 - `add` changing `items` without saying so, E2105: "`add` changes `this.items`; write its first line as
   `fn add(v: int) changes items:`".
 
@@ -2476,6 +2492,10 @@ write `+=` instead (`[TXT-11]`: `s += t` appends), so it is not needed.
      `fn next_word(line: StrView) changes pos -> StrView from src:` (found in this step).
    - AN-33 part 6, E2104 (minor): "remove `let` from `items`' declaration" could give the line,
      `items: Array[int]` (found in this step).
+   **Phase 3 (the lead):** all of these are fixed in this file (AN-24's view struct is now `Editor`, its
+   list `eds`), with the rules' E2118 row and, for item 6, the rules' E2020 row (the `:` form,
+   `fn(s) changes names: names.push(copy of s)`, as AN-56 writes it); each fix is listed in
+   `V3/phase3-messages.md`.
 
 ## 7. For the owner
 

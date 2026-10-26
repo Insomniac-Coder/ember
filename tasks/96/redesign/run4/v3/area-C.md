@@ -400,8 +400,12 @@ could do, so `child.value = 5` stands (R3, R9). The cycle warning L3001 is R11's
    `push(shares mut child)`").
 
    Warned, not refused: the second form's `children: Array[shares mut Node]` lets a `Node` own itself
-   through its children, so it gets the cycle warning L3001 on the type (R11), as today's class form above does: "`Node.children` can lead back to a node that holds it;
-   if it does, link it with `weakref Node` instead".
+   through its children, so it gets the cycle warning L3001 on the type (R11), as today's class form
+   above does; the list is the owning link and stays, so the warning names what would close the cycle:
+   "`Node.children` holds owners of nodes, so a node put among its own children
+   (`child.children.push(shares mut child)`) would own itself and never be freed; push each node under
+   one parent only, as `root.children.push(shares mut child)` does; a link back up to a parent is one
+   that does not keep it alive: `parent: weakref Node = None`".
 7. **Cost:** nothing: a compile-time refusal. The `shares mut` form pays one counted block per child
    and the counts, as Rust's `Rc<Node>` (with `RefCell` for the change, whose flag these rules do not pay).
 8. **Kind:** a readable spelling of Rust's guarantee (Rust refuses the same write, `E0382`, run 2's
@@ -505,7 +509,7 @@ verdict 2).
 
    ```text
    error[E3022]: `path` is the only name for the walk list in `this.state` until its last use on line 14, and line 13 replaces `this.state`
-     = help: set the new state after `path`'s last use: after `path.pop()`, or after the `match`
+     = help: set the new state after `path`'s last use: write `this.state = State.Idle` below `path.pop()` (line 14) instead of on line 13
    ```
 
 7. **Cost:** nothing: `path` is a pointer into the enum's payload; the pop and the store are C's.
@@ -1077,7 +1081,7 @@ a `ref mut T`, which has no "none" to give.
    ```text
    error[E3020]: `reg.emplace(3, 30)` may add to the pool this loop walks (`reg.values[int]()`, line 19)
      = note: `emplace` says `changes pools`; adding can move the pool's elements while the loop reads them
-     = help: add after the loop: collect what to add in a list, then call `reg.emplace(...)` for each once the loop ends
+     = help: add after the loop: write `reg.emplace(3, 30)` below the loop instead of in it
    ```
 
    The `run-pass` test `ecs4/accept_change_during_loop.em` becomes a compile-fail test with this message.
@@ -1628,14 +1632,14 @@ spelled (verdict 20).
 6. **Still refused:**
 
    ```text
-   error[E3020]: `cam.target.inventory.push(...)` may add to the list this loop walks (`hud.target.inventory`, line 23)
+   error[E3020]: `cam.target.inventory.push(copy of item)` (line 24) may add to the list this loop walks (`hud.target.inventory`, line 23)
      = note: `cam.target` and `hud.target` may be the same `Player`, and adding can move the list's elements while the loop reads them
-     = help: add after the loop: collect the new items in a list, then `cam.target.inventory.extend(new_items)` once the loop ends; or loop over `copy of hud.target.inventory`
+     = help: add after the loop: write `new_items: Array[String] = []` before the loop, `new_items.push(copy of item)` in place of line 24, and `cam.target.inventory.extend(new_items)` after the loop; or walk a list of your own: `for item in copy of hud.target.inventory:`
    ```
 
    The same for a call: a method whose first line says `changes target` (it may reach the player's
    inventory) called inside that loop: "`cam.shake()` says `changes target`, which may be the `Player`
-   whose inventory this loop walks; call it after the loop" (E3020). `transfer` without the `is not`
+   whose inventory this loop walks; write `cam.shake()` below the loop instead of in it" (E3020). `transfer` without the `is not`
    test: "`a` and `b` may be the same player, and this loop walks `a.inventory` while adding to
    `b.inventory`; test first: `if a is not b:`" (E3020). `transfer(cam.target, hud.target)` without
    the word: "`transfer` may change `b` (its first line says `ref mut b: shares mut Player`); say so at
@@ -1655,7 +1659,8 @@ spelled (verdict 20).
 
    In (b), a function that makes `p` and returns `cam`: "`cam` holds a link to `p`, which ends when
    this function returns, so `cam` may not outlive it (returned here); let the camera own a share that
-   may change the player: `target: shares mut Player`" (E3063).
+   may change the player: write `target: shares mut Player` in `Camera`, and
+   `cam = Camera(target=shares mut p)` in place of `cam = Camera(target=sharedref mut p)`" (E3063).
 7. **Cost:** nothing checked while running. (a): counts +1/-1 per `shares mut` owner made or ended; for the
    views the loops make (`hud.target.inventory`), no count (R10 point 1: nothing in the loop may end a
    `Player` owner). (b): nothing at all, a pointer in each struct; in run 3's watcher workload this
@@ -1729,7 +1734,7 @@ spelled (verdict 20).
    ```text
    error[E1010]: `RefCell` is not part of Ember
      = note: a change is said on the method that makes it, and checked when compiling
-     = help: write the field plainly, `entities: Array[int]`, and the method's first line as `fn add(e: int) changes entities:`; for a scene several objects own and change write `shares mut Scene`
+     = help: write the field plainly, `entities: Array[int]`, and the method's first line as `fn add(e: int) changes entities:`; for a scene several objects own and change, make it once, `s = Scene(entities=[])`, write the field that keeps it in each owner as `scene: shares mut Scene`, and give each owner its share where it is made, for example `Panel(scene=shares mut s)`
    ```
 
    ```text
@@ -1995,12 +2000,12 @@ Player`).
 
    ```text
    error[E3060]: `players.remove(r)` (line 29) would end a player that `ws` (line 14) still points at on line 30
-     = help: remove players after the last use of `ws`, or let the watchers keep them alive: `target: shares mut Player`
+     = help: write `players.remove(r)` below line 30, after the last use of `ws`; or let the watchers keep their players alive: write `target: shares mut Player` in `Watcher`, `players: Array[shares mut Player]`, and `Watcher(target=shares mut players[r])` where a watcher is made
    ```
 
    ```text
    error[E3063]: `ws` holds views of `players`, so it may not outlive it (returned here)
-     = help: return positions instead (`target: int`), or let the watchers own a share: `target: shares mut Player`
+     = help: let the watchers keep their players alive: write `target: shares mut Player` in `Watcher`, `players: Array[shares mut Player]`, and `Watcher(target=shares mut players[r])` where a watcher is made; or keep positions, `target: int` in `Watcher` and `Watcher(target=r)`, and return `players` beside `ws`
    ```
 
    Run 3's spelling of (b), `target: ref mut Player` with `Watcher(target=ref mut players[r])`
@@ -2111,6 +2116,10 @@ area D's AN-53).
    verdict 31's "every C call", it does: ending such a value inside a loop over a list that a kept callback
    changes would be refused (E3020) unless `sqlite3_close`'s declaration says `@ffi(no_callbacks)`. The
    rules could say so. Nothing in area C depends on it: its programs hand C no callback.
+
+**Phase 3 (the lead):** notes 1 and 6 (the rules' kept-view and arena rows of E3063), and the messages
+this area's form flagged (AN-36, AN-37, AN-42, AN-48, AN-49, AN-52), are fixed; each fix is listed in
+`V3/phase3-messages.md`.
 
 ## For the owner
 

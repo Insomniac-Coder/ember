@@ -300,8 +300,9 @@ exit=0
      boss.hp -= 1
      ```
      E3060: "`enemies.remove(0)` (line 8) may put another enemy in the place `boss` names (line 7), and
-     `boss` is used on line 9; use `boss` before line 8, or name the enemy again after it:
-     `boss = ref mut enemies[0]`".
+     `boss` is used on line 9; use `boss` before line 8; or, to change the enemy that is first after the
+     removal, give it a new name after line 8, `first = ref mut enemies[0]`, and write `first.hp -= 1` in
+     place of line 9".
    - a view into a part that a write frees, used after that write (with `name: String` in `Enemy`;
      R8 (b), (g): a change that may reshape what a view points into ends it):
      ```ember
@@ -311,7 +312,8 @@ exit=0
      println(n.len())
      ```
      E3060: "`n` is a view of `enemies[0].name`, whose old text line 9 frees, and `n` is used on line 10;
-     use `n` before line 9, or keep your own copy: `n = String(boss.name.trim())`".
+     use `n` before line 9, or keep your own copy: write `n = String(boss.name.trim())` in place of
+     line 8".
    - the call without its word (R4), `split_boss(es)`, E3028: "`split_boss` may change `es` (its first
      line says `ref mut enemies: Array[Enemy]`); say so at the call: `split_boss(ref mut es)`".
 
@@ -488,16 +490,17 @@ exit=0
      enemies)` with `on_hit: fn(ref mut Array[Enemy])`; R8 (a), R12), E3060: "`on_hit(ref mut enemies)`
      (line 9) may remove or reorder enemies (its type, `fn(ref mut Array[Enemy])`, lets it change the
      list in any way), which may put another enemy in the place `boss` names (line 7), and `boss` is used
-     on line 10; use `boss` before line 9, or name the enemy again after it: `boss = ref mut enemies[0]`".
+     on line 10; use `boss` before line 9; or, after line 9, give the enemy now first a new name,
+     `first = ref mut enemies[0]`, and write `first.hp -= 10` in place of line 10".
    - a helper the compiler can read that may remove (R8 (a)), E3060: "`kill_weak(ref mut enemies)`
      (line 9) may remove enemies (`kill_weak` line 3: `enemies.remove(i)`), which may put another enemy in
-     the place `boss` names (line 7), and `boss` is used on line 10; use `boss` before line 9, or name the
-     enemy again after it: `boss = ref mut enemies[0]`".
+     the place `boss` names (line 7), and `boss` is used on line 10; use `boss` before line 9; or, after line 9, give the enemy now first a new name,
+     `first = ref mut enemies[0]`, and write `first.hp -= 10` in place of line 10".
    - a helper that reads or writes an element already in the list (R8 (f), verdict 2), with
      `fn heal_all(ref mut enemies: Array[Enemy]):` whose body is `for ref mut e in enemies: e.hp += 1`,
      E3022: "`boss` is the only name for `enemies[0]` until line 10, and `heal_all(ref mut enemies)`
-     (line 9) changes the enemies in it (`heal_all` line 3: `e.hp += 1`); use `boss` before line 9, or
-     name the enemy again after it: `boss = ref mut enemies[0]`".
+     (line 9) changes the enemies in it (`heal_all` line 3: `e.hp += 1`); use `boss` before line 9; or, after line 9, give the enemy now first a new name,
+     `first = ref mut enemies[0]`, and write `first.hp -= 10` in place of line 10".
    - the call without its word (R4), `spawn_minion(enemies, boss.x)`, E3028: "`spawn_minion` may change
      `enemies` (its first line says `ref mut enemies: Array[Enemy]`); say so at the call:
      `spawn_minion(ref mut enemies, boss.x)`".
@@ -642,7 +645,7 @@ exit=0
 6. **Still refused:**
    - the same position twice, known when compiling (`collide(ref mut bodies[i], ref mut bodies[i])`;
      R4), E3022: "`collide` changes `a` and `b` as two different bodies, and both are `bodies[i]`; pass
-     two different bodies, or write a one-body version of `collide`".
+     two different bodies: `collide(ref mut bodies[i], ref mut bodies[j])`".
    - at run time, where not proved and `i == j` (a stop, not a refusal): "`collide` was given
      `bodies[3]` as both `a` and `b`; test `if i != j:` before the call to skip it".
    - the call without its words (R4), `collide(bodies[i], bodies[j])`, E3028: "`collide` may change both
@@ -905,8 +908,9 @@ int main(void) {
 
 6. **Still refused:**
    - `enemies.push(...)` in the loop (R8 (c)), E3020: "`enemies.push(...)` adds to `enemies`, which this
-     loop walks (line 7); collect the new enemies in a list of your own, `spawned.push(Enemy(hp=5,
-     splits=false))` here, and write `enemies.extend(spawned)` after the loop".
+     loop walks (line 7); collect the new enemies in a list of your own: write `spawned: Array[Enemy] = []`
+     before the loop, `spawned.push(Enemy(hp=5, splits=false))` in place of this line, and
+     `enemies.extend(spawned)` after the loop".
    - `enemies.remove(i)` in the loop (R8 (c)), E3020: "`enemies.remove(i)` shortens `enemies`, which this
      loop walks (line 7); remove the dead after the loop: `enemies.retain(fn(e) => e.hp > 0)`".
    - `for e in enemies:` then `e.hp -= 1` (R5: a plain loop name never changes anything), E3023: "`e`
@@ -1117,13 +1121,15 @@ exit=0
 6. **Still refused:**
    - `on_death(ref mut enemies, i)` inside `for ref mut e in enemies:` (R8 (c)), E3020: "`enemies` may not
      change while this loop walks it (line 6), and `on_death` may change it (its type takes
-     `ref mut Array[Enemy]`); collect the positions and call it after the loop: `dead.push(i)` here, then
+     `ref mut Array[Enemy]`); collect the positions and call it after the loop: write
+     `dead: Array[int] = []` before the loop, `dead.push(i)` in place of this line, and after the loop
      `while dead.len() > 0: on_death(ref mut enemies, dead.pop().unwrap())`".
    - the same call inside `for i in 0..enemies.len():`, accepted today (R8 (c): a counting loop may add
      but not remove), E3020: "this loop counts over `enemies`' length with an end fixed when it started
      (line 6), and `on_death(ref mut enemies, i)` may remove from `enemies`, which would skip the next
-     enemy and then run past the end; collect the positions and call it after the loop: `dead.push(i)`
-     here, then `while dead.len() > 0: on_death(ref mut enemies, dead.pop().unwrap())`".
+     enemy and then run past the end; collect the positions and call it after the loop: write
+     `dead: Array[int] = []` before the loop, `dead.push(i)` in place of this line, and after the loop
+     `while dead.len() > 0: on_death(ref mut enemies, dead.pop().unwrap())`".
    - a handler that changes its own state, given to the read-only `on_death` (R12), for example
      `count = fn(ref mut list: Array[Enemy], i: int) with copy of kills: kills += 1` then
      `update(ref mut es, count)`, E3023: "`count` changes its own copy of `kills` each time it runs, and
@@ -1720,8 +1726,10 @@ exit=0
 6. **Still refused:**
    - returning the list (`fn words_of(line: StrView) -> Array[StrView]:` ... `return words`; R8 (d)),
      E3063: "`words` points into the lowered copy of `line` that `line.to_lower()` made on line 2, which
-     ends when `words_of` returns; return copies of your own: make the result `Array[String]` and push
-     `String(w)` for each word; or lower the text in the caller and return views of it:
+     ends when `words_of` returns; return copies of your own: write the first line as
+     `fn words_of(line: StrView) -> Array[String]:` and, in place of line 2, `words: Array[String] = []`
+     then `for w in line.to_lower().split_whitespace(): words.push(String(w))`; or lower the text in the
+     caller and return views of it:
      `fn words_of(text: StrView) -> Array[StrView] from text:`".
    - keeping a word where it outlives its text (`all_words.push(w)` with `all_words` made before a loop
      over lines; R8 (d)), E3063: "`w` points into the lowered copy of `line`, which ends with this loop
@@ -2772,8 +2780,9 @@ exit=0
      E3060: "`ps.swap_remove(0)` (line 13) may put another particle in the place `p` names (line 12), and
      `p` is used on line 14; use `p` before line 13, or name the particle again after it:
      `p = ps.get(0).unwrap()`".
-   - `ps[0].load()` written in a program (a word written instead, vocabulary `SoA.get` row), E1010: "write
-     `copy of ps[0]`".
+   - `snapshot = ps[0].load()` written in a program (a word written instead, vocabulary `SoA.get` row),
+     E1010: "`ps[0].load()` copies particle 0 with a method of its own, and a copy in Ember is always
+     written `copy of`; write `snapshot = copy of ps[0]`".
 
 7. **Cost:** less than today: `get` and `ref mut ps[0]` read and write only the columns used (`p.life`
    is one float), where today's `get` gathers every column into a new `Particle`. `copy of ps[0]` gathers
@@ -3330,7 +3339,8 @@ verdict 21; a lambda naming the captured variable it changes, verdict 22).
      `*enemies[0]` or `*bodies[…]`); a temporary by its expression, `line.to_lower()` (never `_5`); types as
      the program wrote them, `float`, `int` (never `f64`, `i64`); a lambda by its text (never
      `Callable0`); a library's type parameter by what it stands for in the call (`collect` "cannot tell
-     what list to make; write `words: Array[StrView] = ...`", not `C`).
+     what list `collect()` makes here; write the list's type on the name:
+     `words: Array[StrView] = line.split_whitespace().collect()`", not `C`).
    - **why:** one line, in the program's words ("`enemies` may not change while this loop walks it").
    - **the line to write:** always, in the program's names, once (`for ref mut e in enemies:`), and it
      compiles in that program under the rules (R18): a message that advises a call to a `ref mut`
@@ -3359,6 +3369,7 @@ verdict 21; a lambda naming the captured variable it changes, verdict 22).
 | line a message gives (answer) | name | what it is | may it change it |
 |---|---|---|---|
 | `boss = ref mut enemies[0]` (AN-01, AN-02) | `boss` | `ref mut`: element 0 of `enemies` (a position) | `ref mut`: yes, the only name for it until its last use |
+| `first = ref mut enemies[0]` (AN-01, AN-02: a new name after the removal or the call; R2 keeps `boss` on its place) | `first` | `ref mut`: element 0 of `enemies` after that line (a position) | `ref mut`: yes, the only name for it until its last use |
 | the same line | `enemies` | `ref mut` on the parameter (`ref mut enemies: Array[Enemy]`): the caller's list | `ref mut`: yes |
 | `boss = copy of enemies[0]` (AN-01) | `boss` | `copy of`: a copy of your own | none (default: its own copy; changing it changes no enemy) |
 | `boss.hp = 1` (AN-01) | none declared | — | — |
@@ -3381,10 +3392,13 @@ verdict 21; a lambda naming the captured variable it changes, verdict 22).
 | the same line | `kills` (captured, not declared here) | none (default: the real variable of `main`, row 6) | `changes kills`: yes, the real one (verdict 22) |
 | `Query[(Entity, ref mut Health)]` (AN-06) | none declared | the query's types: `ref mut Health` says the system changes health | — |
 | `fn words_of(text: StrView) -> Array[StrView] from text:` (AN-07) | `text` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads) |
+| `fn words_of(line: StrView) -> Array[String]:` (AN-07) | `line` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads) |
+| `words: Array[String] = []` (AN-07) | `words` | its type `Array[String]`: the function's own list of strings of its own | none (default: its own; handed back by `return words`) |
+| `for w in line.to_lower().split_whitespace(): words.push(String(w))` (AN-07) | `w` | none (default: a plain loop name, a read-only view of one word of the lowered copy, which lives to the loop's end, R8 (d)) | none (default: read only; `String(w)` makes the copy pushed) |
 | `all_words.push(String(w))` (AN-07) | `all_words` | none (default: the function's own list, made before the loop) | none (default: its own) |
 | the same line | `w` | none (default: a plain loop name, a read-only view of one word) | none (default: read only) |
 | `String(w)` (AN-07) | none declared | `String(...)`: your own text (row 5) | — |
-| `words: Array[StrView] = ...` (AN-07) | `words` | its type `Array[StrView]`: the function's own list of views | none (default: its own; its views only read) |
+| `words: Array[StrView] = line.split_whitespace().collect()` (AN-16's `collect` message, AN-07's OLD) | `words` | its type `Array[StrView]`: the function's own list of views into `line` | none (default: its own; its views only read) |
 | `return String(word)` (AN-09) | `word` | none (default: a read-only view of the lowered copy, row 5) | none (default: read only) |
 | `es[0].heal()` (AN-10) | `es` | none (default: `main`'s own list) | none (default: its own; `heal`'s first line, `changes hp`, says it changes `es[0].hp`) |
 | `fn enemy_at(ref mut xs: Array[Enemy], i: int) -> ref mut Enemy:` with `return ref mut xs[i]` (AN-10) | `xs` | `ref mut`: the caller's list | `ref mut`: yes; the result gives back one of its elements as a place |
@@ -3406,7 +3420,7 @@ verdict 21; a lambda naming the captured variable it changes, verdict 22).
 | the same line | `w` | none (default: a plain loop name, a read-only view of one word) | none (default: read only) |
 | `p = ref mut ps[0]`, `p.life -= 0.5` (AN-13) | `p` | `ref mut`: particle 0 of `ps` (a position) | `ref mut`: yes, the only name for it until its last use |
 | `p = ps.get(0).unwrap()` (AN-13) | `p` | none (default: what `get` gives, a read-only name of particle 0) | none (default: read only) |
-| `copy of ps[0]` (AN-13) | none declared | `copy of`: a copy of your own | — |
+| `snapshot = copy of ps[0]` (AN-13) | `snapshot` | `copy of`: a particle of your own, gathered from the columns | none (default: its own copy) |
 | `assert_disjoint(d, s)`, `match check_disjoint(d, s):` (AN-14) | none declared | they read `d` and `s` (plain parameters of the library functions) | — |
 | `blend(ref mut d, s)` (AN-14) | none declared | `ref mut` at the call says `blend` writes the elements of `d` | — |
 | `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` (AN-14) | `dst` | `ref mut`: the caller's place, a `MutSpan` | `ref mut`: yes; it writes those elements |
@@ -3520,3 +3534,5 @@ owner beyond item 1 above):
     line replaces line 8, `n = boss.name.trim()`, and on an existing `n`, a view, it would not compile.
     F-06's AN-11 E3063 and F-08 (AN-11's E3023 with `ps` and `vs`) were rewritten here, since verdict 34
     changed those messages; F-14 is settled by verdict 34.
+    **Phase 3 (the lead):** all of these are fixed in this file and in the rules' rows; each fix is listed
+    in `V3/phase3-messages.md`.

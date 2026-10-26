@@ -277,9 +277,7 @@ copies the `int`, which is what `with copy of score` names.
 **6. Still refused.**
 - A capture of someone else's place in a function value that may outlive it (AN-57), E3026: "the click
   handler changes `total`, which belongs to `register`'s caller, and `b` keeps the handler after
-  `register` returns; keep the total where the handler can own a share of it:
-  `count = shares mut Counter()` and `fn() with shares mut count changes Counter: count.n += 1`, kept in
-  a list of `fn() changes Counter`".
+  `register` returns; keep the total in a value the handler can own a share of: declare `struct Counter:` with `n: int = 0`; in the caller write `count = Counter()` and call `register(ref mut b, shares mut count)`; write `fn register(ref mut b: Button, owns count: shares mut Counter):` and `b.on_click(fn() with owns count changes Counter: count.n += 1)`; and in `Button` keep such handlers as `handlers: Array[fn() changes Counter]`, with `fn on_click(owns f: fn() changes Counter) changes handlers:` and `fn click() changes handlers, Counter:`".
 - A capture used by a thread that may outlive it (AN-55), E7004.
 - Row 6's v2 spelling, `b.on_click(fn(): score += 1)`, E2105 (verdict 22: a plain `fn()` changes nothing
   at all): "this function changes `score`, a variable it uses from `game`; say so on its first line:
@@ -307,7 +305,7 @@ copies the `int`, which is what `with copy of score` names.
   handlers, captured...:`".
 - A loop that walks a list a function value changes, around a call that may run it (R12, R8 (c)),
   E3020: "this loop walks `xs` (line 5), and `hs[0]()` (line 6) may run the function made on line 3,
-  which pushes to `xs`; call it after the loop, or collect what to add and push it after the loop". The
+  which pushes to `xs`; call it after the loop, as many times as the loop would: write `n = xs.len()` before the loop, and `for k in 0..n: hs[0]()` below it instead of `hs[0]()` in it". The
   same holds for `b.click()` inside a loop over a list of `game`'s that a handler in `b` changes: in
   `game`, which wrote the lambda, the call counts as each change the lambda names (R12).
 - A handler that changes a module variable says so, and is kept only where the type says so (R12,
@@ -740,16 +738,20 @@ error[E3026]: the click handler changes `total`, which belongs to `register`'s c
   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ written here, kept in `b`
   |
   = why: `b` keeps the handler after `register` returns, and `total` may have ended by then
-  = help: keep the total where the handler can own a share of it:
-          `count = shares mut Counter()` in the caller, and
-          `b.on_click(fn() with shares mut count changes Counter: count.n += 1)`,
-          kept in a list of `fn() changes Counter`: `handlers: Array[fn() changes Counter]` in `Button`
+  = help: keep the total in a value the handler can own a share of:
+          declare `struct Counter:` with `n: int = 0`;
+          in the caller write `count = Counter()` and call `register(ref mut b, shares mut count)`;
+          write `fn register(ref mut b: Button, owns count: shares mut Counter):`
+          and `b.on_click(fn() with owns count changes Counter: count.n += 1)`;
+          and in `Button` keep such handlers as `handlers: Array[fn() changes Counter]`,
+          with `fn on_click(owns f: fn() changes Counter) changes handlers:` and `fn click() changes handlers, Counter:`
 ```
 
 Callable types are printed as written: `fn()`, `fn(ref mut Ui)`, `fn() changes Counter`, never
 `Callable0` (R18). Changed from v2: `changes total` on the lambda (verdict 22). The handler in the help
-changes a `Counter` through a link it holds (`with shares mut count`, its own state: one more owner of
-the counter), so its type says `changes Counter` (R12, verdict 17): a change of an object through a link,
+changes a `Counter` through an owner it holds (`with owns count`: the owner `register` was handed,
+now the handler's own state; one more owner of the counter, beside the caller's `count`), so its type
+says `changes Counter` (R12, verdict 17): a change of an object through a link,
 named by its type, not a change of a variable it captured, so AN-53's `Button`, whose list holds
 `fn() changes captured`, could not keep it (E2113); the help names both lines (R18). The message is
 `V3/rules.md` section 3's E3026 row.
@@ -862,8 +864,7 @@ provably ends first and R12 places `score` at its address: the C of `c/an53_capt
   value may change its own state; walk the list with `for ref mut h in hs:`" (R12).
 - A loop over a list that a stored function value changes, around a call that may run it (R12,
   R8 (c)): `for x in xs: hs[0]()` where `hs[0]` pushes to `xs`, E3020: "this loop walks `xs` (line 5),
-  and `hs[0]()` (line 6) may run the function made on line 3, which pushes to `xs`; call it after the
-  loop, or collect what to add and push it after the loop". (The phase before's `attacks2.exe 11` showed
+  and `hs[0]()` (line 6) may run the function made on line 3, which pushes to `xs`; call it after the loop, as many times as the loop would: write `n = xs.len()` before the loop, and `for k in 0..n: hs[0]()` below it instead of `hs[0]()` in it". (The phase before's `attacks2.exe 11` showed
   the use after free this refusal prevents.)
 - v2's lines, `hs: Array[fn()] = []` and `hs.push(fn(): score += 1)`: first E2105 (verdict 22): "this
   function changes `score`, a variable it uses from `game`; say so on its first line: `hs.push(fn()
@@ -1312,8 +1313,9 @@ that code: the handler's two words copied out of the list, then called.
   `h = ref mut this.handlers.get_mut(i).unwrap()`" (R12; the `get_mut` row).
 - `h` used again after `h(ref mut this)` (say `h(ref mut this)` twice), E3060: "`h(ref mut this)` (line
   5) lets the handler remove handlers, which may put another handler in the place `h` names (line 4),
-  and `h` is used on line 6; name it again after the call: `h = ref mut this.handlers.get_mut(i).unwrap()`"
-  (R8 (a)).
+  and `h` is used on line 6; to call the handler now at `i`, give it a new name after the call,
+  `h2 = ref mut this.handlers.get_mut(i).unwrap()`, and write `h2(ref mut this)` in place of line 6"
+  (R8 (a); R2 keeps `h` on its place, so `h = ref mut ...` again would be refused).
 
 **7. Cost.** As AN-60. The refused form today (a pointer into the list kept across the call and written
 back to) had no cheaper code: the copy back it needs is what made it unsafe.
