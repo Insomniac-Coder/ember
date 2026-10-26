@@ -298,6 +298,14 @@ acceptable it hurt readability too, if you want something to have a copy use the
     functions in the list. Owner, on that meaning: "captured only tells that one variable is captured it
     doesnt matter which one it is and captured... means it will accept multiple variables at once", then "a".
 
+36. **A send on a channel is named on the first line, as a change under a lock is** (the rule writer's
+    question 2). A channel is a queue two threads share (C++: a `std::queue` guarded by a `std::mutex`);
+    `tx.send(v)` pushes onto it, the same kind of change as `log.push("a")` under the log's lock (verdict
+    29). So `fn produce(tx: Sender[int]) changes Sender[int]:`, the thread's function
+    `fn() with owns tx changes Sender[int]: produce(tx)`, and `fn main() changes Sender[int]:`, which
+    starts that thread (verdict 30). It refuses nothing more (no loop walks a channel's queue); it says
+    what the function does. Owner: "Yes go with a". Taking values out (`rx.recv()`) was not asked.
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

@@ -86,7 +86,8 @@ copies; this step did the rest.
   unchanged: these types take no word at a call, and a plain name may still use their own operations
   (R4, R5). The gain the owner named: `with log.lock: for line in log.lines: note()`, where `note` is a
   `fn() changes Log`, is refused when compiling (E3020) instead of waiting forever for the lock while
-  running. A send on a channel end still needs no word (section 11, question 2).
+  running. A send on a channel end is named too, by the type of its end (`changes Sender[int]`;
+  verdict 36, the owner's answer to section 11's question 2).
 - **Starting a thread, and handing C a callback, count** (verdicts 30, 31). R5's "a thread that
   `thread.spawn` starts is not a call" is gone. The library writes
   `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`, and
@@ -244,7 +245,7 @@ places that said "decision N"), as the brief and `inputs/JOB.md` do.
 | the iterator row; `Array`; `push`, ... | the first lines of `for_each`, `inspect`, `retain`, `sort_by` with a change list, and today's beside them | 21 |
 | `thread.spawn`, `Scope` | their first lines with a change list; starting a thread counts | 30 |
 | `@ffi` | a call giving a function to a `callback(retained)` or `callback(once)` parameter counts as making its changes; `no_callbacks` added; E5069 | 30, 31 |
-| `Mutex`, `RwLock`, `Atomic`, `thread_shared`, `guarded by`, `fetch_add`/`store`/`load`, `send`/`channel` | a change made through them is named on first lines and in function types; a channel send needs no word; "R5's exception" reworded to R5's current text | 29 |
+| `Mutex`, `RwLock`, `Atomic`, `thread_shared`, `guarded by`, `fetch_add`/`store`/`load`, `send`/`channel` | a change made through them is named on first lines and in function types; a channel send is named too (`changes Sender[int]`, verdict 36); "R5's exception" reworded to R5's current text | 29 |
 | `MutSpan`, `ref mut` | a name or parameter that writes through a `MutSpan` says `ref mut`; R5's exception by type gone; today's E3023 on `r8_mutspan_plain.em` cited | 34 |
 | `using`, `Allocator`, `Array` | the instance on the making line; checked; one word per value of a several-instance kind | 24 |
 | `shares`, `owns` | the first owner keeps what it could do; the word on the name sets the rights | 23, 32 |
@@ -636,7 +637,9 @@ What the verdicts leave open, one at a time, each with what this step does meanw
    wrote the lambdas can reach those variables, and it checks them at every call that may run them, so
    safety does not need the word; the other choice is to name nothing for captured variables on first
    lines (`fn click() changes handlers:`). Which?
-2. **How a change under a lock is named, and channel ends** (verdict 29). Meanwhile a change is named by
+2. **Answered (verdict 36, the owner: "Yes go with a"): a send is named, `fn produce(tx: Sender[int])
+   changes Sender[int]:`, as a change under a lock is.** The question as it was put: **how a change
+   under a lock is named, and channel ends** (verdict 29). Meanwhile a change is named by
    the type of what changes: `changes Log` for a `Log` whose `guarded by` field changes,
    `changes Mutex[Stats]` for the value in a `Mutex[Stats]`, `changes Atomic[int]` for an atomic.
    Verdict 29 names `Mutex`, `RwLock` and `Atomic`, not channel ends, so a send (`tx.send(v)`) still
