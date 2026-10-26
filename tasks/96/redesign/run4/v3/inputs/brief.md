@@ -3,7 +3,7 @@
 You are one agent of a team of 7 bringing a language design up to date with the decisions its owner
 made. Every agent has the same goal; you only have a different duty. Your duty is in
 `inputs/duties.md`, in the section with your number. Read this brief, then `inputs/JOB.md` in full,
-then your duty. All paths are under `C:\Users\ism19\Code\ember\` unless they start with a drive.
+then your duty. All paths are under `/home/user/ember/` (the checkout's root) unless they start with `/`.
 `V3` means `tasks/96/redesign/run4/v3/` and `V2` means `tasks/96/redesign/run4/v2/`.
 
 ## The goal, the same for every agent; you only have a different duty
@@ -97,15 +97,15 @@ agreed, in the verdicts' spellings (row 6 now reads `b.on_click(fn() changes sco
 
 - No compiler changes. No git writes at all. Write only the files your duty names, and scratch files
   under `target/redesign4/v3-<your number>-<your name>/`. Never edit a file another agent wrote.
-- Today's Ember: `target/redesign4/bin/ember.exe check <file.em>` only (compiles, does not run). Never run
+- Today's Ember: `target/redesign4/bin/ember check <file.em>` only (compiles, does not run). Never run
   an Ember program. Claims about what today's Ember accepts or refuses carry the real output (pasted
   outputs carry over unchanged when the OLD code is unchanged). OLD code, today's outputs and "means
   exactly" programs (today's Ember) are never changed to the new spellings. Statements about the new
   rules need no output (they are not built).
+- The probe files the answers cite (`old/...`, `means/...`, `q1_holds.em`) were in the laptop's ignored
+  `target/` and are not in this checkout. Their pasted outputs carry over as above; a new claim about
+  today's Ember needs a new probe in your scratch folder, checked with the command above.
 - Never `cmd`, never `start`, never anything that opens a window. Every number names its source.
-- If `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms;
-  [System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus"` prints anything but `Online`,
-  stop at once and say so in your form (`on_mains`: false).
 - Plain words: the owner reads the results. Anything left for the owner goes in a "For the owner"
   section; the lead raises it.
 - When you finish, fill in the form exactly. `finished` is true only if you did your whole duty. If you

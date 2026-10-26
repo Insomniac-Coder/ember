@@ -6,13 +6,13 @@ export const meta = {
     { title: 'Areas', detail: '5 area updaters, all at once' },
   ],
 }
-const ROOT = 'C:\\Users\\ism19\\Code\\ember\\'
-const V3 = ROOT + 'tasks\\96\\redesign\\run4\\v3\\'
+const ROOT = '/home/user/ember/'
+const V3 = ROOT + 'tasks/96/redesign/run4/v3/'
 function header(n, name, section) {
   return `You are agent ${n} (${name}) of run 4, step 2, of the Ember memory-model rework. ` +
-    `Read ${V3}inputs\\brief.md first, all of it, then ${V3}inputs\\JOB.md in full, then your duty: ` +
-    `the section "${section}" of ${V3}inputs\\duties.md. ` +
-    `Scratch files go under ${ROOT}target\\redesign4\\v3-${n}-${name}\\. When you are done, fill in the form exactly; ` +
+    `Read ${V3}inputs/brief.md first, all of it, then ${V3}inputs/JOB.md in full, then your duty: ` +
+    `the section "${section}" of ${V3}inputs/duties.md. ` +
+    `Scratch files go under ${ROOT}target/redesign4/v3-${n}-${name}/. When you are done, fill in the form exactly; ` +
     `finished is true only if you did your whole duty. `
 }
 const RETRY = ' NOTE: an earlier attempt at this duty did not finish. Check the files it may have changed and complete them rather than starting over.'
@@ -21,7 +21,6 @@ async function run(n, name, prompt, opts) {
   let last = null
   for (let attempt = 1; attempt <= 2; attempt++) {
     const r = await agent(prompt + (attempt === 2 ? RETRY : ''), { ...opts, label: `${n} ${name}${attempt === 2 ? ' (retry)' : ''}` })
-    if (r && r.on_mains === false) halt(`${n} ${name} reports the laptop is not on mains power`)
     if (r && r.finished) return r
     last = r
     log(`${n} ${name} did not finish (attempt ${attempt}): ${r ? r.reason : 'no result'}`)
@@ -31,7 +30,7 @@ async function run(n, name, prompt, opts) {
 const S = { type: 'string' }, B = { type: 'boolean' }, I = { type: 'integer' }
 const arr = items => ({ type: 'array', items })
 const obj = (props, req) => ({ type: 'object', properties: props, required: req || Object.keys(props) })
-const BASE = { finished: B, reason: S, on_mains: B }
+const BASE = { finished: B, reason: S }
 
 const RULE_SCHEMA = obj({
   ...BASE, rules_path: S, vocabulary_path: S, changes_path: S,
