@@ -92,8 +92,9 @@ copies; this step did the rest.
 - **Starting a thread, and handing C a callback, count** (verdicts 30, 31). R5's "a thread that
   `thread.spawn` starts is not a call" is gone. The library writes
   `[R, CHANGED]` above `pub fn spawn(owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`, and
-  `scope.spawn` the same, so `main` says `fn main() changes FRAME, LOG, RESULTS:` and a `spawn` inside a
-  loop over `RESULTS` is refused (E3020, "start the thread after the loop"); the thread rules (locks,
+  `scope.spawn` the same, so `main` says `fn main() changes FRAME, LOG, RESULTS:`; a `spawn` inside a loop
+  over `RESULTS` under its lock is allowed and joining it inside the lock is refused (E7018, verdict 52);
+  the thread rules (locks,
   `guarded by`, E7012) still keep threads apart. A C function's `callback(retained)` or `callback(once)`
   parameter counts the same way (`setup` and `main` say `changes Game` in AN-78's program);
   `callback(borrowed)` runs the function during the call, as `for_each` does. **Where the line falls**
@@ -642,6 +643,9 @@ carried over.
   `const ref mut` is never given one; `const` means the name itself stays as it is (R2; E3023's rows
   reworded; AN-28's NEW and meaning; v2 readability F-01's lines, `boss = ref mut enemies[0]` and
   `h = ref mut this.handlers.get_mut(i).unwrap()`, compile again, so phase 3 keeps them).
+- **52** (area E's note): a `spawn` inside a loop over what its thread changes under a lock the loop holds
+  is allowed, as in Rust; joining that thread inside the lock is refused when compiling (E7018 widened;
+  R8 (c), R12, R15; `probes/rust_spawn_in_loop.txt`).
 - **51** (the survey's thread and C lambdas): a long lambda may be written in the call or as a named local
   function passed by its name, both allowed (the vocabulary's `fn` row; no answer changes).
 - **50** (the survey's library lines): a generic function's, method's, struct's or class's type

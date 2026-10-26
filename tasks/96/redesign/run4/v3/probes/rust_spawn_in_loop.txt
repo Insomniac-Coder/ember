@@ -1,0 +1,8 @@
+Verdict 52's evidence: how Rust handles starting a thread inside a loop over what the thread changes.
+rustc 1.99.1 (58cf8f9c3 2026-10-13), the cloud container of 2026-10-26, `rustc --edition 2021`.
+spawn_in_loop.rs: a loop over RESULTS (a static Mutex<Vec<i32>>) under its lock starts threads that
+  push to RESULTS under the same lock. Compiles (exit 0): Rust has no rule against it; each thread
+  waits for the lock until the loop's guard ends.
+join_in_lock.rs: the same, with t.join() inside the loop, while the lock is held. Compiles (exit 0);
+  run under `timeout 5`: exit 124, still waiting after 5 s (main holds the lock and waits for the
+  thread; the thread waits for the lock). Ember refuses this one when compiling (E7018).

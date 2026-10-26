@@ -61,7 +61,7 @@ tree, or uses `.copied()`; verdict 23 is cited where AN-78's `main` keeps using 
 | AN-73 | the task says `changes total` (verdicts 22 and 29: a change through an `Atomic` is named, a captured variable by its name); E3026's line and the prose follow; one refusal added (E2105) | **yes**, for one line: v2's `fn() with copy of n: total.fetch_add(n)` is refused (E2105); the program does what it did |
 | AN-74 | the task says `changes stats` (verdict 22); one refusal added (E2105); phase 0's wrong replacement in E7010's message put right | **yes**, for one line: v2's `fn(): stats.add_all(t)` is refused (E2105); the program does what it did |
 | AN-75 | each thread's function says `changes Log` (verdict 29), and `start` and `main` say `changes Log` (verdict 30); the messages give the v3 lines; refusals added: a thread's function without `changes Log` and `start` without it (E2105), and a call through a `fn() changes Log` value inside a walk of `log.lines` under its lock (E3020, verdict 29's gain); v2's reading 1 replaced by verdict 29 | **yes**, for four lines: v2's two thread functions, `fn start(log: thread_shared Log):` and `fn main():` are refused (E2105); the program does what it did. A walk that v2 accepted, and that waited for its own lock while running, is now refused when compiling |
-| AN-76 | `main` says `changes FRAME, LOG, RESULTS` (verdict 30); a `spawn` inside a loop over `RESULTS` is refused (E3020); rule 3 states verdict 31; v2's readings 2 and 3 replaced by verdicts 30 and 31 | **yes**, for one line: v2's `fn main() changes FRAME, LOG:` is refused (E2105); the program does what it did |
+| AN-76 | `main` says `changes FRAME, LOG, RESULTS` (verdict 30); a `spawn` inside a loop over `RESULTS` under its lock is allowed and a join inside the lock is refused (E7018, verdict 52); rule 3 states verdict 31; v2's readings 2 and 3 replaced by verdicts 30 and 31 | **yes**, for one line: v2's `fn main() changes FRAME, LOG:` is refused (E2105); the program does what it did |
 | AN-77 | the v3 line only | no |
 | AN-78 | `setup` and `main` say `changes Game` (verdict 30); the NEW program walks `game.names` across a C function marked `@ffi(no_callbacks)` and calls `poll_events()` after the walk (verdict 31); refusals added: `poll_events()` inside the walk and an unmarked `sqrt` inside it (E3020), the mark on `register_cb` (E5069), `setup` and `main` without `changes Game` (E2105), `setup(...)` inside the walk (E3020); E3023's message is the rules' (verdict 32), E7015's gives the v3 lines; phase 0's missed `holds` in E7004's message put right | **yes**, for two lines: v2's `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:` and `fn main():` are refused (E2105); and a call of a C function marked `@ffi(no_callbacks)` is allowed inside a walk of the game's lists, where v2's reading 3 refused every foreign call there; what the program does with the game is unchanged |
 | AN-79 | the v3 line only | no |
@@ -1073,8 +1073,9 @@ captured name).
 
 **v3:** starting a thread counts as making what its function changes, whenever that happens (verdict
 30: "who said a change needs to be bound by a moment?"): `main` starts threads running `fn() changes
-RESULTS: worker(1)`, so it says `fn main() changes FRAME, LOG, RESULTS:`, the verdict's own line, and a
-`spawn` inside a loop over `RESULTS` is refused (E3020). A foreign call counts as possibly running the
+RESULTS: worker(1)`, so it says `fn main() changes FRAME, LOG, RESULTS:`, the verdict's own line. A
+`spawn` inside a loop over `RESULTS` under `RESULTS_LOCK` is allowed, the thread waiting for the lock, and
+joining it inside the lock is refused (E7018; verdict 52). A foreign call counts as possibly running the
 callbacks C keeps, unless marked `@ffi(no_callbacks)` (rule 3 below; verdict 31). **Meaning changed:**
 yes, for one line: v2's `fn main() changes FRAME, LOG:` is refused (E2105, part 6); the program does what
 it did. What stays from v2: every lambda that changes a module variable says so on its first line, and
@@ -1233,7 +1234,8 @@ The rules (R5, R15, R12):
    (R12): `b.click()` changes `LOG` because `click` runs handlers of type `fn() changes LOG` and its
    first line says `changes handlers, LOG`. A list of plain `fn()` handlers changes nothing, so
    clicking such a button inside a loop over `LOG` is allowed. A `spawn` inside a loop over what its
-   thread changes is refused the same way (E3020: "start the thread after the loop"). A foreign call
+   thread changes under the loop's lock is allowed, and joining that thread inside the lock is refused
+   (E7018; verdict 52). A foreign call
    counts as possibly running every callback C keeps, and makes the changes their types list, unless
    the foreign function's declaration says `@ffi(no_callbacks)` (R12, verdict 31; the attack's 5.1,
    `y16`; AN-78).
@@ -1336,16 +1338,14 @@ an76_static_mut ms=26.241 peak_kb=27884 checksum=2000014
   thread whose function changes \`RESULTS\` (\`fn() changes RESULTS: worker(1)\`, line 18); add it to
   \`main\`'s first line: \`fn main() changes FRAME, LOG, RESULTS:\`` (R5, R12, verdict 30; the rules'
   E2105 row).
-- A thread started inside a walk of what it changes: after line 21, `with RESULTS_LOCK:` (line 22),
-  `for r in RESULTS:` (line 23), `println(r)` (line 24) and `c = thread.spawn(fn() changes RESULTS:
-  worker(3))` (line 25): `error[E3020]: this loop walks \`RESULTS\` (line 23), and \`thread.spawn(...)\`
-  (line 25) starts a thread whose function changes \`RESULTS\` (\`fn() changes RESULTS: worker(3)\`);
-  start the thread after the loop: write \`c = thread.spawn(fn() changes RESULTS: worker(3))\` after
-  it` (R8 (c), R12, R15, verdict 30; the rules' E3020 row, in this program's lines). Memory safety does
-  not need this refusal here: `RESULTS` is read only under `RESULTS_LOCK`, which the walk holds, so the
-  new thread's `push` would wait for the walk to end. It is verdict 30's one rule, a list does not
-  change while a loop walks it through any call that may change it, with one line to move (section
-  4.2, point 3).
+- A thread started inside a walk of what it changes, then joined inside the lock: after line 21,
+  `with RESULTS_LOCK:` (line 22), `for r in RESULTS:` (line 23), `c = thread.spawn(fn() changes RESULTS:
+  worker(r))` (line 24) and `c.join()` (line 25): `error[E7018]: \`c.join()\` (line 25) waits for the
+  thread started on line 24, whose function changes \`RESULTS\` under \`RESULTS_LOCK\`, and this thread
+  holds that lock, so each would wait for the other for ever; join after the \`with RESULTS_LOCK:\` block`
+  (R15, verdict 52). Without line 25 the program is accepted: the new thread waits for the lock until the
+  walk ends, as Rust allows (`probes/rust_spawn_in_loop.txt`: rustc compiles both; the joining one, run,
+  was still waiting after 5 s).
 - The handler written as a plain `fn()`: `b.on_click(fn(): LOG.push(String("clicked")))` (line 12):
   `error[E2105]: this function pushes to \`LOG\`; say so on its first line: \`fn() changes LOG:
   LOG.push(String("clicked"))\``.
@@ -2520,7 +2520,9 @@ Three new points, one at a time, each with what this file does meanwhile.
    type says `changes Log` while this thread holds a `Log`'s lock, which also refuses a function that
    changes another log; (c) keep in each lock the thread that holds it and stop the program, naming the
    function, instead of hanging: one store when the lock is taken and one compare before, not measured.
-3. **Verdict 30's refusal of a `spawn` inside a walk of what its thread changes guards nothing that
+3. **Answered (verdict 52, the owner: "B"): allowed under the loop's lock, as Rust allows it; the join
+   inside the lock is refused instead (E7018).** The note as it was put: **verdict 30's refusal of a
+   `spawn` inside a walk of what its thread changes guards nothing that
    memory safety needs in this area's programs.** A list another thread may change is reached only under
    its lock (`guarded by`, `Mutex`, E7012, E7014), and the walk holds that lock, so the new thread's
    change waits until the walk ends (AN-76's `RESULTS`); a scoped task's change to a list its parent

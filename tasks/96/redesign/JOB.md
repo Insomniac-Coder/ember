@@ -406,6 +406,13 @@ acceptable it hurt readability too, if you want something to have a copy use the
     then `a = thread.spawn(push_a)`; a local function captures as a lambda does. Owner: "I think both ways
     should be permissible".
 
+52. **A thread may be started inside a loop over what it changes when it makes that change under the
+    lock the loop holds; joining it inside that lock is refused** (area E's note). With `RESULTS` guarded
+    by `RESULTS_LOCK` and the loop inside `with RESULTS_LOCK:`, `thread.spawn(fn() changes RESULTS:
+    worker(r))` in the loop is allowed (the thread waits for the lock until the loop ends), as Rust
+    allows it; `t.join()` inside the lock, which freezes (each waits for the other; Rust compiles it and
+    it hangs, `run4/v3/probes/rust_spawn_in_loop.txt`), is refused when compiling (E7018). Owner: "B".
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."
