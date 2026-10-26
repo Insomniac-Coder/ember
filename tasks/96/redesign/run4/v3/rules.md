@@ -289,7 +289,8 @@ by their own operations: a `Mutex`, `RwLock`, `Atomic` or channel end (`with g =
 instruction), as Rust's `&self` methods of these types do, and handed to a call it takes no word (R4).
 What a function changes under a lock or through an `Atomic` is still on its first line, as every change
 is: `changes Log` for a `Log` changed under its lock, `changes Mutex[Stats]`, `changes Atomic[int]`, and
-`changes Sender[int]` for a send on a channel end (R12).
+`changes Sender[int]` for a send on a channel end, `changes Receiver[int]` for taking values out through a
+receiving end the function was given (R12).
 
 **R6. Views a call gives.** A call's result that is a view, and a view a call puts in through a
 `ref mut` parameter, point into the arguments they may come from: a method's into `this`, a function's
@@ -497,7 +498,9 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
   state (what it captured with a word, and what that owns alone) is itself, and a change to it needs no
   word. A send on a channel end is a change of the channel, named by the type of the end, as a change
   under a lock is: `fn produce(tx: Sender[int]) changes Sender[int]:`, and a thread's function that
-  sends, `fn() with owns tx changes Sender[int]: produce(tx)`. No loop walks a channel's queue and no
+  sends, `fn() with owns tx changes Sender[int]: produce(tx)`; so is taking values out through a receiving
+  end a function was given (`rx.recv()`, `for v in rx:`): `fn consume(rx: Receiver[int]) changes
+  Receiver[int] -> int:`. A function's own local end needs no word, as any own local. No loop walks a channel's queue and no
   view reaches it, so the word refuses nothing more; it says what the function does. A lambda says it on its first line, checked against its body both ways
   (E2105): `b.on_click(fn() changes score: score += 1)`; `fn() changes score, lives, LOG:`;
   `fn() changes LOG: LOG.push(String("clicked"))`; `fn() with weakref ui changes Ui:`. A named function

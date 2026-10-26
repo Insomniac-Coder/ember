@@ -306,6 +306,11 @@ acceptable it hurt readability too, if you want something to have a copy use the
     starts that thread (verdict 30). It refuses nothing more (no loop walks a channel's queue); it says
     what the function does. Owner: "Yes go with a". Taking values out (`rx.recv()`) was not asked.
 
+37. **Taking values out of a channel through a receiving end a function is given is named too**, as a send
+    is (verdict 36): `fn consume(rx: Receiver[int]) changes Receiver[int] -> int:` for a function whose
+    body does `for v in rx:` or `rx.recv()`. A function's own local end needs no word, as any own local.
+    Owner: "Yes A".
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

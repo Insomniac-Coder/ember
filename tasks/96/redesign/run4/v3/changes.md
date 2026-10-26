@@ -87,7 +87,8 @@ copies; this step did the rest.
   (R4, R5). The gain the owner named: `with log.lock: for line in log.lines: note()`, where `note` is a
   `fn() changes Log`, is refused when compiling (E3020) instead of waiting forever for the lock while
   running. A send on a channel end is named too, by the type of its end (`changes Sender[int]`;
-  verdict 36, the owner's answer to section 11's question 2).
+  verdict 36, the owner's answer to section 11's question 2), and so is taking values out through a
+  receiving end a function was given (`changes Receiver[int]`, verdict 37).
 - **Starting a thread, and handing C a callback, count** (verdicts 30, 31). R5's "a thread that
   `thread.spawn` starts is not a call" is gone. The library writes
   `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`, and
@@ -638,7 +639,8 @@ What the verdicts leave open, one at a time, each with what this step does meanw
    safety does not need the word; the other choice is to name nothing for captured variables on first
    lines (`fn click() changes handlers:`). Which?
 2. **Answered (verdict 36, the owner: "Yes go with a"): a send is named, `fn produce(tx: Sender[int])
-   changes Sender[int]:`, as a change under a lock is.** The question as it was put: **how a change
+   changes Sender[int]:`, as a change under a lock is; and taking values out likewise (verdict 37: "Yes A"),
+   `fn consume(rx: Receiver[int]) changes Receiver[int] -> int:`.** The question as it was put: **how a change
    under a lock is named, and channel ends** (verdict 29). Meanwhile a change is named by
    the type of what changes: `changes Log` for a `Log` whose `guarded by` field changes,
    `changes Mutex[Stats]` for the value in a `Mutex[Stats]`, `changes Atomic[int]` for an atomic.
