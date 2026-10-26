@@ -1044,11 +1044,13 @@ a `ref mut T`, which has no "none" to give.
    struct Reg:
        pools: Map[u128, owns dyn AnyPool]
 
-       fn get_mut[T](i: int) changes pools -> ref mut T:
+       [T]
+       fn get_mut(i: int) changes pools -> ref mut T:
            pool = ref mut cast this.pools[7u128] as Pool[T]
            return ref mut pool.dense[i]
 
-       fn emplace[T](e: int, owns value: T) changes pools:
+       [T]
+       fn emplace(e: int, owns value: T) changes pools:
            ...
 
    reg = Reg(pools=Map())

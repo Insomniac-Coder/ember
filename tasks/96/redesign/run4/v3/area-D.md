@@ -87,7 +87,7 @@ AN-78). Every answer now cites "verdict N" and the v3 files.
 | AN-53 (row 6) | row 6's handler says `changes score` (verdict 22); `Button`'s list is `Array[fn() changes captured]`, `on_click` takes `fn() changes captured`, `click` says `changes handlers, captured` (R12; verdict 35: the word its list's type uses); refusals added: row 6's v2 spelling (E2105), a two-variable handler (E2113), a handler stored in the button it changes (E3022), `click` without `captured` (E2105); the `LOG` handler's list becomes `Array[fn() changes captured, LOG]` | **yes**: v2's `handlers: Array[fn()]` with `b.on_click(fn(): score += 1)` is refused; the program does what it did, and row 6 reads as the owner agreed it |
 | AN-54 | the v3 line; one refusal added: a handler that changes the real `score` without naming it (E2105) | no |
 | AN-55 | the lambda given to `inspect` says `changes seen` (verdict 22), and `inspect`'s change list makes `count()`, which drives the adapter, the call that changes `seen` (verdict 21); starting the thread counts as making what its function changes (verdict 30), here nothing, so `main` names nothing; refusals added: the lambda without `changes seen` (E2105), the iterator line inside a loop over `seen` (E3020), a scoped task started inside a loop over what it changes (E3020) | **yes**, for one line: v2's `inspect(fn(v) => seen.push(v))` is refused (E2105); the program does what it did |
-| AN-56 | the first lambda says `changes names` (verdict 22), and `each_name` takes a change list, `fn each_name[C](owns f: fn(owns String) changes C) changes C:` (verdict 21); the E2020 way out gives `fn(s) changes names: names.push(copy of s)` | **yes**: v2's `fn each_name(owns f: fn(owns String)):` no longer takes the first lambda (E2113); the program does what it did |
+| AN-56 | the first lambda says `changes names` (verdict 22), and `each_name` takes a change list, `[C]` above `fn each_name(owns f: fn(owns String) changes C) changes C:` (verdict 21); the E2020 way out gives `fn(s) changes names: names.push(copy of s)` | **yes**: v2's `fn each_name(owns f: fn(owns String)):` no longer takes the first lambda (E2113); the program does what it did |
 | AN-57 | the refused lambda says `changes total` (verdict 22), still E3026; one refusal added: the help followed with a plain `count: shares mut Counter` parameter (E3023, verdict 32) | no |
 | AN-58 | the lambda says `changes score`, and the local list is `Array[fn() changes captured]` (verdict 22) | **yes**, for two lines: v2's `hs: Array[fn()]` with `fn(): score += 1` is refused; the program does what it did |
 | AN-59 | the v3 line only: none of its lambdas changes a variable it captured | no |
@@ -597,7 +597,7 @@ depends on the callee.
 `fn(owns s) changes names: names.push(s)` (verdict 22; written with `:`, since the vocabulary shows
 `changes` only on a lambda written with `:`, "Notes for the lead", note 3). A plain `fn(owns String)`
 now changes nothing at all, so `each_name`, a function that runs a function it is given, takes a change
-list, `fn each_name[C](owns f: fn(owns String) changes C) changes C:`, the spelling of verdict 21, and a
+list, `[C]` above `fn each_name(owns f: fn(owns String) changes C) changes C:`, the spelling of verdict 21, and a
 call of it counts as making what its function changes. **Meaning changed:** yes: v2's `fn
 each_name(owns f: fn(owns String)):` no longer takes the first lambda (E2113, part 6); the program does
 what it did.
@@ -626,7 +626,8 @@ exit=0
 **3. NEW.**
 
 ```ember
-fn each_name[C](owns f: fn(owns String) changes C) changes C:
+[C]
+fn each_name(owns f: fn(owns String) changes C) changes C:
     f(String("ann"))
 
 fn main():
@@ -678,7 +679,7 @@ it, and it ends after the call, as if the function had taken it and dropped it.
 - v2's `fn each_name(owns f: fn(owns String)):`, given the first lambda, E2113 (verdict 21): "this
   function changes `names`, a variable it captured (`fn(owns String) changes names`), and `each_name`
   takes `fn(owns String)`, functions that change nothing; let it take one that changes things, and say
-  that a call makes those changes: `fn each_name[C](owns f: fn(owns String) changes C) changes C:`"
+  that a call makes those changes: `[C]` above `fn each_name(owns f: fn(owns String) changes C) changes C:`"
   (R12).
 - `fn(owns s)` where the expected type is `fn(String)` (a read-only parameter), E2020 (a lambda
   parameter whose mode differs from the expected function type): "`each_name` gives each name read-only,
@@ -2199,13 +2200,15 @@ exit=1
 struct Reg:
     pools: Map[u128, owns dyn AnyPool]
 
-    fn get_mut[T](k: u128, i: int) changes pools -> ref mut T:
+    [T]
+    fn get_mut(k: u128, i: int) changes pools -> ref mut T:
         if this.pools[k] is Pool[T] as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
             return ref mut pool.dense[i]
         panic("no pool of this type at this key")
 
 interface Inspect:
-    fn inspect[V: Visitor](ref mut v: V)
+    [V: Visitor]
+    fn inspect(ref mut v: V)
 
 fn walk(xs: Array[owns dyn Inspect]) -> int:
     s = Sum(total=0)
@@ -2272,7 +2275,7 @@ exit=0
 (Both files are today's Ember, so they still write `self`.)
 
 **6. Still refused.**
-- A generic method whose type parameter is returned or stored by value (`fn make[V: Visitor]() -> V`)
+- A generic method whose type parameter is returned or stored by value (`[V: Visitor]` above `fn make() -> V`)
   through `dyn`, E2050: "`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn`
   value has one entry per method; take the visitor as `ref mut v: V`, or use a type parameter
   `[I: Inspect]` instead of `dyn Inspect`".
@@ -2472,13 +2475,15 @@ exit=1
 **3. NEW.**
 
 ```ember
-fn sum[T](xs: Span[T]) -> T:                 # not `pub`: its bound is worked out from the body
+[T]
+fn sum(xs: Span[T]) -> T:                 # not `pub`: its bound is worked out from the body
     acc = copy of xs[0]
     for x in xs[1..]:
         acc = acc + x
     return acc
 
-pub fn total[T: Add[T, Output = T] + Copy](xs: Span[T]) -> T:    # `pub`: the bound is written
+[T: Add[T, Output = T] + Copy]
+pub fn total(xs: Span[T]) -> T:    # `pub`: the bound is written
     ...
 
 extend Array[Vec3] implements Neg:           # accepted in a program (a package nothing depends on)
@@ -2513,7 +2518,7 @@ The orphan exemption is a permission, not code; the overlap stays refused, so it
 
 **6. Still refused.**
 - A `pub` generic with an operation its bounds lack, E2040: "`total` is `pub`, so its bound is written:
-  write `pub fn total[T: Add[T, Output = T] + Copy](xs: Span[T]) -> T:`" (a non-`pub` function never
+  write `[T: Add[T, Output = T] + Copy]` above `pub fn total(xs: Span[T]) -> T:`" (a non-`pub` function never
   gets it).
 - E2121 in a library package: "`Array[Vec3]` and `Neg` both belong to other packages, and packages that
   depend on this one could see a second `Neg` for `Array[Vec3]`; wrap it: `struct Vecs(Array[Vec3])`
@@ -2721,7 +2726,7 @@ this area wrote meanwhile.
    - AN-53 and AN-58 part 6, E3020: "or collect what to add and push it after the loop" is a way out in
      words (F-06).
    - AN-67 part 6, E2050: "or use a type parameter `[I: Inspect]` instead of `dyn Inspect`" gives a
-     bound, not the line (`fn walk[I: Inspect](xs: Array[I]) -> int:`) (found in this step).
+     bound, not the line (`[I: Inspect]` above `fn walk(xs: Array[I]) -> int:`) (found in this step).
    - AN-69 part 6, E2041: "narrow the general one's bound so it leaves `i32` out" is a way out in words;
      its second way out is an exact line (found in this step).
 7. **Verdicts with no code in area D.** No answer of area D calls a C function, so verdict 31 (a C call

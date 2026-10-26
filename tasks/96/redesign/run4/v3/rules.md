@@ -40,6 +40,11 @@ No compiler change, no git command, no Ember program run.
   `pop`, `insert`, `remove`, `clear`, `sort`, `retain`, `extend` on a list or map; changing an enum's
   variant; ending an object's last owner. Writing a number or a `bool` is not a reshape.
 - **`this`**: inside a method, the object the method was called on.
+- **type parameters**: written on a line of their own, directly above the function, method, struct or
+  class they belong to, at its indentation: `[C, F: fn(Item) changes C]` over
+  `fn for_each(owns f: F) owns this changes C:`; `[T]` over `struct Pool:`. A type is used as today,
+  `Pool[int]`, and a lambda has none (verdict 50). In prose, a span cannot hold two lines, so it is
+  written "`[T]` above `fn f(x: T)`".
 - **first line**: a function's signature with its clauses: what a method does to `this` (`reads`,
   `changes`, `changes this`, `owns this`), everything else the function causes to change (`changes NAME`
   for a module variable or a variable a lambda captured, `changes T` for objects of a type, `changes
@@ -538,7 +543,7 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
 - **A change list.** A generic parameter written after `changes` stands for what the function given to
   the call changes, and is filled from it. A library function that runs a function it is given
   accepts one that changes things, if the function says so, and the call counts as making those
-  changes: the library writes `fn for_each[C, F: fn(Item) changes C](owns f: F) owns this changes C:`,
+  changes: the library writes `[C, F: fn(Item) changes C]` above `fn for_each(owns f: F) owns this changes C:`,
   so `scores.for_each(fn(s) changes LOG: LOG.push(s.name))` is a call that changes `LOG` (inside a loop
   over `LOG` it is refused, E3020), and with a plain `fn(s)` it changes nothing; the same lambda without
   `changes LOG` is refused on its own first line (E2105). The bound `F: fn(Item) changes C` makes one
@@ -565,7 +570,7 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
 - **A call that runs a function on its own counts as making its changes, now or later.** Handing a
   function to something that will run it by itself is a change of everything the function changes,
   and the caller names them (R5): `thread.spawn` and `scope.spawn` (the library writes
-  `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`), and
+  `[R, CHANGED]` above `pub fn spawn(owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`), and
   a foreign function's parameter whose contract says `callback(retained)` or `callback(once)` (C keeps
   the function and runs it during later foreign calls; a `callback(borrowed)` parameter runs it during
   the call, as `for_each` does). So `main`, which starts threads running `fn() changes RESULTS:

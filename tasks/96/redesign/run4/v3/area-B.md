@@ -938,7 +938,8 @@ fn main():
 struct Registry:
     pools: Map[u128, owns dyn AnyPool]
 
-    fn get_mut[T](e: int) changes pools -> ref mut T:
+    [T]
+    fn get_mut(e: int) changes pools -> ref mut T:
         pool = ref mut cast this.pools[7u128] as Pool[T]
         return ref mut pool.dense[pool.sparse[e]]
 ```
@@ -958,7 +959,8 @@ method of `Registry` puts entity `e`'s component `c` in the pool under `k` when 
 and does nothing otherwise:
 
 ```ember
-    fn put[T](k: u128, e: int, owns c: T) changes pools:
+    [T]
+    fn put(k: u128, e: int, owns c: T) changes pools:
         if this.pools[k] is Pool[T] as ref mut pool:
             pool.dense[pool.sparse[e]] = c
 ```
@@ -1085,7 +1087,7 @@ of an `if` (the store runs when it passes) instead of a stop; no separate progra
   verdict 27 removed, gets the same message with its own words in the first quote.
 - A kind test in a method whose first line does not say it changes `pools`, `fn put[T](k: u128, e:
   int, owns c: T):` with the same body, E2105: "`put` changes `this.pools` through `pool`; write its
-  first line as `fn put[T](k: u128, e: int, owns c: T) changes pools:`".
+  first line as `[T]` above `fn put(k: u128, e: int, owns c: T) changes pools:`".
 - A change of `reg.pools` while the returned component is used, in the lines
   `p = ref mut reg.get_mut[int](3)` (line 1), `reg.pools.clear()` (line 2), `p += 1` (line 3), E3022:
   "`p` is the only name for a component in `reg.pools` until its last use on line 3, and line 2 empties

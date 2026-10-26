@@ -91,7 +91,7 @@ copies; this step did the rest.
   receiving end a function was given (`changes Receiver[int]`, verdict 37).
 - **Starting a thread, and handing C a callback, count** (verdicts 30, 31). R5's "a thread that
   `thread.spawn` starts is not a call" is gone. The library writes
-  `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`, and
+  `[R, CHANGED]` above `pub fn spawn(owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`, and
   `scope.spawn` the same, so `main` says `fn main() changes FRAME, LOG, RESULTS:` and a `spawn` inside a
   loop over `RESULTS` is refused (E3020, "start the thread after the loop"); the thread rules (locks,
   `guarded by`, E7012) still keep threads apart. A C function's `callback(retained)` or `callback(once)`
@@ -642,6 +642,15 @@ carried over.
   `const ref mut` is never given one; `const` means the name itself stays as it is (R2; E3023's rows
   reworded; AN-28's NEW and meaning; v2 readability F-01's lines, `boss = ref mut enemies[0]` and
   `h = ref mut this.handlers.get_mut(i).unwrap()`, compile again, so phase 3 keeps them).
+- **51** (the survey's thread and C lambdas): a long lambda may be written in the call or as a named local
+  function passed by its name, both allowed (the vocabulary's `fn` row; no answer changes).
+- **50** (the survey's library lines): a generic function's, method's, struct's or class's type
+  parameters go on a line of their own above it (`[C, F: fn(Item) changes C]` over
+  `fn for_each(owns f: F) owns this changes C:`), applied by `tools/v50_template_line.py` to the design's
+  code (31 lines; today's Ember, the owner's verdict 21 example and a probe's line kept).
+- **48, 49** (the survey's long lines): a long function type is named once with `type`:
+  `type Handler = fn() changes LOG` (AN-76's `Button`), `type DeathHandler[C] = fn(ref mut Array[Enemy], int)
+  changes C` (AN-05's `update`).
 - **47** (question 6): an arena-made value carries a pointer to its arena, accepted for now; lists made in
   an arena the same way (R3; not measured).
 - **46** (question 3): a `dyn` type says what its values' methods change, `owns dyn Iterator[Item = int]
@@ -685,7 +694,7 @@ What the verdicts leave open, one at a time, each with what this step does meanw
    gives `AsyncIteratorProtocol` an associated `Failure` type), which costs every generic iterator
    function a word. Is the type-parameter form acceptable?
 4. **Answered (verdict 38, the owner: "a"): the library takes the function as a template parameter,
-   `fn for_each[C, F: fn(Item) changes C](owns f: F) owns this changes C:`; the shared function type stays
+   `[C, F: fn(Item) changes C]` above `fn for_each(owns f: F) owns this changes C:`; the shared function type stays
    legal, for storing functions and in a program's own code.** The question as it was put: **the
    library's first lines take the function as a bound** (verdict 21's example takes a function
    value). Meanwhile `fn for_each[C, F: fn(Item) changes C](owns f: F) owns this changes C:`, as today's

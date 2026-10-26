@@ -384,6 +384,28 @@ acceptable it hurt readability too, if you want something to have a copy use the
     `[String("a")] using current`. Not measured; the measuring phase looks for ways to drop the pointer
     (an arena that never frees single values; memory laid out so a pointer finds its arena). Owner: "Yes".
 
+48. **A function type written several times is named once with `type`** (the survey: AN-76's `Button`).
+    `type Handler = fn() changes LOG`, then `handlers: Array[Handler] = []` and
+    `fn on_click(owns f: Handler) changes handlers:`. Owner: "I like option 1".
+49. **A long function type in a first line is named once with `type`, its change list as a parameter**
+    (the survey's longest line, AN-05). `type DeathHandler[C] = fn(ref mut Array[Enemy], int) changes C`,
+    then `fn update[C](ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:`, over
+    writing each parameter on its own line. Owner: "I meant A".
+
+50. **Type parameters go on a line of their own above the declaration, for every generic function,
+    method, struct and class** (the survey: the library's first lines). `[C, F: fn(Item) changes C]` over
+    `fn for_each(owns f: F) owns this changes C:`; `[T: Add[Output = T] + Default]` over
+    `fn sum(xs: Array[T]) -> T:`; `[T]` over `struct Pool:`. Nothing is dropped; a type is used as today,
+    `Pool[int]`; a lambda has no type parameters. Enums, interfaces and `type` aliases were not named and
+    keep the brackets after the name. Owner: "Template parameters on their own line seems good", "All
+    generics", "Structs too and even classes".
+
+51. **A long lambda may be written inside the call or as a named local function passed by its name; both
+    are allowed** (the survey: thread and C lambdas). `a = thread.spawn(fn() with thread_shared log
+    changes Log: log.push("a"))`, or `fn push_a() with thread_shared log changes Log:` / `log.push("a")`
+    then `a = thread.spawn(push_a)`; a local function captures as a lambda does. Owner: "I think both ways
+    should be permissible".
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

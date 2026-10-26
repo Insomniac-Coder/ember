@@ -1062,9 +1062,13 @@ fn update(ref mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int)
      module variable (`fn drop_and_log(ref mut list: Array[Enemy], i: int) changes LOG:`), or a lambda
      that changes a variable it captured (`fn(ref mut list: Array[Enemy], i: int) changes kills: kills
      += 1`, point 6). An `update` meant to take any handler says so with a change list (verdict 21,
-     R12), as the library's `for_each` does, and keeps the same body:
+     R12), as the library's `for_each` does, and keeps the same body; the handler's type is named once,
+     with its change list as a parameter (verdict 49):
      ```ember
-     fn update[C](ref mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int) changes C) changes C:
+     type DeathHandler[C] = fn(ref mut Array[Enemy], int) changes C
+
+     [C]
+     fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:
      ```
      `C` is filled from the handler each call is given: `update(ref mut es, drop_and_log)` changes `LOG`,
      and its caller names `LOG` on its own first line (R5); `update(ref mut es, drop_it)` changes nothing
@@ -1142,8 +1146,9 @@ exit=0
      E2113: "this function changes `kills`, a variable it uses from `main` (`fn(ref mut list:
      Array[Enemy], i: int) changes kills`), and `update`'s `on_death` takes `fn(ref mut Array[Enemy],
      int)`, a function that changes nothing but the list it is given; to let `update` take handlers that
-     change something, write its first line as `fn update[C](ref mut enemies: Array[Enemy], on_death:
-     fn(ref mut Array[Enemy], int) changes C) changes C:`". Here `kills` is `main`'s own number (no word:
+     change something, name its type with a change list, `type DeathHandler[C] = fn(ref mut
+     Array[Enemy], int) changes C`, and write `update`'s first line as `fn update[C](ref mut enemies:
+     Array[Enemy], on_death: DeathHandler[C]) changes C:`". Here `kills` is `main`'s own number (no word:
      a local of its own), `list` is `ref mut` (the list `update` gives) and `i` a plain parameter (a
      number passed in). The same lambda without `changes kills` is refused on its own first line (E2105:
      "this function changes `kills`, a variable it uses from `main`; say so on its first line:
@@ -3382,7 +3387,7 @@ verdict 21; a lambda naming the captured variable it changes, verdict 22).
 | `dead.push(i)`, then `while dead.len() > 0: on_death(ref mut enemies, dead.pop().unwrap())` (AN-05) | `dead` | none (default: the function's own new list of positions) | none (default: its own) |
 | `ref mut on_death: fn(ref mut Array[Enemy], int)` (AN-05) | `on_death` | `ref mut`: the caller's function value; its type: a function that takes the list `ref mut` and changes nothing else at all (verdict 22) | `ref mut`: the call may change the function value's own state |
 | `update(ref mut es, ref mut count)` (AN-05) | none declared | `ref mut` at the call says `update` may change `es` and `count` | — |
-| `fn update[C](ref mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int) changes C) changes C:` (AN-05) | `enemies` | `ref mut`: the caller's list | `ref mut`: yes |
+| `type DeathHandler[C] = fn(ref mut Array[Enemy], int) changes C` and `[C]` above `fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:` (AN-05) | `enemies` | `ref mut`: the caller's list | `ref mut`: yes |
 | the same line | `on_death` | its type `fn(ref mut Array[Enemy], int) changes C`: a function given by the caller (a plain parameter) | none (default: only called); `changes C` says it may change what the function given to the call changes, and `update`'s own `changes C` says the call makes those changes |
 | the same line | `C` | a change list: it stands for what the function given to the call changes (R12); it names no owner and no change of its own, so the test has nothing to ask of it (vocabulary, change-list row) | — |
 | `fn(ref mut list: Array[Enemy], i: int) changes kills: kills += 1` (AN-05) | `list` | `ref mut`: the list `update` gives the handler | `ref mut`: yes |

@@ -1188,10 +1188,12 @@ fn main() changes FRAME, LOG, RESULTS:
 and the button of verdict 17, whose handlers push to the log:
 
 ```ember
-class Button:
-    handlers: Array[fn() changes LOG] = []
+type Handler = fn() changes LOG
 
-    fn on_click(owns f: fn() changes LOG) changes handlers:
+class Button:
+    handlers: Array[Handler] = []
+
+    fn on_click(owns f: Handler) changes handlers:
         this.handlers.push(f)
 
     fn click() changes handlers, LOG:
@@ -1350,8 +1352,8 @@ an76_static_mut ms=26.241 peak_kb=27884 checksum=2000014
 - A handler that changes `LOG` kept in a list of plain functions: `handlers: Array[fn()]` and
   `fn on_click(owns f: fn()) changes handlers:` with line 12 as written: `error[E2113]: this function
   changes \`LOG\` (\`fn() changes LOG\`), and \`on_click\` takes \`fn()\`, functions that change
-  nothing; keep it in a list that says so: \`handlers: Array[fn() changes LOG]\`, with
-  \`fn on_click(owns f: fn() changes LOG) changes handlers:\``.
+  nothing; keep it in a list that says so: name the type once, \`type Handler = fn() changes LOG\`,
+  and write \`handlers: Array[Handler]\` and \`fn on_click(owns f: Handler) changes handlers:\``.
 - `click` without `LOG`: `fn click() changes handlers:`: `error[E2105]: \`click\` runs the handlers in
   \`this.handlers\`, whose type says \`changes LOG\`; add it to its first line: \`fn click() changes
   handlers, LOG:\``.
@@ -2034,7 +2036,7 @@ The three meanings get three spellings (run 3's ruling, standing):
 - the **effect** keeps `Sync` and **`@nosync`** keeps its spelling: "no synchronisation", which is what
   it forbids (locks, atomics stronger than relaxed, channels, spawn and join, spec 3184-3186);
 - the **property** "several threads may hold and read one value" is **`ThreadShared`**, written only in
-  bounds (`fn keep[T: ThreadShared](x: T)`) and messages, inferred for every type as Rust infers
+  bounds (`[T: ThreadShared]` above `fn keep(x: T)`) and messages, inferred for every type as Rust infers
   `Sync` (R15);
 - the **marker** `@sync` is **removed**: what it said on the class (handles cross threads, atomic
   counts, fields frozen) is said on the value where it is shared, `thread_shared Stats()`, and which
