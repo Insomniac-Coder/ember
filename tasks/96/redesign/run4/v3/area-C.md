@@ -1,39 +1,49 @@
-# Area C, v2: ownership and sharing, `owns` replacing `Box`, copies, hand-over, state machines (AN-34 to AN-52)
+# Area C, v3: ownership and sharing, `owns` replacing `Box`, copies, hand-over, state machines (AN-34 to AN-52)
 
-Agent 04 (area-C), run 4, step 1 (v2). Every answer of area C brought to the v2 rules and words, which
-apply the owner's 20 decisions of 2026-10-25 (`inputs/JOB.md`, "Owner verdicts on run 4's open
-questions"): `V2/rules.md` (rules R1 to R18, the codes), `V2/vocabulary.md` (the words) and
-`V2/changes.md` (what changed from run 4). `RUN3` means `tasks/96/redesign/run3/`, `RUN4` means
-`tasks/96/redesign/run4/`, `V2` means `tasks/96/redesign/run4/v2/`; "R1" .. "R18" are the v2 rules;
-"row N" is the owner's agreed row N and "decision N" the owner's decision N in `inputs/JOB.md`; run 3's
-area rules are written "run 3's C6". All paths are under `C:\Users\ism19\Code\ember\`.
+Agent 04 (area-C), run 4, step 2 (v3). Every answer of area C brought to the v3 rules and words, which
+apply all of the owner's verdicts on run 4's open questions, 1 to 34, where 27 replaces 25
+(`inputs/JOB.md`, "Owner verdicts on run 4's open questions"): `V3/rules.md` (rules R1 to R18, the
+codes), `V3/vocabulary.md` (the words) and `V3/changes.md` (what changed from v2, verdicts 21 to 34).
+`RUN3` means `tasks/96/redesign/run3/`, `RUN4` means `tasks/96/redesign/run4/`, `V2` means
+`tasks/96/redesign/run4/v2/`, `V3` means `tasks/96/redesign/run4/v3/`; "R1" .. "R18" are the v3 rules;
+"row N" is the owner's agreed row N and "verdict N" the owner's verdict N in `inputs/JOB.md` (v2's text
+called them "decision N"; the numbers are the same); run 3's area rules are written "run 3's C6". Paths
+are under the checkout's root, `/home/user/ember/`. The probe files of runs 3 and 4 that the answers
+cite (the `an..` files, `target/redesign3/...`, `target/redesign4/04-area-C/...`) were in the laptop's
+ignored `target/` and are not in this checkout; their pasted outputs carry over unchanged.
 
-Power: `PowerLineStatus` printed `Online` at the start of this work and again before writing this file.
-No compiler change, no git command, no Ember program run, and no `ember check` was run in this step:
-this file makes no new claim about what today's Ember accepts or refuses. Every OLD part, with its
-`ember check` output, and every fenced block of the "means exactly" parts are carried over unchanged
-from `RUN4/area-C.md` (which put them in from `RUN3/combined-v4.md` by script), as are run 4's two
-probe outputs (AN-40, AN-43; `target/redesign4/04-area-C/probes/check_output.txt`); the prose of the
-"means exactly" parts is only respelled where it names a v2 word, and says where no file of today's
-Ember was made. This file was made by copying `RUN4/area-C.md` and editing the prose, the NEW blocks,
-the owner's-test tables, the refusals and the costs; `target/redesign4/v2-04-area-C/check_carried.py`
-checks that those carried parts are byte for byte run 4's (it printed "answers 19 differences 0"), and
-`target/redesign4/v2-04-area-C/check_words.py` lists every old spelling left outside them (each hit was
-read: prose that names an old word on purpose, today's code, Rust's `&mut self`, or English "copied" and
-"shared").
+No compiler change, no git command, no Ember program run. One new claim about today's Ember is made
+(AN-40, part 5: `Box` with a memory-manager parameter), with a new probe checked by
+`target/redesign4/bin/ember check` (`target/redesign4/v3-04-area-C/probes/c3_box_in_arena.em`, its
+output in `probes/check_output.txt` and pasted in AN-40). Every OLD part, with its `ember check` output,
+and every fenced block of the "means exactly" parts is carried over unchanged from `V2/area-C.md`, but
+for that new output; `target/redesign4/v3-04-area-C/check_carried.py` checks it (it printed "answers 19,
+OLD parts differing 0 [], means-exactly blocks differing 1" and "AN-40: v2 0 block(s), v3 1; v2 blocks
+missing from v3: 0", the new probe), and `target/redesign4/v3-04-area-C/check_words.py` lists every old
+spelling left outside the carried parts (it printed 160 hits, each read: an answer's title or prose that
+names today's word or a removed one on purpose, a refused line quoted in a message, the "replaces"
+column of AN-39's table, Rust's `Box`, `Rc` and `&mut self`, or English "copied", "shared", "holds" and
+"set by").
+
+Phase 0 (`V3/spelling-changes.txt`) changed five lines of this file: the opening's "`exists as` appears
+in none of them" and AN-46's four `.copy_each()` lines. Each was checked and is right; the prose that
+still called `.copied()` kept (AN-46's v2 line, the table of changes, v2's note 4) is reworded here.
 
 Each answer has the eight parts: 1 intent; 2 OLD with today's output; 3 NEW; 4 the owner's test for
 every declared name; 5 means exactly (today's Ember or C doing what NEW means); 6 still refused, each
 with its code and message; 7 cost; 8 kind. In the owner's-test tables "none (default: ...)" means no
-word in the line answers that question and the stated default does (the brief allows that only where
-the default never changes anything, never aliases silently and never copies silently). What changed
-from run 4 is said once per answer, in its "v2" line, and in the table "Answers whose meaning changed".
+word in the line answers that question and the stated default does (the brief allows that only where the
+default never changes anything, never aliases silently and never copies silently). What changed from v2
+is said once per answer, in its "v3" line ("**Meaning changed:**" yes or no, with the verdict), and in
+the table "Answers whose meaning changed in v3"; what changed from run 4 to v2 is in each answer's "v2"
+line in `V2/area-C.md`.
 
 ## Terms
 
-The terms of `V2/rules.md` section 0 (owner, handed over, copy, `Copy` type, place, part, view,
-read-only view, kept view, into, link, parent link, position, reshape, `this`, first line, `shares` value,
-count, weak count, count pair, deferred-drop region, memory manager, the owner's test). Two more, used
+The terms of `V3/rules.md` section 0 (owner, handed over, copy, `Copy` type, place, part, view,
+read-only view, kept view, into, link, parent link, position, reshape, `this`, first line, change list,
+`shares` value, count, weak count, count pair, deferred-drop region, function value, kept callback,
+unknown call, kind test, summary, memory manager, noalias, the owner's test). Two more, used
 in the owner's-test tables below:
 
 - **own local** (the default for a local name given a new value): the value made on the line belongs
@@ -43,43 +53,51 @@ in the owner's-test tables below:
 - **reads only** (the default for a plain parameter, a plain loop, pattern or opened name, and a name
   bound to a part): a read-only view; it never changes anything, never aliases a changeable name, never
   copies (a number is copied in, which no change can tell apart; R2, R4, R5), and promises that what it
-  reads does not change while it is used (R8 (g), decision 5).
+  reads does not change while it is used (R8 (g), verdict 5).
 
-## Run 3's area rules, and the v2 rules that now say them
+## Run 3's area rules, and the v3 rules that now say them
 
-Area C's own rules C1 to C10 are gone as separate rules; every answer below cites the v2 rule instead.
+Area C's own rules C1 to C10 are gone as separate rules; every answer below cites the v3 rule instead.
 
-| run 3 | v2 | what is the same, and what changed |
+| run 3 | v3 | what is the same, and what changed |
 |---|---|---|
 | C1, one owner | R1, R2 | the same: `=` with a whole name hands it over; a name for a part is a read-only view, which now also promises that what it reads does not change while it is used (R8 (g)) |
 | C2, `Copy` values | R1, R2 | the same: `=` copies a `Copy` value; a `Copy` struct copied with `=` is not then changed through the new name (E3023) |
 | C3, words before a value | R3 | the same, spelled `copy of`, `shares`, `shares mut`, `weakref`, `sharedref mut x`; an owner made from another may do no more than it (E3023) |
-| C4, words in a type | R3 | the same, spelled `owns T`, `shares T`, `shares mut T`, `weakref T`; `owns` on a class type is E2114; `using A` after the type names its memory manager (decision 19) |
-| C5, parameters | R4 | the same modes, spelled `owns x: T`; a call writes `ref mut` where its parameter does |
-| C6, changing a shared value | R8 (b), R9 | the same compile-time rule; only a `shares mut` owner (and the first owner) changes the value, a `shares` owner reads it (decision 4); `ref mut` is alone everywhere (R8 (f)); a changeable link several holders share is `sharedref mut` (R7) |
+| C4, words in a type | R3 | the same, spelled `owns T`, `shares T`, `shares mut T`, `weakref T`; `owns` on a class type is E2114; `using A` after the type names the kind of its memory manager, and the line that makes the value names the instance (verdicts 19, 24) |
+| C5, parameters | R4 | the same modes, spelled `owns x: T`; a call writes `ref mut` where its parameter does; the word on a parameter's name sets what the function may do with it, for every type (verdict 32) |
+| C6, changing a shared value | R8 (b), R9 | the same compile-time rule; only a `shares mut` owner (and the first owner, which keeps what it could do: verdict 23) changes the value, a `shares` owner reads it (verdict 4); `ref mut` is alone everywhere (R8 (f)); a changeable link several holders share is `sharedref mut` (R7) |
 | C7, keeping an object alive | R10 | the same, with the deferred-drop region as one more cheap way |
-| C8, `class` | R9, the `class` row of `V2/vocabulary.md` | the same 8-byte header; one owner unless a line says `shares` or `shares mut` |
+| C8, `class` | R9, the `class` row of `V3/vocabulary.md` | the same 8-byte header; one owner unless a line says `shares` or `shares mut` |
 | C9, no run-time borrow checks | R9 | the same |
 | C10, one thread | R9, R15 | the same |
 
-What the owner's decisions change in this area: `owned` becomes `owns` and `shared` becomes `shares`
-(decision 19), and an owner that changes the shared value says `shares mut` (decision 4: AN-34, AN-36,
-AN-39, AN-44, AN-48, AN-51, AN-52; a `shares` owner only reads, AN-45); `copied` becomes `copy of`
-(decision 12, every answer that copies); `weak` becomes `weakref` and `set by` is gone (decisions 9 and
-14: the parent-link advice of AN-39, AN-41 and AN-36's cycle warning); `Box[T, A]` now has a spelling,
-`owns T using A` (decision 19, AN-39, AN-40); a function value that gives away what it captured is a
-`once fn()` (R12, AN-47); a `ref mut` name keeps every other name out, reads included (decision 2:
-AN-37's refusal is now E3022). `this` for `self` and `changes <field>` on a method's first line were
-already run 4's (decision 6 keeps the field form). No answer of this area opens an `Option` or a
-`weakref` link, so `exists as` appears in none of them.
+Verdicts 1 to 20 were applied in v2 (`owns`, `shares` and `shares mut`, `copy of`, `weakref` and the
+program-set parent link, `using`, `this`, `changes <field>`, `once fn()`, `ref mut` keeping reads out;
+each answer's v2 line in `V2/area-C.md` says where). What verdicts 21 to 34 change in this area: 24 puts
+the arena's instance on the line that makes the value, the field naming only its kind (AN-40, whose
+meaning changes, and AN-39's table); 23 settles that the first owner of a shared value keeps what it
+could do, as v2 wrote it while the owner had not ruled (AN-34, AN-36, AN-39, AN-44, AN-45, AN-48); 32
+says that the word in front of a parameter's name sets what the function may do with it, for every type,
+which is AN-43's point and what AN-35's `template` and AN-48's `transfer` already wrote; 33 renames
+`.copied()` to `.copy_each()` (AN-46); 27 keeps `cast x as D`, the only cast here (AN-42), and leaves
+`is` before a value as it was (AN-48's `if a is not b:`); 22 makes a plain `fn()` change nothing at all,
+which AN-47's two functions already did; and R11 now says that making a `weakref` link is not a change
+of its target (verdict 28's rule text), which AN-41's `add` relied on. No answer of this area opens an
+`Option` or a `weakref` link (so `exists as` appears in none of them), tests a value's kind, runs a
+function it is given, starts a thread, takes a lock, hands C a callback or holds a `MutSpan`, so
+verdicts 21, 26, 30, 34 and verdict 28's walk change no line here; verdict 29 adds a clause to AN-39's
+table (a function that changes a `Mutex` value says so) and verdict 31 a sentence to AN-40's cost
+(ending a value whose type names a C destroy function).
 
 ## The answers
 
 #### AN-34: `snapshot = items` hands the list over; using `items` after is E3040, whose help says "clone"
 
-**v2:** meaning unchanged; row 9 in its new spelling (decisions 12 and 19: `copy of`, `shares`). The
-second owner in `two_owners` changes the list, so it is made with `shares mut` (decision 4); a `shares`
-owner only reads, and changing the list through one is now refused (E3023, added below).
+**v3:** **Meaning changed:** no. Verdict 23 settles what v2 wrote while the owner had not ruled: after
+`other = shares items` or `other = shares mut items` the first owner, `items`, keeps what it could do,
+so `owner_that_reads`'s `items.push(4)` stands as written (R3, R9). Row 9 is as agreed, in its spellings
+(`copy of`, `shares`; verdicts 12, 19).
 
 1. **Intent:** keep a snapshot of a list before changing it (row 9).
 2. **OLD** (`an34_old_snapshot.em`):
@@ -141,7 +159,7 @@ owner only reads, and changing the list through one is now refused (E3023, added
 
    | name | what it is | may it change it |
    |---|---|---|
-   | `items` (all four) | none (default, own local: the list made on this line is the name's own) | none (default, own local); in `two_owners` and `owner_that_reads`, from the `shares` line on, the first of two owners, which keeps what it could do (R9; settled by the rule writer, `V2/changes.md` section 11, question 3) |
+   | `items` (all four) | none (default, own local: the list made on this line is the name's own) | none (default, own local); in `two_owners` and `owner_that_reads`, from the `shares` line on, the first of two owners, which keeps what it could do (R3, R9; verdict 23) |
    | `snapshot` in `main` | `copy of`: its own new list | none (default, own local) |
    | `snapshot` in `hand_over` | none (default, row 9: `=` with a whole name hands the list over; `items` ends) | none (default, own local) |
    | `other` in `two_owners` | `shares`: one of two owners of the same list | `mut` in `shares mut`: it may change the list (R9) |
@@ -153,7 +171,7 @@ owner only reads, and changing the list through one is now refused (E3023, added
    `items.get_mut().push(4)`, `other.get().len()`; today's `Shared` checks each `get_mut` while running,
    which the NEW `shares` does not, R9). Files under `target/redesign3/10-area-C/`. No file of today's
    Ember was made for `owner_that_reads` (today's `Shared` has no read-only owner).
-6. **Still refused** (R1, E3040; row 9's message, both ways out named, as `V2/rules.md` section 3 gives it):
+6. **Still refused** (R1, E3040; row 9's message, both ways out named, as `V3/rules.md` section 3 gives it):
 
    ```text
    error[E3040]: `items` was handed over to `snapshot` on line 3 and is used on line 4
@@ -161,7 +179,7 @@ owner only reads, and changing the list through one is now refused (E3023, added
      = help: to keep both, write `snapshot = copy of items` (a copy of your own) or `snapshot = shares items` (two owners of one list)
    ```
 
-   A change through an owner that only reads (R9, E3023; the `shares` row of `V2/vocabulary.md`):
+   A change through an owner that only reads (R9, E3023; the `shares` row of `V3/vocabulary.md`):
    `other = shares items` then `other.push(4)`:
 
    ```text
@@ -181,9 +199,10 @@ owner only reads, and changing the list through one is now refused (E3023, added
 
 #### AN-35: partial move (E3042) and move in a loop (E3041)
 
-**v2:** meaning unchanged; `owns` for `owned` and `copy of` for `copied` (decisions 19, 12). The loop
-name is `_` again, as run 3 wrote it: `V2/vocabulary.md` now has a row for it (run 4 wrote `i` for want
-of one).
+**v3:** **Meaning changed:** no. No verdict of 21 to 34 changes a line. Verdict 32 states as a rule what
+`spawn_all`'s plain `template: Player` already meant: the word in front of a parameter's name (here
+none) sets what the function may do with it, for every type, so `template` only reads, and
+`v.push(template)` is refused (E3013, with the rules' message and a note).
 
 1. **Intent:** log a player's name and keep the player; fill a list with copies of a template.
 2. **OLD** (`an35_old_partial.em`, `an35_old_loop.em`):
@@ -265,7 +284,7 @@ of one).
    | `template` | none (default, reads only: a plain parameter, R4) | none (default, reads only) |
    | `n` (parameter) | none (default: an `int` parameter, a number copied in, R4) | none (default: never changes the caller's) |
    | `v` | none (default, own local: the list made on this line) | none (default, own local) |
-   | `_` | declares no name (the `_` row of `V2/vocabulary.md`): nothing to ask | — |
+   | `_` | declares no name (the `_` row of `V3/vocabulary.md`): nothing to ask | — |
 
 5. **Means exactly:** `an35_tr_ref.em` (today's `n = ref p.name` then `keep(p)`: `exit=0`, no output);
    `an35_tr_loop.em` (`template: Player`, `v.push(template.clone())`: `exit=0`, no output).
@@ -283,17 +302,18 @@ of one).
    ```
 
    (R2 and the E3060 row for the first: a view used after what it points into was handed over; R4 and
-   the E3013 row of `V2/rules.md` section 3 for the second, whose help is that row's, word for word.)
-   The OLD's `owned` is not a word of v2 (E1010: "`owned` is now `owns`", the `owned` row of
-   `V2/vocabulary.md`); the two refusals above are for the OLD bodies in v2's spelling.
+   the E3013 row of `V3/rules.md` section 3 for the second, whose help is that row's, word for word.)
+   The OLD's `owned` is not a word of v3 (E1010: "`owned` is now `owns`", the `owned` row of
+   `V3/vocabulary.md`); the two refusals above are for the OLD bodies in v3's spelling.
 7. **Cost:** `n = p.name`: nothing (a pointer). `copy of template`: one copy per pass, as C's
    per-element copy and Rust's `.clone()` in the loop.
 8. **Kind:** a readable spelling of Rust's guarantee.
 
 #### AN-36: a write to a handed-over value is accepted and lost
 
-**v2:** meaning unchanged. The second form's two owners both may change the child (Python's meaning),
-so they are `shares mut` (decisions 4, 19); the cycle warning's help names `weakref` (decision 9).
+**v3:** **Meaning changed:** no. Verdict 23 settles what the second form relies on: after
+`root.children.push(shares mut child)`, `child`, the name the node was first shared from, keeps what it
+could do, so `child.value = 5` stands (R3, R9). The cycle warning L3001 is R11's.
 
 1. **Intent:** add a child to a tree, then set the child's value.
 2. **OLD** (`an36_old_store_then_write.em`):
@@ -347,7 +367,7 @@ so they are `shares mut` (decisions 4, 19); the cycle warning's help names `weak
    | `root`, `child` | none (default, own local: the node made on this line) | none (default, own local) |
    | `value` | none (default: a field holds its value inside its node) | none (default: changed through a name that may change the node) |
    | `children` | first form: none (default: a list held by its node); second: `shares` in the element type, each child has several owners | first form as `value`; second: `mut` in `shares mut`, the list's owners may change each child |
-   | `child` after `push(shares mut child)` | the first owner of the node (R3: the name a value is first shared from stays an owner) | none (default, own local: it keeps what it could do, R9) |
+   | `child` after `push(shares mut child)` | the first owner of the node (R3: the name a value is first shared from stays an owner) | none (default, own local: it keeps what it could do, R3, R9; verdict 23) |
 
 5. **Means exactly:** `an36_tr_before.em` (`exit=0`, no output); `an36_tr_shared.em` (a class `Node`,
    which is today's only spelling of "two owners and both change it"), as run 3 pasted it:
@@ -380,21 +400,18 @@ so they are `shares mut` (decisions 4, 19); the cycle warning's help names `weak
    `push(shares mut child)`").
 
    Warned, not refused: the second form's `children: Array[shares mut Node]` lets a `Node` own itself
-   through its children, so it gets the cycle warning L3001 on the type (R11; `V2/changes.md` section 5,
-   item C 3), as today's class form above does: "`Node.children` can lead back to a node that holds it;
+   through its children, so it gets the cycle warning L3001 on the type (R11), as today's class form above does: "`Node.children` can lead back to a node that holds it;
    if it does, link it with `weakref Node` instead".
 7. **Cost:** nothing: a compile-time refusal. The `shares mut` form pays one counted block per child
-   and the counts, as Rust's `Rc<Node>` (with `RefCell` for the change, whose flag v2 does not pay).
+   and the counts, as Rust's `Rc<Node>` (with `RefCell` for the change, whose flag these rules do not pay).
 8. **Kind:** a readable spelling of Rust's guarantee (Rust refuses the same write, `E0382`, run 2's
    `rust_probes/a11_assign_moved_field.rs`).
 
 #### AN-37: moving a field out from behind `mut self` (`match owned self.state` is E3013)
 
-**v2:** meaning unchanged. The method's first line stays `fn update() changes state:` (row 3's form;
-decision 6 keeps the field form beside `changes this`). The other branches are one `_:` branch again,
-as run 3 wrote them (`V2/vocabulary.md` now has a row for `_`). The help for taking the state out says
-`match owns` (decision 19). One code changes: replacing `this.state` while `path` is still used is now
-E3022, not E3060, because a `ref mut` name keeps every other name out of its place (R8 (f), decision 2).
+**v3:** **Meaning changed:** no. No verdict of 21 to 34 touches it: the method's first line stays row
+3's field form (verdict 6), and replacing `this.state` while `path` is still used stays E3022 (R8 (f),
+verdict 2).
 
 1. **Intent:** `Npc.update` shortens the walk path and goes idle when it is empty.
 2. **OLD** (`an37_old_match_owned.em`, phase 1's `e23`):
@@ -465,7 +482,7 @@ E3022, not E3060, because a `ref mut` name keeps every other name out of its pla
    | `this` | `this`: the NPC the method was called on (R5) | `changes state` on the first line: this method may change `state` only (row 3) |
    | `state` | none (default: a field holds its value inside the NPC) | `changes state` |
    | `path` | `ref mut`: a name for the NPC's own walk list, the only one while it is used (row 8, R8 (f)) | `mut` in `ref mut` |
-   | `_` | declares no name (the `_` row of `V2/vocabulary.md`): nothing to ask | — |
+   | `_` | declares no name (the `_` row of `V3/vocabulary.md`): nothing to ask | — |
 
 5. **Means exactly:** `an37_tr_refmut_inline.em` (the same body with `fn update(mut self):`, today's
    spelling of `changes state`): `exit=0`, no output. Today already ends `path` at its last use
@@ -480,7 +497,7 @@ E3022, not E3060, because a `ref mut` name keeps every other name out of its pla
 
    (The OLD's own spelling, `fn update(mut self):` with `match owned self.state:`, is refused first for
    its words: E0113 for `mut self` and E1010 for `owned` and `self`, each with the line to write, as
-   `V2/rules.md` section 3 gives them; the message above is for the same body in v2's words.)
+   `V3/rules.md` section 3 gives them; the message above is for the same body in v3's words.)
 
    And, while `path` is still used, `this.state = State.Idle` before `path.pop()` (R8 (f): `path` is the
    only name for the walk list in `this.state` until its last use, and replacing the state changes that
@@ -497,8 +514,8 @@ E3022, not E3060, because a `ref mut` name keeps every other name out of its pla
 
 #### AN-38: `State.Walking(path):` then `path.pop()` is E3021 with a `.clone()` help; `mut path` is accepted read-only
 
-**v2:** meaning unchanged, and the text is run 4's: none of the 20 decisions touches it (the field form
-`changes state` stays, decision 6). Row 8's two agreed helps are word for word.
+**v3:** **Meaning changed:** no. No verdict of 21 to 34 touches it; row 8's two agreed helps are word
+for word.
 
 1. **Intent:** the same NPC update, written the obvious way.
 2. **OLD** (`an38_old_plain.em`, reader 4's `t03`; `an38_old_mut.em`, `t04`, the same with `mut path`):
@@ -572,12 +589,12 @@ E3022, not E3060, because a `ref mut` name keeps every other name out of its pla
 
 #### AN-39: choosing among ownership kinds: eleven mechanisms
 
-**v2: the program's meaning is unchanged; one row of the table of kinds changes meaning.** The
-entities' mesh is edited through `a`, so both hold it `shares mut` (decisions 4, 19). The table of
-kinds is in the v2 words: `owns`, `shares` and `shares mut`, `weakref`; the row "a back link the
-language keeps" (`weak T set by f`, uncounted, set by the language) is replaced by an ordinary `weakref`
-field the program sets, counted like every `weakref` (decisions 11, 14; R11); a row for `using` is
-added (decision 19).
+**v3:** **Meaning changed: one row of the table of kinds** (verdict 24); the program means the same. The
+row for a named memory manager now says that the type names the kind of manager (`owns T using A`) and
+the line that makes the value names the instance (`owns Mesh(verts=[0.0]) using current`), checked when
+compiling (R3); in v2 the row stood for a manager with one instance. Verdict 23 settles that `m`, the
+mesh's first owner, keeps what it could do; the row for values threads change adds that a function
+changing one says so on its first line (verdict 29).
 
 1. **Intent:** two entities share one mesh and one of them edits it.
 2. **OLD** (`an39_old_kinds.em`, phase 1's `a10_ownership_kinds.em`: the `Box`, `class` and `Shared`
@@ -636,7 +653,7 @@ added (decision 19).
    |---|---|---|
    | a value that is part of its owner | plain `T` (no word) | `struct` field |
    | one owner, in its own heap block (a type containing itself, `dyn I`, one pointer) | `owns T` | `Box[T]`, `Box[dyn I]`, `ForeignBox[T]` |
-   | its heap memory from a named memory manager | `owns T using A`, `Array[T] using A` (R3) | `Box[T, A]`, `Array[T, A]` |
+   | its heap memory from a memory manager the program names | the kind in the type, `owns T using A`, `Array[T] using A`; the instance on the line that makes the value, `owns Mesh(verts=[0.0]) using current` (R3) | `Box[T, A]`, `Array[T, A]`, with the instance passed at construction |
    | several owners on one thread, which read it | `shares T`, `shares x` | `Shared[T]`, a class handle's copy |
    | several owners on one thread, which may change it | `shares mut T`, `shares mut x` | `Shared[T]` with `get_mut` |
    | several owners on any threads | `thread_shared T` (area E) | `SyncShared[T]` |
@@ -646,7 +663,7 @@ added (decision 19).
    | a name for someone else's place that changes it, the only one while used | `ref mut T` | the same |
    | a changeable link several holders share, not owning | `sharedref mut T` (R7) | two kept `ref mut` views of one object, which `ref mut` does not allow |
    | one value replaced whole through a read-only path | `Cell[T]` | the same |
-   | a value threads change | `Mutex`, `RwLock`, `Atomic` (area E) | the same |
+   | a value threads change | `Mutex`, `RwLock`, `Atomic` (area E); a function that changes one says so on its first line, `changes Mutex[Stats]` (R12) | the same |
    | objects freed together, or found by position | `Arena`, `Pool` + `Handle[T]` (libraries) | the same |
    | a borrow checked while running | removed (AN-49) | `RefCell` |
    | an object with identity and subclasses | `class` (one owner unless `shares` or `shares mut`) | `class` |
@@ -661,7 +678,7 @@ added (decision 19).
    |---|---|---|
    | `verts` | none (default: a field holds its value inside the mesh) | none (default: changed through a name that may change the mesh) |
    | `mesh` | `shares` in the type: one of several owners of a mesh | `mut` in `shares mut`: it may change the mesh (R9); here through `a`, the function's own |
-   | `m` | none (default, own local: the mesh made on this line; after `shares mut m` it is the first of its owners, R3) | none (default, own local: it keeps what it could do, R9) |
+   | `m` | none (default, own local: the mesh made on this line; after `shares mut m` it is the first of its owners, R3) | none (default, own local: it keeps what it could do, R3, R9; verdict 23) |
    | `a`, `b` | none (default, own local: the entity made on this line) | none (default, own local) |
 
 5. **Means exactly:** `an39_tr_shared_mesh.em` (`mesh: Shared[Mesh]`, `a.mesh.get_mut().verts.push(1.0)`):
@@ -680,16 +697,22 @@ added (decision 19).
 
    `Box`, `Shared`, `SyncShared`, `Weak`, `RefCell`: each refused with the word that replaces it
    (E1010: "write `owns T`", "write `shares T` or `shares mut T`", and so on; AN-40, AN-49; the rows of
-   `V2/vocabulary.md` section 3.4).
+   `V3/vocabulary.md` section 3.4).
 7. **Cost:** one counted block for the mesh and a count +1/-1 per owner made or ended, as Rust's
    `Rc<Mesh>`; no borrow flag (Rust needs `Rc<RefCell<Mesh>>` to edit it, and pays a flag per borrow).
 8. **Kind:** a readable spelling of Rust's guarantee (one family of words, each saying its intent).
 
 #### AN-40: `Box[T]` says nothing about one owner; `ForeignBox[T]` carries the same word
 
-**v2:** meaning unchanged; `owns` for `owned` (decision 19). The one case run 4 left without a spelling,
-`Box[T, A]` with a memory manager, now has one: `owns Mesh using LevelArena` (decision 19, R3), added to
-the NEW with its refusals.
+**v3:** **Meaning changed: yes** (verdict 24). In v2 `Level`'s `mesh: owns Mesh using LevelArena` stood
+for a memory manager with one instance, and naming one of several was left for the owner. Now the field
+names the kind of arena and the line that makes the level names which one, `lvl = Level(mesh=owns
+Mesh(verts=[0.0]) using current)`, which calls `current.allocate(...)`; the compiler checks that the
+mesh was made in a `LevelArena` and that the level does not outlive `current` (E2020, E3063; R3). Since
+a `LevelArena` may have several instances, each mesh made this way keeps its arena's address: one word
+beside the mesh's pointer (R3; `V3/rules.md` section 2). The NEW block gains the making line, the
+owner's test its two names, part 6 the two new refusals, and part 5 a probe of this step: today's Ember
+cannot say the arena form at all. The other fields are unchanged.
 
 1. **Intent:** an entity owns its mesh alone; a registry owns its pools alone.
 2. **OLD** (`an40_old_box.em`: `mesh: Box[Mesh]`, `pools: Array[Box[dyn Pool]]`, `Box(IntPool([1, 2]))`):
@@ -736,12 +759,14 @@ the NEW with its refusals.
        db: owns SqliteDb
 
    struct Level:
-       mesh: owns Mesh using LevelArena    # the block comes from `LevelArena` (a type implementing `Allocator`, R3)
+       mesh: owns Mesh using LevelArena    # the block comes from a `LevelArena` (a type implementing `Allocator`, R3)
 
    e = Entity(mesh=Mesh(verts=[0.0]))    # the mesh is put in its own block here
    r = Registry(pools=[])
    r.pools.push(IntPool(items=[1, 2]))    # put in its own block at the push
-   println(e.mesh.verts.len() + r.pools[0].len())
+   current = LevelArena()
+   lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)    # this mesh's block comes from the arena `current`
+   println(e.mesh.verts.len() + r.pools[0].len() + lvl.mesh.verts.len())
    ```
 
 4. **The owner's test:**
@@ -749,21 +774,52 @@ the NEW with its refusals.
    | name | what it is | may it change it |
    |---|---|---|
    | `mesh` (`Entity`) | `owns`: held alone, in its own block | none (default: changed through a name that may change the entity) |
-   | `mesh` (`Level`) | `owns`: held alone, in its own block; `using LevelArena` says only where the block's memory comes from | none (default: changed through a name that may change the level) |
+   | `mesh` (`Level`) | `owns`: held alone, in its own block; `using LevelArena` says only which kind of arena the block's memory comes from, and the line that makes the level names which one (`using current`, R3) | none (default: changed through a name that may change the level) |
    | `pools` | `owns dyn Pool` elements: each pool held alone | as `mesh` |
    | `db` | `owns` on a foreign type: held alone, freed through `sqlite3_close` | as `mesh` |
    | `e`, `r` | none (default, own local: the value made on this line) | none (default, own local) |
+   | `current` | none (default, own local: the arena made on this line) | none (default, own local: making a mesh in it, `using current`, changes the arena, which is this code's own) |
+   | `lvl` | none (default, own local: the level made on this line; its mesh's block comes from `current`, so `lvl` lives no longer than `current`, R3) | none (default, own local) |
    | `verts`, `items` | none (default: a field holds its value) | as `mesh` |
 
 5. **Means exactly:** `an40_old_box.em` itself (`Box[Mesh]`, `Box[dyn Pool]`): `exit=0`, no output; the
-   foreign case is today's `ForeignBox[SqliteDb]` (`[FFI-36a]`, spec 4883-4887). The `using` field is
-   today's `Box[Mesh, LevelArena]` (`[ALC-1]`, spec 2986); no file of today's Ember was made for it in
+   foreign case is today's `ForeignBox[SqliteDb]` (`[FFI-36a]`, spec 4883-4887). The `using` field and
+   its making line are, in the spec, `Box[Mesh, LevelArena]` with the instance passed at construction
+   (`[ALC-1]`, spec 2986-2988: "an allocator instance is passed at construction (`Array.new_in(a)`)").
+   Today's compiler has neither. A probe of this step
+   (`target/redesign4/v3-04-area-C/probes/c3_box_in_arena.em`: a `LevelArena` implementing `Allocator`
+   by `unsafe extend`, written as the conformance test
+   `tests/conformance/ALC-2/accept_an_unsafe_extend_implements_allocator.em` writes it, a field
+   `mesh: Box[Mesh, LevelArena]`, and `Box.new_in(Mesh(verts=[0.0]), current)`):
+
+   ```text
+   === c3_box_in_arena.em
+   error[E2020]: `Box` takes one type argument
+     --> c3_box_in_arena.em:21:11
+      |
+   21 |     mesh: Box[Mesh, LevelArena]
+      |           ^^^^^^^^^^^^^^^^^^^^^
+      |
+
+   error[E1010]: cannot find `Box` in this scope
+     --> c3_box_in_arena.em:25:22
+      |
+   25 |     lvl = Level(mesh=Box.new_in(Mesh(verts=[0.0]), current))
+      |                      ^^^
+      |
+
+   error: could not compile due to 2 error(s)
+   exit=1
+   ```
+
+   So the arena form is the spec's, not today's Ember's. In C it is an allocation from `current`'s own
+   block, with the arena's address kept beside the mesh's pointer (part 7); no C file was made for it in
    this step.
-6. **Still refused** (the `Box`, `ForeignBox` and `using` rows of `V2/vocabulary.md`):
+6. **Still refused** (the `Box`, `ForeignBox` and `using` rows of `V3/vocabulary.md`):
 
    ```text
    error[E1010]: `Box` is not part of Ember
-     = help: for a mesh held alone in its own block write `mesh: owns Mesh`; for `Box[dyn Pool]` write `owns dyn Pool`; for `Box[Mesh, LevelArena]` write `owns Mesh using LevelArena`
+     = help: for a mesh held alone in its own block write `mesh: owns Mesh`; for `Box[dyn Pool]` write `owns dyn Pool`; for `Box[Mesh, LevelArena]` write `mesh: owns Mesh using LevelArena`, and on the line that makes the value name the arena: `lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)`
    ```
 
    `ForeignBox[SqliteDb]` (E1010): "write `owns SqliteDb`". `owns Player` on a class type (E2114, R3):
@@ -787,22 +843,50 @@ the NEW with its refusals.
    exit=1
    ```
 
+   The arena's two checks (R3; the E2020 and E3063 rows of `V3/rules.md` section 3, in this program's
+   names). A level made without saying which arena, `lvl = Level(mesh=Mesh(verts=[0.0]))`:
+
+   ```text
+   error[E2020]: `mesh` takes its memory from a `LevelArena` (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in manager
+     = help: say which arena: `lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)`
+   ```
+
+   A function that makes the arena and returns the level made in it:
+
+   ```ember
+   fn load_level() -> Level:
+       current = LevelArena()
+       lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)
+       return lvl
+   ```
+
+   ```text
+   error[E3063]: `lvl` holds a mesh made in `current` (line 3), and `current` ends when `load_level` returns, so `lvl` cannot be returned (line 4)
+     = help: make it in an arena the caller keeps: `fn load_level(ref mut arena: LevelArena) -> Level:`, with `lvl = Level(mesh=owns Mesh(verts=[0.0]) using arena)`, and in the caller `current = LevelArena()` and `lvl = load_level(ref mut current)`
+   ```
+
 7. **Cost:** the block `Box` made: one allocation at the store, one pointer in the owner, freed with it;
-   the same as C's `malloc` and Rust's `Box`. With `using LevelArena`, the allocation and the free are
-   what `LevelArena` does (an arena: a pointer bump, nothing freed one by one; not measured, `V2/rules.md`
-   section 2), as Rust's `Box::new_in`. Not covered: naming one of several arena instances for an `owns`
-   field (`V2/changes.md` section 11, question 4, for the owner); `Level` names a manager with one
-   instance, as R3 asks.
+   the same as C's `malloc` and Rust's `Box`. With `using current`, the allocation and the free are what
+   the arena `current` does (a pointer bump, nothing freed one by one; not measured, `V3/rules.md`
+   section 2), as Rust's `Box::new_in(mesh, &current)`. A `LevelArena` may have several instances
+   (`current`, and any other made the same way), so `lvl.mesh` keeps the address of the arena it came
+   from, one word beside the pointer, so that its end goes back to `current`, as Rust's
+   `Box<Mesh, &LevelArena>` keeps its `&LevelArena` (R3; not measured); a manager with one instance
+   (`Global`, `System`) costs no word. The word may be saved where the compiler, which sees the kind,
+   knows the end needs no arena (a kind whose `deallocate` does nothing and a value that never grows,
+   as this mesh), or where the arena's chunks are aligned so that the pointer finds its arena; neither
+   is in the rules, and neither is measured (For the owner, below). The arena checks (the kind, and nothing made in `current`
+   outliving it) are made when compiling and cost nothing while running. Ending an `App`'s `db` calls
+   `sqlite3_close`, a C function, which counts as possibly running the callbacks C keeps (R12,
+   verdict 31); this program hands C none, so it changes nothing here (note 7 below).
 8. **Kind:** a readable spelling of Rust's guarantee.
 
 #### AN-41: a type that contains itself crashes the checker
 
-**v2: the program's meaning is unchanged; the parent link the second message gives changes meaning.**
-`owns` for `owned` (decision 19). Run 4's help gave `parent: weak Node set by children`, a link the
-language set and did not count; `set by` is removed (decision 14), so the help now gives an ordinary
-`weakref` field that the program sets, `child.parent = weakref this` before `this.children.push(child)`,
-counted like every `weakref` (decision 11, R11), with the message `V2/rules.md` section 3 gives for
-E2200. That class is now written out below, with what reading its link costs.
+**v3:** **Meaning changed:** no. R11 now says in so many words what `add` relied on: making a `weakref`
+link changes only its target's weak count, a header number no name reads, so `add`, whose first line
+names only `children`, may write `child.parent = weakref this` (the rule text verdict 28 brought). The
+E2200 messages and the parent link's costs are those of `V3/rules.md` sections 2 and 3.
 
 1. **Intent:** a linked list or a binary tree of values.
 2. **OLD** (`an41_old_self_struct.em`: `left: Option[Tree] = None`; `an41_old_node_next.em`:
@@ -856,13 +940,13 @@ E2200. That class is now written out below, with what reading its link costs.
    | `t` | none (default, own local: the tree made on this line) | none (default, own local) |
    | `children` | none (default: a list held by its node; each `Node` in it is a class object, one owner, R3) | `changes children` on `add` |
    | `parent` | `weakref`: a link that does not keep its target alive, which may hold none (`= None`) | as `value` |
-   | `this` (in `add`) | `this`: the node the method was called on | `changes children` on the first line |
+   | `this` (in `add`) | `this`: the node the method was called on | `changes children` on the first line; `child.parent = weakref this` changes `child`, the function's own, and only the weak count of `this`, which is not a change of the node (R11) |
    | `child` | `owns` on the parameter: handed over to `add` | none (default, own local: it is the function's own until it is pushed) |
 
 5. **Means exactly:** `an41_tr_box.em` (`Option[Box[Tree]]`): `exit=0`, no output. No file of today's Ember
    was made for the `Node` class in this step (its parent link is area D's, which carries today's
    counterparts).
-6. **Still refused** (the crash becomes these messages; E2200, R3; the second is `V2/rules.md`
+6. **Still refused** (the crash becomes these messages; E2200, R3; the second is `V3/rules.md`
    section 3's):
 
    ```text
@@ -876,7 +960,7 @@ E2200. That class is now written out below, with what reading its link costs.
    ```
 
 7. **Cost:** one block per node, as `Box` and Rust's `Option<Box<Tree>>` (one pointer, `None` is null).
-   The parent link of the `Node` class, honestly (R11; `V2/rules.md` section 2; nothing measured in this
+   The parent link of the `Node` class, honestly (R11; `V3/rules.md` section 2; nothing measured in this
    step): one add to the parent's weak count when `child.parent = weakref this` runs and one subtract
    when the link changes or the child ends (not measured); each read of the link is a load and a test
    for no link where the compiler proves the parent lives (`add` does its part of R11 condition 1: it
@@ -891,9 +975,11 @@ E2200. That class is now written out below, with what reading its link costs.
 
 #### AN-42: `struct`, `Box` or `class` decides what compiles and what panics
 
-**v2:** meaning unchanged; `owns` for `owned` (decision 19). The loop over `reg.values[int]()` is a walk
-of the pools however `values` walks them, a generator included (one rule for every loop, decision 16,
-R6, R8 (c)), so the refusal's code and message are run 4's.
+**v3:** **Meaning changed:** no. `get_mut`'s `cast this.pools[7u128] as Pool[T]` is the "sure" cast,
+which verdict 27 keeps: it gives the pool as a `Pool[T]`, or stops the program if it is not one; and a
+cast of a place is still a place, so `pool` is a `ref mut` name of the pool in the map (R14). The "not
+sure" test, `if this.pools[7u128] is Pool[T] as ref mut pool:`, is not needed here: `get_mut` gives back
+a `ref mut T`, which has no "none" to give.
 
 1. **Intent:** the same ECS registry, written with class pools or with boxed pools.
 2. **OLD** (four files): `an42_old_box_pools.em` (ODR-286's `box1.em`, `Box[Pool[int]]`,
@@ -976,7 +1062,7 @@ R6, R8 (c)), so the refusal's code and message are run 4's.
    | `this` | `this`: the registry the method was called on | `changes pools` on each method's first line |
    | `pool` | `ref mut`: a name for a pool in the map, the only one while used (R14: a cast of a place is a place) | `mut` in `ref mut` |
    | `i`, `e` | none (default: a number parameter, copied in) | none (default, reads only) |
-   | `value` | `owns`: handed over to `emplace` (a `Copy` `T` such as `int` is copied, the `owns` row of `V2/vocabulary.md`) | none (default, own local) |
+   | `value` | `owns`: handed over to `emplace` (a `Copy` `T` such as `int` is copied, the `owns` row of `V3/vocabulary.md`) | none (default, own local) |
    | `reg`, `total` | none (default, own local) | none (default, own local) |
    | `x` | none (default, reads only: a loop name for each element) | none (default, reads only) |
 
@@ -1002,9 +1088,10 @@ R6, R8 (c)), so the refusal's code and message are run 4's.
 
 #### AN-43: `owned` on a parameter means three things by type; `mem.drop(owned x)` moves a handle
 
-**v2:** meaning unchanged; `owns` for `owned`, `copy of` for `copied`, `shares` for `shared`
-(decisions 12, 19). The codes are run 4's: E2114 for `owns` in a class parameter's type, E2020 (today's
-type mismatch, run 4's probe below) for `take(shares a)`.
+**v3:** **Meaning changed:** no. Verdict 32 makes this answer's point a rule: what a function may do
+with a parameter is set by the word in front of its name, for every type (`owns n: Node` takes the
+object over; a plain `n: int` reads a number copied in), never by the type after the colon (R4). The
+E2114 and E2020 helps below already say so.
 
 1. **Intent:** `take(x)` takes over what it is given.
 2. **OLD:** `an43_old_owned_handle.em` (`fn take(owned n: Node)`, a class, then `println(a.v)`):
@@ -1083,7 +1170,7 @@ type mismatch, run 4's probe below) for `take(shares a)`.
 
    | name | what it is | may it change it |
    |---|---|---|
-   | `n` (in `take`) | `owns`: handed over to `take` | none (default, own local) |
+   | `n` (in `take`) | `owns` on the name: handed over to `take` (the word on the name sets it, for every type: R4, verdict 32) | none (default, own local) |
    | `v` | none (default: a field holds its number) | none (default: through a name that may change the node) |
    | `n` (in `add_one`) | none (default: a number parameter, copied in, R4) | none (default: never changes the caller's) |
    | `a`, `b` | none (default, own local: the value made on this line) | none (default, own local) |
@@ -1092,8 +1179,8 @@ type mismatch, run 4's probe below) for `take(shares a)`.
 5. **Means exactly:** `an43_tr_handover.em` (`take(a)` with `a` not used again, `take_int(n: int)`):
    `exit=0`, no output. Today's `owned n: Node` gives the callee a second owner; the hand-over is
    exactly today's code when the caller does not use `a` again, which the NEW refusal guarantees.
-6. **Still refused** (the OLD files' `owned` is not a word of v2, E1010 "`owned` is now `owns`"; the
-   messages below are for the OLD programs in v2's spelling):
+6. **Still refused** (the OLD files' `owned` is not a word of v3, E1010 "`owned` is now `owns`"; the
+   messages below are for the OLD programs in v3's spelling):
 
    ```text
    error[E3040]: `a` was handed over to `take` on line 11 and `a.v` reads it on line 12
@@ -1139,10 +1226,9 @@ type mismatch, run 4's probe below) for `take(shares a)`.
 
 #### AN-44: `b = a` has no word and does three things by type
 
-**v2:** meaning unchanged. `p2` changes the player, so it is made with `shares mut` (decisions 4, 19);
-`copy of` for `copied` (decision 12). `pos = ref mut p.pos` keeps every other name out of `p.pos`, reads
-included, while it is used (R8 (f), decision 2); the NEW reads `p.pos` again only after `pos`'s last
-use, so it compiles as in run 4.
+**v3:** **Meaning changed:** no. Verdict 23 settles that `player` keeps what it could do after `p2 =
+shares mut player`; here it only reads afterwards (`println(player.hp)`), so v2's reading and the
+stricter one agreed.
 
 1. **Intent:** `p2 = player` and `snapshot = items` in one program.
 2. **OLD** (`an44_old_three.em`: `n2 = n` of an `int`, `snapshot = items`, `p2 = player` of a class,
@@ -1175,7 +1261,7 @@ use, so it compiles as in run 4.
    | `n`, `n2` | none (default: a number; `=` copies it, R1) | none (default, own local) |
    | `items`, `player`, `p` | none (default, own local: the value made on this line) | none (default, own local) |
    | `snapshot` | none (default, row 9: `=` hands the list over) | none (default, own local) |
-   | `p2` | `shares`: one of two owners of the player (`player` stays the first, R3) | `mut` in `shares mut`: it may change the player (R9) |
+   | `p2` | `shares`: one of two owners of the player (`player` stays the first and keeps what it could do, R3, R9, verdict 23) | `mut` in `shares mut`: it may change the player (R9) |
    | `pos` | `ref mut`: a name for `p`'s position, the only one while used | `mut` in `ref mut` |
    | `mine` | `copy of`: its own new position | none (default, own local) |
    | `hp`, `x`, `y` | none (default: a field holds its number) | through the name before them |
@@ -1197,7 +1283,7 @@ use, so it compiles as in run 4.
      = help: to change `p`'s position write `pos = ref mut p.pos`; to change your own copy write `pos = copy of p.pos`
    ```
 
-   And reading `p.pos` while `pos` is still used (R8 (f), decision 2): `mine = copy of p.pos` moved
+   And reading `p.pos` while `pos` is still used (R8 (f), verdict 2): `mine = copy of p.pos` moved
    above `pos.x += 1.0` gives "`pos` is the only name for `p.pos` until line 13, and line 12 reads
    `p.pos`; read it through `pos` (`mine = copy of pos`), or after line 13" (E3021).
 
@@ -1210,9 +1296,8 @@ use, so it compiles as in run 4.
 
 #### AN-45: `.clone()` on a class handle shares the object instead of copying it
 
-**v2:** meaning unchanged; `copy of` for `copied`, `shares` for `shared` (decisions 12, 19). `c` only
-reads the player, so it is a plain `shares` owner; the refusal's second way out changes the player, so it
-names `shares mut` (decision 4). The refusal of `copy of` without `Clone` has its code, E2116.
+**v3:** **Meaning changed:** no. Verdict 23 settles that `a` keeps what it could do after `c = shares
+a`; here `a` is not used again, so nothing depended on it.
 
 1. **Intent:** make an independent copy of a player object and change it.
 2. **OLD** (`an45_old_clone_class.em`: `b = a.clone()`, `b.health = 5`, `println(a.health)`): `exit=0`, no
@@ -1237,7 +1322,7 @@ names `shares mut` (decision 4). The refusal of `copy of` without `Clone` has it
    | name | what it is | may it change it |
    |---|---|---|
    | `health` | none (default: a field holds its number) | through the name before it |
-   | `a` | none (default, own local: the object made on this line; after `shares a` the first of two owners, R3) | none (default, own local: it keeps what it could do, R9) |
+   | `a` | none (default, own local: the object made on this line; after `shares a` the first of two owners, R3) | none (default, own local: it keeps what it could do, R3, R9; verdict 23) |
    | `b` | `copy of`: its own new object | none (default, own local) |
    | `c` | `shares`: a second owner of `a`'s object | none (default: a `shares` owner only reads, R9; the line says no `mut`) |
 
@@ -1250,7 +1335,7 @@ names `shares mut` (decision 4). The refusal of `copy of` without `Clone` has it
      = help: for a new player write `b = copy of a`; for a second owner of this one that changes it write `b = shares mut a`
    ```
 
-   `copy of a` of a class with no `Clone` (E2116, `V2/rules.md` section 3's message): "`Player` has no
+   `copy of a` of a class with no `Clone` (E2116, `V3/rules.md` section 3's message): "`Player` has no
    `Clone`, so `copy of` cannot make one; give it one: `@derive(Clone)` above `class Player`"; and, for
    this program, "or write `b = shares mut a` for a second owner of this player". `c.health = 5`
    through the reading owner (E3023): "`c` only reads the player it shares; to change it through `c`,
@@ -1261,10 +1346,11 @@ names `shares mut` (decision 4). The refusal of `copy of` without `Clone` has it
 
 #### AN-46: silent copies no word names: `comptime(e)` of a heap value; `sorted(m.keys())`
 
-**v2:** meaning unchanged; `copy of` for `copied` (decision 12). `.copied()` stays: it is the iterator
-adapter whose items are each what `copy of` makes (the `.copied()` row of `V2/vocabulary.md`, kept), not
-the keyword decision 12 renamed. A list of views made by a call is the name's own list, bounded in life
-by what its views point into (R2, R7).
+**v3:** **Meaning changed:** no. Verdict 33 renames the iterator adapter `.copied()` to `.copy_each()`
+(phase 0 respelled the code): it keeps the word `copy` of `copy of` and says what it copies, each item.
+Part 6 adds the refusal of today's `.copied()` (E1010) and gives E3060's message its line numbers, as
+the rules' row does. A list of views made by a call is the name's own list, bounded in life by what its
+views point into (R2, R7).
 
 1. **Intent:** use a constant table; print a map's keys in order.
 2. **OLD:** `an46_old_comptime.em` (`t = comptime(table())` in a loop, `table()` returns `Array[int]`):
@@ -1296,7 +1382,7 @@ by what its views point into (R2, R7).
    | `t` | none (default, reads only: a value made when compiling is read-only data; the name is a view of it, never a copy) | none (default: it never changes) |
    | `own` | `copy of`: its own list | none (default, own local) |
    | `k` | none (default, reads only: a loop name; here a view of one of `m`'s keys) | none (default, reads only) |
-   | `names` | `.copy_each()`: its own strings, each a copy of a key (the `.copy_each()` row); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
+   | `names` | `.copy_each()`: its own strings, each a copy of a key (the `.copy_each()` row of `V3/vocabulary.md`, verdict 33); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
 
 5. **Means exactly:** `an46_tr_static.em` (`static TABLE: Array[int] = comptime(table())`,
    `t = ref TABLE`: no copy, as spec 4040 says): `exit=0`, no output. `an46_tr_copied.em`
@@ -1317,8 +1403,16 @@ by what its views point into (R2, R7).
    `ks = sorted(m.keys())`, then `m.insert(String("z"), 1)`, then `println(ks[0])`:
 
    ```text
-   error[E3060]: `m.insert(...)` changes `m`, whose keys `ks` (line 7) still views on line 9
-     = help: use `ks` before this line, or keep your own strings: `ks = sorted(m.keys().copy_each())`
+   error[E3060]: `m.insert(String("z"), 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9
+     = help: use `ks` before line 8, or keep your own strings: `ks = sorted(m.keys().copy_each())`
+   ```
+
+   Today's name of the adapter, `names = sorted(m.keys().copied())` (E1010; the `.copied()` row of
+   `V3/vocabulary.md` and the removed-words row of `V3/rules.md` section 3):
+
+   ```text
+   error[E1010]: `.copied()` is now `.copy_each()`: it says what it copies, each item
+     = help: write `names = sorted(m.keys().copy_each())`
    ```
 
 7. **Cost:** less than today: no allocation per evaluation of the table (read-only data, as C's
@@ -1330,12 +1424,11 @@ by what its views point into (R2, R7).
 
 #### AN-47: `owned` in an expression: E0109 contradicts Annex A, and its help is wrong for `b = owned a`
 
-**v2:** meaning unchanged; `owns` for `owned`, `copy of`, `shares` (decisions 12, 19). Two things are
-now said that run 4 left out. `job` gives away what it captured, so it is a `once fn()` that a call uses
-up (R12), and calling it twice is refused (E3013, added below). And under decision 17 neither
-function changes anything outside itself (`println` writes no variable; `report` is `job`'s own state),
-so both are plain `fn()` with no `changes` word. `send` is renamed `submit` and written out, so that it
-does not read as a channel's `send` (the `send` row of `V2/vocabulary.md`).
+**v3:** **Meaning changed:** no. Verdict 22 makes a plain `fn()` change nothing at all, captured
+variables included. `task` captures nothing, and `job` changes only its own state (`report`, which it
+took over with `owns`), so both stay plain `fn()` (R12); the help `job = fn(): submit(copy of report)`
+uses the real `report` and only reads it, so it needs no `changes` word either. `job` gives `report`
+away when it runs, so it is a `once fn()` that a call uses up (R12).
 
 1. **Intent:** hand a value to a new name.
 2. **OLD:** `an47_old_b_owned_a.em` (`b = owned a`):
@@ -1382,14 +1475,14 @@ does not read as a channel's `send` (the `send` row of `V2/vocabulary.md`).
    | `r` | `owns` on the parameter: handed over to `submit` | none (default, own local) |
    | `a`, `report` (the local) | none (default, own local: the value made on this line) | none (default, own local) |
    | `b` | none (default, row 9: `=` hands over) | none (default, own local) |
-   | `task` | none (default, own local: the function made on this line; it captures nothing) | none (default: a plain `fn()` changes nothing outside itself, R12) |
-   | `job` | none (default, own local: the function made on this line); `owns report` in its capture list says it gives `report` away, so a call uses it up: a `once fn()` (R12) | none (default: a plain `fn()` changes nothing outside itself; `report` is its own state, R12) |
+   | `task` | none (default, own local: the function made on this line; it captures nothing) | none (default: a plain `fn()` changes nothing at all, R12, verdict 22) |
+   | `job` | none (default, own local: the function made on this line); `owns report` in its capture list says it gives `report` away, so a call uses it up: a `once fn()` (R12) | none (default: a plain `fn()` changes nothing at all; `report` is its own state, which is the function itself, R12, verdict 22) |
    | `report` in the capture list | `owns`: handed over to the function (R3, R12) | none (default: the function's own) |
 
 5. **Means exactly:** `an47_tr.em` (`b = a`; `task = fn() => println("done")`): `exit=0`, no output.
 6. **Still refused** (E0109, R3; Annex A's `task = owned fn() => ...` is rewritten). The OLD lines as
-   written use `owned`, which is not a word of v2 (E1010: "`owned` is now `owns`"); written with `owns`,
-   they are refused as follows (`V2/rules.md` section 3's E0109 messages, in this program's names):
+   written use `owned`, which is not a word of v3 (E1010: "`owned` is now `owns`"); written with `owns`,
+   they are refused as follows (`V3/rules.md` section 3's E0109 messages, in this program's names):
 
    ```text
    error[E0109]: `owns a` is not needed: `b = a` already hands `a` over
@@ -1415,13 +1508,13 @@ does not read as a channel's `send` (the `send` row of `V2/vocabulary.md`).
 
 #### AN-48: shared mutable state: a camera and a HUD both change one player
 
-**v2:** meaning unchanged from run 4 (run 4 changed it from run 3: two kept `ref mut` fields of one
-player are refused, and form (b) keeps the intent with `target: sharedref mut Player`, which decision 20
-keeps as spelled). Form (a)'s camera and HUD change the player through their links, so the links are
-`shares mut` (decisions 4, 19); `transfer` reads through `a`, a `shares` link, and changes through `b`, a
-`ref mut` name of a `shares mut` link (R4). `copy of` for `copied` (decision 12). `this` is never
-compiled with noalias and `changes target` promises nothing about other names (decision 18), which
-changes nothing here: every check in this answer is on views and walks (R8 (b), (c), (f), (g)).
+**v3:** **Meaning changed:** no. Verdict 23 settles that `p`, the first owner in (a), keeps what it
+could do (here it is not used after the sharing lines). Verdict 32 says what v2's `transfer` already
+wrote: `a: shares Player` has no word on its name, so it only reads the caller's shared player (the type
+says what the caller's value is), and `ref mut b: shares mut Player` names the caller's link and may
+change it and the player (R4). `if a is not b:` keeps `is`'s meaning before a value, "the same object"
+(verdict 27 gives `is` its second job only before a type name). Form (b) keeps `sharedref mut` as
+spelled (verdict 20).
 
 1. **Intent:** the camera and the HUD both change the player.
 2. **OLD:** the class form, `an48_old_class.em` (phase 1's `a09_shared_state.em`): `exit=0`, no output.
@@ -1519,10 +1612,10 @@ changes nothing here: every check in this answer is on views and walks (R8 (b), 
    | `target` (form (a), both classes) | `shares`: one of several owners of a player | `mut` in `shares mut`: the player may be changed through it (R9); `changes target` on `shake` |
    | `target` (form (b), both structs) | `sharedref`: a link to a player someone else owns, which other holders may also hold | `mut` in `sharedref mut` (R7) |
    | `this` (in `shake`) | `this`: the camera the method was called on | `changes target` on the first line |
-   | `p` | none (default, own local: the player made on this line; in (a), after `shares mut p`, the first of its owners, R3) | none (default, own local: in (a) it keeps what it could do, R9; in (b) the owner, which may change it beside the links, R7) |
+   | `p` | none (default, own local: the player made on this line; in (a), after `shares mut p`, the first of its owners, R3) | none (default, own local: in (a) it keeps what it could do, R3, R9, verdict 23; in (b) the owner, which may change it beside the links, R7) |
    | `cam`, `hud` | none (default, own local: the object made on this line; in (b) a view of `p` by its field's word, R7) | none (default, own local) |
    | `item`, `it` | none (default, reads only: a loop name for each element) | none (default, reads only) |
-   | `a` | `shares` in the parameter type: a view of the caller's shared player, no count (R4) | none (default, reads only; it promises the player does not change while `a` is used, R8 (g), which `if a is not b:` keeps) |
+   | `a` | no word on the name: a view of the caller's player, with no count; `shares` in the type says only that the caller's player is shared (R4, verdict 32) | none (default, reads only: the word on the name, here none, sets what `transfer` may do, R4; it promises the player does not change while `a` is used, R8 (g), which `if a is not b:` keeps) |
    | `b` | `ref mut` on the name, `shares mut` in the type: a name for the caller's link `hud.target` and the player it leads to | `ref mut`: yes; by R4 it names the caller's place, so it covers both the player (`b.inventory.push(...)`, which `mut` in `shares mut` allows) and the caller's link (`b = shares mut q` would point `hud.target` at `q`) |
 
 5. **Means exactly:** `an48_tr_class.em` (today's class form of the accepted lines of (a), with the
@@ -1552,7 +1645,7 @@ changes nothing here: every check in this answer is on views and walks (R8 (b), 
    `Camera(target=shares mut p)`"). A `shares` value sent to another thread: area E's E7015.
 
    The OLD struct form, two kept `ref mut` fields of one player (R8 (f); the E3022 row of
-   `V2/rules.md` section 3, in this program's lines):
+   `V3/rules.md` section 3, in this program's lines):
 
    ```text
    error[E3022]: `p` is lent to `cam.target`, a `ref mut` field, on line 15 until its last use on line 17, and line 16 lends it to `hud.target` too
@@ -1578,10 +1671,7 @@ changes nothing here: every check in this answer is on views and walks (R8 (b), 
 
 #### AN-49: `RefCell` hides a run-time check that panics; E3023 offers it to a beginner who forgot `mut`
 
-**v2:** meaning unchanged; the `changes <field>` first lines stay (decision 6). A scene several objects
-own and change is `shares mut Scene` (decisions 4, 19, the `RefCell` row of `V2/vocabulary.md`); `copy
-of` for `copied` (decision 12). The refused conflict keeps its code: `s.add(4)` pushes to the list `a`
-views, a reshape, so `a` ends and its later use is E3060 (R8 (b), (g)).
+**v3:** **Meaning changed:** no. No verdict of 21 to 34 touches it.
 
 1. **Intent:** change a value reached through a shared path (and: a counter's `bump` changes its count).
 2. **OLD:** `an49_old_refcell.em` (spec IX.7's `Scene` with `entities: RefCell[Array[int]]`,
@@ -1658,8 +1748,8 @@ views, a reshape, so `a` ends and its later use is E3060 (R8 (b), (g)).
 
 #### AN-50: "handle" names a class object's counted pointer and also `Handle[T]`
 
-**v2:** meaning unchanged; `copy of` for `copied` (decision 12). The E2103 message is the E2103 row of
-`V2/rules.md` section 3, word for word.
+**v3:** **Meaning changed:** no. No verdict of 21 to 34 touches it; the E2103 message is the E2103 row
+of `V3/rules.md` section 3, word for word.
 
 1. **Intent:** read a message about a stale handle and know which kind it means.
 2. **OLD:** `an50_old_temp_handle.em` (`first = ref o.bag.items[0]; o.bag = Bag(); println(first)`):
@@ -1700,7 +1790,7 @@ views, a reshape, so `a` ends and its later use is E3060 (R8 (b), (g)).
    `an50_old_pool_handle.em` (`pool[h]` after `pool.remove(h)`): `exit=0`, no output; it panics with
    `stale handle; use .get(h) for an Option` (`std/src/collections.em:1477`).
 3. **NEW:** no new code; the word "handle" is used only for `Handle[T]`, a position in a `Pool`, and
-   the written words `JoinHandle` and `@ffi(handle)` (the `Handle` row of `V2/vocabulary.md`). A class
+   the written words `JoinHandle` and `@ffi(handle)` (the `Handle` row of `V3/vocabulary.md`). A class
    object is "the `Player` object `p`", a link in a field "the link `o.bag`". The program the first
    message is about, as the new message makes it:
 
@@ -1743,10 +1833,9 @@ views, a reshape, so `a` ends and its later use is E3060 (R8 (b), (g)).
 
 #### AN-51: a count pair the spec allows to remove is emitted every loop step
 
-**v2:** meaning unchanged. The watchers' links are the players' owners, and the players are changed
-through them, so the field is `target: shares mut Player` (decisions 4, 19). R10's list is v2's: point 1
-also counts calls whose function type may end an owner (decision 17), and point 2's region starts at
-any call in a loop that may end one.
+**v3:** **Meaning changed:** no. No verdict of 21 to 34 changes a line. R10 is v3's (its point 1 reads
+first lines, summaries and function types, verdict 17), and `t = ref mut ws[i].target` is R10's own
+example of a view made through a `shares mut` field.
 
 1. **Intent:** read each watcher's target in a loop.
 2. **OLD** (`an51_old_watchers.em`, last run's `a09_emit/src/main.em`: `t = ws[i].target` then
@@ -1817,11 +1906,10 @@ any call in a loop that may end one.
 
 #### AN-52: shared class objects re-pointed often ran at 1.16x to 1.17x plain C (last run's limit)
 
-**v2:** meaning unchanged from run 4 (run 4 respelled form (b) from run 3's `target: ref mut Player` to
-`target: sharedref mut Player`, which decision 20 keeps). Form (a)'s watchers keep their players alive
-and change them through the link, so the link and the list it is taken from are `shares mut`
-(decisions 4, 19); (b)'s list of players is `Array[owns Player]` (decision 19). (b)'s two refusals give
-`target: shares mut Player` as the way to keep the players alive, since the watchers change them.
+**v3:** **Meaning changed:** no. No verdict of 21 to 34 changes a line. Form (b) keeps `sharedref mut`
+as spelled (verdict 20), and its refusals keep `target: shares mut Player` as the way to keep the
+players alive, since the watchers change them (note 1 below: the rules' E3063 row still writes `shares
+Player`).
 
 1. **Intent:** game objects (watchers) keep re-pointing their targets.
 2. **OLD:** `an51_old_watchers.em` (`retarget`: `ws[i].target = players[r]`): `exit=0`, no output.
@@ -1930,91 +2018,113 @@ and change them through the link, so the link and the list it is taken from are 
    (a) 1.13x to 1.25x of plain C, against 1.48x to 1.57x for safe Rust's `Rc<Player>` with `Cell`;
    (b) 1.00x to 1.06x, the same memory as plain C (53,284 KB); (c) 0.80x to 0.85x and 8% less memory
    (49,188 KB), against 0.86x to 0.90x for safe Rust's `Vec` and positions. (b)'s C is unchanged by the
-   new word, so its numbers stand (`V2/rules.md` section 2, the `sharedref mut` row). (a)'s `mut` costs
+   new word, so its numbers stand (`V3/rules.md` section 2, the `sharedref mut` row). (a)'s `mut` costs
    nothing: it is checked when compiling.
 8. **Kind:** a new mechanism (`sharedref mut`: kept links several holders may change, checked by R8's
    compile-time rule; Rust allows only one `&mut`), with (a)'s counting kept as the understandable cost
    of "keeps alive", which Rust pays more for.
 
-## Answers whose meaning changed in v2
+## Answers whose meaning changed in v3
 
-| answer | how |
-|---|---|
-| AN-39 | the program means the same; one row of the table of kinds changes meaning: "a back link the language keeps" (run 4's `weak T set by f`, uncounted and set by the language) is now "a link back to the object that owns this one", an ordinary `weakref T` field the program sets (`child.parent = weakref this` before `this.children.push(child)`), counted like every `weakref` and read with no test only where the compiler proves its target lives (decisions 11, 14; R11) |
-| AN-41 | the program means the same; the parent link that E2200's second message gives changes meaning in the same way (run 4: `parent: weak Node set by children`; v2: `parent: weakref Node = None`, set by the program, `V2/rules.md` section 3's message), and the answer now writes that `Node` class out and says what reading its link costs: 1.176x of plain C where the proof holds and 1.579x where it fails, measured in run 3 without the weak count, which comes on top unmeasured (`RUN3/26-timer.md` lines 20 to 22) |
+| answer | verdict | how |
+|---|---|---|
+| AN-40 | 24 | `mesh: owns Mesh using LevelArena` now names only the kind of arena; the line that makes the level names which one (`lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)`), checked when compiling (E2020 for a mesh not made in a `LevelArena`, E3063 for a level outliving `current`), and each such mesh keeps its arena's address, one word (R3). In v2 the field stood for a manager with one instance, and naming one of several was the owner's open question. The intent is the same |
+| AN-39 | 24 | the program means the same; one row of the table of kinds changes meaning in the same way: `owns T using A` and `Array[T] using A` name the kind, and the making line names the instance (`owns Mesh(verts=[0.0]) using current`) |
 
-AN-48 and AN-52, whose meaning run 4 changed (two kept `ref mut` fields of one player refused; form (b)
-spelled `sharedref mut`), keep run 4's meaning.
+Every other answer means what it meant in v2. What changed in them, by kind:
 
-Every other answer means what it meant in run 4. What changed in them, by kind:
-
-| change | answers |
-|---|---|
-| `owns` for `owned` (decision 19) | AN-35, AN-37 (help), AN-40, AN-41, AN-42, AN-43, AN-47, AN-52 |
-| `copy of` for `copied` (decision 12; `.copied()`, the iterator adapter, kept) | AN-34, AN-35, AN-39, AN-43, AN-44, AN-45, AN-46, AN-48, AN-49, AN-50 |
-| `shares mut` where an owner changes the shared value, `shares` where it only reads (decisions 4, 19) | `shares mut`: AN-34, AN-36, AN-39, AN-44, AN-48, AN-51, AN-52; `shares`: AN-34 (`owner_that_reads`), AN-45, AN-48 (`transfer`'s `a`) |
-| a refusal added for a change through an owner that only reads (E3023, R9) | AN-34, AN-36, AN-39, AN-44, AN-45, AN-48 |
-| `using` for `Box[T, A]` (decision 19), with its refusals (E1010, E2114) | AN-39 (table), AN-40 |
-| `weakref` and the program-set parent link (decisions 9, 14) | AN-36 (the cycle warning's help), AN-39, AN-41 |
-| a refusal's code: replacing `this.state` while `ref mut path` is still used is E3022, not E3060 (R8 (f), decision 2) | AN-37 |
-| `_` written again, now that `V2/vocabulary.md` has its row | AN-35, AN-37 |
-| `job` said to be a `once fn()`, with the refusal of a second call (E3013, R12); its callee written out and renamed `submit` | AN-47 |
-| `copy of` without `Clone` given its code (E2116) | AN-45 |
-| R10's list in v2's words (calls whose function type may end an owner, decision 17) | AN-51 |
-| the OLD's removed words (`owned`, `self`, `mut self`) said to be refused first by E1010 / E0113, the refusals shown being for the OLD bodies in v2's words | AN-35, AN-37, AN-43, AN-47 |
+| change | verdict | answers |
+|---|---|---|
+| the first owner of a shared value keeps what it could do, now the owner's ruling (v2 wrote it so, pending) | 23 | AN-34, AN-36, AN-39, AN-44, AN-45, AN-48 |
+| the word on a parameter's name sets what the function may do, for every type, cited where a line relies on it | 32 | AN-35 (`template`), AN-43, AN-48 (`transfer`) |
+| `.copy_each()` for `.copied()` in the prose, with the refusal of `.copied()` (E1010) and E3060's line numbers | 33 | AN-46 |
+| `cast x as D` kept as the "sure" cast; `is` before a value keeps "the same object" | 27 | AN-42, AN-48 |
+| a plain `fn()` changes nothing at all, captured variables included | 22 | AN-47 |
+| making a `weakref` link is not a change of its target (R11's rule text) | 28 | AN-41 |
+| a function that changes a `Mutex`, `RwLock` or `Atomic` value says so on its first line | 29 | AN-39 (table) |
+| a C call may run the callbacks C keeps: ending a value with a C destroy function is one; none are kept here | 31 | AN-40 (cost) |
+| every answer: a "v3" line in place of the "v2" line; `V3` rules, words and messages cited; "verdict N" for v2's "decision N" | — | AN-34 to AN-52 |
 
 ## Words needed
 
-None. Every word the NEW blocks and messages use has a row in `V2/vocabulary.md`; `_`, run 4's one word
-needed, now has its row (section 3.8) and is used again (AN-35, AN-37). The names `Report`, `submit`,
-`LevelArena`, `Pool`, `AnyPool`, `IntPool`, `Reg`, `values`, `emplace`, `get_mut` (on `Reg`), `Watcher`,
-`Camera`, `Hud`, `Player`, `Mesh`, `Entity`, `Registry`, `App`, `Level`, `Tree`, `Node`, `Scene`,
-`Counter`, `Npc`, `State`, `Bag`, `P` and `table` are the programs' own (run 3's and run 4's, and the
-owner's `LevelArena` from decision 19).
+None. Every word the NEW blocks and messages use has a row in `V3/vocabulary.md` (among them `using` on
+a making line, verdict 24; `.copy_each()`, verdict 33; `_`, section 3.8). The names `Report`, `submit`,
+`LevelArena`, `current`, `load_level`, `arena`, `Pool`, `AnyPool`, `IntPool`, `Reg`, `values`,
+`emplace`, `get_mut` (on `Reg`), `Watcher`, `Camera`, `Hud`, `Player`, `Mesh`, `Entity`, `Registry`,
+`App`, `Level`, `Tree`, `Node`, `Scene`, `Counter`, `Npc`, `State`, `Bag`, `P` and `table` are the
+programs' own (run 3's and run 4's; the owner's `LevelArena`, verdict 19, and `current`, verdict 24's
+own example).
 
 ## The agreed rows
 
 | row | where | as agreed |
 |---|---|---|
-| 3 | the methods' first lines (AN-37, AN-38, AN-41, AN-42, AN-48, AN-49) use row 3's form, `fn ...(params) changes field:`, without `self` | yes: the form is `fn note(msg: String) changes log:` as `inputs/JOB.md` writes it (decision 6 keeps the field form beside `changes this`); row 3 itself is not reproduced here |
+| 3 | the methods' first lines (AN-37, AN-38, AN-41, AN-42, AN-48, AN-49) use row 3's form, `fn ...(params) changes field:`, without `self` | yes: the form is `fn note(msg: String) changes log:` as `inputs/JOB.md` writes it (verdict 6 keeps the field form beside `changes this`); row 3 itself is not reproduced here |
 | 8 | AN-37, AN-38: `State.Walking(ref mut path):`, and the two messages ("to change that list through `path`, write `State.Walking(ref mut path):`", for plain `path` and for `mut path`) | yes, word for word |
-| 9 | AN-34: `snapshot = copy of items` for a copy, `snapshot = items` hands the list over, the error names both ways out (`copy of`, `shares`); AN-44: `snapshot = items` | yes, in the new spelling (decisions 12, 19: "Agreed rows 6 and 9 take the new spelling, meaning unchanged") |
+| 9 | AN-34: `snapshot = copy of items` for a copy, `snapshot = items` hands the list over, the error names both ways out (`copy of`, `shares`); AN-44: `snapshot = items` | yes, in the new spelling (verdicts 12, 19: "Agreed rows 6 and 9 take the new spelling, meaning unchanged") |
+
+Rows 4, 5, 6 and 7 are not used in this area (row 6, `b.on_click(fn() changes score: score += 1)`, is
+area D's AN-53).
 
 ## Notes for the lead and the rule writer (not for the owner)
 
-1. **E3063's example line in `V2/rules.md` section 3** ("let the watchers own a share: `target: shares
-   Player`", from AN-52) would not compile in AN-52's program: its watchers change the player, and a
-   `shares` owner only reads (R9), so the line would be refused with E3023 (R18: the line a message
-   gives compiles in that program). AN-52 here writes `target: shares mut Player`; the rules' row may
-   want the same.
-2. **E3023 for a change through a `shares` owner.** The `shares` row of `V2/vocabulary.md` gives it
-   E3023 ("`other` only reads the list it shares; to change it through `other`, write `other = shares
-   mut items`"), and this file uses it six times (list above), but `V2/rules.md` section 3 has no row for
-   it and section 4's E3023 meaning lists only the read-only names and "an owner that may change made
-   from one that only reads". The meaning fits E3023's ("a change the name does not allow"); the row
-   could name it.
-3. **E3022 or E3060 for a change of the place a `ref mut` name views** (AN-37). R8 (f) refuses a
-   change through another name while a `ref mut` name is used (E3022); R8 (b) ends a view at a reshape
-   (E3060 at its later use). Both apply to `this.state = State.Idle` before `path.pop()`. This file uses
-   E3022, R8 (f)'s, since `path` is `ref mut` and section 3's E3022 row names "a `ref mut` name's place
-   used through another name"; the rules could say that (f) is checked first for a `ref mut` name.
-4. **`.copied()` beside `copy of`.** The adapter keeps its name by the `.copied()` row ("keep"), while the
-   keyword `copied` is renamed; AN-46 uses both `copy of` and `.copied()`. The readability check may want
-   to look at whether `.copied()` reads as the old keyword.
-5. **A second call of a `once fn()` local** (AN-47). The E3013 row of `V2/rules.md` section 3 gives the
-   message for passing such a function where it may run twice; AN-47's message, for calling a local
-   twice, is written in the same words.
+1. **E3063's example line in `V3/rules.md` section 3** (the kept-view row: "let the watchers own a
+   share: `target: shares Player`", from AN-52) would not compile in AN-52's program: its watchers change
+   the player, and a `shares` owner only reads (R9), so the line would be refused with E3023 (R18: the line
+   a message gives compiles in that program). AN-52 writes `target: shares mut Player`. v2's readability
+   check found the same (`V2/readability.md` F-04); the v3 row is unchanged.
+
+2. **E3023 for a change through a `shares` owner.** The `shares` row of `V3/vocabulary.md` gives it
+   E3023 ("`other` only reads the list it shares; to change it through `other`, write `other = shares mut
+   items`"), and this file uses it six times (AN-34, AN-36, AN-39, AN-44, AN-45, AN-48), but `V3/rules.md`
+   section 3 has no row for it and section 4's E3023 meaning lists the read-only names, a plain name
+   holding a `MutSpan` and "an owner that may change made from one that only reads", not a change through a
+   `shares` owner. The meaning fits E3023's ("a change the name does not allow"); the row could name it.
+
+3. **E3022 or E3060 for a change of the place a `ref mut` name views** (AN-37). R8 (f) refuses a change
+   through another name while a `ref mut` name is used (E3022); R8 (b) ends a view at a reshape (E3060 at
+   its later use). Both apply to `this.state = State.Idle` before `path.pop()`. This file uses E3022, R8
+   (f)'s, since `path` is `ref mut` and section 3's E3022 row names "a `ref mut` name's place changed
+   through another name"; the rules could say that (f) is checked first for a `ref mut` name.
+
+4. **`owns` before a value on a making line** (AN-40). Verdict 24 writes `mesh=owns Mesh(points=[0.0,
+   1.0]) using current`, and R3's `using` point writes it so; R3's first point refuses `owns x` before a
+   value "where the value is already handed over by its place (`b = a`, an `owns` argument, `return`)" and
+   says it is written "only where the default is a view". A new value given to an `owns` field is put in
+   its own block by the store, with no word (AN-40's `Entity(mesh=Mesh(verts=[0.0]))`, the `owns` row of
+   `V3/vocabulary.md`). AN-40 writes the making line as the verdict does and keeps the plain form for
+   `Entity`; R3 could say whether `owns` before a value made on the line is allowed (it says the block is
+   made there) or E0109.
+
+5. **A second call of a `once fn()` local** (AN-47). The E3013 row of `V3/rules.md` section 3 gives the
+   message for passing such a function where it may run twice; AN-47's message, for calling a local twice,
+   is written in the same words.
+
+6. **The arena row of E3063** (`V3/rules.md` section 3, "make it in an arena the caller keeps: `fn
+   load_level(ref mut arena: LevelArena) -> Enemy:`, with ... `using arena`") gives the function's new
+   first line and making line but not the caller's (`current = LevelArena()`, `load_level(ref mut
+   current)`), which R18 asks for where a message replaces several lines; AN-40's message names them.
+
+7. **The end of a value whose type names a C destroy function** (verdict 31). Ending an `owns SqliteDb`
+   (AN-40's `App.db`, `@ffi(destroys(sqlite3_close))`) calls C. R12 and R15 speak of "a call of a foreign
+   function", which a reader may not take to cover a call the compiler inserts at a value's end. Read with
+   verdict 31's "every C call", it does: ending such a value inside a loop over a list that a kept callback
+   changes would be refused (E3020) unless `sqlite3_close`'s declaration says `@ffi(no_callbacks)`. The
+   rules could say so. Nothing in area C depends on it: its programs hand C no callback.
 
 ## For the owner
 
-No new question from this area. Two of the questions the rule writer listed (`V2/changes.md` section 11)
-decide lines in these answers, so the lead may want to show them there:
+No new question from this area. Verdicts 23 and 24 answered the two questions v2 pointed to here
+(`V2/changes.md` section 11, questions 3 and 4: the first owner of a shared value; naming one of several
+arenas). One of the questions the rule writer lists now (`V3/changes.md` section 11) decides a line of
+these answers, so the lead may want to show it there:
 
-- **Question 3, the first owner of a shared value** (settled for now as "it keeps what it could do").
-  Two lines change the value through the first owner after sharing, and rely on it: AN-34
-  `owner_that_reads` (`items.push(4)` after `other = shares items`) and AN-36's second form
-  (`child.value = 5` after `push(shares mut child)`). Under the stricter choice both would be refused
-  as written. In AN-39, AN-44, AN-45 and AN-48 (a) the first owner only reads after sharing, so either
-  choice keeps them.
-- **Question 4, `using` with a memory manager that has several instances.** AN-40's `Level` names
-  `LevelArena` as a manager with one instance, as R3 asks meanwhile.
+- **Question 6, one word in every arena-made value.** AN-40's `lvl.mesh` keeps the address of `current`,
+  one word beside its pointer, so that its end goes back to the arena it came from (a `LevelArena` may
+  have several). Two ways to save the word, neither in the rules yet and neither measured: where the
+  kind's `deallocate` does nothing (a bump arena frees everything at once) and the value never grows (an
+  `owns Mesh`, unlike a list), the end needs no arena, so the compiler, which sees the kind, can leave
+  the word out; and an arena that hands out memory in aligned chunks whose header names the arena lets
+  the end find it from the pointer, as mimalloc finds a block's segment by masking its address. Without
+  either, the alternative is a field that names an arena with one instance, which is v2's form and does
+  not say which arena the mesh comes from.

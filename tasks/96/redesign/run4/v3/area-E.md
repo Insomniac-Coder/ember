@@ -1,57 +1,85 @@
-# Area E: threads, locks across threads, `unsafe` (AN-71 to AN-84), brought to the v2 rules
+# Area E, v3: threads, locks across threads, `unsafe` (AN-71 to AN-84)
 
-Agent 06 (area E), run 4, step 1 (v2). Every answer of run 4's area E (`RUN4/area-E.md`) in the
-eight-part form, brought to `V2/rules.md`, `V2/vocabulary.md` and `V2/changes.md`, which carry the
-owner's 20 decisions of 2026-10-25 (`inputs/JOB.md`, section "Owner verdicts on run 4's open
-questions"). `RUN3` means `tasks/96/redesign/run3/`, `RUN4` means `tasks/96/redesign/run4/`, `V2` means
-`tasks/96/redesign/run4/v2/`. "R1" .. "R18" are the v2 rules; "row N" is the owner's agreed row N and
-"decision N" the owner's decision N in `inputs/JOB.md`. Terms are those of `V2/rules.md` section 0; the
-few this area adds are in section 1 below.
+Agent 06 (area-E), run 4, step 2 (v3). Every answer of area E in the eight-part form, brought to the v3
+rules and words, which apply all of the owner's verdicts 1 to 34 (`inputs/JOB.md`, "Owner verdicts on
+run 4's open questions"; 27 replaces 25): `V3/rules.md` (rules R1 to R18, the codes), `V3/vocabulary.md`
+(the words) and `V3/changes.md` (what changed from v2). `RUN3` means `tasks/96/redesign/run3/`, `RUN4`
+means `tasks/96/redesign/run4/`, `V2` means `tasks/96/redesign/run4/v2/`, `V3` means
+`tasks/96/redesign/run4/v3/`. "R1" .. "R18" are the v3 rules; "row N" is the owner's agreed row N and
+"verdict N" the owner's verdict N in `inputs/JOB.md` (v2 wrote "decision N" for verdicts 1 to 20; this
+file says "verdict N" throughout). Terms are those of `V3/rules.md` section 0; the few this area adds are
+in section 1 below.
 
-Power: `PowerLineStatus` printed `Online` at the start of this work and before writing this file. No
-compiler change, no git command, no Ember program run.
+No compiler change, no git command, no Ember program run, and no new `ember check`: this file makes no
+new claim about what today's Ember accepts or refuses, and where it cites today's compiler on a new
+spelling it cites the rule writer's probes (`V3/changes.md` section 7, `r1` .. `r8`). No power reading
+was taken: this step ran in a cloud container.
 
-**How the OLD code and its output were carried.** No OLD program of this area changes, so every OLD
-block, its output and every "means exactly" block is run 4's, word for word (run 4 carried them from
-run 3 by script). The file was made by copying `RUN4/area-E.md` and editing only the NEW parts;
-`target/redesign4/v2-06-area-E/compare_old.py` then checked that every OLD block, every pasted output
-and every "means exactly" block of this file is identical to run 4's (output in `compare_old.txt` beside
-it). Run 4 checked every OLD and "means exactly" file again with today's
-`target/redesign4/bin/ember.exe check` (`target/redesign4/06-area-E/recheck.txt`: the same codes and exit
-codes as pasted); none of those files changed since, so no new run was needed, and this step makes no new
-claim about what today's Ember accepts. File names inside carried text are relative to
-`target/redesign3/12-area-E/`, and "section N" inside carried text means a section of run 3's area report
-`RUN3/12-area-E.md`. The "means exactly" programs are written in today's Ember, so they keep today's
-`self`, `@sync`, `owned fn` and `Mutex`: that is the language today's compiler accepts, not a NEW
-spelling.
+**How the OLD code and its output were carried.** This file is phase 0's copy of `V2/area-E.md`
+(`V3/spelling-changes.txt` lists its three replaced lines), edited in place. No OLD program of this area
+changes, so every OLD block, its output and every "means exactly" block is v2's, and so run 4's, byte for
+byte: `target/redesign4/v3-06-area-E/scripts/check_carried.py` compares every fenced block of parts 2 and
+5 of each answer, and every pasted output of today's compiler elsewhere in the file, with `V2/area-E.md`
+(output in `target/redesign4/v3-06-area-E/check_carried.txt`: 54 blocks, all identical). Run 4 checked
+every OLD and "means exactly" file again with today's compiler (`target/redesign4/06-area-E/recheck.txt`,
+on the owner's laptop: the same codes and exit codes as pasted); none of those files changed since. The
+probe files the answers cite (`old/...`, `means/...`, `c/...`) were in the laptop's ignored `target/` and
+are not in this checkout; their pasted outputs carry over unchanged. File names inside carried text are
+relative to `target/redesign3/12-area-E/`, and "section N" inside carried text means a section of run 3's
+area report `RUN3/12-area-E.md`. The "means exactly" programs are written in today's Ember, so they keep
+today's `self`, `@sync`, `owned fn`, `Mutex` and a plain `MutSpan` parameter that writes (`mut ps:
+MutSpan[Player]`): that is the language today's compiler accepts, not a NEW spelling.
 
-## 0. What changed in this area since run 4, answer by answer
+Each answer has the eight parts: 1 intent; 2 OLD with today's output; 3 NEW; 4 the owner's test for every
+declared name; 5 means exactly (today's Ember or C doing what NEW means); 6 still refused, each with its
+code and message; 7 cost; 8 kind. In the owner's-test tables "none (default: ...)" means no word in the
+line answers that question and the stated default does (allowed only where the default never changes
+anything, never aliases silently and never copies silently); a name counts as **without a word** when
+neither column has a word. A function's own name has a row where its first line says what it changes.
 
-| answer | what changed under the v2 rules | meaning changed? |
+## 0. What v3 changed in each answer
+
+"Meaning changed" compares with `V2/area-E.md`; what changed from run 4 to v2 is `V2/area-E.md` section
+0. The verdicts that land in area E are 22 (a task or a thread's function names the captured variables it
+changes: AN-71 to AN-74), 29 (a change made under a lock or through an `Atomic` is named: AN-73, AN-75,
+AN-80), 30 (starting a thread, or handing C a callback to keep, counts as making what its function
+changes: AN-75, AN-76, AN-78, AN-80), 31 (every C call counts as possibly running the callbacks C keeps,
+unless its declaration says `@ffi(no_callbacks)`: AN-78), 32 (the word in front of a parameter's name
+sets what the function may do, for every type: AN-78, which v2 already wrote that way) and 34 (a
+`MutSpan` parameter that writes says `ref mut`: AN-84). They settle the four points v2 left for the owner
+(`V2/area-E.md` section 4.2): point 1 by verdict 29, point 2 by verdict 30, point 3 by verdict 31, point 4
+by verdict 32 (section 2 below). Verdict 26 was done in phase 0, which also turned two English "holds"
+inside messages into `exists as` and missed one `holds` in code inside a message; this step put all three
+right (AN-71, AN-74, AN-78). Verdicts 21, 24, 27, 28 and 33 change no line of area E: no answer hands a
+function to a library function that runs it, makes a value in an arena, tests a value's kind, walks a
+tree, or uses `.copied()`; verdict 23 is cited where AN-78's `main` keeps using its game after sharing it.
+
+| answer | what v3 changed | meaning changed? |
 |---|---|---|
-| AN-71 | `with owns names` (decision 19); the messages in the new words (E3040, E7004; E7015 names `shares` and `weakref`) | no |
-| AN-72 | nothing | no |
-| AN-73 | `with copy of n` (decision 12, row 6's words); the refusal of a task that uses a round's own `n` is E3026 (R12: a function value outliving a place it uses), not run 4's E3060 | no |
-| AN-74 | E7010's message names `Array[shares mut Player]` (decisions 4, 19); the owner's-test defaults say `changes this` (decision 6) | no |
-| AN-75 | the messages say `with owns log` and `with shares log` (decision 19); `with owns log` of the plain parameter `log` is E3013 at the first capture (a name that does not own the value cannot hand it over, R3), not run 4's E3040 at the second; reading 1 of section 2 stated | no |
-| AN-76 | decision 17: every lambda that changes a module variable says so on its first line: the threads are `thread.spawn(fn() changes RESULTS: worker(1))`; the stored handler of the refused loop is `fn() changes LOG: ...`, kept in an `Array[fn() changes LOG]`, and `click` says `changes handlers, LOG`; the loop's refusal now comes from those types, and the same loop over plain `fn()` handlers is accepted | **yes**: under "Meaning changed" in the answer |
-| AN-77 | `yield copy of s` (decision 12); decision 16: a stored generator whose list changes before its last use is refused at the change, E3020, with the loop's message ("push after `g`'s last use"), where run 4 refused it at the later use (E3060); run 4's question for the owner is answered by decision 16 | no: the same programs are refused; one refusal moves to the change, under E3020 |
-| AN-78 | decisions 4 and 19: the game is `shares mut`; a plain parameter only reads (R4, R5), so `setup` takes one owner of the game, `owns game: shares mut Game`, called `setup(shares mut game)`, and the callback holds it `with owns game`; decision 17: the callback says `changes Game`; E7004, E7015 and `owned fn` messages in the new words | no: C still keeps one more owner that may change the game; the count is now made at `setup`'s call instead of at the capture |
-| AN-79 | nothing | no |
-| AN-80 | nothing in the code | no |
-| AN-81 | nothing | no |
-| AN-82 | nothing | no |
-| AN-83 | nothing | no |
-| AN-84 | decision 3: the `MutSpan` argument says `ref mut` at the call: `place(ref mut a.as_mut_span(), order.as_span())` | no |
+| AN-71 | the task says what it changes, `fn() changes total:` (verdict 22); starting it counts as making that change (verdict 30), and `total` is `count_words`'s own, so `count_words` names nothing; one refusal added (the OLD's task line, E2105); phase 0's wrong replacement in an E7015 message put right | **yes**, for one line: v2's task `fn(): total += ...` (the OLD's text) is refused (E2105); the program does what it did |
+| AN-72 | the refused program's task and the help's second way say what they change (`changes total`, `changes parts`, verdict 22), so the program's one mistake is the conflict and the help's lines compile | no |
+| AN-73 | the task says `changes total` (verdicts 22 and 29: a change through an `Atomic` is named, a captured variable by its name); E3026's line and the prose follow; one refusal added (E2105) | **yes**, for one line: v2's `fn() with copy of n: total.fetch_add(n)` is refused (E2105); the program does what it did |
+| AN-74 | the task says `changes stats` (verdict 22); one refusal added (E2105); phase 0's wrong replacement in E7010's message put right | **yes**, for one line: v2's `fn(): stats.add_all(t)` is refused (E2105); the program does what it did |
+| AN-75 | each thread's function says `changes Log` (verdict 29), and `start` and `main` say `changes Log` (verdict 30); the messages give the v3 lines; refusals added: a thread's function without `changes Log` and `start` without it (E2105), and a call through a `fn() changes Log` value inside a walk of `log.lines` under its lock (E3020, verdict 29's gain); v2's reading 1 replaced by verdict 29 | **yes**, for four lines: v2's two thread functions, `fn start(log: thread_shared Log):` and `fn main():` are refused (E2105); the program does what it did. A walk that v2 accepted, and that waited for its own lock while running, is now refused when compiling |
+| AN-76 | `main` says `changes FRAME, LOG, RESULTS` (verdict 30); a `spawn` inside a loop over `RESULTS` is refused (E3020); rule 3 states verdict 31; v2's readings 2 and 3 replaced by verdicts 30 and 31 | **yes**, for one line: v2's `fn main() changes FRAME, LOG:` is refused (E2105); the program does what it did |
+| AN-77 | the v3 line only | no |
+| AN-78 | `setup` and `main` say `changes Game` (verdict 30); the NEW program walks `game.names` across a C function marked `@ffi(no_callbacks)` and calls `poll_events()` after the walk (verdict 31); refusals added: `poll_events()` inside the walk and an unmarked `sqrt` inside it (E3020), the mark on `register_cb` (E5069), `setup` and `main` without `changes Game` (E2105), `setup(...)` inside the walk (E3020); E3023's message is the rules' (verdict 32), E7015's gives the v3 lines; phase 0's missed `holds` in E7004's message put right | **yes**, for two lines: v2's `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:` and `fn main():` are refused (E2105); and a call of a C function marked `@ffi(no_callbacks)` is allowed inside a walk of the game's lists, where v2's reading 3 refused every foreign call there; what the program does with the game is unchanged |
+| AN-79 | the v3 line only | no |
+| AN-80 | the thread's function says `changes Stats` (verdict 29) and `main` says `changes Stats` (verdict 30); two refusals added (E2105) | **yes**, for two lines: v2's `fn() with thread_shared st: st.note(3)` and `fn main():` are refused (E2105); the program does what it did |
+| AN-81 | the v3 line only; E4030's message cited from `V3/rules.md` | no |
+| AN-82 | the v3 line only | no |
+| AN-83 | the v3 line only | no |
+| AN-84 | `place`'s parameter says `ref mut xs: MutSpan[int]` (verdict 34), in the accepted program and in E7016's refused one; E3028's message names it; one refusal added (E3023 for the plain parameter) | **yes**, for one line: v2's `fn place(xs: MutSpan[int], idx: Span[int]):`, which writes `xs[i]`, is refused (E3023); the program does what it did |
 
 No answer of this area opens an `Option` or a `weakref` link, keeps a parent link, or holds a link
 several fields share, so `exists as`, parent links and `sharedref mut` appear only where a message names
-them. No answer uses `self` outside a carried OLD or "means exactly" block: run 4 already wrote `this`,
-and its methods already said what they change after the brackets (`changes words, tags`).
+them. No answer uses `self` outside a carried OLD or "means exactly" block: inside a method the object is
+`this`, and a method says what it changes after the brackets (`changes words, tags`).
 
 ## 1. Terms of this area
 
-Run 3's area terms, kept; every other term is `V2/rules.md` section 0's.
+Run 3's area terms, kept; every other term is `V3/rules.md` section 0's (among them **change list**,
+**kept callback** and **unknown call**).
 
 - **thread**: a sequence of instructions the operating system runs alongside others, sharing memory.
   **task**, **scope**, **join**: as R15 (`with scope = thread.scope():`; the threads started in it;
@@ -69,23 +97,21 @@ Run 3's area terms, kept; every other term is `V2/rules.md` section 0's.
   function and calls it. **user data**: the `void*` a C library hands back to its callback.
 - **kind**: the job's outcomes: a readable spelling of Rust's guarantee; a smarter compile-time
   solution; a new mechanism; an understandable limitation kept.
-- In the owner's-test tables a name counts as **without a word** when neither column has a word and
-  both give the stated default.
 
-## 2. Area E's rules, as the v2 rules state them
+## 2. Area E's rules, as the v3 rules state them
 
-Run 3's nine area rules are all in `V2/rules.md`; nothing here adds to them.
+Run 3's nine area rules are all in `V3/rules.md`; nothing here adds to them.
 
-| run 3's area rule | v2 rule | note |
+| run 3's area rule | v3 rule | note |
 |---|---|---|
-| 1. scoped tasks need no words; reductions | R15 (first point) | a local of one loop round is given to a task `with copy of n` |
-| 2. an unscoped thread or a kept C callback says what it holds in its capture list | R15 (second point), R3 | the capture words are `with owns`, `with thread_shared`, `with copy of`, and, on this thread only, `with shares`, `with shares mut`, `with weakref`; E7004 |
-| 3. a lock guards the fields its class names (`guarded by`) | R15 (third point) | inside a method the object is `this`: `with this.lock:` |
-| 4. `thread_shared` | R3, R9 | unchanged (decision 20); E7014, E7017 |
-| 5. what may go to another thread is inferred from the words | R15 (fourth point) | unchanged; E7015, E7008 |
-| 6. module variables, `static mut` with `changes NAME` | R5, R12, R15 (fifth point) | `static mut` kept (decision 8). A lambda that changes a module variable says so on its first line (`fn() changes LOG:`, decision 17); the function that only writes such a lambda names nothing |
-| 7. generators walk by position across `yield` | R15 (seventh point), R6, R8 (c) | a generator paused in a list is a walk of it: the list does not change while the generator will still be used (decision 16, E3020) |
-| 8. C callbacks through the checked trampoline | R15 (last point), R12 | the callback's first line says what it changes outside itself (`changes Game`, decision 17) |
+| 1. scoped tasks need no words; reductions | R15 (second point) | no capture words: a task uses the real variables and names on its first line the ones it changes (`fn() changes total:`, verdict 22); a local of one loop round is given to a task `with copy of n`; starting a task counts as making what its function changes (R15, first point; verdict 30), which names nothing on the caller's line when the task changes only the caller's own locals (R5) |
+| 2. an unscoped thread or a kept C callback says what it holds in its capture list | R15 (third point), R3 | the capture words are `with owns`, `with thread_shared`, `with copy of`, and, on this thread only, `with shares`, `with shares mut`, `with weakref`; E7004 |
+| 3. a lock guards the fields its class names (`guarded by`) | R15 (fourth point) | inside a method the object is `this`: `with this.lock:`; a function that changes a guarded field names it like any change: the field on a method's first line (`changes words, tags`), the module variable for a `static mut` (`changes RESULTS`), the object's type through a link (`changes Log`; R12, verdict 29) |
+| 4. `thread_shared` | R3, R9 | spelling kept (verdict 20); E7014, E7017; what a function changes in one, under its lock, is on its first line (`fn() with thread_shared log changes Log:`, verdict 29) |
+| 5. what may go to another thread is inferred from the words | R15 (fifth point) | unchanged; E7015, E7008 |
+| 6. module variables, `static mut` with `changes NAME` | R5, R12, R15 (sixth point) | `static mut` kept (verdict 8). A lambda that changes a module variable says so on its first line (`fn() changes LOG:`, verdict 17); storing it changes nothing (AN-76's `setup`, G-06), and starting a thread that runs it counts (`main` names `RESULTS`, verdict 30) |
+| 7. generators walk by position across `yield` | R15 (last point), R6, R8 (c) | a generator paused in a list is a walk of it: the list does not change while the generator will still be used (verdict 16, E3020) |
+| 8. C callbacks through the checked trampoline | R15 (last point), R12 | the callback's first line says what it changes (`changes Game`, verdicts 17 and 29); handing it to C counts as making that change (verdict 30); every foreign call counts as possibly running it, unless the foreign function's declaration says `@ffi(no_callbacks)` (verdict 31) |
 | 9. `unsafe`: one word, two positions | R16 | unchanged |
 
 **Area E's safety argument** (run 3's, unchanged in substance). A data race needs two threads, one
@@ -104,6 +130,12 @@ is ordered or never written:
 7. a `sharedref mut` target (R9): a scoped task changes it directly only where no other task and not
    the parent may touch it before the join (E7007); an unscoped thread never holds one (E7015).
 
+The words verdicts 29 to 31 add are not needed by these points: they put on first lines and in types what
+a thread, a kept callback or a function value changes, so that a walk across such a change is refused
+when compiling (R8 (c)): a call through a `fn() changes Log` inside a walk of the log's guarded list
+(AN-75, which v2 let wait for its own lock while running), a C call inside a walk of a list a kept
+callback may change (AN-78), a `spawn` inside a walk of what its thread changes (AN-76).
+
 Freed while in use: a scoped task's views die at the join, which is before the block ends; an
 unscoped thread holds only what its capture list names (an owner, a copy, or a `weakref` link, which is
 counted and tested on read, R11); one-thread counts never cross threads (E7015); where scoped tasks
@@ -111,7 +143,7 @@ re-point `shares` fields of parent objects, count changes are netted per task an
 every task has finished its loop (run 3's attack, 3.1, kept); a C callback holds a checked slot, not an
 address.
 
-**Area E's rulings** (run 3's, standing, in the v2 words): `@thread_shared` is not added once
+**Area E's rulings** (run 3's, standing, in the v3 words): `@thread_shared` is not added once
 `thread_shared` exists (AN-80); a class object held `shares` uses a one-thread count, and a value created
 `shares` cannot later be made `thread_shared` ("create it `thread_shared` from the start: `names =
 thread_shared Names()`", E7017); a safe `static mut` with `changes` (AN-76); `@cached` across threads:
@@ -120,33 +152,46 @@ on an object several threads reach, the slot is filled under a once-flag, and a 
 threads change under `lock`; a kept result could be stale; remove `@cached`"); the `unsafe fn` body rule
 (AN-79).
 
-**Three readings this area relies on, which `V2/rules.md` does not state in words** (each listed for the
-owner in section 4.2, with what this file does meanwhile):
-1. **A change made through a `thread_shared` link needs no `changes` word on a function or its type.**
-   R12 names the links whose changes a function type must say (`weakref`, `shares mut`,
-   `sharedref mut`); a `thread_shared` value is changed only through `Atomic`, a lock type, a channel or
-   a `guarded by` field under its lock (R9), which are R12's own "need no word" kinds. So
-   `fn() with thread_shared log: log.push("a")` (AN-75) and `fn() with thread_shared st: st.note(3)`
-   (AN-80) say nothing more. Memory safety does not need the word: a call through a function value
-   that takes the same lock again waits for itself (a deadlock, never a change under a walk), since the
-   lock's static re-entry (AN-74) applies only to calls the compiler sees.
-2. **What a function given to `thread.spawn`, `scope.spawn` or a C `callback(...)` parameter may
-   change.** These take a function of any `changes`: a thread is not a call (R5), its changes are
-   checked by the thread rules (R15: E7007, E7012, E7014, E7015), and a task's changes by the scope rule.
-   So `thread.spawn(fn() changes RESULTS: worker(1))` (AN-76) and
-   `register_cb(fn() with owns game changes Game: game.add_point())` (AN-78) are not E2113.
-3. **A foreign call may run the callbacks C keeps.** Run 4's R12 counted "the callbacks C may run on
-   this thread during" a foreign call; v2's R12 replaced that rule by function types and does not say it
-   for C. This file reads it by types: a foreign call made on a thread a kept callback may run on is
-   taken to make every change the types of the callbacks registered there say (`changes Game` for
-   AN-78's), so a loop over `game`'s lists across such a call is refused (E3020) as across any call
-   that changes them.
+**v2's four readings, now the owner's verdicts** (`V2/area-E.md` section 2 and its section 4.2):
+1. **A change made under a lock or through an `Atomic` is named** (verdict 29, R12): `fn() with
+   thread_shared log changes Log: log.push("a")` (AN-75) and `fn() with thread_shared st changes Stats:
+   st.note(3)` (AN-80) name the type of what changes, through a link; a task that changes a captured
+   `Atomic` names the variable, `fn() with copy of n changes total: total.fetch_add(n)` (AN-73). The
+   call-site rule is unchanged: a `Mutex`, `RwLock`, `Atomic` or channel end takes no word at a call
+   (verdict 3). The gain: a call through such a function value inside a walk of the guarded list is
+   refused when compiling (E3020, AN-75).
+2. **Starting a thread, or handing C a callback to keep, counts as making what its function changes**
+   (verdict 30, R12, R15): the library writes `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED ->
+   R) changes CHANGED -> JoinHandle[R]:`, and `scope.spawn` the same; so `main` says `changes FRAME,
+   LOG, RESULTS` (AN-76), `start` and `main` say `changes Log` (AN-75), `setup` and `main` say `changes
+   Game` (AN-78), and a function whose tasks change only its own locals names nothing (AN-71 to AN-74).
+3. **A foreign call counts as possibly running every callback C keeps**, and makes the changes their
+   types list, unless the foreign function's declaration says `@ffi(no_callbacks)` (verdict 31, R12):
+   AN-78's walk of `game.names` across `sqrt` (marked) is allowed, across `poll_events()` refused (E3020).
+4. **A plain `game: shares mut Game` parameter only reads the game** (verdict 32, R4), so `setup` takes
+   `owns game: shares mut Game`, called `setup(shares mut game)`, with `with owns game`, as v2 wrote it.
+
+**One reading this file relies on, which `V3/rules.md` does not state in words** (section 4.2, point 1,
+for the owner): **a `guarded by` field is its lock's value, changed under the lock through any name that
+reaches its object, as a `Mutex`'s value is.** AN-74 calls the lock and its fields "`Mutex<Inner>`
+spelled as a lock field"; R5 lets a `Mutex` be used through any name by its own operations, but R4 and R5 list only
+`Mutex`, `RwLock`, `Atomic` and channel ends. AN-75 relies on it three times: `start`'s plain `log:
+thread_shared Log` (the vocabulary's own example of a `thread_shared` parameter) makes `with thread_shared
+log` owners that change `lines` under the lock, which R3's "an owner made from another may do no more than
+it" allows only if `log` may do the same; `start`'s read-only `log` makes no promise about `lines`, which
+is read and changed only under its lock (R8 (g)); and E7013's way out, `log.push("c")` in `start`. What a
+function changes there is still on its first line (verdict 29).
 
 ## 3. The answers of area E
 
 ### AN-71: threads (A15): the loop variable, `total +=` from tasks, E7004 offering `@sync`
 
-**Meaning changed:** no.
+**v3:** the task says what it changes, `fn() changes total:`: a plain `fn()` now changes nothing at all,
+captured variables included (verdict 22). Starting the task counts as making that change (verdict 30),
+and `total` is `count_words`'s own local, so `count_words`'s first line names nothing (R5). **Meaning
+changed:** yes, for one line: v2's task, `scope.spawn(fn(): total += t.split_whitespace().count())`,
+which was the OLD's text, is refused (E2105, part 6); the program does what it did: every task adds its
+part to the real total.
 
 **1. Intent:** count the words of several texts on several threads, and let a thread read a list of
 names.
@@ -223,14 +268,15 @@ error: could not compile due to 4 error(s)
 exit=1
 ```
 
-**3. NEW** (run 4's, with `with owns names`; no method, no call to a `ref mut` or `MutSpan` parameter):
+**3. NEW** (v2's, with the task's `changes total`; no method, no call to a `ref mut` or `MutSpan`
+parameter):
 
 ```ember
 fn count_words(texts: Array[String]) -> int:
     total = 0
     with scope = thread.scope():
         for t in texts:
-            scope.spawn(fn(): total += t.split_whitespace().count())
+            scope.spawn(fn() changes total: total += t.split_whitespace().count())
     return total
 
 class Names:
@@ -247,9 +293,11 @@ fn share_and_keep():
     println(names.items.len(), h.join())
 ```
 
-`count_words` is the OLD text, unchanged: under R15 it compiles (`total +=` in a task is a reduction).
-Its task stays a plain `fn()`: what it changes, `total`, is a real variable it captures, which counts
-as part of the function itself (R12, decision 17).
+`count_words` is the OLD text with one addition: under R15 it compiles (`total +=` in a task is a
+reduction). The task uses the real `total` (row 6), and says on its first line that it changes it,
+`changes total` (R12, R15, verdict 22); `scope.spawn` counts as making that change (R12, verdict 30), and
+a change of a variable that a lambda written in `count_words` captured is `count_words`'s own, which needs
+no clause (R5). The task reads `t` and needs no word for it.
 `share_plain` hands the object to the thread; `share_and_keep` creates it shared between threads and
 keeps reading it. A capture `with thread_shared x` of a plain local is refused (E7017, below).
 
@@ -261,7 +309,7 @@ keeps reading it. A capture `with thread_shared x` of a plain local is refused (
 | `total` (2) | none (default: a new local, the function's own) | none (default: the function's own variable; `+=` is the change, written) |
 | `scope` (3) | `with` (bound for this block, ended at its end) | none (default: read-only binding) |
 | `t` (4) | none (default: a plain loop name, a read-only view of each element of `texts`, R2) | none (default: read-only, R5) |
-| `total` (5, in the task) | none (default, row 6: a name not in the capture list is the real variable, R12) | none (default, row 6: the real `total` changes; `+=` written) |
+| `total` (5, in the task) | none (default, row 6: a name not in the capture list is the real variable, R12) | `changes total` (the task's first line: the real `total` changes, verdict 22; `+=` written) |
 | `t` (5, in the task) | none (default: the same view of the element of `texts`, which lives until the join) | none (default: read-only) |
 | `items` (9) | none (default: the object's own list) | none (default: changed only by a method whose first line says `changes items` or `changes this`, R5) |
 | `names` (12) | none (default: a new local, the function's own object) | none (default: its own) |
@@ -272,9 +320,10 @@ keeps reading it. A capture `with thread_shared x` of a plain local is refused (
 | `names` (18, capture) | `thread_shared` (one more owner, on any thread) | `thread_shared` (no owner changes it directly) |
 | `names` (19) | `thread_shared` (line 17) | `thread_shared` (line 17: read-only) |
 
-14 names; 10 without a word, each with its default stated. No default changes anything the line does
-not show, aliases silently, or copies silently: the per-task accumulator behind line 5 is a
-compile-time translation no line can observe (5).
+14 names; 8 without a word (`texts`, `total` (2), `t` (4), `t` (5), `items`, `names` (12), `h` (13),
+`h` (18)), each with its default stated. No default changes anything the line does not show, aliases
+silently, or copies silently: the per-task accumulator behind line 5 is a compile-time translation no
+line can observe (5).
 
 **5. Means exactly** (`means/an71_means.em`, today's Ember):
 
@@ -321,6 +370,10 @@ written as a struct value moved to the thread, which is what a hand-over of a on
 
 **6. Still refused** (each message to R18):
 
+- The task without its word, the OLD's line (v2's NEW): `scope.spawn(fn(): total +=
+  t.split_whitespace().count())`: `error[E2105]: this function changes \`total\`, a variable it uses
+  from \`count_words\`; say so on its first line: \`scope.spawn(fn() changes total: total +=
+  t.split_whitespace().count())\`` (R12, verdict 22; the rules' E2105 row, in this program's names).
 - A task reads `total` before the join: `scope.spawn(fn(): if total > 10: println("many"))`:
   `error[E7007]: tasks add their parts to \`total\`, which is known only once the \`with\` block (lines
   3 to 5) ends; read \`total\` after it, as line 6 does`.
@@ -341,7 +394,7 @@ written as a struct value moved to the thread, which is what a hand-over of a on
   \`share_plain\`'s own object, which it may change; to share it between threads, create it shared:
   \`names = thread_shared Names()\`` (the same for `keep = thread_shared names`).
 - Handing over a value that holds a one-thread owner: if `Names` had `cache: shares Cache` and the
-  caller another owner of it, `error[E7015]: \`names\` exists as \`cache\`, which has other owners on this
+  caller another owner of it, `error[E7015]: \`names\` holds \`cache\`, which has other owners on this
   thread (line 9), whose counts change without atomics; share it between threads:
   \`cache: thread_shared Cache\``. The same for a class that is the target of a `weakref` field
   anywhere in the build (its `weakref` links stay on this thread): "share it instead: create it
@@ -369,7 +422,10 @@ of Rust's `move` + `Arc` for unscoped threads (the capture words).
 
 ### AN-72: errors land on the wrong variable in `a15_threads.em`
 
-**Meaning changed:** no (the help now gives lines that compile, R18).
+**v3:** the refused program's task says what it changes, `changes total`, and so does the task in the
+help's second way, `changes parts` (verdict 22): without the word the program would have a second
+mistake (E2105) beside the one this answer is about, and the help's lines would not compile under v3
+(R18). **Meaning changed:** no: the same program is refused, at the same name, for the same reason.
 
 **1. Intent:** read the error and fix the right line.
 
@@ -414,18 +470,18 @@ fn count_words(texts: Array[String]) -> int:
     total = 0
     with scope = thread.scope():
         for t in texts:
-            scope.spawn(fn(): total = total * 2 + t.len())
+            scope.spawn(fn() changes total: total = total * 2 + t.len())
     return total
 ```
 
 ```text
 error[E7007]: two tasks change `total`, and `total = total * 2 + t.len()` uses its old value
-  --> count.em:5:31
+  --> count.em:5:45
    |
- 5 |             scope.spawn(fn(): total = total * 2 + t.len())
-   |                               ^^^^^ every task of this scope runs this line at the same time as the others
+ 5 |             scope.spawn(fn() changes total: total = total * 2 + t.len())
+   |                                             ^^^^^ every task of this scope runs this line at the same time as the others
    |
-   = help: to add each task's part, write `total += t.len()`; to combine the parts in order, write `parts: Array[int] = []` before the `with` block, `scope.spawn(fn(): parts.push(t.len()))` as the task, and `for p in parts: total = total * 2 + p` after the `with` block
+   = help: to add each task's part, write `total += t.len()`; to combine the parts in order, write `parts: Array[int] = []` before the `with` block, `scope.spawn(fn() changes parts: parts.push(t.len()))` as the task, and `for p in parts: total = total * 2 + p` after the `with` block
 ```
 
 The rule: a task's conflict is reported once, on the captured name that causes it; errors on other
@@ -433,12 +489,17 @@ names of the same function that only follow from it are not shown, and no error 
 program uses correctly (`t` here). The help's second way gives the same result as the program run on
 one thread: `push` in a task is a reduction combined at the join in spawn order (R15), which is the
 order of `texts`. (Run 3's help said only "have each task keep its own (`parts.push(t.len())`)", which
-does not compile until `parts` is declared; R18 asks the help's lines to compile in the program.)
+does not compile until `parts` is declared; R18 asks the help's lines to compile in the program.) The
+help's task says `changes parts`, since a plain `fn()` changes nothing at all (verdict 22). A program
+that also leaves out the task's `changes total` has two mistakes and gets two messages: E2105 on the
+task's first line (AN-71's), then this one.
 
-**4. The owner's test:** `texts` (1), `total` (2), `t` (4), `total` (5), `t` (5): none (defaults as in
-AN-71's table, the same lines); `scope` (3): `with`. 6 names, 5 without a word. In the help's lines,
-`parts` is a new local, `count_words`'s own (none: its own; `push` is the change, written), and `p` is a plain
-loop name (none: a read-only view of each number, which as an `int` is copied, R2).
+**4. The owner's test:** `texts` (1), `total` (2), `t` (4), `t` (5): none (defaults as in AN-71's table,
+the same lines); `total` (5): none for what it is (the real variable, row 6), `changes total` for whether
+it may change it (the task's first line); `scope` (3): `with`. 6 names, 4 without a word. In the help's
+lines, `parts` is a new local, `count_words`'s own (none: its own; `push` is the change, written, and the
+task that pushes says `changes parts`), and `p` is a plain loop name (none: a read-only view of each
+number, which as an `int` is copied, R2).
 
 **5. Means exactly.** The program is refused; the line its help gives first (`total += t.len()`) is
 AN-71's program, whose translation is `means/an71_means.em` (`exit=0`, pasted in AN-71).
@@ -453,7 +514,11 @@ AN-71's program, whose translation is `means/an71_means.em` (`exit=0`, pasted in
 
 ### AN-73: "cannot find `n`" (E1010) inside a lambda that calls an `Atomic` method
 
-**Meaning changed:** no (`with copy of n`, decision 12; one refusal's code corrected, E3026).
+**v3:** the task says what it changes, `changes total`: a change made through an `Atomic` is named like
+every change (verdict 29), and a captured variable is named by its name (verdict 22). Starting the task
+counts as making that change (verdict 30); `total` is `count`'s own local, so `count`'s first line names
+nothing (R5). **Meaning changed:** yes, for one line: v2's task, `scope.spawn(fn() with copy of n:
+total.fetch_add(n))`, is refused (E2105, part 6); the program does what it did.
 
 **1. Intent:** each task adds its text's word count to one `Atomic` total.
 
@@ -518,7 +583,7 @@ error: could not compile due to 2 error(s)
 exit=1
 ```
 
-**3. NEW** (run 4's, with `copy of`, decision 12):
+**3. NEW** (v2's, with the task's `changes total`):
 
 ```ember
 fn count(texts: Array[String]) -> int:
@@ -526,15 +591,18 @@ fn count(texts: Array[String]) -> int:
     with scope = thread.scope():
         for t in texts:
             n = t.split_whitespace().count()
-            scope.spawn(fn() with copy of n: total.fetch_add(n))
+            scope.spawn(fn() with copy of n changes total: total.fetch_add(n))
     return total.load()
 ```
 
 The defect is fixed (a name used as an argument of a method call inside a lambda is looked up like any
 other), and the task names what it copies, row 6's words (R15: "a local of one loop round is given to a
 task with `with copy of n`"). `t` needs no word: it is a view of an element of `texts`, which lives
-until the join; `n` is the round's own number, which does not. `total` is the real variable (row 6);
-`fetch_add` changes an `Atomic` through any name (R5's exception by type).
+until the join; `n` is the round's own number, which does not. `total` is the real variable (row 6),
+changed by `fetch_add`, the `Atomic`'s own operation, which any name may use (R5); the task says so after
+its capture list, `changes total` (R12: a lambda names the real variables it changes, a change through an
+`Atomic` included; verdicts 22 and 29). Two tasks changing `total` this way is not E7007: the atomic
+instruction orders each change (R5, R9).
 
 **4. The owner's test:**
 
@@ -546,9 +614,9 @@ until the join; `n` is the round's own number, which does not. `total` is the re
 | `t` (4) | none (default: a read-only view of each element) | none |
 | `n` (5) | none (default: a new local of this round, its own) | none (default: its own) |
 | `n` (6, capture) | `copy of` (the task's own copy, row 6) | `copy of` (the task's own) |
-| `total` (6, in the task) | none (default, row 6: the real `total`) | none (default: through `fetch_add`, the `Atomic`'s own method, written) |
+| `total` (6, in the task) | none (default, row 6: the real `total`) | `changes total` (the task's first line, verdicts 22 and 29), through `fetch_add`, the `Atomic`'s own operation, written |
 
-7 names, 5 without a word.
+7 names, 4 without a word (`texts`, `total` (2), `t`, `n` (5)).
 
 **5. Means exactly** (`means/an73_means.em`):
 
@@ -570,11 +638,16 @@ exit=0
 Today's `owned fn` copies `n` (an `int`) and copies the view `tr` of the real `total`: the task has its
 own `n` and adds to the real total.
 
-**6. Still refused:** the task without the word, once the lookup is fixed:
-`error[E3026]: the task uses \`n\`, which ends at the end of this round of the loop (line 5), while
-the task may still be running; give the task its own copy: \`fn() with copy of n:\``. Under v2 this
-is E3026, "a function value that may outlive a place it uses and does not own" (R12); run 4 gave it
-E3060, whose v2 meaning is a view used after its target changed.
+**6. Still refused:**
+- The task without the copy word, once the lookup is fixed: `scope.spawn(fn() changes total:
+  total.fetch_add(n))`: `error[E3026]: the task uses \`n\`, which ends at the end of this round of the
+  loop (line 5), while the task may still be running; give the task its own copy: \`fn() with copy of n
+  changes total:\``. This is E3026, "a function value that may outlive a place it uses and does not own"
+  (R12); run 4 gave it E3060, whose meaning since v2 is a view used after its target changed.
+- The task without `changes total`, v2's line: `scope.spawn(fn() with copy of n: total.fetch_add(n))`:
+  `error[E2105]: this function changes \`total\` through \`fetch_add\`, a variable it uses from
+  \`count\`; say so on its first line: \`scope.spawn(fn() with copy of n changes total:
+  total.fetch_add(n))\`` (R12, verdicts 22 and 29).
 
 **7. Cost:** one atomic add per task, as the program asks (an `Atomic` is the programmer's choice;
 `total += n` on a plain `int` would be AN-71's reduction at plain C's cost). The copy of `n` is one
@@ -587,7 +660,11 @@ words).
 
 ### AN-74: a `@sync` class freezes every field after `init`; objects written by several tasks need a lock or a claim
 
-**Meaning changed:** no (E7010's message says `shares mut Player`, decisions 4 and 19).
+**v3:** the task says what it changes, `fn() changes stats:` (verdict 22): it changes the real `stats`
+through `add_all`. Starting it counts as making that change (verdict 30), and `stats` is `count`'s own
+local, so `count`'s first line names nothing (R5). Phase 0 had turned an English "holds" in E7010's
+message into `exists as`; it reads "holds" again. **Meaning changed:** yes, for one line: v2's task,
+`scope.spawn(fn(): stats.add_all(t))`, is refused (E2105, part 6); the program does what it did.
 
 **1. Intent:** several tasks update one statistics object; and each task updates its own player.
 
@@ -670,7 +747,7 @@ fn count(texts: Array[String]) -> int:
     stats = Stats()
     with scope = thread.scope():
         for t in texts:
-            scope.spawn(fn(): stats.add_all(t))
+            scope.spawn(fn() changes stats: stats.add_all(t))
     with stats.lock:
         return stats.words
 
@@ -698,8 +775,10 @@ The rules:
 - `add_all`'s first line says what it changes, `changes words, tags` (row 3, R5); its object is `this`
   and is not listed among its parameters. `count` calls it on its own local `stats`, so `count`'s first
   line names nothing (R5: a change to an own local needs no clause). The method is called on the object
-  with no mark (`stats.add_all(t)`, R4). The task's function changes only `stats`, a real variable it
-  captures, which counts as part of the function itself (R12, decision 17), so it is a plain `fn()`.
+  with no mark (`stats.add_all(t)`, R4). The task changes `stats`, a real variable it captures, through
+  `add_all`, so its first line says so, `fn() changes stats:` (R12, verdict 22); the tasks change it
+  only under its lock, inside `add_all`, so two of them changing it is not E7007 (R15). Starting a task
+  counts as making that change (verdict 30), a change of `count`'s own local, which needs no clause (R5).
 - No class mark: `@sync` is gone (AN-80). Fields not written after `init` need nothing.
 - **Each task its own object**: `for ref mut p in players` in a `@parallel` loop hands each chunk its
   own elements. An element of `Array[Player]` has one owner, the list, because a second owner of a
@@ -723,12 +802,12 @@ The rules:
 | `stats` (16) | none (default: a new local, the function's own object) | none (default: its own; changed through `add_all`, which says `changes`) |
 | `scope` (17) | `with` | none |
 | `t` (18) | none (default: a read-only view of each element) | none |
-| `stats` (19, task) | none (default, row 6: the real `stats`) | none (default: through `add_all`'s `changes words, tags`, under the lock) |
+| `stats` (19, task) | none (default, row 6: the real `stats`) | `changes stats` (the task's first line, verdict 22), through `add_all`'s `changes words, tags`, under the lock |
 | `t` (19, task) | none (default: the same view, alive until the join) | none |
 | `players` (27) | `ref mut` (the caller's list) | `ref mut` (may change it) |
 | `p` (29) | `ref mut` (each element of the caller's list, alone while used, R8 (f)) | `ref mut` |
 
-14 names, 7 without a word.
+14 names, 6 without a word (`lock`, `w`, `texts`, `stats` (16), `t` (18), `t` (19)).
 
 **5. Means exactly** (`means/an74_means_lock.em`, today's Ember): the guarded fields inside one
 `Mutex`, the class `@sync`:
@@ -780,6 +859,10 @@ chunks share` at `ps[i].hp -= 1`, `exit=1`. The translation writes the whole ele
 Found in passing: section 10.)
 
 **6. Still refused:**
+- The task without its word, v2's line: `scope.spawn(fn(): stats.add_all(t))`: `error[E2105]: this
+  function changes \`stats\`, a variable it uses from \`count\`, through \`add_all\` (\`changes words,
+  tags\`); say so on its first line: \`scope.spawn(fn() changes stats: stats.add_all(t))\`` (R12,
+  verdict 22).
 - A guarded field used outside its lock: `stats.words += 1` in `count`: `error[E7013]: \`words\` is
   guarded by \`lock\`; change it inside \`with stats.lock:\``.
 - The lock taken on another object: `with a.lock: b.words += 1`: `error[E7013]: \`b.words\` is
@@ -793,7 +876,7 @@ Found in passing: section 10.)
   tasks change \`stats.total\` (line 19); guard it: \`total: int guarded by lock\`, and change it inside
   \`with this.lock:\`; or make it \`Atomic[int]\``.
 - A list whose objects may have a second owner in a parallel loop: `for ref mut p in players` with
-  `players: Array[shares mut Player]`: `error[E7010]: \`players\` exists as \`shares mut Player\` objects,
+  `players: Array[shares mut Player]`: `error[E7010]: \`players\` holds \`shares mut Player\` objects,
   and one object may be in the list twice, so two chunks could change it at once; give each object one owner
   (\`Array[Player]\`), or change it under its lock (\`hp: int guarded by lock\`)`.
 
@@ -811,8 +894,14 @@ field saying which lock guards it), plus a smarter compile-time solution for the
 
 ### AN-75: clone-before-move for shared handles (A34)
 
-**Meaning changed:** no (the messages say `with owns log` and `with shares log`, decision 19; one
-refusal's code corrected, E3013).
+**v3:** each thread's function says what it changes, `changes Log`: a change made under a lock is named
+like every change, by the type of what changes (verdict 29; v2's reading 1, which named nothing, is
+withdrawn). Starting a thread counts as making what its function changes (verdict 30), so `start` says
+`changes Log`, and so does `main`, which calls `start`. **Meaning changed:** yes, for four lines: v2's
+`fn() with thread_shared log: log.push("a")` (and its `"b"` twin), `fn start(log: thread_shared Log):`
+and `fn main():` are refused (E2105, part 6); the program does what it did. And a call through a
+`fn() changes Log` value inside a walk of `log.lines` under the log's lock, which v2 accepted and which
+waited for its own lock while running, is now refused when compiling (E3020, part 6: verdict 29's gain).
 
 **1. Intent:** two threads append to one log.
 
@@ -880,13 +969,13 @@ class Log:
         with this.lock:
             this.lines.push(String(s))
 
-fn start(log: thread_shared Log):
-    a = thread.spawn(fn() with thread_shared log: log.push("a"))
-    b = thread.spawn(fn() with thread_shared log: log.push("b"))
+fn start(log: thread_shared Log) changes Log:
+    a = thread.spawn(fn() with thread_shared log changes Log: log.push("a"))
+    b = thread.spawn(fn() with thread_shared log changes Log: log.push("b"))
     a.join()
     b.join()
 
-fn main():
+fn main() changes Log:
     start(thread_shared Log())
 ```
 
@@ -895,10 +984,15 @@ one more owner. No second name (`log2`) and no separate clone line. `log: thread
 caller's value with no count (R4); `with thread_shared log` makes one more owner from it (R3, allowed
 because the value is already `thread_shared`). Each thread changes the log only through `push`, whose
 first line says `changes lines`, a field `guarded by lock` changed inside `with this.lock:` (R9: the
-one way a `thread_shared` value is changed). The threads' functions change `log` only that way, under
-its lock, so their first lines name nothing (section 2, reading 1), and `start`'s read-only `log`
-promises only that its other fields do not change while it is used (R4, R8 (g)): `lines` is changed under
-its lock, as a `Mutex`'s value is changed through any name.
+one way a `thread_shared` value is changed). What the threads' functions change is on their first lines,
+`changes Log`: they change a `Log` through a `thread_shared` link, under its lock, and such a change is
+named by the type of what changes (R12, verdict 29), exactly the verdict's own line. `thread.spawn`
+counts as making what its function changes (R12, verdict 30; the library's first line is `pub fn
+spawn[R, CHANGED](owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`), so `start`
+says `changes Log`, and `main`, which calls `start`, says it too (R5). Nothing more is checked while
+running: the words are checked when compiling. `start`'s read-only `log` promises that what it reads
+does not change while it is used (R4, R8 (g)); `lines` is read and changed only under its lock, as a
+`Mutex`'s value is, which is the reading section 2 states (`guarded by` as the lock's value).
 
 **4. The owner's test:**
 
@@ -908,37 +1002,69 @@ its lock, as a `Mutex`'s value is changed through any name.
 | `lines` (5) | none (default: the object's own list) | `guarded by lock` |
 | `this` (7, not listed: the method's object, R5) | `this` (the `Log` `push` was called on) | `changes lines` (row 3) |
 | `s` (7) | `StrView` (a view of someone else's text) | none (default: read-only) |
-| `log` (11) | `thread_shared` (in its type: a log shared between threads; a plain parameter, so a view of the caller's, no count, R4) | `thread_shared` (no owner changes it directly; `push` changes a guarded field) |
+| `start` (11) | `fn` | `changes Log` (it starts threads whose functions change a `Log`, R5, R12, verdict 30) |
+| `log` (11) | `thread_shared` (in its type: a log shared between threads; a plain parameter, so a view of the caller's, no count, R4) | `thread_shared` (no owner changes it directly; `push` changes a guarded field, under its lock) |
 | `a` (12) | none (default: the `JoinHandle` the call returns, the caller's own) | none |
-| `log` (12, capture) | `thread_shared` (one more owner) | `thread_shared` |
+| `log` (12, capture) | `thread_shared` (one more owner) | `thread_shared`, and the function's `changes Log` (verdict 29) |
 | `b` (13) | none (default as `a`) | none |
-| `log` (13, capture) | `thread_shared` | `thread_shared` |
+| `log` (13, capture) | `thread_shared` | `thread_shared`, and `changes Log` |
+| `main` (17) | `fn` | `changes Log` (it calls `start`, R5) |
 
-9 names, 3 without a word.
+11 names, 3 without a word (`lock`, `a`, `b`).
 
 **5. Means exactly** (`means/an75_means.em`, which is phase 1's `a34_clone_dance.em` itself): a
 `@sync` class (atomic counts), its list inside a `Mutex`, and `owned fn` retaining the handle once per
 thread. `exit=0`.
 
 **6. Still refused:**
+- A thread's function that does not say what it changes, v2's line: `fn() with thread_shared log:
+  log.push("a")`: `error[E2105]: this function changes \`log\` through \`push\` (\`changes lines\`, under
+  \`log\`'s lock); say so on its first line: \`fn() with thread_shared log changes Log:
+  log.push("a")\`` (R12, verdict 29; the rules' E2105 row).
+- `start` without the word, v2's line `fn start(log: thread_shared Log):`: `error[E2105]: \`start\` starts
+  threads whose functions change \`Log\` (\`fn() with thread_shared log changes Log: log.push("a")\`,
+  line 12); add it to \`start\`'s first line: \`fn start(log: thread_shared Log) changes Log:\`` (R5,
+  R12, verdict 30); and `main` without it: `error[E2105]: \`main\` calls \`start\`, which changes
+  \`Log\` (line 11); add it to \`main\`'s first line: \`fn main() changes Log:\``.
+- A call through a function value that may change the log, inside a walk of the log's list under its
+  lock (verdict 29's gain): in `fn dump(log: thread_shared Log, note: fn() changes Log) changes Log:`
+  (line 1), `with log.lock:` (line 2), `for line in log.lines:` (line 3), `println(line)` (line 4),
+  `note()` (line 5), called as `dump(log, fn() with thread_shared log changes Log: log.push("seen"))`:
+  `error[E3020]: this loop walks \`log.lines\` (line 3) under \`log\`'s lock, and \`note()\` (line 5)
+  may change any \`Log\`, this one included (its type says \`changes Log\`), so it would change the list
+  during the walk and wait for the lock this thread holds; call \`note()\` after the \`with log.lock:\`
+  block` (R8 (c), R12; the rules' E3020 row). v2 accepted it (its `note: fn()` named nothing), and the
+  program waited for ever at line 5.
 - A thread that takes the log over: `with owns log`: `error[E3013]: \`log\` is lent to \`start\`
   (a plain parameter), so the thread cannot take it over (\`with owns log\`, line 12); to give each
-  thread one more owner of the log, write \`fn() with thread_shared log:\``. (Run 4 gave this E3040,
-  "handed to the first thread"; under R3 and E3013 a name that does not own the value cannot hand it
-  over at all, so the refusal comes at the first capture.)
+  thread one more owner of the log, write \`fn() with thread_shared log changes Log: log.push("a")\``.
+  (Run 4 gave this E3040, "handed to the first thread"; under R3 and E3013 a name that does not own the
+  value cannot hand it over at all, so the refusal comes at the first capture.)
 - A one-thread owner sent to a thread: `with shares log`: `error[E7015]: \`with shares log\` makes an
-  owner of \`log\` that stays on one thread, and this function runs on a new one; write \`with
-  thread_shared log\``.
-- No word: `thread.spawn(fn() => log.push("a"))`: AN-71's E7004 message, in this program's names.
+  owner of \`log\` that stays on one thread, and this function runs on a new one; write \`fn() with
+  thread_shared log changes Log: log.push("a")\``.
+- No capture word: `thread.spawn(fn() changes Log: log.push("a"))`: `error[E7004]: this thread may
+  outlive \`start\`, so it cannot use \`start\`'s \`log\`; say what the thread holds: \`fn() with
+  thread_shared log changes Log: log.push("a")\` (one more owner of the log)` (AN-71's E7004, in this
+  program's names; `with owns log` is not offered, since `start` does not own the log).
 - `with thread_shared log` where `log` is a plain parameter `log: Log` (a view of an object whose
-  owner may be one-thread): `error[E7017]: \`log\` is lent to \`start\`, and its owner may not be shared
-  between threads; take it as \`log: thread_shared Log\``.
+  owner may be one-thread), with `start(Log())` in `main`: `error[E7017]: \`log\` is lent to \`start\`,
+  and its owner may not be shared between threads; take it as \`fn start(log: thread_shared Log) changes
+  Log:\`, and create the log shared in \`main\`: \`start(thread_shared Log())\``.
 - `log.lines.push(String("c"))` in `start`, outside the lock: `error[E7013]: \`lines\` is guarded by
   \`lock\`; change it inside \`with log.lock:\`, or call \`log.push("c")\``.
 
+Not refused, and not memory unsafe: `with log.lock:` around `note()` with no walk, where `note` pushes
+to the same log. `push` then waits for the lock its own thread holds, for ever: AN-74's static re-entry
+covers only calls whose body the compiler sees, and the function value's type says `changes Log`, not
+which log. A hang, never a change under a walk or a freed object; C and Rust do the same (Rust's
+`Mutex::lock` does not return when the thread already holds it). Section 4.2, point 2, gives the owner
+the choices.
+
 **7. Cost:** one atomic increment per `with thread_shared` capture and one atomic decrement when the
 thread's owner ends: exactly Rust's `Arc::clone` and drop, and what today's `owned fn` does for a
-`@sync` handle. The lock is C's.
+`@sync` handle. The lock is C's. `changes Log` on the functions' first lines costs nothing while running:
+it is checked when compiling.
 
 **8. Kind:** a readable spelling of Rust's guarantee (`Arc::clone` + `move`, written as one word on the
 captured name).
@@ -947,21 +1073,19 @@ captured name).
 
 ### AN-76: global mutable state (A19)
 
-**Meaning changed: yes** (decision 17: functions say what they change, and so do lists of stored
-functions).
-1. **A lambda that changes a module variable says so on its first line, and the list that keeps it says
-   so in its type**: `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`, kept in
-   `handlers: Array[fn() changes LOG]`; `click`, which runs them, says `fn click() changes handlers,
-   LOG:`. Run 4 let the lambda be a plain `fn()` and took every call that may run a function value to
-   make every change any such value makes; its E3020 message said "the compiler does not follow which
-   handlers each button holds" (G-07). Now the types say it: a loop over `LOG` across `b.click()` is
-   refused because `click`'s first line says `changes LOG`, and the same loop is **accepted** when
-   `b`'s handlers are plain `fn()`, which change nothing outside themselves.
-2. **The functions the threads run say what they change**: `thread.spawn(fn() changes RESULTS:
-   worker(1))`, where run 4 wrote `thread.spawn(fn(): worker(1))`.
-What stays from run 4 (G-06): `setup`, which only writes the lambda, names nothing on its first line;
-`changes LOG` on `setup` would say "a call of `setup` changes `LOG`", and it does not. Nothing this
-answer's own program does changes.
+**v3:** starting a thread counts as making what its function changes, whenever that happens (verdict
+30: "who said a change needs to be bound by a moment?"): `main` starts threads running `fn() changes
+RESULTS: worker(1)`, so it says `fn main() changes FRAME, LOG, RESULTS:`, the verdict's own line, and a
+`spawn` inside a loop over `RESULTS` is refused (E3020). A foreign call counts as possibly running the
+callbacks C keeps, unless marked `@ffi(no_callbacks)` (rule 3 below; verdict 31). **Meaning changed:**
+yes, for one line: v2's `fn main() changes FRAME, LOG:` is refused (E2105, part 6); the program does what
+it did. What stays from v2: every lambda that changes a module variable says so on its first line, and
+the list that keeps it says so in its type (verdict 17): `b.on_click(fn() changes LOG:
+LOG.push(String("clicked")))`, kept in `handlers: Array[fn() changes LOG]`, run by `fn click() changes
+handlers, LOG:`; a loop over `LOG` across `b.click()` is refused because `click`'s first line says
+`changes LOG`, and the same loop is accepted when `b`'s handlers are plain `fn()`, which change nothing.
+And `setup`, which only hands the lambda to `on_click` to keep, names nothing (G-06): storing a function
+is not a change; running it, or handing it to a thread or to C to run, is (R12).
 
 **1. Intent:** count frames and keep a log in module variables; worker threads add results to a
 module list.
@@ -1055,7 +1179,7 @@ fn worker(x: int) changes RESULTS:
     with RESULTS_LOCK:
         RESULTS.push(r)
 
-fn main() changes FRAME, LOG:
+fn main() changes FRAME, LOG, RESULTS:
     tick()
     a = thread.spawn(fn() changes RESULTS: worker(1))
     b = thread.spawn(fn() changes RESULTS: worker(2))
@@ -1063,7 +1187,7 @@ fn main() changes FRAME, LOG:
     b.join()
 ```
 
-and the button of decision 17, whose handlers push to the log:
+and the button of verdict 17, whose handlers push to the log:
 
 ```ember
 class Button:
@@ -1092,21 +1216,27 @@ The rules (R5, R15, R12):
 2. A function whose body changes it, itself or through a call, says so on its first line: `changes
    FRAME` (row 3's word, on a free function; R5). Checked against the body both ways: a change not
    named is refused, a name not changed is refused. Callers name it too, as a method names what the
-   methods it calls change: `main` calls `tick()`, so `fn main() changes FRAME, LOG:`; `report` calls
+   methods it calls change: `main` calls `tick()`, so `main` names `FRAME, LOG`; `report` calls
    `b.click()`, so `fn report(ref mut b: Button) changes LOG:` (the change to `b`'s handlers goes
-   through its `ref mut` parameter and needs no clause). A function `thread.spawn` starts is not a call
-   of `main` (`worker` runs on its own thread; rule 4 and E7012 check it), so `main` does not name
-   `RESULTS`. A lambda says what it changes on its own first line (R12): `fn() changes RESULTS:
-   worker(1)`, `fn() changes LOG: LOG.push(...)`. Writing a lambda is not changing what it changes:
-   `setup` names nothing (R5; G-06).
+   through its `ref mut` parameter and needs no clause). **Starting a thread counts as making what its
+   function changes, now or later** (R5, R12, R15; verdict 30): `thread.spawn` takes `owns f: fn()
+   changes CHANGED -> R` and says `changes CHANGED`, so `main`, which starts threads running `fn()
+   changes RESULTS: worker(1)`, says `fn main() changes FRAME, LOG, RESULTS:`. That says what a call of
+   `main` causes to change; rule 4 and E7012 still keep the threads apart. A lambda says what it
+   changes on its own first line (R12): `fn() changes RESULTS: worker(1)`, `fn() changes LOG:
+   LOG.push(...)`. **Storing a lambda is not changing what it changes**: `setup` hands the handler to
+   `on_click`, which keeps it for `click` to run, so `setup` names nothing (R12: the line falls at who
+   runs the function; G-06).
 3. One thread: a loop over `LOG`, or any view into it, across a call that may change `LOG` is refused
    (R8 (c), (g); the agreed limitation: change after the loop). A call may change `LOG` when its
    callee's first line says so, and a call through a function value when the value's type says so
    (R12): `b.click()` changes `LOG` because `click` runs handlers of type `fn() changes LOG` and its
-   first line says `changes handlers, LOG`. A list of plain `fn()` handlers changes nothing outside
-   them, so clicking such a button inside a loop over `LOG` is allowed. A foreign call is taken to make
-   the changes that the types of the kept C callbacks which may run during it say (section 2,
-   reading 3; the attack's 5.1, `y16`).
+   first line says `changes handlers, LOG`. A list of plain `fn()` handlers changes nothing, so
+   clicking such a button inside a loop over `LOG` is allowed. A `spawn` inside a loop over what its
+   thread changes is refused the same way (E3020: "start the thread after the loop"). A foreign call
+   counts as possibly running every callback C keeps, and makes the changes their types list, unless
+   the foreign function's declaration says `@ffi(no_callbacks)` (R12, verdict 31; the attack's 5.1,
+   `y16`; AN-78).
 4. Threads: a `static mut` is used only by the main thread and the tasks of scopes it opens (where
    tasks' changes follow the scope rule and reductions, AN-71). A function reachable from
    `thread.spawn`, an unscoped job of the job system, a C callback whose contract is not
@@ -1128,7 +1258,7 @@ The rules (R5, R15, R12):
 | `x` (11) | none (default: a plain parameter reads the caller's value; an `int` is copied in, R4) | none (default: read-only) |
 | `r` (12) | none (default: a new local, the function's own) | none (default: its own) |
 | `RESULTS` (14) | `static` (line 9) | `guarded by RESULTS_LOCK` (line 9), held by line 13's `with`; `changes RESULTS` on `worker` (line 11) |
-| `main` (16) | `fn` | `changes FRAME, LOG` (it calls `tick()`, R5) |
+| `main` (16) | `fn` | `changes FRAME, LOG, RESULTS` (it calls `tick()`, and starts threads whose functions change `RESULTS`, R5, R12, verdict 30) |
 | `a` (18) | none (default: the `JoinHandle` the call returns, the caller's own) | none |
 | `b` (19) | none (default as `a`) | none |
 
@@ -1202,13 +1332,27 @@ an76_static_mut ms=26.241 peak_kb=27884 checksum=2000014
 - A thread's function that does not say what it changes: `thread.spawn(fn(): worker(1))`:
   `error[E2105]: this function calls \`worker\`, which changes \`RESULTS\`; say so on its first line:
   \`fn() changes RESULTS: worker(1)\``.
+- `main` without `RESULTS`, v2's line `fn main() changes FRAME, LOG:`: `error[E2105]: \`main\` starts a
+  thread whose function changes \`RESULTS\` (\`fn() changes RESULTS: worker(1)\`, line 18); add it to
+  \`main\`'s first line: \`fn main() changes FRAME, LOG, RESULTS:\`` (R5, R12, verdict 30; the rules'
+  E2105 row).
+- A thread started inside a walk of what it changes: after line 21, `with RESULTS_LOCK:` (line 22),
+  `for r in RESULTS:` (line 23), `println(r)` (line 24) and `c = thread.spawn(fn() changes RESULTS:
+  worker(3))` (line 25): `error[E3020]: this loop walks \`RESULTS\` (line 23), and \`thread.spawn(...)\`
+  (line 25) starts a thread whose function changes \`RESULTS\` (\`fn() changes RESULTS: worker(3)\`);
+  start the thread after the loop: write \`c = thread.spawn(fn() changes RESULTS: worker(3))\` after
+  it` (R8 (c), R12, R15, verdict 30; the rules' E3020 row, in this program's lines). Memory safety does
+  not need this refusal here: `RESULTS` is read only under `RESULTS_LOCK`, which the walk holds, so the
+  new thread's `push` would wait for the walk to end. It is verdict 30's one rule, a list does not
+  change while a loop walks it through any call that may change it, with one line to move (section
+  4.2, point 3).
 - The handler written as a plain `fn()`: `b.on_click(fn(): LOG.push(String("clicked")))` (line 12):
   `error[E2105]: this function pushes to \`LOG\`; say so on its first line: \`fn() changes LOG:
   LOG.push(String("clicked"))\``.
 - A handler that changes `LOG` kept in a list of plain functions: `handlers: Array[fn()]` and
   `fn on_click(owns f: fn()) changes handlers:` with line 12 as written: `error[E2113]: this function
-  changes \`LOG\` (\`fn() changes LOG\`), and \`on_click\` takes \`fn()\`, functions that change nothing
-  outside themselves; keep it in a list that says so: \`handlers: Array[fn() changes LOG]\`, with
+  changes \`LOG\` (\`fn() changes LOG\`), and \`on_click\` takes \`fn()\`, functions that change
+  nothing; keep it in a list that says so: \`handlers: Array[fn() changes LOG]\`, with
   \`fn on_click(owns f: fn() changes LOG) changes handlers:\``.
 - `click` without `LOG`: `fn click() changes handlers:`: `error[E2105]: \`click\` runs the handlers in
   \`this.handlers\`, whose type says \`changes LOG\`; add it to its first line: \`fn click() changes
@@ -1217,14 +1361,15 @@ an76_static_mut ms=26.241 peak_kb=27884 checksum=2000014
   program, in this block's names: `b.click()` inside `report`'s loop, line 16, instead of after it):
   `error[E3020]: this loop walks \`LOG\` (line 15), and \`b.click()\` (line 16) changes \`LOG\`: \`click\`
   runs the handlers of \`b\`, an \`Array[fn() changes LOG]\` (its first line says \`changes handlers,
-  LOG\`); click after the loop` (R8 (c), R12; `V2/rules.md` section 3's message, in this program's
+  LOG\`); click after the loop` (R8 (c), R12; `V3/rules.md` section 3's message, in this program's
   lines). The program that message leads to (line 17's order) is
   `RUN3/21-fixer/c/f4_fnvalue_static_loop.c` mode 2: clean under AddressSanitizer (run 3's proof, not
   run again).
 
-No longer refused: the same loop over `LOG` with `b.click()` inside it, when `b`'s handlers are plain
-`fn()` (`handlers: Array[fn()]`, `fn click() changes handlers:`): no function in the list may change
-`LOG` (E2113 keeps such a function out), so the walk is safe (decision 17).
+Accepted (since v2): the same loop over `LOG` with `b.click()` inside it, when `b`'s handlers are plain
+`fn()` (`handlers: Array[fn()]`, `fn click() changes handlers:`): a plain `fn()` changes nothing at all
+(verdicts 17 and 22), no function in the list may change `LOG` (E2113 keeps such a function out), so the
+walk is safe.
 
 **7. Cost:** plain C globals: nothing counted, nothing checked while running. Last run measured the
 same work (`phase3b-threads.md:854-863`, `tick()` called 100,000,000 times, PROVISIONAL): plain C
@@ -1239,10 +1384,11 @@ function's first line says what it changes and the compiler proves only one thre
 
 ### AN-77: async and generators (A14)
 
-**Meaning changed:** no, since run 4. Run 4 asked the owner whether a generator kept in a variable
-may see its list change; decision 16 ("a, same rule for every loop") answered it the way run 4 had
-read it: a generator paused in the middle of a list is a loop over that list (R6, R8 (c)). What that
-settles, as run 4 had it:
+**v3:** no verdict of 21 to 34 changes a line of this answer: its generators change nothing outside
+themselves and start no thread. **Meaning changed:** no. What v2 settled stays: run 4 asked the owner
+whether a generator kept in a variable may see its list change; verdict 16 ("a, same rule for every
+loop") answered it the way run 4 had read it: a generator paused in the middle of a list is a loop over
+that list (R6, R8 (c)). What that settles, as run 4 had it:
 1. **No "walk by position" way out.** A generator that walks by position (`while i <
    len(this.log):`) is a loop over the list too, so `g = d.replay()`, `d.log.push(...)`, `g.next()` is
    refused whichever way `replay` walks. A program that wants to add to the log between resumes
@@ -1252,8 +1398,8 @@ settles, as run 4 had it:
    `gen fn replay() -> Generator[int]:` compiles; `from log` narrows it to `d.log`, so that changing
    another field of `d` stays allowed while `g` is used. This answer keeps `from log`, which says on
    the line what the generator walks.
-What changes since run 4 is where the refusal of a stored generator lands, and its code: at the change,
-E3020, with the loop's own message ("push after `g`'s last use"), where run 4 gave E3060 at the
+What changed from run 4 (in v2) is where the refusal of a stored generator lands, and its code: at the
+change, E3020, with the loop's own message ("push after `g`'s last use"), where run 4 gave E3060 at the
 generator's later use.
 
 **1. Intent:** a generator yields the lines of its own buffer; another yields the lengths of a
@@ -1346,7 +1492,7 @@ the generator lives is R6's: the generator is a view of its object (of `log` alo
 so while it is still used nothing it views is reshaped, wherever the change is written, whether the
 generator is consumed in place (`for n in d.replay():`) or stored (`g = d.replay()`, while `g` will
 still be used): either way it is a loop over the list, and a change to it is E3020 at the change (R8
-(c), decision 16). The position kept in the frame stays: it is what lets the frame move.
+(c), verdict 16). The position kept in the frame stays: it is what lets the frame move.
 
 `async` stays reserved in this version (understandable limitation: no async runtime exists). Its
 design is run 2's (`phase3b-threads.md` 7.3 rule 3, the attack's 6.3): task groups, which are scopes;
@@ -1410,8 +1556,8 @@ translation would let see the change, is refused in the NEW program (6).
 - A stored generator and a change to its list before its last use: `g = d.replay()` (line 1),
   `d.log.push(String("x"))` (line 2), `println(g.next())` (line 3): `error[E3020]:
   \`d.log.push(String("x"))\` (line 2) changes \`d.log\`, which \`g\` walks (\`g = d.replay()\`, line
-  1), and \`g\` is used again on line 3; push after \`g\`'s last use` (R8 (c), decision 16; the
-  message of `V2/rules.md` section 3, in this program's lines; no "walk by position" way out, since a
+  1), and \`g\` is used again on line 3; push after \`g\`'s last use` (R8 (c), verdict 16; the
+  message of `V3/rules.md` section 3, in this program's lines; no "walk by position" way out, since a
   position walk is refused the same way).
 - A walk with no position (a linked structure held by views): E2221 as today, with "walk it by an
   index or a `Handle`".
@@ -1433,13 +1579,21 @@ generator protocol, not the walk.
 
 ### AN-78: unsafe and FFI (A20): a C callback with user data
 
-**Meaning changed:** no. C still keeps one more owner of the game that may change it. The words
-change (decisions 4, 17, 19): the game is `shares mut`; `setup` takes one owner of it (`owns game:
-shares mut Game`, called `setup(shares mut game)`) instead of a read-only view, because an owner made
-from a read-only name only reads (R3, E3023); the callback holds that owner (`with owns game`) and says
-what it changes, `changes Game`. The count is now made at `setup`'s call, not at the capture.
+**v3:** handing C a callback to keep counts as making what the callback changes, now and whenever C runs
+it (verdict 30): `setup` says `changes Game`, and so does `main`, which calls `setup`. Every C call
+counts as possibly running the callbacks C keeps, unless the C function's declaration says it never calls
+back (verdict 31): the NEW program now shows it, with a walk of the game's `names` across `sqrt`, marked
+`@ffi(no_callbacks)` (allowed), and `poll_events()`, which runs the callback, after the walk (inside it,
+refused, E3020). What a parameter may do is set by the word in front of its name (verdict 32): v2's `owns
+game: shares mut Game`, called `setup(shares mut game)`, is that rule's own example. **Meaning changed:**
+yes, for two lines: v2's `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:` and `fn
+main():` are refused (E2105, part 6); and a C function marked `@ffi(no_callbacks)` may be called inside a
+walk of the game's lists, where v2's reading 3 counted every foreign call as running the callback. What
+the program does with the game is unchanged: C keeps one more owner of the game that may change it, and
+each callback adds a point.
 
-**1. Intent:** a C event library calls back into the game; each call adds a point to that game.
+**1. Intent:** a C event library calls back into the game, and each call adds a point to that game;
+between event polls the game prints its players' names with the help of a C maths function.
 
 **2. OLD** (`old/a20_ffi.em`, phase 1's; `setup_raw` passes a capturing lambda where C wants a plain
 function pointer, `setup` uses the contract and `owned fn`):
@@ -1491,6 +1645,7 @@ plain C per callback (`phase3b-threads.md:1133`, `ffi-1`).
 ```ember
 class Game:
     score: i32 = 0
+    names: Array[String] = []
 
     fn add_point() changes score:
         this.score += 1
@@ -1499,13 +1654,19 @@ unsafe extern "C":
     fn unregister(cb: extern "C" fn(*mut void), ud: *mut void)
     @ffi(param(cb, callback(retained, user_data=ud), threads(creator)), destroys(unregister))
     safe fn register_cb(cb: extern "C" fn(*mut void), ud: *mut void)
+    safe fn poll_events()
+    @ffi(no_callbacks)
+    safe fn sqrt(x: f64) -> f64
 
-fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:
+fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:
     return register_cb(fn() with owns game changes Game: game.add_point())
 
-fn main():
-    game = shares mut Game()
+fn main() changes Game:
+    game = shares mut Game(names=[String("ann"), String("bo")])
     token = setup(shares mut game)
+    for name in game.names:
+        println(name, sqrt(name.len() as f64))
+    poll_events()
     println(game.score)
 ```
 
@@ -1524,32 +1685,56 @@ The rules:
   announces the running slot, and unregistering waits.
 - The contract may be read from the header when its shape is a function pointer plus a `void*` it
   hands back (run 2's 8.4); it is listed by `ember tcb` as an asserted fact, like a written one.
-- **Who may change the game** (R3, R4, R9). `main`'s `game` is the first owner and may change it.
-  `setup(shares mut game)` makes one more owner that may change it and hands it to `setup`'s `owns`
-  parameter (R4: the caller writes `shares mut game` for an `owns x: shares mut T` parameter); `with
-  owns game` hands that owner on to the callback. A plain parameter `game: shares mut Game` would be a
-  read-only view of `main`'s owner (R4, R5), and an owner made from it may do no more than it, so
-  `with shares mut game` from it is refused (E3023, below); that is why `setup` takes an owner.
-- **What the callback changes** (R12, decision 17). It changes the game through an owner it shares
-  with `main`, a link other names reach, so its first line names the type: `changes Game` (checked
-  against its body, E2105: `add_point` says `changes score`). A foreign call made on the creator thread
-  may run it, so such a call is taken to make that change (section 2, reading 3): no view of a game's
-  part and no walk of a game's list lives across it (R8).
+- **Who may change the game** (R3, R4, R9). `main`'s `game` is the first owner and may change it, and
+  it keeps what it could do after sharing it (verdict 23). `setup(shares mut game)` makes one more owner
+  that may change it and hands it to `setup`'s `owns` parameter (R4: the caller writes `shares mut game`
+  for an `owns x: shares mut T` parameter); `with owns game` hands that owner on to the callback. What a
+  function may do with a parameter is set by the word in front of its name, for every type (R4, verdict
+  32): a plain parameter `game: shares mut Game` would be a read-only view of `main`'s owner (the
+  `shares mut` after the colon says what `main`'s game is, not what `setup` may do), and an owner made
+  from it may do no more than it, so `with shares mut game` from it is refused (E3023, below); that is
+  why `setup` takes an owner.
+- **What the callback changes** (R12, verdicts 17 and 29). It changes the game through an owner it
+  shares with `main`, a link other names reach, so its first line names the type: `changes Game`
+  (checked against its body, E2105: `add_point` says `changes score`).
+- **Handing it to C counts** (R5, R12, verdict 30). `register_cb`'s parameter says
+  `callback(retained)`: C keeps the function and runs it during later foreign calls, so the call that
+  hands it over counts as making what it changes, now and later. `setup` says `changes Game`, and so
+  does `main`, which calls `setup`. (Storing a function for its caller to run is not a change; handing it
+  to something that runs it on its own, a thread or C, is.)
+- **Every foreign call may run it** (R12, R15, verdict 31). The compiler cannot see inside C, so a call
+  of a foreign function counts as possibly running every callback C keeps, on the threads their
+  contracts allow (here the creator thread), and makes the changes their types list: `poll_events()` on
+  line 24 makes `changes Game`, so no view of a game's part and no walk of a game's list lives across it
+  (R8). That is why it is called after the walk of `game.names`. `sqrt` says on its declaration that it
+  never calls back into Ember, `@ffi(no_callbacks)` (line 13), so its call inside the walk runs no
+  callback and is allowed. The mark is a fact the programmer vouches for, listed by `ember tcb` with the
+  other asserted facts (`[TCB-1]`); on a function whose own contract takes a callback it is refused
+  (E5069). A missing mark refuses nothing by itself, only a walk, a view or a `ref mut` name that a kept
+  callback's changes would reach across the call, and that message names the mark. The callbacks'
+  changes are on the first lines of the functions that hand them to C (`setup`, and `main` through it),
+  not of the functions that make foreign calls (R12; the rule writer's reading, `V3/changes.md` section
+  11, question 5).
 
 **4. The owner's test:**
 
 | name (line) | what it is | may it change it |
 |---|---|---|
-| `score` (2) | none (default: the object's own number) | none (default: changed only by a method whose first line says `changes score`) |
-| `this` (4, not listed: the method's object, R5) | `this` (the `Game` `add_point` was called on) | `changes score` (row 3) |
-| `cb` (8-10) | `extern "C" fn` (a C function pointer, its type) | none (default: a parameter only reads) |
-| `ud` (8-10) | `*mut void` (C's raw pointer; the contract names it user data) | none (default: Ember never reads it here) |
-| `game` (12) | `owns` (one owner of the game, handed to `setup` by the call) | `shares mut` in its type: an owner that may change the game (R4, R9) |
-| `game` (13, capture) | `owns` (`setup`'s owner, handed to the callback C keeps; `setup`'s `game` ends here) | `shares mut` (its type), and the callback's `changes Game` (R12) |
-| `game` (16) | `shares mut` (a new object with several owners; this is the first) | `shares mut` (this owner may change it) |
-| `token` (17) | none (default: the `Retained` token the call returns, the caller's own; dropping it unregisters) | none |
+| `score` (2) | none (default: the object's own number) | none (default: changed only by a method whose first line says `changes score` or `changes this`) |
+| `names` (3) | none (default: the object's own list) | none (default as `score`) |
+| `this` (5, not listed: the method's object, R5) | `this` (the `Game` `add_point` was called on) | `changes score` (row 3) |
+| `cb` (9-11) | `extern "C" fn` (a C function pointer, its type) | none (default: a parameter only reads) |
+| `ud` (9-11) | `*mut void` (C's raw pointer; the contract names it user data) | none (default: Ember never reads it here) |
+| `x` (14) | none (default: a plain parameter reads the caller's value; an `f64` is copied in, R4) | none (default: read-only) |
+| `setup` (16) | `fn` | `changes Game` (it hands C a callback that changes `Game`, R12, verdict 30) |
+| `game` (16) | `owns` (one owner of the game, handed to `setup` by the call) | `shares mut` in its type: an owner that may change the game (R4, R9) |
+| `game` (17, capture) | `owns` (`setup`'s owner, handed to the callback C keeps; `setup`'s `game` ends here) | `shares mut` (its type), and the callback's `changes Game` (R12) |
+| `main` (19) | `fn` | `changes Game` (it calls `setup`, R5) |
+| `game` (20) | `shares mut` (a new object with several owners; this is the first) | `shares mut` (this owner may change it, and keeps that after line 21, verdict 23) |
+| `token` (21) | none (default: the `Retained` token the call returns, the caller's own; dropping it unregisters) | none |
+| `name` (22) | none (default: a read-only view of each name, R2) | none (default: read-only; `game.names` does not change while the loop walks it, R8 (c)) |
 
-8 names, 2 without a word.
+13 names, 5 without a word (`score`, `names`, `x`, `token`, `name`), each with its default stated.
 
 **5. Means exactly** (`means/an78_means.em`, today's Ember): `owned fn` retains the class handle,
 which is "one more owner":
@@ -1576,28 +1761,68 @@ warning[L1001]: `token` is never read
 exit=0
 ```
 
+That program is the callback part of NEW. The walk of `game.names` and the two C calls v3 adds have no
+translation run here: today's Ember has no `@ffi(no_callbacks)` (E0104, the rule writer's
+`r4_no_callbacks.em`, `V3/changes.md` section 7), and they do what they say: print each name with the
+square root of its length, then let C deliver its events, each of which runs the callback and adds a
+point.
+
 **6. Still refused:**
+- The walk with `poll_events()` inside it (line 24 moved into the loop's body, after line 23):
+  `error[E3020]: this loop walks \`game.names\` (line 22), and \`poll_events()\` (line 24) is a C
+  function, which may run the callback C keeps from \`register_cb\` (line 17), and that callback changes
+  \`Game\` (\`fn() with owns game changes Game\`), so it may change \`game.names\`; call
+  \`poll_events()\` before or after the loop; if \`poll_events\` never calls back into Ember, say so on
+  its declaration: \`@ffi(no_callbacks) safe fn poll_events()\`` (R8 (c), R12, verdict 31; the rules'
+  E3020 row, in this program's lines). With a kept callback that changes nothing
+  (`register_cb(fn(): println("event"))`) the same walk is allowed.
+- `sqrt` declared without the mark (line 13 removed, so the lines after it move up by one):
+  `error[E3020]: this loop walks \`game.names\` (line 21), and \`sqrt(name.len() as f64)\` (line 22) is
+  a C function, which may run the callback C keeps from \`register_cb\` (line 16), and that callback
+  changes \`Game\`; if \`sqrt\` never calls back into Ember, say so on its declaration:
+  \`@ffi(no_callbacks) safe fn sqrt(x: f64) -> f64\`; otherwise call it before or after the loop` (the
+  rules' E3020 row: a missing mark refuses only such a walk, and the message names the mark).
+- The mark on a function whose own contract takes a callback, `@ffi(no_callbacks, param(cb,
+  callback(retained, user_data=ud), threads(creator)), destroys(unregister))` on line 10:
+  `error[E5069]: \`register_cb\` takes a callback (\`param(cb, callback(retained, user_data=ud))\`), so
+  it may call back into Ember; remove \`no_callbacks\` from its \`@ffi(...)\`` (R12).
+- `setup` without the word, v2's line: `fn setup(owns game: shares mut Game) ->
+  Retained[ForeignCallback]:`: `error[E2105]: \`setup\` hands \`register_cb\` a callback that C keeps
+  and that changes \`Game\`; add it to \`setup\`'s first line: \`fn setup(owns game: shares mut Game)
+  changes Game -> Retained[ForeignCallback]:\`` (R5, R12, verdict 30; the rules' E2105 row); and `main`
+  without it, v2's `fn main():`: `error[E2105]: \`main\` calls \`setup\`, which changes \`Game\` (line
+  16: it hands C a callback that changes \`Game\`); add it to \`main\`'s first line: \`fn main() changes
+  Game:\``.
+- The callback handed to C inside the walk (`token = setup(shares mut game)` moved from line 21 into the
+  loop's body, so the loop is on line 21 and the call on line 22): `error[E3020]: this loop walks
+  \`game.names\` (line 21), and \`setup(shares mut game)\` (line 22) changes \`Game\` (its first line
+  says \`changes Game\`: it hands C a callback that changes \`Game\`); call it before the loop: write
+  \`token = setup(shares mut game)\` above the \`for\` line` (R8 (c), R12, verdict 30).
 - No capture word for a kept callback: `register_cb(fn() changes Game: game.add_point())`:
   `error[E7004]: C keeps this function after \`setup\` returns (\`callback(retained)\`), so it cannot
   use \`setup\`'s \`game\`; say what it holds: \`fn() with owns game changes Game:\` (\`setup\`'s owner
-  of the game), or \`fn() with weakref game changes Game:\` with \`if game holds ref mut g:
+  of the game), or \`fn() with weakref game changes Game:\` with \`if game exists as ref mut g:
   g.add_point()\` as its body (a link that lets the game end)`.
 - The callback without `changes Game`: `register_cb(fn() with owns game: game.add_point())`:
   `error[E2105]: this function changes \`game\`, a \`Game\` other owners share, through \`add_point\`
   (\`changes score\`); say so on its first line: \`fn() with owns game changes Game:\`` (R12).
-- A changing owner made from a read-only view: `fn setup(game: shares mut Game)` with `with shares mut
-  game`: `error[E3023]: \`game\` only reads the \`Game\` that \`main\` lends to \`setup\`, so an owner
-  made from it only reads too; take one owner of it: \`fn setup(owns game: shares mut Game)\`, call it
-  \`setup(shares mut game)\`, and capture it \`with owns game\``.
-- The game kept by a `threads(any)` callback: `error[E7015]: C may call this function from any thread
-  (\`threads(any)\`), and \`shares\` owners stay on one thread; share the game between threads: write
-  \`game = thread_shared Game()\` and \`token = setup(game)\` in \`main\`, \`fn setup(game:
-  thread_shared Game)\` and \`fn() with thread_shared game: game.add_point()\` in \`setup\`, and, since
-  \`add_point\` changes \`score\`, \`score: Atomic[i32] = Atomic(0)\`, \`fn add_point():\` with
-  \`this.score.fetch_add(1)\`, and \`println(game.score.load())\`` (R9, R15; `V2/rules.md` section 3's
-  message, completed with every line it replaces, R18: a `thread_shared` value is changed only through
-  `Atomic` or a lock, so `add_point` changes nothing its first line names, and the function value needs
-  no `changes`, section 2, reading 1).
+- A changing owner made from a read-only view: `fn setup(game: shares mut Game) changes Game ->
+  Retained[ForeignCallback]:` with `with shares mut game`: `error[E3023]: \`game\` only reads the
+  \`Game\` that \`main\` lends to \`setup\` (\`shares mut Game\` says what \`main\`'s game is, not what
+  \`setup\` may do with it), so an owner made from it only reads too; to hand on an owner that may
+  change the game, take one: write \`fn setup(owns game: shares mut Game) changes Game ->
+  Retained[ForeignCallback]:\`, call it \`setup(shares mut game)\`, and capture it \`with owns game\``
+  (R4, verdict 32; the rules' E3023 row).
+- The game kept by a `threads(any)` callback (line 10 with `threads(any)`): `error[E7015]: C may call
+  this function from any thread (\`threads(any)\`), and \`shares\` owners stay on one thread; share the
+  game between threads: write \`game = thread_shared Game(names=[String("ann"), String("bo")])\` and
+  \`token = setup(game)\` in \`main\`, \`fn setup(game: thread_shared Game) changes Game ->
+  Retained[ForeignCallback]:\` and \`return register_cb(fn() with thread_shared game changes Game:
+  game.add_point())\` in \`setup\`, and, since \`add_point\` changes \`score\`, \`score: Atomic[i32] =
+  Atomic(0)\`, \`this.score.fetch_add(1)\` as \`add_point\`'s body, and \`println(game.score.load())\``
+  (R9, R15; the rules' E7015 row, completed with every line it replaces, R18). `add_point` keeps its
+  first line, `fn add_point() changes score:`: a change through an `Atomic` is named like every change
+  (verdict 29), and an `Atomic` is changed through any name by its own operations (R5).
 - A capturing lambda where C wants a bare function pointer: E5040, today's message (it already gives
   the line to write).
 - Today's `owned fn(...)`, as `register_cb(owned fn(): game.add_point())`: `error[E1010]: \`owned
@@ -1612,16 +1837,20 @@ trampoline, 1.05x plain C (the attack, `phase3b-threads-attack.md:902`,
 line 960), against today's trampoline 1.47x (`phase3b-threads.md:1133`). The announced
 `threads(any)` version that may be unregistered while running costs 1.42x to 1.58x on an empty
 callback (the attack, 7.1): above C's cost, and only on that path; Rust's workaround (0.97x,
-`phase3b-threads.md:1137`) checks none of these facts.
+`phase3b-threads.md:1137`) checks none of these facts. `changes Game` on the first lines, the
+foreign-call rule and `@ffi(no_callbacks)` cost nothing while running: they are checked when compiling,
+and `sqrt` is called as C calls it.
 
 **8. Kind:** a new mechanism (the checked trampoline), safer than Rust's: a stale, forged or
-wrong-thread call is caught, where Rust's workaround is an unbounded `unsafe` reference.
+wrong-thread call is caught, where Rust's workaround is an unbounded `unsafe` reference. The walk across
+a C call is a smarter compile-time solution: the kept callback's type says what a C call may change,
+and `@ffi(no_callbacks)` exempts a C function that never calls back, a fact vouched for and listed.
 
 ---
 
 ### AN-79: `unsafe` points two ways, and an `unsafe fn` body is unchecked with no mark per operation
 
-**Meaning changed:** no.
+**v3:** no verdict of 21 to 34 changes a line of this answer. **Meaning changed:** no.
 
 **1. Intent:** write a small unsafe helper and call it.
 
@@ -1672,7 +1901,7 @@ own note (Rust 2024's `unsafe_op_in_unsafe_fn`, made an error, E3100).
 
 Today's compiler asks for a `# SAFETY:` note on the `unsafe fn` line too (`[UNS-8]`): the NEW text
 without it gets W3012 there (`target/redesign3/15-vocabulary-review/an79_no_fn_note.em`, checked again
-in this run as `target/redesign4/06-area-E/old/an79_no_fn_note.em`, the same output):
+in run 4 as `target/redesign4/06-area-E/old/an79_no_fn_note.em`, the same output):
 
 ```text
 warning[W3012]: this `unsafe` has no safety note
@@ -1731,7 +1960,12 @@ apart by where `unsafe` sits and by their two notes).
 
 ### AN-80: `Sync` names three things; `@sync` reads "synchronised"; `@nosync` reads "not `@sync`"
 
-**Meaning changed:** no.
+**v3:** the thread's function says what it changes, `changes Stats`: a change made under a lock is named
+like every change, by the type of what changes (verdict 29; v2's reading 1, which named nothing, is
+withdrawn). Starting the thread counts as making that change (verdict 30), so `main` says `changes
+Stats`. **Meaning changed:** yes, for two lines: v2's `fn() with thread_shared st: st.note(3)` and `fn
+main():` are refused (E2105, part 6); the program does what it did: `longest` ends as 5 whichever
+thread runs first.
 
 **1. Intent:** mark a class that threads may share; forbid locks in a hot function.
 
@@ -1792,9 +2026,9 @@ fn sum(xs: Span[int]) -> int:
         s += x
     return s
 
-fn main():
+fn main() changes Stats:
     st = thread_shared Stats()
-    a = thread.spawn(fn() with thread_shared st: st.note(3))
+    a = thread.spawn(fn() with thread_shared st changes Stats: st.note(3))
     st.note(5)
     a.join()
 ```
@@ -1812,8 +2046,11 @@ The three meanings get three spellings (run 3's ruling, standing):
 
 The read and the write of `longest` now sit under one lock, so `longest` ends as 5 whichever thread
 runs first (the OLD's race, both reading 0 and the one with 3 storing last, cannot happen). The
-thread's function changes `st` only through `note`, under its lock, so its first line names nothing
-(section 2, reading 1).
+thread's function changes `st` through `note`, under its lock, so its first line says `changes Stats`
+(R12, verdict 29: a change through a `thread_shared` link is named by the type of what changes).
+`thread.spawn` counts as making what its function changes (R12, verdict 30), so `main` says `changes
+Stats`; `main`'s own `st.note(5)`, a change of its own local, needs no clause (R5). Nothing more runs:
+the words are checked when compiling.
 
 **4. The owner's test:**
 
@@ -1827,11 +2064,12 @@ thread's function changes `st` only through `note`, under its lock, so its first
 | `xs` (13) | none (default: reads the caller's numbers; `Span` is a view) | none |
 | `s` (14) | none (default: a new local, the function's own) | none (default: its own) |
 | `x` (15) | none (default: a read-only view of each number, copied as an `int`, R2) | none |
+| `main` (19) | `fn` | `changes Stats` (it starts a thread whose function changes a `Stats`, R5, R12, verdict 30) |
 | `st` (20) | `thread_shared` (one of several owners, on any thread) | `thread_shared` (changed only through `note`, under the lock) |
 | `a` (21) | none (default: the `JoinHandle` the call returns, the caller's own) | none |
-| `st` (21, capture) | `thread_shared` (one more owner) | `thread_shared` |
+| `st` (21, capture) | `thread_shared` (one more owner) | `thread_shared`, and the function's `changes Stats` (verdict 29) |
 
-11 names, 6 without a word.
+12 names, 6 without a word (`lock`, `n`, `xs`, `s`, `x`, `a`).
 
 **5. Means exactly** (`means/an80_means.em`, today's Ember): the two counters inside one `Mutex`, so the
 read and the write of `longest` are one step; `@sync` for the cross-thread object; `@nosync` as today:
@@ -1859,6 +2097,13 @@ exit=0
 ```
 
 **6. Still refused:**
+- The thread's function without the word, v2's line: `thread.spawn(fn() with thread_shared st:
+  st.note(3))`: `error[E2105]: this function changes \`st\` through \`note\` (\`changes words,
+  longest\`, under \`st\`'s lock); say so on its first line: \`fn() with thread_shared st changes Stats:
+  st.note(3)\`` (R12, verdict 29); and `main` without it, v2's `fn main():`: `error[E2105]: \`main\`
+  starts a thread whose function changes \`Stats\` (\`fn() with thread_shared st changes Stats:
+  st.note(3)\`, line 21); add it to \`main\`'s first line: \`fn main() changes Stats:\`` (R5, R12,
+  verdict 30).
 - `@sync class Stats`: `error[E0104]: \`@sync\` is gone: a class needs no mark to be shared between
   threads; share the object where it is shared, \`st = thread_shared Stats()\`, and say which lock
   guards each field that changes (\`words: int guarded by lock\`) or make it \`Atomic[int]\``.
@@ -1868,7 +2113,8 @@ exit=0
   inside \`with st.lock:\`` (AN-74's message, in this program's names).
 - `@nosync` reaching a lock: `E4002`, today's, which names the chain (`[EFF-6]`).
 
-**7. Cost:** none from the words; the lock is C's (AN-74).
+**7. Cost:** none from the words, `changes Stats` included (checked when compiling); the lock is C's
+(AN-74).
 
 **8. Kind:** a readable spelling of Rust's guarantee (Rust's `Sync`, inferred, named `ThreadShared`;
 the class marker replaced by words on the value and the fields).
@@ -1877,6 +2123,7 @@ the class marker replaced by words on the value and the fields).
 
 ### AN-81: `@static_safe` forbids only aliasing checks
 
+**v3:** no verdict of 21 to 34 changes a line of this answer; E4030's message is cited from `V3/rules.md`.
 **Meaning changed:** no.
 
 **1. Intent:** mark a hot function as having no run-time checks.
@@ -1927,8 +2174,8 @@ same contract): `exit=0`.
   `@no_alias_checks`, whose `collide(ref mut bodies[i], ref mut bodies[j])` (line 3) is compared once
   while running (R4): `error[E4030]: \`step\` is \`@no_alias_checks\`, and \`collide(ref mut
   bodies[i], ref mut bodies[j])\` (line 3) compares \`i\` and \`j\` while running; prove them different
-  (\`if i != j:\` around the call), or remove \`@no_alias_checks\`` (`RUN4/rules.md` section 3). The
-  run-time alias checks left in the model are R4's index compare and `assert_disjoint`.
+  (\`if i != j:\` around the call), or remove \`@no_alias_checks\`` (`V3/rules.md` section 3, E4030
+  row). The run-time alias checks left in the model are R4's index compare and `assert_disjoint`.
 
 **7. Cost:** none; the contract is checked when compiling.
 
@@ -1939,7 +2186,7 @@ named for it).
 
 ### AN-82: `@no_runtime_checks` is reserved, promising a switch that will never exist
 
-**Meaning changed:** no.
+**v3:** no verdict of 21 to 34 changes a line of this answer. **Meaning changed:** no.
 
 **1. Intent:** turn off safety checks in a release build.
 
@@ -1998,7 +2245,7 @@ what to write.
 
 ### AN-83: `@fp(contract)` allows fused multiply-add while "contract" elsewhere means a checked promise
 
-**Meaning changed:** no.
+**v3:** no verdict of 21 to 34 changes a line of this answer. **Meaning changed:** no.
 
 **1. Intent:** allow fused multiply-add in one function.
 
@@ -2042,7 +2289,11 @@ attribute, its `f64::mul_add` is explicit).
 
 ### AN-84: two error codes mean two unrelated things each: E5015 and E7010
 
-**Meaning changed:** no (the `MutSpan` argument says `ref mut` at the call, decision 3).
+**v3:** `place`'s `MutSpan` parameter, which writes the caller's numbers, says `ref mut` in front of
+its name, like every name that may change something it does not own (verdict 34; R5's exception by type
+is withdrawn), in the accepted program and in E7016's refused one. The call already said `ref mut`
+(verdict 3). **Meaning changed:** yes, for one line: v2's `fn place(xs: MutSpan[int], idx:
+Span[int]):`, which writes `xs[i]`, is refused (E3023, part 6); the program does what it did.
 
 **1. Intent:** read an error code and look it up.
 
@@ -2120,7 +2371,7 @@ error[E7012]: `bump` may be called from any thread (`@export(threads=any)`), and
 E7016's message, on the refused program written out (`place` with its loop as a `while` loop):
 
 ```ember
-fn place(xs: MutSpan[int], idx: Span[int]):
+fn place(ref mut xs: MutSpan[int], idx: Span[int]):
     i = 0
     @parallel
     while i < idx.len():
@@ -2140,8 +2391,9 @@ names) would not say it; the line it gives is the accepted `place` below. The ow
 refused program: `xs`, `idx` as in the table below; `i` (line 2): none (default: `place`'s own number),
 changed by `i += 1`, written.
 
-The programs the new codes' messages lead the programmer to, in NEW spelling (run 4's, with one change,
-decision 3: the argument given to `place`'s `MutSpan` parameter says `ref mut` at the call, R4):
+The programs the new codes' messages lead the programmer to, in NEW spelling (run 4's, with two
+changes: the argument given to `place`'s `MutSpan` parameter says `ref mut` at the call, verdict 3, and
+the parameter says `ref mut` in front of its name, verdict 34; R4):
 
 ```ember
 import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
@@ -2151,7 +2403,7 @@ from std.sync import Lock
 pub extern "C" fn read_text(text: *u8) -> i32:         # E5015's help: a C type in the export
     return 0
 
-fn place(xs: MutSpan[int], idx: Span[int]):             # E7010's help: indexed by its own `i`
+fn place(ref mut xs: MutSpan[int], idx: Span[int]):     # E7010's help: indexed by its own `i`
     @parallel
     for i in 0..idx.len():
         xs[i] = idx[i]
@@ -2176,10 +2428,12 @@ fn main():
 
 `place(ref mut a.as_mut_span(), order.as_span())`: `ref mut` says the call may change `a`'s elements
 (before a `MutSpan` the word names its elements, so it stands before the span made in the call, R4;
-without it, E3028: "`place` changes the elements of `a` (its parameter `xs` is a `MutSpan`); say so at
-the call: `place(ref mut a.as_mut_span(), order.as_span())`"). The two arguments are views of two
-different lists, `a` and `order`, so R4's "arguments do not overlap a changeable one" is proved when
-compiling, with nothing checked while running, and `xs` is compiled with noalias (R4).
+without it, E3028: "`place` changes the elements of `a` (its first line says `ref mut xs:
+MutSpan[int]`); say so at the call: `place(ref mut a.as_mut_span(), order.as_span())`"). The parameter
+says the same words, `ref mut xs: MutSpan[int]` (R4, verdict 34): a plain `xs: MutSpan[int]` only reads
+the caller's numbers, and `xs[i] = idx[i]` through it is refused (E3023, part 6). The two arguments are
+views of two different lists, `a` and `order`, so R4's "arguments do not overlap a changeable one" is
+proved when compiling, with nothing checked while running, and `xs` is compiled with noalias (R4).
 
 **4. The owner's test:**
 
@@ -2187,7 +2441,7 @@ compiling, with nothing checked while running, and `xs` is compiled with noalias
 |---|---|---|
 | `v` (1) | `import ... as v`: the C module's name | none (default: a module's name changes nothing) |
 | `text` (5) | `*u8` (its type): a raw pointer to bytes C owns | `*u8` without `mut`: reads only |
-| `xs` (8) | `MutSpan` (its type): a view of the caller's numbers, the only name for them while `place` runs (R8 (f)) | `MutSpan`: its elements may be written (R5's exception by type); the caller says `ref mut` (line 27) |
+| `xs` (8) | `ref mut` (the caller's numbers, through its `MutSpan`: the only name for them while `place` runs, R8 (f)) | `ref mut` (it may write them, R4, verdict 34); the caller says `ref mut` too (line 27) |
 | `idx` (8) | `Span` (its type): a view of the caller's numbers | `Span`: read only |
 | `i` (10) | none (default: the loop's own number) | none (default: only the loop changes it) |
 | `HITS_LOCK` (13) | `static`: the module's own lock | none (default: a `Lock` changes only by being held with `with`) |
@@ -2207,7 +2461,12 @@ its own `i`:
 exit=0
 ```
 
-**6. Still refused:** everything refused today stays refused, under the codes above.
+**6. Still refused:** everything refused today stays refused, under the codes above. And, by verdict 34,
+v2's plain parameter: `fn place(xs: MutSpan[int], idx: Span[int]):` with `xs[i] = idx[i]` (line 11):
+`error[E3023]: \`xs[i] = idx[i]\` writes an element of the caller's span, but \`xs\` only reads it;
+write \`fn place(ref mut xs: MutSpan[int], idx: Span[int]):\`; the call already says
+\`place(ref mut a.as_mut_span(), order.as_span())\`` (R4, R5; the rules' E3023 row, in this program's
+names).
 
 **7. Cost:** none.
 
@@ -2218,52 +2477,53 @@ thing, as Rust's codes do).
 
 ### 4.1 Words needed
 
-None. Every word this area's NEW blocks and messages use has a row in `V2/vocabulary.md`. Checked by
-`target/redesign4/v2-06-area-E/check_words.py` (output in `check_words.txt` beside it): it lists every
-name in the NEW code blocks (part 3 of each answer) and in the inline code of parts 3 and 6 that does
-not occur inside a `` `...` `` span of the vocabulary. Of the 173 names in the NEW blocks, those it lists
-are all the programs' own names (`count_words`, `Names`, `Button`, `Game`, `HITS`, `texts`, `token`,
-`report`, ...). Of the inline code, it lists the programs' own names (`FRAME_LOCK`, `collide`, `bodies`,
-`parts`, `mine`, `log2`, `cache`), error codes, plain English inside quoted messages, `global` (the
-Python spelling a message refuses, AN-76), Rust's lint name `unsafe_op_in_unsafe_fn` and the tool
-command `ember tcb` (AN-78), none of which is a word of an Ember program. The five rows run 4 asked for
-(`count`; a raw pointer's `read` and `add`; `*T`; `i16`; `user_data`) are now in the vocabulary
-(`V2/changes.md` section 5, "E words"). Run 4's AN-76 named `jobs.submit`, which has no row; this file
-says "an unscoped job of the job system" instead.
+None. Every word this area's NEW blocks and messages use has a row in `V3/vocabulary.md`. Checked by
+`target/redesign4/v3-06-area-E/scripts/check_words.py` (output in
+`target/redesign4/v3-06-area-E/check_words.txt`): it lists every name in the NEW code blocks (part 3 of
+each answer), in the inline code of parts 3 and 6 and in the code inside their quoted messages that does
+not occur inside a `` `...` `` span of the vocabulary. The 66 names it lists are the programs' own names
+(`count_words`, `Names`, `Button`, `Game`, `poll_events`, `sqrt`, `dump`, `HITS`, `texts`, `token`,
+`report`, ...), error codes, file and test names carried from run 3 (`f4_fnvalue_static_loop`, `y14`,
+`x05`), plain words of the trampoline's description (`slot`, `generation`, `0x4080`), `global` (the
+Python spelling a message refuses, AN-76) and Rust's lint name `unsafe_op_in_unsafe_fn` (AN-79), none of
+which is a word of an Ember program. The words v3 adds to this area are all rows of the vocabulary:
+`changes` with a captured variable (`changes total`, `changes stats`), with a type (`changes Log`,
+`changes Stats`, `changes Game`) and on `main` (`changes FRAME, LOG, RESULTS`); `@ffi(no_callbacks)` (row
+`@ffi`); `ref mut` on a `MutSpan` parameter (rows `ref mut`, `MutSpan`); `as f64` (rows `as`, `f64`).
 
 ### 4.2 For the owner
 
-Run 4's question (AN-77, a generator kept while its list changes) is answered by decision 16 and
-applied. Four new points, one at a time, each with what this file does meanwhile:
+v2's four points (`V2/area-E.md` section 4.2) are answered by verdicts 29 to 32 and applied (section 2).
+Three new points, one at a time, each with what this file does meanwhile.
 
-1. **Does a function that changes a value shared between threads say so?** (AN-75, AN-80; section 2,
-   reading 1.) `fn() with thread_shared log: log.push("a")` changes the log, under its lock. The v2
-   rules say a function type names what it changes through a `weakref`, `shares mut` or `sharedref
-   mut` link, and that changes through `Mutex`, `RwLock`, `Atomic` or a channel need no word; they do
-   not say which of the two a `thread_shared` value changed under a `guarded by` lock is. Memory safety
-   does not need the word (taking the same lock twice on one thread waits, it never changes a list under
-   a walk). Meanwhile this file writes no word, as for a `Mutex`. The other choice is
-   `fn() with thread_shared log changes Log: log.push("a")`, which says more on the line and costs
-   nothing while running.
-2. **What a thread's function and a C callback may change** (AN-76, AN-78; section 2, reading 2).
-   Decision 17 makes `thread.spawn(fn() changes RESULTS: worker(1))` and
-   `register_cb(fn() with owns game changes Game: game.add_point())` say what they change. The rules do
-   not say what function type `thread.spawn`, `scope.spawn` and a C `callback(...)` parameter accept;
-   this file takes it to be a function of any `changes` (a thread is not a call, and its changes are
-   checked by the thread rules), so neither is E2113. This is the library's first line to write
-   (for example `fn spawn[C](owns f: fn() changes C) -> JoinHandle`), next to `V2/changes.md` section 11,
-   question 1 (`for_each` and friends).
-3. **A foreign call may run a callback C keeps** (AN-76 rule 3, AN-78; section 2, reading 3). Run 4's
-   R12 counted "the callbacks C may run on this thread during" a foreign call; v2's R12 replaced that
-   rule with function types and no longer says it for C. Without it, a loop over a game's list across a
-   call such as `poll_events()` would not see that a kept callback may push to that list. This file
-   reads it by types: a foreign call on a thread where kept callbacks may run makes every change their
-   types say. This is a rule, so the rule writer or the lead should settle it in R12 or R15.
-4. **A plain parameter of a `shares mut` type cannot pass on an owner that may change** (AN-78). Run 4
-   gave `setup` a plain parameter and made the callback's owner from it in the capture. Under R4 and
-   R5 a plain parameter only reads, and R3 refuses a changing owner made from a reading name (E3023),
-   so the v2 program is `fn setup(owns game: shares mut Game)`, called `setup(shares mut game)`, with
-   `with owns game`: the call says the callee gets one more owner that may change the game, which the
-   line before did not say. This file takes that as the rules' intent (the line now says who may
-   change the game). The other reading lets a plain `x: shares mut T` parameter make `shares mut x`
-   owners, which is shorter but lets a read-only name create a writer.
+1. **May a `guarded by` field be changed under its lock through a plain name, as a `Mutex`'s value
+   is?** (AN-75; section 2.) R4 says "Only a `Mutex`, `RwLock`, `Atomic` or channel end may be changed
+   through a plain name, by its own operations", and does not name a `guarded by` field, which is this
+   area's readable spelling of a `Mutex` around the fields (AN-74). AN-75's `fn start(log: thread_shared
+   Log) changes Log:`, the vocabulary's own example of a `thread_shared` parameter, gives each thread
+   `with thread_shared log`, an owner that changes `lines` under the lock. If a plain name may not do
+   that, R3 ("an owner made from another may do no more than it") refuses the capture, and `start` must
+   take an owner, `fn start(owns log: thread_shared Log) changes Log:`, called `start(thread_shared
+   Log())`; E7013's way out "or call `log.push("c")`" in `start` would be refused too. Meanwhile this
+   file reads a `guarded by` field as its lock's value, one rule for `Mutex`, `Lock` and `guarded by`
+   (verdict 3: their "only me" is the lock's block), and keeps v2's `start`. Either costs nothing while
+   running.
+2. **Verdict 29's gain covers a walk, not every call made while a lock is held.** `with log.lock: for
+   line in log.lines: note()`, where `note` is a `fn() changes Log`, is refused when compiling (E3020,
+   AN-75). `with log.lock: note()`, with no walk, where `note` pushes to the same log, is accepted and
+   waits for ever while running: `push` takes the lock its own thread holds, and AN-74's static re-entry
+   covers only calls whose body the compiler sees. That is a hang, never a memory error, and C and Rust
+   do the same (Rust's `Mutex::lock` does not return when the thread already holds the lock). The
+   choices: (a) leave it, as C and Rust do (this file); (b) refuse a call through a function value whose
+   type says `changes Log` while this thread holds a `Log`'s lock, which also refuses a function that
+   changes another log; (c) keep in each lock the thread that holds it and stop the program, naming the
+   function, instead of hanging: one store when the lock is taken and one compare before, not measured.
+3. **Verdict 30's refusal of a `spawn` inside a walk of what its thread changes guards nothing that
+   memory safety needs in this area's programs.** A list another thread may change is reached only under
+   its lock (`guarded by`, `Mutex`, E7012, E7014), and the walk holds that lock, so the new thread's
+   change waits until the walk ends (AN-76's `RESULTS`); a scoped task's change to a list its parent
+   walks is already refused by E7007 (nothing reads a task's place before the join, R15). No question:
+   this file applies the verdict as written ("start the thread after the loop" moves one line), and notes
+   it so that the owner can judge whether it is an understandable limitation or an annoyance. For the
+   rule writer: R15 does not say which of E3020 and E7007 a scoped task that changes the list its parent
+   walks gets (R18: one mistake, one message).

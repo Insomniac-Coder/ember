@@ -1,29 +1,54 @@
-# Area D: linked objects, callbacks, interface types (run 4, step 1, v2; agent 05)
+# Area D, v3: linked objects, callbacks, interface types (AN-53 .. AN-70)
 
-Every answer of area D (AN-53 to AN-70) brought to the v2 rules (`V2/rules.md`) and words
-(`V2/vocabulary.md`), which carry the owner's 20 decisions of 2026-10-25 (`inputs/JOB.md`). `RUN3` means
-`tasks/96/redesign/run3/`, `RUN4` means `tasks/96/redesign/run4/`, `V2` means
-`tasks/96/redesign/run4/v2/`. "R1" .. "R18" are the rules of `V2/rules.md`; "row N" is the owner's agreed
-row N and "decision N" the owner's decision N in `inputs/JOB.md` ("Owner verdicts on run 4's open
-questions"); G-01 .. G-11 are the problems of `RUN3/22-re-attacker.md`.
+Agent 05 (area-D), run 4, step 2 (v3). Every answer of area D brought to the v3 rules and words, which
+apply all of the owner's verdicts 1 to 34 (`inputs/JOB.md`, "Owner verdicts on run 4's open questions";
+27 replaces 25): `V3/rules.md` (rules R1 to R18, the codes), `V3/vocabulary.md` (the words) and
+`V3/changes.md` (what changed from v2). `RUN3` means `tasks/96/redesign/run3/`, `RUN4` means
+`tasks/96/redesign/run4/`, `V2` means `tasks/96/redesign/run4/v2/`, `V3` means
+`tasks/96/redesign/run4/v3/`. "R1" .. "R18" are the v3 rules; "row N" is the owner's agreed row N and
+"verdict N" the owner's verdict N in `inputs/JOB.md` (v2 wrote "decision N" for verdicts 1 to 20; this
+file says "verdict N" throughout); G-01 .. G-11 are the problems of `RUN3/22-re-attacker.md`.
 
-Power: `PowerLineStatus` printed `Online` at the start of this work, before the `ember check` run and the C
-run, and before writing this file. No compiler change, no git command, no Ember program run. Scratch
-files: `C:\Users\ism19\Code\ember\target\redesign4\v2-05-area-D\` (`template.md` and `build.py`, which
-copy every OLD part, and every pasted output that carries over, from `RUN4/area-D.md` unchanged;
-`m55_inspect_count.em` and `check_output.txt`, the one `ember check`; `c\an62_an63_v2.c` and
-`c\an62_an63_v2_output.txt`, the C of AN-62 (b) and AN-63 under AddressSanitizer).
+No compiler change, no git command, no Ember program run, and no new `ember check`: this file makes no
+new claim about what today's Ember accepts or refuses, and where it cites today's compiler on a new
+spelling it cites the rule writer's probes (`V3/changes.md` section 7, `r1` .. `r8`). This file is phase
+0's copy of `V2/area-D.md` (`V3/spelling-changes.txt` lists its replaced lines), edited in place: every
+OLD block and every "means exactly" block in today's Ember, with its pasted output, is v2's byte for byte
+(checked by `target/redesign4/v3-05-area-D/check_carried.py`, output in `check_carried.txt`); only the
+prose, the NEW blocks, the owner's-test tables, the refusals and the costs changed. One new C check was
+run in this step, on Linux in a cloud container: `target/redesign4/v3-05-area-D/c/an62b_region.c`, AN-62
+(b) in a deferred-drop region, built with gcc 13.3 and AddressSanitizer (output in
+`c/an62b_region_output.txt`; no timing). The C files and outputs v2 and run 3 cite (`c/...`,
+`c\an62_an63_v2.c`) were on the owner's laptop and are not in this checkout; their pasted outputs carry
+over unchanged. What changed from v2 is said once per answer, in its "v3" line, and in the table below;
+what changed before that is in `V2/area-D.md`.
+
+Each answer has the eight parts: 1 intent; 2 OLD with today's output; 3 NEW; 4 the owner's test for
+every declared name; 5 means exactly (today's Ember or C doing what NEW means); 6 still refused, each with
+its code and message; 7 cost; 8 kind. In the owner's-test tables "none (default: ...)" means no word in
+the line answers that question and the stated default does (allowed only where the default never changes
+anything, never aliases silently and never copies silently).
 
 ## Terms used in this area
 
 - **function value**: a function or lambda kept in a variable, a list or a field (a callback, a
-  handler): two words, its code and its **state** (what it captured with a word). Its type says what it
-  may change outside itself (R12): `fn()` nothing, `fn() changes LOG` the module variable `LOG`,
-  `fn() changes Ui` objects of type `Ui` it reaches through a link it holds.
+  handler): two words, its code and its **state** (what it captured with a word). Its type says
+  everything it may change but its own state (R12): `fn()` nothing at all, `fn() changes LOG` the module
+  variable `LOG`, `fn() changes score` the variable `score` it captured, `fn() changes Ui` objects of type
+  `Ui` it reaches through a link it holds, and, in the type of a field, list or parameter that keeps
+  functions, `fn() changes captured` (each function may change the one variable it captured) or
+  `fn() changes captured...` (any number of them) (verdict 22).
 - **capture**: a name a lambda uses from the function that made it. **The real variable** (row 6): that
-  very variable, not a copy; a write in the lambda is seen by the function, and back. A captured real
-  variable is part of the function value itself (R12).
+  very variable, not a copy; a write in the lambda is seen by the function, and back. A lambda that
+  changes a real variable it captures names it on its first line (`fn() changes score:`, verdict 22); it
+  is checked in the function that writes the lambda (R12).
 - **capture list**: what follows `with` after a lambda's parameters (`fn() with copy of score:`).
+- **change list**: a generic parameter written after `changes` (`fn each_name[C](owns f: fn(owns String)
+  changes C) changes C:`): it stands for what the function given to the call changes, and the call
+  counts as making those changes (R12, verdict 21).
+- **kind test**: `if s is Circle as c:` (runs its block when `s` is a `Circle`, and names it `c` there)
+  and `if s is Circle:` (tests only); the "not sure" downcast. `cast s as Circle` is the "sure" one: it
+  stops the program if `s` is not a `Circle` (R14, verdict 27).
 - **box**: a small counted heap block holding one captured variable, shared by every user of the
   variable (Python's "cell").
 - **holder**: the object or list whose field or element holds a function value or another object.
@@ -35,37 +60,59 @@ copy every OLD part, and every pasted output that carries over, from `RUN4/area-
 - **count pair**: one +1 and one -1 of an object's count around a use, to keep it alive across it.
 - **deferred-drop region**: a stretch of code (a loop) during which an object whose last owner ends is
   set aside whole (it and everything it owns marked ended) and freed when the stretch ends (R10 point 2).
-- **AddressSanitizer** (ASan): a clang option that stops a program with a report the moment it reads or
-  writes memory it must not.
+- **AddressSanitizer** (ASan): a clang and gcc option that stops a program with a report the moment it
+  reads or writes memory it must not.
 - **today**: `ember check <file>` with today's compiler (`target/redesign3/bin/ember.exe` in run 3,
-  `target/redesign4/bin/ember.exe` in run 4 and here). Every claim about today has its output pasted.
+  `target/redesign4/bin/ember.exe` in run 4 and v2, on the owner's laptop; `target/redesign4/bin/ember
+  check` in this checkout). Every claim about today has its output pasted.
 
 The OLD code of every answer is unchanged, so every OLD part, with its `ember check` output, is copied
-unchanged from `RUN4/area-D.md` (file names in it are relative to `target/redesign3/11-area-D/`).
+unchanged from `RUN4/area-D.md` through `V2/area-D.md` (file names in it are relative to
+`target/redesign3/11-area-D/`).
 
-## Answers whose meaning changed from run 4
+## What v3 changed in each answer
 
-| answer | what changed, and how |
-|---|---|
-| AN-53 | run 4's stated limitation (G-07: inside `click` every `h()` was taken to make every change any `fn()` of the program makes) is gone: a plain `fn()` changes nothing outside itself (decision 17), so a handler that changes a module variable says so (`fn() changes LOG`) and is kept only in a list that says so (E2113 otherwise). The program and row 6 are unchanged |
-| AN-57 | the way out the E3026 message gives now names what the handler changes: `fn() with shares mut count changes Counter:`, kept in a list of `fn() changes Counter` (decision 17); the refused program is unchanged |
-| AN-60 | the second way out (read-only `fn(Ui)` handlers walked with `for`) is now accepted for every program, by the handlers' type: a `fn(Ui)` changes no `Ui` (decision 17); run 4's whole-program search is gone. G-05's handler has the type `fn(Ui) changes Ui` and is refused in that list (E2113). `watch`'s handler changes a `Ui` through its `weakref` capture, so it says `changes Ui` and is kept in a button whose list says so |
-| AN-61 | the programmer's own shape, a handler named by `get_mut` and then called with the Ui, is now accepted when the name says `ref mut` (`h = ref mut this.handlers.get_mut(i).unwrap()`, `h(ref mut this)`; R8 (f)); run 4 refused it (E3022) |
-| AN-62 | rewritten without `set by` (decision 14): the program sets each parent link itself (`child.parent = weakref this`). With a plain `fn(Node)` callback (which changes no node, decision 17) the walk keeps views, needs no protection and no header test per step (R10 point 1, R11's proof). A callback that may change or end nodes says `changes Node`; then no view of a node may live across the call (decision 5), so the walk keeps a link (`up = weakref p`): one header test and one weak-count subtract and add per step, and it stops at the first ended parent (decision 15). Run 4's question (a node visited once after its parent was removed) is gone with `set by` |
-| AN-63 | rewritten without `set by` (decision 14): `add` and `take` set and clear the parent link; reads need no header test where R11 proves the link follows ownership, and every read tests where it cannot. The costs now include a weak count per link |
-| AN-64 | the warning's advice names a `weakref` field, and the parent pair's error names `parent: weakref Node = None` set by the program (no `set by`) |
-| AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if s is Circle as c:`, instead of today's "did you mean `c == ...`" |
+"Meaning changed" compares with `V2/area-D.md`; what changed from run 4 to v2 is `V2/area-D.md`'s table
+"Answers whose meaning changed from run 4". The verdicts that land in area D are 22 (what a lambda and a
+list of functions say they change: AN-53, row 6, and AN-55 to AN-58), 21 (a function handed a function:
+AN-55, AN-56), 27 (kind tests: AN-67, AN-68), 28 (the walk that may delete: AN-62), 30 (starting a
+thread counts: AN-55) and 32 (the word on the name: AN-57). Verdicts 23, 24, 26 (done in phase 0), 29,
+31, 33 and 34 change no line of area D's code: no answer of area D hands on a `shares` owner, makes a
+value in an arena, takes a lock, calls C, uses `.copied()` or holds a `MutSpan` (verdict 31 is area E's,
+AN-78). Every answer now cites "verdict N" and the v3 files.
 
-Spelling changes that do not change meaning (every answer): `owns` for `owned`, `shares` / `shares mut`
-for `shared`, `copy of` for `copied`, `weakref` for `weak`, `if x exists as p:` and `while x exists as p:` for
-run 4's `if p = x:` and `while p = x:`, `changes this` for `ref mut this` after the brackets (AN-60, AN-61,
-AN-70), and the messages in those spellings. AN-55's iterator line is the programmer's own again
-(`.inspect(...).count()`), since `count` now has a row (`V2/vocabulary.md`, the iterator row). AN-70's
-override no longer uses `min` (see "Words needed").
+| answer | what changed | meaning changed? |
+|---|---|---|
+| AN-53 (row 6) | row 6's handler says `changes score` (verdict 22); `Button`'s list is `Array[fn() changes captured]`, `on_click` takes `fn() changes captured`, `click` says `changes handlers, captured...` (R12; `V3/changes.md` section 11, question 1); refusals added: row 6's v2 spelling (E2105), a two-variable handler (E2113), a handler stored in the button it changes (E3022), `click` without `captured...` (E2105); the `LOG` handler's list becomes `Array[fn() changes captured, LOG]` | **yes**: v2's `handlers: Array[fn()]` with `b.on_click(fn(): score += 1)` is refused; the program does what it did, and row 6 reads as the owner agreed it |
+| AN-54 | the v3 line; one refusal added: a handler that changes the real `score` without naming it (E2105) | no |
+| AN-55 | the lambda given to `inspect` says `changes seen` (verdict 22), and `inspect`'s change list makes `count()`, which drives the adapter, the call that changes `seen` (verdict 21); starting the thread counts as making what its function changes (verdict 30), here nothing, so `main` names nothing; refusals added: the lambda without `changes seen` (E2105), the iterator line inside a loop over `seen` (E3020), a scoped task started inside a loop over what it changes (E3020) | **yes**, for one line: v2's `inspect(fn(v) => seen.push(v))` is refused (E2105); the program does what it did |
+| AN-56 | the first lambda says `changes names` (verdict 22), and `each_name` takes a change list, `fn each_name[C](owns f: fn(owns String) changes C) changes C:` (verdict 21); the E2020 way out gives `fn(s) changes names: names.push(copy of s)` | **yes**: v2's `fn each_name(owns f: fn(owns String)):` no longer takes the first lambda (E2113); the program does what it did |
+| AN-57 | the refused lambda says `changes total` (verdict 22), still E3026; one refusal added: the help followed with a plain `count: shares mut Counter` parameter (E3023, verdict 32) | no |
+| AN-58 | the lambda says `changes score`, and the local list is `Array[fn() changes captured]` (verdict 22) | **yes**, for two lines: v2's `hs: Array[fn()]` with `fn(): score += 1` is refused; the program does what it did |
+| AN-59 | the v3 line only: none of its lambdas changes a variable it captured | no |
+| AN-60 | the E2113 message for `watch` with AN-53's `Button` names that button's v3 type; phase 0's wrong replacement in an E2113 message (an English "holds" turned into `exists as`) put right | no |
+| AN-61 | the v3 line only | no |
+| AN-62 | (b) is verdict 28's walk, word for word; its view walk is refused with R11's message (E3021); its cost follows R11's region (one header test per step; the weak-count moves go, since `Node` has no `drop` method), checked in C under ASan in this step, not timed; a refusal added: a function stored in the tree it changes (E3022, v2's note 1); v2's question for the owner answered by verdict 28 | no |
+| AN-63 | the v3 line only | no |
+| AN-64 | the v3 line only | no |
+| AN-65 | the v3 line only | no |
+| AN-66 | the v3 line only | no |
+| AN-67 | the kind test's prose and owner's-test row (verdict 27); refusals rewritten: today's `cast ... if Pool[T]` and the removed `cast ... when Pool[T]`, a `match` on a maybe-downcast, `as?` and `as!` (E1010); added: a plain name from the kind test whose element is returned `ref mut` (E3023) | no |
+| AN-68 | the OLD line is now refused as `cast s if Circle` (E1010, verdict 27) with the line meant, instead of v2's E2036; refusals rewritten and added: a test that always passes (E2036), `cast s when Circle` (E1010), `match cast s if Circle:` (E1010) | no |
+| AN-69 | the v3 line only | no |
+| AN-70 | the v3 line only | no |
 
 ---
 
 ## AN-53: A closure that changes a variable of the function that made it (A12; agreed row 6)
+
+**v3:** row 6 reads as the owner agreed it in verdict 22, `b.on_click(fn() changes score: score +=
+1)`. A plain `fn()` now changes nothing at all, captured variables included, so `Button`'s list covers
+the variable each handler captured with `captured`, as the owner settled it (`handlers: Array[fn()
+changes captured]`), and `click`, which runs them, says `changes handlers, captured...` (R12; the rule
+writer's reading, `V3/changes.md` section 11, question 1). **Meaning changed:** yes, for v2's lines:
+`handlers: Array[fn()]` with `b.on_click(fn(): score += 1)` is refused (E2105 for the lambda, then
+E2113 for the list, part 6); the program does what it did: the button adds 1 to `game`'s real `score`.
 
 **1. Intent:** the button adds 1 to `game`'s score.
 
@@ -132,19 +179,19 @@ exit=0
 
 ```ember
 class Button:
-    handlers: Array[fn()] = []
+    handlers: Array[fn() changes captured] = []      # each may change the one variable it captured
 
-    fn on_click(owns f: fn()) changes handlers:
+    fn on_click(owns f: fn() changes captured) changes handlers:
         this.handlers.push(f)
 
-    fn click() changes handlers:
+    fn click() changes handlers, captured...:
         for ref mut h in this.handlers:
             h()
 
 fn game() -> int:
     score = 0
     b = Button()
-    b.on_click(fn(): score += 1)       # row 6: game's real `score`
+    b.on_click(fn() changes score: score += 1)       # row 6: game's real `score`
     b.click()
     return score                       # 1
 
@@ -156,33 +203,42 @@ fn game_copy() -> int:
     return score                       # 0: only the handler's copy went up
 ```
 
-Changed from run 4: `owns f` (was `owned f`) and `with copy of score` (was `with copied score`). The
-calls write no `ref mut`: `b.on_click(...)` and `b.click()` are methods called on `b`, whose first lines
-say what they change (R4); `f` is an `owns` parameter, and a hand-over is written with no word (R4).
-`handlers` holds plain `fn()`: a function that changes nothing outside itself (R12). Row 6's
-`fn(): score += 1` is one: `score` is a real variable it captures, which is part of the function itself
-and is checked in `game`, the function that writes the lambda (R12; row 6 as agreed). `click` says
-`changes handlers` and walks with `ref mut h` because a call through a stored function value may change
-its own state, so it is a change of the place that holds it (R12); it names nothing more, since the
-handlers' type says they change nothing outside themselves. Where `game`'s real `score` lives (R12): at
-its own address, since `b` never leaves `game` and both methods it is handed to say what they change, so
-the handler provably ends first. In `game_copy` the captured `score` is named (`copy of`), so it is the
-handler's own state.
+Changed from v2 (verdict 22): the lambda says `changes score`, the list's type says `changes captured`,
+`on_click`'s parameter says the same, and `click` says `changes handlers, captured...`. The calls write
+no `ref mut`: `b.on_click(...)` and `b.click()` are methods called on `b`, whose first lines say what
+they change (R4); `f` is an `owns` parameter, and a hand-over is written with no word (R4).
+
+Row 6's handler changes `score`, a real variable of `game` that it captures, and says so on its first
+line (`fn() changes score:`, R12; checked against its body both ways, E2105). The `Button` cannot name
+`game`'s `score` in its own type, so its list covers it with `captured`: each function in it may change
+the one variable it captured (a function that changes none fits too). `click` says `changes handlers`
+and walks with `ref mut h` because a call through a stored function value may change its own state, so
+it is a change of the place that holds it (R12), and `captured...` because it runs every handler in the
+list, and each may change its own captured variable (R12: `captured...` where it runs several). In
+`game`, the function that wrote the lambda, those variables are its own locals (`score`), so `game` names
+nothing (R5); the compiler checks them there: `b` holds a function value that reaches `score`, and
+`b.click()` counts as a change of `score` (R12), so `return score` reads it after the click. Where
+`game`'s real `score` lives (R12): at its own address, since `b` never leaves `game` and both methods it
+is handed to say what they change, so the handler provably ends first. In `game_copy` the captured
+`score` is named (`copy of`), so it is the handler's own state: that handler changes nothing outside
+itself, a plain `fn()`, which fits the same list (it changes fewer captured variables than `captured`
+allows, R12).
 
 **4. The owner's test.**
 
 | name | what it is | may it change it |
 |---|---|---|
-| `handlers` (field) | none (default: the Button's own list; each element its own function value, of type `fn()`: it changes nothing outside itself) | only in a method whose first line says `changes handlers` (or `changes this`) |
+| `handlers` (field) | none (default: the Button's own list; each element its own function value); its type `fn() changes captured`: each function may change the one variable it captured | the list: only in a method whose first line says `changes handlers` (or `changes this`); each function: `changes captured`, its own captured variable |
 | `this` in `on_click` | `this`: the Button the method was called on | `changes handlers`: that field only |
-| `f` | `owns`: handed over to `on_click` | its new owner may; it hands it on to the list |
+| `f` | `owns`: handed over to `on_click`; its type `fn() changes captured` | its new owner may; it hands it on to the list (storing it changes nothing it changes, R12) |
 | `this` in `click` | `this` | `changes handlers` (R12: calling a stored function value may change it) |
+| what `click` runs | the handlers' captured variables | `changes captured...`: each handler may change its own (R12) |
 | `h` | `ref mut`: an element of `handlers`, the only name for it while used (R8 (f)) | yes; calling it changes what its body changes, its own state included (R12) |
 | `score` in `game` | none (default: `game`'s own `int`, made by `=`) | its owner may |
 | `b` in `game` | none (default: `game`'s own Button, made by `=`) | through methods whose first line says `changes` |
-| `score` in the lambda | none (row 6: the real `score` of `game`) | yes, as row 6 says (`score += 1`) |
+| `score` in the lambda | none (row 6: the real `score` of `game`) | `changes score` on the lambda's first line: yes, the real one (row 6, verdict 22) |
 | `score`, `b` in `game_copy` | none (default: `game_copy`'s own `int` and Button) | as in `game` |
-| `score` in `game_copy`'s lambda | `copy of`: the handler's own copy (row 6) | yes, its own copy, through `click`'s `changes handlers` |
+| `score` in `game_copy`'s lambda | `copy of`: the handler's own copy (row 6) | yes, its own copy (its own state, which needs no word, R12), through `click`'s `changes handlers` |
 
 **5. Means exactly.** In today's Ember the real variable shared by `game` and the handler is a counted
 object (`means/m53_button_box.em`):
@@ -225,22 +281,48 @@ copies the `int`, which is what `with copy of score` names.
   `count = shares mut Counter()` and `fn() with shares mut count changes Counter: count.n += 1`, kept in
   a list of `fn() changes Counter`".
 - A capture used by a thread that may outlive it (AN-55), E7004.
+- Row 6's v2 spelling, `b.on_click(fn(): score += 1)`, E2105 (verdict 22: a plain `fn()` changes nothing
+  at all): "this function changes `score`, a variable it uses from `game`; say so on its first line:
+  `b.on_click(fn() changes score: score += 1)`" (R12).
+- v2's `handlers: Array[fn()]`, with row 6's handler as written above, E2113: "this function changes
+  `score`, a variable it captured (`fn() changes score`), and `on_click` takes `fn()`, functions that
+  change nothing; keep it in a list that says so: `handlers: Array[fn() changes captured]`, with
+  `fn on_click(owns f: fn() changes captured) changes handlers:`" (R12).
+- A handler that changes two variables it captured, `b.on_click(fn() changes score, lives: ...)` whose
+  body adds to `score` and takes from `lives`, E2113 (the owner's refinement of verdict 22): "`fn()
+  changes score, lives` changes 2
+  captured variables, and `handlers` allows 1 (`Array[fn() changes captured]`); for functions that change
+  any number write `handlers: Array[fn() changes captured...]` and `fn on_click(owns f: fn() changes
+  captured...) changes handlers:`" (R12).
+- A handler that changes the button that keeps it, `b.on_click(fn() changes b: b.handlers.clear())`,
+  E3022: "this function changes `b`, and `on_click` would keep it in `b.handlers`, so it would change the
+  button that holds it while the button runs it; clear the handlers after the click instead:
+  `b.click()`, then `b.handlers.clear()`" (R12: a function value is not stored in a place that a real
+  variable it changes owns, as Rust refuses).
 - `fn click():` with `for ref mut h in this.handlers: h()`, E2105: "`click` calls the handlers stored in
-  `this.handlers`, which may change their own state; say so on its first line,
-  `fn click() changes handlers:`, and walk them with `for ref mut h in this.handlers:`" (R12).
+  `this.handlers`, which may change their own state and the variable each captured; say so on its first
+  line, `fn click() changes handlers, captured...:`, and walk them with `for ref mut h in
+  this.handlers:`" (R12). With `changes handlers` alone, E2105: "`click` runs the handlers in
+  `this.handlers`, whose type says `changes captured`; add it to its first line: `fn click() changes
+  handlers, captured...:`".
 - A loop that walks a list a function value changes, around a call that may run it (R12, R8 (c)),
   E3020: "this loop walks `xs` (line 5), and `hs[0]()` (line 6) may run the function made on line 3,
-  which pushes to `xs`; call it after the loop, or collect what to add and push it after the loop".
-- A handler that changes something outside itself says so, and is kept only where the type says so
-  (R12, decision 17): `b.on_click(fn() changes LOG: LOG.push(String("clicked")))` with this `Button`,
-  E2113: "this function changes `LOG` (`fn() changes LOG`), and `on_click` takes `fn()`, functions that
-  change nothing outside themselves; keep it in a list that says so: `handlers: Array[fn() changes LOG]`,
-  with `fn on_click(owns f: fn() changes LOG) changes handlers:`". With such a list, `click` says
-  `changes handlers, LOG` (E2105 otherwise), and `b.click()` inside a loop over `LOG` is refused, E3020:
-  "this loop walks `LOG` (line 16), and `b.click()` (line 17) changes `LOG`: `click` runs the handlers of
-  `b`, an `Array[fn() changes LOG]` (its first line says `changes handlers, LOG`); click after the loop".
-  A button whose handlers are plain `fn()`, as here, is clicked inside such a loop with no refusal
-  (G-07 settled by the type, not by a search of the program).
+  which pushes to `xs`; call it after the loop, or collect what to add and push it after the loop". The
+  same holds for `b.click()` inside a loop over a list of `game`'s that a handler in `b` changes: in
+  `game`, which wrote the lambda, the call counts as each change the lambda names (R12).
+- A handler that changes a module variable says so, and is kept only where the type says so (R12,
+  verdict 17): `b.on_click(fn() changes LOG: LOG.push(String("clicked")))` with this `Button`, E2113:
+  "this function changes `LOG` (`fn() changes LOG`), and `on_click` takes `fn() changes captured`,
+  functions that change at most the one variable they captured; keep it in a list that says so:
+  `handlers: Array[fn() changes captured, LOG]`, with `fn on_click(owns f: fn() changes captured, LOG)
+  changes handlers:`". With such a list, `click` says `changes handlers, captured..., LOG` (E2105
+  otherwise: "`click` runs the handlers in `this.handlers`, whose type says `changes LOG`; add it to its
+  first line: `fn click() changes handlers, captured..., LOG:`"), and `b.click()` inside a loop over
+  `LOG` is refused, E3020: "this loop walks `LOG` (line 16), and `b.click()` (line 17) changes `LOG`:
+  `click` runs the handlers of `b`, an `Array[fn() changes captured, LOG]` (its first line says `changes
+  handlers, captured..., LOG`); click after the loop". A button whose handlers change only the variables
+  they captured, as here, is clicked inside a loop over `LOG` with no refusal (G-07 settled by the type,
+  not by a search of the program).
 
 **7. Cost.** At an address: none (the C passes `&score`). In the function value's own state
 (`game_copy`): nothing beyond the function value's own block. In a box: one allocation per variable
@@ -250,14 +332,21 @@ and one load per use. Run 3's W4 (callbacks that remove themselves) measured the
 workload at 1.018 and 1.052 of plain C with the shared total boxed, against 1.045 and 1.037 with it by
 address (`target/redesign2/graphs-callbacks-attack2/bench/runs/w4_a.txt`, `w4_b.txt`, summarised in
 `phase3b-graphs-callbacks-attack.md` 6.4). Rust's spelling of the same program is `Rc<Cell<i32>>`, the
-same box.
+same box. The words verdict 22 adds (`changes score`, `changes captured`, `captured...`) cost nothing
+while the program runs: they are checked when compiling (`V3/rules.md` section 2).
 
 **8. Kind:** a smarter compile-time solution (Rust refuses the program; here the compiler proves the
-cheaper place and otherwise uses the box Rust makes the programmer write).
+cheaper place and otherwise uses the box Rust makes the programmer write), with what each handler
+changes written on it, as verdict 22 asks.
 
 ---
 
 ## AN-54: `owned fn` moves a `String` capture and copies an `int` one (agreed row 6)
+
+**v3:** NEW as in v2. Under verdict 22 the handler is still a plain `fn()`: what it changes is its own
+state (its own `name` and its own copy of `score`), which needs no word (R12). One refusal added: the
+same handler with `score` left out of its capture list changes `main`'s real `score` and must say so.
+Meaning unchanged.
 
 **1. Intent:** a callback that uses a name and a score.
 
@@ -318,8 +407,8 @@ fn main():
     println(score)                    # 0, as `copy of` says
 ```
 
-Changed from run 4: `owns` and `copy of` (were `owned` and `copied`). The call says `run(ref mut cb)`, as
-`run`'s first line says `ref mut f` (R4). `cb` is a plain `fn()`: it changes only its own state (R12).
+The call says `run(ref mut cb)`, as `run`'s first line says `ref mut f` (R4). `cb` is a plain `fn()`:
+it changes only its own state, which is the function itself (R12), so it fits `run`'s `fn()`.
 
 **4. The owner's test.**
 
@@ -351,6 +440,14 @@ exit=0
   using it here, give the function a copy, `with copy of name`, or share it, `with shares name`".
 - `fn() with copy of name, score:`, E0116: "`copy of` here belongs to `name` only; say what the function
   does with `score`: `with copy of name, copy of score`, or leave `score` out to use the real `score`".
+- `cb = fn() with owns name:` with the same body (no word for `score`), E2105 (verdict 22): "this
+  function changes `score`, a variable it uses from `main`; say so on its first line: `cb = fn() with
+  owns name changes score:`, or give it a copy of its own: `cb = fn() with owns name, copy of score:`"
+  (R12). Written with `changes score`, it no longer fits `run`'s `fn()`, E2113: "`cb` changes `score`, a
+  variable it captured (`fn() changes score`), and `run` takes `fn()`, functions that change nothing;
+  take it as one that may, and say that `run` runs it: `fn run(ref mut f: fn() changes captured)
+  changes captured:`" (R12: a function that runs one function whose type says `captured` says
+  `captured`).
 - `run(cb)` with `fn run(f: fn()):`, E3023: "`cb` changes its own copy of `score` each time it runs, and
   `run` takes it read-only; write `fn run(ref mut f: fn()):` and call `run(ref mut cb)`" (R12).
 - `run(cb)` with `fn run(ref mut f: fn()):`, E3028: "`run` may change `cb` (its first line says
@@ -364,6 +461,14 @@ copied, as a Rust `move` closure.
 ---
 
 ## AN-55: The compiler decides a capture is moved from which function receives the lambda (`[CLO-15]`)
+
+**v3:** the lambda given to `inspect` changes `seen`, a variable it captured, so it says so on its first
+line, `fn(v) changes seen: seen.push(v)` (verdict 22), and `inspect` keeps it with its change list, so
+`count()`, which drives the adapter, is the call that changes `seen` (verdict 21; the iterator row of
+`V3/vocabulary.md`). Starting a thread now counts as making what its function changes (verdict 30); the
+thread's function here changes only its own state (it owns `xs`), so `main` names nothing. **Meaning
+changed:** yes, for one line: v2's `inspect(fn(v) => seen.push(v))` is refused (E2105, part 6); the
+program does what it did.
 
 **1. Intent:** count `xs` on another thread, and record the values an iterator sees into `seen`.
 
@@ -403,17 +508,26 @@ callee decides, nothing in the line says it.
 fn main():
     xs = [1, 2, 3]
     seen: Array[int] = []
-    _n = xs.iter().inspect(fn(v) => seen.push(v)).count()   # the real `seen`
-    h = thread.spawn(fn() with owns xs: work(xs))            # `xs` handed to the thread
+    _n = xs.iter().inspect(fn(v) changes seen: seen.push(v)).count()   # the real `seen`
+    h = thread.spawn(fn() with owns xs: work(xs))                      # `xs` handed to the thread
     println(seen.len())
     println(h.join())
 ```
 
-Changed from run 4: the iterator line is the programmer's own again. Run 4 wrote it with `for_each`
-because `count` had no row; `V2/vocabulary.md` now has `count` in the iterator row. `inspect` takes a
-plain `fn(int)`, and the lambda changes only `seen`, a real variable it captures, so it is such a
-function (R12; `V2/changes.md` section 2.2). The thread's line says `with owns xs` (was `with owned
-xs`). The thread is not a call of `main`'s (R5), and what it holds is in its capture list (R15).
+(`work` is the OLD's: it reads the list it is given and returns a number.) Changed from v2: `changes
+seen` on the lambda (verdict 22). The library's first line is `fn inspect[C, F: fn(Item) changes C](owns
+f: F) owns this -> Inspect[Self, C, F]:` (verdict 21, `V3/vocabulary.md`'s iterator row): `inspect`
+keeps the function in the adapter, which changes nothing yet (storing a function is not a change, R12),
+and the adapter's `fn next() changes this, C -> Option[Item]` runs it, so `count()`, which calls `next`
+until the end, is the call that pushes to `seen` (`C` is `seen` here). In `main`, which wrote the
+lambda, `seen` is its own local, so `main` names nothing (R5). One instance of `inspect` is made for
+this lambda (the bound `F`), so the call through `f` is direct, as Rust's `F: FnMut`.
+
+The thread: `thread.spawn`'s first line is `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED ->
+R) changes CHANGED -> JoinHandle[R]:` (verdict 30): starting the thread counts as making what its
+function changes, now or later (R5, R12, R15). The thread's function holds `xs` (`with owns xs`, R15)
+and changes nothing but its own state, so `CHANGED` is empty and `main` names nothing; its first line
+stays `fn main():`.
 
 **4. The owner's test.**
 
@@ -422,7 +536,7 @@ xs`). The thread is not a call of `main`'s (R5), and what it holds is in its cap
 | `xs` in `main` | none (default: `main`'s own list) | its owner may |
 | `seen` in `main` | none (default: `main`'s own list) | its owner may |
 | `v` | none (default for a lambda parameter: it reads; an `int`, copied in) | no |
-| `seen` in the lambda | none (row 6: the real `seen`) | yes (`push`), as row 6 says |
+| `seen` in the lambda | none (row 6: the real `seen`) | `changes seen` on the lambda's first line: yes (`push`), the real one (verdict 22) |
 | `_n` | none (default: `main`'s own `int`, the count `count` hands back) | its owner may |
 | `h` | none (default: the `JoinHandle` `thread.spawn` returns, `main`'s own) | its owner may (`join`) |
 | `xs` in the thread's function | `owns`: handed over to the thread | its new owner may |
@@ -439,8 +553,8 @@ exit=0
 ```
 
 and the whole NEW program in today's words (`target/redesign4/v2-05-area-D/m55_inspect_count.em`: the
-iterator line as written, `thread.spawn(owned fn() => work(xs))`), checked in this step
-(`target/redesign4/v2-05-area-D/check_output.txt`):
+iterator line as written, `thread.spawn(owned fn() => work(xs))`), checked in v2's step, on the
+owner's laptop (`target/redesign4/v2-05-area-D/check_output.txt`):
 
 ```text
 === m55_inspect_count.em
@@ -453,9 +567,23 @@ cannot use `main`'s `xs`; say what the thread holds: `fn() with owns xs:` (hande
 waits for it" (R15). `fn() with shares xs:` on `thread.spawn`, E7015: "this thread runs beside `main`,
 and `shares` owners stay on one thread; hand `xs` over, `fn() with owns xs:`, or give the thread a copy,
 `fn() with copy of xs:`". A box (R12) is never used across threads: its count is a one-thread count.
+And, under verdicts 21, 22 and 30:
+- v2's iterator line, `xs.iter().inspect(fn(v) => seen.push(v)).count()`, E2105: "`inspect` keeps this
+  function and `count()` runs it, and it pushes to `seen`, a variable it uses from `main`; say so on its
+  first line: `xs.iter().inspect(fn(v) changes seen: seen.push(v)).count()`" (R12).
+- The iterator line inside a loop over `seen`, `for s in seen:` (line 3) with the line above as line 4,
+  E3020: "this loop walks `seen` (line 3), and `xs.iter().inspect(...).count()` (line 4) changes `seen`
+  (`count` runs the function `inspect` keeps, which says `changes seen`); count after the loop: write
+  `_n = xs.iter().inspect(fn(v) changes seen: seen.push(v)).count()` after it" (R8 (c), R12).
+- A scoped task started inside a loop over what its function changes, in the lines `with scope =
+  thread.scope():` (line 3), `for s in seen:` (line 4), `scope.spawn(fn() changes seen: seen.push(1))`
+  (line 5), E3020 (verdict 30): "this loop walks `seen` (line 4), and `scope.spawn(...)` (line 5) starts
+  a task whose function changes `seen` (`fn() changes seen: seen.push(1)`); start the task after the
+  loop: write `scope.spawn(fn() changes seen: seen.push(1))` after it" (R8 (c), R15).
 
-**7. Cost.** None beyond C: the lambda given to `inspect` holds `seen`'s address, the hand-over moves
-three words.
+**7. Cost.** None beyond C: the lambda given to `inspect` holds `seen`'s address and is called directly
+(one instance of `inspect` per function given), the hand-over moves three words. The change lists of
+`inspect` and `spawn` cost nothing while running (`V3/rules.md` section 2).
 
 **8. Kind:** a readable spelling of Rust's guarantee (`move` and scoped threads), with no rule that
 depends on the callee.
@@ -463,6 +591,15 @@ depends on the callee.
 ---
 
 ## AN-56: A lambda parameter without a mode takes `owned` from the expected callable type (`[TYP-23]`)
+
+**v3:** the first lambda changes `names`, a variable it captured, so it says so on its first line,
+`fn(owns s) changes names: names.push(s)` (verdict 22; written with `:`, since the vocabulary shows
+`changes` only on a lambda written with `:`, "Notes for the lead", note 3). A plain `fn(owns String)`
+now changes nothing at all, so `each_name`, a function that runs a function it is given, takes a change
+list, `fn each_name[C](owns f: fn(owns String) changes C) changes C:`, the spelling of verdict 21, and a
+call of it counts as making what its function changes. **Meaning changed:** yes: v2's `fn
+each_name(owns f: fn(owns String)):` no longer takes the first lambda (E2113, part 6); the program does
+what it did.
 
 **1. Intent:** pass each name to a callback that keeps it in `names`.
 
@@ -488,27 +625,32 @@ exit=0
 **3. NEW.**
 
 ```ember
-fn each_name(owns f: fn(owns String)):
+fn each_name[C](owns f: fn(owns String) changes C) changes C:
     f(String("ann"))
 
 fn main():
     names: Array[String] = []
-    each_name(fn(owns s) => names.push(s))       # takes `s` over, keeps it
-    each_name(fn(s) => println(s.len()))          # only reads `s`
+    each_name(fn(owns s) changes names: names.push(s))   # takes `s` over, keeps it in the real `names`
+    each_name(fn(s) => println(s.len()))                  # only reads `s`, changes nothing
 ```
 
-Changed from run 4: `owns` (was `owned`). `f(String("ann"))` and `each_name(...)` hand their arguments
-over to `owns` parameters, written with no word (R4). Both lambdas are plain function types: the first
-changes only `names`, a real variable it captures (R12).
+Changed from v2: `each_name`'s first line (verdict 21) and `changes names` on the first lambda (verdict
+22). `f(String("ann"))` and `each_name(...)` hand their arguments over to `owns` parameters, written with
+no word (R4). `C` is filled at each call from the function given (R12): the first call changes `names`,
+which in `main`, the function that wrote the lambda, is its own local, so `main` names nothing (R5); the
+second lambda is a plain function type, which changes nothing, so that call changes nothing. Written with
+a function value as the verdict writes it, `f` is called through its two words; the library's form takes
+it as a bound (`[C, F: fn(owns String) changes C](owns f: F)`, `V3/changes.md` section 11, question 4),
+which makes one instance per function given.
 
 **4. The owner's test.**
 
 | name | what it is | may it change it |
 |---|---|---|
-| `f` | `owns`: handed over to `each_name` | its new owner may |
+| `f` | `owns`: handed over to `each_name`; its type `fn(owns String) changes C`: a function that may change what the function given changes | its new owner may; `each_name`'s own `changes C` says that calling it makes those changes |
 | `names` | none (default: `main`'s own list) | its owner may |
 | `s` in the first lambda | `owns`: handed over to the lambda | its owner may (it hands it on to `names`) |
-| `names` in the first lambda | none (row 6: the real `names`) | yes (`push`), as row 6 says |
+| `names` in the first lambda | none (row 6: the real `names`) | `changes names` on the lambda's first line: yes (`push`), the real one (verdict 22) |
 | `s` in the second lambda | none (default for a parameter: a read-only view) | no |
 
 **5. Means exactly.** `means/m56_lambda_owned_param.em` (`fn(owned s) => names.push(s)`) and
@@ -526,13 +668,24 @@ A read-only lambda where a taking one is expected: the caller hands the `String`
 it, and it ends after the call, as if the function had taken it and dropped it.
 
 **6. Still refused.**
-- `each_name(fn(s) => names.push(s))`, E3013: "`s` is only read here, so it cannot be kept in `names`;
-  to take it over write `fn(owns s) => names.push(s)`".
+- `each_name(fn(s) => names.push(s))` (no word on `s`, and none for `names`), E3013: "`s` is only read
+  here, so it cannot be kept in `names`; to take it over, and say that the function changes `names`,
+  write `each_name(fn(owns s) changes names: names.push(s))`".
+- `each_name(fn(owns s) => names.push(s))`, v2's line, E2105 (verdict 22): "this function pushes to
+  `names`, a variable it uses from `main`; say so on its first line: `each_name(fn(owns s) changes names:
+  names.push(s))`" (R12).
+- v2's `fn each_name(owns f: fn(owns String)):`, given the first lambda, E2113 (verdict 21): "this
+  function changes `names`, a variable it captured (`fn(owns String) changes names`), and `each_name`
+  takes `fn(owns String)`, functions that change nothing; let it take one that changes things, and say
+  that a call makes those changes: `fn each_name[C](owns f: fn(owns String) changes C) changes C:`"
+  (R12).
 - `fn(owns s)` where the expected type is `fn(String)` (a read-only parameter), E2020 (a lambda
   parameter whose mode differs from the expected function type): "`each_name` gives each name read-only,
-  so this function cannot take it over; to keep your own, write `fn(s) => names.push(copy of s)`".
+  so this function cannot take it over; to keep your own, write `fn(s) changes names: names.push(copy of
+  s)`".
 
-**7. Cost.** None: the same code as today.
+**7. Cost.** None: the same code as today. The change list costs nothing while running (`V3/rules.md`
+section 2).
 
 **8. Kind:** a readable spelling of Rust's guarantee (the parameter's mode is written, as on every other
 parameter, R4).
@@ -540,6 +693,13 @@ parameter, R4).
 ---
 
 ## AN-57: E3026 is reported inside the callee; a stored lambda gets E2020 naming `Callable0`
+
+**v3:** the refused lambda says what it changes, `fn() changes total: total += 1` (verdict 22), and is
+still refused for the same reason (E3026): it would outlive `total`. It fits AN-53's v3 `Button`
+(`fn() changes captured`), so E3026 is the only refusal. The E3026 message is v2's (`V2/readability.md`
+F-03, the lead's), with the program's line in its new spelling. One refusal added, for verdict 32: the
+help followed in `register` with a plain `count: shares mut Counter` parameter (E3023). Meaning
+unchanged.
 
 **1. Intent:** find which call wrote the lambda that cannot be kept.
 
@@ -569,15 +729,15 @@ in the program's names:
 
 ```ember
 fn register(ref mut b: Button, ref mut total: int):
-    b.on_click(fn(): total += 1)
+    b.on_click(fn() changes total: total += 1)
 ```
 
 ```text
 error[E3026]: the click handler changes `total`, which belongs to `register`'s caller
  --> app.em:2:16
   |
-2 |     b.on_click(fn(): total += 1)
-  |                ^^^^^^^^^^^^^^^^ written here, kept in `b`
+2 |     b.on_click(fn() changes total: total += 1)
+  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ written here, kept in `b`
   |
   = why: `b` keeps the handler after `register` returns, and `total` may have ended by then
   = help: keep the total where the handler can own a share of it:
@@ -587,10 +747,12 @@ error[E3026]: the click handler changes `total`, which belongs to `register`'s c
 ```
 
 Callable types are printed as written: `fn()`, `fn(ref mut Ui)`, `fn() changes Counter`, never
-`Callable0` (R18). Changed from run 4: the way out. The handler in the help changes a `Counter` through a
-link it holds (`with shares mut count`), which is outside itself, so its type says `changes Counter`
-(R12, decision 17), and AN-53's `Button`, whose list holds plain `fn()`, could not keep it (E2113); the
-help names both lines (R18). The message is `V2/rules.md` section 3's E3026 row.
+`Callable0` (R18). Changed from v2: `changes total` on the lambda (verdict 22). The handler in the help
+changes a `Counter` through a link it holds (`with shares mut count`, its own state: one more owner of
+the counter), so its type says `changes Counter` (R12, verdict 17): a change of an object through a link,
+named by its type, not a change of a variable it captured, so AN-53's `Button`, whose list holds
+`fn() changes captured`, could not keep it (E2113); the help names both lines (R18). The message is
+`V3/rules.md` section 3's E3026 row.
 
 **4. The owner's test.**
 
@@ -598,7 +760,7 @@ help names both lines (R18). The message is `V2/rules.md` section 3's E3026 row.
 |---|---|---|
 | `b` | `ref mut`: the caller's Button | yes (`ref mut`) |
 | `total` | `ref mut`: the caller's `int` | yes (`ref mut`) |
-| `total` in the lambda | none (row 6: the real `total`, here the caller's place) | yes, as row 6 says; refused because the handler may outlive it |
+| `total` in the lambda | none (row 6: the real `total`, here the caller's place) | `changes total` on the lambda's first line: yes, as row 6 says; refused because the handler may outlive it |
 
 **5. Means exactly.** Nothing compiles for the refused program, which is the point. The accepted form in
 the help is AN-53's box (`means/m53_button_box.em`, `exit=0`, pasted under AN-53); its
@@ -608,6 +770,16 @@ the help is AN-53's box (`means/m53_button_box.em`, `exit=0`, pasted under AN-53
 keeps it while the lambda captures a view (a `ref`, `ref mut`, pattern, opened or `for` name): the same
 message shape, at the lambda's line, naming the captured view and the holder that keeps the lambda.
 
+The help followed inside `register` instead of in the caller, with the counter taken as a plain
+parameter: `fn register(ref mut b: Button, count: shares mut Counter):` with `b.on_click(fn() with
+shares mut count changes Counter: count.n += 1)`, E3023 (verdict 32: what a function may do with a
+parameter is set by the word in front of its name, R4): "`count` only reads the `Counter` that
+`register`'s caller lends it (`shares mut Counter` says what the caller's counter is, not what
+`register` may do with it), so an owner made from it only reads too; to hand on an owner that may change
+the counter, take one: write `fn register(ref mut b: Button, owns count: shares mut Counter):`, call it
+`register(ref mut b, shares mut count)`, and capture it `with owns count`". (`register` names nothing it
+changes for the handler: it only stores it, which is not a change, R12.)
+
 **7. Cost.** None (compile time only).
 
 **8. Kind:** an understandable limitation kept (a function value may not outlive a place it does not
@@ -616,6 +788,13 @@ own; Rust's E0373), with the message at the right line and in the program's name
 ---
 
 ## AN-58: A closure stored in a local list that ends first is still E3026
+
+**v3:** the lambda changes `score`, a variable it captured, so it says `changes score`, and the local
+list covers it with `captured`, `hs: Array[fn() changes captured] = []` (verdict 22; a type names no
+captured variable, R12, so the list cannot say `score`; whether a local list in the same function
+could name it is in "For the owner"). `game`, which wrote the lambda and runs it, names nothing: `score`
+is its own local (R5). **Meaning changed:** yes, for two lines: v2's `hs: Array[fn()] = []` with
+`hs.push(fn(): score += 1)` is refused (part 6); the program does what it did.
 
 **1. Intent:** collect a few local callbacks in a list and run them.
 
@@ -645,29 +824,32 @@ error: could not compile due to 1 error(s)
 exit=1
 ```
 
-**3. NEW.** (Unchanged from run 4.)
+**3. NEW.**
 
 ```ember
 fn game() -> int:
     score = 0
-    hs: Array[fn()] = []
-    hs.push(fn(): score += 1)
+    hs: Array[fn() changes captured] = []
+    hs.push(fn() changes score: score += 1)
     for ref mut h in hs:
         h()
     return score                       # 1
 ```
 
 A call through a stored function value may change its own state, so its holder is reached through a
-name that may change it (R12): the walk is `for ref mut h in hs:`, as AN-53's `click`. `hs` holds plain
-`fn()`: the lambda changes only `score`, a real variable it captures (R12).
+name that may change it (R12): the walk is `for ref mut h in hs:`, as AN-53's `click`. `hs` holds
+functions that may each change the one variable they captured; the lambda changes `score`, a real
+variable of `game`, and says so (R12, verdict 22). `h()` changes `score`, which the loop does not walk,
+so the loop is allowed (R8 (c)), and `game` names nothing on its first line, since `score` is its own
+local (R5).
 
 **4. The owner's test.**
 
 | name | what it is | may it change it |
 |---|---|---|
 | `score` | none (default: `game`'s own `int`) | its owner may |
-| `hs` | none (default: `game`'s own list; its elements its own function values, of type `fn()`) | its owner may |
-| `score` in the lambda | none (row 6: the real `score`) | yes, as row 6 says |
+| `hs` | none (default: `game`'s own list; its elements its own function values); its type `fn() changes captured`: each may change the one variable it captured | its owner may |
+| `score` in the lambda | none (row 6: the real `score`) | `changes score` on the lambda's first line: yes, the real one (verdict 22) |
 | `h` | `ref mut`: an element of `hs`, the only name for it while used | yes; calling it changes what its body changes (R12) |
 
 **5. Means exactly.** `hs` is declared after `score` and never leaves `game`, so the function value
@@ -683,6 +865,11 @@ provably ends first and R12 places `score` at its address: the C of `c/an53_capt
   and `hs[0]()` (line 6) may run the function made on line 3, which pushes to `xs`; call it after the
   loop, or collect what to add and push it after the loop". (The phase before's `attacks2.exe 11` showed
   the use after free this refusal prevents.)
+- v2's lines, `hs: Array[fn()] = []` and `hs.push(fn(): score += 1)`: first E2105 (verdict 22): "this
+  function changes `score`, a variable it uses from `game`; say so on its first line: `hs.push(fn()
+  changes score: score += 1)`"; then, with that line, E2113: "this function changes `score`, a variable
+  it captured (`fn() changes score`), and `hs` holds `fn()`, functions that change nothing; keep it in a
+  list that says so: `hs: Array[fn() changes captured] = []`" (R12).
 
 **7. Cost.** None (the C passes an address).
 
@@ -692,6 +879,11 @@ lifetimes, and accepts this program).
 ---
 
 ## AN-59: A closure that gives a capture away gets E3013 with ten options instead of "declare the parameter `once fn()`"
+
+**v3:** as in v2. Under verdict 22 both lambdas stay plain `fn()`: the first changes only its own
+state (it owns `s` and gives it away), the second only reads the real `t` (`copy of t` makes the value
+it hands over), so neither changes a variable it captured, and neither needs `changes`. Verdict 33 does
+not touch this answer: `copy of` is the copy word, and no `.copied()` appears. Meaning unchanged.
 
 **1. Intent:** `call_twice` runs a callback that hands a string to `consume`.
 
@@ -744,8 +936,7 @@ fn main():
     call_twice(fn(): consume(copy of t))         # each run hands over a new copy
 ```
 
-Changed from run 4: `owns` and `copy of` (were `owned` and `copied`), and `consume` written out (the
-OLD's, with `owns`). The arguments of `call_once`, `call_twice` and `consume` are hand-overs to `owns`
+`consume` is written out (the OLD's, with `owns`). The arguments of `call_once`, `call_twice` and `consume` are hand-overs to `owns`
 parameters or plain reads, so no call writes `ref mut` (R4). `call_twice` calls `f` through a read-only
 parameter: allowed, since its argument changes nothing of its own state (R12 refuses only a function
 value that changes its own state given to a parameter that only reads).
@@ -797,6 +988,14 @@ exit=0
 ---
 
 ## AN-60: A callback receiving the object that holds it, and a handler that removes itself (A32)
+
+**v3:** NEW as in v2. Verdict 22 changes nothing in it: the handlers `fn(ref mut Ui)` change the Ui
+through their `ref mut` parameter, which needs no `changes` (R12), and `bump_ui` changes a `Ui` through
+the link it holds and already says `changes Ui`. Two messages put right: the E2113 message for `watch`
+with AN-53's `Button` names that button's v3 type, `fn() changes captured`, which a function that
+changes a `Ui` through a link does not fit; and phase 0 had turned an English "holds" in an E2113
+message into `exists as` (`V3/spelling-changes.txt`, area-D.md:982), now "holds" again. Meaning
+unchanged.
 
 **1. Intent:** the UI calls each handler with the UI; a handler may add handlers (they run in the same
 dispatch, as in Python) or remove itself.
@@ -878,7 +1077,7 @@ class UiButton:                                    # a button whose handlers may
 
 fn watch(ref mut ui: Ui, ref mut b: UiButton):
     bump_ui = fn() with weakref ui changes Ui:     # a link that does not keep the Ui alive
-        if ui exists as ref mut me:                    # the Ui still lives: call it `me`, which may change it
+        if ui exists as ref mut me:                # the Ui still lives: call it `me`, which may change it
             me.clicks += 1
     b.on_click(bump_ui)
 ```
@@ -887,19 +1086,20 @@ Python's list iterator is this loop (a position checked against the length at ev
 added during the dispatch runs in it and a handler that removes itself makes the next one move into its
 place, as in Python.
 
-Changed from run 4: `fn fire() changes this:` (was `ref mut this` after the brackets, R5); the opening
-`if ui exists as ref mut me:` (was `if ref mut me = ui:`, R13); `with weakref ui` (was `with weak ui`); `owns
-f`. `fire` says `changes this`, not `changes handlers, current`, because it gives the whole Ui to a
+`fn fire() changes this:` (R5, verdict 6), the opening `if ui exists as ref mut me:` (R13, verdict
+26) and `with weakref ui` (verdict 9) are the owner's words. `fire` says `changes this`, not `changes handlers, current`, because it gives the whole Ui to a
 handler that may change any field (R4: `ref mut` only before what this function may change, E3027). The
 call says `ref mut this` (R4: the handler's parameter is `ref mut Ui`); it copies the handler's two words
 out of the list first, so the list is not an argument of the call (R12) and nothing points into it while
 the handler runs. The handlers' type `fn(ref mut Ui)` names no change outside the handler: what it
 changes, it changes through its `ref mut` parameter (R12).
 
-**Meaning changed** for `watch` (decision 17): `bump_ui` changes a `Ui` through a link it holds
-(`with weakref ui`), which is outside itself, so its first line says `changes Ui` (R12; E2105 otherwise),
-and it is kept only in a list whose type says so. AN-53's `Button` holds plain `fn()`, so run 4's
-`b: Button` would be refused (E2113); `watch` takes a `UiButton`, whose list says `changes Ui`.
+`watch` (v2's change from run 4, verdict 17): `bump_ui` changes a `Ui` through a link it holds (`with
+weakref ui`), which is outside itself, so its first line says `changes Ui` (R12; E2105 otherwise), and
+it is kept only in a list whose type says so. AN-53's `Button` holds `fn() changes captured`, functions
+that change at most the one variable they captured, so `b: Button` would be refused (E2113); `watch`
+takes a `UiButton`, whose list says `changes Ui`. `watch` itself names nothing: `b.on_click(bump_ui)`
+stores the handler, which is not a change of what it changes (R12).
 
 **4. The owner's test.**
 
@@ -973,13 +1173,13 @@ handler's own state block instead, which run 3's W4 measured (part 7). `watch`'s
   Python's list does: instead of the `for` line and `h(ref mut this)`, write `this.current = 0`,
   `while this.current < len(this.handlers):`, `this.handlers[this.current](ref mut this)` and
   `this.current += 1`".
-- **Meaning changed** (decision 17): the second way out, read-only handlers walked with `for`
+- v2's change from run 4 (verdict 17): the second way out, read-only handlers walked with `for`
   (`handlers: Array[fn(Ui)]`, `fn fire() changes handlers:`, `for ref mut h in this.handlers: h(this)`),
   is accepted for every program: a `fn(Ui)` changes nothing outside itself, so no handler in that list
   can change any Ui's `handlers` while the loop walks them. G-05's handler, which captures
   `with weakref ui` and pushes to `me.handlers`, has the type `fn(Ui) changes Ui` (R12); given to that
   list it is refused, E2113: "this handler changes a `Ui` through `with weakref ui` (`fn(Ui) changes
-  Ui`), and `handlers` exists as `fn(Ui)`, functions that change nothing outside themselves; give it the Ui
+  Ui`), and `handlers` holds `fn(Ui)`, functions that change nothing outside themselves; give it the Ui
   to change as its parameter, `fn(ref mut Ui)`, or keep it in a list that says so,
   `handlers: Array[fn(Ui) changes Ui]`". Kept in a list that says so (with `fn fire() changes handlers,
   Ui:`), the `for` walk is refused, E3020: "this loop walks `this.handlers` (line 7), and `h(this)` may
@@ -993,8 +1193,9 @@ handler's own state block instead, which run 3's W4 measured (part 7). `watch`'s
   function changes `me`, a `Ui` reached through its `weakref ui`; say so on its first line:
   `fn() with weakref ui changes Ui:`" (R12).
 - `watch(ref mut ui: Ui, ref mut b: Button)` with AN-53's `Button`, E2113: "`bump_ui` changes a `Ui`
-  (`fn() changes Ui`), and `on_click` takes `fn()`, functions that change nothing outside themselves;
-  keep it in a list that says so: `handlers: Array[fn() changes Ui]`".
+  through its link `ui` (`fn() changes Ui`), and `on_click` takes `fn() changes captured`, functions
+  that change at most the one variable they captured; keep it in a list that says so: `handlers:
+  Array[fn() changes Ui]`, with `fn on_click(owns f: fn() changes Ui) changes handlers:`".
 - Not refused, warned: a handler that captures the Ui that holds it with `with shares ui` makes a cycle
   of owners that is never freed (a leak, not a memory error, as in Rust); L3001: "the handler is kept by
   `ui` and keeps `ui`; capture it as a link that does not keep it alive, `with weakref ui`, or take the
@@ -1017,6 +1218,9 @@ handlers may change a Ui is read from their type; the `for` refusal is the agree
 ---
 
 ## AN-61: Unsound today: a handler list dispatched by index is accepted and writes freed memory
+
+**v3:** as in v2; verdicts 21 to 34 change nothing here (the handlers are AN-60's `fn(ref mut Ui)`).
+The E3060 message in part 6 is v2's (`V2/readability.md` F-01, the lead's). Meaning unchanged.
 
 **1. Intent:** dispatch handlers by position so each may change the list.
 
@@ -1068,7 +1272,7 @@ whole report, with where the block was freed: the growth in `push1`).
             i += 1
 ```
 
-and, **meaning changed**, the OLD's own shape, accepted once the name says `ref mut`:
+and (v2's change from run 4) the OLD's own shape, accepted once the name says `ref mut`:
 
 ```ember
     fn fire() changes this:
@@ -1082,7 +1286,7 @@ and, **meaning changed**, the OLD's own shape, accepted once the name says `ref 
 Changed from run 4: `changes this` (was `ref mut this` after the brackets, R5); the second form is now
 accepted (run 4 refused it, E3022). A call through a `ref mut` name of a stored function value uses the
 name only to copy the function's two words out, before the arguments are given, so `ref mut this`, which
-reaches `h`'s place, may be given to it (R8 (f), R12; the `get_mut` row of `V2/vocabulary.md`). Nothing is
+reaches `h`'s place, may be given to it (R8 (f), R12; the `get_mut` row of `V3/vocabulary.md`). Nothing is
 written back into the list after the call (the handler's state is behind the function value's own
 pointer, R12), so a handler may grow or shrink the list while it runs. `h` is a position (R8 (a)); it is
 not used after the call, and a use there would be checked against what the call may have done (part 6).
@@ -1120,6 +1324,17 @@ what C costs).
 ---
 
 ## AN-62: A loop calling a stored callback with unknown effects pays a count pair per step (the phase before's limit)
+
+**v3:** NEW as in v2: (b) is the walk the owner ruled in verdict 28, line for line (`up = weakref
+leaf`, `while up exists as n:`, `if n.parent exists as p:`, `up = weakref p`, `else: break`), and (a)
+is the plain walk verdict 28 keeps for a visit function that changes nothing (`fn(Node)`). What changed
+from v2: (b)'s view walk is refused with R11's message (E3021), which gives the link walk line by line;
+(b)'s cost follows v3's R11: since `Node` has no `drop` method, the walk runs in a deferred-drop
+region, and its link holds no weak count after its first target, so each step pays one header test
+(the weak-count moves of v2 go); a C check of that saving under ASan was run in this step (part 5; not
+timed); a refusal added for a function stored in the tree it changes (E3022), the hole v2's note 1
+found, now in R12. v2's question for the owner is answered by verdict 28 ("the cost is justified however
+we will still try to optimise it if possible"). Meaning unchanged.
 
 **1. Intent:** walk from each leaf up to the root and report every ancestor to a stored callback.
 
@@ -1165,9 +1380,9 @@ walk paid a count pair per step because the callback's effects were unknown: 1.2
 same walk without it (`phase3b-graphs-callbacks-attack.md` 3.5, `runs/w2v_a.txt`, `w2v_b.txt`);
 `FINDINGS-phase3b.md` section 5 item 6.
 
-**3. NEW.** A callback's effects are no longer unknown: its type says them (R12, decision 17). The usual
+**3. NEW.** A callback's effects are no longer unknown: its type says them (R12, verdict 17). The usual
 callback only looks at the nodes (a), and a callback that may change or remove nodes says so (b). In both,
-a parent link is an ordinary `weakref` field the program sets (decision 14).
+a parent link is an ordinary `weakref` field the program sets (verdict 14).
 
 (a) The callback changes no node:
 
@@ -1189,9 +1404,9 @@ class Tree:
     fn depth_total() changes on_visit -> int:
         depth = 0
         for leaf in this.leaves:
-            if leaf exists as n:                   # the leaf still lives: call it `n`
+            if leaf exists as n:               # the leaf still lives: call it `n`
                 cur = ref n                    # a view of that node
-                while cur.parent exists as p:      # its parent, while there is one
+                while cur.parent exists as p:  # its parent, while there is one
                     this.on_visit(p)           # changes no node: its type is `fn(Node)`
                     depth += 1
                     cur = ref p                # `cur` now views the parent
@@ -1210,8 +1425,8 @@ class Tree:
         depth = 0
         for leaf in this.leaves:
             up = weakref leaf                  # a link to the leaf, kept across the calls
-            while up exists as n:                  # the node still lives: call it `n`
-                if n.parent exists as p:           # its parent, if it has one
+            while up exists as n:              # the node still lives: call it `n`
+                if n.parent exists as p:       # its parent, if it has one
                     up = weakref p             # the link now names the parent
                     this.on_visit(p)           # may end `p`, or a node above it with all under it
                     depth += 1
@@ -1220,11 +1435,12 @@ class Tree:
         return depth
 ```
 
-**Meaning changed** (decisions 14, 15, 17, 5). Run 4 wrote `parent: weak Node set by children`; `set by`
-is gone, and `add` sets the link (`child.parent = weakref this`) before it puts the child where its parent
-owns it (`this.children.push(child)`). `depth_total` calls the stored function value, a change of the
-field that holds it (`changes on_visit`, R12), and in (b) names what that function changes
-(`changes Node`, R5).
+v2's change from run 4 (verdicts 14, 15, 17, 5): run 4's parent link was set by the language when a
+child was pushed; verdict 14 removed that, and `add` sets the link (`child.parent = weakref this`) before it puts the child where
+its parent owns it (`this.children.push(child)`); making the link changes only `this`'s weak count, a
+number in its header no name reads, so it is not a change of `this` and `add`'s line names only
+`children` (R11). `depth_total` calls the stored function value, a change of the field that holds it
+(`changes on_visit`, R12), and in (b) names what that function changes (`changes Node`, R5).
 
 What (a) costs, by the rules: `on_visit`'s type says it changes no node, so no line in the walk can end a
 `Node` (R10 point 1): the views `n`, `cur` and `p` need no protection (no region, no count pair). The
@@ -1236,17 +1452,30 @@ node. So each step is a plain load of `cur.parent` and a test for no link. The o
 `if leaf exists as n:`, once per leaf (`leaves` holds ordinary links, not parent links). `cur = ref n` and
 `cur = ref p` say what `cur` is, a read-only view (R1); `=` on `cur` gives it a new view (R2).
 
-What (b) costs, and why it is written with a link: a call that may change a `Node` may not have a
-read-only view of a node living across it (R8 (g), the owner's decision 5; R12), so (a)'s loop with
-(b)'s callback type is refused (part 6). The walk keeps a `weakref` link instead (`up`), which is not a
-view and may outlive its target: each step opens it (`while up exists as n:`, one header test), reads
-`n.parent` with no header test (R11: `n` is known to live at the test, and nothing between the test and
-the read can end a node), and moves the link to the parent (`up = weakref p`: one subtract of the old
-target's weak count, one add to the new one) before the call. If the callback ends `p`, or a node above
-it with everything under it, the link's target is ended (its block kept by the link's weak count), so
-the next `while up exists as n:` finds it ended and the walk stops: it never visits an ended node, and
-nothing stops the program (decision 15). If the callback moves `p` under another parent (taking it out
-and giving it a new link, as AN-63's `take` and `add`), the walk goes on up the new parents.
+What (b) costs, and why it is written with a link: across a call that may change a `Node`, no read-only
+view of a node lives (R8 (g), the owner's verdict 5; R10's last paragraph, R12), so (a)'s loop with (b)'s
+callback type is refused (part 6), and the walk keeps a `weakref` link instead (`up`), which is not a
+view and may outlive its target (verdict 28). `n` and `p` are views, but neither lives across the call:
+`n`'s last use is `n.parent`, and `p`'s is the call itself, whose argument it is (a view whose last use
+is an argument of the call does not live across it, R8 (g); inside the call the parameter makes the
+promise). `up = weakref p` makes a link from the read-only `p`, which changes no node (R11). Each step
+opens the link (`while up exists as n:`, one header test), reads `n.parent` with no header test (R11:
+`n` is known to live at the test, and nothing between the test and the read can end a node), and moves
+the link to the parent before the call. If the callback ends `p`, or a node above it with everything
+under it, the link's target is ended and its block is kept, so the next `while up exists as n:` finds it
+ended and the walk stops: it never visits an ended node, and nothing stops the program (verdicts 15,
+28). If the callback moves `p` under another parent (taking it out and giving it a new link, as AN-63's
+`take` and `add`), the walk goes on up the new parents.
+
+What keeps the ended node's block until the test, by R11: every `weakref` link holds a weak count on
+its target, so `up = weakref p` is one subtract on the node left and one add on its parent; and, since
+`Node` has no `drop` method of its own, the compiler places the walk in a deferred-drop region (R10
+point 2), which keeps every block it sets aside until the region ends. A link that lives only inside
+the region and is given only objects that live at that moment (`up = weakref p`, from the view `p`)
+then holds no weak count: the region keeps its target's block. Only the first link of each walk,
+`up = weakref leaf` (made from another link, whose target may already be gone), keeps its count. So
+each step pays one header test, and nothing else (part 7). This never changes what the program does
+(R17): with or without the region the walk stops at the same node.
 
 **4. The owner's test.**
 
@@ -1294,10 +1523,10 @@ an62_defer_asan ms=0.060 peak_kb=8280 checksum=1
 ```
 
 Mode 1 (no protection) reads `p.parent` from freed memory (line 89, `Node *next = a->parent;`); mode 2 (a
-deferred-drop region) and mode 3 (a count pair) are clean. Neither is (b)'s code: under decision 5 a view
+deferred-drop region) and mode 3 (a count pair) are clean. Neither is (b)'s code: under verdict 5 a view
 of a node does not live across a call that may change nodes, so (b) keeps a link.
 
-(b), as the rules give it, is `c\an62_an63_v2.c` part 2 (this step,
+(b), as v2's rules gave it, is `c\an62_an63_v2.c` part 2 (v2's step, on the owner's laptop,
 `target/redesign4/v2-05-area-D/c/`, built `clang -O1 -g -fsanitize=address`): a tree `root`, `top`,
 `mid`, `leaf`; the walk starts at `leaf`, and the callback, on `mid`, takes `top` out of `root` and ends
 it, with `mid` and `leaf` under it. Mode 1 counts every link as R11 says; mode 2 is the same with
@@ -1326,7 +1555,7 @@ exit=1
 
 Mode 1: the walk visited `mid` once (`visited=m`), then `while up exists as n:` found `mid` ended and stopped
 (`depth=1`); `top`, the ended node above, was never visited; no ASan report. Mode 2: the test itself reads
-a freed block, so the weak count is what makes the link's test safe.
+a freed block, so the weak count is what makes the link's test safe (or, in v3, the region, below).
 
 The deferred-drop region's code, from run 3's bench (`c/bin/walk_noprot.s` against `c/bin/walk_defer.s`,
 the whole difference apart from the program's name string and the counter's declaration):
@@ -1338,15 +1567,66 @@ the whole difference apart from the program's name string and the counter's decl
 > 	decq	g_defer(%rip)
 ```
 
-one increment before each pass's loop and one decrement after it; nothing inside the loop. Under v2 a
-region protects a view of an object reached through a link across a call that may end such an object
-(R10 point 2); neither (a) (no such call) nor (b) (no view across the call) needs one.
+one increment before each pass's loop and one decrement after it; nothing inside the loop. (a) needs no
+region (no call in it can end a node). In v3 a region serves (b) in a second way (R11): it keeps the
+block of every node set aside during the walk until the walk ends, so the walk's link needs no weak
+count after its first target.
+
+(b) in that region, checked in this step: `target/redesign4/v3-05-area-D/c/an62b_region.c`, the same
+tree and visit function as v2's part 2 above (`root`, `top`, `mid`, `leaf`; the visit function, on
+`mid`, takes `top` out of `root` and ends it, with `mid` and `leaf` under it). Mode 1 is v3's R11: a
+region around the walk, the first link (`up = weakref leaf`) counted, every move after it uncounted; an
+ended node set aside whole and freed when the region ends. Mode 2 is the same with no region (an ended
+node freed at once) and no counts. Mode 3 has no region and counts every link (v2's R11). Built with
+`gcc -O1 -g -fsanitize=address` (gcc 13.3, Linux, this cloud container), run with
+`ASAN_OPTIONS=detect_leaks=1` (`c/an62b_region_output.txt`, cut after the first frames of mode 2's
+report):
+
+```text
+--- mode 1
+mode1 depth=1 visited=m root.children=0
+exit=0
+--- mode 2
+=================================================================
+==18989==ERROR: AddressSanitizer: heap-use-after-free on address 0x5060000000e8 at pc 0x558c62ba292e bp 0x7ffcbbd796e0 sp 0x7ffcbbd796d0
+READ of size 4 at 0x5060000000e8 thread T0
+    #0 0x558c62ba292d in main /home/user/ember/target/redesign4/v3-05-area-D/c/an62b_region.c:81
+...
+SUMMARY: AddressSanitizer: heap-use-after-free /home/user/ember/target/redesign4/v3-05-area-D/c/an62b_region.c:81 in main
+exit=1
+--- mode 3
+mode3 depth=1 visited=m root.children=0
+exit=0
+```
+
+Mode 1: the walk visited `mid` once and the next test found it ended (`depth=1`, `visited=m`), as with
+counted links (mode 3, v2's mode 1 above); no ASan report and no leak report. Mode 2 shows what the region
+or the count is for: line 81 is the header test, `while (up && !up->dead)`, reading `mid`'s freed
+block.
 
 **6. Still refused.**
-- (a)'s loop (views `cur` and `p` kept across the call) with (b)'s callback type, E3021: "`this.on_visit(p)`
-  (line 21) may change any `Node` (`on_visit` is a `fn(Node) changes Node`), and `p` reads a node and is
-  used again on line 23; keep a link across the call instead of a view: `up = weakref p` before the call,
-  and `while up exists as n:` to go on from it" (R8 (g), R12).
+- (a)'s loop (views `cur` and `p` kept across the call) with (b)'s callback type, the plain-`ref` walk
+  verdict 28 refuses, E3021: "`this.on_visit(p)` (line 21) may change any `Node`, and so end one
+  (`on_visit` is a `fn(Node) changes Node`), and `p` reads a node and is used again on line 23; walk with
+  a link, which may outlive its node: instead of `if leaf exists as n:`, `cur = ref n`, the `while` line
+  and `cur = ref p`, write `up = weakref leaf`, then `while up exists as n:`, inside it `if n.parent
+  exists as p:` with `up = weakref p` and `this.on_visit(p)`, and `else: break`" (R8 (g), R11). Lines 21
+  and 23 are those of (a)'s file, `Node` and `Tree` as shown. This is `V3/rules.md` section 3's E3021
+  row with one line more in "instead of": the row leaves out `if leaf exists as n:`, which would then
+  declare `n` twice (E2106), so the line it gives would not compile in this program (R18; notes for the
+  lead, note 4).
+- A visit function stored in the tree it changes, with a field that allows a captured variable
+  (`on_visit: fn(Node) changes captured`): `t.on_visit = fn(n: Node) changes t: t.root.children.clear()`,
+  E3022: "this function changes `t`, and `t.on_visit = ...` keeps it in `t`, so it would change the tree
+  that holds it while `depth_total` runs it; clear the children after the walk instead:
+  `d = t.depth_total()`, then `t.root.children.clear()`" (R12: a function value is not stored in a
+  place that a real variable it changes owns, as Rust refuses; this was v2's note 1, a walk whose views
+  of `t`'s nodes would live across a call that ends them). With (b)'s field the same line is refused
+  before that, E2113: "this function changes `t`, a variable it captured (`fn(Node) changes t`), and
+  `on_visit` holds `fn(Node) changes Node`, functions that change nodes and no variable they captured;
+  clear the children after the walk instead: `d = t.depth_total()`, then `t.root.children.clear()`";
+  with (a)'s field the message says "`on_visit` holds `fn(Node)`, functions that change nothing" and
+  gives the same two lines.
 - A function that changes nodes stored in (a)'s field: `t.on_visit = prune` where `prune` is
   `fn(n: Node) with weakref r changes Node:`, E2113: "`prune` changes a `Node` through `with weakref r`
   (`fn(Node) changes Node`), and `on_visit` holds `fn(Node)`, functions that change nothing outside
@@ -1362,8 +1642,10 @@ region protects a view of an object reached through a link across a call that ma
 - A view into a `Node`'s contents (an element of `p.children`) kept across a call that may change it:
   refused by the loop rule when a loop walks it (E3020) and by R8 (b), (g) otherwise.
 - Not refused: a `Node` class with its own `drop` method. R11's proof then fails (a child's `drop` could
-  read its link while its parent is ending), so every `parent` read tests the header, and a view of a
-  node kept across a call that may end nodes gets a count pair instead of a region (R10 point 3).
+  read its link while its parent is ending), so every `parent` read tests the header; a view of a node
+  kept across a call that may end nodes without changing one gets a count pair instead of a region (R10
+  point 3); and (b)'s walk gets no region, so its link keeps a weak count on every target, one subtract
+  and one add per step (R11).
 
 **7. Cost.** (a): per step, a plain load of `cur.parent` and a test for no link; no protection; one
 header test per leaf. Timed by run 3 with `target/redesign2/bench/run.ps1 -Rounds 5` (pinned to the fast
@@ -1385,23 +1667,37 @@ on every hop and 1.603x for safe Rust (`RUN3/26-timer.md` lines 20 to 22: `diag_
 `model_w2`, `rust_w2`; `diag_w2_hop_proved` spread 14.8%). The parent links' weak counts are paid where
 a link is made or ended (`add`, a node's end), not in the walk; they were not measured.
 
-(b): per step, one header test (`while up exists as n:`), one subtract and one add of weak counts
-(`up = weakref p`), and the parent read with no header test. **Not measured.** The nearest numbers: a
-header test on every hop, 1.579x of plain C (`model_w2`, uncounted links), and safe Rust's walk, 1.603x
-(`rust_w2`), which upgrades a `Weak` on every step (a count pair); (b)'s weak-count pair per step is the
-same kind of work as Rust's. A compile-time saving is possible and not in the rules (notes for the lead,
-4). Peak memory: 84,544 KB for every variant of run 3's bench against 76,688 KB for plain C (the object
-header); a node's header now holds its weak count too (R9). In (b) an ended node's block is kept until
-the walk's link moves on or ends.
+(b), by v3's R11 (`Node` has no `drop` method): per step, one header test (`while up exists as n:`) and
+the parent read with no header test; the link's moves after its first target (`up = weakref p`) touch
+no count; per walk from a leaf, one add and one subtract of `leaf`'s weak count (the first link); per
+region, one add and one subtract of the per-thread counter (the two instructions above). Where the class
+has a `drop` method, add one subtract and one add of weak counts per step (no region). **Not measured**
+(this step ran in a cloud container, where no timing was taken; the C check in part 5 tests safety
+only). The nearest numbers: a header test on every hop, 1.579x of plain C (`model_w2`, uncounted links,
+the same work per step as (b) in a region), and safe Rust's walk, 1.603x (`rust_w2`), which upgrades a
+`Weak` on every step (a count pair) (`RUN3/26-timer.md` lines 20 to 22). The owner accepted this cost
+(verdict 28) and asked that the next run still look for proof that removes the rest; the region
+removes the weak-count moves, and the header test stays because the visit function is a stored
+function value, an unknown call, of which only its type is known, and `changes Node` allows it to end
+the very node the test is for (notes for the lead, note 2). Peak
+memory: 84,544 KB for every variant of run 3's bench against 76,688 KB for plain C (the object header);
+a node's header now holds its weak count too (R9). In (b) an ended node's block is kept until the region
+ends (or, without one, until the walk's link moves on or ends).
 
 **8. Kind:** (a) a smarter compile-time solution: the callback's type and R11's proof remove every
 per-step check, as fast as the unprotected walk; (b) a readable spelling of Rust's guarantee (a link
 kept across a call that may end its target, Rust's `Weak` on every step), with the walk stopping at the
-first ended parent as decision 15 says.
+first ended parent as verdicts 15 and 28 say, and a smarter compile-time saving (the region) that leaves
+one header test per step where Rust pays a count pair.
 
 ---
 
 ## AN-63: Trees with parent pointers, graphs, cycles (A8)
+
+**v3:** as in v2; verdicts 21 to 34 change nothing here (no function value, kind test or deleting
+walk). `add`'s `child.parent = weakref this` under a line that names only `children` is now R11's text
+(making a link changes only the target's weak count, so it is not a change of `this`). Meaning
+unchanged.
 
 **1. Intent:** a scene tree whose nodes know their parent.
 
@@ -1453,7 +1749,7 @@ class Node:
         return child
 
 fn path(n: Node) -> String:
-    if n.parent exists as p:                       # `n` has a parent: call it `p`
+    if n.parent exists as p:                   # `n` has a parent: call it `p`
         return f"{path(p)}/{n.name}"
     return copy of n.name
 
@@ -1466,8 +1762,8 @@ fn main():
     root.add(moved)                                  # leaf.parent is root
 ```
 
-**Meaning changed** (decision 14). Run 4 wrote `parent: weak Node set by children`, and `push` and
-`remove` set and cleared the link. `set by` is gone: the link is an ordinary `weakref` field, and the
+v2's change from run 4 (verdict 14): in run 4 the language set and cleared the link when `push` and
+`remove` ran. Verdict 14 removed that: the link is an ordinary `weakref` field, and the
 program sets it, as Python does (`child.parent = weakref this`, then `this.children.push(child)`), and
 clears it when it takes a node out (`child.parent = None`). `add` and `take` are the program's own
 methods, not language words.
@@ -1566,6 +1862,8 @@ lines show that a node's parent owns it), with `weakref` a readable spelling of 
 
 ## AN-64: L3001 tells the programmer to make the owning edge weak
 
+**v3:** as in v2; verdicts 21 to 34 change nothing here. Meaning unchanged.
+
 **1. Intent:** follow the warning to fix a tree's cycle.
 
 **2. OLD.** `old/an63_tree_python.em`, `old/an63_tree_weak.em`, `old/an62_walk_callback.em`: all three
@@ -1597,8 +1895,8 @@ warning[L3001]: `Person.best` and `Person.friends` can hold each other: a cycle 
 
 The field named is the single-valued one when the cycle has one (a back link), otherwise the field the
 cycle closes on; a parent-child pair in the Python spelling is the error of AN-63, which names
-`parent: weakref Node = None`, set with `child.parent = weakref this`. Changed from run 4: `shares` and
-`weakref` (were `shared` and `weak`); the parent pair's advice has no `set by` (decision 14).
+`parent: weakref Node = None`, set with `child.parent = weakref this`. The parent pair's
+advice gives the program's own line, `child.parent = weakref this` (verdict 14).
 
 **4. The owner's test.**
 
@@ -1624,6 +1922,9 @@ given where a cycle can exist, and it names the right link).
 ---
 
 ## AN-65: `upgrade` is Rust's word for "the object, if it is still alive"
+
+**v3:** as in v2; the opening `if cam.target exists as p:` is verdict 26's (phase 0 changed the code;
+the prose now cites it). Meaning unchanged.
 
 **1. Intent:** read a weak link's target.
 
@@ -1657,14 +1958,14 @@ fn main():
     player = Player()
     cam = Camera()
     cam.target = weakref player
-    if cam.target exists as p:              # the player still lives: call it `p`
+    if cam.target exists as p:          # the player still lives: call it `p`
         println(p.health)
     else:
         println("gone")
 ```
 
-Changed from run 4: `weakref` (was `weak`) and the opening `if cam.target exists as p:` (was
-`if p = cam.target:`), R11, R13 (decisions 1, 9).
+The link is `weakref` (R11, verdict 9) and the opening is `if cam.target exists as p:` (R13, verdict
+26).
 
 **4. The owner's test.**
 
@@ -1706,7 +2007,7 @@ an63_links ms=0.068 peak_kb=8264 checksum=0
 - `cam.target = player`, E2020: "`=` alone would hand `player` over; write `cam.target = weakref player`".
 - `a = copy of cam.target`, E2116: "`copy of cam.target` would copy the link, not the player; for another
   link to the same player write `a = weakref cam.target`; for a copy of the player itself write
-  `if cam.target exists as p:` and then `c = copy of p`" (decision 10).
+  `if cam.target exists as p:` and then `c = copy of p`" (verdict 10).
 
 **7. Cost.** One add of the player's weak count when `cam.target = weakref player` makes the link and
 one subtract when it ends (R11); one test of the target's header per read (the camera's target is not a
@@ -1718,6 +2019,10 @@ parent link). Nothing keeps `p` alive: no line in its life can end a Player (R10
 ---
 
 ## AN-66: A bare interface type is a counted, shared, dynamically dispatched handle with no word
+
+**v3:** as in v2; verdicts 21 to 34 change nothing here. The E3040 message's second way out
+(`a: shares mut dyn Shape = Circle()` and `b = shares mut a`) is two owners that may both change the
+shape, which verdict 23 now states (the first owner, `a`, keeps what it could do). Meaning unchanged.
 
 **1. Intent:** store shapes of several kinds and draw them.
 
@@ -1769,7 +2074,7 @@ fn main():
         draw(s)
 ```
 
-Changed from run 4: `owns dyn` and `shares dyn` (were `owned dyn` and `shared dyn`).
+`owns dyn` and `shares dyn` say who owns each shape (verdict 19's words).
 
 **4. The owner's test.**
 
@@ -1823,6 +2128,13 @@ table}`, Rust's `Rc<dyn Shape>`.
 ---
 
 ## AN-67: Trait objects and downcasting (A13)
+
+**v3:** NEW as phase 0 left it: the "not sure" downcast is the kind test `if this.pools[k] is Pool[T] as
+ref mut pool:` (verdict 27). The prose and the owner's-test row now say what the kind test is (v2's prose
+described today's maybe-downcast, which verdict 27 removes), and the refusals give
+v3's lines: today's `cast ... if Pool[T]`, the removed `cast ... when Pool[T]`, a `match` on a
+maybe-downcast, `as?` and `as!` (all E1010); one refusal added, a plain name from the kind test whose
+element is returned `ref mut` (E3023). Meaning unchanged.
 
 **1. Intent:** `get_mut[T]` finds the pool of `T` in the registry and returns element `i`.
 
@@ -1899,15 +2211,20 @@ fn walk(xs: Array[owns dyn Inspect]) -> int:
     return s.total
 ```
 
-Changed from run 4: `owns dyn` (was `owned dyn`) and the opening
-`if this.pools[k] is Pool[T] as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
-R13, R14 (decision 1).
+Changed from v2: the kind test
+`if this.pools[k] is Pool[T] as ref mut pool:` (v2 opened today's `cast ... if Pool[T]` with verdict
+1's opening word, two `if`s in one line), R14 (verdict 27).
 
-`cast <place> if D` on an `owns dyn` (or `shares dyn`) place tests the value's type and gives a view of
-it as a `D`, opened with `exists as`: `ref mut pool` names a changeable view because the place is changeable
-(`changes pools`); plain `pool` would be read-only (R14). A generic method whose type parameter appears
-only as the type of a `ref` or `ref mut` parameter, with a `dyn`-compatible bound, gets one method-table
-entry, the generic body compiled with `V = dyn Visitor` (R14).
+The kind test `x is D as name` on an `owns dyn` (or `shares dyn`) place tests the value's type (one
+type-id compare) and, when it is a `D`, names it there as a `D`. A value tested in its place stays a
+place, so the name is a view of the registry's own pool: `ref mut pool` names a view that may change it,
+since `get_mut` may change `pools` (`changes pools`); plain `pool` would be read-only (R14; part 6).
+`is Pool[T]` says what `pool` is (the pool at `k`, seen as a `Pool[T]`), and `ref mut` that it may change
+it. When it is not a `Pool[T]` the `if` block does not run and `get_mut` stops the program with its
+message; the "sure" form, `pool = ref mut cast this.pools[k] as Pool[T]`, stops it in the cast instead
+(area B's AN-22). A generic method whose type parameter appears only as the type of a `ref` or `ref mut`
+parameter, with a `dyn`-compatible bound, gets one method-table entry, the generic body compiled with
+`V = dyn Visitor` (R14).
 
 **4. The owner's test.**
 
@@ -1916,7 +2233,7 @@ entry, the generic body compiled with `V = dyn Visitor` (R14).
 | `pools` | `owns` on its values: each pool has the map as its one owner | `changes pools`, or `changes this` |
 | `this` in `get_mut` | `this`: the Reg `get_mut` was called on | `changes pools` |
 | `k`, `i` | none (default: read-only numbers) | no |
-| `pool` | `ref mut` on the opened name: a view of the registry's pool that may change it | yes |
+| `pool` | `is Pool[T]`: the pool at `k`, seen as a `Pool[T]`; `ref mut` on the name the kind test gives: a view of the registry's own pool | yes (`ref mut`, in a method that says `changes pools`) |
 | result `-> ref mut T` | `ref mut`: a view into the registry's element | yes |
 | `this` in `inspect` | `this` | no: its first line says neither `changes` nor `owns this` |
 | `v` | `ref mut`: the caller's visitor | yes |
@@ -1956,24 +2273,45 @@ exit=0
   through `dyn`, E2050: "`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn`
   value has one entry per method; take the visitor as `ref mut v: V`, or use a type parameter
   `[I: Inspect]` instead of `dyn Inspect`".
-- `cast x as D` / `cast x if D` between unrelated types, E2020, with "`Box[dyn AnyPool]` is now
-  `owns dyn AnyPool`" where that is the cause.
-- `if Some(ref mut pool) = cast this.pools[k] if Pool[T]:`, E0115: "an `Option` or a `weakref` link is
-  opened with `exists as`: write `if this.pools[k] is Pool[T] as ref mut pool:`".
-- `as?` / `as!`, E1010 (today E0100 with the line, pasted in part 2): "a downcast is written
-  `cast x if D`, opened with `exists as` (or `cast x as D`, which stops the program if it is not one)".
+- `cast x as D`, and a kind test `x is D`, between unrelated types, E2020, with "`Box[dyn AnyPool]` is
+  now `owns dyn AnyPool`" where that is the cause.
+- A plain name from the kind test, `if this.pools[k] is Pool[T] as pool:` with `return ref mut
+  pool.dense[i]`, E3023: "`pool` reads the pool in `this.pools` and cannot change it; to return a
+  changeable element, write `if this.pools[k] is Pool[T] as ref mut pool:`" (R14; area B's AN-22 gives
+  the same message).
+- Today's "not sure" downcast, `if Some(ref mut pool) = cast this.pools[k] if Pool[T]:`, E1010 (verdict
+  27): "`cast this.pools[k] if Pool[T]` is not Ember: to run a block when the pool at `k` is a
+  `Pool[T]`, write `if this.pools[k] is Pool[T] as ref mut pool:`; to stop the program when it is not
+  one, write `pool = ref mut cast this.pools[k] as Pool[T]`". `cast this.pools[k] when Pool[T]`, verdict
+  25's spelling, which verdict 27 removed, gets the same message with its own words in the first quote
+  (R14).
+- Today's `match cast this.pools[k] if Pool[T]:` with `Some(pool):` and `None:` branches (the form of
+  part 5's `m67_class_pools.em`), E1010: "a choice among kinds is written with `is`: instead of the
+  `match` line and its two branches, write `if this.pools[k] is Pool[T] as ref mut pool:` for the
+  `Some(pool):` branch and `else:` for the `None:` branch" (R14: there is no "maybe a `Pool[T]`" value
+  to `match` on).
+- `as?`, E1010 (today E0100 with today's line, pasted in part 2): "a downcast that may fail is a kind
+  test: instead of `a = s as? Circle`, write `if s is Circle as a:` and use `a` inside it"; `as!`,
+  E1010: "`as!` is not Ember: to stop the program when `s` is not a `Circle`, write `a = cast s as
+  Circle`" (the vocabulary's `as?` and `as!` rows, in the names of part 2's probe).
 
 **7. Cost.** A `cast`: one load of the method table's type id and one compare; safe Rust's
 `downcast_mut` was measured slower (1.710x and 1.606x against the pool table's 1.208x and 1.084x of plain
-C, `phase3b-references.md` 3.4 as quoted in `phase3b-graphs-callbacks.md` 6.3); `V2/rules.md` section 2
-gives 1.223 to 1.244 of plain C against `downcast_mut` 1.571 to 1.635 (AN-22, PROVISIONAL). The `dyn`
-entry: the indirect calls Rust's hand-written workaround makes.
+C, `phase3b-references.md` 3.4 as quoted in `phase3b-graphs-callbacks.md` 6.3); `V3/rules.md` section 2
+gives 1.223 to 1.244 of plain C against `downcast_mut` 1.571 to 1.635 (AN-22, PROVISIONAL). The kind
+test is the same one compare. The `dyn` entry: the indirect calls Rust's hand-written workaround makes.
 
 **8. Kind:** a smarter compile-time solution.
 
 ---
 
 ## AN-68: `if c = cast s if Circle:` gets E2036 with a help that is not what was meant
+
+**v3:** NEW as phase 0 left it, the kind test `if s is Circle as c:` (verdict 27). The programmer's
+line, `if c = cast s if Circle:`, is now refused because `cast s if Circle` is not Ember (E1010), with a
+message that gives the line meant; v2 refused it with E2036. Refusals added: a kind test that always
+passes (E2036), `cast s when Circle` (E1010), `match cast s if Circle:` (E1010). Meaning unchanged (the
+same program, the same refused line, with another code and the same line to write).
 
 **1. Intent:** do something only when a shape is a circle.
 
@@ -2014,19 +2352,20 @@ exit=1
             t += c.r
 ```
 
-**Meaning changed.** Run 4 accepted the programmer's own line, `if c = cast s if Circle:`, as its opening
-form. The owner chose `exists as` for opening (decision 1), so the opening is
-`if s is Circle as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
-now with a message that gives the line meant (part 6) instead of today's "did you mean
-`c == cast s if Circle`?". The two `if`s in the line are in `V2/changes.md` section 11, question 5, for
-the owner.
+`if s is Circle as c:` runs its block when `s` is a `Circle` and names it `c` there (R14). `is` before a
+type name means "is of this kind", as in Swift, Kotlin and C#; `as c` gives the name, as in `import x as
+y`; one `if`, which settles the two `if`s v2 left for the owner (`V2/changes.md` section 11, question 5).
+v2's change from run 4 stays: run 4 accepted the programmer's own line as its opening form, and the
+owner's opening word (verdict 1, then 26) made it a refused line; v3 refuses it as today's `cast s if
+Circle` (E1010), with a message that gives the line meant (part 6) instead of today's "did you mean
+`c == cast s if Circle`?".
 
 **4. The owner's test.**
 
 | name | what it is | may it change it |
 |---|---|---|
 | `s` | none (default: a read-only view of an element) | no |
-| `c` | none (default for an opened name: a read-only view of the same object as a `Circle`) | no |
+| `c` | `is Circle`: `s` itself, seen as a `Circle` | none (default for the name a kind test gives: a read-only view, R14) |
 
 (`t` is declared earlier in the function, as the function's own `f64`; this fragment does not declare
 it.)
@@ -2039,28 +2378,44 @@ it.)
 exit=0
 ```
 
-Today's compiler does not know the opening word (`V2/changes.md` section 7, `q1_holds.em`, which probed run 4's `holds`).
+Today's compiler does not know the opening word (`V2/changes.md` section 7, `q1_holds.em`, which probed run 4's `holds`), nor the kind test:
+`if s is Circle as c:` is E1010 "cannot find `Circle` in this scope" and E2020 "cannot be cast ... with
+`as`", since today's `is` takes a value and `as c` reads as a conversion (`V3/changes.md` section 7,
+`r2_is_as.em`, output pasted there).
 
 **6. Still refused.**
-- `if c = cast s if Circle:` (the OLD line), E2036: "`c = cast s if Circle` always matches, since `c`
-  takes any value, here an `Option[Circle]`; to run the block only when `s` is a Circle and call it `c`,
-  write `if s is Circle as c:`".
-- `if Some(c) = cast s if Circle:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write
-  `if s is Circle as c:`".
+- `if c = cast s if Circle:` (the OLD line), E1010 (verdict 27): "`cast s if Circle` is not Ember: to
+  run a block when `s` is a `Circle` and call it `c`, write `if s is Circle as c:`; to stop the program
+  when it is not one, write `c = cast s as Circle`" (R14; one mistake, one message: the line's `=`
+  needs no message of its own once the line is replaced).
+- `if Some(c) = cast s if Circle:` (today's spelling, part 5), E1010, with the same message (the
+  vocabulary's `cast` row).
+- Verdict 25's spelling, which verdict 27 removed: `found = cast s when Circle` (line 2) then `if found
+  exists as c:` (line 3), E1010: "`cast s when Circle` is not Ember: instead of `found = cast s when
+  Circle` and `if found exists as c:`, write `if s is Circle as c:`" (R14, R18: the message names both
+  lines it replaces).
+- `match cast s if Circle:` with `Some(c):` and `None:` branches, E1010: "a choice among kinds is
+  written with `is`: instead of the `match` line and its two branches, write `if s is Circle as c:` for
+  the `Some(c):` branch and `else:` for the `None:` branch" (R14).
 - `if s exists as c:`, where `s` always holds a value, E2036: "`s` is a shape, which always holds a value, so
   this `if` would always run; to test whether it is a Circle write `if s is Circle as c:`; to
   name it write `c = s` on the line before".
-- `if s is Circle as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
-  name: `if s is Circle as c:`".
+- A kind test that always passes, where `s` is already a `Circle` (`for s in circles:`), E2036: "`s` is a
+  `Circle` already, so this `if` would always run; to name it write `c = s` on the line before" (R14).
+- `if s is Circle as s:`, E2106: "`s` already names a value (line 1); `as` declares a new name: `if s
+  is Circle as c:`" (R14).
 
-**7. Cost.** None beyond the one type-id compare of the cast (AN-67).
+**7. Cost.** None beyond the one type-id compare of the kind test (AN-67).
 
 **8. Kind:** a readable spelling of Rust's guarantee (`if let Some(c) = s.downcast_ref::<Circle>()`),
-with today's unhelpful help replaced by the line meant.
+written as Swift, Kotlin and C# write it, with today's unhelpful help replaced by the line meant.
 
 ---
 
 ## AN-69: Generics friction (A16)
+
+**v3:** as in v2; verdicts 21 to 34 change nothing here. The E2041 message in part 6 gives one way out
+in words ("narrow the general one's bound"), listed for the lead (notes, note 6). Meaning unchanged.
 
 **1. Intent:** sum any addable values; print a list of vectors; give one type its own description.
 
@@ -2127,7 +2482,7 @@ extend Array[Vec3] implements Neg:           # accepted in a program (a package 
     ...
 ```
 
-Changed from run 4: `copy of` (was `copied`). Rules (R14, R17): a function that is not `pub` gets its
+Rules (R14, R17): a function that is not `pub` gets its
 bounds from its body (every operation on `T` maps to the one interface in scope that provides it;
 recorded, printed by `ember inspect --bounds`); a `pub` function writes its bounds, because they are its
 promise to other packages, and the error gives the exact line; a package that nothing can depend on (a
@@ -2177,6 +2532,8 @@ understandable limitation kept, with its message.
 
 ## AN-70: `virtual` in a class that cannot be subclassed is accepted with a warning (W2111)
 
+**v3:** as in v2; verdicts 21 to 34 change nothing here. Meaning unchanged.
+
 **1. Intent:** declare a method that subclasses may replace.
 
 **2. OLD.** `old/an70_virtual.em` (reader 4's `t10_w2111.em`):
@@ -2214,7 +2571,7 @@ class SwingDoor(Door):
             this.angle = 90.0
 ```
 
-Changed from run 4: the virtual says `changes this` (was `ref mut this` after the brackets, R5, decision
+Changed from run 4: the virtual says `changes this` (was `ref mut this` after the brackets, R5, verdict
 6). Its first line is what every override must keep to, and it may say more than its own body does
 (R5: a virtual's body is checked one way, so `pass` under `changes this` is accepted; this settles run 4's
 note 5). The override says `changes angle`, the one field its body changes: no more than the virtual's
@@ -2265,66 +2622,105 @@ line to write instead of accepted with a warning.
 
 ## Words needed
 
-Words an answer would need that `V2/vocabulary.md` has no row for. None is used in the NEW code above.
+Words an answer would need that `V3/vocabulary.md` has no row for. None is used in the NEW code above.
 
 | word | why |
 |---|---|
-| `min` as a function of two values (`min(a, b)`) | AN-70's override (run 3's and run 4's) wrote `this.angle = min(this.angle + 90.0 * dt, 90.0)`. `V2/vocabulary.md` has `min` only in the iterator row, "as a method" (`xs.iter().min()`). The NEW body writes the same with `+=` and an `if`; a row for the prelude function (as `len`, `abs`) would let the line stay as the programmer wrote it |
+| `min` as a function of two values (`min(a, b)`) | AN-70's override (run 3's and run 4's) wrote `this.angle = min(this.angle + 90.0 * dt, 90.0)`. `V3/vocabulary.md` has `min` only in the iterator row, as a method (`xs.iter().min()`), and its prelude row lists `len`, `println`, `panic`, `sorted`, `abs`. The NEW body writes the same with `+=` and an `if`; a row for the prelude function would let the line stay as the programmer wrote it |
+| `changes` on a lambda written with `=>` (`fn(owns s) changes names => names.push(s)`) | AN-56's first lambda, and AN-55's, were written with `=>` in v2. Under verdict 22 they say what they change, and the vocabulary shows `changes` only on a lambda written with `:` (`fn(s) changes LOG: LOG.push(s.name)`). This file writes both with `:`, which says the same; a line in the `fn` row would say whether `=>` takes the clause too (notes, note 3) |
 
 ## For the owner
 
-1. **A walk whose callback may remove nodes keeps a link, not a view (AN-62 (b)).** Your decision 5 (a
-   read-only name promises that what it reads does not change while it is used) and decision 17 (a
-   function's type says what it changes) together mean: when the callback's type says `changes Node`, the
-   walk may not hold a read-only view of a node across the call, since the callback could change that
-   node. The walk therefore names a link that may outlive its node: `up = weakref p` before the call and
-   `while up exists as n:` after it. It reads plainly and stops at the first deleted parent, as decision 15
-   says; it costs one weak-count subtract and add per step (Rust's walk pays a count pair per step for the
-   same program). With a callback that only looks (`fn(Node)`, the usual case) the walk keeps views and
-   pays nothing per step. Is the link spelling acceptable for the remove-nodes case? AN-62 writes it
-   meanwhile.
+1. **May a list of functions that a function keeps for itself name the variable they change?** (AN-58,
+   verdict 22.) A field's or a parameter's type cannot name a variable of whoever calls it, which is why
+   you chose `captured`. A local list, kept and run inside the one function that wrote the lambdas,
+   could name that function's own variable. Meanwhile AN-58 writes the rule as it stands, which allows
+   only `captured` in a type:
+
+   ```ember
+   hs: Array[fn() changes captured] = []      # meanwhile: the word for "the variable each captured"
+   hs.push(fn() changes score: score += 1)
+   ```
+
+   The other spelling, naming it:
+
+   ```ember
+   hs: Array[fn() changes score] = []         # the list says which variable: only this function's `score`
+   hs.push(fn() changes score: score += 1)
+   ```
+
+   The second says more (a reader sees which variable), and costs a second rule: a type may name a
+   variable only where that variable is in scope, and such a list may not leave the function (E3026
+   already refuses that). Both are checked when compiling and cost nothing while running. Which?
+
+The questions this area's answers meet that the rule writer already raised are in `V3/changes.md`
+section 11 and are not repeated: question 1, what `click` says about its handlers' captured variables
+(AN-53 writes `fn click() changes handlers, captured...:`); question 4, a function value or a bound in a
+function that is handed a function (AN-56 writes verdict 21's function-value form, AN-55 uses the
+library's bound); question 7, timing AN-62 (b)'s region (this step checked it for safety only, part 5).
 
 ## Notes for the lead and the rule writer
 
-Points where the v2 rules did not settle what an answer needed, or where an answer found a gap; what this
-area wrote meanwhile.
+Points where the v3 rules did not settle what an answer needed, or where an answer found a gap; what
+this area wrote meanwhile.
 
-1. **A function value that changes a real variable, stored inside that variable (a possible hole in
-   R12).** R12 counts the real variables a lambda captures as part of the function itself, checked in
-   the function that writes the lambda. This program seems to pass every v2 rule:
-   `t = Tree(...)`, `t.on_visit = fn(n: Node): t.root.children.clear()`, `d = t.depth_total()`. The lambda
-   is a plain `fn(Node)` (it changes only `t`, a real variable it captures), it does not outlive `t`
-   (E3026 does not apply), and `depth_total`'s first line (`changes on_visit`) matches its body. Inside
-   `depth_total`, AN-62 (a)'s views of `t`'s nodes then live across a call that ends them (the case of
-   run 3's `an62_defer_asan.c` mode 1, a read of freed memory). R12's "a call that may run it as a change
-   of each one it changes" makes `t.depth_total()` a change of `t` in `main`, but no rule refuses a method
-   call whose own object is changed by the call beyond the method's first line. A fix in Rust's terms: a
-   function value that captures a real variable may not be stored in a place that variable owns (Rust
-   refuses it as a borrow conflict); or a method call on `x` that may run a function value changing `x`
-   is refused unless the method's first line says `changes this`. AN-62 (a) assumes such a refusal.
-2. **R11's region walk and decision 5.** R11's last paragraph describes a walk whose views live across a
-   call that may end nodes, protected by a deferred-drop region and stopping at the first ended parent.
-   With R8 (g) and R12, a view of a node may not live across a call whose type says it changes nodes, and
-   a callback that removes a node from a `children` list changes a `Node`. AN-62 (b) therefore keeps a
-   link, not a view. R11's sentence covers only a call that may end nodes without changing any; which
-   programs those are (a callback that changes only a `Tree` that owns the nodes?) is not said, nor
-   whether changing an object owned by a `Tree` counts as changing the `Tree` for R12's `changes T`.
-3. **A view given as the argument of a call that may change it.** In AN-62 (b), `this.on_visit(p)` gives
-   `p`, a read-only view of a node, to a function whose type says `changes Node`. AN-62 reads R12's "no
-   read-only view of what they change ... lives across the call" as not covering a view whose last use is
-   that argument, and the callee's own body as checked by R4's promise and R8 (g) (it may not change the
-   node it was given while it reads it, unless it proves the two differ). One sentence in R12 would say so.
-4. **A compile-time saving for AN-62 (b)** (not in the rules, so not used in its cost): a `weakref` local
-   whose whole life lies inside a deferred-drop region needs no weak count, since the region keeps every
-   block set aside until it ends, after the link. Placing a region around (b)'s `for` loop would remove the
-   per-step subtract and add, leaving one header test per step (run 3's W2 with a header test per hop:
-   1.579x of plain C). Worth measuring in the next measuring phase.
-5. **The parent-link proof fails silently.** R11's condition (1) is package-wide: one line elsewhere
-   (a link given to a node that its target does not then own, a `remove` with no clearing) makes every
-   `parent` read in the package test the header, 1.579x of plain C instead of 1.176x on W2, with no word
-   in the program and no message. Decision 14 asks to say honestly what it costs; a note from the compiler
-   naming the line that stops the proof (or an `ember inspect` view of it) would let the programmer see
-   it.
-6. **`weakref this` in a method whose first line names only a field.** AN-62's and AN-63's `add`
-   (`changes children`) write `child.parent = weakref this`, which adds to `this`'s weak count (a number
-   in its header) and changes no field. AN-62 and AN-63 read that as allowed; R5 does not say so.
+1. **v2's six notes, and where they went** (`V3/changes.md` section 5). Note 1 (a function value stored
+   inside the variable it changes) is now refused (E3022, R12): AN-53 and AN-62 part 6 show it. Note 2
+   (R11's region walk against R8 (g)) is settled by verdict 28: AN-62 (b) is its walk. Note 3 (a view as
+   the argument of a call that may change it) is R8 (g)'s sentence on a view whose last use is an
+   argument. Note 4 (a link inside a region needs no weak count) is R11's saving: AN-62's part 5 checks
+   it in C and part 7 uses it. Note 6 (`weakref this` in a method that names only a field) is R11's
+   sentence on making a link. **Note 5 is still open**: R11's parent-link proof is package-wide, and one
+   line elsewhere (a link given to a node its target does not then own, a `remove` with no clearing)
+   makes every `parent` read in the package test the header, 1.579x of plain C instead of 1.176x on W2
+   (`RUN3/26-timer.md` lines 20 to 22), with no word in the program and no message. A note from the
+   compiler naming the line that stops the proof, or an `ember inspect` view of it, would let the
+   programmer see it; `V3/changes.md` section 5 leaves it to the lead.
+2. **The header test AN-62 (b) still pays per step** (verdict 28 asks the next run to look for proof
+   that removes what it can). The region removes the weak-count moves; no v3 rule can remove the header
+   test, because `on_visit` is a stored function value, an unknown call known only by its type, and
+   `fn(Node) changes Node` allows it to end the node the next test is for. A proof would need to know
+   which nodes the visit function may end. Two routes for the next run, neither in the rules: a function
+   type that says more than `changes Node` (for example that it never ends a node above the one it is
+   given), which would be a word for the owner; or, where every line that sets `on_visit` is in the
+   package, the summary of each function given to it (R17), as R11 already reads summaries for parent
+   links. Neither was priced.
+3. **`changes` on a `=>` lambda, and a message in `V3/rules.md` that breaks verdict 22.** The vocabulary
+   shows a `changes` clause only on a lambda written with `:`; this file writes every changing lambda
+   that way (AN-55, AN-56; "Words needed"). `V3/rules.md` section 3's E2020 row gives "to keep your own,
+   write `fn(s) => names.push(copy of s)`", a lambda that changes the captured `names` without saying so,
+   which R12 refuses (E2105); AN-56's own message gives `fn(s) changes names: names.push(copy of s)`.
+   Area B found the same row (`V3/area-B.md` section 6, note 6).
+4. **`V3/rules.md` section 3's E3021 row for the view walk gives a line that does not compile in its own
+   program** (R18). The row says "instead of `cur = ref n`, the `while` line and `cur = ref p`, write
+   `up = weakref leaf`, then `while up exists as n:` ...". AN-62 (a)'s walk, which the row's line numbers
+   (21, 23) come from, also has `if leaf exists as n:` above `cur = ref n`; kept, it and the new `while up
+   exists as n:` declare `n` twice (E2106). AN-62 part 6 adds `if leaf exists as n:` to the "instead of"
+   list; the row needs the same.
+5. **Two readings of R12 this file takes.** (a) R12 says a function that runs a function whose type
+   says `captured` writes "`captured` where it runs the one function a field holds"; AN-54's E2113
+   message applies that to a parameter, `fn run(ref mut f: fn() changes captured) changes captured:`.
+   (b) R12 shows `captured...` beside a module variable (`Array[fn() changes captured..., LOG]`); AN-53's
+   E2113 message writes `captured` beside one, `Array[fn() changes captured, LOG]`, so that the button
+   that keeps row 6's handlers can keep `LOG` handlers too. One sentence in R12 would say each.
+6. **Messages in area D that still break the message rule** (left as v2 wrote them: the lead's, phase 3,
+   except where this step rewrote a message, which is said in the answer):
+   - AN-61 part 6, E3060: "name it again after the call: `h = ref mut this.handlers.get_mut(i).unwrap()`"
+     gives a new view to a `ref mut` name, which R2 refuses (E3023); the line that compiles uses a new
+     name (`V2/readability.md` F-01).
+   - AN-53 part 6 and AN-57 part 3, E3026: the help gives `count = shares mut Counter()` and `count.n +=
+     1`, which need a class `Counter` with a field `n` that the program does not have and the message
+     does not give; AN-53's bullet only describes the list ("kept in a list of `fn() changes Counter`")
+     (F-03). AN-57's new E3023 message (verdict 32) is about that help followed, so its `Counter` is the
+     program's own.
+   - AN-53 and AN-58 part 6, E3020: "or collect what to add and push it after the loop" is a way out in
+     words (F-06).
+   - AN-67 part 6, E2050: "or use a type parameter `[I: Inspect]` instead of `dyn Inspect`" gives a
+     bound, not the line (`fn walk[I: Inspect](xs: Array[I]) -> int:`) (found in this step).
+   - AN-69 part 6, E2041: "narrow the general one's bound so it leaves `i32` out" is a way out in words;
+     its second way out is an exact line (found in this step).
+7. **Verdicts with no code in area D.** No answer of area D calls a C function, so verdict 31 (a C call
+   may run the callbacks C keeps; `@ffi(no_callbacks)`) changes none of its lines; area E's AN-78 carries
+   it. Verdict 32 lands only in AN-57's added refusal; no NEW block of area D takes a plain parameter of a
+   `shares` type. Verdicts 23, 24, 29, 33 and 34 have no construct in area D's NEW code (AN-66's message
+   names two `shares mut` owners, which verdict 23 confirms).

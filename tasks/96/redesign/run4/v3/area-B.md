@@ -1,21 +1,22 @@
-# Area B, v2: references kept or returned, locks, objects still being built (AN-17 .. AN-33)
+# Area B, v3: references kept or returned, locks, objects still being built (AN-17 .. AN-33)
 
-Agent 03 (area-B), run 4, step 1 (v2). Every answer of area B brought to the v2 rules and words, which
-apply the owner's 20 decisions of 2026-10-25 (`inputs/JOB.md`, "Owner verdicts on run 4's open
-questions"): `V2/rules.md` (rules R1 to R18, the codes), `V2/vocabulary.md` (the words) and
-`V2/changes.md` (what changed from run 4). `RUN3` means `tasks/96/redesign/run3/`, `RUN4` means
-`tasks/96/redesign/run4/`, `V2` means `tasks/96/redesign/run4/v2/`; "R1" .. "R18" are the v2 rules;
-"row N" is the owner's agreed row N and "decision N" the owner's decision N in `inputs/JOB.md`.
+Agent 03 (area-B), run 4, step 2 (v3). Every answer of area B brought to the v3 rules and words, which
+apply all of the owner's verdicts 1 to 34 (`inputs/JOB.md`, "Owner verdicts on run 4's open questions";
+27 replaces 25): `V3/rules.md` (rules R1 to R18, the codes), `V3/vocabulary.md` (the words) and
+`V3/changes.md` (what changed from v2). `RUN3` means `tasks/96/redesign/run3/`, `RUN4` means
+`tasks/96/redesign/run4/`, `V2` means `tasks/96/redesign/run4/v2/`, `V3` means
+`tasks/96/redesign/run4/v3/`; "R1" .. "R18" are the v3 rules; "row N" is the owner's agreed row N and
+"verdict N" the owner's verdict N in `inputs/JOB.md`.
 
-Power: `PowerLineStatus` printed `Online` at the start of this work and again before writing this file.
 No compiler change, no git command, no Ember program run, and no `ember check` was needed: this file
 makes no new claim about what today's Ember accepts or refuses. Every OLD block and every "means
-exactly" block, with its `ember check` output, is carried over unchanged from `RUN4/area-B.md` (which
-carried them from `RUN3/combined-v4.md` section 11): this file was made by copying `RUN4/area-B.md` and
-editing only the prose, the NEW blocks, the owner's-test tables, the refusals and the costs
-(`target/redesign4/v2-03-area-B/check_carried.py` checks that every OLD and means-exactly block is
-byte for byte run 4's). What changed from run 4 is said once per answer, in its "v2" line, and in the
-table of section 3.
+exactly" block, with its `ember check` output, is carried over unchanged from `V2/area-B.md` (which
+carried them from `RUN4/area-B.md` and `RUN3/combined-v4.md` section 11): this file is phase 0's copy
+of `V2/area-B.md` (phase 0 changed no line of it: `V3/spelling-changes.txt` lists none, and its 12
+lines with "holds" in area B are all English), with only the prose, the NEW blocks, the owner's-test
+tables, the refusals and the costs edited (`target/redesign4/v3-03-area-B/check_carried.py` checks
+that every OLD and means-exactly block is byte for byte v2's). What changed from v2 is said once per
+answer, in its "v3" line, and in the table of section 3; what changed before that is in `V2/area-B.md`.
 
 Each answer has the eight parts: 1 intent; 2 OLD with today's output; 3 NEW; 4 the owner's test for
 every declared name; 5 means exactly (today's Ember or C doing what NEW means); 6 still refused, each
@@ -29,40 +30,52 @@ default never changes anything, never aliases silently and never copies silently
   `changes <fields>` (row 3: the fields it may change), `reads <fields>` (row 7: the fields it reads),
   `changes this` (any field, or the whole value), `owns this` (it takes the object over). Checked
   against the body and at every call (R5). `changes this` and `changes <fields>` say only that the
-  method may change its own object; they promise nothing about other names (decision 18).
+  method may change its own object; they promise nothing about other names (verdict 18).
 - **one-owner object**: an object with one owner. A second owner is written `shares` or `shares mut`
   (R1, R3), so every other name for a one-owner object is a `ref` or `ref mut` name the compiler can see.
-- **read-only view**: every view but `ref mut`, `sharedref mut` and `MutSpan`; it promises that what it
-  reads does not change while it is used (R8 (g), decision 5).
+- **read-only view**: every view but `ref mut`, `sharedref mut` and a `MutSpan` held by a `ref mut` name
+  (a plain name or parameter holding a `MutSpan` only reads its elements, R5, verdict 34); it promises
+  that what it reads does not change while it is used (R8 (g), verdict 5).
+- **kind test**: `if s is Circle as c:` (runs its block when `s` is a `Circle`, and names it `c`) and
+  `if s is Circle:` (tests only); the "not sure" downcast. `cast s as Circle` is the "sure" one: it
+  stops the program if `s` is not a `Circle` (R14, verdict 27).
+- **a change under a lock**: a change made through a `Mutex`, `RwLock` or `Atomic` (`g.clear()` inside
+  `with g = scores.lock():`). A plain name may make it, by the type's own operations, and the call takes
+  no word (verdict 3); the function's first line names it by the type of what changes
+  (`changes Mutex[Array[String]]`), as every change is named (R5, R12, verdict 29).
 - **access word**: today's run-time check on class fields (`[EXC-19]`, spec 2712-2730): one word per
   non-`Copy` field, tested on each long-term access, set for a whole `mut self` call. Gone in the new
   rules.
 - **view**: a value that points into something someone else owns and may not outlive it (`ref T`,
-  `Span[T]`, `StrView`, a struct holding one; `V2/rules.md` section 0).
+  `Span[T]`, `StrView`, a struct holding one; `V3/rules.md` section 0).
 - **source** of a result: what a returned view points into (R6).
 - **guard**: what `m.lock()`, `rw.read()`, `rw.write()` return; it holds the lock until its `with`
   block ends.
 - **own local**: a name made in this function by the value on its right (`total = 0`, `d = Door()`);
   only this function can change it and nothing else refers to it.
 - **reshape**: a change that can free or move memory (`push`, `clear`, replacing a value that owns
-  memory; `V2/rules.md` section 0). Writing a number is not a reshape.
+  memory; `V3/rules.md` section 0). Writing a number is not a reshape.
 
-## 1. Area B's rules, as the v2 rules state them
+## 1. Area B's rules, as the v3 rules state them
 
 1. **A method's first line says what it does to `this`** (R5): nothing (it only reads), `reads a, b`,
    `changes a, b`, `changes this`, or `owns this`, after the parameters. A method does not list its
    object among its parameters; inside it the object is `this`. A method with no `reads` is taken by
    callers in other packages to read every field (R17). `changes this` promises nothing about other
    names: `this` is never the only name of its object and is never compiled with noalias (R4, R5,
-   decision 18).
+   verdict 18).
 2. **All of it is checked when compiling, for every object, class or struct** (R5, R8, R9): no access
    words, nothing checked while running.
 3. **A name that changes someone else's value says `ref mut` on the name** (R4, R5): a parameter
-   (`ref mut c: Counter`), a loop name (`for ref mut p in players:`), a pattern name (row 8); **and a
-   call that changes an argument says it too**: `bump(ref mut a)`, a `MutSpan` argument included
-   (R4; decision 3). A `Mutex`, `RwLock` or `Atomic` argument takes no word at the call (decision 3).
-   A plain name never changes anything, a `Cell` field included (R5).
-4. **A read-only name promises that what it reads does not change while it is used** (R8 (g), decision
+   (`ref mut c: Counter`), a loop name (`for ref mut p in players:`), a pattern name (row 8), and a name
+   or parameter that writes the elements of a `MutSpan` (`fn first_even(ref mut ps: MutSpan[int]) ->
+   ref mut int:`; verdict 34); **and a call that changes an argument says it too**: `bump(ref mut a)`, a
+   `MutSpan` argument included (R4; verdict 3). What a function may do with a parameter is set by the
+   word in front of the parameter's name, for every type (R4, verdict 32). A `Mutex`, `RwLock` or
+   `Atomic` argument takes no word at the call (verdict 3). A plain name never changes anything, a
+   `Cell` field included (R5); only a `Mutex`, `RwLock`, `Atomic` or channel end is changed through a
+   plain name, by its own operations (R5).
+4. **A read-only name promises that what it reads does not change while it is used** (R8 (g), verdict
    5): a change of it through another name is refused (E3021), and a reshape ends it (E3060 at its later
    use). A copy of your own is `copy of x`.
 5. **A returned view points into its object (a method) or into its view arguments (a function), all of
@@ -78,60 +91,81 @@ default never changes anything, never aliases silently and never copies silently
    block.
 9. **`init` sets the fields of the object it builds through `this` with no word, and may call a `reads`
    method once the fields it names are set** (R5, row 7).
+10. **A function that changes something under a lock says so on its first line** (R5, R12, verdict 29),
+    named by the type of what changes: `fn clear(scores: Mutex[Array[String]]) changes
+    Mutex[Array[String]]:` for `g.clear()` inside `with g = scores.lock():`. The call still takes no word
+    (`clear(m)`, verdict 3). A loop that walks the locked list while such a call runs is refused when
+    compiling (E3020), instead of waiting for the lock this thread already holds.
+11. **A downcast says whether it is sure** (R14, verdict 27): `cast x as T` when sure (it stops the
+    program if `x` is not a `T`), `if x is T as name:` when not; a cast or a kind test of a place stays a
+    place, so `pool = ref mut cast this.pools[k] as Pool[T]` and `if this.pools[k] is Pool[T] as
+    ref mut pool:` both name the registry's own pool. `cast x if T` is gone.
 
 What still runs while the program runs, in area B: Ember's bounds checks (as today, not this area's);
 `@cached`'s flag test (one branch per call, the hand-written C cache); the one type-id compare of a
-downcast (`cast ... as Pool[T]`, as today). Nothing else (`V2/rules.md` section 2).
+downcast or a kind test (`cast ... as Pool[T]`, as today; `if ... is Pool[T] as ...:`); the lock a
+program takes (`with g = scores.lock():`), as C takes it. Nothing else (`V3/rules.md` section 2).
 
-## 2. Area B's rulings on `@cached`, `from` and `Cell`, in the v2 words
+## 2. Area B's rulings on `@cached`, `from` and `Cell`, in the v3 words
 
 1. **`@cached`'s result**: a `Copy` result is returned by value; any other result is returned as a
    `ref T` view into the kept value. A change to a field its `reads` names, through any name, clears the
    kept value; clearing it replaces a value that owns memory, a reshape, so it ends every view of the
    kept value (R8 (b), E3060 at a later use). On an object several threads reach, the slot is filled
-   once under a once-flag (area E's ruling, run 3's clash 6). Its refusals are E2117.
+   once under a once-flag (area E's ruling, run 3's clash 6). Filling the slot is not named on the
+   method's first line, though it is made under that flag: the slot is not a field of the program, no
+   name but the method reads it, and filling it changes nothing a view or a loop reaches (it held no
+   value before); the change that clears it is the change of a `reads` field, which is named where it
+   is made. Verdict 29's "a change under a lock is named" therefore adds nothing to a `@cached` method
+   (section 6, note 4). Its refusals are E2117.
 2. **`from` on a field, the heap-block condition**: the named field must be `let` and a `String` or an
    `Array` (contents outside the header, `ember_vec {ptr, len, cap}`; ADR-141 frame buffers only for
    lists that never leave their function). A fixed array or an inline struct field is refused (AN-25,
    E2118).
 3. **`Cell`**: "a plain name never changes anything" holds with no exception (R5). Setting a `Cell`
    field needs a name that may change it (`ref mut s`, `changes this`, `changes frame`), or an owner of
-   a `shares mut` value (R9). Cost: none, `Cell.set` is a plain store. What `Cell` still gives: it lets
+   a `shares mut` value (R9): a name made with `shares mut`, or a parameter `owns s: shares mut Clock`,
+   not a plain parameter `s: shares mut Clock`, which only reads (R4, verdict 32). Cost: none,
+   `Cell.set` is a plain store. What `Cell` still gives: it lets
    the `shares mut` owners of a value set it whole, and never lends a reference into it.
 
-## 3. What v2 changed in each answer
+## 3. What v3 changed in each answer
 
-"Meaning changed" compares with `RUN4/area-B.md`. Every answer takes the new spellings (`this`,
-`changes this` for run 4's `ref mut this`, `owns` for `owned`, `shares` for `shared`, `weakref` for
-`weak`, `copy of` for `copied`); the table lists them only where they occur.
+"Meaning changed" compares with `V2/area-B.md`. Every answer now cites the owner's verdicts as
+"verdict N" (v2 wrote "decision N") and the v3 files. The verdicts that land in area B are 29 (locks,
+AN-30), 27 (downcasts, AN-22), 34 (`MutSpan`, AN-28), 22 (what a lambda's type covers, AN-29) and 32
+(the word on the name, AN-20); 21 appears in AN-29's refusal. Verdicts 23, 24, 26, 28, 30, 31 and 33
+touch no code of area B (no `shares` hand-on, arena, `holds`, tree walk, thread, C call or `.copied()`
+in its NEW blocks).
 
 | answer | what changed | meaning changed? |
 |---|---|---|
-| AN-17 (row 3) | the field defaults say `changes this` | no |
-| AN-18 | `changes this` for `ref mut this` (decision 6); `copy of msg`; `changes this` promises nothing about other names (decision 18) | no (the program's meaning is the same; `this` in `reset` is no longer "alone", which this program does not rely on) |
-| AN-19 | the field default says `changes this` | no |
-| AN-20 | `Cell` ruling: `changes this` | no |
-| AN-21 | the five `@cached` refusals have a code, E2117, with the v2 messages | no |
-| AN-22 | `find` is back (it has a row now); the refusal for a parameter and a field of one name is E2118; `owns dyn AnyPool`; a new refusal, E3021 | **yes**: the two-word program without `from src` is refused again (E3021, R8 (g), decision 5): with no `from` a method's result views the whole object, so `p.next_word()` may not change `p.pos` while `a` is used. Run 4 accepted it; Rust refuses it. With `from src`, as NEW writes it, it compiles as in run 4 |
-| AN-23 | the refused example's function renamed `first_value` (`copy_of_first` read like the new `copy of`) | no |
-| AN-24 | `owns dyn I` in the prose | no |
-| AN-25 | `owns text`; `copy of d` is E2116; the two `from` refusals are E2118 | no |
-| AN-26 | the class's `StrView` field with no `from` is E2118 | no |
-| AN-27 | none beyond the v2 line | no |
-| AN-28 | the `MutSpan` call example says `ref mut` at the argument (decision 3) | no |
-| AN-29 | the lambda's plain `fn() -> int` type read under decision 17 | no |
-| AN-30 (row 4) | `copy of g[0]`; a `main` added showing `top(m)` with no word (decision 3); its refusal `top(ref mut m)`, E3028 | no |
-| AN-31 (row 7) | none beyond the v2 line | no |
-| AN-32 | `changes this` on `init` is E2108 | no |
-| AN-33 | none beyond the v2 line | no |
+| AN-17 (row 3) | the v3 line only | no |
+| AN-18 | the v3 line only | no |
+| AN-19 | the v3 line only | no |
+| AN-20 | a refusal added: a plain parameter of a `shares mut` type that sets a `Cell` (E3023, verdict 32); section 2's `Cell` ruling says the same | no |
+| AN-21 | why verdict 29 adds nothing to a `@cached` method's once-flag (section 2, ruling 1) | no |
+| AN-22 | the sure downcast kept (verdict 27); the kind test `if this.pools[k] is Pool[T] as ref mut pool:` shown in a new method `put`, with its owner's-test rows; three refusals added: a plain name from the kind test that changes the pool (E3023), today's `cast ... if Pool[T]` and the removed `cast ... when Pool[T]` (E1010), `put` without `changes pools` (E2105) | no |
+| AN-23 | the v3 line only | no |
+| AN-24 | the v3 line only | no |
+| AN-25 | the v3 line only | no |
+| AN-26 | the v3 line only | no |
+| AN-27 | the v3 line only | no |
+| AN-28 | `first_even` takes `ref mut ps: MutSpan[int]` (verdict 34); how a name holding a `MutSpan` is pointed at another span; the plain parameter refused (E3023) | **yes**, for one line: v2's `fn first_even(ps: MutSpan[int]) -> ref mut int:` is refused; the program does what it did |
+| AN-29 | the lambda's plain `fn() -> int` read under verdict 22 (captured variables are not part of the function); two refusals added: a lambda that changes a captured variable without naming it (E2105), and one that names it given to `apply` (E2113, with the change-list line of verdict 21) | no |
+| AN-30 (row 4) | OLD's `clear` added to NEW with `changes Mutex[Array[String]]` (verdict 29); `main` keeps a copy, clears, prints; owner's-test rows for `clear`, `best`, `n`; two refusals added: `clear` without its clause (E2105) and `clear(m)` in a loop over the locked list (E3020) | no, for v2's lines (`clear` is new to NEW) |
+| AN-31 (row 7) | the v3 line only | no |
+| AN-32 | the v3 line only | no |
+| AN-33 | the v3 line only | no |
 
 ## 4. The answers
 
 #### AN-17: a method changes one field while a loop walks another (A1). Agreed row 3.
 
-**v2:** NEW as in run 4; row 3's line is `fn note(msg: String) changes log:`, as the owner agreed it
-without `self`. The field defaults in the owner's test say `changes this` (decision 6). R8 (g) (decision 5)
-refuses nothing here: the loop reads the player only through `p` itself. Meaning unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here (no function value, lock, downcast or
+`MutSpan`). Row 3's line stays `fn note(msg: String) changes log:`, as the owner agreed it without
+`self` (verdict 2). R8 (g) (verdict 5) refuses nothing here: the loop reads the player only through `p`
+itself. Meaning unchanged.
 
 **1. Intent:** `tick` takes 1 hit point from every player and, when one dies, `note` appends a line to
 the game's log; `note` only appends to `log`.
@@ -283,10 +317,10 @@ while the loop borrows `self.players`); the written field set lets it through, c
 
 #### AN-18: `mut self` on a class means "hold a write access on every field for the whole call"
 
-**v2:** `fn reset() ref mut this:` becomes `fn reset() changes this:` (decision 6); `copied msg`
-becomes `copy of msg` (decision 12). `changes this` says only that `reset` may change its own game; it
-promises nothing about other names, so `this` is compiled without noalias (decision 18). This program
-does not rely on `this` being alone, so its meaning is unchanged.
+**v3:** as in v2 (`fn reset() changes this:`, verdict 6; `copy of msg`, verdict 12; `this` compiled
+without noalias, verdict 18); verdicts 21 to 34 change nothing here. Verdict 32 (the word in front of a
+parameter's name sets what the function may do with it) is what `tick(ref mut g: Game)` already
+writes. Meaning unchanged.
 
 **1. Intent:** a class method says that it may change its object, and the program is checked when
 compiling, not while running.
@@ -353,7 +387,7 @@ fn main():
 `changes this` has one meaning for every type: this method may change any field of its object, or the
 whole value (R5); it is checked when compiling, like `changes log`, and nothing is marked while running.
 It says nothing about other names: the game could also be reached through a link while `reset` runs
-(R5, decision 18), and R8 (b), (c) and (g) keep every view and walk safe without `this` being alone. In
+(R5, verdict 18), and R8 (b), (c) and (g) keep every view and walk safe without `this` being alone. In
 `tick`, the loop name `p` reads an element of `g.players` while `g.note(...)` runs; `note`'s line says
 it changes only `log`, so `p`'s promise (R8 (g)) holds. The OLD `tick(g, g)` cannot be written for a one-owner object without saying it: with
 `fn tick(g: Game, ref mut other: Game)` the call must be `tick(g, ref mut g)`, a read and a change of
@@ -420,7 +454,7 @@ exit=0
 
 **7. Cost:** none for one-owner objects: no access words, no check on entry (today: one word per
 non-`Copy` field and a check per field on entry, `[EXC-19]`). A `shares` object is not checked while
-running either (R9). `this` in `reset` is compiled without noalias (R4, decision 18), as a C function
+running either (R9). `this` in `reset` is compiled without noalias (R4, verdict 18), as a C function
 compiles a plain `Game *` parameter; `tick`'s `ref mut g` is compiled with noalias (C's `restrict`).
 Nothing was measured for this answer.
 
@@ -428,9 +462,7 @@ Nothing was measured for this answer.
 
 #### AN-19: plain `self` in a class method changes fields with no word
 
-**v2:** NEW as in run 4. The field default in the owner's test says `changes this` (decision 6);
-`changes angle` promises nothing about other names (decision 18), which the kind line now says. Meaning
-unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here. Meaning unchanged.
 
 **1. Intent:** `open` sets the door's angle to 90.
 
@@ -505,13 +537,14 @@ exit=0
 
 **8. Kind:** a readable spelling of what Rust's `&mut self` says (this method may change its object),
 narrowed to the field. Unlike `&mut self` it does not promise that no other name reaches the door
-(decision 18); R8 keeps every view safe without that promise.
+(verdict 18); R8 keeps every view safe without that promise.
 
 #### AN-20: a plain parameter, a `for` name or a `Cell` field changes a class object with no word
 
-**v2:** NEW as in run 4: each call that changes an argument says `ref mut` (R4: `bump(ref mut counter)`,
-`heal_all(ref mut team)`, `tick(ref mut clock)`). The field default and the `Cell` ruling (section 2)
-say `changes this` (decision 6). Meaning unchanged.
+**v3:** as in v2. Verdict 32 is what this answer already writes: the word in front of each
+parameter's name (`ref mut c`, `ref mut players`, `ref mut s`, plain `s` in `show`) sets what the
+function may do, for a class, a list and a struct alike. The `Cell` ruling (section 2) now says that a
+plain parameter of a `shares mut` type does not set a `Cell` (verdict 32). Meaning unchanged.
 
 **1. Intent:** `bump` adds 1 to the caller's counter; `heal_all` sets every player's health to 100;
 `tick` advances a clock's frame number.
@@ -632,6 +665,10 @@ exit=0
   it; write `for ref mut p in players:`, with `fn heal_all(ref mut players: Array[Player]):`".
 - `fn tick(s: Clock): s.frame.set(...)`, E3023: "`tick` sets `s.frame`, but `s` only reads the caller's
   clock; write `fn tick(ref mut s: Clock):` and call `tick(ref mut clock)`".
+- A plain parameter of a shared clock that sets its `Cell`, `fn tick(s: shares mut Clock):` with
+  `s.frame.set(s.frame.get() + 1)`, E3023 (R4, verdict 32): "`tick` sets `s.frame`, but `s` only reads
+  the caller's clock (`shares mut Clock` says what the caller's clock is, not what `tick` may do with
+  it); write `fn tick(ref mut s: shares mut Clock):` and call `tick(ref mut clock)`".
 - `fn bump(mut c: Counter):`, E0113: "`mut c` on a parameter: to change the caller's `c` through `c`,
   write `ref mut c: Counter`".
 - `bump(counter)`, E3028: "`bump` may change `counter` (its first line says `ref mut c: Counter`); say
@@ -645,9 +682,10 @@ call.
 
 #### AN-21: caching inside a read-only method (A31)
 
-**v2:** NEW as in run 4. The five refusals that had no code are E2117, with the v2 messages
-(`V2/rules.md` section 3); the list of fields a cached method may not read says `shares`, `shares mut`,
-`weakref` and `sharedref mut` (decisions 4, 9, 19). Meaning unchanged.
+**v3:** as in v2; the five E2117 refusals keep v2's messages, which are `V3/rules.md` section 3's.
+Verdict 29 (a change under a lock is named on the first line) adds nothing to `radius`: filling the
+kept result on an object several threads reach is done under a once-flag, but the slot is not a field
+of the program and nothing but `radius` reads it (section 2, ruling 1). Meaning unchanged.
 
 **1. Intent:** `radius()` computes the mesh radius once, keeps it, and computes it again only after
 `verts` changes.
@@ -785,19 +823,18 @@ programmer writes by hand (the translation above is that program).
 
 #### AN-22: returning references (A5): a result borrows all of `self` unless `@borrows` is written above; the ECS pool reference is E3060
 
-**v2:** `next_word` finds the end with `find` again, as run 3 and today's code do (`find` now has a row
-in `V2/vocabulary.md`, section 3.8; run 4 wrote `split(" ").next()` only because it had none);
-`owns dyn AnyPool` (decision 19); the refusal for a parameter and a field of one name is E2118.
-**Meaning changed** for one program: `a = p.next_word()` then `b = p.next_word()` while `a` is used,
-with no `from` on `next_word`'s line, is refused again (E3021), as run 3, today's Ember (E3025, OLD
-above) and Rust refuse it. With no `from`, a method's result points into all of its object (R6), and a
-read-only view promises that what it points into does not change while it is used (R8 (g), decision 5),
-so `p.next_word()` may not change `p.pos` while `a` is used. Run 4 accepted it because its views ended
-only at a reshape. NEW writes `from src`, so `a` points into the text and NEW compiles as in run 4:
-`from src` is now what lets the caller keep two words (and what lets `first_word` return one).
+**v3:** NEW as in v2. `get_mut`'s downcast is the "sure" one, `cast this.pools[7u128] as Pool[T]`,
+which verdict 27 keeps (the pool under that key is always a `Pool[T]`; if it is not, the program
+stops); a cast of a place is a place, so `pool = ref mut cast ...` names the registry's own pool
+(R14). The prose now gives the "not sure" form, the kind test `if this.pools[k] is Pool[T] as ref mut
+pool:`, and part 6 refuses today's `cast ... if Pool[T]` (E1010), a plain name from a kind test that
+then changes the pool (E3023), and a kind test that changes the pool in a method whose first line does
+not say `changes pools` (E2105). Meaning unchanged. (v2's change, a two-word program without `from src`
+refused by R8 (g), stands; it is explained in part 3.)
 
 **1. Intent:** `next_word` returns the next word of the source text, and the caller keeps two words at
-once; `get_mut[T]` returns a component inside its pool, to change it in place.
+once; `get_mut[T]` returns a component inside its pool, to change it in place; `put[T]` (part 3's
+prose) stores a component only if the pool under its key holds that kind.
 
 **2. OLD** (`o22c_two_words_flat.em`; phase 1's nested form `o22a_two_words.em` gives the same E3025):
 
@@ -909,7 +946,27 @@ what `src` views", so the result does not point into `p`, and `p.next_word()` ma
 `this.pos += end + 1` while `rest` is still used changes nothing `rest` reads (R8 (g)). In `get_mut`,
 `pool` is `ref mut`: a name for the slot inside `this.pools`, not a local of its own, so the result
 points into `this` (the default) and the old E3060 cannot arise; a cast of a place is a place (R14): one
-type-id compare, never the method table's address.
+type-id compare, never the method table's address. `cast ... as` is the sure downcast: it stops the
+program if the pool under that key is not a `Pool[T]`, a bug in the registry. Where the kind is not
+sure, the test is written in an `if` and the block runs only when it passes (R14, verdict 27); this
+method of `Registry` puts entity `e`'s component `c` in the pool under `k` when that pool holds `T`s,
+and does nothing otherwise:
+
+```ember
+    fn put[T](k: u128, e: int, owns c: T) changes pools:
+        if this.pools[k] is Pool[T] as ref mut pool:
+            pool.dense[pool.sparse[e]] = c
+```
+
+`is Pool[T]` asks whether the pool under `k` is a `Pool[T]`; `as ref mut pool` names it, and since a
+value tested in its place stays a place, `pool` is the registry's own pool and may change it; with no
+word, `pool` would only read it. `owns c` takes the component over, so it can be stored.
+
+Without `from src` the two-word program is refused (part 6, E3021): with no `from`, a method's result
+points into all of its object (R6), and a read-only view promises that what it points into does not
+change while it is used (R8 (g), verdict 5), so `p.next_word()` may not change `p.pos` while `a` is
+used, as run 3, today's Ember (E3025, OLD above) and Rust refuse it. `from src` is what lets the caller
+keep two words, and what lets `first_word` return one.
 
 **4. The owner's test:**
 
@@ -927,7 +984,11 @@ type-id compare, never the method table's address.
 | `pools` | `owns dyn`: one owner of each pool, each in its own block | none (default: field; `changes pools`) |
 | `this` in `get_mut` | `this` | `changes pools` |
 | `e` | none (default: read-only parameter; a number is copied in) | none (default: never) |
-| `pool` | `ref mut`: a name for the slot in `this.pools` | `ref mut`: yes |
+| `pool` (in `get_mut`) | `ref mut`: a name for the slot in `this.pools` | `ref mut`: yes |
+| `this` in `put` | `this` | `changes pools` |
+| `k`, `e` (parameters of `put`) | none (default: read-only parameters; numbers are copied in) | none (default: never) |
+| `c` | `owns`: handed over by the caller | `owns`: it is `put`'s, handed on into the pool |
+| `pool` (in `put`) | `is Pool[T]`: the pool under `k`, seen as a `Pool[T]`; a place tested in its place stays that place (R14) | `ref mut`: yes, inside the `if` block only |
 
 **5. Means exactly:** `m22a_two_words_borrows.em` (today's `@borrows(self.src)` for `from src`), and for
 one component type `m22b_pool_place.em` (today's `Box` for `owns`, `ref mut` on the place):
@@ -982,7 +1043,8 @@ exit=0
 `p = ref mut reg.get_mut[int](0)` (R2: a name bound to a call whose result is `ref mut T` says
 `ref mut`). The generic downcast cannot be said in today's Ember (`cast` needs class handles); its C is
 last run's faithful model `target/redesign2/references/attack2/bench/get2.c -DCAST` (a type-id load and
-compare, then the element's address).
+compare, then the element's address). `put`'s kind test is the same load and compare used as the test
+of an `if` (the store runs when it passes) instead of a stop; no separate program was written for it.
 
 **6. Still refused:**
 - `first_word` when `next_word`'s line has no `from` (`fn next_word() changes pos -> StrView:`), E3063:
@@ -1007,6 +1069,17 @@ compare, then the element's address).
   E3023: "`pool` reads the pool in `this.pools` and cannot change it; to return a changeable element,
   write `pool = ref mut cast this.pools[k] as Pool[T]`" (R14: a plain name bound from a cast of a place
   is a read-only view of it, never a hand-over).
+- The same in `put`'s kind test, `if this.pools[k] is Pool[T] as pool:` followed by
+  `pool.dense[pool.sparse[e]] = c`, E3023 (R14): "`pool` reads the pool in `this.pools` and cannot
+  change it; to store the component through it, write `if this.pools[k] is Pool[T] as ref mut pool:`".
+- Today's "not sure" downcast, `if Some(pool) = cast this.pools[k] if Pool[T]:`, E1010 (R14, verdict
+  27): "`cast this.pools[k] if Pool[T]` is not Ember: to run a block when the pool is a `Pool[T]`,
+  write `if this.pools[k] is Pool[T] as ref mut pool:`; to stop the program when it is not one, write
+  `pool = ref mut cast this.pools[k] as Pool[T]`". `cast this.pools[k] when Pool[T]`, the spelling
+  verdict 27 removed, gets the same message with its own words in the first quote.
+- A kind test in a method whose first line does not say it changes `pools`, `fn put[T](k: u128, e:
+  int, owns c: T):` with the same body, E2105: "`put` changes `this.pools` through `pool`; write its
+  first line as `fn put[T](k: u128, e: int, owns c: T) changes pools:`".
 - A change of `reg.pools` while the returned component is used, in the lines
   `p = ref mut reg.get_mut[int](3)` (line 1), `reg.pools.clear()` (line 2), `p += 1` (line 3), E3022:
   "`p` is the only name for a component in `reg.pools` until its last use on line 3, and line 2 empties
@@ -1014,19 +1087,21 @@ compare, then the element's address).
 - `@borrows(...)` on its own line, E0104: "`@borrows` is gone: say it after the result type:
   `fn next_word() changes pos -> StrView from src:`".
 
-**7. Cost:** none for `from` (compile time only). The downcast: one type-id compare per get. Last
+**7. Cost:** none for `from` (compile time only). The downcast: one type-id compare per get, and the
+same one compare per kind test in `put`. Last
 run's faithful model measured it at 1.223 to 1.244 of plain C, against safe Rust's `downcast_mut` at
 1.571 to 1.635 (`tasks/96/redesign/phase3b-references-attack.md`, section 3.2 table, lines 282-287;
 provisional, measured while other agents ran). Bounds checks are included in those rows.
 
 **8. Kind:** a readable spelling of Rust's guarantee (a lifetime written as `from src` on the
-signature, where Rust writes `fn next_word(&mut self) -> &'a str` with `src: &'a str`).
+signature, where Rust writes `fn next_word(&mut self) -> &'a str` with `src: &'a str`); the kind test
+is a readable spelling of Rust's `if let Some(pool) = any.downcast_mut::<Pool<T>>()`.
 
 #### AN-23: a call that returns `ref mut` is not a place
 
-**v2:** NEW as in run 4 (`first(ref mut xs) += 1`, R4, R6). A method that may be applied to the place
-says `changes this` (decision 6); the refused example's function is named `first_value`, since run 4's
-`copy_of_first` would now read like the word `copy of`. Meaning unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here. The E2140 message in part 6 is left as v2
+wrote it: `V2/readability.md` F-02 found that its way out loses the change again, and the message
+fixes are the lead's (phase 3; listed in section 6). Meaning unchanged.
 
 **1. Intent:** add 1 to the element a function hands back, and to a map's count for a key.
 
@@ -1141,12 +1216,10 @@ block writes the call as the place itself.
 
 #### AN-24: structs holding references (A6): a view struct cannot be stored in an `Array`
 
-**v2:** NEW as in run 4. The list `vs` is an own local list that lives no longer than `reg` (R2, R7:
-a list of views is owned by its name, and its life is bounded by what its views point into); `owns dyn I`
-in the prose. Each kept `ref` view promises that the registry does not change while it is used (R8 (g),
-decision 5), which adds one refusal below. Two kept `ref mut` views of one registry stay refused, and
-holders that may all change one registry write `sharedref mut Registry` (R7; decision 20 keeps the
-spelling). Meaning unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here. The list `vs` is an own local list that lives
+no longer than `reg` (R2, R7); each kept `ref` view promises that the registry does not change while it
+is used (R8 (g), verdict 5); holders that may all change one registry write `sharedref mut Registry`
+(R7; verdict 20 keeps the spelling). Meaning unchanged.
 
 **1. Intent:** keep a list of views that each read one entity of one registry, and sum their hit
 points.
@@ -1295,9 +1368,8 @@ report.
 
 #### AN-25: self-referential data (A7): a value owning its text and the word views into it
 
-**v2:** `fn init(owned text: String):` becomes `fn init(owns text: String):` (decision 19); `copied d`
-becomes `copy of d`, refused with E2116 (decision 12); the two `from` refusals that had no code are
-E2118. Meaning unchanged.
+**v3:** as in v2 (`fn init(owns text: String):`, verdict 19; `copy of d` refused with E2116, verdict
+12); verdicts 21 to 34 change nothing here. Meaning unchanged.
 
 **1. Intent:** a `Document` holds its text and the list of its words, without copying each word.
 
@@ -1437,8 +1509,7 @@ source is `let` and its contents never move).
 
 #### AN-26: `str` is a borrowed view while Python's `str` is the owned string
 
-**v2:** NEW as in run 4; the class's `StrView` field with no `from` is refused with E2118. Meaning
-unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here. Meaning unchanged.
 
 **1. Intent:** keep a player's name in the player.
 
@@ -1551,7 +1622,9 @@ own `str` object and today's `to_string()`.
 
 #### AN-27: `ref T` / `ref mut T` as a parameter's type
 
-**v2:** as in run 4: the call says `bump(ref mut a)` (R4). Meaning unchanged.
+**v3:** as in v2: the call says `bump(ref mut a)` (R4). Verdict 32 is the rule this answer already
+follows: `ref mut n` in front of the name, not `ref mut` in the type, sets what `bump` may do. Meaning
+unchanged.
 
 **1. Intent:** `bump(n)` adds 1 to the caller's number.
 
@@ -1673,9 +1746,12 @@ exit=0
 
 #### AN-28: `r = ref mut b` on a `ref mut` local copies `b` into `r`'s first target
 
-**v2:** NEW as in run 4. The sentence on a call whose result is `ref mut T` gives its `MutSpan`
-argument `ref mut` at the call (decision 3). Meaning unchanged: a `ref mut` name stands for the place it
-was made from, and a plain view name declared with `=` is re-pointed by `=` (R2, G-08), as in run 4.
+**v3:** NEW as in v2. The prose's `first_even` takes its span as `ref mut ps: MutSpan[int]` (verdict
+34: a `MutSpan` parameter that gives write access to its elements says `ref mut`); the prose now says
+how a name holding a `MutSpan` is pointed at another span (R2), and part 6 refuses the plain parameter.
+**Meaning changed:** yes, for one line, by verdict 34: v2's `fn first_even(ps: MutSpan[int]) -> ref mut
+int:`, accepted under v2's exception by type, is refused (E3023); `fn first_even(ref mut ps:
+MutSpan[int]) -> ref mut int:` means what it meant. What the program does is unchanged.
 
 **1. Intent:** keep a changeable reference to `a`, later work on `b` too.
 
@@ -1714,9 +1790,17 @@ fn main():
 A `ref mut` name stands for the place it was made from (R2; row 8: `path` is the NPC's list for the
 whole arm), so `r = 20` writes into `a`; a second place gets a second name. `println(a, b)` reads `a`
 after `r`'s last use and `b` after `rb`'s, as R8 (f) asks. The same holds for a call whose result is
-`ref mut T`: with `fn first_even(ps: MutSpan[int]) -> ref mut int:`,
-`r = ref mut first_even(ref mut xs.as_mut_span())` then `r = 7` writes the element (R2; the call says
-`ref mut` before the `MutSpan` argument, R4).
+`ref mut T`: with `fn first_even(ref mut ps: MutSpan[int]) -> ref mut int:`,
+`r = ref mut first_even(ref mut xs.as_mut_span())` then `r = 7` writes the element (R2; the parameter
+says `ref mut`, since what it gives back may write its elements, and the call says `ref mut` before
+the `MutSpan` argument, R4, verdict 34).
+
+A name that holds a `MutSpan` is different: what it stands for is the span, a view of its own, as
+`rest = tail.trim()` holds a view of its own (R2). So `d = ref mut xs.as_mut_span()` then
+`d = ref mut ys.as_mut_span()` points `d` at the second span; nothing is written into `xs`, and
+`ref mut` on each line says that `d` may write the elements of the span it then holds (R2, verdict 34).
+`r = ref mut a` names the place `a` itself, so a second `ref mut` line would write into `a`, which is
+why it is refused.
 
 **4. The owner's test:**
 
@@ -1739,20 +1823,27 @@ exit=0
 - `a` read through its own name while `r` is still used, with `println(a)` as line 5 between
   `r = ref mut a` (line 4) and `r = 20` (line 6), E3021 (R8 (f)): "`r` is the only name for `a` until its
   last use on line 6, and line 5 reads `a`; read it through `r`, `println(r)`, or read `a` after line 6".
+- A plain `MutSpan` parameter whose element is given back to be written, `fn first_even(ps:
+  MutSpan[int]) -> ref mut int:`, E3023 (R4, R5, verdict 34): "`first_even` gives back an element of
+  the caller's span to be changed, but `ps` only reads it; write `fn first_even(ref mut ps:
+  MutSpan[int]) -> ref mut int:` and call it `first_even(ref mut xs.as_mut_span())`".
 
 Accepted: `n = p.name` then `n = q.name` makes `n` view `q.name`, checked by R8 against its new target
-(R2, G-08).
+(R2, G-08); `d = ref mut xs.as_mut_span()` then `d = ref mut ys.as_mut_span()` points `d` at the second
+span (part 3).
 
 **7. Cost:** none.
 
-**8. Kind:** an understandable limitation kept (a `ref mut` name is never re-pointed), with the one
-misleading form refused.
+**8. Kind:** an understandable limitation kept (a `ref mut` name of a place is never re-pointed), with
+the one misleading form refused.
 
 #### AN-29: `ref String` is not accepted where `str` is expected at a call
 
-**v2:** NEW as in run 4. `apply`'s parameter type `fn() -> int` is a plain function type, which says
-the function changes nothing outside itself (R12, decision 17); the lambda only reads the real `n`, so it
-may be given there. Meaning unchanged.
+**v3:** NEW as in v2. The reason it is accepted is now verdict 22's: a plain `fn() -> int` changes
+nothing at all, captured variables included, and this lambda only reads the real `n` it captured
+(v2 counted the real `n` as part of the function itself; it is not: only what a lambda captures with a
+word is its own state, R12). Part 6 adds the refusal of a lambda that changes a variable it captured,
+given to `apply`. Meaning unchanged.
 
 **1. Intent:** pass a list's string element to a function that reads text, from inside a lambda.
 
@@ -1811,19 +1902,21 @@ fn main():
 Rule: a `String` place or a `ref String` reads as a `StrView` of its text wherever a `StrView` is wanted,
 inside a lambda as everywhere; the view points into that `String`. The lambda uses the real `n` (a
 capture not named is the real variable, row 6, R12), only reads it, and ends before `n` does, so it uses
-`n` at its own address (R12). Its type is a plain `fn() -> int`: it changes nothing outside itself
-(the real `n` it reads is part of itself, R12). `apply`'s `f` only reads, which is allowed because this
-function value changes no state of its own (R12).
+`n` at its own address (R12). Its type is a plain `fn() -> int`: it changes nothing at all, the
+variables it captured included; reading the real `n` is not a change (R12, verdict 22). Had it changed
+a variable it captured, its first line would name it (`fn() changes seen -> int:`), and a plain
+`fn() -> int` parameter would not take it (part 6). `apply`'s `f` only reads, which is allowed because
+this function value changes no state of its own (R12).
 
 **4. The owner's test:**
 
 | name | what it is | may it change |
 |---|---|---|
 | `s` | `StrView`: a view of the caller's text | none (default: read-only parameter) |
-| `f` | none (default: a read-only function-value parameter) | none (default: never; R12 refuses giving it a function value that changes its own state) |
+| `f` | none (default: a read-only function-value parameter) | none (default: never; its type `fn() -> int` changes nothing at all, so R12 refuses giving it a function value that changes anything, its own state or a captured variable) |
 | `names`, `total` | none (default: own local) | none (default: own local) |
 | `n` (loop name) | none (default: read-only view of each element) | none (default: never) |
-| `n` (captured by the lambda) | none (default: the real `n`, not a copy; row 6, R12) | none: the lambda only reads it |
+| `n` (captured by the lambda) | none (default: the real `n`, not a copy; row 6, R12) | none (default: a lambda changes only what its first line names after `changes`, and this one names nothing, verdict 22) |
 
 **5. Means exactly** (`m29_str_in_lambda.em`, `shout(n.as_str())`):
 
@@ -1832,23 +1925,40 @@ function value changes no state of its own (R12).
 exit=0
 ```
 
-**6. Still refused:** a `StrView` of a list's string kept past a change to the list, in the lines
-`head: StrView = names[0]` (line 1), `names.clear()` (line 2), `println(shout(head))` (line 3), E3060:
-"`names.clear()` (line 2) ends the text `head` points into (`names[0]`, line 1), and `head` is used on
-line 3; use `head` before line 2, or keep a copy of your own: write line 1 as
-`head = String(names[0])`".
+**6. Still refused:**
+- A `StrView` of a list's string kept past a change to the list, in the lines
+  `head: StrView = names[0]` (line 1), `names.clear()` (line 2), `println(shout(head))` (line 3), E3060:
+  "`names.clear()` (line 2) ends the text `head` points into (`names[0]`, line 1), and `head` is used on
+  line 3; use `head` before line 2, or keep a copy of your own: write line 1 as
+  `head = String(names[0])`".
+- A lambda that also counts the names it shouts in `seen`, a variable of `main` (`seen = 0` before the
+  loop), with no word on its first line, E2105 (R12, verdict 22): "this function changes `seen`, a
+  variable it uses from `main`; say so on its first line: `fn() changes seen -> int:`".
+- The same lambda with its first line `fn() changes seen -> int:`, given to `apply`, E2113 (R12): "this
+  function changes `seen`, and `apply` takes `f: fn() -> int`, functions that change nothing; to let
+  `apply` run functions that change things, write `fn apply[C, F: fn() changes C -> int](owns f: F)
+  changes C -> int:`" (a change list, as the library's `for_each` takes one, verdict 21; the call
+  `apply(...)` then counts as changing `seen`).
 
 **7. Cost:** none (pointer and length, as `as_str()`).
 
-**8. Kind:** a smarter compile-time solution (one coercion rule, as Rust's `&String` to `&str`).
+**8. Kind:** a smarter compile-time solution (one coercion rule, as Rust's `&String` to `&str`); the
+function type is a readable spelling of Rust's `Fn` against `FnMut`, with what changes named.
 
 #### AN-30: a reference out of a lock, `RefCell` or `RwLock` guard compiles and is unsafe (A33). Agreed row 4.
 
-**v2:** `copied g[0]` becomes `copy of g[0]` (decision 12). A `main` is added to NEW to show that a
-`Mutex` argument takes no word at the call, `top(m)` (decision 3, R4), with its refusal. Row 4's
-message is exactly as agreed. Meaning unchanged.
+**v3:** NEW adds OLD's `clear`, which changes the list under the lock, so its first line says so:
+`fn clear(scores: Mutex[Array[String]]) changes Mutex[Array[String]]:` (verdict 29, R5, R12); the call
+still takes no word, `clear(m)` (verdict 3). `main` now does what OLD's `main` meant (keep the best
+name, clear the table, print the name), with a copy of the name. Part 6 adds the refusals verdict 29
+brings: `clear` without its `changes`, and `clear(m)` inside a loop over the locked list (E3020, at
+compile time instead of waiting forever for the lock). The owner's-test row for `scores` no longer
+calls the lock types "R5's one exception": a plain name still uses them by their own operations, and
+the first line names the change. Row 4's message is exactly as agreed. Meaning unchanged for v2's
+lines; `clear` is new to NEW, and v2's rules would have taken it with no `changes`.
 
-**1. Intent:** `top(scores)` returns the best name from a locked table.
+**1. Intent:** `top(scores)` returns the best name from a locked table; `clear(scores)` empties the
+table; `main` keeps the best name, clears the table, then prints the name it kept.
 
 **2. OLD** (`o30a_lock.em`, `o30b_lock_uaf.em`, `o30c_refcell.em`, `o30d_rwlock.em`):
 
@@ -1923,23 +2033,42 @@ fn top_len(scores: Mutex[Array[String]]) -> int:
     with g = scores.lock():
         return g[0].len()
 
+fn clear(scores: Mutex[Array[String]]) changes Mutex[Array[String]]:
+    with g = scores.lock():
+        g.clear()
+
 fn main():
     m: Mutex[Array[String]] = Mutex([String("ann")])
-    println(top(m), top_len(m))
+    best = top(m)
+    n = top_len(m)
+    clear(m)
+    println(best, n)
 ```
 
 Rule (R8 (e)): a view made through a guard (`g[0]`, `ref g[0]`, a slice of `g`) points into the guard,
 and the guard ends with its `with` block, so such a view cannot leave it. The same for `RwLock`'s
-`read()` and `write()`. `top(m)` carries no word: a `Mutex` exists to be shared, and its own "only
-me" is the lock's `with` block (R4, R5, decision 3).
+`read()` and `write()`. `best` is a `String` of `main`'s own, so `clear(m)` cannot end it; OLD's
+`println(r)` after `clear(m)` read freed text. `top(m)` and `clear(m)` carry no word: a `Mutex` exists
+to be shared, and its own "only me" is the lock's `with` block (R4, R5, verdict 3).
+
+`clear` changes the list inside the `Mutex` under its lock, and its first line says so by the type of
+what changes, `changes Mutex[Array[String]]`, as every change is said (R5, R12, verdict 29); `top` and
+`top_len` only read under the lock and name nothing. `main` names nothing for `clear(m)`: `m` is its
+own local, and a change to an own local needs no clause (R5). What the clause buys is at the call: a
+`clear(...)` while a loop walks a list in a `Mutex[Array[String]]`, under that lock, is refused when
+compiling (part 6), where it would otherwise wait for the lock this thread holds, forever.
 
 **4. The owner's test:**
 
 | name | what it is | may it change |
 |---|---|---|
-| `scores` | none (default: a read-only parameter) | none (default: never directly); its type, `Mutex`, is made to be changed through any name with its own operation, `lock()` (R5's one exception) |
-| `g` | `lock()`: the guard, the list while locked | `lock()`: yes, while the `with` block lasts |
+| `scores` (in `top`, `top_len`) | none (default: a read-only parameter) | none (default: never directly); its type, `Mutex`, is used through any name by its own operation, `lock()` (R5), and these two only read under it: their first lines name no change |
+| `g` (in `top`, `top_len`) | `lock()`: the guard, the list while locked | `lock()`: yes, while the `with` block lasts; these two only read through it |
+| `scores` (in `clear`) | none (default: a read-only parameter) | `changes Mutex[Array[String]]` on `clear`'s first line: it changes the list in the `Mutex` under its lock (verdict 29); the change is made through `lock()` (R5) |
+| `g` (in `clear`) | `lock()`: the guard, the list while locked | `lock()`: yes, while the `with` block lasts; `g.clear()` is the change the first line names |
 | `m` | none (default: own local, made by `Mutex(...)`) | none (default: own local; its type, `Mutex`, is changed through `lock()`) |
+| `best` | none (default: own local; `top` hands back a new `String`, `copy of g[0]`, R2) | none (default: own local) |
+| `n` | none (default: own local; a number) | none (default: own local) |
 
 **5. Means exactly** (`m30_lock_copy.em`):
 
@@ -1964,6 +2093,11 @@ fn top_len(scores: Mutex[Array[String]]) -> int:
 exit=0
 ```
 
+`clear` means exactly OLD's `clear` (today's Ember writes no clause, `o30a_lock.em`, `exit=0` above;
+the `changes` clause exists only when compiling), and `main` is OLD's `main` with `top` giving a copy,
+as `m30_lock_copy.em`'s `top` does. No new probe was checked for the whole program: this makes no new
+claim about today's Ember.
+
 **6. Still refused:**
 - `return ref g[0]` inside `with g = scores.lock():`, E3063: "this points into the locked list, which
   can change once the lock ends; return a copy, or do the work inside the `with` block" (row 4,
@@ -1976,17 +2110,27 @@ exit=0
   `best = copy of g[0]`, or use it inside the `with` block".
 - `top(ref mut m)`, E3028: "`top` takes the lock of `scores` itself; a `Mutex` takes no word at the
   call: `top(m)`".
+- `clear` without its clause, `fn clear(scores: Mutex[Array[String]]):` with the same body, E2105 (R5,
+  verdict 29): "`clear` changes the list in `scores` under its lock (`g.clear()`, line 13); say so on
+  its first line: `fn clear(scores: Mutex[Array[String]]) changes Mutex[Array[String]]:`".
+- `clear(m)` while a loop walks the locked list, in the lines `with g = m.lock():` (line 17),
+  `for s in g:` (line 18), `clear(m)` (line 19), E3020 (R8 (c), R12, verdict 29): "this loop walks the
+  list in `m` (line 18) under `m`'s lock, and `clear(m)` (line 19) may change any
+  `Mutex[Array[String]]`, this one included (its first line says `changes Mutex[Array[String]]`), so
+  it would change the list during the walk and wait for the lock this thread holds; call `clear(m)`
+  after the `with g = m.lock():` block".
 
 **7. Cost:** `copy of g[0]` is one allocation and copy of the name, as Rust's `.clone()` workaround and
-Python's own behaviour of handing out an object; the `top_len` form costs nothing extra. The check
-itself is when compiling.
+Python's own behaviour of handing out an object; the `top_len` form costs nothing extra. The checks
+themselves, and `clear`'s `changes` clause, are when compiling; the lock is the one C takes.
 
 **8. Kind:** a readable spelling of Rust's guarantee (a `MutexGuard` borrow ends with the guard).
 
 #### AN-31: initialisation (A18): a helper called in `init` before every field is set is E2100 with no help. Agreed row 7.
 
-**v2:** NEW as in run 4; row 7's line is `fn load_assets() reads renderer -> Array[String]:`, as the
-owner agreed it without `self`. Meaning unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here. Row 7's line stays
+`fn load_assets() reads renderer -> Array[String]:`, as the owner agreed it without `self` (verdict 2).
+Meaning unchanged.
 
 **1. Intent:** `init` sets the renderer, then loads assets with a helper that only reads the renderer.
 
@@ -2094,8 +2238,8 @@ exit=0
 
 #### AN-32: `mut self` on `init` is accepted and means the same as `self`
 
-**v2:** NEW as in run 4; the refused form is now `fn init() changes this:` (decision 6), still E2108.
-Meaning unchanged.
+**v3:** as in v2 (the refused form `fn init() changes this:`, E2108, verdict 6); verdicts 21 to 34
+change nothing here. Meaning unchanged.
 
 **1. Intent:** write a constructor.
 
@@ -2159,8 +2303,9 @@ refused with that advice.
 
 #### AN-33: a `let` field still changes through `push`; E2104 has no help
 
-**v2:** NEW as in run 4; E2104 keeps today's code with the vocabulary's `let` meaning (any change
-through a `let` field after `init`, `V2/rules.md` section 4). Meaning unchanged.
+**v3:** as in v2: E2104 keeps today's code with the vocabulary's `let` meaning (any change through a
+`let` field after `init`, `V3/rules.md` section 4); verdicts 21 to 34 change nothing here. Meaning
+unchanged.
 
 **1. Intent:** a log whose list grows; its name is set once in `init` and never changes.
 
@@ -2265,41 +2410,92 @@ the first is `let`), with the messages that say what to write.
 ## 5. Words needed
 
 None. Every word the NEW blocks, the owner's-test tables and the messages use has a row in
-`V2/vocabulary.md` (the program's own names, such as `Parser`, `AnyPool`, `Renderer` and `first_value`,
-are not words). `find`, which run 4 listed here, now has a row (section 3.8's text-method row), so AN-22
-uses it again. `push_str` still has no row; the refusals of AN-25 and AN-33 write `+=` instead
-(`[TXT-11]`: `s += t` appends), so it is not needed.
+`V3/vocabulary.md`: the kind test (`is`, `as`, `if`, `elif`), `cast`, `Mutex` with its `changes
+Mutex[...]` on first lines, `MutSpan` with `ref mut`, `owns`, a change list (`changes C`), `changes`,
+`fn`. The program's own names (`Parser`, `AnyPool`, `Pool`, `put`, `Renderer`, `first_value`,
+`first_even`, `seen`) are not words. `push_str` still has no row; the refusals of AN-25 and AN-33
+write `+=` instead (`[TXT-11]`: `s += t` appends), so it is not needed.
 
 ## 6. For the lead and the rule writer (not owner questions)
 
-1. **`this` without noalias, not measured** (decision 18, R4). A `changes this` or `changes <field>`
+1. **`this` without noalias, not measured** (verdict 18, R4). A `changes this` or `changes <field>`
    method is compiled without noalias on `this`, as C compiles a plain `Game *` parameter, where Rust's
-   `&mut self` is noalias. For a method that loops over one field of `this` while writing another (AN-17's
-   `tick`), the C compiler may then load a field again after each write it cannot prove
-   apart. No area-B answer measured this; the phase that measures again should time one such method
-   (for example AN-17's `tick` over a long `players` list) against Rust's `&mut self`.
-2. **AN-22's two-word program is refused again without `from src`** (R8 (g), decision 5, E3021), which
-   settles run 4's note 4 the way `V2/changes.md` section 2.3 says: a method's result with no `from`
-   points into all of its object, so the object may not change while the result is used. Its message is
-   written in AN-22 (part 6); `V2/rules.md` section 3's E3021 row has no example of this case.
+   `&mut self` is noalias. For a method that loops over one field of `this` while writing another
+   (AN-17's `tick`), the C compiler may then load a field again after each write it cannot prove apart.
+   No area-B answer measured this; the phase that measures again should time one such method (for
+   example AN-17's `tick` over a long `players` list) against Rust's `&mut self`.
+2. **AN-22's two-word program is refused without `from src`** (R8 (g), verdict 5, E3021): a method's
+   result with no `from` points into all of its object, so the object may not change while the result
+   is used. Its message is written in AN-22 (part 6); `V3/rules.md` section 3's E3021 row still has no
+   example of this case.
 3. **Carried blocks keep today's spellings by design**: the OLD and means-exactly blocks (and the C
    comment `/* init(self, owned text: String) */` in AN-25's `c25_document.c`) are today's Ember and
    run 3's C, copied byte for byte (`check_carried.py`); only NEW blocks, tables and messages use the
-   v2 words.
+   v3 words.
+4. **A `@cached` method's once-flag and verdict 29** (AN-21). This file reads verdict 29 ("a function
+   that changes something under a lock says so") as adding nothing to a `@cached` method: filling its
+   kept result under the once-flag changes a slot that is not a field of the program, that nothing but
+   the method reads, and that held no value before; the change that clears it is the change of a
+   `reads` field, named where it is made. If the rule writer reads it otherwise, R12 and the `@cached`
+   row would need a clause the method's first line cannot write (the slot has no name).
+5. **A by-type change through a call on an own local** (AN-30). `clear` says `changes
+   Mutex[Array[String]]`; `main`, which calls `clear(m)` on its own local `m`, names nothing, by R5's "a
+   change ... to an own local needs no clause". `changes T` is a claim about every object of a type, so
+   R5 could be read either way; this file takes the reading R5 states. R5 could say it in one sentence
+   ("a call whose first line says `changes T` needs no clause in a caller where every `T` it reaches is
+   its own local or reached through its own `ref mut` parameters").
+6. **A message in `V3/rules.md` that breaks verdict 22** (not area B's, found while checking the words):
+   section 3's E2020 row gives "`fn(s) => names.push(copy of s)`", a lambda that changes the captured
+   `names` with no `changes names` on its first line, which R12 now refuses (E2105). The line to write
+   would be `fn(s) changes names => names.push(copy of s)` if a lambda written with `=>` takes a clause;
+   neither file shows a `changes` clause on a `=>` lambda, so the spelling is the rule writer's to give
+   (AN-56 is area D's).
+7. **A user function given a function that changes things** (AN-29, part 6). R12 states the change list
+   for the library (`for_each`); this file applies the same form to a user function, `fn apply[C, F:
+   fn() changes C -> int](owns f: F) changes C -> int:`, which R12's wording ("a generic parameter
+   written after `changes` stands for what the function given to the call changes") already covers.
+8. **Messages that still break the message rule** (the lead's, phase 3; left as v2 wrote them, since no
+   rule this step changed rewrote them):
+   - AN-17 part 6, E3020: `this.players.extend(joined)` uses a list `joined` the program does not
+     declare, and no line declares it (`V2/readability.md` F-05).
+   - AN-17 part 6, E3021 from another package: asks the caller to rewrite `note`'s first line in a
+     package it cannot change (F-09).
+   - AN-23 part 6, E2140: "keep it in a name first: `n = first_value(xs)`, then `n += 1`" compiles and
+     still loses the change; the two ways out (`xs[0] += 1`, or `first(ref mut xs) += 1` with
+     `-> ref mut int`) are not given (F-02).
+   - AN-24 part 6, E3063: "or keep `reg` alive as long as `vs`" is a way out in words (F-06).
+   - AN-24 part 6, E3060: "keep the entity number and read `hs[0].reg.hp[0]` again" is a way out in
+     words; the line would be `println(hs[0].reg.hp[0])` in place of line 3 (found in this step).
+   - AN-24 part 6, E3022: the example's view struct is named `Handle`, a word the vocabulary keeps for
+     tokens that name something elsewhere (F-10).
+   - AN-25 part 6, E3063: "change `words` to `Array[String]`" does not give the field's line,
+     `words: Array[String]` (F-06).
+   - AN-31 part 6, E2100: "set `this.renderer` before this line" does not give the line,
+     `this.renderer = Renderer(width=width)` (F-06).
+   - AN-22 part 6, E2118 (and the rules' E2118 row): "rename the parameter" gives no line; it could give
+     `fn next_word(line: StrView) changes pos -> StrView from src:` (found in this step).
+   - AN-33 part 6, E2104 (minor): "remove `let` from `items`' declaration" could give the line,
+     `items: Array[int]` (found in this step).
 
 ## 7. For the owner
 
-Nothing to decide from area B. For information: the owner's decision 5 (a read-only name promises that
-what it reads does not change while it is used) means that a method's result that points only into one
-field must say so with `from` on the method's first line, or the caller may not change the object while
-it keeps the result. AN-22 shows it: `fn next_word() changes pos -> StrView from src:` lets the caller
-keep two words, as today's `@borrows(self.src)` and Rust's lifetime do; without `from src` the program
-is refused with the line to write.
+1. **Two lines that look alike, one refused and one accepted** (AN-28; verdict 34 and R2). After
+   `r = ref mut a`, the line `r = ref mut b` is refused (it would write `b`'s value into `a`; write
+   `rb = ref mut b`). After `d = ref mut xs.as_mut_span()`, the line `d = ref mut ys.as_mut_span()` is
+   accepted and points `d` at the other span (R2: a name that holds a `MutSpan` holds a view of its own,
+   as `rest = tail.trim()` does). The rule is consistent underneath (`ref mut a` names a place,
+   `ref mut xs.as_mut_span()` a span that a call gives), but a reader sees `x = ref mut ...` twice with
+   two outcomes. Meanwhile this file follows R2. The other choice is one rule for every name made with
+   `ref mut`: it is never pointed elsewhere, and `d = ref mut ys.as_mut_span()` is refused with "use a
+   new name: `d2 = ref mut ys.as_mut_span()`"; that costs nothing while running, and loses only the
+   reuse of one name for a second span (a loop that walks several spans through one name would name
+   each round's span inside the loop instead). Which?
 
 ## 8. Files
 
-- `C:\Users\ism19\Code\ember\tasks\96\redesign\run4\v2\area-B.md` (this file), made from a copy of
-  `RUN4/area-B.md` with only the prose, NEW blocks, tables, refusals and costs edited.
-- Under `C:\Users\ism19\Code\ember\target\redesign4\v2-03-area-B\`: `run4-area-B.md` (the copy it
-  started from), `sec0to3.md` and `sec5to8.md` (the new sections), `check_carried.py` (checks that every
-  OLD and means-exactly block is byte for byte run 4's, and lists old spellings left outside them).
+- `/home/user/ember/tasks/96/redesign/run4/v3/area-B.md` (this file), phase 0's copy of `V2/area-B.md`
+  with only the prose, NEW blocks, tables, refusals and costs edited.
+- Under `/home/user/ember/target/redesign4/v3-03-area-B/`: `v2-area-B.md` (the copy it started from),
+  `sec3.md` and `sec5to8.md` (the new sections), `check_carried.py` (checks that every OLD and
+  means-exactly block is byte for byte v2's, and lists old spellings left outside them) and its output
+  `check_carried.txt`.

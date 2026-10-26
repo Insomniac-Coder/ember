@@ -1,30 +1,36 @@
-# Area A under the v2 rules: lists, loops, temporary values (AN-01 to AN-16)
+# Area A under the v3 rules: lists, loops, temporary values (AN-01 to AN-16)
 
-Run 4, step 1, v2, agent 02 (area A). Every answer of area A from `RUN4/area-A.md`, brought to the
-rules in `V2/rules.md`, the words in `V2/vocabulary.md` and the changes in `V2/changes.md`, which apply
-the owner's 20 decisions of 2026-10-25 (`inputs/JOB.md`). `RUN3` means `tasks/96/redesign/run3/`,
-`RUN4` means `tasks/96/redesign/run4/`, `V2` means `tasks/96/redesign/run4/v2/`; "R1" to "R18" are the
-rules of `V2/rules.md`; "row N" is the owner's agreed row N and "decision N" the owner's decision N in
+Run 4, step 2, v3, agent 02 (area A). Every answer of area A, brought to the rules in `V3/rules.md`,
+the words in `V3/vocabulary.md` and the changes in `V3/changes.md`, which apply the owner's verdicts 21
+to 34 of 2026-10-25 (`inputs/JOB.md`; verdict 25 is replaced by 27 and not applied) on top of verdicts 1
+to 20, which v2 applied. `RUN3` means `tasks/96/redesign/run3/`, `RUN4` means `tasks/96/redesign/run4/`,
+`V2` means `tasks/96/redesign/run4/v2/`, `V3` means `tasks/96/redesign/run4/v3/`; "R1" to "R18" are the
+rules of `V3/rules.md`; "row N" is the owner's agreed row N and "verdict N" the owner's verdict N in
 `inputs/JOB.md` ("Owner verdicts on run 4's open questions").
 
-Power: `PowerLineStatus` printed `Online` at the start of this work, before the `ember check` runs and
-again before writing this file. No compiler change, no git command, no Ember program run. Four new
-"means exactly" files were checked with `target/redesign4/bin/ember.exe check` (compiles, does not run);
-they are in `target/redesign4/v2-02-area-A/means/`, and their output is pasted under the answers that use
-them and whole in `means/check_output.txt` there. Every other claim about what today's Ember accepts or
-refuses is run 3's pasted output, carried over with its unchanged OLD code.
+No compiler change, no git command, no Ember program run, and no `ember check` run in this step: no new
+claim about what today's Ember accepts or refuses is made here. This step ran in a cloud container, and
+no power reading was taken. Every claim about today's Ember is a pasted output carried over with its
+unchanged OLD code or "means exactly" program: run 3's (checked with `target/redesign3/bin/ember.exe`),
+and the four "means exactly" files v2 checked with `target/redesign4/bin/ember.exe` (in the laptop's
+`target/redesign4/v2-02-area-A/means/`, not in this checkout). Statements about the v3 rules carry no
+output: they are not built.
 
-**How this file was made.** `target/redesign4/v2-02-area-A/build_area_v2.py` builds it from
-`template.md` beside it: each carried block (the OLD programs with their `ember check` output, the
-"means exactly" programs with theirs, the C programs, the measured costs, and the parts of an answer that
-no decision changed) is a line range of `RUN4/area-A.md`, copied verbatim, so no carried line can differ
-from run 4's (and so from run 3's) by a retyping mistake. File names inside the carried blocks are
-relative to `target/redesign3/08-area-A/`, as in run 3. Everything else is written for v2.
+**How this file was made.** v2's file was built by a script from line ranges of `RUN4/area-A.md`, so
+that no carried line (an OLD program with its `ember check` output, a "means exactly" program with its
+output, a C program, a measured cost) could differ from run 3's by a retyping mistake. This v3 file is
+that file, copied by the lead's phase 0 (which changed no line of it: `V3/spelling-changes.txt` lists
+eleven lines here that still say `holds`, every one English, and they stay), then edited in place for
+verdicts 21 to 34. The carried blocks are unchanged; a copy of the phase 0 file and a diff of this step's
+edits are in `target/redesign4/v3-02-area-A/`. File names inside the carried blocks are relative to
+`target/redesign3/08-area-A/`, as in run 3. Each answer opens with a "**Meaning changed:**" line that
+compares it with `V2/area-A.md` and names the verdict.
 
 ## 0. Terms
 
-The terms of `V2/rules.md` section 0 (owner, view, read-only view, position, reshape, `this`, first line,
-summary, function value, noalias, the owner's test, ...) are used as defined there. This area adds:
+The terms of `V3/rules.md` section 0 (owner, view, read-only view, position, reshape, `this`, first line,
+change list, summary, function value, noalias, the owner's test, ...) are used as defined there. This
+area adds:
 
 - **list**: `Array[T]`: a pointer to a block of memory holding the elements (the **buffer**), the length
   and the capacity. A full list that grows gets a new, larger buffer and frees the old one
@@ -39,8 +45,9 @@ summary, function value, noalias, the owner's test, ...) are used as defined the
   it is recorded in the interface file (R17).
 - **a call through a function value**: a call whose body the compiler cannot read here; it may do what
   the function value's type allows, no more (R12): `fn(ref mut Array[Enemy])` may change the list it is
-  given in any way, and nothing else.
-- **refused**: a compile-time error, with its code from `V2/rules.md` section 4. **Stops**: a run-time
+  given in any way, and nothing else at all (a plain function type changes nothing beyond its `ref mut`
+  parameters, the variables a lambda captured included, verdict 22).
+- **refused**: a compile-time error, with its code from `V3/rules.md` section 4. **Stops**: a run-time
   stop with a message (Ember's panic). **Warned**: accepted, with a warning.
 - **line numbers in messages** count the answer's program as a file whose first line is a comment, as
   run 3's files are; where a refused snippet replaces part of the NEW program, it is counted in that
@@ -49,43 +56,46 @@ summary, function value, noalias, the owner's test, ...) are used as defined the
 
 ## 1. Run 3's area rules A-1 to A-8, and where each is now
 
-| run 3's area rule | now | what changed for this area since run 4 |
+| run 3's area rule | now | where it stands in v3 |
 |---|---|---|
-| A-1: an element name is a position; plain `boss = enemies[0]` reads, `ref mut` changes, a copy is named, a number part is copied | R2, R8 (a) | the copy is `copy of` (decision 12): `boss = copy of enemies[0]` |
-| A-2: while an element name is used, its list may grow but not shrink or move; writes to the element through another name are allowed | R8 (a), (f), **(g)** | run 4 reversed the last half for a `ref mut` name (R8 (f), now decision 2: reads are kept out too). **v2 reverses it for a plain name as well**: while a read-only element name is still used, its element is not changed through any other name (R8 (g), decision 5: E3021, with both ways out). Adding to the list stays allowed for both |
-| A-3: a list may not change while a loop walks it; a counting loop may add, not remove | R8 (c), R12 | a generator paused in a list is such a walk too (decision 16; no generator in this area); a call through a function value changes what its type says (R12, decision 17) |
-| A-4: two `ref mut` parameters are two different places; one compare where not proved | R4 | every `ref mut` parameter is compiled with noalias, a `MutSpan` parameter included (R4) |
-| A-5: a temporary lives until the last use of every view made from it | R8 (d) | nothing (row 5) |
-| A-6: a method that changes its object, called on a temporary, is allowed when its result is used, refused when the change would be lost | **R8 (d)**, E2140 | **now a rule with a code** (decision 13), with both ways out in its message (AN-10) |
-| A-7: a view's type says what it allows (`MutSpan` writes, `Span` and `StrView` read; an ECS query says `ref mut T`) | R5's exception by type, R3, R4 | **a `MutSpan` argument says `ref mut` at the call** (decision 3): `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`; two spans of one list given to one call, one changeable, are proved apart or refused (R4) |
-| A-8: messages in the program's names, why in one line, the exact line to write | R18 | nothing |
+| A-1: an element name is a position; plain `boss = enemies[0]` reads, `ref mut` changes, a copy is named, a number part is copied | R2, R8 (a) | as in v2; the copy is `copy of` (verdict 12): `boss = copy of enemies[0]` |
+| A-2: while an element name is used, its list may grow but not shrink or move; writes to the element through another name are allowed | R8 (a), (f), (g) | as in v2: the last half is reversed for both kinds of name. While a `ref mut` element name is used, its element is neither read nor changed through another name (R8 (f), verdict 2); while a read-only one is used, its element is not changed through another name (R8 (g), verdict 5, E3021 with both ways out). Adding to the list stays allowed for both |
+| A-3: a list may not change while a loop walks it; a counting loop may add, not remove | R8 (c), R12 | as in v2 (a generator paused in a list is such a walk too, verdict 16; a call through a function value changes what its type says, verdict 17), and **wider in v3**: a library call given a function counts as making that function's changes (verdict 21: `enemies.retain(keep_alive)` changes what `keep_alive` changes), and so does a call that hands a function to a thread or to C (verdicts 30, 31; none in this area) |
+| A-4: two `ref mut` parameters are two different places; one compare where not proved | R4 | as in v2: every `ref mut` parameter is compiled with noalias, a `MutSpan` one included (R4) |
+| A-5: a temporary lives until the last use of every view made from it | R8 (d) | as in v2 (row 5) |
+| A-6: a method that changes its object, called on a temporary, is allowed when its result is used, refused when the change would be lost | R8 (d), E2140 | as in v2 (verdict 13), with both ways out in its message (AN-10) |
+| A-7: a view's type says what it allows (`MutSpan` writes, `Span` and `StrView` read; an ECS query says `ref mut T`) | R2, R4, R5 | **v3 withdraws the exception by type** (verdict 34): a `MutSpan` is written only through a name or parameter that says `ref mut` (`fn integrate(ref mut pos: MutSpan[float], vel: Span[float], dt: float):`, `d = ref mut tracks[dst_name].as_mut_span()`), and a plain one only reads. The call says `ref mut` before a `MutSpan` argument, as in v2 (verdict 3): `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`; two spans of one list given to one call, one changeable, are proved apart or refused (R4). `Span` and `StrView` read, and an ECS query says `ref mut T`, as before |
+| A-8: messages in the program's names, why in one line, the exact line to write | R18 | as in v2 |
 
-## 2. What changed from run 4 in this area
+## 2. What changed from v2 in this area
 
-| answer | what changed | meaning changed? |
+| answer | what changed (verdict) | meaning changed? |
 |---|---|---|
-| AN-01 | one more refusal: plain `boss = enemies[0]`, then `enemies[0].hp = 1` while `boss` is still used, is refused (E3021, decision 5); run 4 let the plain name see the write. `copy of` in the messages | the NEW program means what it meant; **what a plain element name promises changed** (decision 5) |
-| AN-02 | the message for a call through a function value names what its type allows (R12, R18) | no |
-| AN-03 | every `ref mut` parameter is compiled with noalias (R4; run 4's exception for links is gone) | no |
-| AN-04 | none (carried whole) | no |
-| AN-05 | `copy of` in the refused handler; the handler's type changes nothing outside itself (decision 17), so `update` names nothing on its first line | no |
-| AN-06 | the loop's `ref mut h` keeps reads out too (decision 2): `q.commands()` neither reads nor changes a `Health` | no |
-| AN-07 | `words` owns its list (R2 settles run 4's note 6); `copy of w` is refused with a code (E2116) | no |
-| AN-08, AN-09 | none (carried whole; row 5 exactly as agreed) | no |
-| AN-10 | `next`'s first line is `changes this`; `heal` says `changes hp`; `copy of`; the refusal of a lost change is now R8 (d) with E2140 (decision 13), and the NEW shows decision 13's second way out (`enemy_at` giving back `ref mut Enemy`, called `enemy_at(ref mut es, 0).heal()`) | the NEW programs mean what they meant; one program added; **the refusal is now a rule** |
-| AN-11 | **a call says `ref mut` before a `MutSpan` argument** (decision 3); **two spans of one list given to one call, one changeable, are now proved apart or refused** (R4; run 4 accepted them, compiled without noalias); every `MutSpan` parameter is compiled with noalias | **yes**: the calls take a word, and an overlapping call that run 4 accepted is refused |
-| AN-12 | none (carried whole) | no |
-| AN-13 | **run 4's NEW is now refused** (decision 5: `p = ps.get(0).unwrap()`, then `ps[0].life -= 0.5`, then `p.life`, E3021); the NEW changes particle 0 through `p = ref mut ps[0]` and reads it afterwards with `get`; `copy of ps[0]`; `Vec3.ZERO` (now a vocabulary row) | **yes**: run 4's NEW is refused, as today's Ember refuses the same program on an `Array` |
-| AN-14 | **the overlap check moves to the caller**: by R4 every call already proves a `MutSpan` argument apart from the others, so a check inside `blend` on its own parameters would always pass; `assert_disjoint` is written where two spans of what may be one list are made, here two tracks of one map; `check_disjoint` gives only the answer (vocabulary) | **yes**: where the check is written, and what `check_disjoint` gives back |
-| AN-15 | the refusal of `ref mut vel` over a query item that only reads now has a code (E3027) | no |
-| AN-16 | the lines the messages give, in the new spellings; every refusal has a code | no |
+| AN-01, AN-02, AN-03 | none but "verdict N" for "decision N" in AN-01 and AN-02; no verdict of 21 to 34 reaches their programs (AN-03's `as_mut_span()` is in today's code, the "means exactly" program, which stays) | no |
+| AN-04 | `retain`'s first line carries a change list (verdict 21), so the call makes what its test changes; this test changes nothing, so `update` names nothing; one refusal added: a test that changes a module variable makes `update` name it (E2105) | no |
+| AN-05 | a plain function type changes nothing at all, captured variables included (verdict 22): a lambda that changes a variable it captured names it and does not fit `on_death`; an `update` that should accept any handler takes a change list (verdict 21) | **yes**, in what `on_death` accepts |
+| AN-06 | `World.run` and `run_parallel` run the system they are given, so they count as making its changes (verdicts 21, 30); `reap` changes nothing beyond its query, so nothing is named | no |
+| AN-07, AN-08, AN-09, AN-12 | the owner's-test rows of the plain `StrView` parameters `line` and `text` say that the plain parameter reads, where v2 said "read only, by its type" (verdict 32: the word in front of a parameter's name sets what the function may do, for every type) | no |
+| AN-10 | "verdict N" for "decision N"; `line`'s owner's-test row as in AN-07 (verdict 32) | no |
+| AN-11 | **every `MutSpan` parameter that writes says `ref mut`** (verdict 34): `fn integrate(ref mut pos: MutSpan[float], ...)`, `fn first_even(ref mut xs: MutSpan[int]) -> ref mut int:`; the spec's plain spelling is now refused (E3023); `pos` may now also point the caller's span elsewhere, so v2's refusal of `pos = ...` is gone, and a span of the callee's own list put there is refused (E3063) | **yes**: the parameters take a word, a plain one only reads, and a writing one may also re-point |
+| AN-13 | "verdict N" for "decision N" only | no |
+| AN-14 | `blend`'s parameter and the locals `d` say `ref mut` (verdict 34): `fn blend(ref mut dst: MutSpan[float], src: Span[float]):`, `d = ref mut tracks[dst_name].as_mut_span()`; a plain `d` given as `ref mut d` is refused (E3027); readability's F-14 is settled | **yes**: a plain name holding a `MutSpan` only reads |
+| AN-15 | the world runs the system (verdict 21), as AN-06 | no |
+| AN-16 | the lines the messages give, in the v3 spellings (`ref mut` on a writing `MutSpan` name, change lists); readability's F-08 fixed in AN-11's rewritten messages | no |
 
-Every answer takes the new spellings where they reach it (`copy of` for `copied`, `this`,
+Verdicts 23, 24, 26, 27, 29, 31 and 33 do not reach this area's programs: no shared owner, arena,
+`Option` or link opening, kind test, lock, C call or `.copied()` appears in a NEW block here (`.copied()`
+was never used in area A, and phase 0 found no `holds` to replace in this file). Verdict 32 changes no
+program here (no `shares mut` parameter), only the wording of the owner's-test rows of plain view
+parameters (AN-07 to AN-12, AN-14). Area A has no `scope.spawn`, `thread.spawn` or `@parallel` loop
+either: verdict 30 reaches it only through AN-06's `run_parallel`. Every answer keeps v2's spellings where no verdict changed them (`copy of`, `this`,
 `changes this` and `changes <field>`, `ref mut` before a `MutSpan` argument).
 
 ## 3. The answers
 
 ### AN-01: Holding an element while adding to the list
+
+**Meaning changed:** no. No verdict of 21 to 34 reaches this program.
 
 1. **Intent:** `split_boss` halves the first enemy's hp and adds a minion with the other half.
 
@@ -263,7 +273,7 @@ exit=0
      change that enemy through `boss`, write `boss = ref mut enemies[0]`; to change a copy of your own,
      write `boss = copy of enemies[0]`".
    - a change of the element through another name while a plain `boss` is still used (R8 (g),
-     decision 5; run 4 let the plain name see the write):
+     verdict 5; run 4 let the plain name see the write):
      ```ember
      boss = enemies[0]
      enemies[0].hp = 1
@@ -274,7 +284,7 @@ exit=0
      and change it through `boss`: `boss.hp = 1`". A copy of your own, `boss = copy of enemies[0]`, is
      restricted by nothing.
    - a write or a read of the element through another name while a `ref mut` `boss` is still used
-     (R8 (f), decision 2):
+     (R8 (f), verdict 2):
      ```ember
      boss = ref mut enemies[0]
      enemies[0].hp = 1
@@ -315,6 +325,10 @@ exit=0
    element name changes it (R8 (f)) or only reads it (R8 (g))).
 
 ### AN-02: A struct element's name used after a call that may change its list
+
+**Meaning changed:** no. `on_hit: fn(ref mut Array[Enemy])` already said what it may change; under
+verdict 22 a plain function type changes nothing beyond its `ref mut` parameter, as v2 read it for this
+program.
 
 1. **Intent:** keep updating `enemies[0]` after calling a helper that adds enemies.
 
@@ -479,7 +493,7 @@ exit=0
      (line 9) may remove enemies (`kill_weak` line 3: `enemies.remove(i)`), which may put another enemy in
      the place `boss` names (line 7), and `boss` is used on line 10; use `boss` before line 9, or name the
      enemy again after it: `boss = ref mut enemies[0]`".
-   - a helper that reads or writes an element already in the list (R8 (f), decision 2), with
+   - a helper that reads or writes an element already in the list (R8 (f), verdict 2), with
      `fn heal_all(ref mut enemies: Array[Enemy]):` whose body is `for ref mut e in enemies: e.hp += 1`,
      E3022: "`boss` is the only name for `enemies[0]` until line 10, and `heal_all(ref mut enemies)`
      (line 9) changes the enemies in it (`heal_all` line 3: `e.hp += 1`); use `boss` before line 9, or
@@ -496,6 +510,9 @@ exit=0
    line.
 
 ### AN-03: Two elements of one list in one call
+
+**Meaning changed:** no. Verdict 34 reaches only the "means exactly" program's `as_mut_span()`, which is
+today's Ember and stays.
 
 1. **Intent:** `collide(bodies[i], bodies[j])` swaps the speeds of two bodies.
 
@@ -644,6 +661,9 @@ exit=0
 
 ### AN-04: Changing a list while looping over it
 
+**Meaning changed:** no. `retain`'s first line now carries a change list (verdict 21), so the call makes
+what its test changes; this program's test changes nothing. One refusal is added in point 6.
+
 1. **Intent:** each frame, every enemy loses 1 hp; a dead enemy that splits makes a new enemy; the dead
    are removed. Settled by the owner: the removal and the addition happen after the loop.
 
@@ -761,8 +781,11 @@ fn update(ref mut enemies: Array[Enemy]):
    R8 (c), as agreed: the list does not change while the loop walks it; the removal and the addition go
    after it. `retain` and `extend` are methods called on `enemies`, so they carry no word (R4: the object
    a method is called on is not marked; their first lines say they change the list). `retain` runs the
-   function it is given, so it is a call that may run a function value (R12); that function changes
-   nothing.
+   function it is given, now, on every element, so the call makes what that function changes (verdict
+   21, R12): the library writes `pub fn retain[C, F: fn(T) changes C -> bool](owns keep: F) changes
+   this, C:` (vocabulary, the iterator row), and `C` is filled from the function given. `fn(e) =>
+   e.hp > 0` changes nothing, so `C` is empty, the call changes only `enemies`, and `update`'s first line
+   names nothing beyond its `ref mut enemies` (point 6 shows a test that changes something).
 
    The speed part: the compiler runs the loop and the `retain` after it in one pass when (1) the `retain`
    follows the loop on the same list with nothing between that touches the list, (2) the loop has no
@@ -892,6 +915,23 @@ int main(void) {
    - `for e in enemies.iter_mut():` then `e.hp -= 1`: the same (`e` is a plain loop name), E3023: "`e` is
      a plain loop name, which only reads; write `for ref mut e in enemies:`" (vocabulary, `iter_mut`: the
      one `for` spelling that changes elements is `for ref mut e in enemies:`).
+   - a `retain` test that also changes a module variable, while `update`'s first line does not name it
+     (verdict 21; R5, R12). With `static mut LOG: Array[String] = []` and this test:
+     ```ember
+     fn keep_alive(e: Enemy) changes LOG -> bool:
+         if e.hp <= 0:
+             LOG.push(String("an enemy died"))
+         return e.hp > 0
+     ```
+     `enemies.retain(keep_alive)` in place of the NEW's `retain` line is a call that changes `LOG` as well
+     as `enemies`, so `update` names it. Without the word, E2105: "`update` calls
+     `enemies.retain(keep_alive)`, which runs `keep_alive` on every enemy, and `keep_alive` changes `LOG`
+     (its first line says `changes LOG`); add it to `update`'s first line: `fn update(ref mut enemies:
+     Array[Enemy]) changes LOG:`". With the word, a call of `update` inside a loop over `LOG` is refused
+     (E3020), as for any function that changes `LOG`. A lambda test that pushes to `LOG` without saying so
+     is refused on its own first line (E2105, as the rules' `for_each` message). In the test, `e` is a
+     plain parameter (default: it reads the enemy `retain` gives it) and `LOG` is `static mut` (a module
+     variable that may change, R15).
 
 7. **Cost.** 1,000,000 enemies, 100 frames, about 1% die per frame; five rounds with
    `target/redesign2/bench/run.ps1` (performance cores, mains checked each round), results in
@@ -910,6 +950,13 @@ int main(void) {
 8. **Kind:** an understandable limitation kept (agreed), made as fast as C by a compile-time fusion.
 
 ### AN-05: A loop that removes from its own list while calling code the compiler cannot see
+
+**Meaning changed:** yes, in what `on_death` accepts (verdict 22). The NEW program does what it did.
+v2 let `on_death: fn(ref mut Array[Enemy], int)` hold a lambda that changes a variable it captured
+(that variable counted as part of the function itself). In v3 a plain function type changes nothing at
+all beyond its `ref mut` parameters, so such a lambda names the variable on its first line and is refused
+where it is given to `on_death` (E2113, point 6). An `update` meant to take any handler says so with a change list (verdict 21), shown in
+point 3.
 
 1. **Intent:** each frame, every enemy loses 1 hp, and the game's `on_death` handler (any function
    given in) is called for each dead enemy; the handler may remove it from the list.
@@ -1002,21 +1049,33 @@ fn update(ref mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int)
      and lets `update` remove them after the calls, as above.
    - **The handler itself is only called**, through a read-only parameter, so it must be a function that
      changes no state of its own (R12): a plain function such as `drop_it`, or a lambda that changes only
-     real variables it captures. A lambda that changes its own copy (`with copy of kills`) is refused at
-     the call that gives it to `update` (section 6).
+     the list it is given. A lambda that changes its own copy (`with copy of kills`) is refused at the
+     call that gives it to `update` (point 6).
    - **What the handler may change**: its type, `fn(ref mut Array[Enemy], int)`, says it changes the list
-     it is given and nothing outside itself (decision 17: a function type names what it changes outside
-     itself, and a change through a `ref mut` parameter needs no word). So `update`'s first line names
-     nothing beyond its `ref mut enemies`, and a handler that changes a module variable (`fn(ref mut
-     list: Array[Enemy], i: int) changes LOG: ...`) is refused where it is given to `on_death` (E2113);
-     `on_death`'s type would say `changes LOG` for it.
+     it is given and nothing else at all (a change through a `ref mut` parameter needs no word, and a plain
+     function type changes nothing beyond it, the variables a lambda captured included: verdict 22). So
+     `update`'s first line names nothing beyond its `ref mut enemies`. A handler that changes anything
+     else says so on its first line, and so does not fit this type (E2113): a function that changes a
+     module variable (`fn drop_and_log(ref mut list: Array[Enemy], i: int) changes LOG:`), or a lambda
+     that changes a variable it captured (`fn(ref mut list: Array[Enemy], i: int) changes kills: kills
+     += 1`, point 6). An `update` meant to take any handler says so with a change list (verdict 21,
+     R12), as the library's `for_each` does, and keeps the same body:
+     ```ember
+     fn update[C](ref mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int) changes C) changes C:
+     ```
+     `C` is filled from the handler each call is given: `update(ref mut es, drop_and_log)` changes `LOG`,
+     and its caller names `LOG` on its own first line (R5); `update(ref mut es, drop_it)` changes nothing
+     but `es`. A call of the first inside a loop over `LOG` is refused (E3020). This is the owner's sketch
+     of verdict 21 (`f: fn(T) changes C`), a function value called through its two words, as `on_death`
+     already is; the library writes the same contract as a bound, one instance per function
+     (`V3/changes.md` section 11, question 4).
 
 4. **The owner's test:**
 
 | name | what it is | may it change it |
 |---|---|---|
 | `enemies` | `ref mut`: the caller's list | `ref mut`: yes; `ref mut enemies` at the call says the handler may change it |
-| `on_death` | its type `fn(ref mut Array[Enemy], int)`: a function given by the caller, read only (a plain parameter) | none (default: only called; its type's `ref mut` says the function may change the list it is given) |
+| `on_death` | its type `fn(ref mut Array[Enemy], int)`: a function given by the caller, read only (a plain parameter) | none (default: only called; its type's `ref mut` says the function may change the list it is given, and nothing else at all, verdict 22) |
 | `dead` | none (default: the function's own new list) | none (default: its own) |
 | `i` | none (default: the loop's own number) | none (default: only the loop gives it its values) |
 
@@ -1070,6 +1129,20 @@ exit=0
      `update(ref mut es, count)`, E3023: "`count` changes its own copy of `kills` each time it runs, and
      `update` takes it read-only; write `ref mut on_death: fn(ref mut Array[Enemy], int)` in `update`'s
      first line and call `update(ref mut es, ref mut count)`".
+   - a lambda that changes a variable it captured, given to `on_death` (R12, verdict 22), in `main`:
+     ```ember
+     kills = 0
+     update(ref mut es, fn(ref mut list: Array[Enemy], i: int) changes kills: kills += 1)
+     ```
+     E2113: "this function changes `kills`, a variable it uses from `main` (`fn(ref mut list:
+     Array[Enemy], i: int) changes kills`), and `update`'s `on_death` takes `fn(ref mut Array[Enemy],
+     int)`, a function that changes nothing but the list it is given; to let `update` take handlers that
+     change something, write its first line as `fn update[C](ref mut enemies: Array[Enemy], on_death:
+     fn(ref mut Array[Enemy], int) changes C) changes C:`". Here `kills` is `main`'s own number (no word:
+     a local of its own), `list` is `ref mut` (the list `update` gives) and `i` a plain parameter (a
+     number passed in). The same lambda without `changes kills` is refused on its own first line (E2105:
+     "this function changes `kills`, a variable it uses from `main`; say so on its first line:
+     `fn(ref mut list: Array[Enemy], i: int) changes kills: kills += 1`").
 
 7. **Cost:** one `push` per death into `dead`, and the handler calls after the loop. C calling a
    handler it does not know must do the same to stay correct (it cannot know what the handler
@@ -1079,6 +1152,10 @@ exit=0
    one run-time stop moved to compile time (the counting loop).
 
 ### AN-06: ECS: creating and destroying entities inside a view loop
+
+**Meaning changed:** no. `World.run` and `run_parallel` run the system they are given, so under verdicts
+21 and 30 they count as making what the system's type says it changes; `reap` changes nothing beyond the
+query it is given, so nothing is named (point 3).
 
 1. **Intent:** a system lowers each entity's health; an entity at 0 is destroyed and a new one with 10
    health takes its place.
@@ -1226,10 +1303,20 @@ fn reap(ref mut q: Query[(Entity, ref mut Health)], dt: float):
    Under R8: `q.commands()` changes only the query's queue of changes (its first line names that field,
    `changes cmds`), which the loop does not walk, so the loop may call it (R8 (c)); and it neither reads
    nor changes a `Health` value: the query's fields hold a view of the world's pools, and reading that
-   view is not reading what it points at (`V2/rules.md` section 0, "into X": what `q` owns, and `q` does
+   view is not reading what it points at (`V3/rules.md` section 0, "into X": what `q` owns, and `q` does
    not own the pools its view points at). So `h`, the only name for its `Health` while it is used
-   (R8 (f), decision 2: reads kept out too), is not reached. In the loop's names, plain `e` comes first and `ref mut h` after it, which R3's list rule
-   allows (only a name with no word after a name with a word is refused).
+   (R8 (f), verdict 2: reads kept out too), is not reached. In the loop's names, plain `e` comes first
+   and `ref mut h` after it, which R3's list rule allows (only a name with no word after a name with a
+   word is refused).
+
+   `World.run` runs the system it is given, so the call counts as making what the system's type says it
+   changes (verdict 21, R12); `run_parallel` hands systems to the job system's threads, which counts the
+   same way (verdict 30: "starting a thread counts", R12, R15). `reap`'s type is `fn(ref mut
+   Query[(Entity, ref mut Health)], float)`: it changes the query it is given and nothing else, and the
+   query's changes are applied by the world after the system returns, so a program that calls
+   `world.run(reap, 0.016)` names nothing on its first line for it. A system that also changed a module
+   variable would say `changes LOG` on its first line, and the function that runs it would name `LOG`
+   too.
 
 4. **The owner's test:**
 
@@ -1402,6 +1489,9 @@ exit=0
 
 ### AN-07: A local list of string views (`words = text.split()`)
 
+**Meaning changed:** no. Only the owner's-test row of the plain parameter `line` is reworded (verdict
+32: a plain parameter reads, whatever its type).
+
 1. **Intent:** split a line into words and count them, without copying each word.
 
 2. **OLD.** Four spellings, all refused:
@@ -1548,7 +1638,7 @@ fn count_words(line: StrView) -> int:
 
 | name | what it is | may it change it |
 |---|---|---|
-| `line` | `StrView`: a view of the caller's text | `StrView`: read only, by its type |
+| `line` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads, R4, verdict 32) |
 | `words` | none (default: its own new list, which `collect()` hands to it (R2), of views into the lowered copy of `line`; the list lives no longer than that copy (R7, R8 (d)); its type `Array[StrView]` comes from its value, as row 5's `word`) | none (default: its own list; its views only read, so changing it changes nothing anyone else holds) |
 
 5. **Means exactly:** today's Ember cannot keep the list (above), so in C: a list of (pointer, length)
@@ -1647,6 +1737,9 @@ exit=0
 
 ### AN-08: A view of a temporary kept past its statement
 
+**Meaning changed:** no (row 5, exactly as agreed). Only the owner's-test row of the plain parameter
+`line` is reworded (verdict 32).
+
 1. **Intent:** `word = line.to_lower().trim()` then use `word.len()`. Agreed row 5.
 
 2. **OLD:**
@@ -1693,7 +1786,7 @@ fn first_word_len(line: StrView) -> int:
 
 | name | what it is | may it change it |
 |---|---|---|
-| `line` | `StrView`: a view of the caller's text | `StrView`: read only |
+| `line` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads, R4, verdict 32) |
 | `word` | none (default: a name bound to a call that gives a view is a read-only view, R2: here of the lowered copy of `line`, which is kept until `word`'s last use, R8 (d), row 5) | none (default: read only) |
 
 5. **Means exactly:** the lowered string held in a local until `word`'s last use. Accepted:
@@ -1726,6 +1819,9 @@ exit=0
 8. **Kind:** a smarter compile-time solution (agreed row 5).
 
 ### AN-09: Returning a view of a temporary
+
+**Meaning changed:** no (row 5, exactly as agreed). Only the owner's-test row of the plain parameter
+`line` is reworded (verdict 32).
 
 1. **Intent:** `clean(line)` returns the trimmed, lowered word. Agreed row 5.
 
@@ -1803,7 +1899,7 @@ fn clean(line: StrView) -> String:
 
 | name | what it is | may it change it |
 |---|---|---|
-| `line` | `StrView`: a view of the caller's text | `StrView`: read only |
+| `line` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads, R4, verdict 32) |
 | `word` | none (default: a read-only view of the lowered copy of `line`, R2, row 5) | none (default: read only) |
 
    The result: `String(...)` says "your own copy", handed to the caller (row 5's words).
@@ -1844,6 +1940,9 @@ exit=0
    it names.
 
 ### AN-10: A method that changes a temporary (`line.split(" ").next()`)
+
+**Meaning changed:** no. Only the owner's-test row of the plain parameter `line` is reworded (verdict
+32).
 
 1. **Intent:** take the first word of a line in one expression; and, in the second program, heal the
    first enemy of a list.
@@ -1921,11 +2020,11 @@ fn first_word(line: StrView) -> int:
    `next` changes the temporary iterator (its first line is `fn next() changes this -> Option[StrView]:`,
    R5) and returns the first word, which is used; the iterator ends with the statement. R8 (d) refuses a
    change to a temporary only when the call's only effect is that change and nothing it gives back is
-   used; here the word is used, so this is accepted, as in Rust (decision 13: "a call whose result is used
+   used; here the word is used, so this is accepted, as in Rust (verdict 13: "a call whose result is used
    (`line.split(" ").next()`) stays allowed").
 
    The second program heals the first enemy of a list, written so that the change reaches the enemy the
-   program means, in each of the two ways decision 13 names, and heals a copy of your own beside them:
+   program means, in each of the two ways verdict 13 names, and heals a copy of your own beside them:
 
 ```ember
 @derive(Copy)
@@ -1958,7 +2057,7 @@ fn main():
 
 | name | what it is | may it change it |
 |---|---|---|
-| `line` | `StrView`: a view of the caller's text | `StrView`: read only |
+| `line` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads, R4, verdict 32) |
 | `this` (in `heal`) | `this`: the enemy `heal` was called on | `changes hp`: it may change `hp` only |
 | `xs` (in `enemy_at`) | `ref mut`: the caller's list | `ref mut`: yes; the result `ref mut Enemy` gives back one of its elements, which the caller may change |
 | `i` (in `enemy_at`) | none (default: a number passed in, copied) | none (default: read) |
@@ -2022,7 +2121,7 @@ exit=0
 ```
 
 6. **Still refused:**
-   - a change that would be lost (R8 (d), decision 13): `enemy_at(es, 0).heal()`, where `enemy_at` is
+   - a change that would be lost (R8 (d), verdict 13): `enemy_at(es, 0).heal()`, where `enemy_at` is
      `fn enemy_at(xs: Array[Enemy], i: int) -> Enemy:` with `return xs[i]` (a copy) and nothing the call
      gives back is used, E2140: "`heal` changes the enemy that `enemy_at(es, 0)` returns, a copy that ends
      on this line, so the change would be lost; to heal the enemy in `es` write `es[0].heal()`, or let
@@ -2041,9 +2140,17 @@ exit=0
 7. **Cost:** none; the same code as the local, and as today's `ref mut` result.
 
 8. **Kind:** a smarter compile-time solution: a call on a temporary is accepted when what it gives back
-   is used, and a change that would be lost is refused with both ways out (decision 13).
+   is used, and a change that would be lost is refused with both ways out (verdict 13).
 
 ### AN-11: A `MutSpan` parameter written without `mut`
+
+**Meaning changed:** yes (verdict 34). v2 kept the spec's plain `pos: MutSpan[float]` and let it write
+the elements (R5's exception by type). In v3 the exception is withdrawn: a `MutSpan` parameter that
+writes says `ref mut` on its name, `fn integrate(ref mut pos: MutSpan[float], vel: Span[float],
+dt: float):`, and a plain one only reads (the spec's spelling is refused, E3023). A `ref mut` parameter
+names the caller's place, so `pos` may now also point the caller's span elsewhere (R2, R4): v2's refusal
+of `pos = ...` is gone, and putting a span of the callee's own list there is refused instead (E3063).
+The calls are v2's.
 
 1. **Intent:** `integrate(pos, vel, dt)` adds each velocity to its position in place.
 
@@ -2177,14 +2284,15 @@ error: could not compile due to 3 error(s)
 exit=1
 ```
 
-3. **NEW** (the spec's examples, as the spec writes them, with the callers in the v2 spelling):
+3. **NEW** (the spec's two examples, with `ref mut` on each `MutSpan` parameter that writes, verdict 34,
+   and their callers):
 
 ```ember
-fn integrate(pos: MutSpan[float], vel: Span[float], dt: float):
+fn integrate(ref mut pos: MutSpan[float], vel: Span[float], dt: float):
     for i in 0..pos.len():
         pos[i] += vel[i] * dt
 
-fn first_even(xs: MutSpan[int]) -> ref mut int:
+fn first_even(ref mut xs: MutSpan[int]) -> ref mut int:
     for i in 0..xs.len():
         if xs[i] % 2 == 0:
             return ref mut xs[i]
@@ -2201,10 +2309,16 @@ fn main():
     println(p[0], a[1])
 ```
 
-   R5's exception by type: a plain name may write what a `MutSpan` leads to, with the type's own
-   operation at the use (`pos[i] = ...`), so the parameters need no other word. **The call says
-   `ref mut` before a `MutSpan` argument** (R4, decision 3: "a `MutSpan` argument says `ref mut` at the
-   call"): before a `MutSpan` the word names its elements, so it stands before the span made in the call,
+   **A `MutSpan` parameter that writes says `ref mut`** (verdict 34: "a `MutSpan` name says `ref mut` in
+   front, like every other name that may change something it does not own"; R4, R5). The word on the
+   name sets what the function may do with the parameter, for every type (R4, verdict 32); the type
+   after the colon, `MutSpan[float]`, says what the caller's value is, a view of elements someone else
+   owns. So `ref mut pos` may write those elements (`pos[i] += ...`), and so may `ref mut xs`, which also
+   gives one of them back as a place (`return ref mut xs[i]`). As every `ref mut` parameter, it names the
+   caller's place, here the caller's span: `pos` may also point that span elsewhere (R2, R4), and where
+   the span is made in the call, as here, that changes only the span made for the call, which ends with
+   the line (R4). **The call says `ref mut` before a `MutSpan` argument** (R4, verdict 3): before a
+   `MutSpan` the word names its elements, so it stands before the span made in the call,
    `ref mut p.as_mut_span()`. `r = ref mut first_even(ref mut a.as_mut_span())` names the element the
    call gives back (a call whose result type is `ref mut int` is a place, R6), and `r = 7` writes it:
    `a[1]` becomes 7.
@@ -2212,22 +2326,28 @@ fn main():
    Inside `integrate`, `pos` is the only name for its elements while it is used (R8 (f)), and `pos` and
    `vel` are compiled with noalias (R4): every call proves its arguments apart. `p` and `v` are two
    different lists, so the compiler knows it with nothing to run. Two spans of one list given to one call
-   (`integrate(ref mut p.as_mut_span(), p.as_span(), 0.5)`) are refused (section 6); run 4 accepted that
+   (`integrate(ref mut p.as_mut_span(), p.as_span(), 0.5)`) are refused (point 6); run 4 accepted that
    call for numbers and compiled it without noalias.
 
 4. **The owner's test:**
 
 | name | what it is | may it change it |
 |---|---|---|
-| `pos` | `MutSpan`: a view of the caller's elements | `MutSpan`: its elements may be written, and `pos` is their only name while it is used (R8 (f)); `pos` itself keeps the view it was given (R2) |
-| `vel` | `Span`: a view of the caller's elements | `Span`: read only; they do not change while `vel` is used (R8 (g)) |
+| `pos` | `ref mut`: the caller's place, a `MutSpan` (a view of elements the caller owns, here the elements of `p`) | `ref mut`: yes; it writes those elements and is their only name while it is used (R8 (f)), and it may point the caller's span elsewhere (R2, R4) |
+| `vel` | `Span`: a view of the caller's elements (a plain parameter) | none (default: a plain parameter reads; they do not change while `vel` is used, R8 (g)) |
 | `dt` | none (default: a number passed in) | none (default: read) |
 | `i` (both functions) | none (default: the loop's own number) | none (default: only the loop gives it its values) |
-| `xs` | `MutSpan`: a view of the caller's elements | `MutSpan`: its elements may be written |
+| `xs` | `ref mut`: the caller's place, a `MutSpan` (a view of the elements of `a`) | `ref mut`: yes; it writes those elements and gives one back as a place (`-> ref mut int`), and may point the caller's span elsewhere |
 | `p`, `v`, `a` | none (default: `main`'s own new lists) | none (default: their own; `ref mut` at a call says the callee writes their elements) |
 | `r` | `ref mut`: the element `first_even` gives back (`a[1]` here) | `ref mut`: yes; `r = 7` writes that element (R2) |
 
-5. **Means exactly:** today's `mut pos` / `mut xs`. Accepted:
+   In `ref mut pos: MutSpan[float]` the line says "mut" twice, as the owner noted for verdict 34: `ref
+   mut` on the name says what `integrate` may do, `MutSpan` in the type says what kind of view the caller
+   gives.
+
+5. **Means exactly:** today's `mut pos` / `mut xs`, which is the NEW `ref mut pos` / `ref mut xs`
+   (today's `mut` on a parameter is the in-out parameter that v3 spells `ref mut`, vocabulary `mut x: T`
+   row). Accepted:
 
 `target/redesign3/08-area-A/means/m11_mutspan.em`:
 
@@ -2265,40 +2385,68 @@ exit=0
    `r = ref mut first_even(ref mut a.as_mut_span())`, and plain `r = first_even(...)` copies the number,
    as `n = counts[0]` does (R2).
 
-6. **Still refused:**
-   - the call without its word (R4, decision 3), `integrate(p.as_mut_span(), v.as_span(), 0.5)`, E3028:
-     "`integrate` changes the elements of `p` (its parameter `pos` is a `MutSpan`); say so at the call:
-     `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`".
+6. **Still refused** (line numbers count the NEW program as a file whose first line is a comment, so
+   `fn integrate` is line 2 and `fn first_even` line 6):
+   - the spec's own spelling, a plain `MutSpan` parameter that writes (verdict 34; R4, R5: a plain name
+     never changes anything), `fn integrate(pos: MutSpan[float], vel: Span[float], dt: float):` with
+     `pos[i] += vel[i] * dt`, E3023: "`pos[i] += vel[i] * dt` (line 4) writes an element of the caller's
+     span, but `pos` only reads it; write `fn integrate(ref mut pos: MutSpan[float], vel: Span[float],
+     dt: float):`, and the call stays `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`". And
+     `fn first_even(xs: MutSpan[int]) -> ref mut int:`, E3023 at its first such line: "`return ref mut
+     xs[i]` (line 9) gives back an element of the caller's span to be changed, but `xs` only reads it;
+     write `fn first_even(ref mut xs: MutSpan[int]) -> ref mut int:`, and the call stays
+     `first_even(ref mut a.as_mut_span())`". One message for each function, at the program's line: the
+     later writes in the same body (`xs[0] = 0`, `return ref mut xs[0]`) are not reported again. Today's
+     compiler refuses the same lines with E3023 too (point 2, three messages for `first_even`), with
+     helps that give `mut xs: MutSpan[i64]`, `RefCell` and `class`; this message gives the line, with the
+     type as written (`int`, not `i64`).
+   - the call without its word (R4, verdict 3), `integrate(p.as_mut_span(), v.as_span(), 0.5)`, E3028:
+     "`integrate` changes the elements of `p` (its first line says `ref mut pos: MutSpan[float]`); say so
+     at the call: `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`".
    - two spans of one list given to one call, one of them changeable (R4), `integrate(ref mut
      p.as_mut_span(), p.as_span(), 0.5)`, E3021: "`integrate` changes the elements of `p` through `pos`
      while `vel` shows the same elements; give `vel` a copy of its own: instead of this line write
      `old = copy of p` and `integrate(ref mut p.as_mut_span(), old.as_span(), 0.5)`". (Run 4 accepted
-     it; R4 now refuses any overlap it cannot prove away, numbers included. Two spans that may or may not
+     it; R4 refuses any overlap it cannot prove away, numbers included. Two spans that may or may not
      overlap are proved apart with `assert_disjoint`, AN-14.)
-   - giving the parameter another view, `pos = other` (R2: a parameter keeps what the caller gave for
-     the whole call), E3023: "`pos` is the view the caller passed and stays that view for the whole call;
-     you may write its elements (`pos[i] = ...`); for a view of your own write `rest = other`; to point the
-     caller's view elsewhere, write `ref mut pos: MutSpan[float]`, called as `integrate(ref mut ps, vs,
-     0.5)`".
-   - `mut pos: MutSpan[float]` (`mut` alone on a name), E0113: "remove `mut`: `MutSpan` already lets
-     `integrate` write `pos[i]`; to point the caller's view elsewhere, write
-     `ref mut pos: MutSpan[float]`".
-   - writing through `vel: Span[float]` (R5), E3023: "`vel` is a read-only view; to write its elements,
-     take it as `vel: MutSpan[float]`". No `RefCell` or `class` help; the type as written (`float`, not
-     `f64`).
-   - with `ref mut pos: MutSpan[float]`, pointing the caller's view at the callee's own list (R4), E3063:
-     "`pos` is the caller's view and lives on after `integrate` returns, but `mine` ends with
-     `integrate`; put a view of what the caller gave there, or return a list of your own".
+   - `mut pos: MutSpan[float]` (`mut` alone on a name; today's spelling, point 2), E0113: "`mut pos` says
+     `pos` may change but not whose elements; to write the caller's elements through `pos`, write
+     `fn integrate(ref mut pos: MutSpan[float], vel: Span[float], dt: float):`".
+   - writing through `vel: Span[float]` (R4, R5), E3023: "`vel[i] = 0.0` writes an element the caller
+     gave as a `Span`, which only reads, and `vel` is a plain parameter; to write the caller's velocities,
+     write `fn integrate(ref mut pos: MutSpan[float], ref mut vel: MutSpan[float], dt: float):` and call
+     it `integrate(ref mut p.as_mut_span(), ref mut v.as_mut_span(), 0.5)`". No `RefCell` or `class`
+     help; the type as written (`float`, not `f64`).
+   - pointing the caller's span at the callee's own list (R2, R4), with these two lines at the top of
+     `integrate`'s body (lines 3 and 4):
+     ```ember
+     mine = [0.0, 0.0]
+     pos = ref mut mine.as_mut_span()
+     ```
+     E3063: "`pos = ref mut mine.as_mut_span()` (line 4) would point the caller's span at `mine`, which
+     ends when `integrate` returns, while the caller's span lives on; to write `mine`'s numbers into the
+     caller's elements, write `for i in 0..pos.len(): pos[i] = mine[i]` instead of this line". `pos` may
+     be pointed only at a span the caller gave, or a part of one (R4).
 
 7. **Cost:** none beyond today's `mut pos`, and the loop runs with noalias: `pos` and `vel` are proved
    apart at every call (R4), here with nothing to run (two different lists). Noalias is what made two
    spans of one list run at 1.00x to 1.07x of C against 1.53x without it
    (`tasks/96/redesign/phase3b-containers.md:346-355`); run 4 compiled an overlapping call without it.
+   One possible cost is new since v2, not measured: a `ref mut` parameter may point the caller's span
+   elsewhere, so the span may have to be passed by its address, where v2's plain `pos` could be passed as
+   its two words. Inside a package the compiler sees whether the body ever gives `pos` another span
+   (`integrate` and `first_even` never do) and can pass the two words as before; with noalias the loop
+   reads the span's pointer and length once before it starts either way. Across a package's edge no
+   word or recorded fact says it (found for the lead, section 5).
 
-8. **Kind:** a readable spelling (the type says it once, and the call says `ref mut` as every call that
-   changes an argument does, decision 3).
+8. **Kind:** a readable spelling: the name says `ref mut`, as every name that may change something it
+   does not own (verdict 34), the type says what the view is, and the call says `ref mut` as every call
+   that changes an argument does (verdict 3).
 
 ### AN-12: Updating a map entry in place
+
+**Meaning changed:** no. Only the owner's-test row of the plain parameter `text` is reworded (verdict
+32).
 
 1. **Intent:** count the words of a text in a map.
 
@@ -2426,7 +2574,7 @@ fn count_words(text: StrView) -> Map[String, int]:
 
 | name | what it is | may it change it |
 |---|---|---|
-| `text` | `StrView`: a view of the caller's text | `StrView`: read only |
+| `text` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads, R4, verdict 32) |
 | `counts` | none (default: the function's own new map; returned, so handed to the caller, row 9) | none (default: its own) |
 | `w` | none (default: a plain `for` name, a read-only view of one word of `text`) | none (default: read only) |
 
@@ -2477,6 +2625,9 @@ exit=0
 8. **Kind:** a readable spelling.
 
 ### AN-13: `SoA.get(i)` silently copies, while `Array.get(i)` gives a reference
+
+**Meaning changed:** no, since v2 (v2 changed it under verdict 5; point 3 says how). `ref mut ps[0]`
+gives an `SoAMut[T]`, not a `MutSpan`, so verdict 34 does not reach it, and it already says `ref mut`.
 
 1. **Intent:** read particle `i` from column storage, and see its current life after it changes.
 
@@ -2553,7 +2704,7 @@ fn main():
    says `copy of` (rows 6, 9); `load()` stays the method `copy of` runs on an `SoA` element, as `clone` is
    the method it runs elsewhere (vocabulary, `SoA.get` row).
 
-   **What changed since run 4** (decision 5): run 4's NEW took `p = ps.get(0).unwrap()`, changed the
+   **What changed since run 4** (verdict 5): run 4's NEW took `p = ps.get(0).unwrap()`, changed the
    particle through `ps[0]` and then read `p.life`, letting the read-only `p` see the write. A read-only
    name now promises that what it reads does not change while it is used (R8 (g)), so that program is
    refused, with both ways out (section 6); it is the same refusal today's Ember gives the same lines on an
@@ -2601,7 +2752,7 @@ exit=0
 ```
 
 6. **Still refused:**
-   - run 4's NEW, a change of what a read-only name reads while it is still used (R8 (g), decision 5):
+   - run 4's NEW, a change of what a read-only name reads while it is still used (R8 (g), verdict 5):
      ```ember
      p = ps.get(0).unwrap()
      ps[0].life -= 0.5
@@ -2629,9 +2780,15 @@ exit=0
    every column once, as today's `load()` does.
 
 8. **Kind:** a readable spelling (one meaning for `get`, a named copy), with Rust's rule kept for a
-   read-only name (decision 5).
+   read-only name (verdict 5).
 
 ### AN-14: `assert_disjoint` returns a `Result` and never stops the program
+
+**Meaning changed:** yes (verdict 34). v2's `blend(dst: MutSpan[float], ...)` and its locals
+`d = tracks[dst_name].as_mut_span()` wrote elements with no word on the name (R5's exception by type).
+In v3 a plain name holding a `MutSpan` only reads: `blend` says `ref mut dst`, and `mix` and `mix_any`
+say `d = ref mut tracks[dst_name].as_mut_span()` (readability's F-14 is settled by it). Where the check
+is written, and what `check_disjoint` gives back, are v2's.
 
 1. **Intent:** check that two views do not overlap before writing one while reading the other.
 
@@ -2680,18 +2837,18 @@ exit=1
 from std.mem import assert_disjoint, check_disjoint
 from std.collections import Map
 
-fn blend(dst: MutSpan[float], src: Span[float]):
+fn blend(ref mut dst: MutSpan[float], src: Span[float]):
     for i in 0..dst.len():
         dst[i] = dst[i] * 0.5 + src[i] * 0.5
 
 fn mix(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_name: StrView):
-    d = tracks[dst_name].as_mut_span()
+    d = ref mut tracks[dst_name].as_mut_span()
     s = tracks[src_name].as_span()
     assert_disjoint(d, s)          # stops the program if the two names are one track
     blend(ref mut d, s)
 
 fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_name: StrView):
-    d = tracks[dst_name].as_mut_span()
+    d = ref mut tracks[dst_name].as_mut_span()
     s = tracks[src_name].as_span()
     match check_disjoint(d, s):
         Ok(_):
@@ -2701,7 +2858,7 @@ fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_nam
 ```
 
    **Where the check is written now.** By R4 every call proves its arguments apart where one of them may
-   be changed: a `MutSpan` argument is marked `ref mut` at the call (decision 3), and the call is accepted
+   be changed: a `MutSpan` argument is marked `ref mut` at the call (verdict 3), and the call is accepted
    only where the compiler knows the other arguments do not reach its elements (two different lists, a
    split, different constants, `j` from `i + 1..`, inside `if i != j:`, after `assert_disjoint`), with one
    index compare where two elements of one list differ only by an index. So inside `blend`, `dst` and
@@ -2718,20 +2875,34 @@ fn mix_any(ref mut tracks: Map[String, Array[float]], dst_name: StrView, src_nam
    after them. Today's `std/src/mem.em:76, :85` take both `owned` and hand them back (a library change for
    the lead, `V2/changes.md` section 5, A 4).
 
-   `d` holds a `MutSpan` (`as_mut_span()` says it), so writing its elements needs no other word (R5's
-   exception by type), and the call says `ref mut d` before it (R4).
+   **The names that write say `ref mut`** (verdict 34; R2, R4, R5). `blend` writes the elements of the
+   span it is given, so its parameter is `ref mut dst: MutSpan[float]`, called `blend(ref mut d, s)`;
+   `src` only reads, so it has no word. `d` is how `mix` hands those elements to `blend` to be written,
+   so it says `ref mut` too: `d = ref mut tracks[dst_name].as_mut_span()` names the elements of
+   `tracks[dst_name]` through the span `as_mut_span()` gives, and may let them be written. A plain
+   `d = tracks[dst_name].as_mut_span()` would only read them, and `blend(ref mut d, s)` would then be
+   refused (point 6).
+
+   While `d` is used it is the only name for the elements of `tracks[dst_name]` (R8 (f)). `s` is made
+   while `d` is in use, from `tracks[src_name]`, which is the same list when the two names are equal. This
+   file reads R8 (f) as refusing a read or a change of `d`'s elements through `s`, not the making of `s`
+   or the reading of its address range: `as_span()` reads the list's buffer address and length, and
+   `assert_disjoint` and `check_disjoint` compare the two address ranges, and none of them reads an
+   element. The first use of `s` that reads elements is inside `blend`, after the two are proved apart.
+   That reading is what lets `assert_disjoint(d, s)` exist at all (R4 names it as a proof), and it is
+   left for the lead to state in R8 (f) (section 5).
 
 4. **The owner's test:**
 
 | name | what it is | may it change it |
 |---|---|---|
-| `dst` | `MutSpan`: a view of the caller's elements | `MutSpan`: its elements may be written, and `dst` is their only name while it is used (R8 (f)) |
-| `src` | `Span`: a view of the caller's elements | `Span`: read only; they do not change while `src` is used (R8 (g)) |
+| `dst` | `ref mut`: the caller's place, a `MutSpan` (a view of elements the caller owns) | `ref mut`: yes; it writes those elements, is their only name while it is used (R8 (f)), and may point the caller's span elsewhere (R4) |
+| `src` | `Span`: a view of the caller's elements (a plain parameter) | none (default: a plain parameter reads; the elements do not change while `src` is used, R8 (g)) |
 | `i` | none (default: the loop's own number) | none (default: only the loop gives it its values) |
 | `tracks` (in `mix`, `mix_any`) | `ref mut`: the caller's map | `ref mut`: yes |
-| `dst_name`, `src_name` | `StrView`: views of the caller's text | `StrView`: read only |
-| `d` | `as_mut_span()`: a changeable view of the elements of `tracks[dst_name]` (a `MutSpan`) | `MutSpan`: its elements may be written; `ref mut d` at the call says `blend` writes them |
-| `s` | `as_span()`: a read-only view of the elements of `tracks[src_name]` (a `Span`) | `Span`: read only; they do not change while `s` is used (R8 (g)) |
+| `dst_name`, `src_name` | `StrView`: views of the caller's text (plain parameters) | none (default: a plain parameter reads) |
+| `d` | `ref mut`: the elements of `tracks[dst_name]`, someone else's, through the `MutSpan` that `as_mut_span()` gives | `ref mut`: yes; the only name for them while it is used (R8 (f)); `ref mut d` at the call says `blend` writes them |
+| `s` | none (default: a name bound to a call that gives a view is a read-only view, R2: here a `Span` of the elements of `tracks[src_name]`) | none (default: read only; the elements do not change while `s` is used, R8 (g)) |
 
    `_` in `Ok(_)` and `Err(_)` declares no name.
 
@@ -2850,18 +3021,30 @@ exit=1
    - two single-object references given to `assert_disjoint` (`E3095`, `[DSJ-4]`): kept, today's code
      (section 5).
    - the call without its word (R4), `blend(d, s)`, E3028: "`blend` changes the elements of `d` (its
-     parameter `dst` is a `MutSpan`); say so at the call: `blend(ref mut d, s)`".
+     first line says `ref mut dst: MutSpan[float]`); say so at the call: `blend(ref mut d, s)`".
+   - a plain `blend` parameter that writes (verdict 34; R4, R5), `fn blend(dst: MutSpan[float], src:
+     Span[float]):`, E3023: "`dst[i] = dst[i] * 0.5 + src[i] * 0.5` (line 7) writes an element of the
+     caller's span, but `dst` only reads it; write `fn blend(ref mut dst: MutSpan[float], src:
+     Span[float]):`, and the calls stay `blend(ref mut d, s)`".
+   - a plain local holding the span, given to be written (verdict 34; R2, R4), `d =
+     tracks[dst_name].as_mut_span()` on line 10, then `blend(ref mut d, s)` on line 13, E3027: "`d` only
+     reads the elements of `tracks[dst_name]` (line 10 gives it no `ref mut`), so it cannot be given to
+     `blend` as `ref mut`; write line 10 as `d = ref mut tracks[dst_name].as_mut_span()`". A write
+     through it, `d[0] = 0.0`, is E3023 with the same line to write (the rules' E3023 row).
 
 7. **Cost:** in `mix`, two compares at `assert_disjoint` (`[DSJ-1]`), none where the compiler already
    knows the ranges apart (`[DSJ-5]`); in `blend`, nothing: its parameters are proved apart at every call
    and compiled with noalias. Noalias is what the compares buy: two spans of one list ran 1.53x of C
    without it and 1.00x to 1.07x with it (`tasks/96/redesign/phase3b-containers.md:346-355`). Run 3's
-   two-compare test inside a callee is gone (`V2/rules.md` section 2).
+   two-compare test inside a callee is gone (`V3/rules.md` section 2).
 
 8. **Kind:** a readable spelling (an `assert` stops the program, as in Python), placed where the
    compiler cannot prove the two apart; everywhere else the proof is the compiler's (R4).
 
 ### AN-15: The ECS query marker `Mut[T]` is a second spelling of `ref mut T`
+
+**Meaning changed:** no. As in AN-06, `world.run(integrate, 0.016)` counts as making what `integrate`'s
+type says it changes (verdict 21), which is nothing beyond the query it is given.
 
 1. **Intent:** a system asks for changeable positions and read-only velocities.
 
@@ -3105,7 +3288,7 @@ exit=0
    - `for ref mut pos, vel in q:` (R3), E0116: "`ref mut` here belongs to `pos` only; say what `vel` is:
      `for ref mut pos, ref vel in q:`, or `ref mut vel` to change it too".
    - `for ref mut pos, ref mut vel in q:` when the query says `Velocity` (a loop name over something it
-     only reads, `V2/rules.md` section 4), E3027: "the query reads `Velocity` only; to change it, ask for
+     only reads, `V3/rules.md` section 4), E3027: "the query reads `Velocity` only; to change it, ask for
      it: `Query[(ref mut Position, ref mut Velocity)]`".
 
 7. **Cost:** none; the same code as `Mut[Position]`.
@@ -3113,6 +3296,10 @@ exit=0
 8. **Kind:** a readable spelling (one spelling for "changes it").
 
 ### AN-16: Messages use the compiler's names, not the program's, and many helps do not give the line to write
+
+**Meaning changed:** no. The refusals are those of AN-01 to AN-15; the lines their messages give take
+the v3 spellings (`ref mut` on a `MutSpan` name or parameter that writes, verdict 34; a change list,
+verdict 21; a lambda naming the captured variable it changes, verdict 22).
 
 1. **Intent:** every refusal names what was refused in the program's own names, says why in one line,
    and gives the exact line to write.
@@ -3146,18 +3333,23 @@ exit=0
      what list to make; write `words: Array[StrView] = ...`", not `C`).
    - **why:** one line, in the program's words ("`enemies` may not change while this loop walks it").
    - **the line to write:** always, in the program's names, once (`for ref mut e in enemies:`), and it
-     compiles in that program under the rules (R18): a message that advises a call to a `ref mut` or
-     `MutSpan` parameter writes the call with `ref mut` (`on_death(ref mut enemies,
+     compiles in that program under the rules (R18): a message that advises a call to a `ref mut`
+     parameter, a `MutSpan` one included, writes the call with `ref mut` (`on_death(ref mut enemies,
      dead.pop().unwrap())`, `collide(ref mut bodies[i], ref mut bodies[j])`,
-     `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`); where a line replaces several, the message
-     names every line it replaces (AN-11's and AN-14's copies).
+     `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)`); a message about a write through a
+     `MutSpan` gives the name or parameter with `ref mut` (`fn integrate(ref mut pos: MutSpan[float],
+     vel: Span[float], dt: float):`, `d = ref mut tracks[dst_name].as_mut_span()`; verdict 34); a message
+     about what a function given to a call changes gives the whole first line that names it
+     (`fn update(ref mut enemies: Array[Enemy]) changes LOG:` in AN-04, the change-list line in AN-05;
+     verdicts 21, 22); where a line replaces several, the message names every line it replaces (AN-11's
+     and AN-14's copies).
    - **both ways out** where there are two: a change of what a read-only name reads gives "change it
-     after its last use" and the `ref mut` line (AN-01, AN-13; decision 5); a lost change gives the
-     place and the function that gives back the element itself (AN-10; decision 13).
+     after its last use" and the `ref mut` line (AN-01, AN-13; verdict 5); a lost change gives the
+     place and the function that gives back the element itself (AN-10; verdict 13).
    - **one mistake, one message:** an error that the library would see as many errors is reported once,
      at the program's line, on the name that caused it; helps that do not apply are not printed. Where a
      call goes through a function value, the message names what its type allows (AN-02's `on_hit`).
-   - **a code from `V2/rules.md` section 4 on every refusal**, written next to each message in AN-01 to
+   - **a code from `V3/rules.md` section 4 on every refusal**, written next to each message in AN-01 to
      AN-15; every refusal of this area has one.
 
 4. **The owner's test.** AN-16's NEW is message text and binds no name itself; every name it brings into
@@ -3177,11 +3369,18 @@ exit=0
 | `spawned.push(Enemy(hp=5, splits=false))`, `enemies.extend(spawned)` (AN-04) | `spawned` | none (default: the function's own new list) | none (default: its own; handed over by `extend`, row 9) |
 | `enemies.retain(fn(e) => e.hp > 0)` (AN-04) | `e` | none (default: a lambda parameter with no word, a read-only view of each element) | none (default: read only) |
 | `for ref mut e in enemies:` (AN-04) | `e` | `ref mut`: the current element of `enemies` | `ref mut`: yes |
+| `fn update(ref mut enemies: Array[Enemy]) changes LOG:` (AN-04) | `enemies` | `ref mut`: the caller's list | `ref mut`: yes; `changes LOG` says the call also changes the module variable `LOG` (through `keep_alive`, which `retain` runs) |
 | `dead.push(i)`, then `while dead.len() > 0: on_death(ref mut enemies, dead.pop().unwrap())` (AN-05) | `dead` | none (default: the function's own new list of positions) | none (default: its own) |
-| `ref mut on_death: fn(ref mut Array[Enemy], int)` (AN-05) | `on_death` | `ref mut`: the caller's function value; its type: a function that takes the list `ref mut` and changes nothing outside itself | `ref mut`: the call may change the function value's own state |
+| `ref mut on_death: fn(ref mut Array[Enemy], int)` (AN-05) | `on_death` | `ref mut`: the caller's function value; its type: a function that takes the list `ref mut` and changes nothing else at all (verdict 22) | `ref mut`: the call may change the function value's own state |
 | `update(ref mut es, ref mut count)` (AN-05) | none declared | `ref mut` at the call says `update` may change `es` and `count` | — |
+| `fn update[C](ref mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int) changes C) changes C:` (AN-05) | `enemies` | `ref mut`: the caller's list | `ref mut`: yes |
+| the same line | `on_death` | its type `fn(ref mut Array[Enemy], int) changes C`: a function given by the caller (a plain parameter) | none (default: only called); `changes C` says it may change what the function given to the call changes, and `update`'s own `changes C` says the call makes those changes |
+| the same line | `C` | a change list: it stands for what the function given to the call changes (R12); it names no owner and no change of its own, so the test has nothing to ask of it (vocabulary, change-list row) | — |
+| `fn(ref mut list: Array[Enemy], i: int) changes kills: kills += 1` (AN-05) | `list` | `ref mut`: the list `update` gives the handler | `ref mut`: yes |
+| the same line | `i` | none (default: a number passed in, copied) | none (default: read) |
+| the same line | `kills` (captured, not declared here) | none (default: the real variable of `main`, row 6) | `changes kills`: yes, the real one (verdict 22) |
 | `Query[(Entity, ref mut Health)]` (AN-06) | none declared | the query's types: `ref mut Health` says the system changes health | — |
-| `fn words_of(text: StrView) -> Array[StrView] from text:` (AN-07) | `text` | `StrView`: a view of the caller's text | `StrView`: read only |
+| `fn words_of(text: StrView) -> Array[StrView] from text:` (AN-07) | `text` | `StrView`: a view of the caller's text (a plain parameter) | none (default: a plain parameter reads) |
 | `all_words.push(String(w))` (AN-07) | `all_words` | none (default: the function's own list, made before the loop) | none (default: its own) |
 | the same line | `w` | none (default: a plain loop name, a read-only view of one word) | none (default: read only) |
 | `String(w)` (AN-07) | none declared | `String(...)`: your own text (row 5) | — |
@@ -3195,10 +3394,14 @@ exit=0
 | `for ref mut p in es:` (AN-10) | `p` | `ref mut`: the current enemy of `es` | `ref mut`: yes |
 | `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)` (AN-11) | none declared | `ref mut` at the call says `integrate` writes the elements of `p` | — |
 | `old = copy of p` (AN-11) | `old` | `copy of`: a copy of your own | none (default: its own) |
-| `ref mut pos: MutSpan[float]` (AN-11) | `pos` | `ref mut`: the caller's own view; `MutSpan`: of the caller's elements | `ref mut`: may point the caller's view elsewhere; `MutSpan`: may write its elements |
-| `integrate(ref mut ps, vs, 0.5)` (AN-11) | none declared | `ref mut` at the call says `integrate` may point `ps` elsewhere and write its elements | — |
-| `rest = other` (AN-11) | `rest` | none (default: a new view of your own, the value of the view `other`, R1, R2) | none (default: by its type, as `other`) |
-| `vel: MutSpan[float]` (AN-11) | `vel` | `MutSpan`: a view of the caller's elements | `MutSpan`: its elements may be written |
+| `fn integrate(ref mut pos: MutSpan[float], vel: Span[float], dt: float):` (AN-11) | `pos` | `ref mut`: the caller's place, a `MutSpan` (a view of the caller's elements) | `ref mut`: yes; it writes those elements and may point the caller's span elsewhere |
+| the same line | `vel` | `Span`: a view of the caller's elements (a plain parameter) | none (default: a plain parameter reads) |
+| the same line | `dt` | none (default: a number passed in) | none (default: read) |
+| `fn first_even(ref mut xs: MutSpan[int]) -> ref mut int:` (AN-11) | `xs` | `ref mut`: the caller's place, a `MutSpan` | `ref mut`: yes; it writes those elements and gives one back as a place |
+| `first_even(ref mut a.as_mut_span())` (AN-11) | none declared | `ref mut` at the call says `first_even` writes the elements of `a` | — |
+| `fn integrate(ref mut pos: MutSpan[float], ref mut vel: MutSpan[float], dt: float):` (AN-11) | `vel` | `ref mut`: the caller's place, a `MutSpan` | `ref mut`: yes; it writes those elements |
+| `integrate(ref mut p.as_mut_span(), ref mut v.as_mut_span(), 0.5)` (AN-11) | none declared | `ref mut` before each span says `integrate` writes the elements of `p` and of `v` | — |
+| `for i in 0..pos.len(): pos[i] = mine[i]` (AN-11) | `i` | none (default: the loop's own number) | none (default: only the loop gives it its values) |
 | `counts[w] = counts.get_or(w, 0) + 1` (AN-12) | `counts` | none (default: the function's own map) | none (default: its own) |
 | the same line | `w` | none (default: a plain loop name, a read-only view of one word) | none (default: read only) |
 | `p = ref mut ps[0]`, `p.life -= 0.5` (AN-13) | `p` | `ref mut`: particle 0 of `ps` (a position) | `ref mut`: yes, the only name for it until its last use |
@@ -3206,6 +3409,9 @@ exit=0
 | `copy of ps[0]` (AN-13) | none declared | `copy of`: a copy of your own | — |
 | `assert_disjoint(d, s)`, `match check_disjoint(d, s):` (AN-14) | none declared | they read `d` and `s` (plain parameters of the library functions) | — |
 | `blend(ref mut d, s)` (AN-14) | none declared | `ref mut` at the call says `blend` writes the elements of `d` | — |
+| `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` (AN-14) | `dst` | `ref mut`: the caller's place, a `MutSpan` | `ref mut`: yes; it writes those elements |
+| the same line | `src` | `Span`: a view of the caller's elements (a plain parameter) | none (default: a plain parameter reads) |
+| `d = ref mut tracks[dst_name].as_mut_span()` (AN-14) | `d` | `ref mut`: the elements of `tracks[dst_name]`, through the `MutSpan` `as_mut_span()` gives | `ref mut`: yes; the only name for them while it is used |
 | `old = copy of tracks[src_name]`, `old = copy of a` (AN-14) | `old` | `copy of`: a copy of your own | none (default: its own) |
 | `for ref mut pos, ref vel in q:` (AN-15) | `pos` | `ref mut`: the current entity's `Position` | `ref mut`: yes |
 | the same line | `vel` | `ref`: a read-only view of the entity's `Velocity` | `ref`: read only |
@@ -3226,39 +3432,91 @@ exit=0
 
 ## 4. Words needed
 
-None. Every word in the NEW code above has a row in `V2/vocabulary.md`. Run 4's one missing word,
-`Vec3.ZERO` (AN-13), now has one (section 3.8), so AN-13 writes run 3's `Vec3.ZERO` again.
+None. Every word in the NEW code above, and in every line a message gives, has a row in
+`V3/vocabulary.md`: the words this step added to the area (`ref mut` on a `MutSpan` name or parameter,
+the `MutSpan` and `ref mut` rows; a change list, AN-05's `update[C]` with `changes C`, its own row; a lambda's
+`changes kills`, the `fn` and `changes` rows; `static mut`, `retain`, `push`, `String(...)`) and v2's
+(`copy of`, `this`, `changes this`, `assert_disjoint`, `check_disjoint`, `Vec3.ZERO`, ...). `World.run`
+and `run_parallel` appear only in prose, as today's `std/src/ecs.em` names, as in v2.
 
 ## 5. For the owner, and found for the lead
 
-For the owner: nothing new from this area. Run 4's two questions are answered: the lost change on a
-temporary by decision 13 (AN-10, R8 (d), E2140) and `ref mut` alone by decision 2 (AN-01, AN-02, R8 (f)).
-Decision 5 changes AN-13 (run 4's NEW is now refused) and adds a refusal to AN-01; both are written
-above with the messages that give both ways out.
+For the owner (one item; the lead raises it):
 
-Found for the lead (consistency of `V2/rules.md` and `V2/vocabulary.md` with this area; none needs the
-owner):
+1. **One word, two rights, on a `MutSpan` parameter** (verdict 34; AN-11, AN-14). `ref mut dst:
+   MutSpan[float]` now both writes the caller's elements and may point the caller's span elsewhere,
+   because every `ref mut` parameter of a view names the caller's place (R4; `V3/changes.md` section
+   2.3). A reader of `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` cannot tell from the
+   first line whether `blend` only writes the elements (as it does) or also re-points `d`. Safety is
+   kept either way. What it costs: the caller must take `d` to view, after the call, what it viewed or
+   any other argument (R4), so a later change to `s`'s list ends `d` unless the compiler has seen
+   `blend`'s body; and the span may have to be passed by its address (AN-11 point 7; not measured).
+   Meanwhile this file writes verdict 34's spelling and relies on the compiler's knowledge of the body
+   inside a package (for the lead, item 8 below). The other choice would keep re-pointing for a
+   separate spelling (v2 had `ref mut s: MutSpan[T]` for it, when a plain `MutSpan` wrote). Is one
+   spelling for both what you meant?
 
-1. **`check_disjoint`'s `Ok` branch as a proof** (AN-14). R4 lists what proves two arguments apart
-   ("after `assert_disjoint(a, b)`", "inside `if i != j:`"), but not the `Ok` branch of
+The rule writer's open questions that reach this area: question 4 (the library takes a function as a
+bound; AN-05's `update[C]` writes the function-value form of your sketch, since `on_death` is already a
+function value) and question 3 (iterator adapters; no adapter that keeps a changing function is used
+here). Run 4's questions for this area stay answered (the lost change on a temporary, verdict 13;
+`ref mut` alone, verdict 2).
+
+Found for the lead (consistency of `V3/rules.md` and `V3/vocabulary.md` with this area; none needs the
+owner beyond item 1 above):
+
+1. **`check_disjoint`'s `Ok` branch as a proof** (AN-14), still open in v3. R4 lists what proves two
+   arguments apart ("after `assert_disjoint(a, b)`", "inside `if i != j:`"), but not the `Ok` branch of
    `match check_disjoint(a, b):`, which the W2190 message offers as the way "to handle both cases". This
    file reads it as a proof, as `if i != j:` is; R4's list should name it, or the W2190 message should not
    offer it.
-2. **A local that holds a `MutSpan`** (AN-14's `d`). R8 (f) makes a `MutSpan` parameter the only name for
-   its elements, and R8 (g) protects read-only views, but neither says what a local `d =
-   x.as_mut_span()` promises while it is used. AN-14 does not depend on it (the call is checked by R4);
-   a program that reads `x[0]` between `d = ...` and `d`'s last use does.
-3. **The E3021 message for two spans** (rules section 3, the `MutSpan` and `blend` example): "prove them
-   apart first: `assert_disjoint(dst, src)`" names the callee's parameters. Under R4 the check belongs in
-   the caller, before the call, on the caller's names (AN-14: `assert_disjoint(d, s)`); inside the callee
-   it would always pass.
+2. **Making a view while a `ref mut` name of the same elements may be in use** (AN-14, new in v3). With
+   `d = ref mut tracks[dst_name].as_mut_span()` (verdict 34), R8 (f) says the elements are "read or
+   changed only through" `d` while it is used. `mix` then makes `s = tracks[src_name].as_span()` and
+   calls `assert_disjoint(d, s)` before anything reads an element through `s`. This file reads R8 (f) as
+   refusing a read or a change of the elements through another name, not the making of a view or the
+   comparing of two address ranges (point 3 of AN-14); without that reading `assert_disjoint`, which R4
+   names as a proof, could never be reached with a `ref mut` span. R8 (f) should say so. (v2's note 2, a
+   local holding a `MutSpan` promising nothing, is settled by verdict 34: R8 (f) and (g) now name it.)
+3. **The E3021 message for two spans** (rules section 3, the `blend` example, still there in v3): "prove
+   them apart first: `assert_disjoint(dst, src)`" names the callee's parameters. Under R4 the check
+   belongs in the caller, before the call, on the caller's names (AN-14: `assert_disjoint(d, s)`); inside
+   the callee it would always pass.
 4. **Two keys of one map** (AN-14). R4's one compare covers two elements of one list that differ only by
    an index; two values of one map under two keys (`tracks[dst_name]`, `tracks[src_name]`) are the same
    case (a map's keys are unique), and could be covered the same way: one compare of the keys before the
    call, a stop if equal. Then `mix` would need no `assert_disjoint`; AN-14 keeps it because R4 does not
    say so. A smarter compile-time rule, the lead's to decide.
 5. **E3095** (AN-14, two single-object references given to `assert_disjoint`, `[DSJ-4]`) is today's
-   code and is not in `V2/rules.md` section 4.
+   code and is not in `V3/rules.md` section 4.
 6. **`std/src/mem.em:76, :85`** still take both arguments `owned` and hand them back; the vocabulary's
    `assert_disjoint` row (both read their arguments, take nothing, give only the answer) is a library
    change (already listed in `V2/changes.md` section 5, A 4).
+7. **The spec's two plain `MutSpan` parameters that write** (AN-11). The vocabulary's section 6.1 row
+   for `mut x: T` lists the spec lines whose `MutSpan` parameter takes `ref mut` (278 2520 3147 3618 3663
+   3704 6186), which are the lines written with `mut`. The spec's examples written with no word at all,
+   which verdict 34 now refuses, are not listed: `fn integrate(pos: MutSpan[float], vel: Span[float],
+   dt: float):` (line 3576 of `docs/spec-source/Ember_v0.9.10_Hardened_35.md`) and `[BCK-6]`'s
+   `fn first_even(xs: MutSpan[int]) -> ref mut int:` (line 6046). Both are AN-11's NEW, with `ref mut`.
+8. **Whether a `ref mut` view parameter is ever pointed elsewhere** (AN-11, AN-14; item 1 for the
+   owner). R17 records the "only adds" summary of a `ref mut` list parameter in the interface file, but
+   no fact says that a `ref mut` view parameter (`ref mut dst: MutSpan[float]`) is never given another
+   view. Without it, across a package's edge or through a function value, a caller's `d` is taken to
+   view any argument of the call afterwards (R4), and the span may have to be passed by address. The
+   same kind of recorded fact as the "only adds" summary would keep both as v2 had them.
+9. **A change list on a program's own function** (AN-05). R12 states change lists for any generic
+   parameter after `changes`, but the vocabulary's change-list row says it is written "in a library
+   function's first line, and in the function type or bound of its parameter". AN-05's `fn update[C](ref
+   mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int) changes C) changes C:` is a
+   program's own function; the row could say "a function's first line".
+10. **Messages in this area that still break the message rule** (the lead's, phase 3; left as they are,
+    since no verdict of this step rewrote them): `V2/readability.md` F-01 (AN-01's E3060 and AN-02's
+    three messages, "name the enemy again after it: `boss = ref mut enemies[0]`", which R2 refuses on the
+    existing `boss`), F-05 (AN-04's E3020 with `spawned`, AN-05's two E3020 with `dead`, lists the
+    messages never declare), F-06 (AN-07's first E3063, AN-13's E1010 for `load()`, AN-16's `collect`
+    message: ways out in words). Two more found here: AN-03's E3022 ("pass two different bodies, or
+    write a one-body version of `collide`", the same as the rules' E3022 row) gives no line to write;
+    and AN-01's last E3060 ("keep your own copy: `n = String(boss.name.trim())`") does not say that the
+    line replaces line 8, `n = boss.name.trim()`, and on an existing `n`, a view, it would not compile.
+    F-06's AN-11 E3063 and F-08 (AN-11's E3023 with `ps` and `vs`) were rewritten here, since verdict 34
+    changed those messages; F-14 is settled by verdict 34.

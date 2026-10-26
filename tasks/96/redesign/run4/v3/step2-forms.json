@@ -1,0 +1,523 @@
+{
+ "rules": {
+  "retired_codes": [],
+  "new_codes": [
+   "E5069"
+  ],
+  "messages_left_for_lead": [
+   {
+    "code": "E3060",
+    "why": "F-01: rules section 3 still advises `boss = ref mut enemies[0]` on a name already declared ref mut, which R2 refuses; a new name is needed"
+   },
+   {
+    "code": "E3026",
+    "why": "F-03: the help names `Counter` and `count.n`, which the refused program (total: int) does not have"
+   },
+   {
+    "code": "E3063",
+    "why": "F-04: the kept-view message advises `target: shares Player`, but AN-52's watchers change players, so it must be `shares mut Player`"
+   },
+   {
+    "code": "E3020",
+    "why": "F-05: the `spawned` message (and E7012's `FRAME_LOCK`) uses a list or lock the program never declares and gives no line for it"
+   },
+   {
+    "code": "E3023",
+    "why": "F-06: 'or make `game` with `shares mut`' gives an action, not a line; verdict 32's message is a separate row I added"
+   },
+   {
+    "code": "E7007",
+    "why": "F-11: `with this.lock:` is advised for a change made in a free function, which has no `this`"
+   },
+   {
+    "code": "E3022",
+    "why": "My new LOG.retain(keep) message gives `LOG.retain(fn(s) => s != \"\")`, which compiles but drops the change to LOG the program meant; a better way out depends on the program"
+   }
+  ],
+  "for_owner": [
+   "1. A function that runs stored functions of a `captured` type: meanwhile its first line says so (`fn click() changes handlers, captured...:`), reading verdict 30 as 'everything'. The other choice names nothing for captured variables, since only the function that wrote the lambdas can reach them. Which?",
+   "2. Naming a change under a lock: meanwhile by the type of what changes (`changes Log`, `changes Mutex[Stats]`, `changes Atomic[int]`). A send on a channel end still names nothing, because verdict 29 lists only Mutex, RwLock and Atomic. Should a send be named too?",
+   "3. Iterator adapters that keep a function (inspect, map, filter) run it later, at each `next`: meanwhile the adapter carries the change list as a type parameter (`Inspect[Self, C, F]`), and such an adapter cannot become a `dyn Iterator`. Acceptable, or give Iterator itself a change list (as Swift 6's associated Failure type does)?",
+   "4. Library first lines take the function as a bound (`F: fn(Item) changes C`, one instance per function given, a direct call as fast as Rust's `F: FnMut`) rather than verdict 21's function-value form `f: fn(T) changes C`, which calls through two words on every item. Keep the bound?",
+   "5. A function that only makes a foreign call: meanwhile the kept callbacks' changes are named only where the callbacks are handed to C (`setup` and `main` say `changes Game`), and R8 still sees them at each foreign call. Should every function that makes an unmarked foreign call name them too?",
+   "6. Arena-made values keep their instance's address (one word, as Rust's `Box<T, &A>`), and the making-line `using current` form was applied to every type `using` may follow, lists included. Both as intended? Not measured.",
+   "7. The compile-time saving for a walk that may delete nodes (a deferred-drop region removes the weak-count moves, leaving one header test per step) is a rule now but not measured; the next measuring phase should time it against run 3's model_w2 (1.579x) and rust_w2 (1.603x)."
+  ],
+  "decisions": [
+   {
+    "number": 21,
+    "applied": true,
+    "where": "R12 (change lists), R4 (a function value counts in the overlap rule), R5, R8 (c); vocabulary fn, changes, the new change-list row, and the iterator row with the first lines of for_each, inspect, retain and sort_by; E2105, E3020, E3022 messages"
+   },
+   {
+    "number": 22,
+    "applied": true,
+    "where": "R12 (only its own state is itself; captured variables named; captured / captured...; the two-variable refusal), R3, R5, R15; vocabulary section 1 (row 6 now b.on_click(fn() changes score: score += 1)), fn, changes, new captured row; E2105, E2113"
+   },
+   {
+    "number": 23,
+    "applied": true,
+    "where": "R3 and R9, stated as settled with why it is safe; vocabulary shares"
+   },
+   {
+    "number": 24,
+    "applied": true,
+    "where": "R3 (the place names the kind, the making line names the instance, checked with E2020 and E3063), rules section 2 (one word per value of a manager with several instances); vocabulary using, Allocator, Array"
+   },
+   {
+    "number": 25,
+    "applied": false,
+    "where": "replaced by verdict 27; cast x when D is refused (E1010) with the line to write"
+   },
+   {
+    "number": 26,
+    "applied": true,
+    "where": "phase 0 did the code; R13's prose, vocabulary exists as, if and as rows, placeholders; no holds left except English and the quotation of run 4's probe"
+   },
+   {
+    "number": 27,
+    "applied": true,
+    "where": "R13, R14 (rewritten), section 0 (kind test), section 2; vocabulary is, as, if, match, cast, as?, as!, placeholders, section 6.1; E1010, E2036, E2106"
+   },
+   {
+    "number": 28,
+    "applied": true,
+    "where": "R11 (the walk across a deleting call, its cost and the compile-time saving), R10, R8 (g), section 2 cost row; vocabulary weakref, while; E3021 message"
+   },
+   {
+    "number": 29,
+    "applied": true,
+    "where": "R12 and R5 (changes under a lock or through an Atomic named by the type of what changes); vocabulary Mutex, RwLock, Atomic, thread_shared, guarded by, fetch_add; E2105 and E3020 (note() inside with log.lock) messages"
+   },
+   {
+    "number": 30,
+    "applied": true,
+    "where": "R5, R12, R15, R8 (c); vocabulary thread.spawn and Scope with spawn[R, CHANGED] first lines, changes, section 6.2; E2105, E3020 (start the thread after the loop)"
+   },
+   {
+    "number": 31,
+    "applied": true,
+    "where": "R12, R15, R17, R8 (b); vocabulary @ffi (no_callbacks; callback(retained) counts), section 6.2; E3020 messages for poll_events() and for an unmarked sqrt; new E5069"
+   },
+   {
+    "number": 32,
+    "applied": true,
+    "where": "R4 first bullet; vocabulary owns, shares; E3023 message for with shares mut game made from a plain game: shares mut Game"
+   },
+   {
+    "number": 33,
+    "applied": true,
+    "where": "vocabulary .copied() (renamed) and .copy_each() (new), section 6.1; rules section 3 E3060 help; E1010"
+   },
+   {
+    "number": 34,
+    "applied": true,
+    "where": "R2, R4, R5 (exception by type withdrawn), R8 (f), (g), section 0; vocabulary MutSpan, ref mut, section 6; E3023, E3028"
+   }
+  ]
+ },
+ "areas": [
+  {
+   "area": "A",
+   "answers": 16,
+   "phase0_lines_checked": true,
+   "meaning_changed": [
+    {
+     "id": "AN-05",
+     "verdict": "22 (with 21)",
+     "how": "The program does what it did, but `on_death: fn(ref mut Array[Enemy], int)` accepts fewer handlers. v2 let it hold a lambda that changes a variable it captured. Now a plain function type changes nothing at all beyond its ref mut parameters, so such a lambda says `changes kills` and is refused where it is given (E2113). An `update` meant to take any handler writes a change list: `fn update[C](ref mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int) changes C) changes C:`."
+    },
+    {
+     "id": "AN-11",
+     "verdict": "34",
+     "how": "A MutSpan parameter that writes says ref mut: `fn integrate(ref mut pos: MutSpan[float], vel: Span[float], dt: float):` and `fn first_even(ref mut xs: MutSpan[int]) -> ref mut int:`. The spec's plain spelling is now refused (E3023), because a plain one only reads. Since a ref mut parameter names the caller's place, `pos` may now also point the caller's span elsewhere. So v2's refusal of `pos = ...` is gone, and pointing it at the callee's own list is refused instead (E3063). The calls are unchanged."
+    },
+    {
+     "id": "AN-14",
+     "verdict": "34",
+     "how": "`fn blend(ref mut dst: MutSpan[float], src: Span[float]):`, and the locals become `d = ref mut tracks[dst_name].as_mut_span()`. A plain name holding a MutSpan only reads, so a plain `d` given as `ref mut d` is refused (E3027). This settles readability's F-14. Where the check is written, and what check_disjoint gives back, are v2's."
+    }
+   ],
+   "words_needed": [],
+   "agreed_rows_changed": [],
+   "messages_flagged": [
+    {
+     "answer": "AN-01",
+     "message": "E3060: \"... use `boss` before line 8, or name the enemy again after it: `boss = ref mut enemies[0]`\"",
+     "why": "This is V2 readability F-01 (the lead's, phase 3). R2 refuses a new `ref mut` target on the existing `boss`, so the line given does not compile."
+    },
+    {
+     "answer": "AN-02",
+     "message": "the three E3060/E3022 messages for `on_hit`, `kill_weak` and `heal_all`: \"name the enemy again after it: `boss = ref mut enemies[0]`\"",
+     "why": "Same as F-01: the line given re-targets an existing ref mut name, which R2 refuses."
+    },
+    {
+     "answer": "AN-01",
+     "message": "E3060: \"... use `n` before line 9, or keep your own copy: `n = String(boss.name.trim())`\"",
+     "why": "Newly found. It does not say that the line replaces line 8 (`n = boss.name.trim()`). Written as a new line on the existing `n`, which holds a view, it would not compile."
+    },
+    {
+     "answer": "AN-03",
+     "message": "E3022: \"`collide` changes `a` and `b` as two different bodies, and both are `bodies[i]`; pass two different bodies, or write a one-body version of `collide`\"",
+     "why": "Newly found, and the rules' E3022 row has the same text. The way out is given in words, with no line to write."
+    },
+    {
+     "answer": "AN-04",
+     "message": "E3020: \"... collect the new enemies in a list of your own, `spawned.push(Enemy(hp=5, splits=false))` here, and write `enemies.extend(spawned)` after the loop\"",
+     "why": "This is F-05: the message never gives the declaration `spawned: Array[Enemy] = []`."
+    },
+    {
+     "answer": "AN-05",
+     "message": "both E3020 messages: \"collect the positions and call it after the loop: `dead.push(i)` here, then `while dead.len() > 0: ...`\"",
+     "why": "This is F-05: the message never gives the declaration `dead: Array[int] = []`."
+    },
+    {
+     "answer": "AN-07",
+     "message": "first E3063: \"return copies of your own: make the result `Array[String]` and push `String(w)` for each word; ...\"",
+     "why": "This is F-06: its first way out is given in words, not as the exact line."
+    },
+    {
+     "answer": "AN-13",
+     "message": "E1010 for `ps[0].load()`: \"write `copy of ps[0]`\"",
+     "why": "This is F-06: it does not name what was refused and gives no reason."
+    },
+    {
+     "answer": "AN-16",
+     "message": "collect: \"cannot tell what list to make; write `words: Array[StrView] = ...`\"",
+     "why": "This is F-06: the line given ends in `...`, so it is not the exact line to write."
+    }
+   ],
+   "for_owner": [
+    "One word now gives two rights on a MutSpan parameter (verdict 34; AN-11, AN-14). `ref mut dst: MutSpan[float]` both writes the caller's elements and may point the caller's span elsewhere, because every ref mut parameter of a view names the caller's place (R4). A reader of `fn blend(ref mut dst: MutSpan[float], src: Span[float]):` cannot tell from its first line whether `blend` only writes the elements or also re-points the caller's `d`. Safety is the same either way. The cost is not measured: unless the compiler has seen the callee's body, the caller must assume that after the call `d` may view any other argument, and the span may have to be passed by its address. Meanwhile this file uses verdict 34's spelling and relies on the compiler seeing the body inside a package; the lead could record the fact across a package's edge. v2 had a separate spelling for re-pointing. Is one spelling for both what you meant?"
+   ]
+  },
+  {
+   "area": "B",
+   "answers": 17,
+   "phase0_lines_checked": true,
+   "meaning_changed": [
+    {
+     "id": "AN-28",
+     "verdict": "34",
+     "how": "v2's prose line `fn first_even(ps: MutSpan[int]) -> ref mut int:` was accepted under v2's exception by type and is now refused (E3023). `fn first_even(ref mut ps: MutSpan[int]) -> ref mut int:` means what it meant, and the program does what it did."
+    }
+   ],
+   "words_needed": [],
+   "agreed_rows_changed": [],
+   "messages_flagged": [
+    {
+     "answer": "AN-17",
+     "message": "E3020: \"... collect the new players in `joined` and write `this.players.extend(joined)` after the loop\"",
+     "why": "It uses a list `joined` that the program does not declare, and no line declares it (V2/readability.md F-05)."
+    },
+    {
+     "answer": "AN-17",
+     "message": "E3021 from another package: \"... say what it reads: `fn note(msg: String) reads frame changes log:`\"",
+     "why": "It asks the caller to rewrite a first line in another package, which the caller cannot change (F-09)."
+    },
+    {
+     "answer": "AN-23",
+     "message": "E2140: \"keep it in a name first: `n = first_value(xs)`, then `n += 1`\"",
+     "why": "The suggested code compiles and still loses the change. Neither real way out is given: `xs[0] += 1`, or `first(ref mut xs) += 1` (F-02)."
+    },
+    {
+     "answer": "AN-24",
+     "message": "E3063: \"... or keep `reg` alive as long as `vs`\"",
+     "why": "The way out is in words, not an exact line (F-06)."
+    },
+    {
+     "answer": "AN-24",
+     "message": "E3060: \"... or keep the entity number and read `hs[0].reg.hp[0]` again\"",
+     "why": "The way out is in words. The line would be `println(hs[0].reg.hp[0])` in place of line 3 (found in this step)."
+    },
+    {
+     "answer": "AN-24",
+     "message": "E3022: \"... write `reg: sharedref mut Registry` in `Handle` ...\"",
+     "why": "The example's view struct is named `Handle`, a word the vocabulary keeps for tokens that name something elsewhere (F-10)."
+    },
+    {
+     "answer": "AN-25",
+     "message": "E3063: \"... keep your own copies: change `words` to `Array[String]` and push `String(other_word)`\"",
+     "why": "It does not give the field's line, `words: Array[String]` (F-06)."
+    },
+    {
+     "answer": "AN-31",
+     "message": "E2100: \"`load_assets` reads `renderer`, which `init` has not set yet; set `this.renderer` before this line\"",
+     "why": "It does not give the line to write, `this.renderer = Renderer(width=width)` (F-06)."
+    },
+    {
+     "answer": "AN-22",
+     "message": "E2118: \"`src` is both a parameter of `next_word` and a field of `Parser`, so `from src` could mean either; rename the parameter\"",
+     "why": "It gives no line. It could give `fn next_word(line: StrView) changes pos -> StrView from src:`. The rules' E2118 row says the same."
+    },
+    {
+     "answer": "AN-33",
+     "message": "E2104: \"... to add to it, remove `let` from `items`' declaration\"",
+     "why": "Minor: it could give the exact line, `items: Array[int]`."
+    },
+    {
+     "answer": "AN-56 (area D; in V3/rules.md section 3, E2020 row)",
+     "message": "E2020: \"... to keep your own, write `fn(s) => names.push(copy of s)`\"",
+     "why": "The suggested lambda changes the captured `names` without `changes names` on its first line, which verdict 22 and R12 refuse (E2105). Neither file shows how a `=>` lambda takes a changes clause, so the right spelling is the rule writer's to give."
+    }
+   ],
+   "for_owner": [
+    "Two lines that look alike, one refused and one accepted (AN-28, verdict 34 and R2). After `r = ref mut a`, the line `r = ref mut b` is refused, because it would write b's value into a. After `d = ref mut xs.as_mut_span()`, the line `d = ref mut ys.as_mut_span()` is accepted and points d at the other span, because a name holding a MutSpan holds a view of its own. Meanwhile the file follows R2. The alternative is one rule: a name made with `ref mut` is never pointed elsewhere, and the second line is refused with 'use a new name: `d2 = ref mut ys.as_mut_span()`'. It costs nothing while running. Which one?"
+   ]
+  },
+  {
+   "area": "C",
+   "answers": 19,
+   "phase0_lines_checked": true,
+   "meaning_changed": [
+    {
+     "id": "AN-40",
+     "verdict": "24",
+     "how": "In v2, `mesh: owns Mesh using LevelArena` stood for a memory manager with one instance. Now the field names only the kind of arena, and the line that makes the value names which one: `current = LevelArena()`, then `lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)`, which calls `current.allocate(...)`. Two compile-time checks are added: E2020 for a mesh not made in a `LevelArena`, and E3063 for a level returned past the end of `current`. Each such mesh keeps its arena's address, one word beside its pointer (not measured). A new probe shows today's Ember cannot express it: `Box` takes one type argument, and `Box.new_in` does not exist. The program's intent is unchanged."
+    },
+    {
+     "id": "AN-39",
+     "verdict": "24",
+     "how": "The program means the same. One row of the table of kinds changes meaning in the same way as AN-40: `owns T using A` and `Array[T] using A` name the kind of manager, and the making line names the instance (`owns Mesh(verts=[0.0]) using current`), checked when compiling."
+    }
+   ],
+   "words_needed": [],
+   "agreed_rows_changed": [],
+   "messages_flagged": [
+    {
+     "answer": "AN-48",
+     "message": "E3020: \"... then `cam.target.inventory.extend(new_items)` once the loop ends; or loop over `copy of hud.target.inventory`\"",
+     "why": "`new_items` is never declared and no line for it is given. This is v2 readability F-05, the lead's, so it was left unchanged."
+    },
+    {
+     "answer": "AN-42",
+     "message": "E3020: \"add after the loop: collect what to add in a list, then call `reg.emplace(...)` for each once the loop ends\"",
+     "why": "It gives a way out in words, not the exact lines to write. This is v2 readability F-06, the lead's, so it was left unchanged."
+    },
+    {
+     "answer": "AN-36",
+     "message": "L3001: \"`Node.children` can lead back to a node that holds it; if it does, link it with `weakref Node` instead\"",
+     "why": "It reads as making the owning children list weak, and gives no exact line. This is v2 readability F-07, the lead's, so it was left unchanged."
+    },
+    {
+     "answer": "AN-48",
+     "message": "E3063 in form (b): \"let the camera own a share that may change the player: `target: shares mut Player`\"",
+     "why": "It gives only the field line. The program would also need `Camera(target=shares mut p)` and the same two changes in `Hud`, and R18 asks a message to name every line it replaces."
+    },
+    {
+     "answer": "AN-52",
+     "message": "E3060 and E3063 for form (b): \"let the watchers keep them alive: `target: shares mut Player`\" / \"return positions instead (`target: int`), or let the watchers own a share: `target: shares mut Player`\"",
+     "why": "Only the field line is given. The shared form also needs `players: Array[shares mut Player]` and `Watcher(target=shares mut players[r])`, and the positions form needs the indexing lines."
+    },
+    {
+     "answer": "AN-49",
+     "message": "E1010 for `RefCell`: \"... for a scene several objects own and change write `shares mut Scene`\"",
+     "why": "`shares mut Scene` is a fragment, not a line the program can take; the field line and the line that makes the owner are missing."
+    },
+    {
+     "answer": "AN-37",
+     "message": "E3022: \"set the new state after `path`'s last use: after `path.pop()`, or after the `match`\"",
+     "why": "It says where to move the line rather than giving the exact line to write."
+    },
+    {
+     "answer": "V3/rules.md section 3 (AN-52)",
+     "message": "E3063 kept-view row: \"let the watchers own a share: `target: shares Player`\"",
+     "why": "AN-52's watchers change their players, so a `shares` owner would be refused (E3023); the line must be `shares mut`. This is v2 readability F-04, still in the v3 rules."
+    },
+    {
+     "answer": "V3/rules.md section 3 (AN-40)",
+     "message": "E3063 arena row: \"make it in an arena the caller keeps: `fn load_level(ref mut arena: LevelArena) -> Enemy:`, with ... `using arena`\"",
+     "why": "It does not give the caller's lines (`current = LevelArena()`, `load_level(ref mut current)`), which R18 asks for. AN-40's own message names them."
+    }
+   ],
+   "for_owner": [
+    "No new question from area C. Verdicts 23 and 24 answered the two questions v2 pointed to here.",
+    "Question 6 of V3/changes.md section 11 (one word in every arena-made value) decides AN-40's cost line: `lvl.mesh` keeps `current`'s address beside its pointer. area-C.md's For the owner section gives two possible ways to save that word, neither in the rules and neither measured. First, the compiler, which sees the arena's kind, can leave the word out where that kind's `deallocate` does nothing and the value never grows. Second, an arena that hands out memory in aligned chunks lets a pointer find its arena, as mimalloc finds a block's segment by masking its address."
+   ]
+  },
+  {
+   "area": "D",
+   "answers": 18,
+   "phase0_lines_checked": true,
+   "meaning_changed": [
+    {
+     "id": "AN-53",
+     "verdict": "22",
+     "how": "Row 6's handler now says `fn() changes score:`. The Button's list is `Array[fn() changes captured]`, `on_click` takes `fn() changes captured`, and `click` says `changes handlers, captured...`. v2's `handlers: Array[fn()]` with `b.on_click(fn(): score += 1)` is now refused (E2105 for the lambda, then E2113 for the list). The program does what it did: the button adds 1 to game's real score."
+    },
+    {
+     "id": "AN-55",
+     "verdict": "22 (with 21 and 30)",
+     "how": "The lambda given to `inspect` must say `changes seen` (v2's `inspect(fn(v) => seen.push(v))` is refused, E2105). By `inspect`'s change list, `count()` is the call that makes the change. Starting the thread counts as making what its function changes, here nothing, so `main` names nothing. The program does what it did."
+    },
+    {
+     "id": "AN-56",
+     "verdict": "22 and 21",
+     "how": "The first lambda must say `changes names`. v2's `fn each_name(owns f: fn(owns String)):` no longer takes it (E2113); `each_name` becomes `fn each_name[C](owns f: fn(owns String) changes C) changes C:`. The program does what it did."
+    },
+    {
+     "id": "AN-58",
+     "verdict": "22",
+     "how": "v2's `hs: Array[fn()] = []` with `hs.push(fn(): score += 1)` is refused. The lambda says `changes score` and the local list is `Array[fn() changes captured]`. The program does what it did."
+    }
+   ],
+   "words_needed": [
+    {
+     "word": "`min` as a function of two values (`min(a, b)`)",
+     "why": "AN-70's override originally wrote `this.angle = min(this.angle + 90.0 * dt, 90.0)`. V3/vocabulary.md has `min` only as an iterator method, and its prelude row lists only len, println, panic, sorted and abs. The NEW body writes the same with `+=` and an `if`."
+    },
+    {
+     "word": "`changes` on a lambda written with `=>`",
+     "why": "v2 wrote AN-55's and AN-56's lambdas with `=>`. Under verdict 22 they must say what they change, and the vocabulary shows a `changes` clause only on a lambda written with `:`. This file writes both with `:`. A line in the `fn` row would settle whether `=>` takes the clause."
+    }
+   ],
+   "agreed_rows_changed": [],
+   "messages_flagged": [
+    {
+     "answer": "AN-61",
+     "message": "E3060: \"name it again after the call: `h = ref mut this.handlers.get_mut(i).unwrap()`\"",
+     "why": "It gives a new view to an existing `ref mut` name, which R2 refuses (E3023); the line that compiles needs a new name (V2/readability.md F-01, the lead's)."
+    },
+    {
+     "answer": "AN-53, AN-57",
+     "message": "E3026 help: \"`count = shares mut Counter()` and `fn() with shares mut count changes Counter: count.n += 1`, kept in a list of `fn() changes Counter`\"",
+     "why": "It needs a class `Counter` with a field `n` that the program does not have and the message does not give; AN-53's bullet only describes the list (F-03, the lead's)."
+    },
+    {
+     "answer": "AN-53, AN-58",
+     "message": "E3020: \"call it after the loop, or collect what to add and push it after the loop\"",
+     "why": "The second way out is in words, not an exact line (F-06, the lead's)."
+    },
+    {
+     "answer": "AN-67",
+     "message": "E2050: \"take the visitor as `ref mut v: V`, or use a type parameter `[I: Inspect]` instead of `dyn Inspect`\"",
+     "why": "The second way out gives a bound, not the line to write (`fn walk[I: Inspect](xs: Array[I]) -> int:`). Found in this step."
+    },
+    {
+     "answer": "AN-69",
+     "message": "E2041: \"narrow the general one's bound so it leaves `i32` out, or give `i32` its own function: ...\"",
+     "why": "The first way out is in words. Found in this step."
+    },
+    {
+     "answer": "AN-62",
+     "message": "V3/rules.md section 3, E3021 row for the view walk: \"instead of `cur = ref n`, the `while` line and `cur = ref p`, write `up = weakref leaf`, then `while up exists as n:` ...\"",
+     "why": "In its own program (AN-62 (a), lines 21 and 23) the walk also has `if leaf exists as n:`. Kept, it and the new `while up exists as n:` declare `n` twice (E2106), so the given line does not compile (R18). AN-62 adds that line to the 'instead of' list; the rules row is the rule writer's to fix."
+    },
+    {
+     "answer": "AN-56",
+     "message": "V3/rules.md section 3, E2020 row: \"to keep your own, write `fn(s) => names.push(copy of s)`\"",
+     "why": "The lambda changes the captured `names` without saying so, which R12 refuses (E2105). AN-56's own message gives `fn(s) changes names: names.push(copy of s)`. Area B flagged the same row."
+    }
+   ],
+   "for_owner": [
+    "AN-58 (verdict 22): may a list of functions that one function keeps and runs itself name the variable they change, `hs: Array[fn() changes score] = []`, instead of `hs: Array[fn() changes captured] = []`? The rule as it stands allows only `captured` in a type, and AN-58 writes it that way meanwhile. Naming the variable tells a reader more, at the cost of a second rule: a type may name only a variable in scope, and such a list may not leave the function. Both cost nothing while running. The rule writer's questions 1, 4 and 7 in V3/changes.md section 11 also apply to this area and are not repeated."
+   ]
+  },
+  {
+   "area": "E",
+   "answers": 14,
+   "phase0_lines_checked": true,
+   "meaning_changed": [
+    {
+     "id": "AN-71",
+     "verdict": "22 (and 30)",
+     "how": "The task now says `scope.spawn(fn() changes total: total += t.split_whitespace().count())`. v2's plain `fn():` task, which was the OLD's text, is refused (E2105). `count_words` names nothing, because `total` is its own local. The program does what it did."
+    },
+    {
+     "id": "AN-73",
+     "verdict": "22, 29 (and 30)",
+     "how": "The task now says `fn() with copy of n changes total: total.fetch_add(n)`. v2's `fn() with copy of n: total.fetch_add(n)` is refused (E2105): a change through an `Atomic` is named, and a captured variable by its name. The program does what it did."
+    },
+    {
+     "id": "AN-74",
+     "verdict": "22 (and 30)",
+     "how": "The task now says `scope.spawn(fn() changes stats: stats.add_all(t))`. v2's plain `fn(): stats.add_all(t)` is refused (E2105). The program does what it did."
+    },
+    {
+     "id": "AN-75",
+     "verdict": "29, 30",
+     "how": "Each thread's function now says `fn() with thread_shared log changes Log: log.push(\"a\")`, and `start` and `main` say `changes Log`. v2's four lines are refused (E2105). Also new: a call through a `fn() changes Log` value inside `with log.lock: for line in log.lines:` was accepted in v2 and hung while running; it is now refused when compiling (E3020)."
+    },
+    {
+     "id": "AN-76",
+     "verdict": "30 (31 stated in rule 3)",
+     "how": "`main` now says `fn main() changes FRAME, LOG, RESULTS:`. v2's `fn main() changes FRAME, LOG:` is refused (E2105). A `spawn` inside a loop over `RESULTS` is now refused (E3020). The program does what it did."
+    },
+    {
+     "id": "AN-78",
+     "verdict": "30, 31 (32 confirmed)",
+     "how": "`setup` and `main` now say `changes Game`, and v2's lines without it are refused (E2105). NEW now walks `game.names` across `sqrt`, which is marked `@ffi(no_callbacks)` and allowed, and calls `poll_events()` after the walk (inside it, E3020). v2's reading 3 counted every foreign call as running the callback; a marked C function is now allowed inside the walk. What the program does with the game is unchanged."
+    },
+    {
+     "id": "AN-80",
+     "verdict": "29, 30",
+     "how": "The thread's function now says `fn() with thread_shared st changes Stats: st.note(3)`, and `main` says `fn main() changes Stats:`. v2's two lines are refused (E2105). The program does what it did."
+    },
+    {
+     "id": "AN-84",
+     "verdict": "34",
+     "how": "`place` now takes `ref mut xs: MutSpan[int]`, in the accepted program and in E7016's refused one. v2's plain `xs: MutSpan[int]`, which writes `xs[i]`, is refused (E3023). E3028's message names the `ref mut` parameter. The program does what it did."
+    }
+   ],
+   "words_needed": [],
+   "agreed_rows_changed": [],
+   "messages_flagged": [
+    {
+     "answer": "AN-74",
+     "message": "E7007: \"two tasks change `stats.total` (line 19); guard it: `total: int guarded by lock`, and change it inside `with this.lock:`; or make it `Atomic[int]`\"",
+     "why": "F-11, the lead's: line 19 is a task in a free function, where there is no `this`."
+    },
+    {
+     "answer": "AN-76",
+     "message": "E7012: \"... guard it: `static mut FRAME: int guarded by FRAME_LOCK` and change it inside `with FRAME_LOCK:`, or make it `Atomic[int]`\"",
+     "why": "F-05, the lead's: `FRAME_LOCK` is never declared, and no line `static FRAME_LOCK: Lock = Lock()` is given."
+    },
+    {
+     "answer": "AN-84",
+     "message": "E7012: \"guard it: `static mut HITS: int guarded by HITS_LOCK`, and change it inside `with HITS_LOCK:`; or make it `Atomic[int]`\"",
+     "why": "F-05, the lead's: the refused program does not declare `HITS_LOCK`, and the message does not give that line."
+    },
+    {
+     "answer": "AN-77",
+     "message": "E2221: \"keep the value instead (`m = n`), or its position\"; and \"walk it by an index or a `Handle`\"",
+     "why": "F-06, the lead's: the way out is described in words, not given as the exact line."
+    },
+    {
+     "answer": "AN-71",
+     "message": "E7007 (float sums): \"add up in the task first: `mine = 0.0`, `mine += x` for each, then `sum += mine` once\"",
+     "why": "\"for each\" stands in for the loop line, which is not given; the refused program is not written out, so the lines cannot be checked against it."
+    },
+    {
+     "answer": "AN-71",
+     "message": "E7015: \"`names` holds `cache`, which has other owners on this thread (line 9) ...; share it between threads: `cache: thread_shared Cache`\"",
+     "why": "That line alone does not compile: under R3, `thread_shared` goes only before a new value, so the caller's other owner of the cache must be created `thread_shared` too, and the message does not give that line."
+    },
+    {
+     "answer": "AN-74",
+     "message": "E7010: \"... give each object one owner (`Array[Player]`), or change it under its lock (`hp: int guarded by lock`)\"",
+     "why": "Same pattern as F-05: `Player` has no `lock` field, and neither `lock: Lock = Lock()` nor the `with p.lock:` line is given."
+    },
+    {
+     "answer": "AN-76",
+     "message": "`global FRAME`: \"today's E0100 help, kept (\\\"`global` is Python's\\\"), pointing at `changes FRAME`\"",
+     "why": "The message is not written out, so it cannot be checked against R18 (the program's names, why, the exact line)."
+    },
+    {
+     "answer": "AN-80",
+     "message": "E0104 for `@sync class Stats`: \"... share the object where it is shared, `st = thread_shared Stats()`, and say which lock guards each field that changes (`words: int guarded by lock`) or make it `Atomic[int]`\"",
+     "why": "The guarded-field line uses a lock that is not declared and gives no `lock: Lock = Lock()` line. \"Say which lock guards each field\" is words, not a line. The refused OLD class already has `Atomic` fields, so the line it needs is \"remove `@sync`\", which the message does not give."
+    },
+    {
+     "answer": "AN-79",
+     "message": "E3100: \"... put it in an `unsafe:` block with a `# SAFETY:` note saying why it holds here\"",
+     "why": "Plausible: the way out is words. It names neither the lines to add (`# SAFETY: ...`, `unsafe:`) nor the line that moves into the block."
+    }
+   ],
+   "for_owner": [
+    "1. Can a `guarded by` field be changed under its lock through a plain name, the way a `Mutex`'s value can? R4 says \"Only a `Mutex`, `RwLock`, `Atomic` or channel end may be changed through a plain name\" and does not mention `guarded by` fields. AN-75's `fn start(log: thread_shared Log) changes Log:`, which is the vocabulary's own example, gives each thread a `with thread_shared log` owner that changes `lines`. That only works if the plain `log` may do the same. If it may not, `start` must take `owns log: thread_shared Log`, called `start(thread_shared Log())`, and E7013's way out `log.push(\"c\")` is refused too. Meanwhile area E treats a `guarded by` field as its lock's value (one rule for `Mutex`, `Lock` and `guarded by`) and keeps v2's `start`. Neither choice costs anything while running.",
+    "2. Verdict 29's gain only covers a walk. `with log.lock: for line in log.lines: note()` is refused when compiling. `with log.lock: note()` without a walk, where `note` is a `fn() changes Log` that pushes to the same log, is accepted and hangs while running: the call takes a lock its own thread already holds. It is never a memory error, and C and Rust behave the same way. Choices: (a) leave it (what the file does now); (b) refuse a call through a `changes Log` function value while this thread holds a `Log`'s lock, which would also refuse a function that changes a different log; (c) record in each lock which thread holds it, and stop the program with the function's name instead of hanging. That costs one store and one compare per lock, not measured.",
+    "3. Not a question, just noted so the owner can judge whether it is a limitation worth keeping or an annoyance: in area E's programs, verdict 30's refusal of a `spawn` inside a walk of what its thread changes protects nothing memory safety needs. A list another thread may change is only reached under its lock, and the walk holds that lock, so the new thread's change waits (AN-76's `RESULTS`). A scoped task's change to a list its parent walks is already refused by E7007. Applied as written. For the rule writer: R15 does not say which of E3020 and E7007 such a scoped task gets (R18: one mistake, one message)."
+   ]
+  }
+ ]
+}
