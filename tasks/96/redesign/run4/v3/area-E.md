@@ -161,8 +161,8 @@ threads change under `lock`; a kept result could be stale; remove `@cached`"); t
    (verdict 3). The gain: a call through such a function value inside a walk of the guarded list is
    refused when compiling (E3020, AN-75).
 2. **Starting a thread, or handing C a callback to keep, counts as making what its function changes**
-   (verdict 30, R12, R15): the library writes `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED ->
-   R) changes CHANGED -> JoinHandle[R]:`, and `scope.spawn` the same; so `main` says `changes FRAME,
+   (verdict 30, R12, R15): the library writes `[R, CHANGED]` above `pub fn spawn(owns f: fn() changes
+   CHANGED -> R) changes CHANGED -> JoinHandle[R]:` (verdict 50), and `scope.spawn` the same; so `main` says `changes FRAME,
    LOG, RESULTS` (AN-76), `start` and `main` say `changes Log` (AN-75), `setup` and `main` say `changes
    Game` (AN-78), and a function whose tasks change only its own locals names nothing (AN-71 to AN-74).
 3. **A foreign call counts as possibly running every callback C keeps**, and makes the changes their
@@ -429,9 +429,23 @@ written as a struct value moved to the thread, which is what a hand-over of a on
   `weakref` links stay on this thread): if `Names` were one, the NEW's `share_plain` would be refused
   with "share it instead: write `names = thread_shared Names()` instead of line 12 and `fn() with
   thread_shared names:` instead of `fn() with owns names:` on line 13".
-- Changing a `thread_shared` value directly: `names.items.push(s)` in `share_and_keep`: `error[E7014]:
-  \`names\` is shared between threads (line 17), so no owner changes it directly; keep the list in a
-  field \`guarded by\` a lock and change it inside \`with names.lock:\``.
+- Changing a `thread_shared` value directly, in this refused program (`share_and_keep` given a name
+  to add):
+
+  ```ember
+  class Names:
+      items: Array[String] = []
+
+  fn share_and_keep(s: String):
+      names = thread_shared Names()
+      names.items.push(copy of s)
+      h = thread.spawn(fn() with thread_shared names: names.items.len())
+      println(names.items.len(), h.join())
+  ```
+
+  `error[E7014]: \`names\` is shared between threads (line 5), so no owner changes it directly, and line 6 pushes to its list; fill the list where the object is made: write \`names = thread_shared Names(items=[copy of s])\` instead of lines 5 and 6`. (A list that must change while threads share it is kept in a field
+  `guarded by` a lock, and every read and change of it is made inside that lock, E7013, as AN-74's
+  `Stats` does.)
 - A thread-bound value sent to a task (a guard, a `Scope`, a raw pointer; run 3's attack `x05`,
   `x08`, `x09`): `error[E7008]: \`g\` is the guard of \`m\`'s lock, which belongs to the thread that
   took it; take the lock inside the task: \`with g = m.lock():\``.
@@ -1015,8 +1029,8 @@ first line says `changes lines`, a field `guarded by lock` changed inside `with 
 one way a `thread_shared` value is changed). What the threads' functions change is on their first lines,
 `changes Log`: they change a `Log` through a `thread_shared` link, under its lock, and such a change is
 named by the type of what changes (R12, verdict 29), exactly the verdict's own line. `thread.spawn`
-counts as making what its function changes (R12, verdict 30; the library's first line is `pub fn
-spawn[R, CHANGED](owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`), so `start`
+counts as making what its function changes (R12, verdict 30; the library's first line is `[R, CHANGED]`
+above `pub fn spawn(owns f: fn() changes CHANGED -> R) changes CHANGED -> JoinHandle[R]:`), so `start`
 says `changes Log`, and `main`, which calls `start`, says it too (R5). Nothing more is checked while
 running: the words are checked when compiling. `start`'s read-only `log` promises that what it reads
 does not change while it is used (R4, R8 (g)); `lines` is read and changed only under its lock, as a
@@ -2599,7 +2613,8 @@ Three new points, one at a time, each with what this file does meanwhile.
    its lock (`guarded by`, `Mutex`, E7012, E7014), and the walk holds that lock, so the new thread's
    change waits until the walk ends (AN-76's `RESULTS`); a scoped task's change to a list its parent
    walks is already refused by E7007 (nothing reads a task's place before the join, R15). No question:
-   this file applies the verdict as written ("start the thread after the loop" moves one line), and notes
-   it so that the owner can judge whether it is an understandable limitation or an annoyance. For the
+   this file applied the verdict as written ("start the thread after the loop" moves one line), and noted
+   it so that the owner could judge whether it is an understandable limitation or an annoyance. Since
+   verdict 52 the file allows the spawn under the loop's lock and refuses the join inside it (AN-76). For the
    rule writer: R15 does not say which of E3020 and E7007 a scoped task that changes the list its parent
    walks gets (R18: one mistake, one message).

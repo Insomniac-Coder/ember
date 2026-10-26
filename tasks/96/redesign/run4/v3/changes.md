@@ -63,8 +63,8 @@ copies; this step did the rest.
   across a call that clears them) and lets R12 say that inside a function that runs stored functions,
   `captured` never stands for `this`.
 - **Change lists** (verdict 21). A generic parameter written after `changes` stands for what the
-  function given to the call changes. The library writes `fn for_each[C, F: fn(Item) changes C](owns f:
-  F) owns this changes C:`, so `scores.for_each(fn(s) changes LOG: LOG.push(s.name))` is a call that
+  function given to the call changes. The library writes `[C, F: fn(Item) changes C]` above `fn for_each(owns
+  f: F) owns this changes C:` (verdict 50), so `scores.for_each(fn(s) changes LOG: LOG.push(s.name))` is a call that
   changes `LOG` (inside a loop over `LOG`, E3020), and a plain `fn(s)` makes it change nothing. The
   first lines of `for_each`, `inspect`, `retain` and `sort_by` are in the vocabulary's iterator row.
   The function is taken as a bound (`F: fn(Item) changes C`), as today's library takes it
@@ -77,8 +77,9 @@ copies; this step did the rest.
   `fn next() changes this, C -> Option[Item]`. An implementation of `Iterator.next` may make the
   changes its own type parameters carry, beyond `Iterator.next`'s line, because wherever the adapter's
   type is known they are known; a generic body's changes through its type parameters' methods are
-  worked out per instance, as its body is compiled per instance. Such an adapter is not made a
-  `dyn Iterator` unless its list is empty (E2113). Listed for the owner (question 3).
+  worked out per instance, as its body is compiled per instance. Made a `dyn Iterator`, such an
+  adapter's `dyn` type says what it changes, `owns dyn Iterator[Item = int] changes LOG` (verdict 46,
+  which answered question 3); a `dyn` type that says less is refused (E2113).
 - **Changes under a lock** (verdict 29). R12's "changes through a `Mutex`, `RwLock`, `Atomic` or channel
   end need no word" is withdrawn for function types and first lines. A change is named by the type of
   what changes: `fn() with thread_shared log changes Log: log.push("a")` (a `Log` whose `guarded by`
@@ -107,9 +108,10 @@ copies; this step did the rest.
   allow), unless the declaration says `@ffi(no_callbacks)`, an asserted fact listed by `ember tcb`
   (`[TCB-1]`). A missing mark refuses only a loop, a view or a `ref mut` name that such a change would
   reach across the call, and that message names the mark (E3020 for `for name in game.names:
-  poll_events()`). The callbacks' changes go on the first lines of the functions that hand them to C,
-  not on those of every function that makes a foreign call: this step reads "a missing mark only
-  refuses a loop" that way (question 5). A package records the change lists of the callbacks it hands
+  poll_events()`). The callbacks' changes go on the first lines of the functions that hand them to C
+  and, by verdict 39, of every function that makes an unmarked foreign call: `fn tick() changes Game,
+  LOG:` for a `tick` that calls `poll_events()` (R12; E2105 without it). This step had first read "a
+  missing mark only refuses a loop" the other way and asked (question 5); verdict 39 answered it. A package records the change lists of the callbacks it hands
   to C in its interface file (R17). `@ffi(no_callbacks)` on a function whose own contract takes a
   callback is refused (E5069, new).
 
@@ -229,7 +231,7 @@ places that said "decision N"), as the brief and `inputs/JOB.md` do.
 | R17 | R17 | the change lists of the callbacks a package hands to C are recorded in its interface file; a generic's changes through its type parameters are worked out per instance | 21, 31 |
 | R18 | R18 | unchanged | — |
 | section 2 | section 2 | rows added: the walk across a deleting call (cost, not measured); one word for a several-instance manager's address; nothing at run time for the compile-time checks of 21, 22, 29, 30, 31, 24; the `cast` row covers kind tests | 21, 22, 24, 27, 28, 29, 30, 31 |
-| section 3 | section 3 | rows added: E3023 for a changing owner from a plain `shares mut` parameter (32) and for a write through a plain `MutSpan` name (34); E2105 for captured variables, a function given to `for_each`, a change under a lock, `captured` on a lambda, a thread started or a callback handed to C without naming its changes; E3020 for `for_each`, `note()` under a lock, `spawn`, `poll_events()` and an unmarked `sqrt`; E3021 for the view walk; E3022 for `LOG.retain(keep)` and a function stored in what it changes; E2113 for `captured` counts and a `dyn Iterator` of a changing adapter; E2020 and E3063 for arenas; E5069; E2036 and E2106 for kind tests; E3060 with AN-46's `.copy_each()` help; the removed-words row gains `cast x if D`, `cast x when D`, `as?`/`as!` respelled, `.copied()`; E3028's `integrate` message names `ref mut pos: MutSpan[float]` | 21, 22, 24, 27, 28, 29, 30, 31, 32, 33, 34 |
+| section 3 | section 3 | rows added: E3023 for a changing owner from a plain `shares mut` parameter (32) and for a write through a plain `MutSpan` name (34); E2105 for captured variables, a function given to `for_each`, a change under a lock, `captured` on a lambda, a thread started or a callback handed to C without naming its changes; E3020 for `for_each`, `note()` under a lock, `spawn`, `poll_events()` and an unmarked `sqrt`; E3021 for the view walk; E3022 for `LOG.retain(keep)` and a function stored in what it changes; E2113 for `captured` counts and a `dyn Iterator` whose type says less than its adapter changes (verdict 46); E2020 and E3063 for arenas; E5069; E2036 and E2106 for kind tests; E3060 with AN-46's `.copy_each()` help; the removed-words row gains `cast x if D`, `cast x when D`, `as?`/`as!` respelled, `.copied()`; E3028's `integrate` message names `ref mut pos: MutSpan[float]` | 21, 22, 24, 27, 28, 29, 30, 31, 32, 33, 34 |
 | section 4 | section 4 | section 6 below; "new in v2" marks replaced by bold for the model's own codes, with where each was checked unused | — |
 
 ## 4. Word changes
@@ -290,16 +292,17 @@ Every other row is v2's text, with "decision N" read as "verdict N".
 | E1010 | **widened** in its own meaning ("a name or form the program may not use here"): `cast x if D`, `cast x when D`, `.copied()` | 27, 33 |
 | E2020 | **widened**: a value given to a `using A` place that was not made in an instance of `A` | 24 |
 | E2036 | **widened**: a kind test that always passes | 27 |
-| E2105 | **widened**: captured variables named on a lambda's first line (and `captured` written there instead); what library calls, threads started and callbacks handed to C change | 21, 22, 30, 31 |
+| E2105 | **widened**: captured variables named on a lambda's first line (and `captured` written there instead), a `=>` lambda's included; what library calls, threads started and callbacks handed to C change; a send or a receive through a channel end a function is given; a foreign call that may run a kept callback | 21, 22, 30, 31, 36, 37, 39, 45 |
 | E2106 | **widened**: a kind test's name already in use | 27 |
-| E2113 | **widened**: more captured variables than `captured` allows; a value whose type carries changes made a `dyn` value; an implementation may make its type parameters' changes | 21, 22 |
-| E3020 | **widened**: a library call given a changing function, a `spawn` by what its thread changes, a foreign call by what the kept callbacks change | 21, 29, 30, 31 |
+| E2113 | **widened**: more captured variables than `captured` allows; a value made a `dyn` value whose type says less than its methods change (a `dyn` type may say what they change); an implementation may make its type parameters' changes | 21, 22, 46 |
+| E3020 | **widened**: a library call given a changing function, a `spawn` by what its thread changes (unless it makes that change under the lock the loop holds), a foreign call by what the kept callbacks change | 21, 29, 30, 31, 52 |
 | E3021 | message added for the view walk across a call that may change nodes (its meaning is v2's) | 28 |
 | E3022 | **widened**: a function value counts as an argument that changes what its type names; a function value stored in a place that a variable it changes owns | 21, 22 |
 | E3023 | **widened**: a write through a plain name holding a `MutSpan`; a changing owner made from a plain parameter of a `shares mut` type (its meaning already covered "an owner that may change made from one that only reads") | 32, 34 |
 | E3028 | reworded: a `MutSpan` parameter is a `ref mut` parameter now | 34 |
 | E3060 | message added (AN-46's, with `.copy_each()`) | 33 |
 | E3063 | **widened**: a value made in a memory manager's instance kept or returned where it would outlive that instance | 24 |
+| **E7018** | **new**: a wait for a lock this thread holds, inside that lock's `with` block: a call through a function value whose type says it changes what the lock guards, or a join of a thread whose function needs it; checked unused by the lead (`rules.md` section 4) | 43, 52 |
 
 No code is retired in this step. E2116, E2117 and E2118 lose their "new in v2" marks, which were
 history; they stay the model's own codes, in bold.
@@ -701,7 +704,7 @@ What the verdicts leave open, one at a time, each with what this step does meanw
    `[C, F: fn(Item) changes C]` above `fn for_each(owns f: F) owns this changes C:`; the shared function type stays
    legal, for storing functions and in a program's own code.** The question as it was put: **the
    library's first lines take the function as a bound** (verdict 21's example takes a function
-   value). Meanwhile `fn for_each[C, F: fn(Item) changes C](owns f: F) owns this changes C:`, as today's
+   value). Meanwhile `[C, F: fn(Item) changes C]` above `fn for_each(owns f: F) owns this changes C:` (verdict 50's spelling), as today's
    library writes `[F: fn(Item)]`: one instance per function given, so the call is direct and may be
    inlined, as Rust's `F: FnMut`. Your `fn for_each[C](f: fn(T) changes C) changes C:` means the same and
    reads shorter, but calls through the function value's two words on every item, slower than C and

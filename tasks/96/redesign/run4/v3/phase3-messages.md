@@ -60,3 +60,39 @@ was, and what the message says now.
 | area E | area-E AN-80 E0104; vocabulary `@sync` row | a guarded field with an undeclared lock, and "say which lock guards each field" (words), for a class whose fields are already `Atomic` -> "remove `@sync` (line 1)", with the reason: `Stats`'s fields are `Atomic`, which threads may change as they are |
 | F-06 | rules E3023 row (R3) | "or make `game` with `shares mut`" (an action) -> names the refused line, `g2 = shares mut game`, and gives "write `game = shares mut Game()` instead of line 1" |
 | F-13 | vocabulary `from` row | C's `from(self)` in the "it will mean" column -> `from(this)`, the receiver's region; today's `from(self)` named as today's |
+
+## After phase 4: the readability check's failures, fixed by the lead
+
+`V3/readability.md` (agent 07) listed 15 failures (its F-01 to F-15, not v2's). The lead checked each
+against the files (all 15 hold) and fixed them; `readability.md` itself is left as the checker wrote it.
+
+| item | where | fix |
+|---|---|---|
+| R-01 (verdict 50) | area-A AN-05 E2113, AN-04 part 3, section 5 item 9; area-B AN-29 E2113, AN-22's refused `put`, section 6 note 7; rules section 0, R5, R12; changes 2.1, section 11 question 4; area-D terms, AN-55 (`inspect`, `spawn`); area-E reading 2, AN-75; vocabulary `[THR-10]` row, `some I` row | `fn name[...](...)` -> `[...]` above `fn name(...)`; the `some I` row now says today's E2260 help becomes `[T: I]` above `fn f(x: T)`. A scan that joins wrapped lines finds no other prose span; what remains is today's Ember, the owner's own sketch, or OLD and "means exactly" code |
+| R-02 (verdict 42) | area-B AN-28 part 8; area-A AN-11 part 7, section 5 item 8 | "a `ref mut` name of a place is never re-pointed" -> C++'s two pointers: `ref mut` may be given another ref, `const ref mut` never; "no word says it" -> `const ref mut pos: MutSpan[float]` says it across a package's edge; item 8 marked settled |
+| R-03 (verdict 39) | changes 2.1 (foreign calls) | "not on every function that makes a foreign call" -> also on every function that makes an unmarked foreign call, `fn tick() changes Game, LOG:` |
+| R-04 (verdict 46) | changes 2.1 and section 3's row; vocabulary iterator row, section 5 | "not made a `dyn Iterator` unless its list is empty" -> the `dyn` type says what it changes (`owns dyn Iterator[Item = int] changes LOG`), refused only when it says less; section 5 now says no word is open (verdicts 46 and 38) |
+| R-05 (verdicts 36, 30) | vocabulary `owned fn` row (spec 3495) | `thread.spawn(fn() with owns tx => produce(tx))` -> `thread.spawn(fn() with owns tx changes Sender[int]: produce(tx))`, its caller saying `changes Sender[int]` too |
+| R-06 (verdict 40) | area-D summary table and AN-58 part 3 | `Array[fn() changes captured]` -> `Array[fn() changes score]`, as AN-58's code writes it |
+| R-07 | rules E3021 row (`blend`) | `assert_disjoint(dst, src)` (the callee's names) -> AN-14's `mix` message: `assert_disjoint(d, s)` before line 12, or the copy lines |
+| R-08 | vocabulary `for` row (E3020) | `spawned` declared: the rules' fixed text |
+| R-09 | vocabulary `let` row and section 6.2 (E2104), `from` row (E2118), `RefCell` row (E1010) | the fixed answers' lines: `items: Array[int]`; both renamed first lines of `next_word`; `s = Scene(entities=[])`, `scene: shares mut Scene`, `Panel(scene=shares mut s)` |
+| R-10 | vocabulary `MutSpan` row (E3028) | `integrate(ref mut ps, vs, 0.5)` -> `integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)` |
+| R-11 | vocabulary `Box` row (E1010), `using` row (E3063) | the making line `lvl = Level(mesh=owns Mesh(verts=[0.0]) using current)` added; the E3063 message is the rules' full one, with the caller's `current = LevelArena()` and `boss = load_level(ref mut current)` |
+| R-12 | area-B AN-26; area-C AN-35, AN-46, AN-49, AN-50; rules E3060 row | each copy line now says the line it replaces ("in place of line N"); AN-26's and AN-35's refused programs written out so the numbers can be checked |
+| R-13 | rules E7015 row | fragments -> AN-78's full message (`main`'s two lines, `setup`'s first line and `return` line, `score: Atomic[i32] = Atomic(0)`, `fetch_add`, `game.score.load()`) |
+| R-14 | area-E AN-71 E7014; rules E7014 row; vocabulary `thread_shared` row | `with names.lock:` on a class with no lock -> the refused program written out; "fill the list where the object is made: write `names = thread_shared Names(items=[copy of s])` instead of lines 5 and 6" |
+| R-15 | area-B AN-24 E3021 | "change it after `vs`'s last use" (words) -> `reg.hp[0] = 5` below the loop instead of on line 2; the `sharedref mut` way names the field line and both `vs.push(View(...))` lines |
+
+The checker's notes for the lead (its section 7) that were stale text, fixed the same way:
+
+| note | where | fix |
+|---|---|---|
+| 1 | area-B AN-23, area-D AN-57 and AN-61, their "v3" lines | "the message is v2's / left for the lead" -> what phase 3 did: AN-23's E2140 gives both ways out; AN-57's E3026 gives every line; AN-61's line compiles under verdict 42 |
+| 3 | rules R5's caller example | `main` calls a `tick` that changes `FRAME` and `LOG` (R5's own `tick`), so `fn main() changes FRAME, LOG:` |
+| 6 | changes section 6 (error codes) | E7018 added (verdicts 43, 52); the E2105, E2113 and E3020 rows name verdicts 36, 37, 39, 45, 46 and 52 |
+| 7 | area-E section 4.2 item 3 | the note as put is kept in the past tense, with what the file does since verdict 52 |
+
+Notes 2, 4, 5 and 8 are not stale text: 2 and 4 are open points of the rules (which of E3020 and E7018
+comes first for one call; `owns` before a value made `using` an arena), 5 says the `@sync` message
+leads to a class that keeps the OLD's race (the NEW is the fix), and 8 lists area A's open rule notes.

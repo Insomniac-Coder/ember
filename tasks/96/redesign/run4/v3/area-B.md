@@ -1085,8 +1085,8 @@ of an `if` (the store runs when it passes) instead of a stop; no separate progra
   write `if this.pools[k] is Pool[T] as ref mut pool:`; to stop the program when it is not one, write
   `pool = ref mut cast this.pools[k] as Pool[T]`". `cast this.pools[k] when Pool[T]`, the spelling
   verdict 27 removed, gets the same message with its own words in the first quote.
-- A kind test in a method whose first line does not say it changes `pools`, `fn put[T](k: u128, e:
-  int, owns c: T):` with the same body, E2105: "`put` changes `this.pools` through `pool`; write its
+- A kind test in a method whose first line does not say it changes `pools`, `[T]` above `fn put(k: u128,
+  e: int, owns c: T):` with the same body, E2105: "`put` changes `this.pools` through `pool`; write its
   first line as `[T]` above `fn put(k: u128, e: int, owns c: T) changes pools:`".
 - A change of `reg.pools` while the returned component is used, in the lines
   `p = ref mut reg.get_mut[int](3)` (line 1), `reg.pools.clear()` (line 2), `p += 1` (line 3), E3022:
@@ -1107,9 +1107,9 @@ is a readable spelling of Rust's `if let Some(pool) = any.downcast_mut::<Pool<T>
 
 #### AN-23: a call that returns `ref mut` is not a place
 
-**v3:** as in v2; verdicts 21 to 34 change nothing here. The E2140 message in part 6 is left as v2
-wrote it: `V2/readability.md` F-02 found that its way out loses the change again, and the message
-fixes are the lead's (phase 3; listed in section 6). Meaning unchanged.
+**v3:** as in v2; verdicts 21 to 34 change nothing here. The E2140 message in part 6 was fixed by the
+lead in phase 3 (`V2/readability.md` F-02: v2's way out lost the change again); it now gives both
+ways out, `xs[0] += 1` and `first(ref mut xs) += 1`. Meaning unchanged.
 
 **1. Intent:** add 1 to the element a function hands back, and to a map's count for a key.
 
@@ -1366,9 +1366,11 @@ report.
 - A change of the registry while the views that read it are still used, in the lines
   `vs.push(View(reg=ref reg, entity=1))` (line 1), `reg.hp[0] = 5` (line 2), `for v in vs:` (line 3),
   E3021 (R8 (g)): "`reg.hp[0] = 5` (line 2) changes the registry that `vs[1].reg` reads
-  (`View(reg=ref reg, entity=1)`, line 1), and `vs` is used on line 3; change it after `vs`'s last use,
-  or, if the registry must change while the views are kept, write `reg: sharedref mut Registry` in
-  `View` and `View(reg=sharedref mut reg, entity=1)`".
+  (`View(reg=ref reg, entity=1)`, line 1), and `vs` is used on line 3; write `reg.hp[0] = 5` below the
+  `for v in vs:` loop instead of on line 2, or, if the registry must change while the views are kept,
+  write `reg: sharedref mut Registry` in `View` instead of `reg: ref Registry`, and make both views
+  with it: `vs.push(View(reg=sharedref mut reg, entity=0))` and `vs.push(View(reg=sharedref mut reg,
+  entity=1))` instead of the two `vs.push(View(reg=ref reg, ...))` lines".
 - The list kept longer than `reg` (returned from `fn views() -> Array[View]:`, which makes
   `reg = Registry(hp=[10, 20])` and `vs` as above and ends with `return vs`; or stored in a field with no
   `from`, or sent to a thread), E3063: "`vs` holds views of `reg`, which ends when `views` returns, so it
@@ -1628,9 +1630,22 @@ exit=0
 - A view of something else stored in a `from static` field (`this.kind = name`), E3063: "`kind` holds
   only text written in the program, and `name` comes from the caller; write `this.kind = String(name)`
   with `kind: String`".
-- `o26c`'s `push` while `n` lives, E3060: "`names.push(...)` may move the strings `n` points into
-  (`first` returns a view of `xs`, here `names`), and `n` is used after it; use `n` before the `push`,
-  or keep a copy of your own: `n = String(first(names))`".
+- `o26c`'s `push` while `n` lives, in this refused program:
+
+  ```ember
+  fn first(xs: Array[String]) -> StrView:
+      return xs[0]
+
+  fn main():
+      names = [String("ann"), String("bob")]
+      n = first(names)
+      names.push(String("cy"))
+      println(n)
+  ```
+
+  E3060: "`names.push(String("cy"))` (line 7) may move the strings `n` points into (`first` returns a
+  view of `xs`, here `names`), and `n` is used on line 8; use `n` before line 7, or keep a copy of your
+  own: write `n = String(first(names))` in place of line 6".
 
 **7. Cost:** none for the spelling. `String(name)` is one allocation and copy, the same as Python's
 own `str` object and today's `to_string()`.
@@ -1856,8 +1871,9 @@ span (part 3).
 
 **7. Cost:** none.
 
-**8. Kind:** an understandable limitation kept (a `ref mut` name of a place is never re-pointed), with
-the one misleading form refused.
+**8. Kind:** a readable spelling of C++'s two pointers (verdict 42): a `ref mut` name may be given
+another ref, as a `float*` may, and a `const ref mut` name never is, as a `float* const`; today's
+misleading line, `r = ref mut b` writing `b`'s value into `a`, now does what it reads as.
 
 #### AN-29: `ref String` is not accepted where `str` is expected at a call
 
@@ -1958,8 +1974,8 @@ exit=0
   variable it uses from `main`; say so on its first line: `fn() changes seen -> int:`".
 - The same lambda with its first line `fn() changes seen -> int:`, given to `apply`, E2113 (R12): "this
   function changes `seen`, and `apply` takes `f: fn() -> int`, functions that change nothing; to let
-  `apply` run functions that change things, write `fn apply[C, F: fn() changes C -> int](owns f: F)
-  changes C -> int:`" (a change list, as the library's `for_each` takes one, verdict 21; the call
+  `apply` run functions that change things, write `[C, F: fn() changes C -> int]` above `fn
+  apply(owns f: F) changes C -> int:`" (a change list, as the library's `for_each` takes one, verdict 21; the call
   `apply(...)` then counts as changing `seen`).
 
 **7. Cost:** none (pointer and length, as `as_str()`).
@@ -2474,8 +2490,8 @@ write `+=` instead (`[TXT-11]`: `s += t` appends), so it is not needed.
    neither file shows a `changes` clause on a `=>` lambda, so the spelling is the rule writer's to give
    (AN-56 is area D's).
 7. **A user function given a function that changes things** (AN-29, part 6). R12 states the change list
-   for the library (`for_each`); this file applies the same form to a user function, `fn apply[C, F:
-   fn() changes C -> int](owns f: F) changes C -> int:`, which R12's wording ("a generic parameter
+   for the library (`for_each`); this file applies the same form to a user function, `[C, F: fn()
+   changes C -> int]` above `fn apply(owns f: F) changes C -> int:` (verdict 50), which R12's wording ("a generic parameter
    written after `changes` stands for what the function given to the call changes") already covers.
 8. **Messages that still break the message rule** (the lead's, phase 3; left as v2 wrote them, since no
    rule this step changed rewrote them):

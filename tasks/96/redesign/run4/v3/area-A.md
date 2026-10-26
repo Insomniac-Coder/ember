@@ -784,8 +784,8 @@ fn update(ref mut enemies: Array[Enemy]):
    after it. `retain` and `extend` are methods called on `enemies`, so they carry no word (R4: the object
    a method is called on is not marked; their first lines say they change the list). `retain` runs the
    function it is given, now, on every element, so the call makes what that function changes (verdict
-   21, R12): the library writes `pub fn retain[C, F: fn(T) changes C -> bool](owns keep: F) changes
-   this, C:` (vocabulary, the iterator row), and `C` is filled from the function given. `fn(e) =>
+   21, R12): the library writes `[C, F: fn(T) changes C -> bool]` above `pub fn retain(owns keep: F)
+   changes this, C:` (vocabulary, the iterator row; verdict 50), and `C` is filled from the function given. `fn(e) =>
    e.hp > 0` changes nothing, so `C` is empty, the call changes only `enemies`, and `update`'s first line
    names nothing beyond its `ref mut enemies` (point 6 shows a test that changes something).
 
@@ -1147,8 +1147,8 @@ exit=0
      Array[Enemy], i: int) changes kills`), and `update`'s `on_death` takes `fn(ref mut Array[Enemy],
      int)`, a function that changes nothing but the list it is given; to let `update` take handlers that
      change something, name its type with a change list, `type DeathHandler[C] = fn(ref mut
-     Array[Enemy], int) changes C`, and write `update`'s first line as `fn update[C](ref mut enemies:
-     Array[Enemy], on_death: DeathHandler[C]) changes C:`". Here `kills` is `main`'s own number (no word:
+     Array[Enemy], int) changes C`, and write `update`'s first line as `[C]` above `fn update(ref mut
+     enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:`". Here `kills` is `main`'s own number (no word:
      a local of its own), `list` is `ref mut` (the list `update` gives) and `i` a plain parameter (a
      number passed in). The same lambda without `changes kills` is refused on its own first line (E2105:
      "this function changes `kills`, a variable it uses from `main`; say so on its first line:
@@ -2448,8 +2448,9 @@ exit=0
    elsewhere, so the span may have to be passed by its address, where v2's plain `pos` could be passed as
    its two words. Inside a package the compiler sees whether the body ever gives `pos` another span
    (`integrate` and `first_even` never do) and can pass the two words as before; with noalias the loop
-   reads the span's pointer and length once before it starts either way. Across a package's edge no
-   word or recorded fact says it (found for the lead, section 5).
+   reads the span's pointer and length once before it starts either way. Across a package's edge the
+   word says it: a parameter written `const ref mut pos: MutSpan[float]` is never given another span
+   (verdict 42), so its span is passed as its two words there too.
 
 8. **Kind:** a readable spelling: the name says `ref mut`, as every name that may change something it
    does not own (verdict 34), the type says what the view is, and the call says `ref mut` as every call
@@ -3519,16 +3520,15 @@ owner beyond item 1 above):
    which verdict 34 now refuses, are not listed: `fn integrate(pos: MutSpan[float], vel: Span[float],
    dt: float):` (line 3576 of `docs/spec-source/Ember_v0.9.10_Hardened_35.md`) and `[BCK-6]`'s
    `fn first_even(xs: MutSpan[int]) -> ref mut int:` (line 6046). Both are AN-11's NEW, with `ref mut`.
-8. **Whether a `ref mut` view parameter is ever pointed elsewhere** (AN-11, AN-14; item 1 for the
-   owner). R17 records the "only adds" summary of a `ref mut` list parameter in the interface file, but
-   no fact says that a `ref mut` view parameter (`ref mut dst: MutSpan[float]`) is never given another
-   view. Without it, across a package's edge or through a function value, a caller's `d` is taken to
-   view any argument of the call afterwards (R4), and the span may have to be passed by address. The
-   same kind of recorded fact as the "only adds" summary would keep both as v2 had them.
+8. **Settled by verdict 42: whether a `ref mut` view parameter is ever pointed elsewhere** (AN-11,
+   AN-14; item 1 for the owner). The first line says it: `const ref mut dst: MutSpan[float]` is never
+   given another view, so across a package's edge or through a function value the caller's `d` is the
+   same span after the call and the span is passed as its two words; a plain `ref mut dst` may point
+   `d` elsewhere (R4). No recorded fact beside the "only adds" summary (R17) is needed.
 9. **A change list on a program's own function** (AN-05). R12 states change lists for any generic
    parameter after `changes`, but the vocabulary's change-list row says it is written "in a library
-   function's first line, and in the function type or bound of its parameter". AN-05's `fn update[C](ref
-   mut enemies: Array[Enemy], on_death: fn(ref mut Array[Enemy], int) changes C) changes C:` is a
+   function's first line, and in the function type or bound of its parameter". AN-05's `[C]` above `fn
+   update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:` (verdicts 49 and 50) is a
    program's own function; the row could say "a function's first line".
 10. **Messages in this area that still break the message rule** (the lead's, phase 3; left as they are,
     since no verdict of this step rewrote them): `V2/readability.md` F-01 (AN-01's E3060 and AN-02's

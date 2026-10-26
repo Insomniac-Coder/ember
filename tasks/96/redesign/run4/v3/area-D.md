@@ -44,8 +44,8 @@ anything, never aliases silently and never copies silently).
   changes a real variable it captures names it on its first line (`fn() changes score:`, verdict 22); it
   is checked in the function that writes the lambda (R12).
 - **capture list**: what follows `with` after a lambda's parameters (`fn() with copy of score:`).
-- **change list**: a generic parameter written after `changes` (`fn each_name[C](owns f: fn(owns String)
-  changes C) changes C:`): it stands for what the function given to the call changes, and the call
+- **change list**: a generic parameter written after `changes` (`[C]` above `fn each_name(owns f: fn(owns
+  String) changes C) changes C:`, verdict 50): it stands for what the function given to the call changes, and the call
   counts as making those changes (R12, verdict 21).
 - **kind test**: `if s is Circle as c:` (runs its block when `s` is a `Circle`, and names it `c` there)
   and `if s is Circle:` (tests only); the "not sure" downcast. `cast s as Circle` is the "sure" one: it
@@ -89,7 +89,7 @@ AN-78). Every answer now cites "verdict N" and the v3 files.
 | AN-55 | the lambda given to `inspect` says `changes seen` (verdict 22), and `inspect`'s change list makes `count()`, which drives the adapter, the call that changes `seen` (verdict 21); starting the thread counts as making what its function changes (verdict 30), here nothing, so `main` names nothing; refusals added: the lambda without `changes seen` (E2105), the iterator line inside a loop over `seen` (E3020), a scoped task started inside a loop over what it changes (E3020) | **yes**, for one line: v2's `inspect(fn(v) => seen.push(v))` is refused (E2105); the program does what it did |
 | AN-56 | the first lambda says `changes names` (verdict 22), and `each_name` takes a change list, `[C]` above `fn each_name(owns f: fn(owns String) changes C) changes C:` (verdict 21); the E2020 way out gives `fn(s) changes names: names.push(copy of s)` | **yes**: v2's `fn each_name(owns f: fn(owns String)):` no longer takes the first lambda (E2113); the program does what it did |
 | AN-57 | the refused lambda says `changes total` (verdict 22), still E3026; one refusal added: the help followed with a plain `count: shares mut Counter` parameter (E3023, verdict 32) | no |
-| AN-58 | the lambda says `changes score`, and the local list is `Array[fn() changes captured]` (verdict 22) | **yes**, for two lines: v2's `hs: Array[fn()]` with `fn(): score += 1` is refused; the program does what it did |
+| AN-58 | the lambda says `changes score`, and the local list, written where `score` is visible, names it: `Array[fn() changes score]` (verdicts 22 and 40) | **yes**, for two lines: v2's `hs: Array[fn()]` with `fn(): score += 1` is refused; the program does what it did |
 | AN-59 | the v3 line only: none of its lambdas changes a variable it captured | no |
 | AN-60 | the E2113 message for `watch` with AN-53's `Button` names that button's v3 type; phase 0's wrong replacement in an E2113 message (an English "holds" turned into `exists as`) put right | no |
 | AN-61 | the v3 line only | no |
@@ -516,16 +516,16 @@ fn main():
 ```
 
 (`work` is the OLD's: it reads the list it is given and returns a number.) Changed from v2: `changes
-seen` on the lambda (verdict 22). The library's first line is `fn inspect[C, F: fn(Item) changes C](owns
-f: F) owns this -> Inspect[Self, C, F]:` (verdict 21, `V3/vocabulary.md`'s iterator row): `inspect`
+seen` on the lambda (verdict 22). The library's first line is `[C, F: fn(Item) changes C]` above `fn
+inspect(owns f: F) owns this -> Inspect[Self, C, F]:` (verdicts 21 and 50, `V3/vocabulary.md`'s iterator row): `inspect`
 keeps the function in the adapter, which changes nothing yet (storing a function is not a change, R12),
 and the adapter's `fn next() changes this, C -> Option[Item]` runs it, so `count()`, which calls `next`
 until the end, is the call that pushes to `seen` (`C` is `seen` here). In `main`, which wrote the
 lambda, `seen` is its own local, so `main` names nothing (R5). One instance of `inspect` is made for
 this lambda (the bound `F`), so the call through `f` is direct, as Rust's `F: FnMut`.
 
-The thread: `thread.spawn`'s first line is `pub fn spawn[R, CHANGED](owns f: fn() changes CHANGED ->
-R) changes CHANGED -> JoinHandle[R]:` (verdict 30): starting the thread counts as making what its
+The thread: `thread.spawn`'s first line is `[R, CHANGED]` above `pub fn spawn(owns f: fn() changes
+CHANGED -> R) changes CHANGED -> JoinHandle[R]:` (verdicts 30 and 50): starting the thread counts as making what its
 function changes, now or later (R5, R12, R15). The thread's function holds `xs` (`with owns xs`, R15)
 and changes nothing but its own state, so `CHANGED` is empty and `main` names nothing; its first line
 stays `fn main():`.
@@ -698,8 +698,8 @@ parameter, R4).
 
 **v3:** the refused lambda says what it changes, `fn() changes total: total += 1` (verdict 22), and is
 still refused for the same reason (E3026): it would outlive `total`. It fits AN-53's v3 `Button`
-(`fn() changes captured`), so E3026 is the only refusal. The E3026 message is v2's (`V2/readability.md`
-F-03, the lead's), with the program's line in its new spelling. One refusal added, for verdict 32: the
+(`fn() changes captured`), so E3026 is the only refusal. The E3026 message was fixed by the lead in phase 3
+(`V2/readability.md` F-03): it now gives every line, `struct Counter:` with `n: int = 0` included. One refusal added, for verdict 32: the
 help followed in `register` with a plain `count: shares mut Counter` parameter (E3023). Meaning
 unchanged.
 
@@ -843,7 +843,7 @@ fn game() -> int:
 
 A call through a stored function value may change its own state, so its holder is reached through a
 name that may change it (R12): the walk is `for ref mut h in hs:`, as AN-53's `click`. `hs` holds
-functions that may each change the one variable they captured; the lambda changes `score`, a real
+functions that change `score`, and its type says so, `Array[fn() changes score]` (verdict 40); the lambda changes `score`, a real
 variable of `game`, and says so (R12, verdict 22). `h()` changes `score`, which the loop does not walk,
 so the loop is allowed (R8 (c)), and `game` names nothing on its first line, since `score` is its own
 local (R5).
@@ -1224,7 +1224,9 @@ handlers may change a Ui is read from their type; the `for` refusal is the agree
 ## AN-61: Unsound today: a handler list dispatched by index is accepted and writes freed memory
 
 **v3:** as in v2; verdicts 21 to 34 change nothing here (the handlers are AN-60's `fn(ref mut Ui)`).
-The E3060 message in part 6 is v2's (`V2/readability.md` F-01, the lead's). Meaning unchanged.
+The E3060 message in part 6 is v2's, and `V2/readability.md` F-01 is settled by verdict 42: its line,
+`h = ref mut this.handlers.get_mut(i).unwrap()`, gives `h` another ref, which now compiles. Meaning
+unchanged.
 
 **1. Intent:** dispatch handlers by position so each may change the list.
 

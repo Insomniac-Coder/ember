@@ -290,9 +290,25 @@ none) sets what the function may do with it, for every type, so `template` only 
    `an35_tr_loop.em` (`template: Player`, `v.push(template.clone())`: `exit=0`, no output).
 6. **Still refused:**
 
+   The refused program (the NEW's `log_and_keep` with the hand-over moved up):
+
+   ```ember
+   struct Player:
+       name: String
+       inventory: Array[String]
+
+   fn keep(owns p: Player):
+       pass
+
+   fn log_and_keep(owns p: Player):
+       n = p.name
+       keep(p)
+       println(n)
+   ```
+
    ```text
-   error[E3060]: `n` views `p.name`, and `keep(p)` hands `p` over on line 11 while `n` is used on line 12
-     = help: use `n` before line 11, or keep your own copy: `n = copy of p.name`
+   error[E3060]: `n` views `p.name` (line 9), and `keep(p)` hands `p` over on line 10 while `n` is used on line 11
+     = help: use `n` before line 10, or keep your own copy: write `n = copy of p.name` in place of line 9
    ```
 
    ```text
@@ -1410,7 +1426,7 @@ views point into (R2, R7).
 
    ```text
    error[E3060]: `m.insert(String("z"), 1)` (line 8) changes `m`, whose keys `ks` (line 7) still views on line 9
-     = help: use `ks` before line 8, or keep your own strings: `ks = sorted(m.keys().copy_each())`
+     = help: use `ks` before line 8, or keep your own strings: write `ks = sorted(m.keys().copy_each())` in place of line 7
    ```
 
    Today's name of the adapter, `names = sorted(m.keys().copied())` (E1010; the `.copied()` row of
@@ -1747,7 +1763,7 @@ spelled (verdict 20).
    The conflict `an49_old_refcell_conflict.em` panics on becomes a compile-time refusal (R8 (b)): a
    view of `s.entities` (`a = s.entities`) still used while `s.add(...)` changes it: "`s.add(4)`
    (line 7) changes `s.entities` (`add` says `changes entities`), which `a` views (line 6) and uses on
-   line 8; use `a` before line 7, or keep a copy: `a = copy of s.entities`" (E3060).
+   line 8; use `a` before line 7, or keep a copy: write `a = copy of s.entities` in place of line 6" (E3060).
 7. **Cost:** less than today: no borrow flag (one word per `RefCell`, checked on every borrow in every
    profile, `[CELL-5]`, `[CELL-9]`); nothing runs.
 8. **Kind:** a smarter compile-time solution (Rust's run-time-checked `RefCell` replaced by R8's
@@ -1822,7 +1838,7 @@ of `V3/rules.md` section 3, word for word.
 
    ```text
    error[E3060]: `o.bag = Bag()` (line 11) replaces the `Bag` object that `first` (line 10) points into, and `first` is used on line 12
-     = help: use `first` before line 11, or keep your own copy: `first = copy of o.bag.items[0]`
+     = help: use `first` before line 11, or keep your own copy: write `first = copy of o.bag.items[0]` in place of line 10
    ```
 
    ```text
