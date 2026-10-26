@@ -2662,8 +2662,9 @@ The questions this area's answers meet that the rule writer already raised are i
 section 11 and are not repeated: question 1, what `click` says about its handlers' captured variables
 (answered by verdict 35: the word their type uses, `fn click() changes handlers, captured:`, as AN-53 now
 writes it); question 4, a function value or a bound in a
-function that is handed a function (AN-56 writes verdict 21's function-value form, AN-55 uses the
-library's bound); question 7, timing AN-62 (b)'s region (this step checked it for safety only, part 5).
+function that is handed a function (answered by verdict 38: the library uses the bound, a program's own
+function may write either; AN-56 writes verdict 21's function-value form, AN-55 uses the library's
+bound); question 7, timing AN-62 (b)'s region (this step checked it for safety only, part 5).
 
 ## Notes for the lead and the rule writer
 

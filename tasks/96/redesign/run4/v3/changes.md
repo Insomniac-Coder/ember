@@ -654,7 +654,10 @@ What the verdicts leave open, one at a time, each with what this step does meanw
    alternative would give `Iterator` itself a change list that every generic consumer names (as Swift 6
    gives `AsyncIteratorProtocol` an associated `Failure` type), which costs every generic iterator
    function a word. Is the type-parameter form acceptable?
-4. **The library's first lines take the function as a bound** (verdict 21's example takes a function
+4. **Answered (verdict 38, the owner: "a"): the library takes the function as a template parameter,
+   `fn for_each[C, F: fn(Item) changes C](owns f: F) owns this changes C:`; the shared function type stays
+   legal, for storing functions and in a program's own code.** The question as it was put: **the
+   library's first lines take the function as a bound** (verdict 21's example takes a function
    value). Meanwhile `fn for_each[C, F: fn(Item) changes C](owns f: F) owns this changes C:`, as today's
    library writes `[F: fn(Item)]`: one instance per function given, so the call is direct and may be
    inlined, as Rust's `F: FnMut`. Your `fn for_each[C](f: fn(T) changes C) changes C:` means the same and

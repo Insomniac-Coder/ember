@@ -311,6 +311,16 @@ acceptable it hurt readability too, if you want something to have a copy use the
     body does `for v in rx:` or `rx.recv()`. A function's own local end needs no word, as any own local.
     Owner: "Yes A".
 
+38. **Library functions that call a function right away take it as a template parameter** (the rule
+    writer's question 4): `fn for_each[C, F: fn(Item) changes C](owns f: F) owns this changes C:`, and
+    `retain`, `inspect` and `sort_by` the same way. `F` names the exact function given, so each lambda
+    gets its own copy and the call is direct (C++'s `template <typename F> void for_each(F f)`); the
+    shared type written on the parameter, `owns f: fn(Item) changes C` (C++'s `std::function`), is legal
+    too and is what keeps functions of different kinds together (`handlers: Array[fn() changes
+    captured]`), and a program's own functions may write either. Measured in C++ (g++ 13 -O2, 100
+    million items, median of 5, cloud container): template 73.3 ms, `std::function` 265.6 ms
+    (`run4/v3/probes/q4_template_vs_function.txt`). Owner: "a".
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."
