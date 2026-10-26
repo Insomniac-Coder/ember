@@ -43,7 +43,8 @@ No compiler change, no git command, no Ember program run.
 - **first line**: a function's signature with its clauses: what a method does to `this` (`reads`,
   `changes`, `changes this`, `owns this`), everything else the function causes to change (`changes NAME`
   for a module variable or a variable a lambda captured, `changes T` for objects of a type, `changes
-  captured...` for the variables the functions it runs captured, a change list; R5, R12), the result
+  captured` or `changes captured...` for the variables the functions it runs captured, in the word their
+  type uses, a change list; R5, R12), the result
   type, `from`.
 - **change list**: what a function changes, as one list (module variables, captured variables, types of
   objects, `captured`); a generic parameter written after `changes` stands for one and is filled from the
@@ -501,7 +502,8 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
   is a value of the type its first line gives (`fn log_click() changes LOG:` is a `fn() changes LOG`).
 - **A field, a list or a parameter that holds functions says it in its type**, naming module variables
   and types, and covering the variables the functions captured, which that type cannot name, with
-  **`captured`** (one captured variable) or **`captured...`** (any number):
+  **`captured`** (each function changes one variable it captured, whichever) or **`captured...`** (each
+  may change several at once):
   `handlers: Array[fn() changes LOG]`; `handlers: Array[fn() changes captured]`;
   `Array[fn() changes captured..., LOG]`. A lambda names its own captured variables and does not write
   `captured` (E2105).
@@ -534,8 +536,9 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
   holder while it runs, as Rust refuses. So inside a function that runs stored functions, `captured`
   never stands for `this` or for anything that owns it. A function that runs function values whose type
   says `captured` or `captured...`, itself or through a call whose first line says it, says so on its own
-  first line: `captured` where it runs the one function a field holds, `captured...` otherwise
-  (`fn click() changes handlers, captured...:`). In the function that wrote those lambdas the word
+  first line with the word that type uses, as it would name `LOG` for functions that change `LOG`:
+  `fn click() changes handlers, captured:` for `handlers: Array[fn() changes captured]`, and
+  `captured...` where any of the types it runs says `captured...`. In the function that wrote those lambdas the word
   stands for variables of its own, which need no clause (R5).
 - **A call that runs a function on its own counts as making its changes, now or later.** Handing a
   function to something that will run it by itself is a change of everything the function changes,
@@ -550,7 +553,7 @@ for a type whose `shares` fields can form a cycle of owners, and names the link 
   rules (R15: locks, `guarded by`, E7012) still keep threads apart. **Storing a function value is not a
   change**: putting it in a field, a list, a local or an iterator adapter (`b.on_click(f)`; AN-76's
   `setup`, which stores a button's handler; `xs.iter().inspect(f)`) changes nothing the function changes, and the
-  function that later runs it names them (`fn click() changes handlers, captured...:`; an adapter's
+  function that later runs it names them (`fn click() changes handlers, captured:`; an adapter's
   `next`). The line falls at who runs it: a call that runs the function, itself or by handing it to a
   thread or to C, counts; a call that keeps it for its caller to run does not.
 - **A foreign call may run the callbacks C keeps.** The compiler cannot see inside C, so a call of a
@@ -762,7 +765,7 @@ from in brackets, where there is one). Every message follows R18.
 | a change of what a read-only name reads while the name is still used (R8 (g)) | E3021 | "`enemies[0].hp = 1` (line 7) changes the enemy `boss` reads (`boss = enemies[0]`, line 5), and `boss` is used on line 9; change it after `boss`'s last use, or write `boss = ref mut enemies[0]` and change it through `boss`: `boss.hp = 1`" |
 | a walk with views across a call that may change nodes (R8 (g), R11; AN-62) | E3021 | "`this.on_visit(p)` (line 21) may change any `Node`, and so end one (`on_visit` is a `fn(Node) changes Node`), and `p` reads a node and is used again on line 23; walk with a link, which may outlive its node: instead of `cur = ref n`, the `while` line and `cur = ref p`, write `up = weakref leaf`, then `while up exists as n:`, inside it `if n.parent exists as p:` with `up = weakref p` and `this.on_visit(p)`, and `else: break`" |
 | a body that changes or reads what its first line does not name, or names what it does not do (rows 3, 7; AN-17, AN-31) | E2105 | "`tick` calls `note`, which changes `log`; add it to `tick`'s first line: `fn tick() changes players, log:`"; "`open` changes `this.angle`; write its first line as `fn open() changes angle:`"; "`load_assets` reads `assets`, which its first line does not name, and `init` calls it on line 6 before `assets` is set; set `assets` first, or write `fn load_assets() reads renderer -> Array[String]:` and stop reading `assets`" |
-| a lambda, or a function that runs one, that changes what its first line does not name (R12) | E2105 | "this function pushes to `LOG`; say so on its first line: `fn() changes LOG: LOG.push(String("clicked"))`"; "this function changes `score`, a variable it uses from `game`; say so on its first line: `b.on_click(fn() changes score: score += 1)`"; "`for_each` runs this function, which pushes to `LOG`; say so on its first line: `scores.for_each(fn(s) changes LOG: LOG.push(s.name))`"; "this function changes `log` through `push` (`changes lines`, under `log`'s lock); say so on its first line: `fn() with thread_shared log changes Log: log.push("a")`"; "`click` runs the handlers in `this.handlers`, whose type says `changes LOG`; add it to its first line: `fn click() changes handlers, LOG:`"; "`click` runs the handlers in `this.handlers`, whose type says `changes captured`; add it to its first line: `fn click() changes handlers, captured...:`" |
+| a lambda, or a function that runs one, that changes what its first line does not name (R12) | E2105 | "this function pushes to `LOG`; say so on its first line: `fn() changes LOG: LOG.push(String("clicked"))`"; "this function changes `score`, a variable it uses from `game`; say so on its first line: `b.on_click(fn() changes score: score += 1)`"; "`for_each` runs this function, which pushes to `LOG`; say so on its first line: `scores.for_each(fn(s) changes LOG: LOG.push(s.name))`"; "this function changes `log` through `push` (`changes lines`, under `log`'s lock); say so on its first line: `fn() with thread_shared log changes Log: log.push("a")`"; "`click` runs the handlers in `this.handlers`, whose type says `changes LOG`; add it to its first line: `fn click() changes handlers, LOG:`"; "`click` runs the handlers in `this.handlers`, whose type says `changes captured`; add it to its first line: `fn click() changes handlers, captured:`" |
 | `captured` on a lambda's own first line (R12) | E2105 | "this function changes `score`; a function names the variables it changes: write `fn() changes score:` (`captured` is for a list or a field of functions, which cannot name `score`)" |
 | a function that starts a thread, or hands C a callback to keep, without naming what it changes (R5, R12; AN-76, AN-78) | E2105 | "`main` starts a thread whose function changes `RESULTS` (`fn() changes RESULTS: worker(1)`, line 18); add it to `main`'s first line: `fn main() changes FRAME, LOG, RESULTS:`"; "`setup` hands `register_cb` a callback that C keeps and that changes `Game`; add it to `setup`'s first line: `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`" |
 | `changes this` or `owns this` beside `reads`, a field, or each other (R5) | E2107 | "`reset` says `changes this`, which already lets it change every field; write `fn reset() changes this:` or `fn reset() changes count:`" |

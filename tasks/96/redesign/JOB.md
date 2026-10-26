@@ -289,6 +289,15 @@ acceptable it hurt readability too, if you want something to have a copy use the
     `dst: MutSpan[float]` that writes is refused with the line to write. Owner: "b" (one rule, as
     verdict 32 and `boss = ref mut enemies[0]`; the line says "mut" twice).
 
+35. **A function that runs stored functions names their captured variables in the word their type uses**
+    (the rule writer's question 1). `class Button: handlers: Array[fn() changes captured] = []`, so
+    `fn click() changes handlers, captured:`, as a list of `fn() changes LOG` makes `click` say `LOG`;
+    `captured...` only where the list's functions each change several variables at once
+    (`Array[fn() changes captured...]`). `captured` describes one function that changes one variable it
+    captured, whichever; `captured...` one function that changes several at once; neither counts the
+    functions in the list. Owner, on that meaning: "captured only tells that one variable is captured it
+    doesnt matter which one it is and captured... means it will accept multiple variables at once", then "a".
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

@@ -37,7 +37,8 @@ anything, never aliases silently and never copies silently).
   variable `LOG`, `fn() changes score` the variable `score` it captured, `fn() changes Ui` objects of type
   `Ui` it reaches through a link it holds, and, in the type of a field, list or parameter that keeps
   functions, `fn() changes captured` (each function may change the one variable it captured) or
-  `fn() changes captured...` (any number of them) (verdict 22).
+  `fn() changes captured...` (each may change several at once) (verdict 22); a function that runs them
+  repeats that word on its first line (verdict 35).
 - **capture**: a name a lambda uses from the function that made it. **The real variable** (row 6): that
   very variable, not a copy; a write in the lambda is seen by the function, and back. A lambda that
   changes a real variable it captures names it on its first line (`fn() changes score:`, verdict 22); it
@@ -83,7 +84,7 @@ AN-78). Every answer now cites "verdict N" and the v3 files.
 
 | answer | what changed | meaning changed? |
 |---|---|---|
-| AN-53 (row 6) | row 6's handler says `changes score` (verdict 22); `Button`'s list is `Array[fn() changes captured]`, `on_click` takes `fn() changes captured`, `click` says `changes handlers, captured...` (R12; `V3/changes.md` section 11, question 1); refusals added: row 6's v2 spelling (E2105), a two-variable handler (E2113), a handler stored in the button it changes (E3022), `click` without `captured...` (E2105); the `LOG` handler's list becomes `Array[fn() changes captured, LOG]` | **yes**: v2's `handlers: Array[fn()]` with `b.on_click(fn(): score += 1)` is refused; the program does what it did, and row 6 reads as the owner agreed it |
+| AN-53 (row 6) | row 6's handler says `changes score` (verdict 22); `Button`'s list is `Array[fn() changes captured]`, `on_click` takes `fn() changes captured`, `click` says `changes handlers, captured` (R12; verdict 35: the word its list's type uses); refusals added: row 6's v2 spelling (E2105), a two-variable handler (E2113), a handler stored in the button it changes (E3022), `click` without `captured` (E2105); the `LOG` handler's list becomes `Array[fn() changes captured, LOG]` | **yes**: v2's `handlers: Array[fn()]` with `b.on_click(fn(): score += 1)` is refused; the program does what it did, and row 6 reads as the owner agreed it |
 | AN-54 | the v3 line; one refusal added: a handler that changes the real `score` without naming it (E2105) | no |
 | AN-55 | the lambda given to `inspect` says `changes seen` (verdict 22), and `inspect`'s change list makes `count()`, which drives the adapter, the call that changes `seen` (verdict 21); starting the thread counts as making what its function changes (verdict 30), here nothing, so `main` names nothing; refusals added: the lambda without `changes seen` (E2105), the iterator line inside a loop over `seen` (E3020), a scoped task started inside a loop over what it changes (E3020) | **yes**, for one line: v2's `inspect(fn(v) => seen.push(v))` is refused (E2105); the program does what it did |
 | AN-56 | the first lambda says `changes names` (verdict 22), and `each_name` takes a change list, `fn each_name[C](owns f: fn(owns String) changes C) changes C:` (verdict 21); the E2020 way out gives `fn(s) changes names: names.push(copy of s)` | **yes**: v2's `fn each_name(owns f: fn(owns String)):` no longer takes the first lambda (E2113); the program does what it did |
@@ -109,8 +110,8 @@ AN-78). Every answer now cites "verdict N" and the v3 files.
 **v3:** row 6 reads as the owner agreed it in verdict 22, `b.on_click(fn() changes score: score +=
 1)`. A plain `fn()` now changes nothing at all, captured variables included, so `Button`'s list covers
 the variable each handler captured with `captured`, as the owner settled it (`handlers: Array[fn()
-changes captured]`), and `click`, which runs them, says `changes handlers, captured...` (R12; the rule
-writer's reading, `V3/changes.md` section 11, question 1). **Meaning changed:** yes, for v2's lines:
+changes captured]`), and `click`, which runs them, says `changes handlers, captured`, the word its list's
+type uses (R12; verdict 35). **Meaning changed:** yes, for v2's lines:
 `handlers: Array[fn()]` with `b.on_click(fn(): score += 1)` is refused (E2105 for the lambda, then
 E2113 for the list, part 6); the program does what it did: the button adds 1 to `game`'s real `score`.
 
@@ -184,7 +185,7 @@ class Button:
     fn on_click(owns f: fn() changes captured) changes handlers:
         this.handlers.push(f)
 
-    fn click() changes handlers, captured...:
+    fn click() changes handlers, captured:
         for ref mut h in this.handlers:
             h()
 
@@ -204,7 +205,7 @@ fn game_copy() -> int:
 ```
 
 Changed from v2 (verdict 22): the lambda says `changes score`, the list's type says `changes captured`,
-`on_click`'s parameter says the same, and `click` says `changes handlers, captured...`. The calls write
+`on_click`'s parameter says the same, and `click` says `changes handlers, captured`. The calls write
 no `ref mut`: `b.on_click(...)` and `b.click()` are methods called on `b`, whose first lines say what
 they change (R4); `f` is an `owns` parameter, and a hand-over is written with no word (R4).
 
@@ -213,8 +214,9 @@ line (`fn() changes score:`, R12; checked against its body both ways, E2105). Th
 `game`'s `score` in its own type, so its list covers it with `captured`: each function in it may change
 the one variable it captured (a function that changes none fits too). `click` says `changes handlers`
 and walks with `ref mut h` because a call through a stored function value may change its own state, so
-it is a change of the place that holds it (R12), and `captured...` because it runs every handler in the
-list, and each may change its own captured variable (R12: `captured...` where it runs several). In
+it is a change of the place that holds it (R12), and `captured` because it runs functions of the type
+`fn() changes captured`, and says what they change in their own word, as it would say `LOG` for
+functions that change `LOG` (R12, verdict 35). In
 `game`, the function that wrote the lambda, those variables are its own locals (`score`), so `game` names
 nothing (R5); the compiler checks them there: `b` holds a function value that reaches `score`, and
 `b.click()` counts as a change of `score` (R12), so `return score` reads it after the click. Where
@@ -232,7 +234,7 @@ allows, R12).
 | `this` in `on_click` | `this`: the Button the method was called on | `changes handlers`: that field only |
 | `f` | `owns`: handed over to `on_click`; its type `fn() changes captured` | its new owner may; it hands it on to the list (storing it changes nothing it changes, R12) |
 | `this` in `click` | `this` | `changes handlers` (R12: calling a stored function value may change it) |
-| what `click` runs | the handlers' captured variables | `changes captured...`: each handler may change its own (R12) |
+| what `click` runs | the handlers' captured variables | `changes captured`: the word of its list's type; each handler may change the one variable it captured (R12, verdict 35) |
 | `h` | `ref mut`: an element of `handlers`, the only name for it while used (R8 (f)) | yes; calling it changes what its body changes, its own state included (R12) |
 | `score` in `game` | none (default: `game`'s own `int`, made by `=`) | its owner may |
 | `b` in `game` | none (default: `game`'s own Button, made by `=`) | through methods whose first line says `changes` |
@@ -290,8 +292,8 @@ copies the `int`, which is what `with copy of score` names.
   body adds to `score` and takes from `lives`, E2113 (the owner's refinement of verdict 22): "`fn()
   changes score, lives` changes 2
   captured variables, and `handlers` allows 1 (`Array[fn() changes captured]`); for functions that change
-  any number write `handlers: Array[fn() changes captured...]` and `fn on_click(owns f: fn() changes
-  captured...) changes handlers:`" (R12).
+  several at once write `handlers: Array[fn() changes captured...]`, `fn on_click(owns f: fn() changes
+  captured...) changes handlers:` and `fn click() changes handlers, captured...:`" (R12).
 - A handler that changes the button that keeps it, `b.on_click(fn() changes b: b.handlers.clear())`,
   E3022: "this function changes `b`, and `on_click` would keep it in `b.handlers`, so it would change the
   button that holds it while the button runs it; clear the handlers after the click instead:
@@ -299,10 +301,10 @@ copies the `int`, which is what `with copy of score` names.
   variable it changes owns, as Rust refuses).
 - `fn click():` with `for ref mut h in this.handlers: h()`, E2105: "`click` calls the handlers stored in
   `this.handlers`, which may change their own state and the variable each captured; say so on its first
-  line, `fn click() changes handlers, captured...:`, and walk them with `for ref mut h in
+  line, `fn click() changes handlers, captured:`, and walk them with `for ref mut h in
   this.handlers:`" (R12). With `changes handlers` alone, E2105: "`click` runs the handlers in
   `this.handlers`, whose type says `changes captured`; add it to its first line: `fn click() changes
-  handlers, captured...:`".
+  handlers, captured:`".
 - A loop that walks a list a function value changes, around a call that may run it (R12, R8 (c)),
   E3020: "this loop walks `xs` (line 5), and `hs[0]()` (line 6) may run the function made on line 3,
   which pushes to `xs`; call it after the loop, as many times as the loop would: write `n = xs.len()` before the loop, and `for k in 0..n: hs[0]()` below it instead of `hs[0]()` in it". The
@@ -313,12 +315,13 @@ copies the `int`, which is what `with copy of score` names.
   "this function changes `LOG` (`fn() changes LOG`), and `on_click` takes `fn() changes captured`,
   functions that change at most the one variable they captured; keep it in a list that says so:
   `handlers: Array[fn() changes captured, LOG]`, with `fn on_click(owns f: fn() changes captured, LOG)
-  changes handlers:`". With such a list, `click` says `changes handlers, captured..., LOG` (E2105
-  otherwise: "`click` runs the handlers in `this.handlers`, whose type says `changes LOG`; add it to its
-  first line: `fn click() changes handlers, captured..., LOG:`"), and `b.click()` inside a loop over
+  changes handlers:`". With such a list, `click` says `changes handlers, captured, LOG`, the words of
+  its list's type (E2105 otherwise: "`click` runs the handlers in `this.handlers`, whose type says
+  `changes LOG`; add it to its first line: `fn click() changes handlers, captured, LOG:`"), and
+  `b.click()` inside a loop over
   `LOG` is refused, E3020: "this loop walks `LOG` (line 16), and `b.click()` (line 17) changes `LOG`:
   `click` runs the handlers of `b`, an `Array[fn() changes captured, LOG]` (its first line says `changes
-  handlers, captured..., LOG`); click after the loop". A button whose handlers change only the variables
+  handlers, captured, LOG`); click after the loop". A button whose handlers change only the variables
   they captured, as here, is clicked inside a loop over `LOG` with no refusal (G-07 settled by the type,
   not by a search of the program).
 
@@ -2657,7 +2660,8 @@ Words an answer would need that `V3/vocabulary.md` has no row for. None is used 
 
 The questions this area's answers meet that the rule writer already raised are in `V3/changes.md`
 section 11 and are not repeated: question 1, what `click` says about its handlers' captured variables
-(AN-53 writes `fn click() changes handlers, captured...:`); question 4, a function value or a bound in a
+(answered by verdict 35: the word their type uses, `fn click() changes handlers, captured:`, as AN-53 now
+writes it); question 4, a function value or a bound in a
 function that is handed a function (AN-56 writes verdict 21's function-value form, AN-55 uses the
 library's bound); question 7, timing AN-62 (b)'s region (this step checked it for safety only, part 5).
 

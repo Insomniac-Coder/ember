@@ -51,10 +51,10 @@ copies; this step did the rest.
   it; one that changes more is refused (E2113, "changes 2 captured variables, the list allows 1"). The
   check of captured variables in the function that writes the lambda (E3026, R4, R8) is v2's,
   unchanged; it is still what keeps them safe.
-- **A function that runs such functions** names them too: `fn click() changes handlers, captured...:`
-  (R5, R12). This step reads verdict 30's "everything a function causes to change" as covering them;
-  in the function that wrote the lambdas the word stands for its own locals and needs no clause. Listed
-  for the owner (section 11, question 1).
+- **A function that runs such functions** names them too, in the word their type uses:
+  `fn click() changes handlers, captured:` for `Array[fn() changes captured]` (R5, R12; verdict 35, the
+  owner's answer to section 11's question 1). In the function that wrote the lambdas the word stands for
+  its own locals and needs no clause.
 - **Stored inside what it changes** (area D's note 1 in `V2/area-D.md`, now expressible): a function
   value that changes a captured variable counts, for R4's overlap rule, as an argument that changes
   that variable, so `b.on_click(fn() changes b: b.handlers.clear())` is refused (E3022), and so is a
@@ -602,7 +602,8 @@ output in `touched_v3.txt`.
 | 34 a `MutSpan` name or parameter that writes says `ref mut` | R2, R4, R5 | AN-03, AN-11, AN-14, AN-16, AN-28, AN-71, AN-74, AN-84 |
 
 Two consequences the area updaters will meet: AN-53's `Button.click` runs handlers of type
-`fn() changes captured`, so its first line becomes `fn click() changes handlers, captured...:` (R12);
+`fn() changes captured`, so its first line becomes `fn click() changes handlers, captured:` (R12,
+verdict 35);
 and AN-78's `setup` and `main` say `changes Game` (verdict 31's own example), while a function that
 only calls `poll_events()` names nothing for the kept callback (R12).
 
@@ -626,8 +627,9 @@ carried over.
 
 What the verdicts leave open, one at a time, each with what this step does meanwhile.
 
-1. **What a function that runs stored functions says about their captured variables** (verdicts 22
-   and 30). Verdict 22 settled the list's type (`handlers: Array[fn() changes captured]`); it did not
+1. **Answered (verdict 35, the owner: "a"): the word their type uses, `fn click() changes handlers,
+   captured:`.** The question as it was put: **what a function that runs stored functions says about
+   their captured variables** (verdicts 22 and 30). Verdict 22 settled the list's type (`handlers: Array[fn() changes captured]`); it did not
    say what `click`, which runs them, writes on its first line. This step reads verdict 30 ("`changes`
    only tells that a function will change something") as asking for it: `fn click() changes handlers,
    captured...:` (`captured...` since the list may hold several functions). Only the function that
