@@ -48,7 +48,7 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 7 | C++ interoperability and the interpreter | 97% |
 | 7a | Iteration, determinism, cost control | 91% |
 | 8 | Hardening and 1.0 | 84% |
-| 9 | The LLVM backend (ODR-223) | 0% |
+| 9 | The LLVM backend (ODR-223) | 23% |
 | | Overall (1.0) | 98% |
 | | After 1.0: the GPU host model (v0.6) | 0% |
 
