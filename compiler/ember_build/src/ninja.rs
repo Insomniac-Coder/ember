@@ -61,7 +61,8 @@ pub fn write_if_changed(path: &Path, text: &str) -> std::io::Result<bool> {
 /// objects and keeping `retained` though nothing calls them (as `compile_and_link_program`).
 pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], libraries: &[String]) -> Result<(), BuildError> {
     std::fs::create_dir_all(&program.dir)?;
-    // Ninja runs in the objects' folder: every path it is given is absolute.
+    // Ninja runs in the objects' folder: every path it is given is absolute, and the build's own
+    // files are spelled from that folder (`from_dir`).
     let absolute = |path: &PathBuf| std::path::absolute(path).unwrap_or_else(|_| path.clone());
     let units: Vec<PathBuf> = program.units.iter().map(absolute).collect();
     let linked: Vec<PathBuf> = program.objects.iter().map(absolute).collect();
@@ -149,21 +150,22 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     text.push_str("  description = link $out\n\n");
     for (unit, object) in program.units.iter().zip(&objects) {
         let rule = if is_ir(unit) { "ll" } else { "cc" };
-        text.push_str(&format!("build {}: {rule} {}\n", escape_path(object), escape_path(unit)));
+        text.push_str(&format!("build {}: {rule} {}\n", escape_path(&from_dir(&program.dir, object)), escape_path(&from_dir(&program.dir, unit))));
     }
-    let linked: Vec<&PathBuf> = objects.iter().chain(program.objects).collect();
+    let linked: Vec<PathBuf> = objects.iter().chain(program.objects).map(|path| from_dir(&program.dir, path)).collect();
     let mut rsp: Vec<OsString> = linked.iter().map(|path| path.as_os_str().to_os_string()).collect();
     rsp.extend(link.iter().cloned());
     if program.image.is_none() {
         rsp.extend(output_args(toolchain, program));
     }
+    let output = from_dir(&program.dir, &program.output);
     text.push_str(&format!(
         "build {}: link {}\n  rsp = {}\n",
-        escape_path(&program.output),
+        escape_path(&output),
         linked.iter().map(|path| escape_path(path)).collect::<Vec<_>>().join(" "),
         escape_value(&rsp_words(&rsp, !msvc))
     ));
-    text.push_str(&format!("default {}\n", escape_path(&program.output)));
+    text.push_str(&format!("default {}\n", escape_path(&output)));
     let file = program.dir.join("build.ninja");
     write_if_changed(&file, &text)?;
     let mut run = Command::new(&ninja);
@@ -397,16 +399,17 @@ fn link_args(toolchain: &Toolchain, program: &Program<'_>, lto: Lto, retained: &
 /// program, and the visualisers it puts in the program database (keyed by their content).
 fn output_args(toolchain: &Toolchain, program: &Program<'_>) -> Vec<OsString> {
     let request = LinkRequest { sources: &[], include_dirs: &[], output: program.output.clone(), profile: program.profile, obj_dir: program.dir.clone() };
-    let natvis = natvis_beside(&request);
+    let natvis = natvis_beside(&request).map(|natvis| from_dir(&program.dir, &natvis));
+    let output = from_dir(&program.dir, &program.output);
     match toolchain {
         // After `/link`: the linker's own.
         Toolchain::Msvc { .. } => {
-            let mut out = vec![OsString::from(format!("/OUT:{}", program.output.display()))];
+            let mut out = vec![OsString::from(format!("/OUT:{}", output.display()))];
             out.extend(natvis.map(|natvis| OsString::from(format!("/NATVIS:{}", natvis.display()))));
             out
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            let mut out = vec![OsString::from("-o"), program.output.clone().into()];
+            let mut out = vec![OsString::from("-o"), output.into()];
             if cfg!(windows) {
                 out.extend(natvis.map(|natvis| OsString::from(format!("-Wl,/NATVIS:{}", natvis.display()))));
             }
@@ -506,6 +509,22 @@ fn escape_value(text: &str) -> String {
 /// A path in a `build` line: `$`, a space and `:` escaped.
 fn escape_path(path: &Path) -> String {
     path.to_string_lossy().replace('$', "$$").replace(' ', "$ ").replace(':', "$:")
+}
+
+/// `[BLD-13]` — a file of the build's own spelled from the Ninja folder, where Ninja runs the
+/// commands: an object by its name, a unit, the program and its visualisers from the folder above
+/// (`..\c\main.c`, `..\bin\main.exe`). The objects' debug information, a link-time optimised
+/// object's module (its source file's name, which ThinLTO hashes into the names it promotes) and
+/// the program database name them as the commands spell them, so the same inputs built in another
+/// folder are the same bytes. Any other path (the runtime's cached objects) stays as it is.
+fn from_dir(dir: &Path, path: &Path) -> PathBuf {
+    if let Ok(name) = path.strip_prefix(dir) {
+        return name.to_path_buf();
+    }
+    match dir.parent().and_then(|above| path.strip_prefix(above).ok()) {
+        Some(rest) => Path::new("..").join(rest),
+        None => path.to_path_buf(),
+    }
 }
 
 /// Whether a unit is the LLVM backend's IR (`.ll`) rather than C.

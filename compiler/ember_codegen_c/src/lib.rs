@@ -636,8 +636,9 @@ fn emit_with(
         relaxed_units.push((mode, text));
     }
     // `[FFI-37]` — the program's table of foreign functions (the address of each one it calls,
-    // which names its library) and how many call sites it counts.
-    let ffi_instrument = emitter.ffi_instrument.take().map(|instrument| {
+    // which names its library) and how many call sites it counts. The emitter keeps the
+    // instrumentation until the main unit's declarations are written: they declare its entry points.
+    let ffi_instrument = emitter.ffi_instrument.as_ref().map(|instrument| {
         let sites = instrument.sites.take();
         let called: BTreeSet<u32> = sites.iter().map(|(function, _)| *function).collect();
         let entries: Vec<String> = instrument.functions.iter().enumerate().map(|(index, (name, address))| {
@@ -652,7 +653,7 @@ fn emit_with(
         ));
         FfiInstrumentOutput {
             source: ffi_instrument_source(),
-            functions: instrument.functions.into_iter().map(|(name, _)| name).collect(),
+            functions: instrument.functions.iter().map(|(name, _)| name.clone()).collect(),
             sites,
         }
     });

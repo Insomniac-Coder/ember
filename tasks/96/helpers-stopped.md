@@ -2,8 +2,15 @@
 
 The owner stopped all helpers on 2026-10-23: the language's memory model is to be reworked (C-like
 performance, memory safety without Rust's annoying parts, Python-like syntax; the research is in
-`tasks/96/redesign/`). Nothing of theirs is merged. Each helper's work, its unfinished part
-included, is committed and pinned to a named branch, and its notes are copied to `tasks/95/`.
+`tasks/96/redesign/`). Each helper's work, its unfinished part included, is committed and pinned
+to a named branch, and its notes are copied to `tasks/95/`.
+
+**Merged on 2026-10-27** (the owner: "bring their work to main"), in the order below, each checked
+before the next: AK as `158cc9a0` (output byte-identical on every test program in debug C,
+development C and `ember check`), AJ as `b8fed8ae` (a result changed only in its own tests; 377
+programs' C changed as intended), AI as `8fa95b5f` (every run test under the LLVM backend in every
+listed profile, 2152 of 2152; the driver's llvm, reload, cdylib and staticlib tests with it
+selected). The merge commits name the conflicts and how each was resolved.
 
 | Helper | Branch | Base on `main` | Commits past base | Notes |
 |---|---|---|---|---|

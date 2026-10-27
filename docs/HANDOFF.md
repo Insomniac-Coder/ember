@@ -6,6 +6,11 @@
 > `tasks/96/redesign/FINDINGS.md` and, for the phase 3 rerun on the owner's job (`JOB.md`),
 > `tasks/96/redesign/FINDINGS-phase3b.md`; the stopped helpers' work and how to resume it in
 > `tasks/96/helpers-stopped.md`. Nothing below is to be continued before that discussion.
+>
+> **2026-10-27.** On the owner's word ("bring their work to main") the stopped helpers' work is
+> merged on `main` at the old spec, each checked: AK `158cc9a0`, AJ `b8fed8ae`, AI `8fa95b5f`
+> (`tasks/96/helpers-stopped.md`). The first clang-cl run since `[BLD-4]` found D-917 and D-918
+> (`docs/DEFECTS.md`), both fixed after the merges.
 
 ## 0. Current state — the authoritative snapshot (updated 2026-09-23)
 
