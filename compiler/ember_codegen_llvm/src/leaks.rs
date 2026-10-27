@@ -18,7 +18,7 @@ const UNKNOWN: u32 = 3;
 fn class_edges(m: &mut Module<'_>, id: ClassId) -> Result<String> {
     let symbol = format!("ember.edges.{}", m.ty.table.mangled_class(id));
     let table = m.ty.table;
-    let offsets = table.class_field_offsets(id);
+    let offsets = m.ty.object_field_offsets(id);
     crate::glue::define_glue(m, &symbol, &["ptr", "ptr", "ptr"], "", |cx| {
         for index in 0..table.class_field_count(id) {
             let Some((owner, field)) = table.class_field_at_info(id, index) else { continue };
@@ -27,7 +27,7 @@ fn class_edges(m: &mut Module<'_>, id: ClassId) -> Result<String> {
                 (true, TyKind::Class(target)) => Some(format!("Weak[{}]", table.class_def(*target).name)),
                 _ => None,
             };
-            let at = cx.gep("%p0", 24 + offsets[index]);
+            let at = cx.gep("%p0", offsets[index]);
             cx.edges_of(&at, field.ty, &label, replacement.as_deref(), true)?;
         }
         Ok(())
@@ -41,7 +41,7 @@ fn shared_edges(m: &mut Module<'_>, id: StructId, inner: Ty) -> Result<String> {
     let label = format!("Shared[{}].value", m.ty.table.display(inner));
     let (_, align) = m.ty.size_align(inner);
     crate::glue::define_glue(m, &symbol, &["ptr", "ptr", "ptr"], "", |cx| {
-        let payload = cx.gep("%p0", crate::glue::payload_offset(align.max(1)));
+        let payload = cx.gep("%p0", cx.m.ty.payload_offset(align.max(1)));
         cx.edges_of(&payload, inner, &label, None, false)
     })?;
     Ok(global_name(&symbol))

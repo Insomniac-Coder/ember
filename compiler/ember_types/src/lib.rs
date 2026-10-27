@@ -1747,8 +1747,27 @@ impl TypeTable {
         }
     }
 
+    /// ODR-275 — what an `UnsafeCell[T]` holds (`T`), else `None`: every std type whose state
+    /// changes through a shared reference keeps that state in one (`RefCell`'s, `Mutex`'s,
+    /// `RwLock`'s and `Atomic`'s fields), which the code reaching that state reads through.
+    pub fn unsafe_cell_inner(&self, ty: Ty) -> Option<Ty> {
+        let TyKind::Struct(id) = self.kind(ty) else { return None };
+        match &self.struct_def(*id).origin {
+            Some((name, args)) if name.is("std.mem.UnsafeCell") && args.len() == 1 => Some(args[0]),
+            _ => None,
+        }
+    }
+
+    /// The type a field of `ty` holds: through the `UnsafeCell` that keeps it, when it is one.
+    pub fn cell_held(&self, ty: Ty) -> Ty {
+        self.unsafe_cell_inner(ty).unwrap_or(ty)
+    }
+
     /// Whether a value of this type holds a `Cell` or `UnsafeCell` in its
-    /// own storage.
+    /// own storage: what a shared reference to it may change (`[BRW-8]`, and the LLVM backend's
+    /// `readonly`, `[CG-LL-3]`). ODR-275: every std type whose state changes through a shared
+    /// reference keeps it in an `UnsafeCell`, so this one structural fact serves both; `Cell`, which
+    /// is `Copy` where an `UnsafeCell` never is, is the other primitive.
     pub fn holds_a_cell(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Struct(id) => {
@@ -2474,12 +2493,18 @@ impl TypeTable {
     /// a zero word after an odd count (`[EXC-19]`), each field at its natural alignment, as the C
     /// backend declares them.
     /// ponytail: placed after a 24-byte header; a field aligned to 32 or more sits elsewhere in a
-    /// reloadable build's object.
+    /// reloadable build's object (`class_field_offsets_after` places them after either).
     pub fn class_field_offsets(&self, id: ClassId) -> Vec<u64> {
+        self.class_field_offsets_after(id, 24).into_iter().map(|offset| offset - 24).collect()
+    }
+
+    /// `[OBJ-1]`, `[HR-12]` — each field's offset from the object's start, after a header of
+    /// `header` bytes (24, or 40 in a reloadable build whose instances migrate).
+    pub fn class_field_offsets_after(&self, id: ClassId, header: u64) -> Vec<u64> {
         let count = self.class_field_count(id);
         let owner = |index: usize| self.class_field_at_info(id, index).map(|(owner, _)| owner);
         let mut offsets = Vec::with_capacity(count);
-        let mut at = 24u64;
+        let mut at = header;
         let mut start = 0;
         while start < count {
             let mut end = start + 1;
@@ -2492,7 +2517,7 @@ impl TypeTable {
                 if let Some(field) = self.class_field_at(id, index) {
                     let layout = self.layout(field.ty);
                     at = align_to(at, layout.align);
-                    offsets.push(at - 24);
+                    offsets.push(at);
                     at += layout.size;
                 }
             }

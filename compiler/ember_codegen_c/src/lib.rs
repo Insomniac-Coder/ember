@@ -28,12 +28,14 @@ mod class_exports;
 mod frames;
 mod header;
 mod integer_reduction;
+pub mod image;
 mod reload;
 mod visualisers;
 
 pub use visualisers::Visualisers;
+pub use class_exports::{ClassExport, Crossed, MethodExport};
 
-pub use reload::{ReloadImage, manifest_symbol};
+pub use image::{ReloadImage, manifest_symbol};
 
 pub struct Output {
     /// The single translation unit for this module.
@@ -64,6 +66,22 @@ pub struct Output {
     pub ffi_instrument: Option<FfiInstrumentOutput>,
     /// `[CG-C-9]` — the program's debugger visualisers, which the build writes beside it.
     pub visualisers: Visualisers,
+    /// `[BLD-FFI-5a]` — the `@sync` classes' functions the header declares.
+    pub classes: Vec<ClassExport>,
+}
+
+/// `[FFI-26]`, `[BLD-FFI-5a]` — what a library's headers declare (`library_interface`).
+pub struct LibraryInterface {
+    pub header: Result<HeaderOutput, String>,
+    pub classes: Vec<ClassExport>,
+}
+
+/// `[FFI-26]`, `[BLD-FFI-5a]` — a library's C and C++ headers and the `@sync` classes' functions they
+/// declare, from the type plan `emit` makes, for a backend that writes the library itself
+/// (`ember_codegen_llvm`); no C is written. `module`: a shared library's (`[FFI-28]`).
+pub fn library_interface(mir: VerifiedMir<'_>, map: &SourceMap, module_name: &str, package_name: &str, module: bool, for_msvc: bool) -> LibraryInterface {
+    let output = emit_with(mir, map, module_name, package_name, false, false, true, module, for_msvc, None, None, None, false, None, None, true);
+    LibraryInterface { header: output.header_source, classes: output.classes }
 }
 
 /// `[FFI-37]`, `[FFI-37b]` — what an instrumented test binary counts.
@@ -293,7 +311,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false, None, None)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false, None, None, false)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -331,7 +349,7 @@ pub fn emit(
     units: Option<&[(String, BTreeSet<String>)]>,
     unit_sink: Option<UnitSink<'_>>,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi, units, unit_sink)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi, units, unit_sink, false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -351,6 +369,7 @@ fn emit_with(
     instrument_ffi: bool,
     units: Option<&[(String, BTreeSet<String>)]>,
     unit_sink: Option<UnitSink<'_>>,
+    interface_only: bool,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -493,21 +512,11 @@ fn emit_with(
         fmt_prints: std::cell::RefCell::new(Vec::new()),
         fmt_specs: std::cell::RefCell::new(Vec::new()),
         reload: reload.cloned(),
-        reload_slots: BTreeMap::new(),
+        reload_plan: None,
         reload_interface_ids: std::cell::RefCell::new(BTreeSet::new()),
-        reload_shapes: BTreeMap::new(),
-        reload_shapes_open: BTreeSet::new(),
-        reload_elements: BTreeMap::new(),
-        reload_frame_layouts: BTreeMap::new(),
-        reload_old_layouts: BTreeSet::new(),
         rl_sites: BTreeMap::new(),
         rl_frame_active: false,
         lazy_statics: lazy_statics.clone(),
-        reload_bodies: if reload.is_some() {
-            bodies.iter().map(|body| (body.name.clone(), body.symbol.clone(), body.return_ty())).collect()
-        } else {
-            Vec::new()
-        },
         mangled_types: std::cell::RefCell::new(BTreeMap::new()),
         collection_wrappers: wrappers,
         array_helpers: std::cell::RefCell::new(Vec::new()),
@@ -536,6 +545,23 @@ fn emit_with(
         emitter.declare_foreign_statics(&lazy_statics);
     };
     let mut emitter = make(None);
+    // `[FFI-26]` — only what the headers declare: the type plan, and the class methods' tables the
+    // class exports' plans read.
+    if interface_only {
+        emitter.collect_virtual_methods(bodies);
+        let class_plans = class_exports::plan(&emitter, bodies, package_name);
+        return Output {
+            c_source: String::new(),
+            relaxed_units: Vec::new(),
+            module_units: Vec::new(),
+            optimization_report: Vec::new(),
+            header_source: header::render(&emitter, bodies, package_name),
+            safety_json: String::new(),
+            ffi_instrument: None,
+            visualisers: Visualisers::default(),
+            classes: class_exports::exported(&class_plans),
+        };
+    }
     // `[BLD-4]` — written one unit per module, the main unit defines the functions of no module.
     if let Some(units) = units {
         let in_units: BTreeSet<&String> = units.iter().flat_map(|(_, symbols)| symbols).collect();
@@ -589,6 +615,7 @@ fn emit_with(
         (runs, class_plans)
     });
     let class_definitions = class_exports::definitions(&emitter, &class_plans);
+    let classes = class_exports::exported(&class_plans);
     emitter.out.push_str(&class_definitions);
     let header_source = header::render(&emitter, bodies, package_name);
     let visualisers = visualisers::render(&emitter);
@@ -659,6 +686,7 @@ fn emit_with(
         safety_json: safety_json(bodies, map),
         ffi_instrument,
         visualisers,
+        classes,
     }
 }
 
@@ -701,7 +729,7 @@ pub const FP_CONTRACT: [&str; 6] = [
 /// as compiler metadata on the body. The JSON is deliberately written without
 /// a serialization dependency: this artifact is a compiler output with a
 /// fixed, small schema rather than a user-facing data model.
-fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
+pub fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
     // ODR-281 — written into one buffer as it is found: each entry its own string, joined into
     // a copy and formatted into another, held a large program's table three times over.
     let mut out = String::from("{\"schema\":1,\"checks\":[");
@@ -1026,29 +1054,16 @@ struct Emitter<'a> {
     fmt_specs: std::cell::RefCell<Vec<Ty>>,
     /// Annex B — a reloadable image's functions, statics and mode (`reload.rs`).
     reload: Option<ReloadImage>,
-    /// Each function the reload manifest lists, by symbol, with its index in the image's tables.
-    reload_slots: BTreeMap<String, usize>,
+    /// What the image says of itself, decided once for both backends (`image.rs`).
+    reload_plan: Option<image::Planner<'a>>,
     /// The interface identities a reloadable image defines.
     reload_interface_ids: std::cell::RefCell<BTreeSet<String>>,
-    /// `[HR-15]` — the tables describing a value no schema names, by type and whether the table
-    /// lists the type's fields (`reload.rs`); and the types being described, met again inside
-    /// themselves.
-    reload_shapes: BTreeMap<(Ty, bool), String>,
-    reload_shapes_open: BTreeSet<Ty>,
-    /// `[HR-13]` — the rows describing a container's element by its schema, by element type, with
-    /// the row's kind.
-    reload_elements: BTreeMap<Ty, (String, &'static str)>,
-    /// `[HR-3b]` (A1) — what each body depends on with its direct callees, what any old body may
-    /// (a call through a function value), the current body's call sites by block, and whether the
-    /// body being emitted keeps a frame record (`frames.rs`).
-    reload_frame_layouts: BTreeMap<String, BTreeSet<String>>,
-    reload_old_layouts: BTreeSet<String>,
+    /// `[HR-3b]` (A1) — the current body's call sites by block, and whether the body being emitted
+    /// keeps a frame record (`frames.rs`).
     rl_sites: BTreeMap<usize, u32>,
     rl_frame_active: bool,
     /// `[STA-3]` — the statics initialised on first access, by initialiser symbol.
     lazy_statics: BTreeMap<String, (Ty, String)>,
-    /// Annex B — every body's name, symbol and return type, for the functions the driver wrote.
-    reload_bodies: Vec<(String, String, Ty)>,
     /// `[MNG-1]` — each type's mangled form (`TypeTable::mangled`), made once: a type is named
     /// wherever a value of it is.
     mangled_types: std::cell::RefCell<BTreeMap<TypeNode, String>>,
@@ -1775,8 +1790,7 @@ impl Emitter<'_> {
         if self.module {
             self.line(&format!("static uint32_t {}module_creator;", ember_branding::mangle_prefix()));
         }
-        self.plan_reload_slots(bodies);
-        self.plan_frame_layouts(bodies);
+        self.plan_reload(bodies);
         self.emit_type_declarations();
         self.line(COLLECTION_WRAPPERS);
         self.line(FOREIGN_STATIC_DECLARATIONS);
@@ -4998,7 +5012,7 @@ impl Emitter<'_> {
                 .base
                 .map(|base| format!("&{}", self.class_type_info(base)))
                 .unwrap_or_else(|| "NULL".to_string());
-            let identity = reload::class_identity_symbol(&self.mangled_type(TypeNode::Class(id)));
+            let identity = image::class_identity_symbol(&self.mangled_type(TypeNode::Class(id)));
             if self.reload.is_some() {
                 self.line(&format!("static {RT}rl_identity {identity} = {{ {}, NULL }};", c_string_literal(&info)));
             }
@@ -5662,6 +5676,16 @@ impl Emitter<'_> {
     /// `RefCell_…` struct whose field 0 holds this guard's `T`. Name-checked
     /// first (like `is_option`'s `Option_` prefix) so a user struct with the
     /// same shape does not capture the release.
+    /// ODR-275 — the C member path of the field `name` of the struct `owner`: through the
+    /// `UnsafeCell` that keeps it (`word.value`), when it is one.
+    fn state_member(&self, owner: Ty, name: &str) -> String {
+        let TyKind::Struct(id) = *self.types.kind(owner) else { return name.to_string() };
+        match self.types.struct_def(id).fields.iter().find(|field| field.name.as_str() == name) {
+            Some(field) if self.types.unsafe_cell_inner(field.ty).is_some() => format!("{name}.value"),
+            _ => name.to_string(),
+        }
+    }
+
     fn refcell_for_guard(&self, guard_ty: Ty) -> Option<Ty> {
         let TyKind::Struct(guard_id) = *self.types.kind(guard_ty) else {
             return None;
@@ -5685,7 +5709,7 @@ impl Emitter<'_> {
             if def.fields.len() != 4 {
                 continue;
             }
-            if def.fields[0].ty == inner {
+            if self.types.cell_held(def.fields[0].ty) == inner {
                 return Some(ty);
             }
         }
@@ -5818,8 +5842,9 @@ impl Emitter<'_> {
                     Some("std.sync.MutexGuard") => {
                         if let Some(mutex) = self.lock_for_guard(ty, "std.sync.Mutex") {
                             let mutex_c = self.c_type(mutex);
-                            out.push(format!("{RT}lock_order_freed(&(({mutex_c}*){access}.value)->word);"));
-                            out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->word);"));
+                            let word = self.state_member(mutex, "word");
+                            out.push(format!("{RT}lock_order_freed(&(({mutex_c}*){access}.value)->{word});"));
+                            out.push(format!("{RT}mutex_unlock(&(({mutex_c}*){access}.value)->{word});"));
                         }
                         return;
                     }
@@ -5848,8 +5873,9 @@ impl Emitter<'_> {
                         let write = guard == "std.sync.RwLockWriteGuard";
                         if let Some(lock) = self.lock_for_guard(ty, "std.sync.RwLock") {
                             let lock_c = self.c_type(lock);
-                            out.push(format!("{RT}lock_order_freed(&(({lock_c}*){access}.value)->word);"));
-                            out.push(format!("{RT}rwlock_release(&(({lock_c}*){access}.value)->word, {write});"));
+                            let word = self.state_member(lock, "word");
+                            out.push(format!("{RT}lock_order_freed(&(({lock_c}*){access}.value)->{word});"));
+                            out.push(format!("{RT}rwlock_release(&(({lock_c}*){access}.value)->{word}, {write});"));
                         }
                         return;
                     }
@@ -5873,13 +5899,14 @@ impl Emitter<'_> {
                 if guard_name.starts_with("RefMut_") || guard_name.starts_with("Ref_") {
                     if let Some(cell_ty) = self.refcell_for_guard(ty) {
                         let cell_c = self.c_type(cell_ty);
+                        let borrow = self.state_member(cell_ty, "borrow");
                         if guard_name.starts_with("RefMut_") {
                             out.push(format!(
-                                "((({cell_c}*){access}.value)->borrow = 0);"
+                                "((({cell_c}*){access}.value)->{borrow} = 0);"
                             ));
                         } else {
                             out.push(format!(
-                                "((({cell_c}*){access}.value)->borrow--);"
+                                "((({cell_c}*){access}.value)->{borrow}--);"
                             ));
                         }
                         return;
@@ -6647,7 +6674,7 @@ impl Emitter<'_> {
             Some(owned) => format!("{}*", self.c_type(owned.pointee)),
             None => result,
         };
-        format!("{result} {}{}({params})", calling_convention(body.abi.as_deref()), counted.foreign_symbol)
+        format!("{result} {}{}({params})", calling_convention(counted.abi.as_deref()), counted.foreign_symbol)
     }
 
     /// `[FFI-23]` — the address of the object `value`, a class handle or a `Box`, holds: the
@@ -8213,15 +8240,22 @@ impl Emitter<'_> {
     fn access_call(&self, place: &Place, operation: &str, span: ember_span::Span, body: &Body) -> String {
         let location = self.location(span);
         // `[EXC-18]` — a `dyn` receiver's object, through its table's `access`
-        // entry, which only a class concrete has (F4).
-        let dyn_place = match self.types.kind(self.place_ty(place, body)) {
+        // entry, which only a class concrete has (F4). D-913: one a class field
+        // holds is named with a `Deref` after the field; the field's own place
+        // is its access word (`[EXC-19]`), which a store into the field takes
+        // (through the table it read the box before the store wrote it).
+        let (carrier, behind) = match place.projection.split_last() {
+            Some((Projection::Deref, prefix)) => (Place { local: place.local, projection: prefix.to_vec() }, true),
+            _ => (place.clone(), false),
+        };
+        let dyn_place = match self.types.kind(self.place_ty(&carrier, body)) {
             TyKind::Dyn { .. } => true,
-            TyKind::Ref { inner, .. } => matches!(self.types.kind(*inner), TyKind::Dyn { .. }),
+            TyKind::Ref { inner, .. } => !behind && matches!(self.types.kind(*inner), TyKind::Dyn { .. }),
             TyKind::Struct(id) => self.box_inner_id(*id).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })),
             _ => false,
         };
-        if dyn_place {
-            let fat = self.place_in(place, body);
+        if dyn_place && (behind || self.class_field_of_place(place, body).is_none()) {
+            let fat = self.place_in(&carrier, body);
             let header = ember_branding::generated("dyn_vtable_header");
             let code = match operation {
                 "begin_read" => DYN_BEGIN_READ,
@@ -13366,7 +13400,9 @@ fn library_namespaced(text: &str, namespace: &str, exports: &BTreeSet<String>) -
     out
 }
 
-fn package_type_namespace(package_name: &str) -> String {
+/// A library's namespace for the names its units share: `[CG-C-11]` its private types and
+/// functions across its C units, `[CG-LL-1]` its IR's shims.
+pub fn package_type_namespace(package_name: &str) -> String {
     let mut prefix = format!("{}pkg_", ember_branding::mangle_prefix());
     for byte in package_name.as_bytes() {
         prefix.push_str(&format!("{byte:02x}"));
@@ -15077,17 +15113,11 @@ mod string_descriptor_view_parts_tests {
             fmt_prints: Default::default(),
             fmt_specs: Default::default(),
             reload: None,
-            reload_slots: BTreeMap::new(),
+            reload_plan: None,
             reload_interface_ids: Default::default(),
-            reload_shapes: BTreeMap::new(),
-            reload_shapes_open: BTreeSet::new(),
-            reload_elements: BTreeMap::new(),
-            reload_frame_layouts: BTreeMap::new(),
-            reload_old_layouts: BTreeSet::new(),
             rl_sites: BTreeMap::new(),
             rl_frame_active: false,
             lazy_statics: BTreeMap::new(),
-            reload_bodies: Vec::new(),
             mangled_types: std::cell::RefCell::new(BTreeMap::new()),
             collection_wrappers: BTreeMap::new(),
         }

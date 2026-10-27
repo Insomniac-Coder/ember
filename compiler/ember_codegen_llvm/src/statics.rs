@@ -246,12 +246,20 @@ pub(crate) fn lazy_static(m: &mut Module<'_>, name: &str, init: &str, ty: Ty) ->
         return Ok(ir_name);
     }
     let (size, align) = m.ty.size_align(ty);
-    let storage = global_name(&format!("{init}.storage"));
-    let state = global_name(&format!("{init}.state"));
-    m.global(format!("{storage} = internal global [{} x i8] zeroinitializer, align {}", size.max(1), align.max(1)));
-    m.global(format!("{state} = internal global i32 0, align 4"));
+    let reload = m.reload.is_some();
+    let (mut storage, mut state) = (global_name(&format!("{init}.storage")), global_name(&format!("{init}.state")));
+    if !reload {
+        m.global(format!("{storage} = internal global [{} x i8] zeroinitializer, align {}", size.max(1), align.max(1)));
+        m.global(format!("{state} = internal global i32 0, align 4"));
+    }
     let shown = name.rsplit('.').next().unwrap_or(name);
     let mut cx = FnCx::glue(m);
+    // `[HR-4a]`, `[HR-17]` — in a reloadable image the storage and the state word are the runtime's,
+    // found by the static's name, so a reload keeps the value.
+    if reload {
+        storage = crate::reload::static_storage(&mut cx, name);
+        state = crate::reload::static_state(&mut cx, name);
+    }
     let text = cx.m.bytes(shown.as_bytes());
     let first = cx.alloca(4, 4);
     cx.call_rt("rt_static_begin", vec![Val::Imm(crate::types::Sc::Ptr, state.clone()), Val::Imm(crate::types::Sc::Ptr, text)], Some((&first, 4)));

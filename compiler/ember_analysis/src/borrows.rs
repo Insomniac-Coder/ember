@@ -30,7 +30,7 @@
 //! handing one back — and `regions.rs` is what replaced it.
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_diag::{Diagnostic, Sink, codes};
 use ember_mir::{
@@ -333,7 +333,7 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
     let call_contract = |func: &FuncRef| contract_for(func, &summaries, &signatures);
     let capture_contracts = closure_capture_contracts(bodies, &summaries);
     // The bodies that implement each virtual slot, by the class declaring them.
-    let mut slots: VirtualSlots = HashMap::new();
+    let mut slots: VirtualSlots = BTreeMap::new();
     for body in bodies.iter().filter(|body| !body.is_abstract) {
         if let (Some(owner), Some(slot)) = (body.class_owner, body.class_virtual_slot) {
             slots.entry((owner, slot)).or_default().push(body.symbol.clone());
@@ -360,7 +360,7 @@ pub fn insert_shared_accesses_all(bodies: &mut [Body], types: &TypeTable) -> usi
 
 /// Per (class, virtual slot), the symbols of the bodies that class declares
 /// for the slot.
-type VirtualSlots = HashMap<(ClassId, usize), Vec<String>>;
+type VirtualSlots = BTreeMap<(ClassId, usize), Vec<String>>;
 
 /// A dynamic `Shared.get()`/`Shared.get_mut()` interval that crosses a direct call. This is
 /// kept separate from callable-region metadata: it affects compiler-internal
@@ -594,13 +594,15 @@ fn whole_receiver_access(body: &Body, types: &TypeTable, args: &[Operand], dest:
         }
         // A `dyn` receiver: the object behind it, if its concrete is a
         // class, through its table's `access` entry (F4). The fat
-        // pointer itself names it.
-        TyKind::Dyn { .. } => receiver.clone(),
+        // pointer itself names it; one a class field holds is named with a
+        // `Deref` after it (D-913), since the field's own place names the
+        // field's access word (`[EXC-19]`), which a store into it takes.
+        TyKind::Dyn { .. } => behind_dyn(body, types, receiver),
         TyKind::Ref { inner, .. } if matches!(types.kind(*inner), TyKind::Dyn { .. }) => receiver.clone(),
         TyKind::Struct(id)
             if types.compiler_box_inner(*id).is_some_and(|inner| matches!(types.kind(inner), TyKind::Dyn { .. })) =>
         {
-            receiver.clone()
+            behind_dyn(body, types, receiver)
         }
         _ => return Vec::new(),
     };
@@ -608,6 +610,20 @@ fn whole_receiver_access(body: &Body, types: &TypeTable, args: &[Operand], dest:
     // the result (`Option[ref mut T]`, a tuple; D-452).
     let mutable = types.has_mutable_view(place_ty(body, types, dest));
     vec![(object, mutable, 0)]
+}
+
+/// D-913 — the object behind a `dyn` carrier at `receiver`: the carrier itself, or, when a class
+/// field holds it, the field's place with a `Deref` after it, which the backends read as the
+/// carrier's object (the field's own place is its access word).
+fn behind_dyn(body: &Body, types: &TypeTable, receiver: &Place) -> Place {
+    let Some((Projection::Field(_), prefix)) = receiver.projection.split_last() else { return receiver.clone() };
+    let holder = Place { local: receiver.local, projection: prefix.to_vec() };
+    if !matches!(types.kind(place_ty(body, types, &holder)), TyKind::Class(_)) {
+        return receiver.clone();
+    }
+    let mut object = receiver.clone();
+    object.projection.push(Projection::Deref);
+    object
 }
 
 /// The region of the loan an argument was made from, when the argument is a
@@ -4026,9 +4042,7 @@ fn check_refcell_call(
             loan.capability.reference_kind == ReferenceKind::RuntimeGuard
                 // A mutex guard held across a call is ordinary: L3011 is `RefCell`'s.
                 && loan.capability.source_place().is_none_or(|source| {
-                    let mut parent = source.clone();
-                    parent.projection.pop();
-                    is_refcell_ty(types, place_ty(body, types, &parent))
+                    is_refcell_ty(types, place_ty(body, types, &guarded_parent(body, types, source)))
                 })
         })
         .collect();
@@ -4045,8 +4059,7 @@ fn check_refcell_call(
         .expect("a guard loan has source storage")
         .clone();
     if let Some(Projection::Field(0)) = display.projection.last() {
-        let mut parent = display.clone();
-        parent.projection.pop();
+        let parent = guarded_parent(body, types, &display);
         if is_refcell_ty(types, place_ty(body, types, &parent)) {
             display = parent;
         }
@@ -5372,9 +5385,18 @@ fn is_guard_loan(body: &Body, types: &TypeTable, place: &Place) -> bool {
     if place.projection.is_empty() {
         return false;
     }
+    is_guarded_cell_ty(types, place_ty(body, types, &guarded_parent(body, types, place)))
+}
+
+/// The place a loan of a cell's value is inside: its parent, or (ODR-275) its parent's parent when
+/// the parent is the `UnsafeCell` that keeps the value.
+fn guarded_parent(body: &Body, types: &TypeTable, place: &Place) -> Place {
     let mut parent = place.clone();
     parent.projection.pop();
-    is_guarded_cell_ty(types, place_ty(body, types, &parent))
+    if !parent.projection.is_empty() && types.unsafe_cell_inner(place_ty(body, types, &parent)).is_some() {
+        parent.projection.pop();
+    }
+    parent
 }
 
 fn operand_read(operand: &Operand, out: &mut Vec<(Place, Access)>) {

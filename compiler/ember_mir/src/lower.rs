@@ -2151,12 +2151,9 @@ impl<'a> Builder<'a> {
         };
         self.at(span);
         let mutex_place = self.lower_place(mutex_hir);
-        let value_place = mutex_place.clone().field(0);
-        let word_place = mutex_place.field(1);
-        let word_ty = {
-            let TyKind::Struct(mutex_id) = *self.types.kind(mutex_hir.ty) else { return };
-            self.types.struct_def(mutex_id).fields[1].ty
-        };
+        let (Some((_, value_cell)), Some((word_ty, word_cell))) = (self.state_ty(mutex_hir.ty, 0), self.state_ty(mutex_hir.ty, 1)) else { return };
+        let value_place = state_place(mutex_place.clone(), 0, value_cell);
+        let word_place = state_place(mutex_place, 1, word_cell);
         // The word's address: in C a reference is a pointer.
         // Interned by the type checker with the guard (`mutex_guard_of`).
         let Some(word_ref_ty) = self.types.find(&TyKind::Ref { mutable: true, inner: word_ty }) else { return };
@@ -2232,13 +2229,12 @@ impl<'a> Builder<'a> {
     /// operands as they are.
     fn lower_atomic(&mut self, place: Place, which: hir::Builtin, args: &'a [hir::Expr], span: ember_span::Span) {
         let hir::ExprKind::Ref { place: atomic_hir, .. } = &args[0].kind else { return };
-        let TyKind::Struct(id) = *self.types.kind(atomic_hir.ty) else { return };
-        let value_ty = self.types.struct_def(id).fields[0].ty;
+        let Some((value_ty, value_cell)) = self.state_ty(atomic_hir.ty, 0) else { return };
         // Interned by the type checker (`synth_atomic_method`).
         let Some(value_ref_ty) = self.types.find(&TyKind::Ref { mutable: true, inner: value_ty }) else { return };
         let operands: Vec<Operand> = args[1..].iter().map(|arg| self.lower_operand(arg)).collect();
         self.at(span);
-        let value_place = self.lower_place(atomic_hir).field(0);
+        let value_place = state_place(self.lower_place(atomic_hir), 0, value_cell);
         let value_ref = self.temp(value_ref_ty, span);
         self.push(StmtKind::Assign { place: Place::local(value_ref), rvalue: Rvalue::Ref { place: value_place, mutable: true } });
         let next = self.new_block();
@@ -2249,6 +2245,17 @@ impl<'a> Builder<'a> {
             next,
         });
         self.current = next;
+    }
+
+    /// Field `index` of the compiler-known struct `owner` (a lock, an atomic, a `RefCell`): the type
+    /// it holds and whether an `UnsafeCell` keeps it (ODR-275), for `state_place`.
+    fn state_ty(&self, owner: Ty, index: usize) -> Option<(Ty, bool)> {
+        let TyKind::Struct(id) = *self.types.kind(owner) else { return None };
+        let field = self.types.struct_def(id).fields.get(index)?.ty;
+        Some(match self.types.unsafe_cell_inner(field) {
+            Some(inner) => (inner, true),
+            None => (field, false),
+        })
     }
 
     fn lower_refcell_borrow(
@@ -2264,10 +2271,11 @@ impl<'a> Builder<'a> {
         };
         self.at(span);
         let cell_place = self.lower_place(cell_hir);
-        let value_place = cell_place.clone().field(0);
-        let borrow_place = cell_place.clone().field(1);
-        let file_place = cell_place.clone().field(2);
-        let line_place = cell_place.clone().field(3);
+        let Some(state) = (0..4).map(|index| self.state_ty(cell_hir.ty, index)).collect::<Option<Vec<_>>>() else { return };
+        let value_place = state_place(cell_place.clone(), 0, state[0].1);
+        let borrow_place = state_place(cell_place.clone(), 1, state[1].1);
+        let file_place = state_place(cell_place.clone(), 2, state[2].1);
+        let line_place = state_place(cell_place.clone(), 3, state[3].1);
 
         let TyKind::Struct(guard_id) = *self.types.kind(guard_ty) else {
             return;
@@ -2331,25 +2339,15 @@ impl<'a> Builder<'a> {
         if mutable {
             // `-1` via `-(1)`: `Const::Int` holds a `u128` bit pattern, and a
             // huge positive would render as one in C. Negation is exact.
-            let one_isize = {
-                // The counter's own type, from the cell (field 1).
-                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
-                    return;
-                };
-                self.types.struct_def(cell_id).fields[1].ty
-            };
+            // The counter's own type, from the cell (field 1).
+            let one_isize = state[1].0;
             let neg_one = Rvalue::UnaryOp {
                 op: crate::UnOp::Neg,
                 operand: Operand::Const(Const::Int { value: 1, ty: one_isize }),
             };
             self.push(StmtKind::Assign { place: borrow_place.clone(), rvalue: neg_one });
         } else {
-            let counter_ty = {
-                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
-                    return;
-                };
-                self.types.struct_def(cell_id).fields[1].ty
-            };
+            let counter_ty = state[1].0;
             let one = Operand::Const(Const::Int { value: 1, ty: counter_ty });
             self.push(StmtKind::Assign {
                 place: borrow_place.clone(),
@@ -2365,12 +2363,7 @@ impl<'a> Builder<'a> {
             place: file_place,
             rvalue: Rvalue::Use(Operand::Const(Const::CStr(path))),
         });
-        let line_ty = {
-            let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
-                return;
-            };
-            self.types.struct_def(cell_id).fields[3].ty
-        };
+        let line_ty = state[3].0;
         self.push(StmtKind::Assign {
             place: line_place,
             rvalue: Rvalue::Use(Operand::Const(line(line_ty))),
@@ -2405,10 +2398,11 @@ impl<'a> Builder<'a> {
         };
         self.at(span);
         let cell_place = self.lower_place(cell_hir);
-        let value_place = cell_place.clone().field(0);
-        let borrow_place = cell_place.clone().field(1);
-        let file_place = cell_place.clone().field(2);
-        let line_place = cell_place.clone().field(3);
+        let Some(state) = (0..4).map(|index| self.state_ty(cell_hir.ty, index)).collect::<Option<Vec<_>>>() else { return };
+        let value_place = state_place(cell_place.clone(), 0, state[0].1);
+        let borrow_place = state_place(cell_place.clone(), 1, state[1].1);
+        let file_place = state_place(cell_place.clone(), 2, state[2].1);
+        let line_place = state_place(cell_place.clone(), 3, state[3].1);
 
         let TyKind::Enum(opt_id) = *self.types.kind(opt_ty) else {
             return;
@@ -2466,24 +2460,14 @@ impl<'a> Builder<'a> {
         self.current = success_bb;
         self.at(span);
         if mutable {
-            let one_isize = {
-                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
-                    return;
-                };
-                self.types.struct_def(cell_id).fields[1].ty
-            };
+            let one_isize = state[1].0;
             let neg_one = Rvalue::UnaryOp {
                 op: crate::UnOp::Neg,
                 operand: Operand::Const(Const::Int { value: 1, ty: one_isize }),
             };
             self.push(StmtKind::Assign { place: borrow_place.clone(), rvalue: neg_one });
         } else {
-            let counter_ty = {
-                let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
-                    return;
-                };
-                self.types.struct_def(cell_id).fields[1].ty
-            };
+            let counter_ty = state[1].0;
             let one = Operand::Const(Const::Int { value: 1, ty: counter_ty });
             self.push(StmtKind::Assign {
                 place: borrow_place.clone(),
@@ -2499,12 +2483,7 @@ impl<'a> Builder<'a> {
             place: file_place,
             rvalue: Rvalue::Use(Operand::Const(Const::CStr(path))),
         });
-        let line_ty = {
-            let TyKind::Struct(cell_id) = *self.types.kind(cell_hir.ty) else {
-                return;
-            };
-            self.types.struct_def(cell_id).fields[3].ty
-        };
+        let line_ty = state[3].0;
         self.push(StmtKind::Assign {
             place: line_place,
             rvalue: Rvalue::Use(Operand::Const(line(line_ty))),
@@ -7604,4 +7583,11 @@ fn is_plain_data(types: &ember_types::TypeTable, ty: Ty) -> bool {
         TyKind::Array { elem, .. } => is_plain_data(types, *elem),
         _ => false,
     }
+}
+
+/// The place of field `index` of the struct at `place`, through the `UnsafeCell` that keeps it
+/// (`in_cell`, from `state_ty`).
+fn state_place(place: Place, index: usize, in_cell: bool) -> Place {
+    let field = place.field(index);
+    if in_cell { field.field(0) } else { field }
 }

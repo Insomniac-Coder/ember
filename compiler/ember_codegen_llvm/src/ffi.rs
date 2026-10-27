@@ -123,9 +123,13 @@ pub(crate) fn declare_c(m: &mut Module<'_>, symbol: &str, ret: Option<Ty>, param
 }
 
 fn declare_sig(m: &mut Module<'_>, symbol: &str, sig: &abi::Signature) {
-    let name = global_name(symbol);
+    declare_named(m, symbol, &global_name(symbol), sig);
+}
+
+/// The declaration of the foreign function `symbol`, under its IR name `name`.
+fn declare_named(m: &mut Module<'_>, symbol: &str, name: &str, sig: &abi::Signature) {
     m.declare(&link_symbol(symbol), || {
-        format!("declare{} {} {name}({})", crate::func::ret_attr(sig), sig.ret.ir(), crate::func::ir_params(sig, false).join(", "))
+        format!("declare {}{} {name}({})", sig.conv.ir(), crate::func::ret_with_attr(sig), crate::func::ir_params(sig, false).join(", "))
     });
 }
 
@@ -186,6 +190,11 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
         }
         let others: Vec<(usize, ember_types::FnParam)> = params.iter().copied().enumerate().filter(|(at, _)| *at != callback.slot).collect();
         let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+        // `[HR-42]` — C calling back into Ember code: this thread's depth counter.
+        let reload = cx.m.reload.is_some();
+        if reload {
+            cx.call_rt("reload_enter", Vec::new(), None);
+        }
         let consumed = match closure {
             Some(closure) => {
                 // ODR-278 — a function's own type holds no state: its function takes none.
@@ -232,6 +241,9 @@ fn trampoline<'a>(m: &mut Module<'a>, body: &'a Body, index: usize, callback: &'
                 false
             }
         };
+        if reload {
+            cx.call_rt("reload_leave", Vec::new(), None);
+        }
         if callback.mode == FfiCallbackMode::Once {
             // Its one call is over: the callable ends (unless the call took it), and so does what
             // held it.
@@ -653,9 +665,17 @@ impl<'a> FnCx<'_, 'a> {
         } else {
             (!self.m.ty.is_zst(c_result)).then(|| self.m.ty.shape(c_result))
         };
-        let sig = abi::classify(self.m.ty.target, result_shape.as_ref(), &shapes);
-        declare_sig(self.m, &counted.foreign_symbol, &sig);
-        let callee = global_name(&counted.foreign_symbol);
+        // `[FFI-9]` — the foreign function's own convention.
+        let (sig, callee) = if counted.abi.as_deref() == Some("vectorcall") {
+            if self.m.ty.target != abi::Target::Win64 {
+                return unsupported("`extern \"vectorcall\"` off Windows x64 ([FFI-9]: the convention is x86's)");
+            }
+            let name = format!("\u{1}{}", abi::vectorcall_symbol(&link_symbol(&counted.foreign_symbol), &shapes));
+            (abi::classify_vectorcall(result_shape.as_ref(), &shapes), global_name(&name))
+        } else {
+            (abi::classify(self.m.ty.target, result_shape.as_ref(), &shapes), global_name(&counted.foreign_symbol))
+        };
+        declare_named(self.m, &counted.foreign_symbol, &callee, &sig);
         let values: Vec<(Val, u64, u64)> = values.into_iter().zip(&shapes).map(|(value, shape)| (value, shape.size(), shape.align())).collect();
         let (result_size, result_align) = match &result_shape {
             Some(shape) => (shape.size(), shape.align()),
@@ -814,4 +834,91 @@ impl<'a> FnCx<'_, 'a> {
         self.start(&done);
         Ok(slot)
     }
+}
+
+/// `[BLD-FFI-5a]` (ODR-162) — what a library gives C and C++ of each `@sync` class an export hands
+/// them, as its header declares it (`ember_codegen_c::ClassExport`): a handle's count and its end,
+/// and each `pub` method, which attaches the calling thread and calls the method's body (through the
+/// object's method table when it is virtual) with what C passed: a handle as the object's address
+/// (with a count of its own where the method keeps it), a view from its address and length, a value
+/// the method borrows by its address.
+pub(crate) fn emit_class_exports(m: &mut Module<'_>, classes: &[ember_codegen_c::ClassExport]) -> Result<()> {
+    for class in classes {
+        define_c_fn(m, &class.retain, "", None, &[Param::Ptr], "", |cx, values, _| {
+            cx.call_rt("obj_retain", vec![values[0].clone()], None);
+            Ok(())
+        })?;
+        define_c_fn(m, &class.release, "", None, &[Param::Ptr], "", |cx, values, _| {
+            cx.call_rt("rt_thread_attach", Vec::new(), None);
+            cx.call_rt("obj_release", vec![values[0].clone()], None);
+            Ok(())
+        })?;
+        for method in &class.methods {
+            class_method(m, method)?;
+        }
+    }
+    Ok(())
+}
+
+fn class_method(m: &mut Module<'_>, method: &ember_codegen_c::MethodExport) -> Result<()> {
+    use ember_codegen_c::Crossed;
+    let Some(body) = m.bodies.get(method.body.as_str()).copied() else {
+        return unsupported(format!("the class method `{}` without its body", method.body));
+    };
+    let declared: Vec<Ty> = body.args().skip(1).map(|(_, decl)| decl.ty).collect();
+    let mut params = vec![Param::Ptr];
+    for (crossed, ty) in method.crossings.iter().zip(&declared) {
+        match crossed {
+            Crossed::Handle { .. } => params.push(Param::Ptr),
+            Crossed::View => params.extend([Param::Ptr, Param::Size]),
+            Crossed::Borrowed => match m.ty.kind(*ty) {
+                TyKind::Ref { inner, .. } => params.push(Param::Ty(*inner)),
+                _ => return unsupported("a borrowed class-method parameter that is not a reference"),
+            },
+            Crossed::Value => params.push(Param::Ty(*ty)),
+        }
+    }
+    let virtual_slot = body.class_owner.zip(body.class_virtual_slot);
+    let symbol = body.symbol.clone();
+    define_c_fn(m, &method.symbol, "", Some(body.return_ty()), &params, "", |cx, values, result| {
+        cx.call_rt("rt_thread_attach", Vec::new(), None);
+        let by_address = |cx: &mut FnCx<'_, '_>, value: &Val, size: u64, align: u64| {
+            let (ptr, _) = cx.spill(value, size, align);
+            Val::Imm(Sc::Ptr, ptr)
+        };
+        let mut arguments = vec![if method.receiver_by_address { by_address(cx, &values[0], 8, 8) } else { values[0].clone() }];
+        let mut next = 1;
+        for (crossed, ty) in method.crossings.iter().zip(&declared) {
+            let value = values[next].clone();
+            next += 1;
+            arguments.push(match crossed {
+                Crossed::Handle { by_address: address, kept } => {
+                    if *kept {
+                        cx.call_rt("obj_retain", vec![value.clone()], None);
+                    }
+                    if *address { by_address(cx, &value, 8, 8) } else { value }
+                }
+                Crossed::View => {
+                    let length = values[next].clone();
+                    next += 1;
+                    let view = cx.alloca(16, 8);
+                    cx.store(&value, &view, 8, 8, false);
+                    let at = cx.gep(&view, 8);
+                    cx.store(&length, &at, 8, 8, false);
+                    Val::Mem(view, 8)
+                }
+                Crossed::Borrowed => {
+                    let TyKind::Ref { inner, .. } = *cx.m.ty.kind(*ty) else { unreachable!("checked above") };
+                    let (size, align) = cx.m.ty.size_align(inner);
+                    by_address(cx, &value, size, align)
+                }
+                Crossed::Value => value,
+            });
+        }
+        let dest = result.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+        match virtual_slot {
+            Some((owner, slot)) => cx.virtual_call_values(owner, slot, owner, arguments, dest),
+            None => cx.call_body(&symbol, arguments, dest),
+        }
+    })
 }

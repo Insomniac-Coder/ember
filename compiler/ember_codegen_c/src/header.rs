@@ -22,6 +22,22 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     for table in emitter.types.export_tables() {
         reachable.visit(table.ty)?;
     }
+    // `[BLD-FFI-5a]` — and each type a class's method declared for C takes or gives by value (D-915:
+    // a C-laid-out struct a method borrowed was named but never declared).
+    let classes = super::class_exports::plan(emitter, bodies, package_name);
+    for method in classes.iter().flat_map(|class| &class.methods) {
+        let Some(body) = bodies.iter().find(|body| body.symbol == method.body) else { continue };
+        for (crossed, (_, parameter)) in method.crossings.iter().zip(body.args().skip(1)) {
+            match (crossed, emitter.types.kind(parameter.ty)) {
+                (super::Crossed::Borrowed, TyKind::Ref { inner, .. }) => reachable.visit(*inner)?,
+                (super::Crossed::Value, _) => reachable.visit(parameter.ty)?,
+                _ => {}
+            }
+        }
+        if !matches!(emitter.types.kind(body.return_ty()), TyKind::Class(_)) {
+            reachable.visit(body.return_ty())?;
+        }
+    }
 
     // Hex of the exact UTF-8 bytes is injective: e.g. foo-bar, foo_bar and
     // differently spelled Unicode names must never suppress each other.
@@ -72,7 +88,6 @@ pub(super) fn render(emitter: &Emitter<'_>, bodies: &[Body], package_name: &str)
     }
     // `[BLD-FFI-5a]` (ODR-162) — each `@sync` class an export hands over: its object's struct,
     // which C holds only behind a pointer, under the class's name.
-    let classes = super::class_exports::plan(emitter, bodies, package_name);
     for class in &classes {
         line(&mut out, &format!("typedef struct {} {};", emitter.object_struct(class.class), class.name));
     }

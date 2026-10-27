@@ -112,6 +112,65 @@ pub fn asked_lto(profile: Profile) -> Lto {
     LTO.lock().ok().and_then(|set| *set).unwrap_or(profile.lto())
 }
 
+/// `[CG-LL-3]`, `[BLD-6]` (ODR-274) — profile-guided optimisation, which Clang does for the LLVM
+/// backend's IR and C: a build instrumented to write raw profiles into a folder when it runs, or
+/// one optimised with a merged profile (`llvm-profdata merge`'s `.profdata`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pgo {
+    Generate(PathBuf),
+    Use(PathBuf),
+}
+
+static PGO: std::sync::Mutex<Option<Pgo>> = std::sync::Mutex::new(None);
+
+/// `[CG-LL-3]` — set the profile-guided optimisation this build does.
+pub fn set_pgo(pgo: Option<Pgo>) {
+    if let Ok(mut set) = PGO.lock() {
+        *set = pgo;
+    }
+}
+
+pub fn pgo() -> Option<Pgo> {
+    PGO.lock().ok().and_then(|set| set.clone())
+}
+
+/// Clang's flags for the build's profile-guided optimisation: the same at a compile and at the
+/// link (an instrumented link takes the profile runtime). No other toolchain is asked.
+fn pgo_flags(toolchain: &Toolchain) -> Vec<String> {
+    match (toolchain, pgo()) {
+        (Toolchain::Clang(_), Some(Pgo::Generate(dir))) => vec![format!("-fprofile-generate={}", dir.display())],
+        (Toolchain::Clang(_), Some(Pgo::Use(data))) => vec![format!("-fprofile-use={}", data.display())],
+        _ => Vec::new(),
+    }
+}
+
+/// `[CG-LL-3]` (ODR-274) — `llvm-profdata merge`: the raw profiles `inputs` (each a `.profraw`
+/// file) merged into `output`, which `Pgo::Use` reads. The tool is Clang's own, beside it.
+pub fn merge_profiles(toolchain: &Toolchain, inputs: &[PathBuf], output: &Path) -> Result<(), BuildError> {
+    let tool = profdata_tool(toolchain);
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut command = Command::new(&tool);
+    command.arg("merge").arg("-o").arg(output).args(inputs);
+    run(command)
+}
+
+/// `llvm-profdata` beside the Clang the build uses (its real file: `/usr/bin/clang` is a link into
+/// LLVM's own folder), else the one the `PATH` finds.
+fn profdata_tool(toolchain: &Toolchain) -> PathBuf {
+    let name = if cfg!(windows) { "llvm-profdata.exe" } else { "llvm-profdata" };
+    let clang = match toolchain {
+        Toolchain::Clang(path) => Some(path.canonicalize().unwrap_or_else(|_| path.clone())),
+        Toolchain::Msvc { cl, .. } if is_clang_cl(cl) => Some(cl.clone()),
+        _ => None,
+    };
+    clang
+        .and_then(|clang| clang.parent().map(|dir| dir.join(name)))
+        .filter(|tool| tool.is_file())
+        .unwrap_or_else(|| PathBuf::from(name))
+}
+
 /// Which C compiler drives the backend. `[MAN-1]`'s `c_compiler = "auto"`
 /// resolves to MSVC on Windows when it can be found, then clang, then gcc.
 #[derive(Clone, Debug)]
@@ -941,11 +1000,8 @@ fn compile_and_link_impl(
             if warnings_as_errors() {
                 command.arg("-Werror");
             }
-            // `[CG-LL-1]` — the LLVM backend's module: Clang compiles it for its own target (the
-            // module names none), and it reads none of the C flags the command shares.
-            if request.sources.iter().any(|source| source.extension().is_some_and(|ext| ext == "ll")) {
-                command.args(["-Wno-override-module", "-Wno-unused-command-line-argument"]);
-            }
+            command.args(ir_flags(request.sources));
+            command.args(pgo_flags(toolchain));
             folder_names(&mut command, request.sources, request.include_dirs);
             let section_flags = executable_section_flags(toolchain, retained_symbols.is_some());
             command.args(section_flags);
@@ -1111,6 +1167,12 @@ impl CachedProgram {
         }
         for name in PROGRAM_VARIABLES {
             key.part(variable(command, name).unwrap_or_default().as_encoded_bytes());
+        }
+        // `[CG-LL-3]` — the profile a build is optimised with, by its content (its name is the same
+        // from one recording to the next).
+        if let Some(Pgo::Use(data)) = pgo() {
+            key.part(b"pgo");
+            key.part(&std::fs::read(data).ok()?);
         }
         // `[CG-C-9]` — the visualisers the link puts in the program database, by their content.
         if let Some(natvis) = natvis_beside(request) {
@@ -1573,10 +1635,14 @@ fn compile_c_object(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(lto).arg("-c").args(flags);
+            command.args(ir_flags(&[source]));
             // D-893 — for a reloadable image's shared library or a `cdylib`, position-independent:
             // a shared library cannot be linked with code made for an executable.
             if shared_library && !cfg!(windows) {
                 command.arg("-fPIC");
+            }
+            if shared_library {
+                command.args(clang_windows_runtime(toolchain));
             }
             folder_names(&mut command, &[source.to_path_buf()], include_dirs);
             for dir in include_dirs { command.arg("-I").arg(dir); }
@@ -1600,6 +1666,7 @@ pub fn compile_cpp_object(
     output: &Path,
     profile: Profile,
     standard: &str,
+    shared_library: bool,
 ) -> Result<(), BuildError> {
     if let Some(parent) = output.parent() { std::fs::create_dir_all(parent)?; }
     let mut command = match toolchain {
@@ -1628,6 +1695,9 @@ pub fn compile_cpp_object(
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile).into_iter().filter(|flag| *flag != "-std=c11" && *flag != "-mcx16")).args(lto).arg(format!("-std={standard}")).arg("-c");
             command.args(inherited_gnu_runtime()).args(flags);
+            if shared_library {
+                command.args(clang_windows_runtime(toolchain));
+            }
             // D-790 — position-independent, for a reloadable image's shared library too (Annex B):
             // the thunks' `thread_local` record of a caught exception is otherwise reached as an
             // executable's, which a shared object cannot be linked with.
@@ -1962,6 +2032,39 @@ fn lto_link_flags(toolchain: &Toolchain, lto: Lto) -> &'static [&'static str] {
 /// `[BLD-FFI-1b]` — `/MD`, or the runtime switch the build inherits.
 pub fn msvc_runtime_switch() -> &'static str {
     inherited_msvc_runtime().into_iter().find(|flag| flag.starts_with("/M")).unwrap_or("/MD")
+}
+
+/// Clang's driver on Windows takes the C runtime `msvc_runtime_switch` names (the DLL one, `/MD`'s,
+/// unless a C++ project says otherwise) for a shared library and what loads it: a reloadable
+/// program's runtime, images and host, a `cdylib`, so one C runtime's heap and streams serve them
+/// all, as MSVC's `/MD` has them. (Clang's own default is the static one, a copy per library.)
+/// `None` for any other toolchain or host.
+pub(crate) fn clang_windows_runtime(toolchain: &Toolchain) -> Option<&'static str> {
+    (cfg!(windows) && matches!(toolchain, Toolchain::Clang(_))).then(|| match msvc_runtime_switch() {
+        "/MDd" => "-fms-runtime-lib=dll_dbg",
+        "/MT" => "-fms-runtime-lib=static",
+        "/MTd" => "-fms-runtime-lib=static_dbg",
+        _ => "-fms-runtime-lib=dll",
+    })
+}
+
+/// `[CG-LL-1]` — the LLVM backend's module among a compile's units: Clang compiles it for its own
+/// target (the module names none), and it reads none of the C flags the command shares.
+pub(crate) fn ir_flags<P: AsRef<Path>>(sources: &[P]) -> &'static [&'static str] {
+    if sources.iter().any(|source| source.as_ref().extension().is_some_and(|ext| ext == "ll")) {
+        &["-Wno-override-module", "-Wno-unused-command-line-argument"]
+    } else {
+        &[]
+    }
+}
+
+/// The object of a build's unit `index` (a module's `.ll` or `.c`, then its shim): `stem.o`, then
+/// `stem.1.o`, `stem.2.o`.
+pub fn unit_object(obj_dir: &Path, stem: &str, index: usize, extension: &str) -> PathBuf {
+    match index {
+        0 => obj_dir.join(format!("{stem}.{extension}")),
+        _ => obj_dir.join(format!("{stem}.{index}.{extension}")),
+    }
 }
 
 /// clang's and gcc's flags for a profile, shared by the program's compile and

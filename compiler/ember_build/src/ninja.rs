@@ -126,6 +126,17 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
         text.push_str("  depfile = $out.d\n  deps = gcc\n");
     }
     text.push_str("  description = C $in\n\n");
+    // The LLVM backend's units (`[CG-LL-1]`): its IR, compiled by Clang with the program's flags and
+    // the ones IR needs (`crate::ir_flags`); an IR unit includes nothing, so it has no dependency file.
+    if program.units.iter().any(|unit| is_ir(unit)) {
+        let mut words: Vec<String> = vec![quote(&program_name.to_string_lossy())];
+        words.extend(prefix.iter().chain(&compile).map(|arg| quote(&arg.to_string_lossy())));
+        words.extend(crate::ir_flags(&[Path::new("unit.ll")]).iter().map(|flag| flag.to_string()));
+        words.extend(["-c".to_string(), "$in".to_string(), "-o".to_string(), "$out".to_string()]);
+        text.push_str("rule ll\n");
+        text.push_str(&format!("  command = {}\n", escape_value(&words.join(" "))));
+        text.push_str("  description = IR $in\n\n");
+    }
     // The link's inputs and flags in a response file: four hundred objects are more than a command
     // line holds.
     let mut link_words: Vec<String> = vec![quote(&program_name.to_string_lossy())];
@@ -137,7 +148,8 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     text.push_str("  rspfile_content = $rsp\n");
     text.push_str("  description = link $out\n\n");
     for (unit, object) in program.units.iter().zip(&objects) {
-        text.push_str(&format!("build {}: cc {}\n", escape_path(object), escape_path(unit)));
+        let rule = if is_ir(unit) { "ll" } else { "cc" };
+        text.push_str(&format!("build {}: {rule} {}\n", escape_path(object), escape_path(unit)));
     }
     let linked: Vec<&PathBuf> = objects.iter().chain(program.objects).collect();
     let mut rsp: Vec<OsString> = linked.iter().map(|path| path.as_os_str().to_os_string()).collect();
@@ -494,4 +506,9 @@ fn escape_value(text: &str) -> String {
 /// A path in a `build` line: `$`, a space and `:` escaped.
 fn escape_path(path: &Path) -> String {
     path.to_string_lossy().replace('$', "$$").replace(' ', "$ ").replace(':', "$:")
+}
+
+/// Whether a unit is the LLVM backend's IR (`.ll`) rather than C.
+fn is_ir(unit: &Path) -> bool {
+    unit.extension().is_some_and(|extension| extension == "ll")
 }

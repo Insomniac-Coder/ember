@@ -3,7 +3,6 @@
 //! (`[OWN-2]`, `[DRP-2]`), and each class's type information, destructor adapter and field glue
 //! (`[RT-3]`, `[CLS-6]`).
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use crate::func::{FnCx, Val};
@@ -93,11 +92,11 @@ pub(crate) struct ObjectLayout {
 pub(crate) fn object_layout(m: &Module<'_>, id: ClassId) -> ObjectLayout {
     let table = m.ty.table;
     let count = table.class_field_count(id);
-    let offsets = table.class_field_offsets(id);
+    let offsets = m.ty.object_field_offsets(id);
     let owner = |index: usize| table.class_field_at_info(id, index).map(|(owner, _)| owner);
     let mut words = vec![None; count];
     let mut levels = Vec::new();
-    let mut at = 24u64;
+    let mut at = m.ty.header;
     let mut align = 8u64;
     let mut start = 0;
     while start < count {
@@ -118,7 +117,7 @@ pub(crate) fn object_layout(m: &Module<'_>, id: ClassId) -> ObjectLayout {
             if let Some(field) = table.class_field_at(id, index) {
                 let (size, field_align) = m.ty.size_align(field.ty);
                 align = align.max(field_align);
-                at = 24 + offsets[index] + size;
+                at = offsets[index] + size;
             }
         }
         levels.push(level);
@@ -129,9 +128,8 @@ pub(crate) fn object_layout(m: &Module<'_>, id: ClassId) -> ObjectLayout {
 
 /// Every pending piece of glue, to a fixpoint.
 pub(crate) fn emit_pending(m: &mut Module<'_>) -> Result<()> {
-    let mut done: BTreeSet<Pending> = BTreeSet::new();
     while let Some(work) = m.pending.pop() {
-        if !done.insert(work) {
+        if !m.pending_done.insert(work) {
             continue;
         }
         match work {
@@ -181,6 +179,21 @@ fn emit_class(m: &mut Module<'_>, id: ClassId) -> Result<()> {
     // `[RFL-2]`, `[RT-3]` — a `@reflect` class's description, the constant static its type
     // information reaches through a function.
     let reflect = match table.class_reflection(id) {
+        // `[HR-4a]` — a reloadable image's constant data is the runtime's.
+        Some((holder, _)) if m.reload.is_some() => {
+            let function = format!("{info}_reflect");
+            let mut cx = FnCx::glue(m);
+            let description = crate::reload::static_storage(&mut cx, holder.as_str());
+            let attrs = crate::func::fn_attrs(cx.m);
+            let text = format!(
+                "define internal ptr {}() {attrs} {{\nentry:\n{}  br label %start\nstart:\n{}  ret ptr {description}\n}}\n\n",
+                global_name(&function),
+                cx.allocas_text(),
+                cx.out_text()
+            );
+            cx.m.fns.push_str(&text);
+            global_name(&function)
+        }
         Some((holder, ty)) => {
             let description = crate::statics::constant_static(m, holder.as_str(), ty)?;
             let function = global_name(&format!("{info}_reflect"));
@@ -232,11 +245,23 @@ fn emit_class(m: &mut Module<'_>, id: ClassId) -> Result<()> {
     let flags = if def.is_sync { 1 } else { 0 };
     let vtable = crate::dispatch::class_vtable(m, id)?;
     let (itables, itable_count) = crate::dispatch::class_itables(m, id)?;
+    // Annex B — a reloadable image's type information ends with the type's identity across images,
+    // which the runtime makes one per name.
+    let identity = match m.reload.is_some() {
+        true => {
+            let symbol = ember_codegen_c::image::class_identity_symbol(&mangled);
+            let named = m.bytes(info.as_bytes());
+            m.global(format!("{} = internal global %ember.rl_identity {{ ptr {named}, ptr null }}, align 8", global_name(&symbol)));
+            format!(", ptr {}", global_name(&symbol))
+        }
+        false => String::new(),
+    };
     m.global(format!(
-        "{} = internal constant {{ i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, i32, ptr, i32, ptr }} \
+        "{} = internal constant {{ i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, i32, ptr, i32, ptr{} }} \
          {{ i32 {}, i32 {}, i32 {flags}, ptr {name}, ptr {base}, ptr {drop}, ptr {drop_fields}, ptr {vtable}, \
-         ptr {itables}, i32 {itable_count}, ptr {fields}, i32 {field_count}, ptr {reflect} }}, align 8",
+         ptr {itables}, i32 {itable_count}, ptr {fields}, i32 {field_count}, ptr {reflect}{identity} }}, align 8",
         global_name(&info),
+        if identity.is_empty() { "" } else { ", ptr" },
         layout.size,
         layout.align,
     ));
@@ -299,7 +324,7 @@ fn emit_drop_adapter(m: &mut Module<'_>, id: ClassId, symbol: &str) -> Result<()
 /// level's in reverse order.
 fn emit_drop_fields(m: &mut Module<'_>, id: ClassId, symbol: &str) -> Result<()> {
     let table = m.ty.table;
-    let offsets = table.class_field_offsets(id);
+    let offsets = m.ty.object_field_offsets(id);
     let mut levels = Vec::new();
     let mut current = Some(id);
     while let Some(class) = current {
@@ -318,7 +343,7 @@ fn emit_drop_fields(m: &mut Module<'_>, id: ClassId, symbol: &str) -> Result<()>
                 if !table.needs_drop(field_ty) {
                     continue;
                 }
-                let offset = 24 + offsets[index];
+                let offset = offsets[index];
                 let at = cx.gep("%p0", offset);
                 let align = cx.m.ty.size_align(field_ty).1.min(crate::types::offset_align(offset));
                 cx.drop_at(&at, align, field_ty)?;
@@ -693,7 +718,7 @@ impl<'a> FnCx<'_, 'a> {
         {
             let Some(borrow_at) = crate::arenas::field_offset(self.m, cell, "borrow") else { return unsupported("a `RefCell` without its state") };
             let TyKind::Struct(cell_id) = *table.kind(cell) else { unreachable!("a cell is a struct") };
-            let borrow_ty = table.struct_def(cell_id).fields.iter().find(|field| field.name.as_str() == "borrow").expect("found above").ty;
+            let borrow_ty = table.cell_held(table.struct_def(cell_id).fields.iter().find(|field| field.name.as_str() == "borrow").expect("found above").ty);
             let crate::types::Repr::Scalar(Sc::I(bits)) = self.m.ty.repr(borrow_ty) else { return unsupported("a `RefCell` state that is not an integer") };
             let object = self.load(Sc::Ptr, ptr, align.min(8));
             let state = self.gep(&object, borrow_at);
@@ -897,11 +922,6 @@ pub(crate) fn vec_push_helper(m: &mut Module<'_>, aligned: bool) -> String {
     global_name(symbol)
 }
 
-/// `EMBER_OBJ_PAYLOAD_OFFSET` — where a shared value's payload starts after its object's header.
-pub(crate) fn payload_offset(align: u64) -> u64 {
-    (24 + align - 1) & !(align - 1)
-}
-
 /// `[HEAP-5]`, `[HEAP-10]` — a `Shared[T]`'s (or `SyncShared[T]`'s) type information: the header
 /// and the payload, its alignment, atomic counts for a `SyncShared`, and the payload's drop.
 pub(crate) fn shared_type_info(m: &mut Module<'_>, id: ember_types::StructId) -> Result<String> {
@@ -917,7 +937,7 @@ pub(crate) fn shared_type_info(m: &mut Module<'_>, id: ember_types::StructId) ->
     };
     let sync = def.origin.as_ref().is_some_and(|(name, _)| name.is("SyncShared"));
     let (size, align) = m.ty.size_align(inner);
-    let offset = payload_offset(align);
+    let offset = m.ty.payload_offset(align);
     let drop = if table.needs_drop(inner) {
         let drop = format!("{}_drop_payload", ember_branding::symbol(&mangled));
         define_glue(m, &drop, &["ptr"], "", |cx| {
@@ -930,9 +950,11 @@ pub(crate) fn shared_type_info(m: &mut Module<'_>, id: ember_types::StructId) ->
     };
     let display = format!("{}[{}]", if sync { "SyncShared" } else { "Shared" }, table.display(inner));
     let name = m.bytes(display.as_bytes());
+    // Annex B — a shared value's type information has no identity of its own.
+    let (identity_ty, identity) = if m.reload.is_some() { (", ptr", ", ptr null") } else { ("", "") };
     m.global(format!(
-        "{} = internal constant {{ i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, i32, ptr, i32, ptr }} \
-         {{ i32 {}, i32 {}, i32 {}, ptr {name}, ptr null, ptr {drop}, ptr null, ptr null, ptr null, i32 0, ptr null, i32 0, ptr null }}, align 8",
+        "{} = internal constant {{ i32, i32, i32, ptr, ptr, ptr, ptr, ptr, ptr, i32, ptr, i32, ptr{identity_ty} }} \
+         {{ i32 {}, i32 {}, i32 {}, ptr {name}, ptr null, ptr {drop}, ptr null, ptr null, ptr null, i32 0, ptr null, i32 0, ptr null{identity} }}, align 8",
         global_name(&symbol),
         offset + size,
         align.max(8),
@@ -967,7 +989,7 @@ fn refcell_for_guard(table: &ember_types::TypeTable, guard: Ty) -> Option<Ty> {
     table.all().find_map(|(ty, kind)| match kind {
         TyKind::Struct(cell) => {
             let def = table.struct_def(*cell);
-            (def.name.as_str().starts_with("RefCell_") && def.fields.len() == 4 && def.fields[0].ty == inner).then_some(ty)
+            (def.name.as_str().starts_with("RefCell_") && def.fields.len() == 4 && table.cell_held(def.fields[0].ty) == inner).then_some(ty)
         }
         _ => None,
     })

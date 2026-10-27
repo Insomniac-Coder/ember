@@ -13,7 +13,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
-    BuildError, Key, Link, Lto, Profile, Toolchain, compiler_command, gcc_flags, gnu_flags, lto_compile_flags, msvc_flags, run,
+    BuildError, Key, Link, Lto, Profile, Toolchain, clang_windows_runtime, compiler_command, gcc_flags, gnu_flags, lto_compile_flags,
+    msvc_flags, run,
 };
 
 /// The runtime a reloadable program shares, as the build links it.
@@ -97,6 +98,8 @@ pub(crate) fn compile_library_object(
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(lto_compile_flags(toolchain, lto, Link::Here));
+            command.args(clang_windows_runtime(toolchain));
+            command.args(crate::ir_flags(&[source]));
             if !cfg!(windows) {
                 command.arg("-fPIC");
             }
@@ -141,8 +144,9 @@ pub fn shared_runtime(
         });
     }
     let mut key = Key::new();
-    // v2: compiled without link-time optimisation in every profile (`[BLD-6]`).
-    key.part(b"reload runtime v2");
+    // v2: compiled without link-time optimisation in every profile (`[BLD-6]`); v3: under Clang on
+    // Windows, with the DLL C runtime (`clang_windows_runtime`).
+    key.part(b"reload runtime v3");
     key.part(toolchain.name().as_bytes());
     key.part(profile.name().as_bytes());
     key.part(&[match reload { None => 2, Some(instances) => u8::from(instances) }]);
@@ -184,6 +188,7 @@ pub fn shared_runtime(
             Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
                 let definitions = staging.join(format!("{stem}.def"));
                 write_definitions(&object, &definitions, &stem)?;
+                command.args(clang_windows_runtime(toolchain));
                 command.arg("-shared").arg(&object).arg("-o").arg(&library)
                     .arg(format!("-Wl,/DEF:{}", definitions.display()))
                     .arg(format!("-Wl,/IMPLIB:{}", staging.join(format!("{stem}.lib")).display()));
@@ -212,12 +217,13 @@ pub fn shared_runtime(
     Ok(SharedRuntime { library, link_with })
 }
 
-/// Compile and link one image: the package's C as a shared library that imports the runtime and
-/// exports nothing, keeping its manifest (`manifest_symbol`) however the linker trims.
+/// Compile and link one image: the package's units (its C, or the LLVM backend's IR and the C
+/// beside it) as a shared library that imports the runtime and exports nothing, keeping its
+/// manifest (`manifest_symbol`) however the linker trims.
 #[allow(clippy::too_many_arguments)]
 pub fn link_image(
     toolchain: &Toolchain,
-    source: &Path,
+    sources: &[PathBuf],
     include_dirs: &[PathBuf],
     profile: Profile,
     instances: bool,
@@ -229,12 +235,17 @@ pub fn link_image(
     output: &Path,
 ) -> Result<(), BuildError> {
     let stem = output.file_stem().and_then(|stem| stem.to_str()).unwrap_or("image").to_string();
-    let object = obj_dir.join(format!("{stem}.{}", if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" }));
-    compile_reload_object(toolchain, source, include_dirs, &object, profile, instances, true)?;
+    let extension = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+    let mut objects = Vec::with_capacity(sources.len());
+    for (index, source) in sources.iter().enumerate() {
+        let object = crate::unit_object(obj_dir, &stem, index, extension);
+        compile_reload_object(toolchain, source, include_dirs, &object, profile, instances, true)?;
+        objects.push(object);
+    }
     let mut command = compiler_command(toolchain);
     match toolchain {
         Toolchain::Msvc { .. } => {
-            command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).arg(&object).args(relaxed).arg(&runtime.link_with)
+            command.args(["/nologo", "/LD", crate::msvc_runtime_switch()]).args(&objects).args(relaxed).arg(&runtime.link_with)
                 .args(libraries.iter().map(|library| crate::cdylib::windows_library(library)))
                 .arg(format!("/Fe{}", output.display()))
                 .arg("/link").arg(format!("/INCLUDE:{manifest_symbol}"));
@@ -243,12 +254,13 @@ pub fn link_image(
             }
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
-            command.arg("-shared").arg(&object).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
+            command.args(clang_windows_runtime(toolchain));
+            command.arg("-shared").args(&objects).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
                 .args(libraries.iter().map(|library| crate::cdylib::gnu_library(library)))
                 .arg(format!("-Wl,/INCLUDE:{manifest_symbol}"));
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.arg("-shared").arg(&object).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
+            command.arg("-shared").args(&objects).args(relaxed).arg(&runtime.link_with).arg("-o").arg(output)
                 .args(libraries.iter().map(|library| crate::cdylib::gnu_library(library)))
                 .args(["-lm", "-pthread"]);
         }
@@ -310,7 +322,7 @@ pub fn link_host_source(
                 .arg(&runtime.link_with);
         }
         Toolchain::Clang(_) | Toolchain::Gcc(_) => {
-            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile));
+            command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile)).args(clang_windows_runtime(toolchain));
             for define in reload_defines(false) {
                 command.arg(format!("-D{define}"));
             }
@@ -403,7 +415,7 @@ mod tests {
         for (index, image) in ["a", "b", "c"].iter().enumerate() {
             link_image(
                 &toolchain,
-                &runtime.join("tests").join(format!("reload_image_{image}.c")),
+                &[runtime.join("tests").join(format!("reload_image_{image}.c"))],
                 &includes,
                 Profile::Debug,
                 true,

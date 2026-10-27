@@ -5969,7 +5969,7 @@ pub fn build_objects(
             let thunks = c_dir.join(format!("{stem}.thunks.cpp"));
             std::fs::write(&thunks, &foreign.shim).map_err(|e| e.to_string())?;
             let object = obj_dir.join(format!("{stem}.thunks.{}", if matches!(backend, ember_build::Toolchain::Msvc { .. }) { "obj" } else { "o" }));
-            ember_build::compile_cpp_object(backend, &thunks, &foreign.flags, &object, profile, standard).map_err(|e| e.to_string())?;
+            ember_build::compile_cpp_object(backend, &thunks, &foreign.flags, &object, profile, standard, shared_library).map_err(|e| e.to_string())?;
             objects.push(object);
             libraries.extend(foreign.link.iter().cloned());
             if !matches!(backend, ember_build::Toolchain::Msvc { .. }) {

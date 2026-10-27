@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::abi::{self, Part, PartTy, Pass, Return, Shape, Signature};
-use crate::runtime;
+use crate::runtime::{self, config};
 use crate::types::{Repr, Sc, offset_align};
 use crate::{Module, Options, Profile, Result, global_name, unsupported};
 use ember_mir::{
@@ -60,6 +60,8 @@ pub(crate) struct FnCx<'m, 'a> {
     locations: HashMap<(u32, u32), usize>,
     /// `[GRM-39]` — the literals written straight into the next literal's field (`fold`).
     folded: HashMap<LocalId, Rvalue>,
+    /// `[HR-3b]` — in a reloadable image whose instances migrate, the body's frame record.
+    frame_record: Option<crate::reload::FrameRecord>,
 }
 
 /// A literal's operand: its value, or a folded literal's temporary (`[GRM-39]`).
@@ -78,9 +80,16 @@ fn signature(m: &Module<'_>, ret: Ty, params: impl Iterator<Item = Ty>) -> Signa
 pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     let values = ffi_value_params(m, body);
     let passed: Vec<Ty> = body.args().enumerate().map(|(index, (_, decl))| passed_ty(m, &values, index, decl.ty)).collect();
-    let mut sig = signature(m, body.return_ty(), passed.iter().copied());
+    let mut sig = if is_vectorcall(body) {
+        let ret = (!m.ty.is_zst(body.return_ty())).then(|| m.ty.shape(body.return_ty()));
+        let params: Vec<Shape> = passed.iter().map(|ty| m.ty.shape(*ty)).collect();
+        abi::classify_vectorcall(ret.as_ref(), &params)
+    } else {
+        signature(m, body.return_ty(), passed.iter().copied())
+    };
     // `[CG-LL-3]` — the facts the types and the borrow checker give, derived, never assumed
-    // (`[SIMD-3]`): a reference is never null; a list kernel's views (`restrict_views`, the C
+    // (`[SIMD-3]`): a reference is never null, its referent stays allocated for the call, and a
+    // shared one to what holds no cell is only read (`abi::Ext::Ref`); a list kernel's views (`restrict_views`, the C
     // backend's `restrict` parameters) are each their elements' pointer, apart from every other,
     // and their length. Such a kernel is internal: its parameters are this backend's own.
     // An export's caller is foreign code, which the type system does not bind: no fact there; nor
@@ -90,10 +99,11 @@ pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     let internal = body.abi.is_none() && !body.is_extern_declaration && !given_to_c;
     for (pass, ty) in sig.params.iter_mut().zip(&passed) {
         match (pass, m.ty.kind(*ty)) {
-            (Pass::Direct(parts), TyKind::Ref { inner, .. })
-                if internal && parts.len() == 1 && parts[0].ty == PartTy::Ptr && !m.ty.is_zst(*inner) =>
+            (Pass::Direct(parts), &TyKind::Ref { inner, mutable })
+                if internal && parts.len() == 1 && parts[0].ty == PartTy::Ptr && !m.ty.is_zst(inner) =>
             {
-                parts[0].ext = abi::Ext::NonNull;
+                let (size, _) = m.ty.size_align(inner);
+                parts[0].ext = abi::Ext::Ref { size, readonly: !mutable && !m.ty.table.holds_a_cell(inner) };
             }
             (pass, TyKind::Span { .. }) if body.restrict_views && body.abi.is_none() => {
                 *pass = Pass::Direct(vec![
@@ -114,14 +124,53 @@ pub(crate) fn body_signature(m: &Module<'_>, body: &Body) -> Signature {
     sig
 }
 
+/// `[FFI-9]` — a function of an `extern "vectorcall"` block, or one defined with the convention.
+fn is_vectorcall(body: &Body) -> bool {
+    body.abi.as_deref() == Some("vectorcall")
+}
+
+/// The IR name of `body`: its symbol's, or for a `__vectorcall` function MSVC's decorated symbol
+/// (`\01scale@@16`, its bytes counted from the C types, as Clang counts them: an aggregate passed
+/// by address counts its own size, which LLVM, decorating by the IR's parameters, would count as a
+/// pointer's; the `\01` keeps LLVM from decorating it again).
+pub(crate) fn body_name(m: &Module<'_>, body: &Body) -> String {
+    if !is_vectorcall(body) {
+        return global_name(&body.symbol);
+    }
+    global_name(&format!("\u{1}{}", vectorcall_symbol(&m.ty, body)))
+}
+
+/// `[FFI-9]` — MSVC's symbol of the `__vectorcall` function `body` (`scale@@16`).
+pub(crate) fn vectorcall_symbol(types: &crate::types::Types<'_>, body: &Body) -> String {
+    let values = ffi_value_params_of(types.table, body);
+    let shapes: Vec<Shape> = body
+        .args()
+        .enumerate()
+        .map(|(index, (_, decl))| types.shape(passed_ty_of(types.table, &values, index, decl.ty)))
+        .collect();
+    abi::vectorcall_symbol(&crate::link_symbol(&body.symbol), &shapes)
+}
+
+/// `[FFI-9]` — `__vectorcall` is Windows x64's here (the C backend's `EMBER_CC_VECTORCALL` stops a
+/// build without it the same way).
+fn check_convention(m: &Module<'_>, body: &Body) -> Result<()> {
+    if is_vectorcall(body) && m.ty.target != abi::Target::Win64 {
+        return unsupported("`extern \"vectorcall\"` off Windows x64 ([FFI-9]: the convention is x86's)");
+    }
+    Ok(())
+}
+
 /// `[FFI-10]` — which parameters an exported function takes by value though its body borrows
 /// them: a borrowed C-safe value Ember passes by address is C's `T`, not `const T*` (the C
 /// backend's `ffi_export_value_params`). Empty for any other function.
 pub(crate) fn ffi_value_params(m: &Module<'_>, body: &Body) -> Vec<bool> {
+    ffi_value_params_of(m.ty.table, body)
+}
+
+fn ffi_value_params_of(table: &ember_types::TypeTable, body: &Body) -> Vec<bool> {
     if body.abi.is_none() || body.is_extern_declaration {
         return Vec::new();
     }
-    let table = m.ty.table;
     body.args()
         .enumerate()
         .map(|(index, (_, decl))| {
@@ -133,7 +182,11 @@ pub(crate) fn ffi_value_params(m: &Module<'_>, body: &Body) -> Vec<bool> {
 
 /// The type parameter `index` is passed as: a by-value export parameter's pointee.
 fn passed_ty(m: &Module<'_>, values: &[bool], index: usize, ty: Ty) -> Ty {
-    match m.ty.kind(ty) {
+    passed_ty_of(m.ty.table, values, index, ty)
+}
+
+fn passed_ty_of(table: &ember_types::TypeTable, values: &[bool], index: usize, ty: Ty) -> Ty {
+    match table.kind(ty) {
         TyKind::Ref { inner, .. } if values.get(index) == Some(&true) => *inner,
         _ => ty,
     }
@@ -178,20 +231,19 @@ pub(crate) fn declare_body_symbol(m: &mut Module<'_>, symbol: &str) -> Result<()
     let Some(body) = m.bodies.get(symbol).copied() else {
         return unsupported(format!("a call to `{symbol}`, which has no body"));
     };
+    check_convention(m, body)?;
     let sig = body_signature(m, body);
-    let name = global_name(symbol);
+    let name = body_name(m, body);
     // A foreign function is the C library's: whether it unwinds is its own.
     let attrs = if body.is_extern_declaration { "" } else { fn_attrs(m) };
     let variadic = body.variadic;
     // By the linker's symbol: a foreign function the runtime's tables also call is declared once.
     m.declare(&crate::link_symbol(symbol), || {
-        let ret = sig.ret.ir();
-        let ext = ret_attr(&sig);
         let mut params = ir_params(&sig, false);
         if variadic {
             params.push("...".to_string());
         }
-        format!("declare{ext} {ret} {name}({}) {attrs}", params.join(", "))
+        format!("declare {}{} {name}({}) {attrs}", sig.conv.ir(), ret_with_attr(&sig), params.join(", "))
     });
     Ok(())
 }
@@ -229,17 +281,17 @@ pub(crate) fn ir_params(sig: &Signature, named: bool) -> Vec<String> {
 }
 
 /// The result's type with its extension (`zeroext i1`).
-fn ret_with_attr(sig: &Signature) -> String {
-    match ret_attr(sig) {
+pub(crate) fn ret_with_attr(sig: &Signature) -> String {
+    match ret_attr(sig).as_str() {
         "" => sig.ret.ir(),
         ext => format!("{} {}", ext.trim(), sig.ret.ir()),
     }
 }
 
-pub(crate) fn ret_attr(sig: &Signature) -> &'static str {
+pub(crate) fn ret_attr(sig: &Signature) -> String {
     match &sig.ret {
         Return::Direct(parts) if parts.len() == 1 => parts[0].ext.attr(),
-        _ => "",
+        _ => String::new(),
     }
 }
 
@@ -256,6 +308,10 @@ pub(crate) fn fn_attrs(m: &Module<'_>) -> &'static str {
             "nounwind uwtable \"probe-stack\"=\"inline-asm\" \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx16\" \"tune-cpu\"=\"generic\""
         }
         abi::Target::Win64 => "nounwind uwtable \"target-cpu\"=\"x86-64\" \"target-features\"=\"+cx16\" \"tune-cpu\"=\"generic\"",
+        // Clang's own for `aarch64-linux-gnu`, which the runtime's C is compiled with.
+        abi::Target::Aapcs64 => {
+            "nounwind uwtable \"probe-stack\"=\"inline-asm\" \"target-cpu\"=\"generic\" \"target-features\"=\"+fp-armv8,+neon,+v8a,-fmv\""
+        }
     }
 }
 
@@ -263,16 +319,32 @@ pub(crate) fn emit_body<'a>(m: &mut Module<'a>, body: &'a Body) -> Result<()> {
     if body.variadic {
         return unsupported("a variadic function definition");
     }
-    // `[FFI-9]` — on x86-64, `"system"` and `"fastcall"` are the platform's C convention.
-    if body.abi.as_deref().is_some_and(|abi| !matches!(abi, "C" | "system" | "fastcall")) {
+    // `[FFI-9]` — on x86-64, `"system"` and `"fastcall"` are the platform's C convention;
+    // `"vectorcall"` is its own (Windows x64).
+    if body.abi.as_deref().is_some_and(|abi| !matches!(abi, "C" | "system" | "fastcall" | "vectorcall")) {
         return unsupported(format!("the calling convention `{}`", body.abi.as_deref().unwrap_or_default()));
     }
+    check_convention(m, body)?;
+    if is_vectorcall(body) && crate::reload::is_reloadable(m, &body.symbol) {
+        return unsupported("a reloadable `extern \"vectorcall\"` function ([HR-6]'s thunk is the C convention's)");
+    }
     let sums = ember_codegen_c::byte_sum_loops(body, m.ty.table, |place| place_type(m, body, place));
+    // `[HR-3b]` (A1) — what a checkpoint's frames of this body still use, described beside it.
+    let frames = m.reload.as_ref().is_some_and(|reload| reload.instances).then(|| crate::reload::frame_info(m, body));
     define_body(m, body, |cx| {
+        if let Some(info) = frames {
+            cx.push_frame_record(&info);
+        }
         for index in block_order(body) {
             let block = &body.blocks[index];
             cx.start(&format!("bb{index}"));
             cx.stmts(&block.stmts)?;
+            // `[HR-3b]` — the call this frame is in, for a checkpoint reached below it.
+            if let Some(site) = cx.frame_record.as_ref().and_then(|record| record.sites.get(&index).copied()) {
+                let record = cx.frame_record.as_ref().map(|record| record.record.clone()).expect("a frame record");
+                let at = cx.gep(&record, 16);
+                cx.emit(format!("store i32 {site}, ptr {at}, align 8"));
+            }
             match sums.iter().find(|sum| sum.header == index) {
                 Some(sum) => cx.byte_sum(sum)?,
                 None => cx.terminator(&block.terminator, block.terminator_span)?,
@@ -332,7 +404,10 @@ fn block_order(body: &Body) -> Vec<usize> {
 pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl FnOnce(&mut FnCx<'_, 'a>) -> Result<()>) -> Result<()> {
     let sig = body_signature(m, body);
     let optimized = m.profile != Profile::Debug;
-    let link = crate::link_symbol(&body.symbol);
+    // `[HR-6]` — a reloadable function's symbol is its thunk's; its body has a name of its own.
+    let reloadable = crate::reload::is_reloadable(m, &body.symbol);
+    let defined = if reloadable { ember_codegen_c::image::body_symbol(&body.symbol) } else { body.symbol.clone() };
+    let link = crate::link_symbol(&defined);
     let (subprogram, line) = m.debug.subprogram(m.map, &link, body.span, optimized);
     let folded = crate::fold::foldable(m.ty.table, body);
     let mut cx = FnCx {
@@ -349,6 +424,7 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
         scope: Some((subprogram, line)),
         locations: HashMap::new(),
         folded,
+        frame_record: None,
     };
     cx.frame()?;
     cx.declare_locals(subprogram, line);
@@ -369,15 +445,20 @@ pub(crate) fn define_body<'a>(m: &mut Module<'a>, body: &'a Body, build: impl Fn
     if body.inline.hot {
         attrs.push_str(" hot");
     }
-    let linkage = if body.abi.is_some() { "" } else { "internal " };
+    let linkage = if body.abi.is_some() && !reloadable { "" } else { "internal " };
     let header = format!(
-        "define {linkage}{} {}({}) {attrs} !dbg !{subprogram} {{",
+        "define {linkage}{}{} {}({}) {attrs} !dbg !{subprogram} {{",
+        cx.sig.conv.ir(),
         ret_with_attr(&cx.sig),
-        global_name(&body.symbol),
+        if reloadable { global_name(&defined) } else { body_name(cx.m, body) },
         ir_params(&cx.sig, true).join(", ")
     );
     let text = format!("{header}\nentry:\n{}{}  br label %bb0\n{}}}\n\n", cx.allocas, cx.prologue, cx.out);
+    let sig = cx.sig.clone();
     cx.m.fns.push_str(&text);
+    if reloadable {
+        crate::reload::emit_thunk(m, body, &sig);
+    }
     Ok(())
 }
 
@@ -390,6 +471,8 @@ pub(crate) enum Param {
     Ptr,
     /// C's `int`.
     Int,
+    /// C's `size_t`.
+    Size,
     /// The runtime's `ember_loc`.
     Loc,
 }
@@ -400,6 +483,7 @@ impl Param {
             Param::Ty(ty) => m.ty.shape(ty),
             Param::Ptr => Shape::Scalar(abi::Scalar::Ptr),
             Param::Int => Shape::Scalar(abi::Scalar::Int { bytes: 4, signed: true }),
+            Param::Size => Shape::Scalar(abi::Scalar::Int { bytes: 8, signed: false }),
             Param::Loc => runtime::c_type("$loc").shape().expect("ember_loc has a shape"),
         }
     }
@@ -409,6 +493,7 @@ impl Param {
             Param::Ty(ty) => m.ty.repr(ty),
             Param::Ptr => Repr::Scalar(Sc::Ptr),
             Param::Int => Repr::Scalar(Sc::I(32)),
+            Param::Size => Repr::Scalar(Sc::I(64)),
             Param::Loc => Repr::Mem { size: 16, align: 8 },
         }
     }
@@ -436,9 +521,9 @@ pub(crate) fn define_c_fn<'a>(
             index = 1;
             Some(("%p0".to_string(), *align))
         }
-        (Return::Direct(_), Some(ty)) => {
+        (Return::Direct(parts), Some(ty)) => {
             let (size, align) = cx.m.ty.size_align(ty);
-            Some((cx.alloca(size, align), align))
+            Some((cx.alloca(size.max(parts_span(parts)), align), align))
         }
         _ => None,
     };
@@ -460,7 +545,7 @@ pub(crate) fn define_c_fn<'a>(
                 }
                 _ => {
                     let (size, align) = (shape.size(), shape.align());
-                    let slot = cx.alloca(size, align);
+                    let slot = cx.alloca(size.max(parts_span(&parts)), align);
                     for part in &parts {
                         let incoming = format!("%p{index}");
                         cx.store_part(&slot, align, part, &incoming);
@@ -506,6 +591,12 @@ pub(crate) fn define_c_fn<'a>(
     Ok(())
 }
 
+/// The bytes a value's parts reach: AAPCS64 passes a 4-byte struct as an `i64` and a 12-byte one as
+/// `[2 x i64]`, so its storage is padded to them where the parts are read or written.
+fn parts_span(parts: &[Part]) -> u64 {
+    parts.iter().map(|part| part.offset + part.ty.size()).max().unwrap_or(0)
+}
+
 /// The ABI signature of a function the backend writes itself (as `define_c_fn` makes it).
 pub(crate) fn c_fn_signature(m: &Module<'_>, ret: Option<Ty>, params: &[Param]) -> Signature {
     let ret = ret.filter(|ty| !m.ty.is_zst(*ty)).map(|ty| m.ty.shape(ty));
@@ -524,12 +615,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
             out: String::new(),
             next: 0,
             addr: Vec::new(),
-            sig: Signature { ret: Return::Void, params: Vec::new() },
+            sig: Signature { ret: Return::Void, params: Vec::new(), conv: abi::Conv::C },
             block: "start".to_string(),
             span: ember_span::Span::DUMMY,
             scope: None,
             locations: HashMap::new(),
             folded: HashMap::new(),
+            frame_record: None,
         }
     }
 
@@ -589,10 +681,15 @@ impl<'m, 'a> FnCx<'m, 'a> {
 
     /// A call of the runtime's `name()` in the entry block, before the body.
     fn prologue_rt(&mut self, name: &str) {
+        self.in_prologue(|cx| cx.call_rt(name, Vec::new(), None));
+    }
+
+    /// What `write` emits, placed in the prologue.
+    fn in_prologue(&mut self, write: impl FnOnce(&mut Self)) {
         let body = std::mem::take(&mut self.out);
-        self.call_rt(name, Vec::new(), None);
-        let call = std::mem::replace(&mut self.out, body);
-        self.prologue.push_str(&call);
+        write(self);
+        let code = std::mem::replace(&mut self.out, body);
+        self.prologue.push_str(&code);
     }
 
     pub(crate) fn label(&mut self) -> String {
@@ -740,7 +837,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 }
                 Pass::Direct(parts) => {
                     let (size, align) = self.m.ty.size_align(passed_ty(self.m, &values, position, decl.ty));
-                    let slot = self.alloca(size, align);
+                    let slot = self.alloca(size.max(parts_span(&parts)), align);
                     for part in parts {
                         let at = if part.offset == 0 { slot.clone() } else {
                             let at = self.tmp();
@@ -776,7 +873,21 @@ impl<'m, 'a> FnCx<'m, 'a> {
         if body.abi.is_some() {
             self.prologue_rt("rt_thread_attach");
             if body.export_thread_policy != ember_mir::ExportThreadPolicy::Any {
-                self.prologue_rt("rt_check_main_thread");
+                if self.m.module {
+                    // `[FFI-33]` — a shared library's contract is its own: the thread of its
+                    // successful `ember_module_init`, even in a runtime other modules share.
+                    let creator = module_creator(self.m);
+                    self.in_prologue(|cx| {
+                        let id = cx.load(Sc::I(32), &creator, 4);
+                        cx.call_rt("rt_check_module_thread", vec![Val::Imm(Sc::I(32), id)], None);
+                    });
+                } else {
+                    self.prologue_rt("rt_check_main_thread");
+                }
+            }
+            // `[HR-42]` — entering Ember code from a foreign caller: this thread's depth counter.
+            if self.m.reload.is_some() {
+                self.prologue_rt("reload_enter");
             }
         }
         // ADR-141 — each list's frame buffer, aligned for any element it may hold.
@@ -804,6 +915,11 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     self.addr[index] = Some(name);
                 }
                 Repr::Mem { size, align } => {
+                    // The result's slot holds the parts it is returned in (`ret`).
+                    let size = match &self.sig.ret {
+                        Return::Direct(parts) if index == 0 => size.max(parts_span(parts)),
+                        _ => size,
+                    };
                     let slot = self.alloca(size, align);
                     self.addr[index] = Some(slot);
                 }
@@ -876,7 +992,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     let field_ty = table.struct_def(id).fields[*index].ty;
                     let header = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
                     let (_, align) = self.m.ty.size_align(inner);
-                    let payload = self.gep(&header, crate::glue::payload_offset(align));
+                    let payload = self.gep(&header, self.m.ty.payload_offset(align));
                     let slot = self.alloca(8, 8);
                     self.emit(format!("store ptr {payload}, ptr {slot}, align 8"));
                     return Ok(PlaceRef { ptr: slot, ty: field_ty, variant: None, align: 8 });
@@ -897,7 +1013,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let field_ty = field.ty;
                 // The object: after the handle's pointer, the runtime's header, then the fields.
                 let object = self.load(Sc::Ptr, &at.ptr, at.align.min(8));
-                let offset = 24 + table.class_field_offsets(id)[*index];
+                let offset = self.m.ty.object_field_offsets(id)[*index];
                 let ptr = self.gep(&object, offset);
                 PlaceRef { ptr, ty: field_ty, variant: None, align: self.natural_align(field_ty).min(offset_align(offset).min(16)) }
             }
@@ -1069,9 +1185,15 @@ impl<'m, 'a> FnCx<'m, 'a> {
             Const::Fn(symbol) => {
                 // `[FN-6]` — a native value of the function; one a C pointer holds is its address.
                 if let Some(signature) = self.m.callables.natives.get(symbol.as_str()).copied() {
+                    if let Some(value) = crate::reload::fn_value(self, symbol) {
+                        return Ok(value);
+                    }
                     return self.native_fn_value(symbol, signature);
                 }
                 let symbol = symbol.clone();
+                if self.m.bodies.get(symbol.as_str()).is_some_and(|body| is_vectorcall(body)) {
+                    return unsupported("a `__vectorcall` function as a value ([FFI-9])");
+                }
                 self.declare_body(&symbol)?;
                 Val::Imm(Sc::Ptr, global_name(&symbol))
             }
@@ -1131,7 +1253,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let operation = if *mutable { "access_end_write" } else { "access_end_read" };
                 let at = self.place(place)?;
                 let (_, align) = self.m.ty.size_align(at.ty);
-                let offset = (24 + align - 1) & !(align - 1);
+                let offset = self.m.ty.payload_offset(align);
                 let object = self.value(format!("getelementptr i8, ptr {}, i64 -{offset}", at.ptr));
                 let what = self.mir().symbol.clone();
                 let what = self.m.bytes(what.as_bytes());
@@ -1200,8 +1322,16 @@ impl<'m, 'a> FnCx<'m, 'a> {
     /// (`[HEAP-5]`).
     fn access(&mut self, place: &Place, operation: &str, span: ember_span::Span) -> Result<()> {
         let ty = self.place_ty(place);
-        if self.is_dyn_place(ty) {
-            // `[EXC-18]` — through the table's `access` entry.
+        // `[EXC-18]` — a `dyn` receiver's object, through the table's `access` entry. D-913: one a
+        // class field holds is named with a `Deref` after the field, whose own place is its access
+        // word (`[EXC-19]`), which a store into the field takes.
+        let (carrier, behind) = match place.projection.split_last() {
+            Some((Projection::Deref, prefix)) if self.is_dyn_place(self.place_ty(&Place { local: place.local, projection: prefix.to_vec() })) => {
+                (Place { local: place.local, projection: prefix.to_vec() }, true)
+            }
+            _ => (place.clone(), false),
+        };
+        if behind || (self.is_dyn_place(ty) && !self.has_field_word(place)) {
             let code = match operation {
                 "begin_read" => 0,
                 "end_read" => 1,
@@ -1209,7 +1339,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 _ => 3,
             };
             // A `ref dyn I`, a `dyn I` and a `Box[dyn I]` are each the carrier itself.
-            let at = self.place(place)?;
+            let at = self.place(&carrier)?;
             let loc = self.loc(span);
             self.dyn_access(&at, code, loc);
             return Ok(());
@@ -1238,9 +1368,9 @@ impl<'m, 'a> FnCx<'m, 'a> {
     /// a class field with its own word nor a class object.
     fn access_check(&mut self, place: &Place, mutable: bool, span: ember_span::Span) -> Result<bool> {
         let ty = self.place_ty(place);
-        if self.is_dyn_place(ty) {
-            return Ok(false);
-        }
+        // A class field with its own word is checked there, a `dyn` one too, as the C backend's
+        // `field_check_call` does: the pair brackets a store into the field (D-911: through the
+        // table it read the box the store had not yet written).
         let operation = if mutable { "check_write" } else { "check_read" };
         if let Some((word, what)) = self.field_word(place)? {
             let loc = self.loc(span);
@@ -1297,6 +1427,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
             TyKind::Struct(id) => table.compiler_box_inner(*id).is_some_and(|inner| matches!(table.kind(inner), TyKind::Dyn { .. })),
             _ => false,
         }
+    }
+
+    /// Whether `place` is a class handle's field with its own access word (`h.f`).
+    fn has_field_word(&self, place: &Place) -> bool {
+        let Some((Projection::Field(index), prefix)) = place.projection.split_last() else { return false };
+        let handle = Place { local: place.local, projection: prefix.to_vec() };
+        matches!(*self.m.ty.kind(self.place_ty(&handle)), TyKind::Class(id) if self.m.ty.table.class_field_has_access_word(id, *index))
     }
 
     /// When `place` is a class handle's field with its own access word (`h.f`), the word's address
@@ -2243,14 +2380,14 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.call_rt(name, vec![Val::Imm(Sc::F64, wide)], Some((&slot, 16)));
                 self.load(Sc::I(128), &slot, 16)
             }
-            (Sc::I(from_bits), to @ (Sc::F32 | Sc::F64 | Sc::F80)) => {
+            (Sc::I(from_bits), to @ (Sc::F32 | Sc::F64 | Sc::F80 | Sc::F128)) => {
                 if from_bits > 64 {
                     return unsupported("a 256-bit integer to float conversion");
                 }
                 let instruction = if signed { "sitofp" } else { "uitofp" };
                 self.value(format!("{instruction} i{from_bits} {value} to {}", to.ir()))
             }
-            (from @ (Sc::F32 | Sc::F64 | Sc::F80), Sc::I(to_bits)) => {
+            (from @ (Sc::F32 | Sc::F64 | Sc::F80 | Sc::F128), Sc::I(to_bits)) => {
                 // `[TYP-6]` — saturating, NaN to 0: LLVM's `.sat` conversions exactly.
                 if to_bits > 64 {
                     return unsupported("a float to 256-bit integer conversion");
@@ -2261,10 +2398,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.m.declare(&intrinsic, || format!("declare i{to_bits} @{intrinsic}({from_ir})"));
                 self.value(format!("call i{to_bits} @{intrinsic}({from_ir} {value})"))
             }
-            (Sc::F32, to @ (Sc::F64 | Sc::F80)) | (Sc::F64, to @ Sc::F80) => {
+            (Sc::F32, to @ (Sc::F64 | Sc::F80 | Sc::F128)) | (Sc::F64, to @ (Sc::F80 | Sc::F128)) => {
                 self.value(format!("fpext {} {value} to {}", sc.ir(), to.ir()))
             }
-            (from @ (Sc::F64 | Sc::F80), to @ (Sc::F32 | Sc::F64)) => {
+            (from @ (Sc::F64 | Sc::F80 | Sc::F128), to @ (Sc::F32 | Sc::F64)) => {
                 self.value(format!("fptrunc {} {value} to {}", from.ir(), to.ir()))
             }
             (Sc::Ptr, Sc::I(bits)) => {
@@ -2380,6 +2517,17 @@ impl<'m, 'a> FnCx<'m, 'a> {
     }
 
     pub(crate) fn ret(&mut self) -> Result<()> {
+        // `[HR-42]` — leaving Ember code for the foreign caller of an export.
+        if self.m.reload.is_some() && self.body.is_some_and(|body| body.abi.is_some()) {
+            self.call_rt("reload_leave", Vec::new(), None);
+        }
+        // `[HR-3b]` — this frame's record off its thread's chain.
+        if let Some(record) = self.frame_record.as_ref().map(|record| (record.head.clone(), record.record.clone())) {
+            let (head, record) = record;
+            let head = self.load(Sc::Ptr, &head, 8);
+            let previous = self.load(Sc::Ptr, &record, 8);
+            self.emit(format!("store ptr {previous}, ptr {head}, align 8"));
+        }
         match self.sig.ret.clone() {
             Return::Void | Return::Sret { .. } => self.emit("ret void"),
             Return::Direct(parts) => {
@@ -2437,7 +2585,13 @@ impl<'m, 'a> FnCx<'m, 'a> {
                         out.push(format!("{}{} {text}", part.ty, part.ext.attr()));
                         continue;
                     }
-                    let (base, base_align) = self.spill(value, *size, *align);
+                    let (mut base, mut base_align) = self.spill(value, *size, *align);
+                    let span = parts_span(parts);
+                    if span > *size {
+                        let padded = self.alloca(span, base_align.max(8));
+                        self.copy(&padded, base_align.max(8), &base, base_align, *size, false);
+                        (base, base_align) = (padded, base_align.max(8));
+                    }
                     for part in parts {
                         let loaded = self.load_part(&base, base_align, part);
                         out.push(format!("{}{} {loaded}", part.ty, part.ext.attr()));
@@ -2471,18 +2625,22 @@ impl<'m, 'a> FnCx<'m, 'a> {
         };
         args.extend(self.lower_args(sig, values));
         let ret_ir = sig.ret.ir();
-        let ret_ext = ret_attr(sig);
-        let call = format!("call{ret_ext} {ret_ir} {callee}({}){attrs}", args.join(", "));
+        let call = format!("call {}{} {callee}({}){attrs}", sig.conv.ir(), ret_with_attr(sig), args.join(", "));
         match (&sig.ret, dest) {
-            (Return::Direct(parts), Some((to, to_align, _))) => {
+            (Return::Direct(parts), Some((to, to_align, to_size))) => {
                 let result = self.value(&call);
+                let span = parts_span(parts);
+                let (into, into_align) = if span > to_size { (self.alloca(span, to_align.max(8)), to_align.max(8)) } else { (to.to_string(), to_align) };
                 if parts.len() == 1 {
-                    self.store_part(to, to_align, &parts[0], &result);
+                    self.store_part(&into, into_align, &parts[0], &result);
                 } else {
                     for (index, part) in parts.iter().enumerate() {
                         let element = self.value(format!("extractvalue {ret_ir} {result}, {index}"));
-                        self.store_part(to, to_align, part, &element);
+                        self.store_part(&into, into_align, part, &element);
                     }
+                }
+                if into != to {
+                    self.copy(to, to_align, &into, into_align, to_size, false);
                 }
             }
             (Return::Sret { .. }, Some((to, to_align, _))) => {
@@ -2611,7 +2769,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let values = lowered;
         let (size, _) = self.m.ty.size_align(body.return_ty());
         let dest = dest.map(|(ptr, align)| (ptr, align, size));
-        self.lowered_call(&global_name(symbol), &sig, &values, dest, "");
+        let callee = body_name(self.m, body);
+        self.lowered_call(&callee, &sig, &values, dest, "");
         Ok(())
     }
 
@@ -2686,7 +2845,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
         let ret = runtime::c_type(entry.ret).shape();
         let shapes: Vec<Shape> = entry.params.iter().map(|param| runtime::c_type(param).shape().expect("a parameter has a type")).collect();
         let sig = abi::classify(self.m.ty.target, ret.as_ref(), &shapes);
-        let symbol = runtime::symbol(entry);
+        let symbol = runtime::symbol(entry, &self.m.shim_namespace);
         if entry.inline {
             self.m.shims.insert(entry.name);
         }
@@ -2820,8 +2979,35 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.zero(&at.ptr, 8, 24);
                 Ok(())
             }
+            // `[HR-33]` — a poll the program makes itself; a runtime without reload answers that it
+            // has none.
+            Builtin::HotCheckpoint => {
+                let status = self.alloca(4, 4);
+                self.call_rt("reload_checkpoint", Vec::new(), Some((&status, 4)));
+                Ok(())
+            }
             other => self.builtin_call(other, arg_ty, args, dest, span),
         }
+    }
+
+    /// `[HR-3b]` — this body's frame record pushed on its thread's chain as the body starts:
+    /// `{ prev, &info, site }`, the head of the chain `ember_reload_frames()`'s.
+    fn push_frame_record(&mut self, info: &ember_codegen_c::image::FrameInfo) {
+        let record = self.alloca(24, 8);
+        let head = self.alloca(8, 8);
+        let body = std::mem::take(&mut self.out);
+        self.call_rt("reload_frames", Vec::new(), Some((&head, 8)));
+        let chain = self.load(Sc::Ptr, &head, 8);
+        let previous = self.load(Sc::Ptr, &chain, 8);
+        self.emit(format!("store ptr {previous}, ptr {record}, align 8"));
+        let info_at = self.gep(&record, 8);
+        self.emit(format!("store ptr {}, ptr {info_at}, align 8", global_name(&info.symbol)));
+        let site_at = self.gep(&record, 16);
+        self.emit(format!("store i32 0, ptr {site_at}, align 8"));
+        self.emit(format!("store ptr {record}, ptr {chain}, align 8"));
+        let pushed = std::mem::replace(&mut self.out, body);
+        self.prologue.push_str(&pushed);
+        self.frame_record = Some(crate::reload::FrameRecord { head, record, sites: info.by_block.clone() });
     }
 
     /// ADR-141 — `ember_stack_vec(buffer, cap)`: the list in its frame buffer where the runtime
@@ -2835,7 +3021,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 let cap = self.gep(to, 16);
                 self.emit(format!("store i64 {capacity}, ptr {cap}, align 8"));
             }
-            abi::Target::SysV => {
+            abi::Target::SysV | abi::Target::Aapcs64 => {
                 let (low, high) = ("@ember_stack_low", "@ember_stack_high");
                 self.m.declare(low, || format!("{low} = external thread_local global i64, align 8"));
                 self.m.declare(high, || format!("{high} = external thread_local global i64, align 8"));
@@ -2913,6 +3099,7 @@ fn sc_part(sc: Sc) -> Option<PartTy> {
         Sc::F32 => PartTy::F32,
         Sc::F64 => PartTy::F64,
         Sc::F80 => PartTy::F80,
+        Sc::F128 => PartTy::F128,
         Sc::Ptr => PartTy::Ptr,
         Sc::I(_) => return None,
     })
@@ -2981,12 +3168,13 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         out: String::new(),
         next: 0,
         addr: Vec::new(),
-        sig: Signature { ret: Return::Void, params: Vec::new() },
+        sig: Signature { ret: Return::Void, params: Vec::new(), conv: abi::Conv::C },
         block: "entry".to_string(),
         span: ember_span::Span::DUMMY,
         scope: Some((subprogram, line)),
         locations: HashMap::new(),
         folded: HashMap::new(),
+        frame_record: None,
     };
     // `[TST-3]` — a test binary runs the test its one argument numbers (`2` for anything else),
     // its crash a status rather than Windows' error window (D-252).
@@ -2995,23 +3183,22 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         None => None,
     };
     // `ember_rt_config_default()`: its size, and nothing else set.
-    let cfg = cx.alloca(48, 8);
-    cx.zero(&cfg, 8, 48);
-    cx.emit(format!("store i64 48, ptr {cfg}, align 8"));
+    let cfg = cx.alloca(config::SIZE, 8);
+    cx.zero(&cfg, 8, config::SIZE);
+    cx.emit(format!("store i64 {}, ptr {cfg}, align 8", config::SIZE));
     if options.leak_check {
-        let flags = cx.gep(&cfg, 40);
-        // `EMBER_RT_DEBUG_OBJECTS`
-        cx.emit(format!("store i32 1, ptr {flags}, align 8"));
+        let flags = cx.gep(&cfg, config::FLAGS);
+        cx.emit(format!("store i32 {}, ptr {flags}, align 8", config::DEBUG_OBJECTS));
     }
     if which.is_some() {
         // A test's panic is marked for the runner.
-        let on_panic = cx.gep(&cfg, 32);
+        let on_panic = cx.gep(&cfg, config::ON_PANIC);
         cx.emit(format!("store ptr @ember_ll_test_on_panic, ptr {on_panic}, align 8"));
         cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "1".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
     } else {
         cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "%argc".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
     }
-    cx.call_rt("rt_init_v3", vec![Val::Imm(Sc::Ptr, cfg.clone()), Val::Imm(Sc::I(32), "3".to_string())], None);
+    cx.call_rt("rt_init_v3", vec![Val::Imm(Sc::Ptr, cfg.clone()), Val::Imm(Sc::I(32), runtime::RUNTIME_ABI.to_string())], None);
     let (named, sites) = if options.profile != Profile::Release { frame_tables(cx.m, bodies) } else { (0, 0) };
     if named > 0 {
         cx.call_rt("backtrace_names", vec![Val::Imm(Sc::Ptr, "@em_frame_names".to_string()), Val::Imm(Sc::I(64), named.to_string())], None);
@@ -3042,7 +3229,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         cx.call_rt("rt_shutdown", Vec::new(), None);
         cx.emit("ret i32 0");
         let attrs = fn_attrs(cx.m);
-        let text = format!("define i32 @main(i32 %argc, ptr %argv) {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", cx.allocas, cx.out);
+        let text = format!("define {} {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", entry_head(cx.m), cx.allocas, cx.out);
         cx.m.fns.push_str(&text);
         return Ok(());
     }
@@ -3065,12 +3252,129 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     cx.call_rt("rt_shutdown", Vec::new(), None);
     cx.emit(format!("ret i32 {status}"));
     let attrs = fn_attrs(cx.m);
+    let text = format!("define {} {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n", entry_head(cx.m), cx.allocas, cx.out);
+    cx.m.fns.push_str(&text);
+    Ok(())
+}
+
+/// `[FFI-33]` — a shared library's creator: the thread of its successful `ember_module_init`, 0
+/// before it and after `ember_module_shutdown`.
+fn module_creator(m: &mut Module<'_>) -> String {
+    let name = global_name(&format!("{}module_creator", ember_branding::mangle_prefix()));
+    m.declare(&name, || format!("{name} = internal global i32 0, align 4"));
+    name
+}
+
+/// `[FFI-28]`, `[FFI-31]`, `[ABI-1]`, `[ABI-3]`, `[FFI-33]` — a shared library's entry points, as the
+/// C backend writes them (`emit_module_entry`): the marker of the module protocol it follows;
+/// `ember_module_init`, which refuses a runtime of another ABI version before anything else, then
+/// initialises the module in its runtime (its own copy, or the one modules share) with the host's
+/// config, as much of it as the host's `size` covers and the defaults past it, and records its
+/// creator thread, a second call while initialised changing nothing; `ember_module_shutdown`, which
+/// shuts the module down in its runtime (the runtime's own shutdown when it is the last module).
+pub(crate) fn emit_module_entry(m: &mut Module<'_>, leak_check: bool) -> Result<()> {
+    let creator = module_creator(m);
+    m.global(format!(
+        "{} = constant i32 {}, align 4",
+        global_name(&ember_branding::runtime("module_protocol_v1")),
+        runtime::MODULE_PROTOCOL
+    ));
+    m.declare("llvm.umin.i64", || "declare i64 @llvm.umin.i64(i64, i64)".to_string());
+    m.declare("llvm.memcpy.p0.p0.i64", || "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)".to_string());
+    let mut cx = FnCx::glue(m);
+    let version = cx.alloca(4, 4);
+    cx.call_rt("rt_abi_version", Vec::new(), Some((&version, 4)));
+    let version = cx.load(Sc::I(32), &version, 4);
+    let same = cx.value(format!("icmp eq i32 {version}, {} ; EMBER_RUNTIME_ABI", runtime::RUNTIME_ABI));
+    let (refused, checked) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {same}, label %{checked}, label %{refused}"));
+    cx.start(&refused);
+    cx.emit(format!("ret i32 {}", runtime::MODULE_INIT_ABI_MISMATCH));
+    cx.start(&checked);
+    let current = cx.load(Sc::I(32), &creator, 4);
+    let initialised = cx.value(format!("icmp ne i32 {current}, 0"));
+    let (again, fresh) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {initialised}, label %{again}, label %{fresh}"));
+    cx.start(&again);
+    cx.emit("ret i32 0");
+    cx.start(&fresh);
+    let settings = cx.alloca(config::SIZE, 8);
+    cx.zero(&settings, 8, config::SIZE);
+    cx.emit(format!("store i64 {}, ptr {settings}, align 8", config::SIZE));
+    let given = cx.value("icmp ne ptr %p0, null");
+    let (copy, configured) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {given}, label %{copy}, label %{configured}"));
+    cx.start(&copy);
+    let size = cx.load(Sc::I(64), "%p0", 8);
+    let count = cx.value(format!("call i64 @llvm.umin.i64(i64 {size}, i64 {})", config::SIZE));
+    cx.emit(format!("call void @llvm.memcpy.p0.p0.i64(ptr align 8 {settings}, ptr align 8 %p0, i64 {count}, i1 false)"));
+    cx.emit(format!("store i64 {}, ptr {settings}, align 8", config::SIZE));
+    cx.emit(format!("br label %{configured}"));
+    cx.start(&configured);
+    if leak_check {
+        let flags = cx.gep(&settings, config::FLAGS);
+        let set = cx.load(Sc::I(32), &flags, 8);
+        let with = cx.value(format!("or i32 {set}, {}", config::DEBUG_OBJECTS));
+        cx.emit(format!("store i32 {with}, ptr {flags}, align 8"));
+    }
+    let status = cx.alloca(4, 4);
+    cx.call_rt(
+        "rt_module_init_v3",
+        vec![Val::Imm(Sc::Ptr, settings.clone()), Val::Imm(Sc::I(32), runtime::RUNTIME_ABI.to_string())],
+        Some((&status, 4)),
+    );
+    let status = cx.load(Sc::I(32), &status, 4);
+    let failed = cx.value(format!("icmp ne i32 {status}, 0"));
+    let (stopped, started) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {failed}, label %{stopped}, label %{started}"));
+    cx.start(&stopped);
+    cx.emit(format!("ret i32 {status}"));
+    cx.start(&started);
+    if leak_check {
+        cx.register_edges()?;
+    }
+    let thread = cx.alloca(4, 4);
+    cx.call_rt("rt_thread_id", Vec::new(), Some((&thread, 4)));
+    let thread = cx.load(Sc::I(32), &thread, 4);
+    cx.emit(format!("store i32 {thread}, ptr {creator}, align 4"));
+    cx.emit("ret i32 0");
+    let attrs = fn_attrs(cx.m);
     let text = format!(
-        "define i32 @main(i32 %argc, ptr %argv) {attrs} !dbg !{subprogram} {{\nentry:\n{}{}}}\n\n",
-        cx.allocas, cx.out
+        "define i32 {}(ptr %p0) {attrs} {{\nentry:\n{}  br label %start\nstart:\n{}}}\n\n",
+        global_name(&ember_branding::runtime("module_init")),
+        cx.allocas,
+        cx.out
+    );
+    cx.m.fns.push_str(&text);
+    let mut cx = FnCx::glue(m);
+    let current = cx.load(Sc::I(32), &creator, 4);
+    let initialised = cx.value(format!("icmp ne i32 {current}, 0"));
+    let (never, end) = (cx.label(), cx.label());
+    cx.emit(format!("br i1 {initialised}, label %{end}, label %{never}"));
+    cx.start(&never);
+    cx.emit("ret void");
+    cx.start(&end);
+    cx.emit(format!("store i32 0, ptr {creator}, align 4"));
+    cx.call_rt("rt_module_shutdown", Vec::new(), None);
+    cx.emit("ret void");
+    let text = format!(
+        "define void {}() {attrs} {{\nentry:\n{}  br label %start\nstart:\n{}}}\n\n",
+        global_name(&ember_branding::runtime("module_shutdown")),
+        cx.allocas,
+        cx.out
     );
     cx.m.fns.push_str(&text);
     Ok(())
+}
+
+/// The C entry's name and parameters: `main`, or in a reloadable image the image's own entry, which
+/// the runtime calls (`[HR-33]`).
+fn entry_head(m: &Module<'_>) -> String {
+    if m.reload.is_some() {
+        format!("internal i32 {}(i32 %argc, ptr %argv)", global_name(&ember_codegen_c::image::entry_symbol()))
+    } else {
+        "i32 @main(i32 %argc, ptr %argv)".to_string()
+    }
 }
 
 /// `[TST-3]` — a test binary's argument: the number of the test it runs, in decimal, below

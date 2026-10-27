@@ -62,8 +62,21 @@ pub(crate) struct Build<'a> {
     pub module_name: &'a str,
     pub has_main: bool,
     pub command: &'a str,
+    /// `[FFI-28]` — a library package (`staticlib`, `cdylib`), its exports' names under
+    /// `package_name`; a `cdylib`'s runtime its own or `[FFI-31c]` the process's (`shared_runtime`).
     pub library: bool,
-    pub reload: bool,
+    pub cdylib: bool,
+    pub package_name: &'a str,
+    pub shared_runtime: bool,
+    /// `[CG-LL-3]` (ODR-274) — the profile-guided optimisation asked for.
+    pub pgo: Option<super::PgoAsk>,
+    /// Annex B — a reloadable program's image, as the driver decides it, and what it wrote into the
+    /// program (the next build's `Old<Name>` structs are made from its schema).
+    pub reload: Option<&'a ember_codegen_c::ReloadImage>,
+    pub additions: Option<&'a super::reload::Additions>,
+    pub started: std::time::Instant,
+    /// `ember inspect`'s tables (`super::write_inspect`), which no backend changes.
+    pub inspect: [String; 2],
     pub bodies: &'a [ember_mir::Body],
     pub input: &'a Path,
     pub manifest: Option<&'a str>,
@@ -81,66 +94,46 @@ fn profile(profile: Profile) -> ember_codegen_llvm::Profile {
     }
 }
 
-/// The module emitted, written, compiled and linked; run for `ember run`.
-pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Sink) -> Result<ExitCode, String> {
-    if request.library {
-        return Err("the LLVM backend does not build a library package yet".to_string());
+/// `[CG-LL-3]` (ODR-274) — the profile `--pgo-use` names: a merged `.profdata` as it is; a raw
+/// `.profraw`, or a folder of them (`--pgo-generate`'s `pgo` folder), merged by `llvm-profdata`
+/// into this build's own `pgo/<module>.profdata` first.
+fn profile_data(toolchain: &Toolchain, recorded: &Path, layout: &Layout, module_name: &str) -> Result<PathBuf, String> {
+    if recorded.extension().is_some_and(|ext| ext == "profdata") {
+        return if recorded.is_file() {
+            std::path::absolute(recorded).map_err(|e| e.to_string())
+        } else {
+            Err(format!("no recorded profile at {} [CG-LL-3]", recorded.display()))
+        };
     }
-    if request.reload {
-        return Err("the LLVM backend does not build a reloadable program yet".to_string());
-    }
-    let testing = request.command == "test";
-    match options.emit.as_deref() {
-        None | Some("llvm-ir") => {}
-        Some(other) => return Err(format!("`--emit {other}` is the C backend's; the LLVM backend emits `llvm-ir`")),
-    }
-    let emit_options = ember_codegen_llvm::Options {
-        module_name: request.module_name,
-        has_main: request.has_main,
-        leak_check: options.leak_check,
-        profile: profile(options.profile),
-        target: ember_codegen_llvm::Target::host(),
-        triple: None,
-        tests: testing.then(|| request.tests.iter().map(|test| test.symbol.clone()).collect()),
+    let raw: Vec<PathBuf> = if recorded.is_dir() {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(recorded)
+            .map_err(|e| e.to_string())?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "profraw"))
+            .collect();
+        found.sort();
+        found
+    } else if recorded.is_file() {
+        vec![recorded.to_path_buf()]
+    } else {
+        Vec::new()
     };
-    let output = ember_codegen_llvm::emit(request.mir, request.map, &emit_options).map_err(|error| error.to_string())?;
-    super::mark("LLVM IR generation", "all modules");
-    if options.emit.as_deref() == Some("llvm-ir") {
-        print!("{}", output.ir);
-        if let Some(shim) = &output.shim {
-            print!("\n; the runtime's inline functions, called through this C:\n");
-            for line in shim.lines() {
-                println!("; {line}");
-            }
-        }
-        return Ok(super::finish(sink, request.map, options));
+    if raw.is_empty() {
+        return Err(format!(
+            "no recorded profile at {}: run the program built with `--pgo-generate` first, which writes its raw profiles there [CG-LL-3]",
+            recorded.display()
+        ));
     }
-    if !request.has_main && !testing {
-        return Err("this file declares no `main`, so there is nothing to run".to_string());
-    }
-    let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
-    let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
-    let ll_path = layout.c.join(format!("{}.ll", request.module_name));
-    std::fs::write(&ll_path, &output.ir).map_err(|e| e.to_string())?;
-    let mut sources = vec![ll_path];
-    // The runtime's inline functions the IR calls, through their one-line C wrappers.
-    if let Some(shim) = &output.shim {
-        let shim_path = layout.c.join(format!("{}.rt.c", request.module_name));
-        std::fs::write(&shim_path, shim).map_err(|e| e.to_string())?;
-        sources.push(shim_path);
-    }
-    let toolchain = clang(options)?;
-    // `[BLD-6]` — the build record: the IR goes through the same Clang link, ThinLTO's included.
-    super::write_build_record(&layout, request.module_name, options.profile, &toolchain, ember_build::Link::Here, false)?;
-    let runtime = super::runtime_dir()?;
-    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
-    let includes = vec![runtime.join("include")];
-    let runtime_input = ember_build::runtime_object_for_executable(&toolchain, &runtime_source, &includes, options.profile, &ember_build::cache_root())
-        .map_err(|e| e.to_string())?
-        .unwrap_or(runtime_source);
-    let exe_name = if cfg!(windows) { format!("{}.exe", request.module_name) } else { request.module_name.to_string() };
-    let exe = layout.bin.join(&exe_name);
-    // `[BLD-FFI-3]` — `[link] libs`, in the order written, a path the package's.
+    let merged = std::path::absolute(layout.root.join("pgo").join(format!("{module_name}.profdata"))).map_err(|e| e.to_string())?;
+    ember_build::merge_profiles(toolchain, &raw, &merged).map_err(|e| e.to_string())?;
+    Ok(merged)
+}
+
+/// `[BLD-FFI-3]` — `[link] libs`, in the order written, a path the package's; `[FFI-29]`,
+/// `[BLD-FFI-1]` — each `import c`'s shim and C sources, compiled by the `[c]` section's compiler
+/// (Clang by default) into objects of their own (`shared_library`: for a `cdylib`), then its
+/// libraries.
+fn link_inputs(request: &Build<'_>, toolchain: &Toolchain, layout: &Layout, profile: Profile, shared_library: bool) -> Result<(Vec<String>, Vec<PathBuf>), String> {
     let package_dir = super::nearest_manifest_path(request.input).and_then(|path| path.parent().map(Path::to_path_buf));
     let mut libraries: Vec<String> = request
         .manifest
@@ -154,21 +147,137 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
             _ => library,
         })
         .collect();
-    // `[FFI-29]`, `[BLD-FFI-1]` — each `import c`'s shim and C sources, compiled by the `[c]`
-    // section's compiler (Clang by default) into objects of their own, then its libraries.
     let c_toolchain = match request.manifest.and_then(|text| manifest_string(text, "c", "compiler")) {
         Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
         None => toolchain.clone(),
     };
     let (foreign_objects, foreign_libraries) =
-        super::cimport::build_objects(request.modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, false)?;
+        super::cimport::build_objects(request.modules, &c_toolchain, toolchain, &layout.c, &layout.obj, profile, shared_library)?;
     libraries.extend(foreign_libraries);
+    Ok((libraries, foreign_objects))
+}
+
+/// The module emitted, written, compiled and linked; run for `ember run`. A reloadable program's
+/// module is its image, which the shared runtime loads beside the host (Annex B).
+pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag::Sink) -> Result<ExitCode, String> {
+    let testing = request.command == "test";
+    match options.emit.as_deref() {
+        None | Some("llvm-ir") => {}
+        Some(other) => return Err(format!("`--emit {other}` is the C backend's; the LLVM backend emits `llvm-ir`")),
+    }
+    // `[FFI-26]`, `[BLD-FFI-5a]` — a library's headers are the C backend's, from the same type plan;
+    // this module defines what they declare.
+    let interface = request.library.then(|| {
+        ember_codegen_c::library_interface(request.mir, request.map, request.module_name, request.package_name, request.cdylib, false)
+    });
+    let emit_options = ember_codegen_llvm::Options {
+        module_name: request.module_name,
+        has_main: request.has_main,
+        // `[FFI-31]` — a shared library reports its leaks at shutdown in `debug`.
+        leak_check: options.leak_check || (request.cdylib && options.profile == Profile::Debug),
+        profile: profile(options.profile),
+        target: ember_codegen_llvm::Target::host(),
+        triple: None,
+        tests: testing.then(|| request.tests.iter().map(|test| test.symbol.clone()).collect()),
+        reload: request.reload,
+        module: request.cdylib,
+        package: request.library.then_some(request.package_name),
+        classes: interface.as_ref().map_or(&[], |interface| interface.classes.as_slice()),
+    };
+    let output = ember_codegen_llvm::emit(request.mir, request.map, &emit_options).map_err(|error| error.to_string())?;
+    super::mark("LLVM IR generation", "all modules");
+    if options.emit.as_deref() == Some("llvm-ir") {
+        print!("{}", output.ir);
+        if let Some(shim) = &output.shim {
+            print!("\n; the runtime's inline functions, called through this C:\n");
+            for line in shim.lines() {
+                println!("; {line}");
+            }
+        }
+        return Ok(super::finish(sink, request.map, options));
+    }
+    if !request.has_main && !testing && !request.library {
+        return Err("this file declares no `main`, so there is nothing to run".to_string());
+    }
+    let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+    let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
+    super::write_inspect(&layout, request.module_name, &request.inspect)?;
+    let ll_path = layout.c.join(format!("{}.ll", request.module_name));
+    std::fs::write(&ll_path, &output.ir).map_err(|e| e.to_string())?;
+    let mut sources = vec![ll_path];
+    // The runtime's inline functions the IR calls, through their one-line C wrappers.
+    if let Some(shim) = &output.shim {
+        let shim_path = layout.c.join(format!("{}.rt.c", request.module_name));
+        std::fs::write(&shim_path, shim).map_err(|e| e.to_string())?;
+        sources.push(shim_path);
+    }
+    let toolchain = clang(options)?;
+    ember_build::set_pgo(match &request.pgo {
+        None => None,
+        Some(_) if request.library || request.reload.is_some() || testing => {
+            return Err("profile-guided optimisation builds a program ([CG-LL-3]), not a library, a reloadable image or a test binary".to_string());
+        }
+        // Raw profiles in the profile's own folder, where the program writes them as it ends.
+        Some(super::PgoAsk::Generate) => {
+            let dir = layout.root.join("pgo");
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            Some(ember_build::Pgo::Generate(std::path::absolute(&dir).map_err(|e| e.to_string())?))
+        }
+        Some(super::PgoAsk::Use(recorded)) => Some(ember_build::Pgo::Use(profile_data(&toolchain, recorded, &layout, request.module_name)?)),
+    });
+    // `[BLD-6]` — the build record: the IR goes through the same Clang link, ThinLTO's included (a
+    // hot-reload image without it).
+    super::write_build_record(&layout, request.module_name, options.profile, &toolchain, ember_build::Link::Here, request.reload.is_some())?;
+    // Annex B — the image: the IR and its C, compiled with the reload definitions, as a shared
+    // library beside the shared runtime and the host.
+    if let Some(image) = request.reload {
+        let program = super::ReloadProgram {
+            toolchain: &toolchain,
+            layout: &layout,
+            module_name: request.module_name,
+            units: &sources,
+            relaxed_units: &[],
+            image,
+            additions: request.additions,
+            modules: request.modules,
+            manifest: request.manifest,
+            started: request.started,
+        };
+        return super::build_reload_program(program, request.command, options, sink, request.map);
+    }
+    if let Some(interface) = interface {
+        let header = interface.header?;
+        let (libraries, foreign_objects) = link_inputs(&request, &toolchain, &layout, options.profile, request.cdylib)?;
+        let library = super::Library {
+            toolchain: &toolchain,
+            layout: &layout,
+            package_name: request.package_name,
+            module_name: request.module_name,
+            cdylib: request.cdylib,
+            shared_runtime: request.shared_runtime,
+            units: &sources,
+            objects: &foreign_objects,
+            libraries: &libraries,
+            exports: if request.cdylib { super::cdylib_exports(request.bodies, request.mir.types()) } else { Vec::new() },
+            header: &header,
+        };
+        return super::build_library(library, options, sink, request.map);
+    }
+    let runtime = super::runtime_dir()?;
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let includes = vec![runtime.join("include")];
+    let runtime_input = ember_build::runtime_object_for_executable(&toolchain, &runtime_source, &includes, options.profile, &ember_build::cache_root())
+        .map_err(|e| e.to_string())?
+        .unwrap_or(runtime_source);
+    let exe_name = if cfg!(windows) { format!("{}.exe", request.module_name) } else { request.module_name.to_string() };
+    let exe = layout.bin.join(&exe_name);
+    let (libraries, foreign_objects) = link_inputs(&request, &toolchain, &layout, options.profile, false)?;
     // The exports stay though nothing in the program calls them.
     let mut retained: Vec<String> = request
         .bodies
         .iter()
         .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
-        .map(|body| ember_branding::export_alias_symbol(&body.symbol).unwrap_or_else(|| body.symbol.clone()))
+        .map(|body| ember_codegen_llvm::function_link_symbol(request.mir.types(), ember_codegen_llvm::Target::host(), body))
         .collect();
     retained.sort();
     retained.dedup();
@@ -186,7 +295,18 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &ember_diag::Si
         &retained,
         &libraries,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        // `[CG-LL-3]` — an instrumented link needs Clang's profile runtime, which some packagings
+        // of Clang leave out.
+        let error = e.to_string();
+        match ember_build::pgo() {
+            Some(ember_build::Pgo::Generate(_)) if error.contains("clang_rt.profile") => format!(
+                "{error}\n  = help: `--pgo-generate` links Clang's profile runtime, which this Clang lacks: {}",
+                if cfg!(windows) { "install LLVM's full package (`winget install --id LLVM.LLVM`)" } else { "on Debian or Ubuntu, `sudo apt install libclang-rt-dev`" }
+            ),
+            _ => error,
+        }
+    })?;
     super::mark("LLVM compile and link", "all modules");
     super::report(sink, request.map, options);
     if testing {

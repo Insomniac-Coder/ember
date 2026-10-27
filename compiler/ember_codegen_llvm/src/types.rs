@@ -14,6 +14,8 @@ pub enum Sc {
     F32,
     F64,
     F80,
+    /// IEEE quad precision: AArch64 Linux's `long double`.
+    F128,
     Ptr,
 }
 
@@ -26,6 +28,7 @@ impl Sc {
             Sc::F32 => "float".to_string(),
             Sc::F64 => "double".to_string(),
             Sc::F80 => "x86_fp80".to_string(),
+            Sc::F128 => "fp128".to_string(),
             Sc::Ptr => "ptr".to_string(),
         }
     }
@@ -39,7 +42,7 @@ impl Sc {
     }
 
     pub fn is_float(self) -> bool {
-        matches!(self, Sc::F32 | Sc::F64 | Sc::F80)
+        matches!(self, Sc::F32 | Sc::F64 | Sc::F80 | Sc::F128)
     }
 
     pub fn bits(self) -> u32 {
@@ -49,6 +52,7 @@ impl Sc {
             Sc::F32 => 32,
             Sc::F64 | Sc::Ptr => 64,
             Sc::F80 => 80,
+            Sc::F128 => 128,
         }
     }
 }
@@ -68,6 +72,9 @@ pub struct Types<'a> {
     pub table: &'a TypeTable,
     pub target: Target,
     pub usize_ty: Ty,
+    /// `[OBJ-1]`, `[HR-12]` — every object's header, in bytes: 24, or 40 in a reloadable image
+    /// whose instances migrate (its live-instance links).
+    pub header: u64,
 }
 
 impl<'a> Types<'a> {
@@ -75,7 +82,17 @@ impl<'a> Types<'a> {
         let usize_ty = table
             .find(&TyKind::Uint(UintTy::Usize))
             .expect("the interner always holds `usize`");
-        Types { table, target, usize_ty }
+        Types { table, target, usize_ty, header: 24 }
+    }
+
+    /// Each field's offset from a class object's start, after the header.
+    pub fn object_field_offsets(&self, id: ember_types::ClassId) -> Vec<u64> {
+        self.table.class_field_offsets_after(id, self.header)
+    }
+
+    /// `EMBER_OBJ_PAYLOAD_OFFSET` — where a shared value's payload starts after its object's header.
+    pub fn payload_offset(&self, align: u64) -> u64 {
+        (self.header + align - 1) & !(align - 1)
     }
 
     pub fn kind(&self, ty: Ty) -> &TyKind {
@@ -118,6 +135,7 @@ impl<'a> Types<'a> {
             TyKind::CLongDouble => match self.target {
                 Target::SysV => Repr::Scalar(Sc::F80),
                 Target::Win64 => Repr::Scalar(Sc::F64),
+                Target::Aapcs64 => Repr::Scalar(Sc::F128),
             },
             // ODR-278 — a function item holds nothing.
             TyKind::Void | TyKind::Never | TyKind::Error | TyKind::Opaque(_) | TyKind::FnItem { .. } => Repr::Zst,
@@ -126,6 +144,12 @@ impl<'a> Types<'a> {
                 Repr::Scalar(Sc::Ptr)
             }
             TyKind::Fn { abi: Some(_), .. } => Repr::Scalar(Sc::Ptr),
+            // `[FFI-8]` — a `va_list` parameter is a pointer on every target here: Windows' is a
+            // `char*`, System V's an array of one `__va_list_tag`, which a parameter decays to a
+            // pointer to (`va_list_layout`'s 8 bytes, which hold no scalar its shape could show),
+            // and AAPCS64's 32-byte struct is passed by the address of a copy, which the function
+            // passes on as it came.
+            TyKind::VaList => Repr::Scalar(Sc::Ptr),
             TyKind::Range(id) => self.repr(self.table.range_def(*id).repr),
             // `[FFI-8]` — a newtype is its typedef's representation, passed as C passes it.
             TyKind::Newtype(id) => self.repr(self.table.newtype_def(*id).repr),
@@ -189,7 +213,7 @@ impl<'a> Types<'a> {
     /// The type's shape as the C ABI classifies its C type.
     pub fn shape(&self, ty: Ty) -> Shape {
         match self.repr(ty) {
-            Repr::Zst => Shape::Aggregate { size: 0, align: 1, leaves: Vec::new(), unaligned: false },
+            Repr::Zst => Shape::Aggregate { size: 0, align: 1, leaves: Vec::new(), unaligned: false, vectors: false },
             Repr::Scalar(sc) => match self.scalar_shape(ty, sc) {
                 Some(scalar) => Shape::Scalar(scalar),
                 None => self.aggregate_shape(ty),
@@ -208,24 +232,27 @@ impl<'a> Types<'a> {
             Sc::F32 => Scalar::F32,
             Sc::F64 => Scalar::F64,
             Sc::F80 => Scalar::F80,
+            Sc::F128 => Scalar::F128,
             Sc::Ptr => Scalar::Ptr,
         })
     }
 
     fn aggregate_shape(&self, ty: Ty) -> Shape {
         let (size, align) = self.size_align(ty);
-        let mut leaves = Vec::new();
-        // Past two eightbytes only the size is read (System V passes it in memory, Windows
-        // behind a pointer), so a large array's leaves are never listed.
-        if size <= 16 {
-            self.leaves(ty, 0, &mut leaves);
+        let (mut leaves, mut vectors) = (Vec::new(), false);
+        // Past four eightbytes only the size is read (System V passes it in memory, Windows behind
+        // a pointer, AAPCS64 and `__vectorcall` hold no floating-point aggregate larger), so a
+        // large array's leaves are never listed.
+        if size <= 32 {
+            self.leaves(ty, 0, &mut leaves, &mut vectors);
         }
         let unaligned = leaves.iter().any(|(offset, scalar)| offset % scalar.size().clamp(1, 8) != 0);
-        Shape::Aggregate { size, align, leaves, unaligned }
+        Shape::Aggregate { size, align, leaves, unaligned, vectors }
     }
 
-    /// Every scalar of a value of `ty` placed at `base`, as C lays out its C type.
-    fn leaves(&self, ty: Ty, base: u64, out: &mut Vec<(u64, Scalar)>) {
+    /// Every scalar of a value of `ty` placed at `base`, as C lays out its C type; `vectors` set
+    /// when it holds a `std.simd` vector.
+    fn leaves(&self, ty: Ty, base: u64, out: &mut Vec<(u64, Scalar)>, vectors: &mut bool) {
         let word = Scalar::Int { bytes: 8, signed: false };
         match self.kind(ty) {
             TyKind::Str | TyKind::Span { .. } => out.extend([(base, Scalar::Ptr), (base + 8, word)]),
@@ -236,38 +263,39 @@ impl<'a> Types<'a> {
             TyKind::Fn { abi: None, .. } => out.extend((0..5).map(|i| (base + 8 * i, Scalar::Ptr))),
             TyKind::Int(IntTy::I256) | TyKind::Uint(UintTy::U256) => out.extend((0..4).map(|i| (base + 8 * i, word))),
             TyKind::Struct(id) => {
+                *vectors |= ember_types::SimdShape::of(self.table.struct_def(*id).name.as_str()).is_some();
                 let offsets = self.table.layout(ty).field_offsets;
                 for (field, offset) in self.table.struct_def(*id).fields.iter().zip(offsets) {
-                    self.leaves(field.ty, base + offset, out);
+                    self.leaves(field.ty, base + offset, out, vectors);
                 }
             }
             TyKind::Tuple(items) => {
                 let offsets = self.table.layout(ty).field_offsets;
                 for (item, offset) in items.iter().zip(offsets) {
-                    self.leaves(*item, base + offset, out);
+                    self.leaves(*item, base + offset, out, vectors);
                 }
             }
             TyKind::Array { elem, len } => {
                 let (size, _) = self.size_align(*elem);
                 for i in 0..*len {
-                    self.leaves(*elem, base + i * size, out);
+                    self.leaves(*elem, base + i * size, out, vectors);
                 }
             }
             TyKind::Enum(id) if matches!(self.repr(ty), Repr::Mem { .. }) && self.table.option_niche(*id).is_none() => {
                 let def = self.table.enum_def(*id);
-                self.leaves(def.repr, base, out);
+                self.leaves(def.repr, base, out, vectors);
                 for (variant, offsets) in def.variants.iter().zip(self.table.variant_field_offsets(*id)) {
                     for (field, offset) in variant.fields.iter().zip(offsets) {
-                        self.leaves(field.ty, base + offset, out);
+                        self.leaves(field.ty, base + offset, out, vectors);
                     }
                 }
             }
             TyKind::Enum(id) => match self.table.option_niche(*id) {
-                Some(niche) => self.leaves(niche.payload, base, out),
-                None => self.leaves(self.table.enum_def(*id).repr, base, out),
+                Some(niche) => self.leaves(niche.payload, base, out, vectors),
+                None => self.leaves(self.table.enum_def(*id).repr, base, out, vectors),
             },
-            TyKind::Range(id) => self.leaves(self.table.range_def(*id).repr, base, out),
-            TyKind::Newtype(id) => self.leaves(self.table.newtype_def(*id).repr, base, out),
+            TyKind::Range(id) => self.leaves(self.table.range_def(*id).repr, base, out, vectors),
+            TyKind::Newtype(id) => self.leaves(self.table.newtype_def(*id).repr, base, out, vectors),
             _ => {
                 if let Repr::Scalar(sc) = self.repr(ty)
                     && let Some(scalar) = self.scalar_shape(ty, sc)

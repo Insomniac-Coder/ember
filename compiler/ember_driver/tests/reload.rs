@@ -22,8 +22,25 @@ struct Run {
     exit: i32,
 }
 
+/// `[CG-LL-1]` — the backend these tests build with: the C backend, or the one `EMBER_BACKEND`
+/// names (`llvm`), as `tasks/impl-0.9.9/annotations.py` takes it.
+fn backend() -> Option<String> {
+    std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty() && backend != "c")
+}
+
+/// `ember` with `args` in `cwd`; a build or a run with the backend `backend()` names, unless it
+/// emits C or names a backend itself.
 fn ember(args: &[&str], cwd: &Path) -> Run {
-    let output = Command::new(EMBER).args(args).current_dir(cwd).output().expect("the ember binary runs");
+    let mut args: Vec<&str> = args.to_vec();
+    let backend = backend();
+    let chooses = args.iter().any(|arg| *arg == "--backend") || args.windows(2).any(|pair| pair[0] == "--emit" && pair[1] != "llvm-ir");
+    if let Some(backend) = backend.as_deref()
+        && matches!(args.first(), Some(&"build" | &"run"))
+        && !chooses
+    {
+        args.splice(1..1, ["--backend", backend]);
+    }
+    let output = Command::new(EMBER).args(&args).current_dir(cwd).output().expect("the ember binary runs");
     Run {
         stdout: String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         stderr: String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
@@ -238,7 +255,7 @@ fn a_closure_holding_an_instance_follows_it_when_it_moves() {
                   fn tie():\n    m = Mote()\n    keeper = m\n    boxed: Box[dyn Speak] = Box(m)\n    keeper.keep = Some(Holder(boxed))\n\n@export(\"game_frame\")")
         .replace("            for k in 0..3:\n", "            tie()\n            for k in 0..3:\n");
     let run = host_run("reload-dyn-cannot-move", &boxed, &[&grow(&boxed)], 2);
-    assert!(run.stdout.contains("an instance of `Mote` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "{}{}", run.stdout, run.stderr);
+    assert!(run.stdout.contains("an instance of `Mote` must move (its new size does not fit), but 1 of its 1 references are held where the runtime cannot follow them"), "exit {} {}{}", run.exit, run.stdout, run.stderr);
     assert!(run.stdout.ends_with("6\n"), "the old code did not run on: {}", run.stdout);
 }
 
@@ -392,14 +409,16 @@ fn release_is_the_same_with_reload_attributes() {
         .replacen("# an attribute would go here", "@reinit_on_reload", 1);
     let (package, file) = package("reload-release-identical", "[package]\nname = \"p\"\n", plain);
     let file_arg = file.to_string_lossy().into_owned();
-    let without = ember(&["build", &file_arg, "--emit", "c", "--profile", "release"], &root);
+    // The program the backend writes: its C, or under the LLVM backend its IR.
+    let emitted = if backend().is_some() { "llvm-ir" } else { "c" };
+    let without = ember(&["build", &file_arg, "--emit", emitted, "--profile", "release"], &root);
     assert_eq!(without.exit, 0, "{}", without.stderr);
     std::fs::write(&file, &attributed).expect("the source is writable");
-    let with = ember(&["build", &file_arg, "--emit", "c", "--profile", "release"], &root);
+    let with = ember(&["build", &file_arg, "--emit", emitted, "--profile", "release"], &root);
     assert_eq!(with.exit, 0, "{}", with.stderr);
     drop(package);
-    assert!(without.stdout.len() > 1000, "no C was emitted");
-    assert!(without.stdout == with.stdout, "[HR-27] the reload attributes changed a release build's C");
+    assert!(without.stdout.len() > 1000, "nothing was emitted");
+    assert!(without.stdout == with.stdout, "[HR-27] the reload attributes changed a release build's {emitted}");
 }
 
 /// `[HR-28]` — `ember inspect --safety` reports, beside each function's checks, whether a call
@@ -524,7 +543,11 @@ fn link_host(package: &Path, out: &Path, host: &str) -> PathBuf {
     let root = workspace_root();
     let runtime = root.join("runtime").join(format!("{}_rt", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
-    let requested = std::env::var(ember_branding::cc_var()).ok();
+    // The runtime the program's build placed beside it: the LLVM backend's is Clang's.
+    let requested = match backend() {
+        Some(_) => Some("clang".to_string()),
+        None => std::env::var(ember_branding::cc_var()).ok(),
+    };
     let toolchain = ember_build::Toolchain::detect(requested.as_deref()).expect("a C toolchain");
     let shared = ember_build::reload::shared_runtime(
         &toolchain,
@@ -1107,6 +1130,28 @@ fn a_thunk_is_one_load_and_one_indirect_jump() {
         let out = package.join("target");
         let built = ember(&["build", &file.to_string_lossy(), "--profile", profile, "--out-dir", &out.to_string_lossy()], &root);
         assert_eq!(built.exit, 0, "{profile}: {}", built.stderr);
+        // `[CG-LL-1]` — under the LLVM backend the thunk is IR: the load of its target and a call
+        // `musttail` makes a jump in every profile, `-O0`'s too.
+        if backend().is_some() {
+            let ir = std::fs::read_to_string(out.join(profile).join("c").join("main.ll")).expect("the generated IR");
+            drop(package);
+            let lines: Vec<&str> = ir.lines().collect();
+            let mut thunks = 0;
+            for (at, line) in lines.iter().enumerate() {
+                if !line.starts_with("; [HR-6] the thunk of `") {
+                    continue;
+                }
+                thunks += 1;
+                let body: Vec<&str> = lines[at + 2..].iter().take_while(|line| **line != "}").map(|line| line.trim()).collect();
+                assert_eq!(body[0], "entry:", "{profile}: {}", lines[at..at + 6].join("\n"));
+                assert!(body[1].starts_with("%t = load ptr, ptr getelementptr (") && body[1].contains(&format!("{}rl_targets,", ember_branding::mangle_prefix())),
+                    "{profile}: the thunk does not load its target from the call table: {}", body[1]);
+                assert!(body[2].contains("musttail call") && body[2].contains(" %t("), "{profile}: the thunk does not jump through its target: {}", body[2]);
+                assert!(body[3].starts_with("ret") && body.len() == 4, "{profile}: the thunk does more than one load and one jump:\n{}", body.join("\n"));
+            }
+            assert!(thunks >= 3, "{profile}: {thunks} thunks in:\n{ir}");
+            continue;
+        }
         let c = std::fs::read_to_string(out.join(profile).join("c").join("main.c")).expect("the generated C");
         drop(package);
         let mut thunks = 0;
@@ -1290,6 +1335,11 @@ fn every_type_has_a_schema() {
     let out = package.join("target");
     let built = ember(&["build", &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
     assert_eq!(built.exit, 0, "{}", built.stderr);
+    if backend().is_some() {
+        let ir = std::fs::read_to_string(out.join("debug").join("c").join("main.ll")).expect("the generated IR");
+        every_type_has_a_schema_in_ir(&ir);
+        return;
+    }
     let c = std::fs::read_to_string(out.join("debug").join("c").join("main.c")).expect("the generated C");
     // A type's row: name, kind, base, layout, size, align, schema hash, …
     let row = |name: &str| -> Vec<String> {
@@ -1327,6 +1377,55 @@ fn every_type_has_a_schema() {
     assert!(variant("Dot").starts_with("{ \"Dot\", NULL, UINT64_C(0), ") && variant("Dot").ends_with("0u, NULL },"), "{}", variant("Dot"));
     assert!(variant("Circle").starts_with("{ \"Circle\", NULL, UINT64_C(1), ") && variant("Circle").contains("1u, "), "{}", variant("Circle"));
     assert!(variant("Fast").starts_with("{ \"Fast\", NULL, UINT64_C(1), "), "{}", variant("Fast"));
+}
+
+/// `every_type_has_a_schema`'s program as the LLVM backend's image writes it: the same rows, with the
+/// numbers the C backend's `sizeof` and `offsetof` give: the 40-byte header of `[HR-12]`, then
+/// `Base`'s `id`, `Mote`'s access word for `pair` (with its pad word), then `x` and `pair`.
+fn every_type_has_a_schema_in_ir(ir: &str) {
+    // Each string constant's text, by its name.
+    let strings: std::collections::HashMap<String, String> = ir
+        .lines()
+        .filter_map(|line| {
+            let (name, rest) = line.split_once(" = private unnamed_addr constant ")?;
+            let text = rest.split_once("c\"")?.1.split_once("\\00\"")?.0;
+            Some((name.to_string(), text.to_string()))
+        })
+        .collect();
+    // A record's fields, its strings read.
+    let fields = |record: &str| -> Vec<String> {
+        record.split(", ").map(|field| {
+            let value = field.rsplit(' ').next().unwrap_or("").trim_end_matches('}').trim();
+            strings.get(value).map_or(value.to_string(), |text| format!("\"{text}\""))
+        }).collect()
+    };
+    let records_in = |text: &str, kind: &str| -> Vec<Vec<String>> {
+        text.split(&format!("%ember.{kind} {{ ")).skip(1).map(|rest| fields(rest.split(" }").next().unwrap_or(""))).collect()
+    };
+    let records = |kind: &str| records_in(ir, kind);
+    let types = records("rl_type");
+    let row = |name: &str| types.iter().find(|row| row[0] == format!("\"{name}\"")).unwrap_or_else(|| panic!("[HR-11] no schema for `{name}`:\n{ir}")).clone();
+    let (base, mote, pair, shape, mode) = (row("Base"), row("Mote"), row("Pair"), row("Shape"), row("Mode"));
+    // kind (2 a class, 1 a struct, 3 an enum), base, layout (2 a unit enum), size, align.
+    assert_eq!((base[1].as_str(), base[2].as_str()), ("2", "null"), "{base:?}");
+    assert_eq!((mote[1].as_str(), mote[2].as_str(), mote[4].as_str(), mote[5].as_str()), ("2", "\"Base\"", "72", "8"), "{mote:?}");
+    assert_eq!((pair[1].as_str(), pair[4].as_str(), pair[5].as_str()), ("1", "8", "4"), "{pair:?}");
+    assert_eq!((shape[1].as_str(), shape[3].as_str()), ("3", "0"), "{shape:?}");
+    assert_eq!((mode[1].as_str(), mode[3].as_str()), ("3", "2"), "{mode:?}");
+    // `Mote`'s fields, the base's first, at the offsets the 40-byte header gives.
+    let table = format!("@{}rl_fields_{} = ", ember_branding::mangle_prefix(), ember_branding::mangled_path("Mote"));
+    let line = ir.lines().find(|line| line.starts_with(&table)).unwrap_or_else(|| panic!("[HR-11] no fields of `Mote`:\n{ir}"));
+    let rows = records_in(line, "rl_field");
+    let mote_fields: Vec<&Vec<String>> = rows.iter().collect();
+    let placed: Vec<(&str, &str, &str)> = mote_fields.iter().map(|row| (row[0].as_str(), row[4].as_str(), row[5].as_str())).collect();
+    assert_eq!(placed, [("\"id\"", "40", "8"), ("\"x\"", "56", "8"), ("\"pair\"", "64", "8")], "{rows:?}");
+    assert_eq!(mote_fields[2][3], pair[6], "[HR-11] `pair`'s type schema hash is not `Pair`'s");
+    // A variant: name, renamed from, discriminant, payload schema hash, payload fields.
+    let variants = records("rl_variant");
+    let variant = |name: &str| variants.iter().find(|row| row[0] == format!("\"{name}\"")).unwrap_or_else(|| panic!("[HR-11] no variant `{name}`:\n{ir}")).clone();
+    assert_eq!((variant("Dot")[2].as_str(), variant("Dot")[4].as_str()), ("0", "0"));
+    assert_eq!((variant("Circle")[2].as_str(), variant("Circle")[4].as_str()), ("1", "1"));
+    assert_eq!(variant("Fast")[2], "1");
 }
 
 /// `[HR-17]`, `[HR-11a]` — a static of a unit enum whose variants were reordered keeps its variant,
@@ -1584,6 +1683,31 @@ fn an_exports_c_abi_is_the_same_under_every_protocol() {
     let protocol = header.lines().find_map(|line| line.strip_prefix(&define)).expect("the header defines the reload protocol").trim().to_string();
     let marker = ember_branding::runtime(&format!("reload_protocol_v{protocol}"));
     let source = "@export(\"game_frame\")\nextern \"C\" fn frame(turn: i64, scale: f64) -> i64:\n    return turn + 1\n\nfn main():\n    pass\n";
+    // `[CG-LL-1]` — under the LLVM backend, the export's IR signature: the same C ABI.
+    if backend().is_some() {
+        let mut signatures = Vec::new();
+        for (manifest, profile, reloadable) in [
+            ("", "debug", false), (RELOAD_ALL, "debug", true),
+            ("", "development", false), (RELOAD_ALL, "development", true), ("", "release", false),
+        ] {
+            let (package, file) = package("abi-export-ir", manifest, source);
+            let out = package.join("target");
+            let built = ember(&["build", "--emit", "llvm-ir", "--profile", profile, &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+            drop(package);
+            assert_eq!(built.exit, 0, "{profile}, reload {reloadable}:\n{}", built.stderr);
+            let signature = built.stdout.lines().find(|line| line.starts_with("define") && line.contains("@game_frame("))
+                .and_then(|line| line.split_once("@game_frame(").map(|(head, rest)| (head.rsplit(' ').nth(1).unwrap_or("").to_string(), rest.split(')').next().unwrap_or("").to_string())))
+                .unwrap_or_else(|| panic!("{profile}, reload {reloadable}: no definition of the export"));
+            assert_eq!(built.stdout.contains(&marker), reloadable, "{profile}, reload {reloadable}: the reload protocol `{marker}` named or missing");
+            signatures.push((profile, reloadable, signature));
+        }
+        let (_, _, first) = &signatures[0];
+        assert_eq!(first, &("i64".to_string(), "i64 %p0, double %p1".to_string()), "the export's C ABI is its Ember signature's");
+        for (profile, reloadable, signature) in &signatures {
+            assert_eq!(signature, first, "[ABI-5] {profile}, reload {reloadable}: the export's C ABI moved with the protocol");
+        }
+        return;
+    }
     let mut declarations = Vec::new();
     for (manifest, profile, reloadable) in [
         ("", "debug", false), (RELOAD_ALL, "debug", true),

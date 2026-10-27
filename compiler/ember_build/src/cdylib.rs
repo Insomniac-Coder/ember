@@ -24,14 +24,14 @@ pub struct Cdylib {
     pub link_with: PathBuf,
 }
 
-/// Compile `source` (the package's C) and, without `shared`, the runtime into one shared library
-/// in `lib`, exporting exactly `exports` (a datum's name ends in ` DATA`); `libraries` are linked
-/// after them, in order (`[BLD-FFI-3]`).
+/// Compile `sources` (the package's C, or its IR and the IR's C shim, `[CG-LL-1]`) and, without
+/// `shared`, the runtime into one shared library in `lib`, exporting exactly `exports` (a datum's
+/// name ends in ` DATA`); `libraries` are linked after them, in order (`[BLD-FFI-3]`).
 #[allow(clippy::too_many_arguments)]
 pub fn link_cdylib(
     toolchain: &Toolchain,
     name: &str,
-    source: &Path,
+    sources: &[PathBuf],
     runtime_source: &Path,
     include_dirs: &[PathBuf],
     profile: Profile,
@@ -51,10 +51,14 @@ pub fn link_cdylib(
     std::fs::create_dir_all(obj_dir)?;
     std::fs::create_dir_all(lib)?;
     let ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
-    let mut objects = vec![obj_dir.join(format!("{name}.{ext}"))];
     // `[BLD-6]` — the library's own link optimises across its package and its runtime.
     let lto = build_lto(toolchain, profile, Link::Here);
-    compile_library_object(toolchain, source, include_dirs, &objects[0], profile, &[], false, lto)?;
+    let mut objects = Vec::with_capacity(sources.len() + relaxed.len() + 1);
+    for (index, source) in sources.iter().enumerate() {
+        let object = crate::unit_object(obj_dir, name, index, ext);
+        compile_library_object(toolchain, source, include_dirs, &object, profile, &[], false, lto)?;
+        objects.push(object);
+    }
     // `[CG-C-11]` — each relaxed unit, compiled by the caller with its own flags.
     objects.extend(relaxed.iter().cloned());
     if shared.is_none() {
@@ -99,6 +103,7 @@ pub fn link_cdylib(
         Toolchain::Clang(_) | Toolchain::Gcc(_) if cfg!(windows) => {
             let definitions = obj_dir.join(format!("{name}.def"));
             write_definitions(&definitions, name, exports, false)?;
+            command.args(crate::clang_windows_runtime(toolchain));
             command.arg("-shared").args(&objects).args(lto_link_flags(toolchain, lto));
             if let Some(shared) = shared {
                 command.arg(&shared.link_with);

@@ -45,14 +45,17 @@ this compiler does not have yet):
     ember build [file.em|package-dir] [--profile <name>] [--target <triple>] [--backend c|llvm]
                 [--emit tokens|ast|hir|mir|c|obj|header] [--out-dir <dir>]
                 [--emit-optimization-report] [--report=engine|instantiations] [--timings[=json]]
-                [--build-id] [--reload [--explain]] [-D warnings] [-j N]
+                [--build-id] [--reload [--explain]] [--pgo-generate | --pgo-use <file>] [-D warnings]
+                [-j N]
                                                    compile a bin, staticlib or cdylib package; --reload
                                                    builds the next image of a running program and
                                                    --explain predicts that reload; --build-id prints
                                                    the hash of the build's inputs; --report=engine
                                                    what the build did to the program (--target is
                                                    not built yet; --backend llvm builds programs
-                                                   through Clang, the C backend stays the default)
+                                                   through Clang, the C backend stays the default;
+                                                   with it --pgo-generate instruments a program to
+                                                   record a profile, --pgo-use optimises it with one)
     ember check [file.em] [--syntax-only] [--timings] [-j N]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
@@ -454,6 +457,9 @@ struct Options {
     cpp_header: bool,
     /// `[BLD-FFI-2]` — `--cc-flags-from-target <target>`: a CMake target's C compiler and flags.
     cc_flags_target: Option<String>,
+    /// `[CG-LL-3]` (ODR-274) — `--pgo-generate`, and `--pgo-use <file>`.
+    pgo_generate: bool,
+    pgo_use: Option<PathBuf>,
     cc: Option<String>,
     out_dir: Option<PathBuf>,
     json: bool,
@@ -704,7 +710,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 if arg.starts_with('-') {
                     skip_value = matches!(
                         arg.as_str(),
-                        "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "-D" | "-j" | "--jobs"
+                        "--profile" | "--emit" | "--cc" | "--out-dir" | "--backend" | "--pgo-use" | "-D" | "-j" | "--jobs"
                     );
                     rest.push(arg.clone());
                 } else if input.is_none() {
@@ -3409,6 +3415,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--report=instantiations" => options.instantiation_report = true,
             "--report=engine" => options.engine_report = true,
             "--build-id" => options.build_id = true,
+            "--pgo-generate" => options.pgo_generate = true,
+            "--pgo-use" => options.pgo_use = Some(PathBuf::from(value(&mut index, arg)?)),
             "--require-evidence" => options.require_evidence = true,
             "--cc" => options.cc = Some(value(&mut index, arg)?),
             "-j" | "--jobs" => {
@@ -4744,8 +4752,49 @@ fn write_build_record(layout: &Layout, name: &str, profile: Profile, toolchain: 
         "profile": profile.name(),
         "c_compiler": ember_build::toolchain_name(toolchain),
         "lto": { "asked": asked.name(), "used": used.name(), "why": why },
+        // `[CG-LL-3]` (ODR-274).
+        "pgo": match ember_build::pgo() {
+            Some(ember_build::Pgo::Generate(dir)) => serde_json::json!({ "generate": dir.display().to_string() }),
+            Some(ember_build::Pgo::Use(data)) => serde_json::json!({ "use": data.display().to_string() }),
+            None => serde_json::Value::Null,
+        },
     });
     std::fs::write(layout.inspect.join(format!("{name}.build.json")), format!("{record}\n")).map_err(|e| e.to_string())
+}
+
+/// `[CG-LL-3]`, `[BLD-6]` (ODR-274) — the profile-guided optimisation a build asks for: an
+/// instrumented build that records a profile as it runs, or one optimised with a recorded profile.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PgoAsk {
+    Generate,
+    Use(PathBuf),
+}
+
+/// The command line's `--pgo-generate` or `--pgo-use <file>`, else the manifest's
+/// `[profiles.<name>] pgo` with its `pgo_data` (a path from the manifest's folder), as `--profile`
+/// wins over the manifest.
+fn pgo_ask(settings: &ManifestLintSettings, options: &Options, input: &Path) -> Result<Option<PgoAsk>, String> {
+    if options.pgo_generate && options.pgo_use.is_some() {
+        return Err("`--pgo-generate` records a profile and `--pgo-use` optimises with one: one of the two [CG-LL-3]".to_string());
+    }
+    if options.pgo_generate {
+        return Ok(Some(PgoAsk::Generate));
+    }
+    if let Some(data) = &options.pgo_use {
+        return Ok(Some(PgoAsk::Use(data.clone())));
+    }
+    let profile = options.profile as usize;
+    match settings.pgo[profile] {
+        None => Ok(None),
+        Some(true) => Ok(Some(PgoAsk::Generate)),
+        Some(false) => {
+            let Some(data) = settings.pgo_data[profile] else {
+                return Err(format!("`[profiles.{}] pgo = \"use\"` needs `pgo_data`, the recorded profile it optimises with [CG-LL-3]", options.profile.name()));
+            };
+            let dir = nearest_manifest_path(input).and_then(|path| path.parent().map(Path::to_path_buf)).unwrap_or_default();
+            Ok(Some(PgoAsk::Use(dir.join(data.as_str()))))
+        }
+    }
 }
 
 /// `[DIA-12]` N2, `[DIA-15]` — the index of exported names a diagnostic offers import lines from:
@@ -5010,6 +5059,10 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     llvm::mark_selected(llvm::selected(options, nearest_manifest_text(input)?.as_deref())?);
     // `[BLD-6]` — the manifest's link-time optimisation for this profile, else the profile's own.
     ember_build::set_lto(lint_settings.lto[options.profile as usize]);
+    let pgo = pgo_ask(&lint_settings, options, input)?;
+    if pgo.is_some() && !llvm::is_selected() {
+        return Err("profile-guided optimisation is the LLVM backend's ([CG-LL-3]): build with `--backend llvm` or `[build] backend = \"llvm\"`".to_string());
+    }
     let reload = reload_mode(&lint_settings, options, &mut sink)?;
     // `ember test` builds the package's tests as a program of their own, without reload.
     let reload = if command == "test" { ReloadMode::None } else { reload };
@@ -5809,14 +5862,21 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             has_main: has_main && !library && command != "test",
             command,
             library,
-            reload: reload_image.is_some(),
+            cdylib,
+            package_name: &package_name,
+            shared_runtime: runtime_mode == "shared",
+            pgo: pgo.clone(),
+            reload: reload_image.as_ref(),
+            additions: reload_additions.as_ref(),
+            started,
+            inspect: [safety_table(&ember_codegen_c::safety_json(&bodies, &map), &safety_functions, &safety_costs), counts_json(&bodies, &types, &map)],
             bodies: &bodies,
             input,
             manifest: manifest.as_deref(),
             modules: &modules,
             tests: &tests,
         };
-        return llvm::build(request, options, &sink);
+        return llvm::build(request, options, &mut sink);
     }
     // `[BLD-4]` (ODR-244) — a `debug` or `development` program is written one C unit per module, so
     // a build compiles again only the units whose text changed; a `release` one is one unit, which
@@ -6048,53 +6108,23 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     }
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
-    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it. The
-    // image holds the imports' shims and thunks (`[FFI-39a]`: a trampoline's object keeps calling
-    // through the permanent thunks of the entries it was given).
+    // Annex B — a reloadable program: the shared runtime, an image and the host that runs it.
     if let Some(image) = &reload_image {
-        let c_toolchain = match manifest.as_deref().and_then(|text| manifest_string(text, "c", "compiler")) {
-            Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
-            None => toolchain.clone(),
+        // `[BLD-4]` — the main unit and each module's, compiled through Ninja.
+        let reload_units: Vec<PathBuf> = std::iter::once(c_path.clone()).chain(module_unit_paths.iter().cloned()).collect();
+        let program = ReloadProgram {
+            toolchain: &toolchain,
+            layout: &layout,
+            module_name: &module_name,
+            units: &reload_units,
+            relaxed_units: &emitted.relaxed_units,
+            image,
+            additions: reload_additions.as_ref(),
+            modules: &modules,
+            manifest: manifest.as_deref(),
+            started,
         };
-        let foreign = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, true)?;
-        let units: Vec<PathBuf> = std::iter::once(c_path.clone()).chain(module_unit_paths.iter().cloned()).collect();
-        let built = match reload::build(&toolchain, &layout, &module_name, &units, &runtime_source, &includes,
-            options.profile, image, &emitted.relaxed_units, &foreign, options.reload, options.explain, started, options.jobs)
-        {
-            Ok(built) => built,
-            Err(reload::Failure::Other(message)) => return Err(message),
-            // `[HR-12a]` — the process's header is fixed when it starts: an image built for the other
-            // header cannot join it.
-            Err(reload::Failure::Header { running, built }) => {
-                sink.emit(
-                    Diagnostic::error(codes::E9035, Span::DUMMY, format!(
-                        "the running program's objects have {running}-byte headers, and this image's would have {built}"))
-                        .note("whether reload migrates instances (`[build] reload`) is the whole process's to agree on: it fixes the object header [HR-12a]")
-                        .help("build the program again with `ember build` and restart it"),
-                );
-                return Ok(finish(&sink, &map, options));
-            }
-        };
-        mark("C compile and link", "all modules");
-        // `[HR-18b]` — the running program's own plan of this image, applying nothing.
-        if options.explain {
-            report(&sink, &map, options);
-            let (apply, text) = reload::explain(&layout.bin, &module_name, &built.image)?;
-            println!("{}", if apply { "the reload would apply" } else { "the reload would be refused" });
-            print!("{text}");
-            return Ok(if apply { ExitCode::SUCCESS } else { ExitCode::FAILURE });
-        }
-        // `[HR-16]` — this build's schema, which the next build's `Old<Name>` structs are made from.
-        if let Some(additions) = &reload_additions {
-            let schema = serde_json::Value::Object(additions.schema.clone());
-            std::fs::write(layout.bin.join(format!("{module_name}.schema.json")), schema.to_string()).map_err(|e| e.to_string())?;
-        }
-        report(&sink, &map, options);
-        if command == "run" {
-            return run_program(&built.host, options);
-        }
-        eprintln!("built {}", if options.reload { built.image.display() } else { built.host.display() });
-        return Ok(ExitCode::SUCCESS);
+        return build_reload_program(program, command, options, &mut sink, &map);
     }
     // `[CG-C-11]` — a library's relaxed units, each compiled with its own flags into an object of its
     // own: the archive or the shared library takes them beside the package's main unit.
@@ -6141,80 +6171,22 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let (foreign_objects, foreign_libraries) = cimport::build_objects(&modules, &c_toolchain, &toolchain, &layout.c, &layout.obj, options.profile, cdylib)?;
     libraries.extend(foreign_libraries);
     library_relaxed.extend(foreign_objects.iter().cloned());
-    // `[FFI-28]`, `[FFI-31]` — a shared library exporting only its exports and the module's entry
-    // points; `[FFI-31c]` with `runtime = "shared"` it imports the runtime its process shares.
-    if cdylib {
+    if library {
         let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
-        let mut exports: Vec<String> = bodies.iter()
-            .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
-            .map(|body| body.symbol.clone())
-            .collect();
-        // `[FFI-28]`, `[ABI-1]` (ODR-131) — the entry points and the module protocol's marker.
-        exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown"),
-            format!("{} DATA", ember_branding::runtime(MODULE_PROTOCOL_MARKER))]);
-        // `[FFI-26]` — each export table, its protocol version in its symbol, as data.
-        for table in types.export_tables() {
-            exports.push(format!("{} DATA", table.symbol()));
-        }
-        exports.sort();
-        exports.dedup();
-        let shared = if runtime_mode == "shared" {
-            Some(ember_build::reload::shared_runtime(&toolchain, &runtime_source, &includes, options.profile, None,
-                &ember_build::cache_root(), &layout.lib).map_err(|e| e.to_string())?)
-        } else {
-            None
+        let built = Library {
+            toolchain: &toolchain,
+            layout: &layout,
+            package_name: &package_name,
+            module_name: &module_name,
+            cdylib,
+            shared_runtime: runtime_mode == "shared",
+            units: std::slice::from_ref(&c_path),
+            objects: &library_relaxed,
+            libraries: &libraries,
+            exports: if cdylib { cdylib_exports(&bodies, &types) } else { Vec::new() },
+            header,
         };
-        let package_header = layout.lib.join(format!("{package_name}.h"));
-        let built = ember_build::cdylib::link_cdylib(&toolchain, &package_name, &c_path, &runtime_source, &includes,
-            options.profile, shared.as_ref(), &exports, &libraries, &library_relaxed, &layout.obj, &layout.lib)
-            .map_err(|e| e.to_string())?;
-        copy_runtime_header(&layout.lib)?;
-        std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
-        if options.cpp_header {
-            std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
-        }
-        report(&sink, &map, options);
-        eprintln!("built {}", built.library.display());
-        return Ok(ExitCode::SUCCESS);
-    }
-    if staticlib {
-        let header = emitted.header_source.as_ref().map_err(|error| error.clone())?;
-        let object_ext = if matches!(&toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
-        let package_object = layout.obj.join(format!("{module_name}.{object_ext}"));
-        let runtime_object = layout.obj.join("runtime").join(format!("{}_rt.{object_ext}", ember_branding::SYMBOL_PREFIX));
-        let package_archive = layout.lib.join(ember_build::archive_name(&toolchain, &package_name));
-        let runtime_lib = runtime_artifact_dir(&layout.lib);
-        let runtime_archive = runtime_lib.join(ember_build::archive_name(&toolchain,
-            &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
-        let package_header = layout.lib.join(format!("{package_name}.h"));
-        let runtime_header = runtime_lib.join(ember_branding::runtime_header());
-        let outputs = [&package_archive, &runtime_archive, &package_header, &runtime_header];
-        for path in outputs { if path.is_file() { std::fs::remove_file(path).map_err(|e| e.to_string())?; } }
-        let built = (|| -> Result<(), String> {
-            ember_build::compile_object(&toolchain, &c_path, &includes, &package_object, options.profile)
-                .map_err(|e| e.to_string())?;
-            ember_build::compile_object(&toolchain, &runtime_source, &includes, &runtime_object, options.profile)
-                .map_err(|e| e.to_string())?;
-            let mut package_objects = vec![package_object];
-            package_objects.extend(library_relaxed.iter().cloned());
-            ember_build::archive_objects(&toolchain, &package_objects, &package_archive)
-                .map_err(|e| e.to_string())?;
-            ember_build::archive_objects(&toolchain, &[runtime_object], &runtime_archive)
-                .map_err(|e| e.to_string())?;
-            copy_runtime_header(&layout.lib)?;
-            std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
-            if options.cpp_header {
-                std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        })();
-        if let Err(error) = built {
-            for path in outputs { let _ = std::fs::remove_file(path); }
-            return Err(error);
-        }
-        report(&sink, &map, options);
-        eprintln!("built {} and {}", package_archive.display(), runtime_archive.display());
-        return Ok(ExitCode::SUCCESS);
+        return build_library(built, options, &sink, &map);
     }
     // The runtime is compiled once per toolchain and profile, then linked as
     // an object; without one (MSVC), it is compiled with the program.
@@ -6456,6 +6428,89 @@ fn run_hot(input: &Path, options: &Options) -> Result<ExitCode, String> {
             }
         }
     }
+}
+
+/// `[HR-28]`, `[EFF-16]` — the safety side table: the checks the program keeps, with what each
+/// function's contracts say and the costs the checks do not show.
+fn safety_table(checks: &str, functions: &str, costs: &str) -> String {
+    let table = checks.trim_end();
+    let table = table.strip_suffix('}').unwrap_or(table);
+    format!("{table},\"functions\":{functions},\"costs\":{costs}}}\n")
+}
+
+/// `ember inspect`'s tables beside the program: the safety side table and `[RC-6]`'s count
+/// operations left inside loops, read from the final MIR the backend was given.
+pub(crate) fn write_inspect(layout: &Layout, module_name: &str, [safety, counts]: &[String; 2]) -> Result<(), String> {
+    std::fs::write(layout.inspect.join(format!("{module_name}.safety.json")), safety).map_err(|e| e.to_string())?;
+    std::fs::write(layout.inspect.join(format!("{module_name}.counts.json")), counts).map_err(|e| e.to_string())
+}
+
+/// Annex B — what a reloadable program is built from: the image's units (C, or the LLVM backend's IR
+/// and its C), the relaxed units, what the driver decided of the image and wrote into the program.
+pub(crate) struct ReloadProgram<'a> {
+    pub toolchain: &'a Toolchain,
+    pub layout: &'a Layout,
+    pub module_name: &'a str,
+    pub units: &'a [PathBuf],
+    pub relaxed_units: &'a [(ember_types::FpMode, String)],
+    pub image: &'a ember_codegen_c::ReloadImage,
+    pub additions: Option<&'a reload::Additions>,
+    pub modules: &'a [ember_typeck::LoadedModule],
+    pub manifest: Option<&'a str>,
+    pub started: std::time::Instant,
+}
+
+/// Annex B — a reloadable program: the shared runtime, an image and the host that runs it, whichever
+/// backend wrote the image. The image holds the imports' shims and thunks (`[FFI-39a]`: a
+/// trampoline's object keeps calling through the permanent thunks of the entries it was given).
+/// Then `--explain`'s prediction, the schema the next build reads, and for `ember run` the host.
+pub(crate) fn build_reload_program(program: ReloadProgram<'_>, command: &str, options: &Options, sink: &mut Sink, map: &SourceMap) -> Result<ExitCode, String> {
+    let ReloadProgram { toolchain, layout, module_name, units, relaxed_units, image, additions, modules, manifest, started } = program;
+    let runtime = runtime_dir()?;
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let includes = vec![runtime.join("include")];
+    let c_toolchain = match manifest.and_then(|text| manifest_string(text, "c", "compiler")) {
+        Some(compiler) => Toolchain::detect(Some(&compiler)).map_err(|e| e.to_string())?,
+        None => toolchain.clone(),
+    };
+    let foreign = cimport::build_objects(modules, &c_toolchain, toolchain, &layout.c, &layout.obj, options.profile, true)?;
+    let built = match reload::build(toolchain, layout, module_name, units, &runtime_source, &includes,
+        options.profile, image, relaxed_units, &foreign, options.reload, options.explain, started, options.jobs)
+    {
+        Ok(built) => built,
+        Err(reload::Failure::Other(message)) => return Err(message),
+        // `[HR-12a]` — the process's header is fixed when it starts: an image built for the other
+        // header cannot join it.
+        Err(reload::Failure::Header { running, built }) => {
+            sink.emit(
+                Diagnostic::error(codes::E9035, Span::DUMMY, format!(
+                    "the running program's objects have {running}-byte headers, and this image's would have {built}"))
+                    .note("whether reload migrates instances (`[build] reload`) is the whole process's to agree on: it fixes the object header [HR-12a]")
+                    .help("build the program again with `ember build` and restart it"),
+            );
+            return Ok(finish(sink, map, options));
+        }
+    };
+    mark("C compile and link", "all modules");
+    // `[HR-18b]` — the running program's own plan of this image, applying nothing.
+    if options.explain {
+        report(sink, map, options);
+        let (apply, text) = reload::explain(&layout.bin, module_name, &built.image)?;
+        println!("{}", if apply { "the reload would apply" } else { "the reload would be refused" });
+        print!("{text}");
+        return Ok(if apply { ExitCode::SUCCESS } else { ExitCode::FAILURE });
+    }
+    // `[HR-16]` — this build's schema, which the next build's `Old<Name>` structs are made from.
+    if let Some(additions) = additions {
+        let schema = serde_json::Value::Object(additions.schema.clone());
+        std::fs::write(layout.bin.join(format!("{module_name}.schema.json")), schema.to_string()).map_err(|e| e.to_string())?;
+    }
+    report(sink, map, options);
+    if command == "run" {
+        return run_program(&built.host, options);
+    }
+    eprintln!("built {}", if options.reload { built.image.display() } else { built.host.display() });
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The options of one of `ember run --hot`'s builds: the first, or the next image (`--reload`).
@@ -6782,6 +6837,10 @@ struct ManifestLintSettings {
     lto: [Option<ember_build::Lto>; 3],
     /// `[PRF-3]` — `[profiles.<name>] rewrites` for each built-in profile, by `Profile`.
     rewrites: [Option<bool>; 3],
+    /// `[CG-LL-3]` (ODR-274) — `[profiles.<name>] pgo` (`Some(true)`: `"generate"`, `Some(false)`:
+    /// `"use"`) and `pgo_data`.
+    pgo: [Option<bool>; 3],
+    pgo_data: [Option<ember_span::Symbol>; 3],
 }
 
 /// `[MAN-7]`, `[HR-25]` — what a package's `[build] reload` asks for. `OptIn` makes reloadable only
@@ -6907,6 +6966,21 @@ fn manifest_lint_settings(
                                     .help("`lto` is \"off\", \"thin\" or \"on\" [BLD-6]"),
                             ),
                         }
+                    } else if let Some(profile) = section.strip_prefix("profiles.") && matches!(key, "pgo" | "pgo_data") {
+                        // `[CG-LL-3]` (ODR-274) — instrument, or optimise with the profile `pgo_data`.
+                        let written = value.trim().trim_matches('"').to_string();
+                        if key == "pgo" && !matches!(written.as_str(), "generate" | "use") {
+                            sink.emit(
+                                Diagnostic::error(codes::E9001, location, format!("`{written}` is not a `pgo` value"))
+                                    .help("`pgo` is \"generate\" (record a profile) or \"use\" (optimise with `pgo_data`) [CG-LL-3]"),
+                            );
+                        } else if let Some(profile) = Profile::from_name(profile.trim()) {
+                            if key == "pgo" {
+                                settings.pgo[profile as usize] = Some(written == "generate");
+                            } else {
+                                settings.pgo_data[profile as usize] = Some(ember_span::Symbol::intern(&written));
+                            }
+                        }
                     } else if let Some(profile) = section.strip_prefix("profiles.") && key == "rewrites" {
                         // `[PRF-3]` — `true` or `false`.
                         match value.trim() {
@@ -6966,6 +7040,112 @@ fn manifest_lint_settings(
 /// `[ABI-1]`, `[FFI-28]` (ODR-131) — the marker a host looks up before calling into a module: its
 /// name carries the module protocol's version, `EMBER_MODULE_PROTOCOL` in the runtime's header.
 const MODULE_PROTOCOL_MARKER: &str = "module_protocol_v1";
+
+/// `[FFI-28]`, `[FFI-26]`, `[ABI-1]` (ODR-131) — what a `cdylib` exports: its `@export` functions,
+/// the module's entry points and the module protocol's marker, and each export table, its protocol
+/// version in its symbol (a datum's name ends in ` DATA`).
+fn cdylib_exports(bodies: &[ember_mir::Body], types: &TypeTable) -> Vec<String> {
+    let mut exports: Vec<String> = bodies.iter()
+        .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
+        .map(|body| body.symbol.clone())
+        .collect();
+    exports.extend([ember_branding::runtime("module_init"), ember_branding::runtime("module_shutdown"),
+        format!("{} DATA", ember_branding::runtime(MODULE_PROTOCOL_MARKER))]);
+    for table in types.export_tables() {
+        exports.push(format!("{} DATA", table.symbol()));
+    }
+    exports.sort();
+    exports.dedup();
+    exports
+}
+
+/// `[FFI-28]` — a library package, its units written (the C backend's C, or the LLVM backend's IR
+/// and its shim).
+pub(crate) struct Library<'a> {
+    pub toolchain: &'a Toolchain,
+    pub layout: &'a Layout,
+    pub package_name: &'a str,
+    pub module_name: &'a str,
+    pub cdylib: bool,
+    /// `[FFI-31c]` — `[build] runtime = "shared"`.
+    pub shared_runtime: bool,
+    pub units: &'a [PathBuf],
+    /// Objects compiled already (relaxed units, `import c`'s), linked or archived beside the units.
+    pub objects: &'a [PathBuf],
+    /// `[BLD-FFI-3]` — linked after them, in order.
+    pub libraries: &'a [String],
+    /// A `cdylib`'s exports (`cdylib_exports`).
+    pub exports: Vec<String>,
+    pub header: &'a ember_codegen_c::HeaderOutput,
+}
+
+/// `[FFI-28]`, `[FFI-31]` — a `cdylib`: a shared library exporting only its exports and the module's
+/// entry points, `[FFI-31c]` with `runtime = "shared"` importing the runtime its process shares; a
+/// `staticlib`: the package's archive beside the runtime's, for its host's build to link. The
+/// package's header (and with `--cpp` its C++ header) beside them.
+pub(crate) fn build_library(library: Library<'_>, options: &Options, sink: &ember_diag::Sink, map: &SourceMap) -> Result<ExitCode, String> {
+    let Library { toolchain, layout, package_name, module_name, units, objects, header, .. } = library;
+    let runtime = runtime_dir()?;
+    let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
+    let includes = vec![runtime.join("include")];
+    let package_header = layout.lib.join(format!("{package_name}.h"));
+    let write_headers = || -> Result<(), String> {
+        copy_runtime_header(&layout.lib)?;
+        std::fs::write(&package_header, &header.source).map_err(|e| e.to_string())?;
+        if options.cpp_header {
+            std::fs::write(package_header.with_extension("hpp"), &header.cpp_source).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    };
+    if library.cdylib {
+        let shared = if library.shared_runtime {
+            Some(ember_build::reload::shared_runtime(toolchain, &runtime_source, &includes, options.profile, None,
+                &ember_build::cache_root(), &layout.lib).map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        let built = ember_build::cdylib::link_cdylib(toolchain, package_name, units, &runtime_source, &includes,
+            options.profile, shared.as_ref(), &library.exports, library.libraries, objects, &layout.obj, &layout.lib)
+            .map_err(|e| e.to_string())?;
+        write_headers()?;
+        report(sink, map, options);
+        eprintln!("built {}", built.library.display());
+        return Ok(ExitCode::SUCCESS);
+    }
+    let object_ext = if matches!(toolchain, Toolchain::Msvc { .. }) { "obj" } else { "o" };
+    let runtime_object = layout.obj.join("runtime").join(format!("{}_rt.{object_ext}", ember_branding::SYMBOL_PREFIX));
+    let package_archive = layout.lib.join(ember_build::archive_name(toolchain, package_name));
+    let runtime_lib = runtime_artifact_dir(&layout.lib);
+    let runtime_archive = runtime_lib.join(ember_build::archive_name(toolchain,
+        &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
+    let runtime_header = runtime_lib.join(ember_branding::runtime_header());
+    let outputs = [&package_archive, &runtime_archive, &package_header, &runtime_header];
+    for path in outputs { if path.is_file() { std::fs::remove_file(path).map_err(|e| e.to_string())?; } }
+    let built = (|| -> Result<(), String> {
+        let mut package_objects = Vec::with_capacity(units.len() + objects.len());
+        for (index, unit) in units.iter().enumerate() {
+            let object = ember_build::unit_object(&layout.obj, module_name, index, object_ext);
+            ember_build::compile_object(toolchain, unit, &includes, &object, options.profile)
+                .map_err(|e| e.to_string())?;
+            package_objects.push(object);
+        }
+        ember_build::compile_object(toolchain, &runtime_source, &includes, &runtime_object, options.profile)
+            .map_err(|e| e.to_string())?;
+        package_objects.extend(objects.iter().cloned());
+        ember_build::archive_objects(toolchain, &package_objects, &package_archive)
+            .map_err(|e| e.to_string())?;
+        ember_build::archive_objects(toolchain, &[runtime_object], &runtime_archive)
+            .map_err(|e| e.to_string())?;
+        write_headers()
+    })();
+    if let Err(error) = built {
+        for path in outputs { let _ = std::fs::remove_file(path); }
+        return Err(error);
+    }
+    report(sink, map, options);
+    eprintln!("built {} and {}", package_archive.display(), runtime_archive.display());
+    Ok(ExitCode::SUCCESS)
+}
 
 fn reload_mode(settings: &ManifestLintSettings, options: &Options, sink: &mut Sink) -> Result<ReloadMode, String> {
     let (written, location) = settings.reload.unwrap_or((ReloadMode::None, Span::DUMMY));
@@ -7210,7 +7390,7 @@ fn manifest_section_keys(section: &str) -> Option<Option<&'static [&'static str]
         // `[PRF-3]` — the profile table's keys.
         _ if section.starts_with("profiles.") => &[
             "inherits", "opt", "rewrites", "debug_info", "strip", "backtrace", "debug_assert", "leak_report",
-            "lock_order", "sanitizers", "lto",
+            "lock_order", "sanitizers", "lto", "pgo", "pgo_data",
         ],
         // `[FFI-50]`.
         _ if section.starts_with("cpp.") => &["compiler", "standard", "defines", "include_paths", "flags", "cmake"],
