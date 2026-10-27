@@ -1,0 +1,36 @@
+# build.txt (M2): the exact build line of every program. Run from Git Bash in this folder
+# (tasks/96/redesign/measure-0.9.15/M2). C: clang -O2; Rust: rustc -C opt-level=2 --edition 2021.
+# Output: target/measure-0.9.15/M2/bin/. The C is portable to MSVC (`cl /O2 /nologo <file> /Fe<exe>`,
+# same -D switches as /D); every C file includes only harness.h and m2_rt.h from this folder.
+CC="/c/Program Files/LLVM/bin/clang.exe"
+B=../../../../../target/measure-0.9.15/M2/bin
+mkdir -p $B
+
+# workload "tree": weakref links made, given another target, ended (parent links included)
+"$CC" -O2 plain_tree.c -o $B/plain_tree.exe
+"$CC" -O2 model_tree.c -o $B/model_tree.exe
+"$CC" -O2 -DPLAIN model_tree.c -o $B/plain_same_tree.exe
+"$CC" -O2 salvage_tree_parentfree.c -o $B/salvage_tree_parentfree.exe
+rustc -C opt-level=2 --edition 2021 rust_tree_rc.rs -o $B/rust_tree_rc.exe
+rustc -C opt-level=2 --edition 2021 rust_tree_arena.rs -o $B/rust_tree_arena.exe
+
+# workload "w2v": run 3's W2 with a call on every step of the walk
+"$CC" -O2 plain_w2v.c -o $B/plain_w2v.exe
+"$CC" -O2 -DNOVISIT plain_w2v.c -o $B/plain_w2v_novisit.exe
+"$CC" -O2 -DFORM_MOVE model_w2v.c -o $B/model_w2v_move.exe
+"$CC" -O2 -DFORM_MOVE -DDROPCLASS model_w2v.c -o $B/model_w2v_move_drop.exe
+"$CC" -O2 -DFORM_REGION model_w2v.c -o $B/model_w2v_region.exe
+"$CC" -O2 -DFORM_VIEWS model_w2v.c -o $B/model_w2v_views.exe
+"$CC" -O2 -DFORM_VIEWS -DNOVISIT model_w2v.c -o $B/model_w2v_views_novisit.exe
+"$CC" -O2 -DPLAIN model_w2v.c -o $B/plain_same_w2v.exe
+"$CC" -O2 salvage_w2v_freeonly.c -o $B/salvage_w2v_freeonly.exe
+"$CC" -O2 salvage_w2v_dispatch.c -o $B/salvage_w2v_dispatch.exe
+"$CC" -O2 salvage_w2v_hoist.c -o $B/salvage_w2v_hoist.exe
+rustc -C opt-level=2 --edition 2021 rust_w2v.rs -o $B/rust_w2v.exe
+rustc -C opt-level=2 --edition 2021 rust_w2v_rc.rs -o $B/rust_w2v_rc.exe
+
+# optional, the assembly the report cites (per-step instructions of each walk form):
+# A=../../../../../target/measure-0.9.15/M2/asm; mkdir -p $A
+# "$CC" -O2 -S -DFORM_MOVE model_w2v.c -o $A/move.s   (likewise -DFORM_MOVE -DDROPCLASS move_drop.s, -DFORM_REGION region.s,
+#   -DFORM_VIEWS views.s, plain_w2v.c plain.s, salvage_w2v_hoist.c hoist.s, salvage_w2v_freeonly.c freeonly.s, salvage_w2v_dispatch.c dispatch.s)
+rm -f $B/*.pdb

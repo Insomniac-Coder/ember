@@ -1,0 +1,78 @@
+# runs.txt: job M4. <binary in target/measure-0.9.15/M4/bin/> | <arguments> | <expected checksum>
+# Each program prints "<name> ms=<wall ms> peak_kb=<peak KB> checksum=<u64>"; every program of a
+# workload must print its workload's checksum (computed by checksums.py, without the programs).
+# The ratio of each program is against the first `plain_` line of its workload.
+
+# this_tick: 16,384 players x 12,000 frames
+plain_this_tick.exe | | 296621420256
+plain_this_tick_noalias.exe | | 296621420256
+model_this_tick.exe | | 296621420256
+salvage_this_tick_typeproof.exe | | 296621420256
+salvage_this_tick_hoist.exe | | 296621420256
+rust_this_tick.exe | | 296621420256
+
+# this_tally: 65,536 samples x 3,000 frames
+plain_this_tally.exe | | 97825394205986
+plain_this_tally_noalias.exe | | 97825394205986
+model_this_tally.exe | | 97825394205986
+salvage_this_tally_typeproof.exe | | 97825394205986
+salvage_this_tally_hoist.exe | | 97825394205986
+rust_this_tally.exe | | 97825394205986
+
+# this_mix: 65,536 floats x 3,000 frames
+plain_this_mix.exe | | 18446744073331175827
+plain_this_mix_noalias.exe | | 18446744073331175827
+model_this_mix.exe | | 18446744073331175827
+salvage_this_mix_typeproof.exe | | 18446744073331175827
+salvage_this_mix_hoist.exe | | 18446744073331175827
+rust_this_mix.exe | | 18446744073331175827
+
+# samevar_one: 50,000,128 calls naming one span twice (the one-name copy)
+plain_samevar.exe | one | 7325321544
+model_samevar.exe | one | 7325321544
+salvage_samevar_generic.exe | one | 7325321544
+rust_samevar.exe | one | 7325321544
+
+# samevar_two: 50,000,128 calls on two different spans (the normal copy)
+plain_samevar.exe | two | 7167992860
+plain_samevar_noalias.exe | two | 7167992860
+model_samevar.exe | two | 7167992860
+rust_samevar.exe | two | 7167992860
+# (salvage_samevar_generic two runs the model's normal copy, the same code as model_samevar two: not timed)
+
+# respan: 30,000,128 calls on 16-float chunks
+plain_respan.exe | | 44599137
+model_respan.exe | | 44599137
+model_respan_words.exe | | 44599137
+salvage_respan_flag.exe | | 44599137
+rust_respan.exe | repoint | 44599137
+rust_respan.exe | plain | 44599137
+# respan, the chunk length read at run time (ratio against plain_respan_rtlen)
+plain_respan_rtlen.exe | | 44599137
+model_respan_rtlen.exe | | 44599137
+model_respan_words_rtlen.exe | | 44599137
+salvage_respan_flag_rtlen.exe | | 44599137
+
+# cb_event: 200,000,000 callbacks with a one-line body (the ffi workload run 3 cites, run 2's ffi.c)
+plain_cb_event.exe | | 200000000
+model_cb_event.exe | | 200000000
+model_cb_event_nothread.exe | | 200000000
+salvage_cb_event_fold.exe | | 200000000
+salvage_cb_event_teb.exe | | 200000000
+rust_cb_event.exe | | 200000000
+
+# cb_parse: 20,000,000 field and 2,500,000 row callbacks from a C parser
+plain_cb_parse.exe | | 999428960427
+model_cb_parse.exe | | 999428960427
+model_cb_parse_nothread.exe | | 999428960427
+salvage_cb_parse_fold.exe | | 999428960427
+salvage_cb_parse_teb.exe | | 999428960427
+rust_cb_parse.exe | | 999428960427
+
+# cb_once: 49,999,872 callback(once) registrations and calls
+plain_cb_once.exe | | 1249993625008128
+model_cb_once.exe | | 1249993625008128
+model_cb_once_nothread.exe | | 1249993625008128
+salvage_cb_once_genmark.exe | | 1249993625008128
+salvage_cb_once_nomark.exe | | 1249993625008128
+rust_cb_once.exe | | 1249993625008128

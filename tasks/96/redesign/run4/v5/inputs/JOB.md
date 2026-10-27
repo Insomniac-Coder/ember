@@ -784,6 +784,33 @@ acceptable it hurt readability too, if you want something to have a copy use the
     `owns dyn AnyPool` values. Where anything does run several pieces of work at once, a clash between
     them is refused when compiling (worked out from every function the program can put there), never
     checked while running, as verdict 98.
+101. **A `thread_shared` object's owners are counted in two numbers** (owner, 2026-10-27, after the
+    measuring phase; `tasks/96/redesign/measure-0.9.15/brc/REPORT.md`).
+    - **The two numbers.**
+      - The thread that made the object counts its owners in one number, A, which only it ever reads or
+        writes, with normal fast instructions.
+      - Every other thread uses the second number, B, with locked instructions.
+      - The object has A + B owners.
+      - Only the making thread can read both, so when another thread takes the last owner it hands the
+        object to the making thread. That thread deletes it at its next check point (placed by the
+        compiler; always before the thread ends), or the other thread deletes it at once if the making
+        thread has ended.
+    - **The fixes.**
+      - The maker's id is read from the object's memory chunk (fix 1).
+      - A hand-over the compiler sees moves A into B at that moment (fix 2), so the delay remains only for
+        an object that travels inside another object.
+      - Rule Q: the drop that hands the object over marks it in the same atomic step, and only the making
+        thread's check then deletes it.
+      - A merged object's −1 is one locked add (the shortcut).
+    - **Measured against one locked count**, 550 stress runs clean:
+      - a thread's own objects, 25% faster;
+      - the camera program, 89 ms against 544 ms;
+      - several threads reading one thread's objects, up to 28% faster;
+      - objects passed back and forth all the time, 9% to 13% slower;
+      - each object 16 bytes bigger.
+    - Owner, asked "Do you want the two-number design in the spec?" (with fix 2): "yes". The owner first
+      kept the view's count on every read ("why the fuck would remove the counter for a read
+      operation?"), and asked for a fix for the language, not for one benchmark.
 
 ## Error messages are part of readability (owner, 2026-10-24)
 

@@ -1,0 +1,31 @@
+# M3 runs: binary (in target/measure-0.9.15/M3/bin/), arguments, expected checksum.
+# M3 ran no program, so no checksum value is known yet. Every program of one workload must print
+# the same checksum: W1 for every trees line, W2 for every lists line, W3 for every churn line.
+# The first program run of a workload sets that workload's value; any other value is a defect.
+# Each program prints one line: "<name> ms=<wall ms> peak_kb=<peak working set KB> checksum=<u64>".
+plain_trees_malloc.exe        -       W1
+plain_trees_arena.exe         -       W1
+model_trees.exe               -       W1
+model_trees_inl.exe           -       W1
+model_trees_inl_nowalk.exe    -       W1
+salvage_trees_nofree.exe      -       W1
+salvage_trees_chunkhdr.exe    -       W1
+rust_trees.exe                box     W1
+rust_trees.exe                abox    W1
+rust_trees.exe                bref    W1
+rust_trees.exe                index   W1
+plain_lists_malloc.exe        -       W2
+plain_lists_arena.exe         -       W2
+model_lists.exe               -       W2
+model_lists_inl.exe           -       W2
+salvage_lists_known.exe       -       W2
+salvage_lists_chunkhdr.exe    -       W2
+rust_lists.exe                vec     W2
+rust_lists.exe                avec    W2
+plain_churn_malloc.exe        -       W3
+plain_churn_pool.exe          -       W3
+model_churn.exe               -       W3
+salvage_churn_chunkhdr.exe    -       W3
+rust_churn.exe                box     W3
+rust_churn.exe                pbox    W3
+rust_churn.exe                slab    W3

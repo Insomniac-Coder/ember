@@ -1,0 +1,37 @@
+# build.txt (agent M1): run from tasks/96/redesign/measure-0.9.15/M1 in Git Bash. Every C program is one
+# self-contained .c file (it includes its own headers from this folder); every Rust program uses
+# harness.rs from this folder (mod harness). Output: target/measure-0.9.15/M1/bin/ (B below).
+# MSVC twin of every C line, from a VS x64 prompt in this folder: cl /nologo /O2 /Fe<B>\<name>.exe <name>.c
+CL="/c/Program Files/LLVM/bin/clang.exe"
+B=/c/Users/ism19/Code/ember/target/measure-0.9.15/M1/bin
+mkdir -p $B
+"$CL" -O2 -o $B/plain_retarget.exe plain_retarget.c
+"$CL" -O2 -o $B/model_retarget.exe model_retarget.c
+"$CL" -O2 -o $B/diag_retarget_nocompare.exe diag_retarget_nocompare.c
+"$CL" -O2 -o $B/model_retarget_ts.exe model_retarget_ts.c
+"$CL" -O2 -o $B/diag_retarget_ts_nocompare.exe diag_retarget_ts_nocompare.c
+"$CL" -O2 -o $B/salvage_retarget_fold.exe salvage_retarget_fold.c
+"$CL" -O2 -o $B/salvage_retarget_wide.exe salvage_retarget_wide.c
+"$CL" -O2 -o $B/salvage_retarget_ts_wide.exe salvage_retarget_ts_wide.c
+"$CL" -O2 -o $B/plain_hotshare.exe plain_hotshare.c
+"$CL" -O2 -o $B/model_hotshare.exe model_hotshare.c
+"$CL" -O2 -o $B/diag_hotshare_nocompare.exe diag_hotshare_nocompare.c
+"$CL" -O2 -o $B/model_hotshare_ts.exe model_hotshare_ts.c
+"$CL" -O2 -o $B/diag_hotshare_ts_nocompare.exe diag_hotshare_ts_nocompare.c
+"$CL" -O2 -o $B/salvage_hotshare_fold.exe salvage_hotshare_fold.c
+"$CL" -O2 -o $B/salvage_hotshare_wide.exe salvage_hotshare_wide.c
+"$CL" -O2 -o $B/salvage_hotshare_ts_wide.exe salvage_hotshare_ts_wide.c
+"$CL" -O2 -o $B/plain_weakview.exe plain_weakview.c
+"$CL" -O2 -o $B/model_weakview.exe model_weakview.c
+"$CL" -O2 -o $B/model_weakview_onethread.exe model_weakview_onethread.c
+"$CL" -O2 -o $B/salvage_weakview_plaindata.exe salvage_weakview_plaindata.c
+"$CL" -O2 -o $B/plain_selfremove.exe plain_selfremove.c
+"$CL" -O2 -o $B/model_selfremove.exe model_selfremove.c
+"$CL" -O2 -o $B/salvage_selfremove_hoist.exe salvage_selfremove_hoist.c
+rustc -C opt-level=2 --edition 2021 -o $B/rust_retarget_rc.exe rust_retarget_rc.rs
+rustc -C opt-level=2 --edition 2021 -o $B/rust_retarget_arc.exe rust_retarget_arc.rs
+rustc -C opt-level=2 --edition 2021 -o $B/rust_hotshare_rc.exe rust_hotshare_rc.rs
+rustc -C opt-level=2 --edition 2021 -o $B/rust_hotshare_arc.exe rust_hotshare_arc.rs
+rustc -C opt-level=2 --edition 2021 -o $B/rust_weakview_arc.exe rust_weakview_arc.rs
+rustc -C opt-level=2 --edition 2021 -o $B/rust_weakview_rc.exe rust_weakview_rc.rs
+rustc -C opt-level=2 --edition 2021 -o $B/rust_selfremove.exe rust_selfremove.rs

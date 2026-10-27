@@ -1,0 +1,25 @@
+# runs.txt (M2): one line per program: binary (in target/measure-0.9.15/M2/bin/), arguments, expected
+# checksum. No program takes arguments: an argument would store the pruner in `on_visit` (w2v), which
+# is never timed. Workload "tree": its checksum was not run by M2 (the brief forbids running); every
+# tree program must print the same value as plain_tree.exe, and a different value is a fault.
+# Workload "w2v": every program prints run 3's W2 checksum, 647034814 (the visitor counts what W2's
+# walk counted).
+plain_tree.exe              (none)  = plain_tree.exe's checksum
+plain_same_tree.exe         (none)  = plain_tree.exe's checksum
+model_tree.exe              (none)  = plain_tree.exe's checksum
+salvage_tree_parentfree.exe (none)  = plain_tree.exe's checksum
+rust_tree_rc.exe            (none)  = plain_tree.exe's checksum
+rust_tree_arena.exe         (none)  = plain_tree.exe's checksum
+plain_w2v.exe               (none)  647034814
+plain_w2v_novisit.exe       (none)  647034814
+plain_same_w2v.exe          (none)  647034814
+model_w2v_move.exe          (none)  647034814
+model_w2v_move_drop.exe     (none)  647034814
+model_w2v_region.exe        (none)  647034814
+model_w2v_views.exe         (none)  647034814
+model_w2v_views_novisit.exe (none)  647034814
+salvage_w2v_freeonly.exe    (none)  647034814
+salvage_w2v_dispatch.exe    (none)  647034814
+salvage_w2v_hoist.exe       (none)  647034814
+rust_w2v.exe                (none)  647034814
+rust_w2v_rc.exe             (none)  647034814
