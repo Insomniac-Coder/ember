@@ -30,6 +30,10 @@ From the gap map (`gap/01` to `gap/09`, one report per area) and its critic (`ga
   - AI: 14 conflict hunks in 5 files.
 
   After the first rework milestone, their old-spec proofs cannot be repeated.
+- **Done 2026-10-27:** the three are merged on `main` (AK `158cc9a0`, AJ `b8fed8ae`, AI `8fa95b5f`), and
+  the owner answered Q-A, Q-B, Q-C, Q-D and Q-G (JOB.md verdicts 102-106). `AFTER-MERGES.md` re-checks
+  the work items against the merged compiler: the count is unchanged; the hot-reload items now write both
+  backends' images; D-920 (open) goes with M2.
 
 ## How every milestone lands
 
@@ -51,25 +55,25 @@ milestone by milestone. M-A to M0 need no agents.
 
 | # | Milestone | Items (area ids) | Size | Blocked by an owner question |
 |---|---|---|---|---|
-| M-A | Merge AK (compiler memory), on `main`, at the old spec | A9-1 | S | — |
-| M-B | Merge AJ (a type for every function, ODR-278) | A9-2 | M | — |
-| M-C | Merge AI (LLVM backend: reload, libraries, ABI, PGO); record the gates | A9-3, A9-4 | 1 M, 1 S | — |
+| M-A | Merge AK (compiler memory), on `main`, at the old spec | A9-1 | S | — (**done**, `158cc9a0`) |
+| M-B | Merge AJ (a type for every function, ODR-278) | A9-2 | M | — (**done**, `b8fed8ae`) |
+| M-C | Merge AI (LLVM backend: reload, libraries, ABI, PGO); record the gates | A9-3, A9-4 | 1 M, 1 S | — (**done**, `8fa95b5f`; A9-4 (c) is M0's) |
 | M0 | The spec-tied checks read 0.9.15; independent pieces | A7-1, A7-2, A7-3; A3-1 + A7-17 (count limit compares, `#$ count_bits`); A5-1, A5-2, A5-3, A5-21 (unsafe, codes); A7-18; A6-12, A6-16 | 12 S | — |
-| M1 | The 0.9.15 grammar, the spelling-only forms and the migrator, in one commit | A7-4 to A7-9, A7-15; A1-1; A2-1's spelling half; A8-6; the mechanical part of A8-9 and A8-10 | 5 L, 5 M, 2 S | Q-A |
-| M2 | Whole-program facts, with nothing new refused | A4-1, A4-2 (with A2-9's borrow facts in it, C2), A4-3, A9-11; A1-17's first half (`static mut` as a place, Y2) | 3 L, 3 M | — |
+| M1 | The 0.9.15 grammar, the spelling-only forms and the migrator, in one commit | A7-4 to A7-9, A7-15; A1-1; A2-1's spelling half; A8-6; the mechanical part of A8-9 and A8-10 | 5 L, 5 M, 2 S | Q-A answered (verdict 102); also parses verdict 106's contract line |
+| M2 | Whole-program facts, with nothing new refused | A4-1, A4-2 (with A2-9's borrow facts in it, C2), A4-3, A9-11; A1-17's first half (`static mut` as a place, Y2); D-920 (the callable-region panic: fixed first, or made moot by the summaries) | 3 L, 3 M | — |
 | M3 | Ownership: hand-over, `owns T` replacing `Box`, parameter and call words, `this` | A1-2 to A1-4, A1-6 to A1-8, A1-12, A7-10's `owns` part; A6-1, A6-4, A6-17 | 2 L, 5 M, 3 S | — |
-| M4 | Shared owners and links; class objects have one owner; `copy of` | A3-2, A3-3, A1-9, A7-10's rest, A1-5, A5-8, A5-9, A1-10 + A1-11 (`mem.forget` gone, `into_raw()` in `unsafe`), A6-5, A6-9, A6-10; HEAP-3..7 | 2 L, 9 M, 1 S | Q-B |
+| M4 | Shared owners and links; class objects have one owner; `copy of` | A3-2, A3-3, A1-9, A7-10's rest, A1-5, A5-8, A5-9, A1-10 + A1-11 (`mem.forget` gone, `into_raw()` in `unsafe`), A6-5, A6-9, A6-10; HEAP-3..7 | 2 L, 9 M, 1 S | Q-B answered (verdict 103: refused) |
 | M5 | Views inside a function, loops, spans, kept views, generators | A2-2 to A2-8, A2-15, A1-18, A1-19, A3-5 (`RefCell` ends), A5-6, A5-7; A7-23, A7-26, A7-27 (their TYP texts, C8) | 4 L, 8 M, 4 S | — |
 | M6a | Calls checked by the summaries; one name for one variable; messages that name the chain | A4-4 to A4-7, A2-10, A2-13, A1-21, A1-22, A3-6, A3-7, A3-8, A7-14 | 5 L, 6 M, 1 S | — |
 | M6b | The run-time exclusivity checks removed, and the new 8/12-byte header, in one layout change | A4-8, A3-4, A2-11 (`RefCell` loans only), A9-5, A9-8, A6-19, L3013 | 2 L, 3 M, 1 S | — |
 | M6c | Alias facts: disjointness, `noalias` on every `ref mut` | A2-12, A2-14 (with A7-19 folded in, C3), A9-10 | 4 M | — |
 | M7 | Loops of owners refused unless opened (E3032); parent links and the walk | A3-9, A3-10, A3-11 (with the measured salvages) | 2 L, 1 M | — |
 | M8 | Function values: capture words, two words `{code, state}` | A4-9, A4-10, A9-6, A9-7, A4-17, A5-10, A6-7 | 2 L, 4 M, 1 S | — |
-| M9 | Threads: `thread_shared` values, spawn, scoped tasks, reductions, locks, module variables | A5-11 to A5-20, A1-17's second half, A6-13, A6-14, A9-9 | 3 L, 7 M, 3 S | Q-C, Q-D, Q-E |
+| M9 | Threads: `thread_shared` values, spawn, scoped tasks, reductions, locks, module variables | A5-11 to A5-20, A1-17's second half, A6-13, A6-14, A9-9 | 3 L, 7 M, 3 S | Q-E (Q-C, Q-D answered: verdicts 104, 105) |
 | M10 | Memory managers and arenas with `using` | A1-13 to A1-16, A7-11 (with the measured choice about the instance word) | 1 L, 3 M, 1 S | Q-F |
-| M11 | Interface values, kind tests and casts, generic bounds, `init`, `@cached`, class rules, contracts | A4-11 to A4-16 (with A1-20 and A7-12's checker, C4), A7-13 | 2 L, 6 M, 1 S | Q-G, Q-H |
+| M11 | Interface values, kind tests and casts, generic bounds, `init`, `@cached`, class rules, contracts | A4-11 to A4-16 (with A1-20 and A7-12's checker, C4), A7-13 | 2 L, 6 M, 1 S | Q-H (Q-G answered: verdict 106) |
 | M12 | The C interface: `unsafe import c`, `@unsafe(export)`, the checked trampoline, what a foreign call may run | A6-2, A6-3, A6-6, A6-8, A6-11, A6-15; A5-4, A5-5 | 2 L, 2 M, 4 S | — |
-| M13 | Hot reload on the new model | A6-18, A6-20, A6-21, A6-22 | 2 L, 2 M | — |
+| M13 | Hot reload on the new model | A6-18, A6-20, A6-21, A6-22 | 2 L, 2 M | — (both backends' image writers: AFTER-MERGES.md) |
 | M14 | std.ecs as EnTT's design, and the rest of std's semantics | A8-1 to A8-5, A8-7, A8-8, A8-11, A8-12 | 1 L, 5 M, 3 S | Q-I |
 | M15 | Close-out: stop texts, debugger, mangling, tools, Annex A compiles, the flat memory curve, std.gpu | A7-16, A7-20 to A7-22, A7-24, A7-25, A9-12, A5-22 | 2 L, 2 M, 4 S | — |
 
