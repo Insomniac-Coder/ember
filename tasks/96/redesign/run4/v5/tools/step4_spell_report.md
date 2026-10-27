@@ -1,0 +1,3138 @@
+# Step 4 spelling script: report
+
+1018 lines changed, 0 lines left with a removed word in their code (for the agents), 72 tests whose expected error belonged to the removed words.
+
+## 1. Tests whose expected error belonged to the removed words
+
+- `conformance/R1/reject_a_function_whose_local_ends_with_a_drop_that_pushes_to_log_without_naming_it.em`: E2105
+- `conformance/R12/reject_a_counting_handler_given_to_a_plain_death_handler.em`: E2113
+- `conformance/R12/reject_a_function_that_ends_the_players_it_owns_without_naming_player.em`: E2105
+- `conformance/R12/reject_a_function_that_says_changes_world_but_never_changes_frame.em`: E2105
+- `conformance/R12/reject_a_lambda_that_changes_a_captured_atomic_without_naming_it.em`: E2105
+- `conformance/R12/reject_a_lambda_that_names_a_variable_it_never_changes.em`: E2105
+- `conformance/R12/reject_a_lambda_that_pushes_to_log_without_saying_so.em`: E2105
+- `conformance/R12/reject_a_local_function_that_changes_a_mutex_without_naming_it.em`: E2105
+- `conformance/R12/reject_a_local_list_of_plain_functions_given_a_lambda_that_changes_score.em`: E2113
+- `conformance/R12/reject_a_log_handler_in_a_button_of_a_module_that_imports_log.em`: E2113
+- `conformance/R12/reject_a_log_handler_in_a_button_that_allows_only_captured.em`: E2113
+- `conformance/R12/reject_a_log_handler_in_a_list_of_plain_functions.em`: E2113
+- `conformance/R12/reject_a_thread_function_that_pushes_under_the_log_lock_without_changes_log.em`: E2105
+- `conformance/R12/reject_a_two_variable_handler_in_a_captured_list.em`: E2113
+- `conformance/R12/reject_a_ui_changing_handler_in_a_list_of_read_only_handlers.em`: E2113
+- `conformance/R12/reject_a_weakref_handler_that_changes_the_ui_without_changes_ui.em`: E2105
+- `conformance/R12/reject_add_line_changes_a_guarded_field_without_changes_log.em`: E2105
+- `conformance/R12/reject_an_arrow_lambda_that_changes_removed_without_saying_so.em`: E2105
+- `conformance/R12/reject_an_inspect_adapter_that_changes_log_made_a_dyn_iterator_that_says_nothing.em`: E2113
+- `conformance/R12/reject_an_inspect_lambda_without_changes_seen.em`: E2105
+- `conformance/R12/reject_captured_on_a_lambdas_own_first_line.em`: E2105
+- `conformance/R12/reject_click_says_captured_for_a_list_of_captured_dots.em`: E2105
+- `conformance/R12/reject_click_walks_its_handlers_without_changes_handlers.em`: E2105
+- `conformance/R12/reject_click_without_captured.em`: E2105
+- `conformance/R12/reject_click_without_log.em`: E2105
+- `conformance/R12/reject_each_name_without_a_change_list_given_a_changing_lambda.em`: E2113
+- `conformance/R12/reject_for_each_given_a_lambda_that_does_not_say_it_changes_log.em`: E2105
+- `conformance/R12/reject_main_starts_a_thread_that_changes_results_without_naming_it.em`: E2105
+- `conformance/R12/reject_press_runs_handlers_without_captured.em`: E2105
+- `conformance/R12/reject_row_6_handler_without_changes_score.em`: E2105
+- `conformance/R12/reject_setup_says_changes_log_for_a_handler_it_only_stores.em`: E2105
+- `conformance/R12/reject_tick_calls_poll_events_without_naming_what_the_kept_callback_changes.em`: E2105
+- `conformance/R14/reject_a_dyn_iterator_whose_steps_change_more_than_its_type_says.em`: E2113
+- `conformance/R14/reject_a_function_driving_a_dyn_that_changes_log_without_saying_so.em`: E2105
+- `conformance/R14/reject_a_kind_test_that_changes_pools_in_a_method_that_does_not_say_so.em`: E2105
+- `conformance/R15/reject_a_kept_callback_that_does_not_say_it_changes_game.em`: E2105
+- `conformance/R15/reject_a_receive_through_a_given_end_not_named.em`: E2105
+- `conformance/R15/reject_a_scoped_task_that_changes_total_without_saying_so.em`: E2105
+- `conformance/R15/reject_a_send_not_named_on_the_first_line.em`: E2105
+- `conformance/R15/reject_a_task_changing_an_atomic_without_saying_so.em`: E2105
+- `conformance/R15/reject_a_threads_function_changing_the_log_without_saying_so.em`: E2105
+- `conformance/R15/reject_a_threads_function_that_does_not_say_what_it_changes.em`: E2105
+- `conformance/R15/reject_a_threads_function_that_sends_without_saying_so.em`: E2105
+- `conformance/R15/reject_main_calls_setup_without_naming_game.em`: E2105
+- `conformance/R15/reject_main_starts_a_sending_thread_without_naming_it.em`: E2105
+- `conformance/R15/reject_main_starts_a_thread_without_naming_what_it_changes.em`: E2105
+- `conformance/R15/reject_setup_hands_c_a_callback_without_naming_its_changes.em`: E2105
+- `conformance/R15/reject_start_without_naming_what_its_threads_change.em`: E2105
+- `conformance/R15/reject_tick_calls_a_c_function_without_naming_the_kept_callbacks_changes.em`: E2105
+- `conformance/R2/reject_replacing_an_object_whose_drop_pushes_to_log_without_naming_it.em`: E2105
+- `conformance/R3/reject_owns_on_a_captured_number.em`: E2085
+- `conformance/R4/reject_owns_on_an_int_parameter.em`: E2085
+- `conformance/R5/reject_a_caller_does_not_name_what_its_callee_changes.em`: E2105
+- `conformance/R5/reject_a_change_through_a_ref_mut_link_parameter_not_named.em`: E2105
+- `conformance/R5/reject_a_change_through_an_own_link_not_named.em`: E2105
+- `conformance/R5/reject_a_first_line_names_a_field_the_body_never_changes.em`: E2105
+- `conformance/R5/reject_a_first_line_out_of_order.em`: E0118
+- `conformance/R5/reject_a_method_changes_a_field_its_line_does_not_name.em`: E2105
+- `conformance/R5/reject_a_method_changes_a_field_with_no_clause.em`: E2105
+- `conformance/R5/reject_a_mutex_change_not_named_on_the_first_line.em`: E2105
+- `conformance/R5/reject_a_reads_method_reads_a_field_it_does_not_name.em`: E2105
+- `conformance/R5/reject_an_atomic_change_not_named_on_the_first_line.em`: E2105
+- `conformance/R5/reject_an_implementation_changes_more_than_its_interface_method.em`: E2113
+- `conformance/R5/reject_an_override_changes_more_than_its_virtual.em`: E2113
+- `conformance/R5/reject_changes_this_beside_a_field.em`: E2107
+- `conformance/R5/reject_changes_this_beside_reads.em`: E2107
+- `conformance/R5/reject_changes_this_on_a_drop.em`: E2122
+- `conformance/R5/reject_changes_this_on_a_drop_that_changes_nothing_outside.em`: E2122
+- `conformance/R5/reject_main_does_not_name_a_module_variable_its_callee_changes.em`: E2105
+- `conformance/R5/reject_owns_this_beside_changes_this.em`: E2107
+- `conformance/R5/reject_reads_names_a_field_the_body_never_reads.em`: E2105
+- `conformance/R8/reject_a_function_that_ends_an_enemy_without_naming_log.em`: E2105
+
+## 2. Lines left with a removed word in their code
+
+
+## 3. Every changed line (before, then after)
+
+- `conformance/R1/accept_a_drop_method_that_keeps_a_number_of_its_object.em:13`
+  - `fn drop() changes KEPT_HP:`
+  - `fn drop():`
+- `conformance/R1/accept_a_drop_method_that_keeps_a_number_of_its_object.em:16`
+  - `fn main() changes KEPT_HP:`
+  - `fn main():`
+- `conformance/R1/accept_a_function_whose_local_ends_with_a_drop_that_pushes_to_log_names_it.em:13`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R1/accept_a_function_whose_local_ends_with_a_drop_that_pushes_to_log_names_it.em:16`
+  - `fn spawn_one() changes LOG:`
+  - `fn spawn_one():`
+- `conformance/R1/accept_a_function_whose_local_ends_with_a_drop_that_pushes_to_log_names_it.em:20`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R1/reject_a_drop_method_that_keeps_its_object.em:15`
+  - `fn drop() changes KEPT:`
+  - `fn drop():`
+- `conformance/R1/reject_a_drop_method_that_keeps_its_object.em:18`
+  - `fn main() changes KEPT:`
+  - `fn main():`
+- `conformance/R1/reject_a_function_whose_local_ends_with_a_drop_that_pushes_to_log_without_naming_it.em:13`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R1/reject_a_function_whose_local_ends_with_a_drop_that_pushes_to_log_without_naming_it.em:20`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R10/accept_a_view_from_a_link_used_after_a_call_that_changes_nothing.em:16`
+  - `fn show() changes on_hit:`
+  - `fn show():`
+- `conformance/R10/accept_a_view_from_a_link_used_before_a_function_that_ends_the_players_it_owns.em:16`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R10/accept_a_view_from_a_link_used_before_a_function_that_ends_the_players_it_owns.em:20`
+  - `reset = fn() with owns players changes Player: players.clear()`
+  - `reset = fn() owns players: players.clear()`
+- `conformance/R10/reject_a_view_from_a_link_used_after_a_call_that_may_change_players.em:13`
+  - `on_hit: fn() changes Player`
+  - `on_hit: fn()`
+- `conformance/R10/reject_a_view_from_a_link_used_after_a_call_that_may_change_players.em:15`
+  - `fn show() changes on_hit, Player:`
+  - `fn show():`
+- `conformance/R10/reject_a_view_from_a_link_used_after_a_call_that_may_change_players.em:20`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R10/reject_a_view_from_a_link_used_after_a_function_that_ends_the_players_it_owns.em:13`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R10/reject_a_view_from_a_link_used_after_a_function_that_ends_the_players_it_owns.em:17`
+  - `reset = fn() with owns players changes Player: players.clear()`
+  - `reset = fn() owns players: players.clear()`
+- `conformance/R11/accept_a_link_made_from_a_read_only_name_changes_nothing.em:12`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/accept_a_parent_link_set_by_the_program.em:12`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/accept_a_tree_with_parent_links_gets_no_cycle_warning.em:12`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/accept_a_walk_with_views_when_the_visit_changes_no_node.em:15`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/accept_a_walk_with_views_when_the_visit_changes_no_node.em:24`
+  - `fn depth_total() changes on_visit -> int:`
+  - `fn depth_total() -> int:`
+- `conformance/R11/reject_a_parent_field_that_owns_its_parent.em:11`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/reject_a_walk_with_views_across_a_visit_that_may_change_nodes.em:14`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/reject_a_walk_with_views_across_a_visit_that_may_change_nodes.em:21`
+  - `on_visit: fn(Node) changes Node`
+  - `on_visit: fn(Node)`
+- `conformance/R11/reject_a_walk_with_views_across_a_visit_that_may_change_nodes.em:23`
+  - `fn depth_total() changes on_visit, Node -> int:`
+  - `fn depth_total() -> int:`
+- `conformance/R11/reject_a_walk_with_views_across_a_visit_that_may_change_nodes.em:34`
+  - `fn main() changes Node:`
+  - `fn main():`
+- `conformance/R11/run_a_childs_drop_finds_its_parent_ended.em:18`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/run_a_parent_link_that_does_not_follow_ownership_finds_its_target_gone.em:16`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/run_a_proved_parent_walk_prints_the_path.em:19`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/run_a_proved_parent_walk_prints_the_path.em:23`
+  - `fn take(i: int) changes children -> Node:`
+  - `fn take(i: int) -> Node:`
+- `conformance/R11/run_a_walk_follows_a_node_moved_under_another_parent.em:15`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/run_a_walk_follows_a_node_moved_under_another_parent.em:19`
+  - `fn take(i: int) changes children -> Node:`
+  - `fn take(i: int) -> Node:`
+- `conformance/R11/run_a_walk_follows_a_node_moved_under_another_parent.em:27`
+  - `on_visit: fn(Node) changes Node`
+  - `on_visit: fn(Node)`
+- `conformance/R11/run_a_walk_follows_a_node_moved_under_another_parent.em:29`
+  - `fn depth_total() changes on_visit, Node -> int:`
+  - `fn depth_total() -> int:`
+- `conformance/R11/run_a_walk_follows_a_node_moved_under_another_parent.em:42`
+  - `fn main() changes Node:`
+  - `fn main():`
+- `conformance/R11/run_a_walk_follows_a_node_moved_under_another_parent.em:49`
+  - `fn regraft(n: Node) with weakref root changes Node:`
+  - `fn regraft(n: Node) weakref root:`
+- `conformance/R11/run_a_walk_over_nodes_with_a_drop_method_stops_at_the_first_ended_parent.em:19`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/run_a_walk_over_nodes_with_a_drop_method_stops_at_the_first_ended_parent.em:30`
+  - `on_visit: fn(Node) changes Node`
+  - `on_visit: fn(Node)`
+- `conformance/R11/run_a_walk_over_nodes_with_a_drop_method_stops_at_the_first_ended_parent.em:32`
+  - `fn depth_total() changes on_visit, Node -> int:`
+  - `fn depth_total() -> int:`
+- `conformance/R11/run_a_walk_over_nodes_with_a_drop_method_stops_at_the_first_ended_parent.em:45`
+  - `fn program() changes Node:`
+  - `fn program():`
+- `conformance/R11/run_a_walk_over_nodes_with_a_drop_method_stops_at_the_first_ended_parent.em:52`
+  - `fn prune(n: Node) with weakref root changes Node:`
+  - `fn prune(n: Node) weakref root:`
+- `conformance/R11/run_a_walk_over_nodes_with_a_drop_method_stops_at_the_first_ended_parent.em:61`
+  - `fn main() changes Node:`
+  - `fn main():`
+- `conformance/R11/run_a_walk_whose_visit_may_end_nodes_stops_at_the_first_ended_parent.em:19`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R11/run_a_walk_whose_visit_may_end_nodes_stops_at_the_first_ended_parent.em:26`
+  - `on_visit: fn(Node) changes Node            # may change nodes, remove them included`
+  - `on_visit: fn(Node)            # may change nodes, remove them included`
+- `conformance/R11/run_a_walk_whose_visit_may_end_nodes_stops_at_the_first_ended_parent.em:28`
+  - `fn depth_total() changes on_visit, Node -> int:`
+  - `fn depth_total() -> int:`
+- `conformance/R11/run_a_walk_whose_visit_may_end_nodes_stops_at_the_first_ended_parent.em:41`
+  - `fn main() changes Node:`
+  - `fn main():`
+- `conformance/R11/run_a_walk_whose_visit_may_end_nodes_stops_at_the_first_ended_parent.em:48`
+  - `fn prune(n: Node) with weakref root changes Node:`
+  - `fn prune(n: Node) weakref root:`
+- `conformance/R12/accept_a_button_keeps_captured_and_log_handlers.em:11`
+  - `handlers: Array[fn() changes captured, LOG] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_a_button_keeps_captured_and_log_handlers.em:13`
+  - `fn on_click(owns f: fn() changes captured, LOG) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_a_button_keeps_captured_and_log_handlers.em:16`
+  - `fn click() changes handlers, captured, LOG:`
+  - `fn click():`
+- `conformance/R12/accept_a_button_keeps_captured_and_log_handlers.em:20`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_a_button_keeps_captured_and_log_handlers.em:23`
+  - `b.on_click(fn() changes score: score += 1)`
+  - `b.on_click(fn(): score += 1)`
+- `conformance/R12/accept_a_button_keeps_captured_and_log_handlers.em:24`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/accept_a_button_of_another_module_keeps_a_log_handler_under_captured.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_a_button_of_another_module_keeps_a_log_handler_under_captured.em:14`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/accept_a_dyn_iterator_that_says_changes_log.em:11`
+  - `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:`
+  - `fn show(owns it: owns dyn Iterator[Item = int]):`
+- `conformance/R12/accept_a_dyn_iterator_that_says_changes_log.em:15`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_a_dyn_iterator_that_says_changes_log.em:17`
+  - `it = xs.iter().inspect(fn(x) changes LOG: LOG.push(x))`
+  - `it = xs.iter().inspect(fn(x): LOG.push(x))`
+- `conformance/R12/accept_a_function_that_ends_the_players_it_owns_names_player.em:12`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R12/accept_a_function_that_ends_the_players_it_owns_names_player.em:15`
+  - `reset = fn() with owns players changes Player: players.clear()`
+  - `reset = fn() owns players: players.clear()`
+- `conformance/R12/accept_a_handler_called_by_position_adds_one_and_removes_itself.em:14`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `conformance/R12/accept_a_handler_called_by_position_adds_one_and_removes_itself.em:20`
+  - `fn remove_current() changes handlers, current:`
+  - `fn remove_current():`
+- `conformance/R12/accept_a_lambda_keeps_a_copy_of_what_each_name_lends.em:9`
+  - `fn each_name(owns f: fn(String) changes C) changes C:`
+  - `fn each_name(owns f: fn(String)):`
+- `conformance/R12/accept_a_lambda_keeps_a_copy_of_what_each_name_lends.em:14`
+  - `each_name(fn(s) changes names: names.push(copy of s))`
+  - `each_name(fn(s): names.push(copy of s))`
+- `conformance/R12/accept_a_lambda_names_the_captured_atomic_it_changes.em:12`
+  - `count_hit = fn() changes hits: hits.fetch_add(1)`
+  - `count_hit = fn(): hits.fetch_add(1)`
+- `conformance/R12/accept_a_lambda_says_it_changes_the_real_variable.em:9`
+  - `bump = fn() changes score: score += 1`
+  - `bump = fn(): score += 1`
+- `conformance/R12/accept_a_lambda_says_it_takes_the_name_it_uses.em:9`
+  - `f = fn() with owns name => println(name)`
+  - `f = fn() owns name => println(name)`
+- `conformance/R12/accept_a_lambda_that_says_it_pushes_to_log.em:10`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_a_lambda_that_says_it_pushes_to_log.em:11`
+  - `click = fn() changes LOG: LOG.push(String("clicked"))`
+  - `click = fn(): LOG.push(String("clicked"))`
+- `conformance/R12/accept_a_local_function_names_the_mutex_it_changes.em:14`
+  - `fn main() changes Mutex[Stats]:`
+  - `fn main():`
+- `conformance/R12/accept_a_local_function_names_the_mutex_it_changes.em:16`
+  - `fn add_one() with thread_shared stats changes Mutex[Stats]:`
+  - `fn add_one() thread_shared stats:`
+- `conformance/R12/accept_a_local_list_names_the_variable_its_functions_change.em:10`
+  - `hs: Array[fn() changes score] = []`
+  - `hs: Array[fn()] = []`
+- `conformance/R12/accept_a_local_list_names_the_variable_its_functions_change.em:11`
+  - `hs.push(fn() changes score: score += 1)`
+  - `hs.push(fn(): score += 1)`
+- `conformance/R12/accept_a_log_handler_in_a_button_of_a_module_that_does_not_import_log.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_a_log_handler_in_a_button_of_a_module_that_does_not_import_log.em:14`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/accept_a_name_opened_from_a_link_used_before_the_call_that_may_end_players.em:15`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R12/accept_a_name_opened_from_a_link_used_before_the_call_that_may_end_players.em:19`
+  - `reset = fn() with owns players changes Player: players.clear()`
+  - `reset = fn() owns players: players.clear()`
+- `conformance/R12/accept_a_plain_function_fits_a_list_of_log_handlers.em:9`
+  - `fn log_click() changes LOG:`
+  - `fn log_click():`
+- `conformance/R12/accept_a_plain_function_fits_a_list_of_log_handlers.em:16`
+  - `handlers: Array[fn() changes LOG] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_a_plain_function_fits_a_list_of_log_handlers.em:18`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_a_programs_own_function_takes_its_function_as_a_template_parameter.em:10`
+  - `[C, F: fn(int) changes C]`
+  - `[C, F: fn(int)]`
+- `conformance/R12/accept_a_programs_own_function_takes_its_function_as_a_template_parameter.em:11`
+  - `fn apply_each(xs: Array[int], owns f: F) changes C:`
+  - `fn apply_each(xs: Array[int], owns f: F):`
+- `conformance/R12/accept_a_programs_own_function_takes_its_function_as_a_template_parameter.em:16`
+  - `fn apply_each_value(xs: Array[int], owns f: fn(int) changes C) changes C:`
+  - `fn apply_each_value(xs: Array[int], owns f: fn(int)):`
+- `conformance/R12/accept_a_programs_own_function_takes_its_function_as_a_template_parameter.em:23`
+  - `apply_each(xs, fn(x) changes total: total += x)`
+  - `apply_each(xs, fn(x): total += x)`
+- `conformance/R12/accept_a_programs_own_function_takes_its_function_as_a_template_parameter.em:25`
+  - `apply_each_value(xs, fn(x) changes seen: seen.push(x))`
+  - `apply_each_value(xs, fn(x): seen.push(x))`
+- `conformance/R12/accept_a_ref_mut_name_from_get_mut_calls_the_handler.em:13`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `conformance/R12/accept_a_ref_mut_name_from_get_mut_calls_the_handler.em:20`
+  - `fn fire_by_position() changes this:`
+  - `fn fire_by_position():`
+- `conformance/R12/accept_a_returned_function_owns_the_variable_it_keeps.em:14`
+  - `return fn() with owns t:`
+  - `return fn() owns t:`
+- `conformance/R12/accept_a_thread_shared_owner_held_by_a_function_any_thread_may_run.em:14`
+  - `handlers: Array[thread_shared fn() changes Counter] = []`
+  - `handlers: Array[thread_shared fn()] = []`
+- `conformance/R12/accept_a_thread_shared_owner_held_by_a_function_any_thread_may_run.em:16`
+  - `fn on_event(owns f: thread_shared fn() changes Counter) changes handlers:`
+  - `fn on_event(owns f: thread_shared fn()):`
+- `conformance/R12/accept_a_thread_shared_owner_held_by_a_function_any_thread_may_run.em:19`
+  - `fn fire() changes handlers, Counter:`
+  - `fn fire():`
+- `conformance/R12/accept_a_thread_shared_owner_held_by_a_function_any_thread_may_run.em:23`
+  - `fn main() changes Counter:`
+  - `fn main():`
+- `conformance/R12/accept_a_thread_shared_owner_held_by_a_function_any_thread_may_run.em:26`
+  - `bus.on_event(fn() with thread_shared count changes Counter: count.n.fetch_add(1))`
+  - `bus.on_event(fn() thread_shared count: count.n.fetch_add(1))`
+- `conformance/R12/accept_a_two_variable_handler_in_a_captured_dots_list.em:9`
+  - `handlers: Array[fn() changes captured...] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_a_two_variable_handler_in_a_captured_dots_list.em:11`
+  - `fn on_click(owns f: fn() changes captured...) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_a_two_variable_handler_in_a_captured_dots_list.em:14`
+  - `fn click() changes handlers, captured...:`
+  - `fn click():`
+- `conformance/R12/accept_a_two_variable_handler_in_a_captured_dots_list.em:22`
+  - `hit = fn() changes score, lives:`
+  - `hit = fn():`
+- `conformance/R12/accept_a_weakref_handler_says_changes_ui.em:12`
+  - `handlers: Array[fn() changes Ui] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_a_weakref_handler_says_changes_ui.em:14`
+  - `fn on_click(owns f: fn() changes Ui) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_a_weakref_handler_says_changes_ui.em:18`
+  - `bump_ui = fn() with weakref ui changes Ui:`
+  - `bump_ui = fn() weakref ui:`
+- `conformance/R12/accept_a_weakref_handler_says_changes_ui.em:23`
+  - `fn main() changes Ui:`
+  - `fn main():`
+- `conformance/R12/accept_add_line_changes_a_guarded_field_through_a_plain_parameter.em:14`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R12/accept_add_line_changes_a_guarded_field_through_a_plain_parameter.em:18`
+  - `fn add_line(log: Log) changes Log:`
+  - `fn add_line(log: Log):`
+- `conformance/R12/accept_add_line_changes_a_guarded_field_through_a_plain_parameter.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R12/accept_an_arrow_lambda_says_what_it_changes_after_its_parameters.em:19`
+  - `enemies.retain(fn(e) changes removed => keep(e, ref mut removed))`
+  - `enemies.retain(fn(e) => keep(e, ref mut removed))`
+- `conformance/R12/accept_call_once_holds_an_owns_once_fn_and_call_twice_hands_over_copies.em:23`
+  - `call_once(fn() with owns s: consume(s))`
+  - `call_once(fn() owns s: consume(s))`
+- `conformance/R12/accept_clear_the_handlers_after_the_click.em:8`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_clear_the_handlers_after_the_click.em:10`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_clear_the_handlers_after_the_click.em:13`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/accept_clear_the_handlers_after_the_click.em:20`
+  - `b.on_click(fn() changes score: score += 1)`
+  - `b.on_click(fn(): score += 1)`
+- `conformance/R12/accept_click_says_changes_handlers_and_walks_ref_mut.em:11`
+  - `fn on_click(owns f: fn()) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_click_says_changes_handlers_and_walks_ref_mut.em:14`
+  - `fn click() changes handlers:`
+  - `fn click():`
+- `conformance/R12/accept_click_says_changes_handlers_and_walks_ref_mut.em:21`
+  - `tick = fn() with copy of n:`
+  - `tick = fn() copy of n:`
+- `conformance/R12/accept_clicking_after_the_loop_over_the_list_a_handler_changes.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_clicking_after_the_loop_over_the_list_a_handler_changes.em:11`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_clicking_after_the_loop_over_the_list_a_handler_changes.em:14`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/accept_clicking_after_the_loop_over_the_list_a_handler_changes.em:21`
+  - `b.on_click(fn() changes names: names.push(String("b")))`
+  - `b.on_click(fn(): names.push(String("b")))`
+- `conformance/R12/accept_clicking_plain_handlers_inside_a_loop_over_log.em:16`
+  - `fn on_click(owns f: fn()) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_clicking_plain_handlers_inside_a_loop_over_log.em:19`
+  - `fn click() changes handlers:`
+  - `fn click():`
+- `conformance/R12/accept_clicking_plain_handlers_inside_a_loop_over_log.em:23`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_each_name_takes_a_change_list.em:11`
+  - `fn each_name(owns f: fn(owns String) changes C) changes C:`
+  - `fn each_name(owns f: fn(owns String)):`
+- `conformance/R12/accept_each_name_takes_a_change_list.em:16`
+  - `each_name(fn(owns s) changes names: names.push(s))`
+  - `each_name(fn(owns s): names.push(s))`
+- `conformance/R12/accept_for_each_after_the_loop_over_log.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_for_each_after_the_loop_over_log.em:18`
+  - `scores.iter().for_each(fn(s) changes LOG: LOG.push(s.points))`
+  - `scores.iter().for_each(fn(s): LOG.push(s.points))`
+- `conformance/R12/accept_for_each_given_a_lambda_that_says_it_changes_log.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_for_each_given_a_lambda_that_says_it_changes_log.em:14`
+  - `scores.iter().for_each(fn(s) changes LOG: LOG.push(s.points))`
+  - `scores.iter().for_each(fn(s): LOG.push(s.points))`
+- `conformance/R12/accept_inspect_keeps_the_function_and_count_runs_it.em:12`
+  - `it = xs.iter().inspect(fn(v) changes seen: seen.push(v))`
+  - `it = xs.iter().inspect(fn(v): seen.push(v))`
+- `conformance/R12/accept_main_names_results_for_the_threads_it_starts.em:15`
+  - `fn tick() changes FRAME, LOG:`
+  - `fn tick():`
+- `conformance/R12/accept_main_names_results_for_the_threads_it_starts.em:22`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R12/accept_main_names_results_for_the_threads_it_starts.em:27`
+  - `fn main() changes FRAME, LOG, RESULTS:`
+  - `fn main():`
+- `conformance/R12/accept_main_names_results_for_the_threads_it_starts.em:29`
+  - `a = thread.spawn(fn() changes RESULTS: worker(1))`
+  - `a = thread.spawn(fn(): worker(1))`
+- `conformance/R12/accept_main_names_results_for_the_threads_it_starts.em:30`
+  - `b = thread.spawn(fn() changes RESULTS: worker(2))`
+  - `b = thread.spawn(fn(): worker(2))`
+- `conformance/R12/accept_press_says_captured_and_game_names_nothing.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_press_says_captured_and_game_names_nothing.em:11`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_press_says_captured_and_game_names_nothing.em:14`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/accept_press_says_captured_and_game_names_nothing.em:18`
+  - `fn press(ref mut b: Button) changes captured:`
+  - `fn press(ref mut b: Button):`
+- `conformance/R12/accept_press_says_captured_and_game_names_nothing.em:24`
+  - `b.on_click(fn() changes score: score += 1)`
+  - `b.on_click(fn(): score += 1)`
+- `conformance/R12/accept_read_only_handlers_walked_with_for.em:13`
+  - `fn fire() changes handlers:`
+  - `fn fire():`
+- `conformance/R12/accept_report_clicks_after_the_loop_over_log.em:12`
+  - `type Handler = fn() changes LOG`
+  - `type Handler = fn()`
+- `conformance/R12/accept_report_clicks_after_the_loop_over_log.em:17`
+  - `fn on_click(owns f: Handler) changes handlers:`
+  - `fn on_click(owns f: Handler):`
+- `conformance/R12/accept_report_clicks_after_the_loop_over_log.em:20`
+  - `fn click() changes handlers, LOG:`
+  - `fn click():`
+- `conformance/R12/accept_report_clicks_after_the_loop_over_log.em:25`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/accept_report_clicks_after_the_loop_over_log.em:27`
+  - `fn report(ref mut b: Button) changes LOG:`
+  - `fn report(ref mut b: Button):`
+- `conformance/R12/accept_report_clicks_after_the_loop_over_log.em:32`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_retain_then_push_the_notes.em:9`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/accept_row_6_handler_changes_the_real_score.em:10`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_row_6_handler_changes_the_real_score.em:12`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_row_6_handler_changes_the_real_score.em:15`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/accept_row_6_handler_changes_the_real_score.em:22`
+  - `b.on_click(fn() changes score: score += 1)`
+  - `b.on_click(fn(): score += 1)`
+- `conformance/R12/accept_run_takes_the_stateful_callback_ref_mut.em:16`
+  - `cb = fn() with owns name, copy of score:`
+  - `cb = fn() owns name, copy of score:`
+- `conformance/R12/accept_the_function_value_called_after_the_with_block.em:14`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R12/accept_the_function_value_called_after_the_with_block.em:18`
+  - `fn dump(log: thread_shared Log) changes Log:`
+  - `fn dump(log: thread_shared Log):`
+- `conformance/R12/accept_the_function_value_called_after_the_with_block.em:19`
+  - `note = fn() with thread_shared log changes Log: log.push("seen")`
+  - `note = fn() thread_shared log: log.push("seen")`
+- `conformance/R12/accept_the_function_value_called_after_the_with_block.em:25`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R12/accept_the_handler_owns_a_share_of_a_counter.em:13`
+  - `handlers: Array[fn() changes Counter] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/accept_the_handler_owns_a_share_of_a_counter.em:15`
+  - `fn on_click(owns f: fn() changes Counter) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_the_handler_owns_a_share_of_a_counter.em:18`
+  - `fn click() changes handlers, Counter:`
+  - `fn click():`
+- `conformance/R12/accept_the_handler_owns_a_share_of_a_counter.em:23`
+  - `b.on_click(fn() with owns count changes Counter: count.n += 1)`
+  - `b.on_click(fn() owns count: count.n += 1)`
+- `conformance/R12/accept_the_handler_owns_a_share_of_a_counter.em:25`
+  - `fn main() changes Counter:`
+  - `fn main():`
+- `conformance/R12/accept_the_handler_takes_a_copy_of_the_loop_name.em:11`
+  - `fn on_click(owns f: fn()) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/accept_the_handler_takes_a_copy_of_the_loop_name.em:14`
+  - `fn click() changes handlers:`
+  - `fn click():`
+- `conformance/R12/accept_the_handler_takes_a_copy_of_the_loop_name.em:22`
+  - `b.on_click(fn() with copy of name: println(name))`
+  - `b.on_click(fn() copy of name: println(name))`
+- `conformance/R12/accept_the_stored_function_called_after_the_loop_as_many_times.em:11`
+  - `hs: Array[fn() changes xs] = []`
+  - `hs: Array[fn()] = []`
+- `conformance/R12/accept_the_stored_function_called_after_the_loop_as_many_times.em:12`
+  - `hs.push(fn() changes xs: xs.push(0))`
+  - `hs.push(fn(): xs.push(0))`
+- `conformance/R12/accept_tick_changes_world.em:12`
+  - `fn tick() changes world:`
+  - `fn tick():`
+- `conformance/R12/accept_tick_changes_world.em:16`
+  - `fn note() changes LOG:`
+  - `fn note():`
+- `conformance/R12/accept_tick_changes_world.em:19`
+  - `fn main() changes world:`
+  - `fn main():`
+- `conformance/R12/accept_tick_names_what_the_kept_callback_changes.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R12/accept_tick_names_what_the_kept_callback_changes.em:23`
+  - `fn setup(owns game: shares mut Game) changes Game, LOG -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R12/accept_tick_names_what_the_kept_callback_changes.em:24`
+  - `fn on_event() with owns game changes Game, LOG:`
+  - `fn on_event() owns game:`
+- `conformance/R12/accept_tick_names_what_the_kept_callback_changes.em:29`
+  - `fn tick() changes Game, LOG:`
+  - `fn tick():`
+- `conformance/R12/accept_tick_names_what_the_kept_callback_changes.em:32`
+  - `fn main() changes Game, LOG:`
+  - `fn main():`
+- `conformance/R12/accept_two_threads_push_to_one_log_and_say_changes_log.em:15`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R12/accept_two_threads_push_to_one_log_and_say_changes_log.em:19`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R12/accept_two_threads_push_to_one_log_and_say_changes_log.em:20`
+  - `a = thread.spawn(fn() with thread_shared log changes Log: log.push("a"))`
+  - `a = thread.spawn(fn() thread_shared log: log.push("a"))`
+- `conformance/R12/accept_two_threads_push_to_one_log_and_say_changes_log.em:21`
+  - `b = thread.spawn(fn() with thread_shared log changes Log: log.push("b"))`
+  - `b = thread.spawn(fn() thread_shared log: log.push("b"))`
+- `conformance/R12/accept_two_threads_push_to_one_log_and_say_changes_log.em:27`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R12/accept_update_takes_a_death_handler_type_with_a_change_list.em:11`
+  - `type DeathHandler[C] = fn(ref mut Array[Enemy], int) changes C`
+  - `type DeathHandler[C] = fn(ref mut Array[Enemy], int)`
+- `conformance/R12/accept_update_takes_a_death_handler_type_with_a_change_list.em:14`
+  - `fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:`
+  - `fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]):`
+- `conformance/R12/accept_update_takes_a_death_handler_type_with_a_change_list.em:29`
+  - `update(ref mut es, fn(ref mut list: Array[Enemy], i: int) changes kills: kills += 1)`
+  - `update(ref mut es, fn(ref mut list: Array[Enemy], i: int): kills += 1)`
+- `conformance/R12/accept_views_used_before_the_call_that_changes_their_place.em:15`
+  - `bump = fn() changes c: c.n += 1`
+  - `bump = fn(): c.n += 1`
+- `conformance/R12/log_widgets.em:10`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/log_widgets.em:12`
+  - `pub fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `pub fn on_click(owns f: fn()):`
+- `conformance/R12/log_widgets.em:15`
+  - `pub fn click() changes handlers, captured, LOG:`
+  - `pub fn click():`
+- `conformance/R12/reject_a_counting_handler_given_to_a_plain_death_handler.em:23`
+  - `update(ref mut es, fn(ref mut list: Array[Enemy], i: int) changes kills: kills += 1)    #$ error[E2113]: this function changes `kills`, a variable it uses from `main` (`fn(ref mut list: Array[Enemy], i: int) changes kills`), and `update`'s `on_death` takes `fn(ref mut Array[Enemy], int)`, a function that changes nothing but the list it is given; to let `update` take handlers that change something, name its type with a change list, `type DeathHandler[C] = fn(ref mut Array[Enemy], int) changes C`, and write `update`'s first line as `[C]` above `fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:``
+  - `update(ref mut es, fn(ref mut list: Array[Enemy], i: int): kills += 1)    #$ error[E2113]: this function changes `kills`, a variable it uses from `main` (`fn(ref mut list: Array[Enemy], i: int) changes kills`), and `update`'s `on_death` takes `fn(ref mut Array[Enemy], int)`, a function that changes nothing but the list it is given; to let `update` take handlers that change something, name its type with a change list, `type DeathHandler[C] = fn(ref mut Array[Enemy], int) changes C`, and write `update`'s first line as `[C]` above `fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:``
+- `conformance/R12/reject_a_for_walk_of_handlers_given_the_ui_ref_mut.em:13`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `conformance/R12/reject_a_for_walk_of_handlers_whose_type_changes_ui.em:9`
+  - `handlers: Array[fn(Ui) changes Ui] = []`
+  - `handlers: Array[fn(Ui)] = []`
+- `conformance/R12/reject_a_for_walk_of_handlers_whose_type_changes_ui.em:13`
+  - `fn fire() changes handlers, Ui:`
+  - `fn fire():`
+- `conformance/R12/reject_a_for_walk_of_handlers_whose_type_changes_ui.em:17`
+  - `fn main() changes Ui:`
+  - `fn main():`
+- `conformance/R12/reject_a_function_that_ends_the_players_it_owns_without_naming_player.em:15`
+  - `reset = fn() with owns players: players.clear()    #$ error[E2105]: this function ends the players it owns (`players.clear()`); say so on its first line: `reset = fn() with owns players changes Player: players.clear()`, and, since `main` runs it, add it to `main`'s first line: `fn main() changes Player:``
+  - `reset = fn() owns players: players.clear()    #$ error[E2105]: this function ends the players it owns (`players.clear()`); say so on its first line: `reset = fn() with owns players changes Player: players.clear()`, and, since `main` runs it, add it to `main`'s first line: `fn main() changes Player:``
+- `conformance/R12/reject_a_function_that_gives_s_away_passed_to_call_twice.em:18`
+  - `call_twice(fn() with owns s: consume(s))    #$ error[E3013]: this function gives `s` away, so it can run only once, and `call_twice` runs it twice; hand over a copy each time instead: `call_twice(fn(): consume(copy of s))``
+  - `call_twice(fn() owns s: consume(s))    #$ error[E3013]: this function gives `s` away, so it can run only once, and `call_twice` runs it twice; hand over a copy each time instead: `call_twice(fn(): consume(copy of s))``
+- `conformance/R12/reject_a_function_that_says_changes_world_but_never_changes_frame.em:13`
+  - `fn tick() changes world:`
+  - `fn tick():`
+- `conformance/R12/reject_a_function_that_says_changes_world_but_never_changes_frame.em:17`
+  - `fn note() changes world:    #$ error[E2105]: `note` says `changes world`, but it never changes `FRAME`; write `fn note() changes LOG:``
+  - `fn note():    #$ error[E2105]: `note` says `changes world`, but it never changes `FRAME`; write `fn note() changes LOG:``
+- `conformance/R12/reject_a_function_that_says_changes_world_but_never_changes_frame.em:20`
+  - `fn main() changes world:`
+  - `fn main():`
+- `conformance/R12/reject_a_function_value_that_changes_log_called_in_a_walk_of_log_lines.em:16`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R12/reject_a_function_value_that_changes_log_called_in_a_walk_of_log_lines.em:20`
+  - `fn dump(log: thread_shared Log) changes Log:`
+  - `fn dump(log: thread_shared Log):`
+- `conformance/R12/reject_a_function_value_that_changes_log_called_in_a_walk_of_log_lines.em:21`
+  - `note = fn() with thread_shared log changes Log: log.push("seen")`
+  - `note = fn() thread_shared log: log.push("seen")`
+- `conformance/R12/reject_a_function_value_that_changes_log_called_in_a_walk_of_log_lines.em:27`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R12/reject_a_handler_kept_past_the_loop_name_it_uses.em:12`
+  - `fn on_click(owns f: fn()) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_a_handler_kept_past_the_loop_name_it_uses.em:15`
+  - `fn click() changes handlers:`
+  - `fn click():`
+- `conformance/R12/reject_a_handler_stored_in_the_button_it_changes.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_a_handler_stored_in_the_button_it_changes.em:11`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_a_handler_stored_in_the_button_it_changes.em:14`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_a_handler_stored_in_the_button_it_changes.em:20`
+  - `b.on_click(fn() changes b: b.handlers.clear())    #$ error[E3022]: this function changes `b`, and `on_click` would keep it in `b.handlers`, so it would change the button that holds it while the button runs it; clear the handlers after the click instead: `b.click()`, then `b.handlers.clear()``
+  - `b.on_click(fn(): b.handlers.clear())    #$ error[E3022]: this function changes `b`, and `on_click` would keep it in `b.handlers`, so it would change the button that holds it while the button runs it; clear the handlers after the click instead: `b.click()`, then `b.handlers.clear()``
+- `conformance/R12/reject_a_handler_that_outlives_the_callers_total.em:12`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_a_handler_that_outlives_the_callers_total.em:14`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_a_handler_that_outlives_the_callers_total.em:17`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_a_handler_that_outlives_the_callers_total.em:22`
+  - `b.on_click(fn() changes total: total += 1)    #$ error[E3026]: the click handler changes `total`, which belongs to `register`'s caller, and `b` keeps the handler after `register` returns; keep the total in an object the handler can own a share of: declare `class Counter:` with the field `n: int = 0`; in `main`, instead of `total = 0`, `register(ref mut b, ref mut total)` and `println(total)`, write `count = Counter()`, `register(ref mut b, shares mut count)` and `println(count.n)`, and make its first line `fn main() changes Counter:`; instead of `register`'s two lines write `fn register(ref mut b: Button, owns count: shares mut Counter):` and `b.on_click(fn() with owns count changes Counter: count.n += 1)`; and in `Button`, instead of its `handlers`, `on_click` and `click` lines, write `handlers: Array[fn() changes Counter] = []`, `fn on_click(owns f: fn() changes Counter) changes handlers:` and `fn click() changes handlers, Counter:``
+  - `b.on_click(fn(): total += 1)    #$ error[E3026]: the click handler changes `total`, which belongs to `register`'s caller, and `b` keeps the handler after `register` returns; keep the total in an object the handler can own a share of: declare `class Counter:` with the field `n: int = 0`; in `main`, instead of `total = 0`, `register(ref mut b, ref mut total)` and `println(total)`, write `count = Counter()`, `register(ref mut b, shares mut count)` and `println(count.n)`, and make its first line `fn main() changes Counter:`; instead of `register`'s two lines write `fn register(ref mut b: Button, owns count: shares mut Counter):` and `b.on_click(fn() with owns count changes Counter: count.n += 1)`; and in `Button`, instead of its `handlers`, `on_click` and `click` lines, write `handlers: Array[fn() changes Counter] = []`, `fn on_click(owns f: fn() changes Counter) changes handlers:` and `fn click() changes handlers, Counter:``
+- `conformance/R12/reject_a_handler_that_outlives_the_callers_total.em:24`
+  - `fn main() changes captured:`
+  - `fn main():`
+- `conformance/R12/reject_a_lambda_that_names_a_variable_it_never_changes.em:10`
+  - `show = fn() changes score: println(score)    #$ error[E2105]: this function says `changes score` and never changes it; remove `score` from its first line: `show = fn(): println(score)``
+  - `show = fn(): println(score)    #$ error[E2105]: this function says `changes score` and never changes it; remove `score` from its first line: `show = fn(): println(score)``
+- `conformance/R12/reject_a_lambda_that_pushes_to_log_without_saying_so.em:10`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_a_lambda_that_takes_over_what_each_name_lends.em:10`
+  - `fn each_name(owns f: fn(String) changes C) changes C:`
+  - `fn each_name(owns f: fn(String)):`
+- `conformance/R12/reject_a_lambda_that_takes_over_what_each_name_lends.em:15`
+  - `each_name(fn(owns s) changes names: names.push(s))    #$ error[E2020]: `each_name` gives each name read-only, so this function cannot take it over; to keep your own, write `fn(s) changes names: names.push(copy of s)``
+  - `each_name(fn(owns s): names.push(s))    #$ error[E2020]: `each_name` gives each name read-only, so this function cannot take it over; to keep your own, write `fn(s) changes names: names.push(copy of s)``
+- `conformance/R12/reject_a_local_function_that_changes_a_mutex_without_naming_it.em:14`
+  - `fn main() changes Mutex[Stats]:`
+  - `fn main():`
+- `conformance/R12/reject_a_local_function_that_changes_a_mutex_without_naming_it.em:16`
+  - `fn add_one() with thread_shared stats:    #$ error[E2105]: `add_one` changes the `Stats` in `stats` through `g` (under `stats`'s lock); say so on its first line: `fn add_one() with thread_shared stats changes Mutex[Stats]:``
+  - `fn add_one() thread_shared stats:    #$ error[E2105]: `add_one` changes the `Stats` in `stats` through `g` (under `stats`'s lock); say so on its first line: `fn add_one() with thread_shared stats changes Mutex[Stats]:``
+- `conformance/R12/reject_a_local_list_of_plain_functions_given_a_lambda_that_changes_score.em:11`
+  - `hs.push(fn() changes score: score += 1)    #$ error[E2113]: this function changes `score`, a variable it captured (`fn() changes score`), and `hs` holds `fn()`, functions that change nothing; keep it in a list that says so: `hs: Array[fn() changes score] = []``
+  - `hs.push(fn(): score += 1)    #$ error[E2113]: this function changes `score`, a variable it captured (`fn() changes score`), and `hs` holds `fn()`, functions that change nothing; keep it in a list that says so: `hs: Array[fn() changes score] = []``
+- `conformance/R12/reject_a_log_handler_in_a_button_of_a_module_that_imports_log.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_a_log_handler_in_a_button_of_a_module_that_imports_log.em:15`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))    #$ error[E2113]: this function changes `LOG` (`fn() changes LOG`), and `on_click` takes `fn() changes captured`, functions that change one variable each captured; `log_widgets` imports `LOG` (`from logbook import LOG`), so its list names it: in `log_widgets.em` write `handlers: Array[fn() changes captured, LOG] = []` and `pub fn on_click(owns f: fn() changes captured, LOG) changes handlers:``
+  - `b.on_click(fn(): LOG.push(String("clicked")))    #$ error[E2113]: this function changes `LOG` (`fn() changes LOG`), and `on_click` takes `fn() changes captured`, functions that change one variable each captured; `log_widgets` imports `LOG` (`from logbook import LOG`), so its list names it: in `log_widgets.em` write `handlers: Array[fn() changes captured, LOG] = []` and `pub fn on_click(owns f: fn() changes captured, LOG) changes handlers:``
+- `conformance/R12/reject_a_log_handler_in_a_button_that_allows_only_captured.em:12`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_a_log_handler_in_a_button_that_allows_only_captured.em:14`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_a_log_handler_in_a_button_that_allows_only_captured.em:17`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_a_log_handler_in_a_button_that_allows_only_captured.em:21`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_a_log_handler_in_a_button_that_allows_only_captured.em:23`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))    #$ error[E2113]: this function changes `LOG` (`fn() changes LOG`), and `on_click` takes `fn() changes captured`, functions that change one variable each captured; this file declares `LOG`, so the list names it: write `handlers: Array[fn() changes captured, LOG] = []`, `fn on_click(owns f: fn() changes captured, LOG) changes handlers:` and `fn click() changes handlers, captured, LOG:``
+  - `b.on_click(fn(): LOG.push(String("clicked")))    #$ error[E2113]: this function changes `LOG` (`fn() changes LOG`), and `on_click` takes `fn() changes captured`, functions that change one variable each captured; this file declares `LOG`, so the list names it: write `handlers: Array[fn() changes captured, LOG] = []`, `fn on_click(owns f: fn() changes captured, LOG) changes handlers:` and `fn click() changes handlers, captured, LOG:``
+- `conformance/R12/reject_a_log_handler_in_a_list_of_plain_functions.em:11`
+  - `fn log_click() changes LOG:`
+  - `fn log_click():`
+- `conformance/R12/reject_a_log_handler_in_a_list_of_plain_functions.em:17`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_a_name_opened_from_a_link_used_after_a_call_that_may_end_players.em:16`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R12/reject_a_name_opened_from_a_link_used_after_a_call_that_may_end_players.em:20`
+  - `reset = fn() with owns players changes Player: players.clear()`
+  - `reset = fn() owns players: players.clear()`
+- `conformance/R12/reject_a_once_fn_called_twice.em:17`
+  - `call_once(fn() with owns s: consume(s))`
+  - `call_once(fn() owns s: consume(s))`
+- `conformance/R12/reject_a_plain_lambda_parameter_where_each_name_hands_the_name_over.em:10`
+  - `fn each_name(owns f: fn(owns String) changes C) changes C:`
+  - `fn each_name(owns f: fn(owns String)):`
+- `conformance/R12/reject_a_plain_lambda_parameter_where_each_name_hands_the_name_over.em:15`
+  - `each_name(fn(owns s) changes names: names.push(s))`
+  - `each_name(fn(owns s): names.push(s))`
+- `conformance/R12/reject_a_plain_loop_name_calls_a_stored_function.em:9`
+  - `hs: Array[fn() changes score] = []`
+  - `hs: Array[fn()] = []`
+- `conformance/R12/reject_a_plain_loop_name_calls_a_stored_function.em:10`
+  - `hs.push(fn() changes score: score += 1)`
+  - `hs.push(fn(): score += 1)`
+- `conformance/R12/reject_a_plain_name_from_get_mut_calls_the_handler.em:11`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `conformance/R12/reject_a_plain_once_fn_parameter.em:15`
+  - `call_once(fn() with owns s: consume(s))`
+  - `call_once(fn() owns s: consume(s))`
+- `conformance/R12/reject_a_read_only_view_across_a_call_that_changes_what_it_reads.em:13`
+  - `bump = fn() changes c: c.n += 1`
+  - `bump = fn(): c.n += 1`
+- `conformance/R12/reject_a_ref_mut_name_across_a_call_that_changes_its_place.em:13`
+  - `bump = fn() changes c: c.n += 1`
+  - `bump = fn(): c.n += 1`
+- `conformance/R12/reject_a_returned_function_that_changes_its_makers_local.em:15`
+  - `return fn() changes t:    #$ error[E3026]: the returned function changes `t`, which ends when `make_counter` returns; let the function own it: write `return fn() with owns t:` in place of this line`
+  - `return fn():    #$ error[E3026]: the returned function changes `t`, which ends when `make_counter` returns; let the function own it: write `return fn() with owns t:` in place of this line`
+- `conformance/R12/reject_a_shares_mut_owner_held_by_a_function_any_thread_may_run.em:13`
+  - `handlers: Array[thread_shared fn() changes Counter] = []`
+  - `handlers: Array[thread_shared fn()] = []`
+- `conformance/R12/reject_a_shares_mut_owner_held_by_a_function_any_thread_may_run.em:15`
+  - `fn on_event(owns f: thread_shared fn() changes Counter) changes handlers:`
+  - `fn on_event(owns f: thread_shared fn()):`
+- `conformance/R12/reject_a_shares_mut_owner_held_by_a_function_any_thread_may_run.em:18`
+  - `fn fire() changes handlers, Counter:`
+  - `fn fire():`
+- `conformance/R12/reject_a_shares_mut_owner_held_by_a_function_any_thread_may_run.em:22`
+  - `fn main() changes Counter:`
+  - `fn main():`
+- `conformance/R12/reject_a_shares_mut_owner_held_by_a_function_any_thread_may_run.em:25`
+  - `bus.on_event(fn() with shares mut count changes Counter: count.n += 1)    #$ error[E7015]: `on_event` keeps functions any thread may run (`thread_shared fn() changes Counter`), and this one holds `count`, a `shares mut` owner, which stays on one thread; share the counter between threads: write `count = thread_shared Counter()` in place of line 24, give `Counter` the field `n: Atomic[int] = Atomic(0)` in place of line 10 (with `from std.sync import Atomic` at the top), and pass `fn() with thread_shared count changes Counter: count.n.fetch_add(1)``
+  - `bus.on_event(fn() shares mut count: count.n += 1)    #$ error[E7015]: `on_event` keeps functions any thread may run (`thread_shared fn() changes Counter`), and this one holds `count`, a `shares mut` owner, which stays on one thread; share the counter between threads: write `count = thread_shared Counter()` in place of line 24, give `Counter` the field `n: Atomic[int] = Atomic(0)` in place of line 10 (with `from std.sync import Atomic` at the top), and pass `fn() with thread_shared count changes Counter: count.n.fetch_add(1)``
+- `conformance/R12/reject_a_stateful_callback_given_to_a_read_only_parameter.em:13`
+  - `cb = fn() with copy of score:`
+  - `cb = fn() copy of score:`
+- `conformance/R12/reject_a_stored_function_that_pushes_to_the_walked_list_called_in_the_loop.em:10`
+  - `hs: Array[fn() changes xs] = []`
+  - `hs: Array[fn()] = []`
+- `conformance/R12/reject_a_stored_function_that_pushes_to_the_walked_list_called_in_the_loop.em:11`
+  - `hs.push(fn() changes xs: xs.push(0))`
+  - `hs.push(fn(): xs.push(0))`
+- `conformance/R12/reject_a_thread_function_that_pushes_under_the_log_lock_without_changes_log.em:15`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R12/reject_a_thread_function_that_pushes_under_the_log_lock_without_changes_log.em:19`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R12/reject_a_thread_function_that_pushes_under_the_log_lock_without_changes_log.em:20`
+  - `a = thread.spawn(fn() with thread_shared log: log.push("a"))    #$ error[E2105]: this function changes `log` through `push` (`changes lines`, under `log`'s lock); say so on its first line: `fn() with thread_shared log changes Log: log.push("a")``
+  - `a = thread.spawn(fn() thread_shared log: log.push("a"))    #$ error[E2105]: this function changes `log` through `push` (`changes lines`, under `log`'s lock); say so on its first line: `fn() with thread_shared log changes Log: log.push("a")``
+- `conformance/R12/reject_a_thread_function_that_pushes_under_the_log_lock_without_changes_log.em:21`
+  - `b = thread.spawn(fn() with thread_shared log changes Log: log.push("b"))`
+  - `b = thread.spawn(fn() thread_shared log: log.push("b"))`
+- `conformance/R12/reject_a_thread_function_that_pushes_under_the_log_lock_without_changes_log.em:25`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R12/reject_a_two_variable_handler_in_a_captured_list.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_a_two_variable_handler_in_a_captured_list.em:11`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_a_two_variable_handler_in_a_captured_list.em:14`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_a_two_variable_handler_in_a_captured_list.em:22`
+  - `hit = fn() changes score, lives:`
+  - `hit = fn():`
+- `conformance/R12/reject_a_ui_changing_handler_in_a_list_of_read_only_handlers.em:13`
+  - `fn fire() changes handlers:`
+  - `fn fire():`
+- `conformance/R12/reject_a_ui_changing_handler_in_a_list_of_read_only_handlers.em:18`
+  - `bump = fn(seen: Ui) with weakref ui changes Ui:`
+  - `bump = fn(seen: Ui) weakref ui:`
+- `conformance/R12/reject_a_weakref_handler_that_changes_the_ui_without_changes_ui.em:12`
+  - `handlers: Array[fn() changes Ui] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_a_weakref_handler_that_changes_the_ui_without_changes_ui.em:14`
+  - `fn on_click(owns f: fn() changes Ui) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_a_weakref_handler_that_changes_the_ui_without_changes_ui.em:18`
+  - `bump_ui = fn() with weakref ui:    #$ error[E2105]: this function changes `me`, a `Ui` reached through its `weakref ui`; say so on its first line: `fn() with weakref ui changes Ui:``
+  - `bump_ui = fn() weakref ui:    #$ error[E2105]: this function changes `me`, a `Ui` reached through its `weakref ui`; say so on its first line: `fn() with weakref ui changes Ui:``
+- `conformance/R12/reject_a_weakref_handler_that_changes_the_ui_without_changes_ui.em:23`
+  - `fn main() changes Ui:`
+  - `fn main():`
+- `conformance/R12/reject_add_line_changes_a_guarded_field_without_changes_log.em:14`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R12/reject_add_line_changes_a_guarded_field_without_changes_log.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R12/reject_an_inspect_adapter_that_changes_log_made_a_dyn_iterator_that_says_nothing.em:14`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_an_inspect_adapter_that_changes_log_made_a_dyn_iterator_that_says_nothing.em:16`
+  - `it = xs.iter().inspect(fn(x) changes LOG: LOG.push(x))`
+  - `it = xs.iter().inspect(fn(x): LOG.push(x))`
+- `conformance/R12/reject_captured_on_a_lambdas_own_first_line.em:8`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_captured_on_a_lambdas_own_first_line.em:10`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_captured_on_a_lambdas_own_first_line.em:13`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_captured_on_a_lambdas_own_first_line.em:20`
+  - `b.on_click(fn() changes captured: score += 1)    #$ error[E2105]: this function changes `score`; a function names the variables it changes: write `fn() changes score:` (`captured` is for a list or a field of functions, which cannot name `score`)`
+  - `b.on_click(fn(): score += 1)    #$ error[E2105]: this function changes `score`; a function names the variables it changes: write `fn() changes score:` (`captured` is for a list or a field of functions, which cannot name `score`)`
+- `conformance/R12/reject_click_says_captured_for_a_list_of_captured_dots.em:9`
+  - `handlers: Array[fn() changes captured...] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_click_says_captured_for_a_list_of_captured_dots.em:11`
+  - `fn on_click(owns f: fn() changes captured...) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_click_says_captured_for_a_list_of_captured_dots.em:14`
+  - `fn click() changes handlers, captured:    #$ error[E2105]: `click` runs the handlers in `this.handlers`, whose type says `changes captured...`; add it to its first line: `fn click() changes handlers, captured...:``
+  - `fn click():    #$ error[E2105]: `click` runs the handlers in `this.handlers`, whose type says `changes captured...`; add it to its first line: `fn click() changes handlers, captured...:``
+- `conformance/R12/reject_click_says_captured_for_a_list_of_captured_dots.em:22`
+  - `hit = fn() changes score, lives:`
+  - `hit = fn():`
+- `conformance/R12/reject_click_walks_its_handlers_without_changes_handlers.em:11`
+  - `fn on_click(owns f: fn()) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_click_walks_its_handlers_without_changes_handlers.em:21`
+  - `tick = fn() with copy of n:`
+  - `tick = fn() copy of n:`
+- `conformance/R12/reject_click_without_captured.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_click_without_captured.em:11`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_click_without_captured.em:14`
+  - `fn click() changes handlers:    #$ error[E2105]: `click` runs the handlers in `this.handlers`, whose type says `changes captured`; add it to its first line: `fn click() changes handlers, captured:``
+  - `fn click():    #$ error[E2105]: `click` runs the handlers in `this.handlers`, whose type says `changes captured`; add it to its first line: `fn click() changes handlers, captured:``
+- `conformance/R12/reject_click_without_captured.em:21`
+  - `b.on_click(fn() changes score: score += 1)`
+  - `b.on_click(fn(): score += 1)`
+- `conformance/R12/reject_click_without_log.em:10`
+  - `type Handler = fn() changes LOG`
+  - `type Handler = fn()`
+- `conformance/R12/reject_click_without_log.em:15`
+  - `fn on_click(owns f: Handler) changes handlers:`
+  - `fn on_click(owns f: Handler):`
+- `conformance/R12/reject_click_without_log.em:18`
+  - `fn click() changes handlers:    #$ error[E2105]: `click` runs the handlers in `this.handlers`, whose type says `changes LOG`; add it to its first line: `fn click() changes handlers, LOG:``
+  - `fn click():    #$ error[E2105]: `click` runs the handlers in `this.handlers`, whose type says `changes LOG`; add it to its first line: `fn click() changes handlers, LOG:``
+- `conformance/R12/reject_click_without_log.em:22`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_click_without_log.em:24`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/reject_clicking_a_button_of_another_module_inside_a_loop_over_log.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_clicking_a_button_of_another_module_inside_a_loop_over_log.em:15`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/reject_clicking_a_log_button_inside_a_loop_over_log.em:11`
+  - `handlers: Array[fn() changes LOG] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_clicking_a_log_button_inside_a_loop_over_log.em:13`
+  - `fn on_click(owns f: fn() changes LOG) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_clicking_a_log_button_inside_a_loop_over_log.em:16`
+  - `fn click() changes handlers, LOG:`
+  - `fn click():`
+- `conformance/R12/reject_clicking_a_log_button_inside_a_loop_over_log.em:20`
+  - `fn report(ref mut b: Button) changes LOG:`
+  - `fn report(ref mut b: Button):`
+- `conformance/R12/reject_clicking_a_log_button_inside_a_loop_over_log.em:25`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_clicking_a_log_button_inside_a_loop_over_log.em:28`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/reject_clicking_inside_a_loop_over_a_list_a_handler_changes.em:10`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_clicking_inside_a_loop_over_a_list_a_handler_changes.em:12`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_clicking_inside_a_loop_over_a_list_a_handler_changes.em:15`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_clicking_inside_a_loop_over_a_list_a_handler_changes.em:22`
+  - `b.on_click(fn() changes names: names.push(String("b")))`
+  - `b.on_click(fn(): names.push(String("b")))`
+- `conformance/R12/reject_each_name_without_a_change_list_given_a_changing_lambda.em:13`
+  - `each_name(fn(owns s) changes names: names.push(s))    #$ error[E2113]: this function changes `names`, a variable it captured (`fn(owns String) changes names`), and `each_name` takes `fn(owns String)`, functions that change nothing; let it take one that changes things, and say that a call makes those changes: `[C]` above `fn each_name(owns f: fn(owns String) changes C) changes C:``
+  - `each_name(fn(owns s): names.push(s))    #$ error[E2113]: this function changes `names`, a variable it captured (`fn(owns String) changes names`), and `each_name` takes `fn(owns String)`, functions that change nothing; let it take one that changes things, and say that a call makes those changes: `[C]` above `fn each_name(owns f: fn(owns String) changes C) changes C:``
+- `conformance/R12/reject_for_each_given_a_lambda_that_does_not_say_it_changes_log.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_for_each_inside_a_loop_over_log.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_for_each_inside_a_loop_over_log.em:18`
+  - `scores.iter().for_each(fn(s) changes LOG: LOG.push(s.points))    #$ error[E3020]: this loop walks `LOG` (line 16), and `scores.iter().for_each(...)` (line 18) changes `LOG` (the function it is given says `changes LOG`); write `scores.iter().for_each(fn(s) changes LOG: LOG.push(s.points))` after the loop`
+  - `scores.iter().for_each(fn(s): LOG.push(s.points))    #$ error[E3020]: this loop walks `LOG` (line 16), and `scores.iter().for_each(...)` (line 18) changes `LOG` (the function it is given says `changes LOG`); write `scores.iter().for_each(fn(s) changes LOG: LOG.push(s.points))` after the loop`
+- `conformance/R12/reject_inspect_count_inside_a_loop_over_seen.em:13`
+  - `_n = xs.iter().inspect(fn(v) changes seen: seen.push(v)).count()    #$ error[E3020]: this loop walks `seen` (line 11), and `xs.iter().inspect(...).count()` (line 13) changes `seen` (`count` runs the function `inspect` keeps, which says `changes seen`); count after the loop: write `_n = xs.iter().inspect(fn(v) changes seen: seen.push(v)).count()` after it`
+  - `_n = xs.iter().inspect(fn(v): seen.push(v)).count()    #$ error[E3020]: this loop walks `seen` (line 11), and `xs.iter().inspect(...).count()` (line 13) changes `seen` (`count` runs the function `inspect` keeps, which says `changes seen`); count after the loop: write `_n = xs.iter().inspect(fn(v) changes seen: seen.push(v)).count()` after it`
+- `conformance/R12/reject_main_starts_a_thread_that_changes_results_without_naming_it.em:14`
+  - `fn tick() changes FRAME, LOG:`
+  - `fn tick():`
+- `conformance/R12/reject_main_starts_a_thread_that_changes_results_without_naming_it.em:21`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R12/reject_main_starts_a_thread_that_changes_results_without_naming_it.em:26`
+  - `fn main() changes FRAME, LOG:    #$ error[E2105]: `main` starts a thread whose function changes `RESULTS` (`fn() changes RESULTS: worker(1)`, line 28); add it to `main`'s first line: `fn main() changes FRAME, LOG, RESULTS:``
+  - `fn main():    #$ error[E2105]: `main` starts a thread whose function changes `RESULTS` (`fn() changes RESULTS: worker(1)`, line 28); add it to `main`'s first line: `fn main() changes FRAME, LOG, RESULTS:``
+- `conformance/R12/reject_main_starts_a_thread_that_changes_results_without_naming_it.em:28`
+  - `a = thread.spawn(fn() changes RESULTS: worker(1))`
+  - `a = thread.spawn(fn(): worker(1))`
+- `conformance/R12/reject_main_starts_a_thread_that_changes_results_without_naming_it.em:29`
+  - `b = thread.spawn(fn() changes RESULTS: worker(2))`
+  - `b = thread.spawn(fn(): worker(2))`
+- `conformance/R12/reject_press_runs_handlers_without_captured.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_press_runs_handlers_without_captured.em:11`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_press_runs_handlers_without_captured.em:14`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_press_runs_handlers_without_captured.em:24`
+  - `b.on_click(fn() changes score: score += 1)`
+  - `b.on_click(fn(): score += 1)`
+- `conformance/R12/reject_retain_given_a_function_that_changes_the_list.em:10`
+  - `fn keep(s: String) changes LOG -> bool:`
+  - `fn keep(s: String) -> bool:`
+- `conformance/R12/reject_retain_given_a_function_that_changes_the_list.em:16`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_row_6_handler_without_changes_score.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_row_6_handler_without_changes_score.em:11`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_row_6_handler_without_changes_score.em:14`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/reject_setup_says_changes_log_for_a_handler_it_only_stores.em:11`
+  - `handlers: Array[fn() changes LOG] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/reject_setup_says_changes_log_for_a_handler_it_only_stores.em:13`
+  - `fn on_click(owns f: fn() changes LOG) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/reject_setup_says_changes_log_for_a_handler_it_only_stores.em:16`
+  - `fn click() changes handlers, LOG:`
+  - `fn click():`
+- `conformance/R12/reject_setup_says_changes_log_for_a_handler_it_only_stores.em:20`
+  - `fn setup(ref mut b: Button) changes LOG:    #$ error[E2105]: `setup` says `changes LOG` and never changes it: it only gives the handler to `b.on_click`, which keeps it, and storing a function is not a change of what it changes; remove `LOG` from its first line: `fn setup(ref mut b: Button):``
+  - `fn setup(ref mut b: Button):    #$ error[E2105]: `setup` says `changes LOG` and never changes it: it only gives the handler to `b.on_click`, which keeps it, and storing a function is not a change of what it changes; remove `LOG` from its first line: `fn setup(ref mut b: Button):``
+- `conformance/R12/reject_setup_says_changes_log_for_a_handler_it_only_stores.em:21`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R12/reject_setup_says_changes_log_for_a_handler_it_only_stores.em:23`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R12/reject_the_handler_name_used_again_after_the_call.em:12`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `conformance/R12/reject_tick_calls_poll_events_without_naming_what_the_kept_callback_changes.em:14`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R12/reject_tick_calls_poll_events_without_naming_what_the_kept_callback_changes.em:25`
+  - `fn setup(owns game: shares mut Game) changes Game, LOG -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R12/reject_tick_calls_poll_events_without_naming_what_the_kept_callback_changes.em:26`
+  - `fn on_event() with owns game changes Game, LOG:`
+  - `fn on_event() owns game:`
+- `conformance/R12/reject_tick_calls_poll_events_without_naming_what_the_kept_callback_changes.em:34`
+  - `fn main() changes Game, LOG:`
+  - `fn main():`
+- `conformance/R12/run_a_counter_made_by_a_function_keeps_its_variable.em:17`
+  - `return fn() with owns t:`
+  - `return fn() owns t:`
+- `conformance/R12/run_a_handler_that_grows_the_list_during_dispatch_keeps_its_state.em:19`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `conformance/R12/run_a_handler_that_grows_the_list_during_dispatch_keeps_its_state.em:31`
+  - `grow = fn(ref mut u: Ui) with copy of runs:`
+  - `grow = fn(ref mut u: Ui) copy of runs:`
+- `conformance/R12/run_a_handler_that_removes_itself_then_uses_its_state.em:18`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `conformance/R12/run_a_handler_that_removes_itself_then_uses_its_state.em:24`
+  - `fn remove_current() changes handlers, current:`
+  - `fn remove_current():`
+- `conformance/R12/run_a_handler_that_removes_itself_then_uses_its_state.em:34`
+  - `once_handler = fn(ref mut u: Ui) with owns label:`
+  - `once_handler = fn(ref mut u: Ui) owns label:`
+- `conformance/R12/run_a_named_copy_is_the_handlers_own_state.em:12`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/run_a_named_copy_is_the_handlers_own_state.em:14`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/run_a_named_copy_is_the_handlers_own_state.em:17`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/run_a_named_copy_is_the_handlers_own_state.em:24`
+  - `counted = fn() with copy of score:`
+  - `counted = fn() copy of score:`
+- `conformance/R12/run_a_real_variable_is_seen_by_the_handler_and_back.em:13`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/run_a_real_variable_is_seen_by_the_handler_and_back.em:15`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `conformance/R12/run_a_real_variable_is_seen_by_the_handler_and_back.em:18`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `conformance/R12/run_a_real_variable_is_seen_by_the_handler_and_back.em:25`
+  - `b.on_click(fn() changes score: score += 1)`
+  - `b.on_click(fn(): score += 1)`
+- `conformance/R12/widgets.em:9`
+  - `handlers: Array[fn() changes captured] = []`
+  - `handlers: Array[fn()] = []`
+- `conformance/R12/widgets.em:11`
+  - `pub fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `pub fn on_click(owns f: fn()):`
+- `conformance/R12/widgets.em:14`
+  - `pub fn click() changes handlers, captured:`
+  - `pub fn click():`
+- `conformance/R13/accept_exists_as_ref_mut_changes_what_the_link_names.em:14`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R13/reject_a_change_through_a_plain_opened_name.em:13`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R14/accept_a_dyn_iterator_type_says_what_its_steps_change.em:11`
+  - `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:`
+  - `fn show(owns it: owns dyn Iterator[Item = int]):`
+- `conformance/R14/accept_a_dyn_iterator_type_says_what_its_steps_change.em:15`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R14/accept_a_dyn_iterator_type_says_what_its_steps_change.em:17`
+  - `show(xs.iter().inspect(fn(x) changes LOG: LOG.push(x)))`
+  - `show(xs.iter().inspect(fn(x): LOG.push(x)))`
+- `conformance/R14/accept_a_generic_method_taking_its_visitor_by_ref_mut_has_one_dyn_entry.em:8`
+  - `fn visit(n: int) changes this`
+  - `fn visit(n: int)`
+- `conformance/R14/accept_a_generic_method_taking_its_visitor_by_ref_mut_has_one_dyn_entry.em:13`
+  - `fn visit(n: int) changes total:`
+  - `fn visit(n: int):`
+- `conformance/R14/accept_a_kind_test_on_a_place_names_it_ref_mut.em:23`
+  - `fn put(k: u128, e: int, owns c: T) changes pools:`
+  - `fn put(k: u128, e: int, owns c: T):`
+- `conformance/R14/accept_a_ref_mut_cast_of_a_place_changes_the_registry.em:22`
+  - `fn get_mut(k: u128, e: int) changes pools -> ref mut T:`
+  - `fn get_mut(k: u128, e: int) -> ref mut T:`
+- `conformance/R14/accept_a_ref_mut_dyn_parameter_changes_the_shape.em:9`
+  - `fn grow(by: int) changes this`
+  - `fn grow(by: int)`
+- `conformance/R14/accept_a_ref_mut_dyn_parameter_changes_the_shape.em:17`
+  - `fn grow(by: int) changes r:`
+  - `fn grow(by: int):`
+- `conformance/R14/reject_a_change_through_a_plain_dyn_parameter.em:8`
+  - `fn grow(by: int) changes this`
+  - `fn grow(by: int)`
+- `conformance/R14/reject_a_change_through_a_plain_dyn_parameter.em:16`
+  - `fn grow(by: int) changes r:`
+  - `fn grow(by: int):`
+- `conformance/R14/reject_a_change_through_the_read_only_name_a_kind_test_gives.em:22`
+  - `fn put(k: u128, e: int, owns c: T) changes pools:`
+  - `fn put(k: u128, e: int, owns c: T):`
+- `conformance/R14/reject_a_dyn_iterator_whose_steps_change_more_than_its_type_says.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R14/reject_a_dyn_iterator_whose_steps_change_more_than_its_type_says.em:15`
+  - `show(xs.iter().inspect(fn(x) changes LOG: LOG.push(x)))    #$ error[E2113]: `it` runs a function that changes `LOG` (`inspect(fn(x) changes LOG: LOG.push(x))`, line 15), and `owns dyn Iterator[Item = int]` says its steps change nothing; say what they change: `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:``
+  - `show(xs.iter().inspect(fn(x): LOG.push(x)))    #$ error[E2113]: `it` runs a function that changes `LOG` (`inspect(fn(x) changes LOG: LOG.push(x))`, line 15), and `owns dyn Iterator[Item = int]` says its steps change nothing; say what they change: `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:``
+- `conformance/R14/reject_a_dyn_that_changes_log_driven_inside_a_walk_of_log.em:8`
+  - `fn add_each(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG -> int:`
+  - `fn add_each(owns it: owns dyn Iterator[Item = int]) -> int:`
+- `conformance/R14/reject_a_dyn_that_changes_log_driven_inside_a_walk_of_log.em:15`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R14/reject_a_dyn_that_changes_log_driven_inside_a_walk_of_log.em:17`
+  - `println(add_each(xs.iter().inspect(fn(x) changes LOG: LOG.push(x))))`
+  - `println(add_each(xs.iter().inspect(fn(x): LOG.push(x))))`
+- `conformance/R14/reject_a_function_driving_a_dyn_that_changes_log_without_saying_so.em:8`
+  - `fn show(owns it: owns dyn Iterator[Item = int] changes LOG):    #$ error[E2105]: `show` drives `it`, whose steps change `LOG` (its type says `owns dyn Iterator[Item = int] changes LOG`); add it to `show`'s first line: `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:``
+  - `fn show(owns it: owns dyn Iterator[Item = int]):    #$ error[E2105]: `show` drives `it`, whose steps change `LOG` (its type says `owns dyn Iterator[Item = int] changes LOG`); add it to `show`'s first line: `fn show(owns it: owns dyn Iterator[Item = int] changes LOG) changes LOG:``
+- `conformance/R14/reject_a_function_driving_a_dyn_that_changes_log_without_saying_so.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R14/reject_a_function_driving_a_dyn_that_changes_log_without_saying_so.em:14`
+  - `show(xs.iter().inspect(fn(x) changes LOG: LOG.push(x)))`
+  - `show(xs.iter().inspect(fn(x): LOG.push(x)))`
+- `conformance/R14/reject_a_generic_method_that_returns_its_type_parameter_through_dyn.em:7`
+  - `fn visit(n: int) changes this`
+  - `fn visit(n: int)`
+- `conformance/R14/reject_a_plain_name_from_a_cast_of_a_place_returns_ref_mut.em:21`
+  - `fn get_mut(k: u128, e: int) changes pools -> ref mut T:`
+  - `fn get_mut(k: u128, e: int) -> ref mut T:`
+- `conformance/R15/accept_a_borrowed_callback_that_changes_the_list_after_the_walk.em:16`
+  - `fn grow() changes names:`
+  - `fn grow():`
+- `conformance/R15/accept_a_borrowed_callback_uses_the_real_variable.em:16`
+  - `fn bump() changes count:`
+  - `fn bump():`
+- `conformance/R15/accept_a_c_call_inside_a_walk_when_the_kept_callback_changes_nothing.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/accept_a_c_function_marked_no_callbacks_inside_a_walk.em:14`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/accept_a_c_function_marked_no_callbacks_inside_a_walk.em:25`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/accept_a_c_function_marked_no_callbacks_inside_a_walk.em:26`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/accept_a_c_function_marked_no_callbacks_inside_a_walk.em:28`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/accept_a_callback_c_may_run_on_any_thread_holds_a_thread_shared_owner.em:13`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/accept_a_callback_c_may_run_on_any_thread_holds_a_thread_shared_owner.em:22`
+  - `fn setup(game: thread_shared Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(game: thread_shared Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/accept_a_callback_c_may_run_on_any_thread_holds_a_thread_shared_owner.em:23`
+  - `return register_cb(fn() with thread_shared game changes Game: game.add_point())`
+  - `return register_cb(fn() thread_shared game: game.add_point())`
+- `conformance/R15/accept_a_callback_c_may_run_on_any_thread_holds_a_thread_shared_owner.em:25`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/accept_a_class_with_atomic_fields_is_shared_without_a_mark.em:14`
+  - `fn main() changes Stats:`
+  - `fn main():`
+- `conformance/R15/accept_a_class_with_atomic_fields_is_shared_without_a_mark.em:16`
+  - `a = thread.spawn(fn() with thread_shared st changes Stats: st.words.fetch_add(2))`
+  - `a = thread.spawn(fn() thread_shared st: st.words.fetch_add(2))`
+- `conformance/R15/accept_a_creator_thread_callback_holds_a_weakref.em:13`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/accept_a_creator_thread_callback_holds_a_weakref.em:24`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/accept_a_creator_thread_callback_holds_a_weakref.em:25`
+  - `fn point() with weakref game changes Game:`
+  - `fn point() weakref game:`
+- `conformance/R15/accept_a_creator_thread_callback_holds_a_weakref.em:30`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/accept_a_direct_call_that_takes_the_held_lock_enters_past_it.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/accept_a_float_sum_added_once_per_task.em:13`
+  - `scope.spawn(fn() with copy of p changes sum: sum += p.iter().sum())`
+  - `scope.spawn(fn() copy of p: sum += p.iter().sum())`
+- `conformance/R15/accept_a_scope_started_after_the_lock_block.em:14`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/accept_a_scope_started_after_the_lock_block.em:19`
+  - `fn main() changes RESULTS:`
+  - `fn main():`
+- `conformance/R15/accept_a_scope_started_after_the_lock_block.em:23`
+  - `scope.spawn(fn() changes RESULTS: worker(2))`
+  - `scope.spawn(fn(): worker(2))`
+- `conformance/R15/accept_a_scoped_task_changes_an_unguarded_static_mut.em:11`
+  - `fn bump() changes FRAME:`
+  - `fn bump():`
+- `conformance/R15/accept_a_scoped_task_changes_an_unguarded_static_mut.em:14`
+  - `fn main() changes FRAME:`
+  - `fn main():`
+- `conformance/R15/accept_a_scoped_task_changes_an_unguarded_static_mut.em:16`
+  - `scope.spawn(fn() changes FRAME: bump())`
+  - `scope.spawn(fn(): bump())`
+- `conformance/R15/accept_a_task_reads_an_atomic_field_another_task_adds_to.em:18`
+  - `fn add() with copy of x changes stats:`
+  - `fn add() copy of x:`
+- `conformance/R15/accept_a_task_started_after_the_walk_changes_the_list.em:14`
+  - `scope.spawn(fn() changes names: names.push(String("x")))`
+  - `scope.spawn(fn(): names.push(String("x")))`
+- `conformance/R15/accept_a_task_takes_a_copy_of_a_round_local.em:15`
+  - `scope.spawn(fn() with copy of n changes total: total.fetch_add(n))`
+  - `scope.spawn(fn() copy of n: total.fetch_add(n))`
+- `conformance/R15/accept_a_task_takes_the_lock_itself.em:12`
+  - `fn add_one(m: Mutex[Array[int]]) changes Mutex[Array[int]]:`
+  - `fn add_one(m: Mutex[Array[int]]):`
+- `conformance/R15/accept_a_task_takes_the_lock_itself.em:16`
+  - `fn main() changes Mutex[Array[int]]:`
+  - `fn main():`
+- `conformance/R15/accept_a_task_takes_the_lock_itself.em:21`
+  - `scope.spawn(fn() changes Mutex[Array[int]]: add_one(m))`
+  - `scope.spawn(fn(): add_one(m))`
+- `conformance/R15/accept_a_thread_shared_object_is_read_by_a_thread_and_its_maker.em:14`
+  - `h = thread.spawn(fn() with thread_shared names: names.items.len())`
+  - `h = thread.spawn(fn() thread_shared names: names.items.len())`
+- `conformance/R15/accept_a_thread_started_in_a_walk_under_the_lock_it_needs.em:15`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/accept_a_thread_started_in_a_walk_under_the_lock_it_needs.em:20`
+  - `fn main() changes RESULTS:`
+  - `fn main():`
+- `conformance/R15/accept_a_thread_started_in_a_walk_under_the_lock_it_needs.em:25`
+  - `handles.push(thread.spawn(fn() with copy of r changes RESULTS: worker(r)))`
+  - `handles.push(thread.spawn(fn() copy of r: worker(r)))`
+- `conformance/R15/accept_a_thread_started_under_the_lock_is_joined_after_it.em:13`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/accept_a_thread_started_under_the_lock_is_joined_after_it.em:18`
+  - `fn main() changes RESULTS:`
+  - `fn main():`
+- `conformance/R15/accept_a_thread_started_under_the_lock_is_joined_after_it.em:20`
+  - `c = thread.spawn(fn() changes RESULTS: worker(2))`
+  - `c = thread.spawn(fn(): worker(2))`
+- `conformance/R15/accept_a_thread_stores_a_handler_in_a_bus_threads_share.em:15`
+  - `fn on_event(owns f: thread_shared fn()) changes handlers:`
+  - `fn on_event(owns f: thread_shared fn()):`
+- `conformance/R15/accept_a_thread_stores_a_handler_in_a_bus_threads_share.em:22`
+  - `fn main() changes Bus:`
+  - `fn main():`
+- `conformance/R15/accept_a_thread_stores_a_handler_in_a_bus_threads_share.em:24`
+  - `t = thread.spawn(fn() with thread_shared bus changes Bus: bus.on_event(ping))`
+  - `t = thread.spawn(fn() thread_shared bus: bus.on_event(ping))`
+- `conformance/R15/accept_a_thread_takes_a_list_of_its_own_strings.em:12`
+  - `t = thread.spawn(fn() with owns words: println(words.len()))`
+  - `t = thread.spawn(fn() owns words: println(words.len()))`
+- `conformance/R15/accept_an_any_thread_export_changes_a_guarded_static.em:12`
+  - `fn bump() changes HITS:`
+  - `fn bump():`
+- `conformance/R15/accept_an_own_local_end_needs_no_word.em:10`
+  - `fn produce(tx: Sender[int]) changes Sender[int]:`
+  - `fn produce(tx: Sender[int]):`
+- `conformance/R15/accept_an_own_local_end_needs_no_word.em:14`
+  - `fn main() changes Sender[int]:`
+  - `fn main():`
+- `conformance/R15/accept_an_own_local_end_needs_no_word.em:16`
+  - `producer = thread.spawn(fn() with owns tx changes Sender[int]: produce(tx))`
+  - `producer = thread.spawn(fn() owns tx: produce(tx))`
+- `conformance/R15/accept_an_unscoped_thread_takes_its_object_over.em:13`
+  - `h = thread.spawn(fn() with owns names: names.items.len())`
+  - `h = thread.spawn(fn() owns names: names.items.len())`
+- `conformance/R15/accept_guarded_statics_changed_by_a_thread.em:14`
+  - `fn tick() changes FRAME, LOG:`
+  - `fn tick():`
+- `conformance/R15/accept_guarded_statics_changed_by_a_thread.em:19`
+  - `fn main() changes FRAME, LOG:`
+  - `fn main():`
+- `conformance/R15/accept_guarded_statics_changed_by_a_thread.em:20`
+  - `a = thread.spawn(fn() changes FRAME, LOG: tick())`
+  - `a = thread.spawn(fn(): tick())`
+- `conformance/R15/accept_handlers_that_change_a_bus_run_after_its_lock.em:13`
+  - `handlers: Array[thread_shared fn() changes Bus] guarded by lock = []`
+  - `handlers: Array[thread_shared fn()] guarded by lock = []`
+- `conformance/R15/accept_handlers_that_change_a_bus_run_after_its_lock.em:15`
+  - `fn on_event(owns f: thread_shared fn() changes Bus) changes handlers:`
+  - `fn on_event(owns f: thread_shared fn()):`
+- `conformance/R15/accept_handlers_that_change_a_bus_run_after_its_lock.em:19`
+  - `fn fire() changes handlers, Bus:`
+  - `fn fire():`
+- `conformance/R15/accept_handlers_that_change_a_bus_run_after_its_lock.em:27`
+  - `fn main() changes Bus:`
+  - `fn main():`
+- `conformance/R15/accept_handlers_that_change_a_bus_run_after_its_lock.em:29`
+  - `fn poke() with thread_shared other changes Bus:`
+  - `fn poke() thread_shared other:`
+- `conformance/R15/accept_handlers_that_change_a_bus_run_after_its_lock.em:32`
+  - `t = thread.spawn(fn() with thread_shared bus changes Bus: bus.fire())`
+  - `t = thread.spawn(fn() thread_shared bus: bus.fire())`
+- `conformance/R15/accept_main_names_what_its_threads_change.em:14`
+  - `fn tick() changes FRAME, LOG:`
+  - `fn tick():`
+- `conformance/R15/accept_main_names_what_its_threads_change.em:21`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/accept_main_names_what_its_threads_change.em:26`
+  - `fn main() changes FRAME, LOG, RESULTS:`
+  - `fn main():`
+- `conformance/R15/accept_main_names_what_its_threads_change.em:28`
+  - `a = thread.spawn(fn() changes RESULTS: worker(1))`
+  - `a = thread.spawn(fn(): worker(1))`
+- `conformance/R15/accept_main_names_what_its_threads_change.em:29`
+  - `b = thread.spawn(fn() changes RESULTS: worker(2))`
+  - `b = thread.spawn(fn(): worker(2))`
+- `conformance/R15/accept_tasks_change_stats_under_its_lock.em:16`
+  - `fn add_all(text: StrView) changes words, tags:`
+  - `fn add_all(text: StrView):`
+- `conformance/R15/accept_tasks_change_stats_under_its_lock.em:27`
+  - `scope.spawn(fn() with copy of t changes stats: stats.add_all(t))`
+  - `scope.spawn(fn() copy of t: stats.add_all(t))`
+- `conformance/R15/accept_the_function_value_called_after_the_lock_is_let_go.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/accept_the_function_value_called_after_the_lock_is_let_go.em:17`
+  - `fn flush(log: thread_shared Log, note: fn() changes Log) changes Log:`
+  - `fn flush(log: thread_shared Log, note: fn()):`
+- `conformance/R15/accept_the_function_value_called_after_the_lock_is_let_go.em:24`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/accept_the_function_value_called_after_the_lock_is_let_go.em:26`
+  - `flush(log, fn() with thread_shared log changes Log: log.push("seen"))`
+  - `flush(log, fn() thread_shared log: log.push("seen"))`
+- `conformance/R15/accept_threads_share_a_log_and_push_under_its_lock.em:15`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/accept_threads_share_a_log_and_push_under_its_lock.em:19`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R15/accept_threads_share_a_log_and_push_under_its_lock.em:20`
+  - `a = thread.spawn(fn() with thread_shared log changes Log: log.push("a"))`
+  - `a = thread.spawn(fn() thread_shared log: log.push("a"))`
+- `conformance/R15/accept_threads_share_a_log_and_push_under_its_lock.em:21`
+  - `b = thread.spawn(fn() with thread_shared log changes Log: log.push("b"))`
+  - `b = thread.spawn(fn() thread_shared log: log.push("b"))`
+- `conformance/R15/accept_threads_share_a_log_and_push_under_its_lock.em:27`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/accept_tick_names_what_the_kept_callback_changes.em:13`
+  - `fn add_point() changes score, LOG:`
+  - `fn add_point():`
+- `conformance/R15/accept_tick_names_what_the_kept_callback_changes.em:25`
+  - `fn setup(owns game: shares mut Game) changes Game, LOG -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/accept_tick_names_what_the_kept_callback_changes.em:26`
+  - `return register_cb(fn() with owns game changes Game, LOG: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/accept_tick_names_what_the_kept_callback_changes.em:28`
+  - `fn tick() changes Game, LOG:`
+  - `fn tick():`
+- `conformance/R15/accept_tick_names_what_the_kept_callback_changes.em:31`
+  - `fn main() changes Game, LOG:`
+  - `fn main():`
+- `conformance/R15/reject_a_borrowed_callback_that_changes_the_walked_list.em:15`
+  - `fn grow() changes names:`
+  - `fn grow():`
+- `conformance/R15/reject_a_c_call_inside_a_walk_a_kept_callback_may_change.em:13`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_a_c_call_inside_a_walk_a_kept_callback_may_change.em:24`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_a_c_call_inside_a_walk_a_kept_callback_may_change.em:25`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/reject_a_c_call_inside_a_walk_a_kept_callback_may_change.em:27`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_a_call_through_a_function_value_that_may_take_the_held_lock.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_call_through_a_function_value_that_may_take_the_held_lock.em:17`
+  - `fn flush(log: thread_shared Log, note: fn() changes Log) changes Log:`
+  - `fn flush(log: thread_shared Log, note: fn()):`
+- `conformance/R15/reject_a_call_through_a_function_value_that_may_take_the_held_lock.em:22`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_call_through_a_function_value_that_may_take_the_held_lock.em:24`
+  - `flush(log, fn() with thread_shared log changes Log: log.push("seen"))`
+  - `flush(log, fn() thread_shared log: log.push("seen"))`
+- `conformance/R15/reject_a_callback_c_may_run_on_any_thread_holding_a_shares_owner.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_a_callback_c_may_run_on_any_thread_holding_a_shares_owner.em:21`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_a_callback_c_may_run_on_any_thread_holding_a_shares_owner.em:22`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())    #$ error[E7015]: C may call this function from any thread (`threads(any)`), and `shares` owners stay on one thread; share the game between threads: write `game = thread_shared Game(names=[String("ann"), String("bo")])` and `token = setup(game)` in `main`, `fn setup(game: thread_shared Game) changes Game -> Retained[ForeignCallback]:` and `return register_cb(fn() with thread_shared game changes Game: game.add_point())` in `setup`, and, since `add_point` changes `score`, `from std.sync import Atomic` at the top, `score: Atomic[i32] = Atomic(0)`, `this.score.fetch_add(1)` as `add_point`'s body, and `println(game.score.load())``
+  - `return register_cb(fn() owns game: game.add_point())    #$ error[E7015]: C may call this function from any thread (`threads(any)`), and `shares` owners stay on one thread; share the game between threads: write `game = thread_shared Game(names=[String("ann"), String("bo")])` and `token = setup(game)` in `main`, `fn setup(game: thread_shared Game) changes Game -> Retained[ForeignCallback]:` and `return register_cb(fn() with thread_shared game changes Game: game.add_point())` in `setup`, and, since `add_point` changes `score`, `from std.sync import Atomic` at the top, `score: Atomic[i32] = Atomic(0)`, `this.score.fetch_add(1)` as `add_point`'s body, and `println(game.score.load())``
+- `conformance/R15/reject_a_callback_c_may_run_on_any_thread_holding_a_shares_owner.em:24`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_a_float_sum_added_more_than_once_per_task.em:12`
+  - `scope.spawn(fn() with copy of p changes sum: for x in p: sum += x)    #$ error[E7007]: each task adds to `sum` once per number (line 12); float sums depend on how the adds are grouped, so the result would not be any order of single adds; add up each part in its task and add it to `sum` once: `scope.spawn(fn() with copy of p changes sum: sum += p.iter().sum())` instead of line 12`
+  - `scope.spawn(fn() copy of p: for x in p: sum += x)    #$ error[E7007]: each task adds to `sum` once per number (line 12); float sums depend on how the adds are grouped, so the result would not be any order of single adds; add up each part in its task and add it to `sum` once: `scope.spawn(fn() with copy of p changes sum: sum += p.iter().sum())` instead of line 12`
+- `conformance/R15/reject_a_function_value_that_changes_another_log_inside_the_lock.em:12`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_function_value_that_changes_another_log_inside_the_lock.em:16`
+  - `fn flush(log: thread_shared Log, note: fn() changes Log) changes Log:`
+  - `fn flush(log: thread_shared Log, note: fn()):`
+- `conformance/R15/reject_a_function_value_that_changes_another_log_inside_the_lock.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_function_value_that_changes_another_log_inside_the_lock.em:24`
+  - `flush(log, fn() with thread_shared other changes Log: other.push("seen"))`
+  - `flush(log, fn() thread_shared other: other.push("seen"))`
+- `conformance/R15/reject_a_guarded_list_pushed_to_outside_its_lock.em:12`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_guarded_list_pushed_to_outside_its_lock.em:16`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R15/reject_a_guarded_list_pushed_to_outside_its_lock.em:19`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_handler_any_thread_may_run_holding_a_shares_mut_owner.em:15`
+  - `handlers: Array[thread_shared fn() changes Counter] guarded by lock = []`
+  - `handlers: Array[thread_shared fn()] guarded by lock = []`
+- `conformance/R15/reject_a_handler_any_thread_may_run_holding_a_shares_mut_owner.em:17`
+  - `fn on_event(owns f: thread_shared fn() changes Counter) changes handlers:`
+  - `fn on_event(owns f: thread_shared fn()):`
+- `conformance/R15/reject_a_handler_any_thread_may_run_holding_a_shares_mut_owner.em:21`
+  - `fn fire() changes handlers, Counter:`
+  - `fn fire():`
+- `conformance/R15/reject_a_handler_any_thread_may_run_holding_a_shares_mut_owner.em:26`
+  - `fn main() changes Bus, Counter:`
+  - `fn main():`
+- `conformance/R15/reject_a_handler_any_thread_may_run_holding_a_shares_mut_owner.em:29`
+  - `bus.on_event(fn() with shares mut count changes Counter: count.n += 1)    #$ error[E7015]: `on_event` keeps functions any thread may run (`thread_shared fn() changes Counter`), and this one holds `count`, a `shares mut` owner, which stays on one thread; share the counter between threads: write `from std.sync import Atomic, Lock` instead of line 8, `n: Atomic[int] = Atomic(0)` instead of line 11, `count = thread_shared Counter()` instead of line 28, `bus.on_event(fn() with thread_shared count changes Counter: count.n.fetch_add(1))` instead of line 29, and `println(count.n.load())` instead of line 32`
+  - `bus.on_event(fn() shares mut count: count.n += 1)    #$ error[E7015]: `on_event` keeps functions any thread may run (`thread_shared fn() changes Counter`), and this one holds `count`, a `shares mut` owner, which stays on one thread; share the counter between threads: write `from std.sync import Atomic, Lock` instead of line 8, `n: Atomic[int] = Atomic(0)` instead of line 11, `count = thread_shared Counter()` instead of line 28, `bus.on_event(fn() with thread_shared count changes Counter: count.n.fetch_add(1))` instead of line 29, and `println(count.n.load())` instead of line 32`
+- `conformance/R15/reject_a_handler_any_thread_may_run_holding_a_shares_mut_owner.em:30`
+  - `t = thread.spawn(fn() with thread_shared bus changes Bus, Counter: bus.fire())`
+  - `t = thread.spawn(fn() thread_shared bus: bus.fire())`
+- `conformance/R15/reject_a_join_inside_the_lock_its_thread_needs.em:12`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/reject_a_join_inside_the_lock_its_thread_needs.em:17`
+  - `fn main() changes RESULTS:`
+  - `fn main():`
+- `conformance/R15/reject_a_join_inside_the_lock_its_thread_needs.em:19`
+  - `c = thread.spawn(fn() changes RESULTS: worker(2))`
+  - `c = thread.spawn(fn(): worker(2))`
+- `conformance/R15/reject_a_kept_callback_that_does_not_say_it_changes_game.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_a_kept_callback_that_does_not_say_it_changes_game.em:23`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_a_kept_callback_that_does_not_say_it_changes_game.em:24`
+  - `return register_cb(fn() with owns game: game.add_point())    #$ error[E2105]: this function changes `game`, a `Game` other owners share, through `add_point` (`changes score`); say so on its first line: `fn() with owns game changes Game:``
+  - `return register_cb(fn() owns game: game.add_point())    #$ error[E2105]: this function changes `game`, a `Game` other owners share, through `add_point` (`changes score`); say so on its first line: `fn() with owns game changes Game:``
+- `conformance/R15/reject_a_kept_callback_that_does_not_say_it_changes_game.em:26`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_a_kept_callback_using_a_name_with_no_capture_word.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_a_kept_callback_using_a_name_with_no_capture_word.em:23`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_a_kept_callback_using_a_name_with_no_capture_word.em:24`
+  - `return register_cb(fn() changes Game: game.add_point())    #$ error[E7004]: C keeps this function after `setup` returns (`callback(retained)`), so it cannot use `setup`'s `game`; say what it holds: `fn() with owns game changes Game:` (`setup`'s owner of the game), or `fn() with weakref game changes Game:` with `if game exists as ref mut g: g.add_point()` as its body (a link that lets the game end)`
+  - `return register_cb(fn(): game.add_point())    #$ error[E7004]: C keeps this function after `setup` returns (`callback(retained)`), so it cannot use `setup`'s `game`; say what it holds: `fn() with owns game changes Game:` (`setup`'s owner of the game), or `fn() with weakref game changes Game:` with `if game exists as ref mut g: g.add_point()` as its body (a link that lets the game end)`
+- `conformance/R15/reject_a_kept_callback_using_a_name_with_no_capture_word.em:26`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_a_lock_guard_sent_to_a_task.em:15`
+  - `scope.spawn(fn() changes g: g.push(1))    #$ error[E7008]: `g` is the guard of `m`'s lock, which belongs to the thread that took it; take the lock inside the task: write `fn add_one(m: Mutex[Array[int]]) changes Mutex[Array[int]]:` with the body `with g = m.lock():` and, inside it, `g.push(1)` above `main`, `scope.spawn(fn() changes Mutex[Array[int]]: add_one(m))` instead of line 15, and `fn main() changes Mutex[Array[int]]:` instead of line 10`
+  - `scope.spawn(fn(): g.push(1))    #$ error[E7008]: `g` is the guard of `m`'s lock, which belongs to the thread that took it; take the lock inside the task: write `fn add_one(m: Mutex[Array[int]]) changes Mutex[Array[int]]:` with the body `with g = m.lock():` and, inside it, `g.push(1)` above `main`, `scope.spawn(fn() changes Mutex[Array[int]]: add_one(m))` instead of line 15, and `fn main() changes Mutex[Array[int]]:` instead of line 10`
+- `conformance/R15/reject_a_parallel_loop_over_shares_mut_objects.em:12`
+  - `fn hurt_all(ref mut players: Array[shares mut Player]) changes Player:`
+  - `fn hurt_all(ref mut players: Array[shares mut Player]):`
+- `conformance/R15/reject_a_parallel_loop_over_shares_mut_objects.em:18`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R15/reject_a_receive_through_a_given_end_not_named.em:9`
+  - `fn produce(tx: Sender[int]) changes Sender[int]:`
+  - `fn produce(tx: Sender[int]):`
+- `conformance/R15/reject_a_receive_through_a_given_end_not_named.em:19`
+  - `fn main() changes Sender[int], Receiver[int]:`
+  - `fn main():`
+- `conformance/R15/reject_a_receive_through_a_given_end_not_named.em:21`
+  - `producer = thread.spawn(fn() with owns tx changes Sender[int]: produce(tx))`
+  - `producer = thread.spawn(fn() owns tx: produce(tx))`
+- `conformance/R15/reject_a_receive_through_a_given_end_not_named.em:22`
+  - `consumer = thread.spawn(fn() with owns rx changes Receiver[int] -> int: consume(rx))`
+  - `consumer = thread.spawn(fn() owns rx -> int: consume(rx))`
+- `conformance/R15/reject_a_round_local_used_by_a_task_without_a_copy.em:14`
+  - `scope.spawn(fn() changes total: total.fetch_add(n))    #$ error[E3026]: the task uses `n`, which ends at the end of this round of the loop (line 13), while the task may still be running; give the task its own copy: `fn() with copy of n changes total:``
+  - `scope.spawn(fn(): total.fetch_add(n))    #$ error[E3026]: the task uses `n`, which ends at the end of this round of the loop (line 13), while the task may still be running; give the task its own copy: `fn() with copy of n changes total:``
+- `conformance/R15/reject_a_scope_that_ends_inside_the_lock_its_task_needs.em:13`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/reject_a_scope_that_ends_inside_the_lock_its_task_needs.em:18`
+  - `fn main() changes RESULTS:`
+  - `fn main():`
+- `conformance/R15/reject_a_scope_that_ends_inside_the_lock_its_task_needs.em:22`
+  - `scope.spawn(fn() changes RESULTS: worker(2))`
+  - `scope.spawn(fn(): worker(2))`
+- `conformance/R15/reject_a_scoped_task_that_changes_total_without_saying_so.em:12`
+  - `scope.spawn(fn() with copy of t: total += t.split_whitespace().count())    #$ error[E2105]: this function changes `total`, a variable it uses from `count_words`; say so on its first line: `scope.spawn(fn() with copy of t changes total: total += t.split_whitespace().count())``
+  - `scope.spawn(fn() copy of t: total += t.split_whitespace().count())    #$ error[E2105]: this function changes `total`, a variable it uses from `count_words`; say so on its first line: `scope.spawn(fn() with copy of t changes total: total += t.split_whitespace().count())``
+- `conformance/R15/reject_a_send_not_named_on_the_first_line.em:13`
+  - `fn main() changes Sender[int]:`
+  - `fn main():`
+- `conformance/R15/reject_a_send_not_named_on_the_first_line.em:15`
+  - `producer = thread.spawn(fn() with owns tx changes Sender[int]: produce(tx))`
+  - `producer = thread.spawn(fn() owns tx: produce(tx))`
+- `conformance/R15/reject_a_task_changes_the_list_its_parent_walks.em:14`
+  - `scope.spawn(fn() changes names: names.push(String("x")))    #$ error[E3020]: `scope.spawn(...)` (line 14) starts a task that pushes to `names` (`fn() changes names: names.push(String("x"))`), which this loop walks (line 12); start it after the loop: move line 14 below the loop`
+  - `scope.spawn(fn(): names.push(String("x")))    #$ error[E3020]: `scope.spawn(...)` (line 14) starts a task that pushes to `names` (`fn() changes names: names.push(String("x"))`), which this loop walks (line 12); start it after the loop: move line 14 below the loop`
+- `conformance/R15/reject_a_task_changing_an_atomic_without_saying_so.em:14`
+  - `scope.spawn(fn() with copy of n: total.fetch_add(n))    #$ error[E2105]: this function changes `total` through `fetch_add`, a variable it uses from `count`; say so on its first line: `scope.spawn(fn() with copy of n changes total: total.fetch_add(n))``
+  - `scope.spawn(fn() copy of n: total.fetch_add(n))    #$ error[E2105]: this function changes `total` through `fetch_add`, a variable it uses from `count`; say so on its first line: `scope.spawn(fn() with copy of n changes total: total.fetch_add(n))``
+- `conformance/R15/reject_a_task_reads_a_field_another_task_adds_to.em:16`
+  - `fn add() with copy of x changes stats:`
+  - `fn add() copy of x:`
+- `conformance/R15/reject_a_task_reads_total_before_the_join.em:11`
+  - `scope.spawn(fn() with copy of t changes total: total += t.split_whitespace().count())`
+  - `scope.spawn(fn() copy of t: total += t.split_whitespace().count())`
+- `conformance/R15/reject_a_task_update_that_uses_the_old_value.em:13`
+  - `scope.spawn(fn() with copy of t changes total: total = total * 2 + t.len())    #$ error[E7007]: two tasks change `total`, and `total = total * 2 + t.len()` uses its old value`
+  - `scope.spawn(fn() copy of t: total = total * 2 + t.len())    #$ error[E7007]: two tasks change `total`, and `total = total * 2 + t.len()` uses its old value`
+- `conformance/R15/reject_a_task_uses_the_loop_name_without_a_copy.em:13`
+  - `scope.spawn(fn() changes total: total += t.split_whitespace().count())    #$ error[E3026]: the task uses `t`, the loop's name (line 12), which names the next text in the next round while the task may still be running; give the task its own copy: `scope.spawn(fn() with copy of t changes total: total += t.split_whitespace().count())``
+  - `scope.spawn(fn(): total += t.split_whitespace().count())    #$ error[E3026]: the task uses `t`, the loop's name (line 12), which names the next text in the next round while the task may still be running; give the task its own copy: `scope.spawn(fn() with copy of t changes total: total += t.split_whitespace().count())``
+- `conformance/R15/reject_a_thread_captures_a_one_thread_owner.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_thread_captures_a_one_thread_owner.em:17`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R15/reject_a_thread_captures_a_one_thread_owner.em:18`
+  - `a = thread.spawn(fn() with shares log changes Log: log.push("a"))    #$ error[E7015]: `with shares log` makes an owner of `log` that stays on one thread, and this function runs on a new one; write `fn() with thread_shared log changes Log: log.push("a")``
+  - `a = thread.spawn(fn() shares log: log.push("a"))    #$ error[E7015]: `with shares log` makes an owner of `log` that stays on one thread, and this function runs on a new one; write `fn() with thread_shared log changes Log: log.push("a")``
+- `conformance/R15/reject_a_thread_captures_a_one_thread_owner.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_thread_changes_an_unguarded_static_mut.em:11`
+  - `fn tick() changes FRAME, LOG:`
+  - `fn tick():`
+- `conformance/R15/reject_a_thread_changes_an_unguarded_static_mut.em:15`
+  - `fn main() changes FRAME, LOG:`
+  - `fn main():`
+- `conformance/R15/reject_a_thread_changes_an_unguarded_static_mut.em:16`
+  - `a = thread.spawn(fn() changes FRAME, LOG: tick())    #$ error[E7012]: `tick` changes `FRAME` and `LOG`, module variables of the main thread, and this thread runs beside it; guard both with one lock: write `from std.sync import Lock` at the top, `static TICK_LOCK: Lock = Lock()`, then `static mut FRAME: int guarded by TICK_LOCK = 0` instead of line 8 and `static mut LOG: Array[String] guarded by TICK_LOCK = []` instead of line 9, and put `tick`'s body inside `with TICK_LOCK:``
+  - `a = thread.spawn(fn(): tick())    #$ error[E7012]: `tick` changes `FRAME` and `LOG`, module variables of the main thread, and this thread runs beside it; guard both with one lock: write `from std.sync import Lock` at the top, `static TICK_LOCK: Lock = Lock()`, then `static mut FRAME: int guarded by TICK_LOCK = 0` instead of line 8 and `static mut LOG: Array[String] guarded by TICK_LOCK = []` instead of line 9, and put `tick`'s body inside `with TICK_LOCK:``
+- `conformance/R15/reject_a_thread_started_in_a_walk_uses_the_loop_name_without_a_copy.em:13`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/reject_a_thread_started_in_a_walk_uses_the_loop_name_without_a_copy.em:18`
+  - `fn main() changes RESULTS:`
+  - `fn main():`
+- `conformance/R15/reject_a_thread_started_in_a_walk_uses_the_loop_name_without_a_copy.em:23`
+  - `handles.push(thread.spawn(fn() changes RESULTS: worker(r)))    #$ error[E7004]: this thread may still run in a later round of the loop, when `r` (line 22) names the next element; say what the thread holds: `fn() with copy of r changes RESULTS: worker(r)` (its own copy of `r`)`
+  - `handles.push(thread.spawn(fn(): worker(r)))    #$ error[E7004]: this thread may still run in a later round of the loop, when `r` (line 22) names the next element; say what the thread holds: `fn() with copy of r changes RESULTS: worker(r)` (its own copy of `r`)`
+- `conformance/R15/reject_a_thread_takes_a_list_of_views.em:12`
+  - `t = thread.spawn(fn() with owns words: println(words.len()))    #$ error[E7015]: `words` holds views of `text` (line 11), which stays on this thread and may end before the thread does, so the thread cannot take them; give the thread text of its own: write `words: Array[String] = [String(text.trim())]` instead of line 11`
+  - `t = thread.spawn(fn() owns words: println(words.len()))    #$ error[E7015]: `words` holds views of `text` (line 11), which stays on this thread and may end before the thread does, so the thread cannot take them; give the thread text of its own: write `words: Array[String] = [String(text.trim())]` instead of line 11`
+- `conformance/R15/reject_a_thread_takes_a_shares_mut_bus_to_store_a_handler.em:12`
+  - `fn on_event(owns f: fn()) changes handlers:`
+  - `fn on_event(owns f: fn()):`
+- `conformance/R15/reject_a_thread_takes_a_shares_mut_bus_to_store_a_handler.em:18`
+  - `fn main() changes Bus:`
+  - `fn main():`
+- `conformance/R15/reject_a_thread_takes_a_shares_mut_bus_to_store_a_handler.em:20`
+  - `t = thread.spawn(fn() with shares mut bus changes Bus: bus.on_event(ping))    #$ error[E7015]: `with shares mut bus` makes an owner of `bus` that stays on one thread, and this function runs on a new one; share the bus between threads: write `from std.sync import Lock` at the top; in `Bus`, `lock: Lock = Lock()` and `handlers: Array[thread_shared fn()] guarded by lock = []` instead of line 10, `fn on_event(owns f: thread_shared fn()) changes handlers:` instead of line 12 and `with this.lock:` above line 13, with line 13 inside it; `bus = thread_shared Bus()` instead of line 19, and `t = thread.spawn(fn() with thread_shared bus changes Bus: bus.on_event(ping))` instead of line 20`
+  - `t = thread.spawn(fn() shares mut bus: bus.on_event(ping))    #$ error[E7015]: `with shares mut bus` makes an owner of `bus` that stays on one thread, and this function runs on a new one; share the bus between threads: write `from std.sync import Lock` at the top; in `Bus`, `lock: Lock = Lock()` and `handlers: Array[thread_shared fn()] guarded by lock = []` instead of line 10, `fn on_event(owns f: thread_shared fn()) changes handlers:` instead of line 12 and `with this.lock:` above line 13, with line 13 inside it; `bus = thread_shared Bus()` instead of line 19, and `t = thread.spawn(fn() with thread_shared bus changes Bus: bus.on_event(ping))` instead of line 20`
+- `conformance/R15/reject_a_thread_takes_over_a_lent_log.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_thread_takes_over_a_lent_log.em:17`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R15/reject_a_thread_takes_over_a_lent_log.em:18`
+  - `a = thread.spawn(fn() with owns log changes Log: log.push("a"))    #$ error[E3013]: `log` is lent to `start` (a plain parameter), so the thread cannot take it over (`with owns log`, line 18); to give each thread one more owner of the log, write `fn() with thread_shared log changes Log: log.push("a")``
+  - `a = thread.spawn(fn() owns log: log.push("a"))    #$ error[E3013]: `log` is lent to `start` (a plain parameter), so the thread cannot take it over (`with owns log`, line 18); to give each thread one more owner of the log, write `fn() with thread_shared log changes Log: log.push("a")``
+- `conformance/R15/reject_a_thread_takes_over_a_lent_log.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_thread_using_the_log_with_no_capture_word.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_thread_using_the_log_with_no_capture_word.em:17`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R15/reject_a_thread_using_the_log_with_no_capture_word.em:18`
+  - `a = thread.spawn(fn() changes Log: log.push("a"))    #$ error[E7004]: this thread may outlive `start`, so it cannot use `start`'s `log`; say what the thread holds: `fn() with thread_shared log changes Log: log.push("a")` (one more owner of the log)`
+  - `a = thread.spawn(fn(): log.push("a"))    #$ error[E7004]: this thread may outlive `start`, so it cannot use `start`'s `log`; say what the thread holds: `fn() with thread_shared log changes Log: log.push("a")` (one more owner of the log)`
+- `conformance/R15/reject_a_thread_using_the_log_with_no_capture_word.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_threads_function_changing_the_log_without_saying_so.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_threads_function_changing_the_log_without_saying_so.em:17`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `conformance/R15/reject_a_threads_function_changing_the_log_without_saying_so.em:18`
+  - `a = thread.spawn(fn() with thread_shared log: log.push("a"))    #$ error[E2105]: this function changes `log` through `push` (`changes lines`, under `log`'s lock); say so on its first line: `fn() with thread_shared log changes Log: log.push("a")``
+  - `a = thread.spawn(fn() thread_shared log: log.push("a"))    #$ error[E2105]: this function changes `log` through `push` (`changes lines`, under `log`'s lock); say so on its first line: `fn() with thread_shared log changes Log: log.push("a")``
+- `conformance/R15/reject_a_threads_function_changing_the_log_without_saying_so.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_threads_function_that_does_not_say_what_it_changes.em:12`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/reject_a_threads_function_that_does_not_say_what_it_changes.em:17`
+  - `fn main() changes RESULTS:`
+  - `fn main():`
+- `conformance/R15/reject_a_threads_function_that_sends_without_saying_so.em:9`
+  - `fn produce(tx: Sender[int]) changes Sender[int]:`
+  - `fn produce(tx: Sender[int]):`
+- `conformance/R15/reject_a_threads_function_that_sends_without_saying_so.em:13`
+  - `fn main() changes Sender[int]:`
+  - `fn main():`
+- `conformance/R15/reject_a_threads_function_that_sends_without_saying_so.em:15`
+  - `producer = thread.spawn(fn() with owns tx: produce(tx))    #$ error[E2105]: this function calls `produce`, which changes `Sender[int]`; say so on its first line: `fn() with owns tx changes Sender[int]: produce(tx)``
+  - `producer = thread.spawn(fn() owns tx: produce(tx))    #$ error[E2105]: this function calls `produce`, which changes `Sender[int]`; say so on its first line: `fn() with owns tx changes Sender[int]: produce(tx)``
+- `conformance/R15/reject_a_walk_under_the_lock_across_a_function_value_that_changes_log.em:14`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_a_walk_under_the_lock_across_a_function_value_that_changes_log.em:18`
+  - `fn dump(log: thread_shared Log, note: fn() changes Log) changes Log:`
+  - `fn dump(log: thread_shared Log, note: fn()):`
+- `conformance/R15/reject_a_walk_under_the_lock_across_a_function_value_that_changes_log.em:24`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_a_walk_under_the_lock_across_a_function_value_that_changes_log.em:27`
+  - `dump(log, fn() with thread_shared log changes Log: log.push("seen"))`
+  - `dump(log, fn() thread_shared log: log.push("seen"))`
+- `conformance/R15/reject_an_any_thread_export_changes_a_static_mut.em:11`
+  - `fn bump() changes HITS:`
+  - `fn bump():`
+- `conformance/R15/reject_an_unmarked_c_function_inside_the_walk.em:13`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_an_unmarked_c_function_inside_the_walk.em:23`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_an_unmarked_c_function_inside_the_walk.em:24`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/reject_an_unmarked_c_function_inside_the_walk.em:26`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_handing_c_the_callback_inside_the_walk.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_handing_c_the_callback_inside_the_walk.em:23`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_handing_c_the_callback_inside_the_walk.em:24`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/reject_handing_c_the_callback_inside_the_walk.em:26`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_main_calls_setup_without_naming_game.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_main_calls_setup_without_naming_game.em:23`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_main_calls_setup_without_naming_game.em:24`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/reject_main_starts_a_sending_thread_without_naming_it.em:8`
+  - `fn produce(tx: Sender[int]) changes Sender[int]:`
+  - `fn produce(tx: Sender[int]):`
+- `conformance/R15/reject_main_starts_a_sending_thread_without_naming_it.em:14`
+  - `producer = thread.spawn(fn() with owns tx changes Sender[int]: produce(tx))`
+  - `producer = thread.spawn(fn() owns tx: produce(tx))`
+- `conformance/R15/reject_main_starts_a_thread_without_naming_what_it_changes.em:12`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `conformance/R15/reject_main_starts_a_thread_without_naming_what_it_changes.em:18`
+  - `a = thread.spawn(fn() changes RESULTS: worker(1))`
+  - `a = thread.spawn(fn(): worker(1))`
+- `conformance/R15/reject_no_callbacks_on_a_function_that_takes_a_callback.em:12`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_no_callbacks_on_a_function_that_takes_a_callback.em:20`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_no_callbacks_on_a_function_that_takes_a_callback.em:21`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/reject_no_callbacks_on_a_function_that_takes_a_callback.em:23`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_python_global.em:12`
+  - `fn main() changes FRAME:`
+  - `fn main():`
+- `conformance/R15/reject_ref_mut_before_a_channel_end_at_a_call.em:9`
+  - `fn produce(tx: Sender[int]) changes Sender[int]:`
+  - `fn produce(tx: Sender[int]):`
+- `conformance/R15/reject_ref_mut_before_a_channel_end_at_a_call.em:13`
+  - `fn main() changes Sender[int]:`
+  - `fn main():`
+- `conformance/R15/reject_ref_mut_before_a_channel_end_at_a_call.em:15`
+  - `producer = thread.spawn(fn() with owns tx changes Sender[int]: produce(ref mut tx))    #$ error[E3028]: `produce` sends through `tx` by the channel's own operation; a channel end takes no word at the call: `produce(tx)``
+  - `producer = thread.spawn(fn() owns tx: produce(ref mut tx))    #$ error[E3028]: `produce` sends through `tx` by the channel's own operation; a channel end takes no word at the call: `produce(tx)``
+- `conformance/R15/reject_running_handlers_that_change_their_bus_under_its_lock.em:14`
+  - `handlers: Array[thread_shared fn() changes Bus] guarded by lock = []`
+  - `handlers: Array[thread_shared fn()] guarded by lock = []`
+- `conformance/R15/reject_running_handlers_that_change_their_bus_under_its_lock.em:16`
+  - `fn on_event(owns f: thread_shared fn() changes Bus) changes handlers:`
+  - `fn on_event(owns f: thread_shared fn()):`
+- `conformance/R15/reject_running_handlers_that_change_their_bus_under_its_lock.em:20`
+  - `fn fire() changes handlers, Bus:`
+  - `fn fire():`
+- `conformance/R15/reject_running_handlers_that_change_their_bus_under_its_lock.em:25`
+  - `fn main() changes Bus:`
+  - `fn main():`
+- `conformance/R15/reject_running_handlers_that_change_their_bus_under_its_lock.em:27`
+  - `fn poke() with thread_shared other changes Bus:`
+  - `fn poke() thread_shared other:`
+- `conformance/R15/reject_running_handlers_that_change_their_bus_under_its_lock.em:30`
+  - `t = thread.spawn(fn() with thread_shared bus changes Bus: bus.fire())`
+  - `t = thread.spawn(fn() thread_shared bus: bus.fire())`
+- `conformance/R15/reject_setup_hands_c_a_callback_without_naming_its_changes.em:13`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/reject_setup_hands_c_a_callback_without_naming_its_changes.em:25`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/reject_setup_hands_c_a_callback_without_naming_its_changes.em:27`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/reject_start_without_naming_what_its_threads_change.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_start_without_naming_what_its_threads_change.em:18`
+  - `a = thread.spawn(fn() with thread_shared log changes Log: log.push("a"))`
+  - `a = thread.spawn(fn() thread_shared log: log.push("a"))`
+- `conformance/R15/reject_start_without_naming_what_its_threads_change.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_thread_shared_from_a_plain_parameter.em:13`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `conformance/R15/reject_thread_shared_from_a_plain_parameter.em:17`
+  - `fn start(log: Log) changes Log:`
+  - `fn start(log: Log):`
+- `conformance/R15/reject_thread_shared_from_a_plain_parameter.em:18`
+  - `a = thread.spawn(fn() with thread_shared log changes Log: log.push("a"))    #$ error[E7017]: `log` is lent to `start`, and its owner may not be shared between threads; take it as `fn start(log: thread_shared Log) changes Log:`, and create the log shared in `main`: `start(thread_shared Log())``
+  - `a = thread.spawn(fn() thread_shared log: log.push("a"))    #$ error[E7017]: `log` is lent to `start`, and its owner may not be shared between threads; take it as `fn start(log: thread_shared Log) changes Log:`, and create the log shared in `main`: `start(thread_shared Log())``
+- `conformance/R15/reject_thread_shared_from_a_plain_parameter.em:21`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `conformance/R15/reject_thread_shared_on_a_plain_local.em:13`
+  - `h = thread.spawn(fn() with thread_shared names: names.items.len())    #$ error[E7017]: `names` is `share_plain`'s own object, which it may change; to share it between threads, create it shared: `names = thread_shared Names()``
+  - `h = thread.spawn(fn() thread_shared names: names.items.len())    #$ error[E7017]: `names` is `share_plain`'s own object, which it may change; to share it between threads, create it shared: `names = thread_shared Names()``
+- `conformance/R15/reject_tick_calls_a_c_function_without_naming_the_kept_callbacks_changes.em:14`
+  - `fn add_point() changes score, LOG:`
+  - `fn add_point():`
+- `conformance/R15/reject_tick_calls_a_c_function_without_naming_the_kept_callbacks_changes.em:26`
+  - `fn setup(owns game: shares mut Game) changes Game, LOG -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/reject_tick_calls_a_c_function_without_naming_the_kept_callbacks_changes.em:27`
+  - `return register_cb(fn() with owns game changes Game, LOG: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/reject_tick_calls_a_c_function_without_naming_the_kept_callbacks_changes.em:32`
+  - `fn main() changes Game, LOG:`
+  - `fn main():`
+- `conformance/R15/reject_using_a_name_after_it_was_handed_to_a_thread.em:13`
+  - `h = thread.spawn(fn() with owns names: names.items.len())`
+  - `h = thread.spawn(fn() owns names: names.items.len())`
+- `conformance/R15/run_a_kept_callback_that_ends_its_own_token_then_uses_its_state.em:18`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/run_a_kept_callback_that_ends_its_own_token_then_uses_its_state.em:29`
+  - `fn setup(owns game: shares mut Game) changes Game:`
+  - `fn setup(owns game: shares mut Game):`
+- `conformance/R15/run_a_kept_callback_that_ends_its_own_token_then_uses_its_state.em:31`
+  - `fn leave() with owns me changes Game:`
+  - `fn leave() owns me:`
+- `conformance/R15/run_a_kept_callback_that_ends_its_own_token_then_uses_its_state.em:36`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/run_a_producer_thread_sends_and_a_consumer_thread_receives.em:11`
+  - `fn produce(tx: Sender[int]) changes Sender[int]:`
+  - `fn produce(tx: Sender[int]):`
+- `conformance/R15/run_a_producer_thread_sends_and_a_consumer_thread_receives.em:15`
+  - `fn consume(rx: Receiver[int]) changes Receiver[int] -> int:`
+  - `fn consume(rx: Receiver[int]) -> int:`
+- `conformance/R15/run_a_producer_thread_sends_and_a_consumer_thread_receives.em:21`
+  - `fn main() changes Sender[int], Receiver[int]:`
+  - `fn main():`
+- `conformance/R15/run_a_producer_thread_sends_and_a_consumer_thread_receives.em:23`
+  - `producer = thread.spawn(fn() with owns tx changes Sender[int]: produce(tx))`
+  - `producer = thread.spawn(fn() owns tx: produce(tx))`
+- `conformance/R15/run_a_producer_thread_sends_and_a_consumer_thread_receives.em:24`
+  - `consumer = thread.spawn(fn() with owns rx changes Receiver[int] -> int: consume(rx))`
+  - `consumer = thread.spawn(fn() owns rx -> int: consume(rx))`
+- `conformance/R15/run_a_thread_runs_a_handler_holding_a_thread_shared_owner.em:16`
+  - `handlers: Array[thread_shared fn() changes Counter] guarded by lock = []`
+  - `handlers: Array[thread_shared fn()] guarded by lock = []`
+- `conformance/R15/run_a_thread_runs_a_handler_holding_a_thread_shared_owner.em:18`
+  - `fn on_event(owns f: thread_shared fn() changes Counter) changes handlers:`
+  - `fn on_event(owns f: thread_shared fn()):`
+- `conformance/R15/run_a_thread_runs_a_handler_holding_a_thread_shared_owner.em:22`
+  - `fn fire() changes handlers, Counter:`
+  - `fn fire():`
+- `conformance/R15/run_a_thread_runs_a_handler_holding_a_thread_shared_owner.em:27`
+  - `fn main() changes Bus, Counter:`
+  - `fn main():`
+- `conformance/R15/run_a_thread_runs_a_handler_holding_a_thread_shared_owner.em:30`
+  - `bus.on_event(fn() with thread_shared count changes Counter: count.n.fetch_add(1))`
+  - `bus.on_event(fn() thread_shared count: count.n.fetch_add(1))`
+- `conformance/R15/run_a_thread_runs_a_handler_holding_a_thread_shared_owner.em:31`
+  - `t = thread.spawn(fn() with thread_shared bus changes Bus, Counter: bus.fire())`
+  - `t = thread.spawn(fn() thread_shared bus: bus.fire())`
+- `conformance/R15/run_c_holds_a_tagged_number_not_an_address.em:16`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/run_c_holds_a_tagged_number_not_an_address.em:33`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/run_c_holds_a_tagged_number_not_an_address.em:34`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/run_c_holds_a_tagged_number_not_an_address.em:36`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/run_c_runs_a_kept_callback_through_the_trampoline.em:15`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/run_c_runs_a_kept_callback_through_the_trampoline.em:32`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/run_c_runs_a_kept_callback_through_the_trampoline.em:33`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/run_c_runs_a_kept_callback_through_the_trampoline.em:35`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/run_fail_a_creator_callback_called_on_another_thread.em:17`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/run_fail_a_creator_callback_called_on_another_thread.em:34`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/run_fail_a_creator_callback_called_on_another_thread.em:35`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/run_fail_a_creator_callback_called_on_another_thread.em:37`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/run_fail_c_calls_a_once_callback_twice.em:17`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/run_fail_c_calls_a_once_callback_twice.em:28`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/run_fail_c_calls_a_once_callback_twice.em:29`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/run_fail_c_calls_a_once_callback_twice.em:31`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/run_fail_c_runs_a_callback_after_it_was_unregistered.em:16`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `conformance/R15/run_fail_c_runs_a_callback_after_it_was_unregistered.em:33`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `conformance/R15/run_fail_c_runs_a_callback_after_it_was_unregistered.em:34`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `conformance/R15/run_fail_c_runs_a_callback_after_it_was_unregistered.em:39`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `conformance/R15/run_scoped_tasks_add_their_parts_to_a_total.em:16`
+  - `scope.spawn(fn() with copy of t changes total: total += t.split_whitespace().count())`
+  - `scope.spawn(fn() copy of t: total += t.split_whitespace().count())`
+- `conformance/R15/run_tasks_add_to_a_field_of_an_object_they_reach.em:17`
+  - `scope.spawn(fn() with copy of t changes stats: stats.total += t.len())`
+  - `scope.spawn(fn() copy of t: stats.total += t.len())`
+- `conformance/R15/run_tasks_push_their_parts_in_spawn_order.em:16`
+  - `scope.spawn(fn() with copy of t changes parts: parts.push(t.len()))`
+  - `scope.spawn(fn() copy of t: parts.push(t.len()))`
+- `conformance/R15/run_two_threads_update_a_guarded_pair_under_one_lock.em:16`
+  - `fn note(n: int) changes words, longest:`
+  - `fn note(n: int):`
+- `conformance/R15/run_two_threads_update_a_guarded_pair_under_one_lock.em:22`
+  - `fn main() changes Stats:`
+  - `fn main():`
+- `conformance/R15/run_two_threads_update_a_guarded_pair_under_one_lock.em:24`
+  - `a = thread.spawn(fn() with thread_shared st changes Stats: st.note(3))`
+  - `a = thread.spawn(fn() thread_shared st: st.note(3))`
+- `conformance/R17/accept_a_body_fact_is_used_inside_its_package.em:17`
+  - `pub fn note_any(msg: String) changes log:`
+  - `pub fn note_any(msg: String):`
+- `conformance/R17/accept_a_call_from_another_package_given_what_its_recorded_fact_allows.em:11`
+  - `fn main() changes HISTORY:`
+  - `fn main():`
+- `conformance/R17/accept_a_ledger_generic_whose_instance_changes_log_after_the_loop.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R17/accept_a_ledger_generic_whose_instance_changes_log_after_the_loop.em:16`
+  - `each([1], fn(x) changes LOG: LOG.push(String("x")))`
+  - `each([1], fn(x): LOG.push(String("x")))`
+- `conformance/R17/accept_a_librarys_button_clicked_after_the_loop_over_log.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R17/accept_a_librarys_button_clicked_after_the_loop_over_log.em:15`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R17/ledger/src/lib.em:13`
+  - `pub fn note(msg: String) reads frame changes log:`
+  - `pub fn note(msg: String):`
+- `conformance/R17/ledger/src/lib.em:17`
+  - `pub fn note_any(msg: String) changes log:`
+  - `pub fn note_any(msg: String):`
+- `conformance/R17/ledger/src/lib.em:38`
+  - `pub handlers: Array[fn() changes captured] = []`
+  - `pub handlers: Array[fn()] = []`
+- `conformance/R17/ledger/src/lib.em:40`
+  - `pub fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `pub fn on_click(owns f: fn()):`
+- `conformance/R17/ledger/src/lib.em:43`
+  - `pub fn click() changes handlers, captured:`
+  - `pub fn click():`
+- `conformance/R17/ledger/src/lib.em:50`
+  - `pub fn record(s: StrView) changes HISTORY:`
+  - `pub fn record(s: StrView):`
+- `conformance/R17/ledger/src/lib.em:55`
+  - `pub fn record_first(s: StrView) changes HISTORY:`
+  - `pub fn record_first(s: StrView):`
+- `conformance/R17/ledger/src/lib.em:61`
+  - `[C, F: fn(int) changes C]`
+  - `[C, F: fn(int)]`
+- `conformance/R17/ledger/src/lib.em:62`
+  - `pub fn each(xs: Array[int], owns f: F) changes C:`
+  - `pub fn each(xs: Array[int], owns f: F):`
+- `conformance/R17/reject_a_call_from_another_package_hands_a_part_of_what_it_clears.em:10`
+  - `fn main() changes HISTORY:`
+  - `fn main():`
+- `conformance/R17/reject_a_ledger_generic_whose_instance_changes_log_in_a_loop_over_log.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R17/reject_a_ledger_generic_whose_instance_changes_log_in_a_loop_over_log.em:16`
+  - `each([1], fn(x) changes LOG: LOG.push(String("x")))    #$ error[E3020]: this loop walks `LOG` (line 14), and `each(...)` (line 16) changes `LOG` (the function it is given says `changes LOG`); move `each([1], fn(x) changes LOG: LOG.push(String("x")))` below the loop`
+  - `each([1], fn(x): LOG.push(String("x")))    #$ error[E3020]: this loop walks `LOG` (line 14), and `each(...)` (line 16) changes `LOG` (the function it is given says `changes LOG`); move `each([1], fn(x) changes LOG: LOG.push(String("x")))` below the loop`
+- `conformance/R17/reject_a_librarys_button_runs_a_programs_log_handler_in_a_loop_over_log.em:12`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R17/reject_a_librarys_button_runs_a_programs_log_handler_in_a_loop_over_log.em:15`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `conformance/R2/accept_equals_on_a_ref_mut_pattern_name_replaces_the_payload.em:14`
+  - `fn stop() changes state:`
+  - `fn stop():`
+- `conformance/R2/accept_ref_mut_pattern_name_changes_the_payload.em:14`
+  - `fn update() changes state:`
+  - `fn update():`
+- `conformance/R2/accept_replacing_an_object_whose_drop_pushes_to_log_names_it.em:13`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R2/accept_replacing_an_object_whose_drop_pushes_to_log_names_it.em:16`
+  - `fn swap_in() changes LOG:`
+  - `fn swap_in():`
+- `conformance/R2/accept_replacing_an_object_whose_drop_pushes_to_log_names_it.em:21`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R2/reject_a_change_through_a_plain_pattern_name.em:14`
+  - `fn update() changes state:`
+  - `fn update():`
+- `conformance/R2/reject_equals_on_a_pattern_name.em:14`
+  - `fn stop() changes state:`
+  - `fn stop():`
+- `conformance/R2/reject_mut_alone_on_a_pattern_name.em:15`
+  - `fn update() changes state:`
+  - `fn update():`
+- `conformance/R2/reject_replacing_an_object_whose_drop_pushes_to_log_without_naming_it.em:13`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R2/reject_replacing_an_object_whose_drop_pushes_to_log_without_naming_it.em:21`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R3/accept_a_capture_list_names_what_it_takes_over.em:19`
+  - `job = fn() with owns report: submit(report)`
+  - `job = fn() owns report: submit(report)`
+- `conformance/R3/accept_a_captured_copy_is_the_function_values_own.em:10`
+  - `show = fn() with copy of score: println(score)`
+  - `show = fn() copy of score: println(score)`
+- `conformance/R3/accept_a_class_with_a_weakref_link_to_its_parent.em:12`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `conformance/R3/accept_a_level_made_in_an_arena_the_caller_keeps.em:15`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/accept_a_level_made_in_an_arena_the_caller_keeps.em:20`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/accept_a_level_made_in_an_arena_the_caller_keeps.em:25`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/accept_a_list_field_names_its_arena_and_the_making_line_its_instance.em:15`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/accept_a_list_field_names_its_arena_and_the_making_line_its_instance.em:20`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/accept_a_list_field_names_its_arena_and_the_making_line_its_instance.em:25`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/accept_each_captured_name_says_its_own_word.em:9`
+  - `show = fn() with copy of name, copy of score: println(name, score)`
+  - `show = fn() copy of name, copy of score: println(name, score)`
+- `conformance/R3/accept_two_owners_that_may_change_one_list.em:8`
+  - `fn main() changes Array[int]:`
+  - `fn main():`
+- `conformance/R3/reject_a_captured_name_with_no_word_after_one_with_a_word.em:10`
+  - `show = fn() with copy of name, score: println(name, score)     #$ error[E0116]: `copy of` here belongs to `name` only`
+  - `show = fn() copy of name, score: println(name, score)     #$ error[E0116]: `copy of` here belongs to `name` only`
+- `conformance/R3/reject_a_change_through_a_shares_owner.em:8`
+  - `fn main() changes Array[int]:`
+  - `fn main():`
+- `conformance/R3/reject_a_value_from_another_kind_of_arena_given_to_an_arena_place.em:15`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/reject_a_value_from_another_kind_of_arena_given_to_an_arena_place.em:20`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/reject_a_value_from_another_kind_of_arena_given_to_an_arena_place.em:25`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/reject_a_value_from_another_kind_of_arena_given_to_an_arena_place.em:40`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/reject_a_value_from_another_kind_of_arena_given_to_an_arena_place.em:45`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/reject_a_value_from_another_kind_of_arena_given_to_an_arena_place.em:49`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/reject_a_value_from_the_built_in_manager_given_to_an_arena_place.em:16`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/reject_a_value_from_the_built_in_manager_given_to_an_arena_place.em:21`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/reject_a_value_from_the_built_in_manager_given_to_an_arena_place.em:26`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/reject_a_value_returned_past_the_end_of_its_arena.em:15`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/reject_a_value_returned_past_the_end_of_its_arena.em:20`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/reject_a_value_returned_past_the_end_of_its_arena.em:25`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/reject_an_array_with_a_manager_is_array_using.em:16`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/reject_an_array_with_a_manager_is_array_using.em:21`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/reject_an_array_with_a_manager_is_array_using.em:26`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/reject_box_with_a_manager_is_owns_using.em:16`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/reject_box_with_a_manager_is_owns_using.em:21`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/reject_box_with_a_manager_is_owns_using.em:26`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/reject_owns_before_fn.em:18`
+  - `job = fn() with owns report: submit(report)`
+  - `job = fn() owns report: submit(report)`
+- `conformance/R3/reject_owns_on_a_captured_number.em:9`
+  - `show = fn() with owns score: println(score)    #$ error[E2085]: `with owns score`: an `int` is copied, not handed over`
+  - `show = fn() owns score: println(score)    #$ error[E2085]: `with owns score`: an `int` is copied, not handed over`
+- `conformance/R3/reject_using_after_a_type_with_no_heap_memory.em:15`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/reject_using_after_a_type_with_no_heap_memory.em:20`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/reject_using_after_a_type_with_no_heap_memory.em:25`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/run_a_mesh_made_using_an_arena_takes_its_block_from_that_arena.em:22`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/run_a_mesh_made_using_an_arena_takes_its_block_from_that_arena.em:27`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/run_a_mesh_made_using_an_arena_takes_its_block_from_that_arena.em:32`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/run_a_value_ends_in_the_arena_instance_it_came_from.em:20`
+  - `fn allocate(layout: Layout) changes this -> *mut u8:`
+  - `fn allocate(layout: Layout) -> *mut u8:`
+- `conformance/R3/run_a_value_ends_in_the_arena_instance_it_came_from.em:25`
+  - `fn deallocate(p: *mut u8, layout: Layout) changes this:`
+  - `fn deallocate(p: *mut u8, layout: Layout):`
+- `conformance/R3/run_a_value_ends_in_the_arena_instance_it_came_from.em:30`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) changes this -> *mut u8:`
+  - `fn reallocate(p: *mut u8, old: Layout, new_size: usize) -> *mut u8:`
+- `conformance/R3/run_copy_of_a_struct_copies_the_links_it_holds.em:27`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R4/accept_a_copy_given_to_a_function_that_clears_log.em:10`
+  - `fn note(s: StrView) changes LOG:`
+  - `fn note(s: StrView):`
+- `conformance/R4/accept_a_copy_given_to_a_function_that_clears_log.em:14`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/accept_a_method_given_another_object_as_ref_mut.em:10`
+  - `fn merge(ref mut other: Bag) changes items:`
+  - `fn merge(ref mut other: Bag):`
+- `conformance/R4/accept_a_mutex_argument_takes_no_word.em:19`
+  - `fn clear(scores: Mutex[Array[String]]) changes Mutex[Array[String]]:`
+  - `fn clear(scores: Mutex[Array[String]]):`
+- `conformance/R4/accept_a_mutex_argument_takes_no_word.em:23`
+  - `fn main() changes Mutex[Array[String]]:`
+  - `fn main():`
+- `conformance/R4/accept_a_ref_mut_argument_of_your_own_given_to_a_function_that_clears_log.em:9`
+  - `fn rename(ref mut s: String) changes LOG:`
+  - `fn rename(ref mut s: String):`
+- `conformance/R4/accept_a_ref_mut_argument_of_your_own_given_to_a_function_that_clears_log.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/accept_a_ref_mut_shares_mut_parameter_sets_a_cell.em:12`
+  - `fn tick(ref mut s: shares mut Clock) changes Clock:`
+  - `fn tick(ref mut s: shares mut Clock):`
+- `conformance/R4/accept_a_ref_mut_shares_mut_parameter_sets_a_cell.em:15`
+  - `fn main() changes Clock:`
+  - `fn main():`
+- `conformance/R4/accept_a_view_argument_used_before_the_callee_clears.em:11`
+  - `fn note(s: StrView) changes LOG:`
+  - `fn note(s: StrView):`
+- `conformance/R4/accept_a_view_argument_used_before_the_callee_clears.em:15`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/accept_drop_the_lines_first_and_push_the_notes_after.em:10`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/accept_one_game_passed_once_as_ref_mut.em:13`
+  - `fn note(msg: String) changes log:`
+  - `fn note(msg: String):`
+- `conformance/R4/accept_text_written_in_the_program_given_to_a_function_that_clears_log.em:10`
+  - `fn note(s: StrView) changes LOG:`
+  - `fn note(s: StrView):`
+- `conformance/R4/accept_text_written_in_the_program_given_to_a_function_that_clears_log.em:14`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/reject_a_function_value_that_changes_the_calls_object.em:9`
+  - `fn keep(s: String) changes LOG -> bool:`
+  - `fn keep(s: String) -> bool:`
+- `conformance/R4/reject_a_function_value_that_changes_the_calls_object.em:14`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/reject_a_method_given_its_own_object_as_ref_mut.em:11`
+  - `fn merge(ref mut other: Bag) changes items:`
+  - `fn merge(ref mut other: Bag):`
+- `conformance/R4/reject_a_ref_mut_argument_into_what_the_callee_clears.em:10`
+  - `fn rename(ref mut s: String) changes LOG:`
+  - `fn rename(ref mut s: String):`
+- `conformance/R4/reject_a_ref_mut_argument_into_what_the_callee_clears.em:14`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/reject_a_view_argument_into_what_a_callee_of_the_callee_clears.em:10`
+  - `fn wipe() changes LOG:`
+  - `fn wipe():`
+- `conformance/R4/reject_a_view_argument_into_what_a_callee_of_the_callee_clears.em:13`
+  - `fn note(s: StrView) changes LOG:`
+  - `fn note(s: StrView):`
+- `conformance/R4/reject_a_view_argument_into_what_a_callee_of_the_callee_clears.em:17`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R4/reject_a_view_argument_into_what_the_callee_clears_and_then_uses.em:10`
+  - `fn note(s: StrView) changes LOG:`
+  - `fn note(s: StrView):`
+- `conformance/R4/reject_a_view_argument_into_what_the_callee_clears_and_then_uses.em:14`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R5/accept_a_change_through_a_link_is_named_whatever_holds_it.em:10`
+  - `fn tick(ref mut c: shares mut Clock) changes Clock:`
+  - `fn tick(ref mut c: shares mut Clock):`
+- `conformance/R5/accept_a_change_through_a_link_is_named_whatever_holds_it.em:13`
+  - `fn main() changes Clock:`
+  - `fn main():`
+- `conformance/R5/accept_a_changing_method_called_through_a_ref_mut_loop_name.em:10`
+  - `fn heal() changes this:`
+  - `fn heal():`
+- `conformance/R5/accept_a_drop_names_only_what_it_changes_outside_its_object.em:14`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R5/accept_a_drop_names_only_what_it_changes_outside_its_object.em:17`
+  - `fn use_one() changes LOG:`
+  - `fn use_one():`
+- `conformance/R5/accept_a_drop_names_only_what_it_changes_outside_its_object.em:21`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R5/accept_a_first_line_in_its_order.em:10`
+  - `fn note(msg: String) reads frame changes log:`
+  - `fn note(msg: String):`
+- `conformance/R5/accept_a_loop_calls_a_virtual_that_changes_one_field.em:11`
+  - `virtual fn on_update(dt: float) changes angle:`
+  - `virtual fn on_update(dt: float):`
+- `conformance/R5/accept_a_loop_calls_a_virtual_that_changes_one_field.em:15`
+  - `override fn on_update(dt: float) changes angle:`
+  - `override fn on_update(dt: float):`
+- `conformance/R5/accept_a_method_names_the_field_it_changes.em:10`
+  - `fn open() changes angle:`
+  - `fn open():`
+- `conformance/R5/accept_a_method_that_uses_this_before_it_clears_what_owns_it.em:12`
+  - `fn hit() changes hp, ENEMIES:`
+  - `fn hit():`
+- `conformance/R5/accept_a_method_that_uses_this_before_it_clears_what_owns_it.em:16`
+  - `fn main() changes ENEMIES:`
+  - `fn main():`
+- `conformance/R5/accept_a_struct_method_replaces_its_whole_value.em:11`
+  - `fn reset() changes this:`
+  - `fn reset():`
+- `conformance/R5/accept_a_virtual_says_more_than_its_body.em:10`
+  - `virtual fn on_update(dt: float) changes this:`
+  - `virtual fn on_update(dt: float):`
+- `conformance/R5/accept_a_virtual_says_more_than_its_body.em:14`
+  - `override fn on_update(dt: float) changes angle:`
+  - `override fn on_update(dt: float):`
+- `conformance/R5/accept_an_atomic_changed_through_a_plain_name.em:10`
+  - `fn add(total: Atomic[int], n: int) changes Atomic[int]:`
+  - `fn add(total: Atomic[int], n: int):`
+- `conformance/R5/accept_an_atomic_changed_through_a_plain_name.em:13`
+  - `fn main() changes Atomic[int]:`
+  - `fn main():`
+- `conformance/R5/accept_an_implementation_within_its_interface_methods_line.em:8`
+  - `fn area() changes this -> float`
+  - `fn area() -> float`
+- `conformance/R5/accept_an_implementation_within_its_interface_methods_line.em:15`
+  - `fn area() changes calls -> float:`
+  - `fn area() -> float:`
+- `conformance/R5/accept_changes_this_beside_a_module_variable.em:12`
+  - `fn fire() changes this, LOG:`
+  - `fn fire():`
+- `conformance/R5/accept_changes_this_beside_a_module_variable.em:16`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R5/accept_init_calls_a_reads_method_once_its_fields_are_set.em:19`
+  - `fn load_assets() reads renderer -> Array[String]:`
+  - `fn load_assets() -> Array[String]:`
+- `conformance/R5/accept_init_sets_its_fields_with_no_word.em:14`
+  - `fn open() changes angle:`
+  - `fn open():`
+- `conformance/R5/accept_main_names_the_module_variable_its_callee_changes.em:8`
+  - `fn tick() changes FRAME:`
+  - `fn tick():`
+- `conformance/R5/accept_main_names_the_module_variable_its_callee_changes.em:11`
+  - `fn main() changes FRAME:`
+  - `fn main():`
+- `conformance/R5/accept_tick_names_what_note_changes.em:17`
+  - `fn note(msg: String) changes log:`
+  - `fn note(msg: String):`
+- `conformance/R5/accept_tick_names_what_note_changes.em:20`
+  - `fn tick() changes players, log:`
+  - `fn tick():`
+- `conformance/R5/reject_a_caller_does_not_name_what_its_callee_changes.em:16`
+  - `fn note(msg: String) changes log:`
+  - `fn note(msg: String):`
+- `conformance/R5/reject_a_caller_does_not_name_what_its_callee_changes.em:19`
+  - `fn tick() changes players:`
+  - `fn tick():`
+- `conformance/R5/reject_a_change_through_a_ref_mut_link_parameter_not_named.em:13`
+  - `fn main() changes Clock:`
+  - `fn main():`
+- `conformance/R5/reject_a_changing_method_called_on_a_plain_parameter.em:10`
+  - `fn heal() changes this:`
+  - `fn heal():`
+- `conformance/R5/reject_a_changing_method_called_through_a_plain_loop_name.em:10`
+  - `fn heal() changes this:`
+  - `fn heal():`
+- `conformance/R5/reject_a_first_line_names_a_field_the_body_never_changes.em:11`
+  - `fn open() changes angle, hinge:    #$ error[E2105]: `open` says `changes angle, hinge`, but it never changes `hinge`; write `fn open() changes angle:``
+  - `fn open():    #$ error[E2105]: `open` says `changes angle, hinge`, but it never changes `hinge`; write `fn open() changes angle:``
+- `conformance/R5/reject_a_first_line_out_of_order.em:11`
+  - `fn note(msg: String) changes log reads frame:    #$ error[E0118]: the parts of `note`'s first line are out of order; write `fn note(msg: String) reads frame changes log:``
+  - `fn note(msg: String):    #$ error[E0118]: the parts of `note`'s first line are out of order; write `fn note(msg: String) reads frame changes log:``
+- `conformance/R5/reject_a_loop_calls_a_virtual_that_changes_this.em:12`
+  - `virtual fn on_update(dt: float) changes this:`
+  - `virtual fn on_update(dt: float):`
+- `conformance/R5/reject_a_loop_calls_a_virtual_that_changes_this.em:16`
+  - `override fn on_update(dt: float) changes angle:`
+  - `override fn on_update(dt: float):`
+- `conformance/R5/reject_a_method_called_on_a_part_of_what_it_clears.em:12`
+  - `fn hit() changes hp, ENEMIES:`
+  - `fn hit():`
+- `conformance/R5/reject_a_method_called_on_a_part_of_what_it_clears.em:16`
+  - `fn main() changes ENEMIES:`
+  - `fn main():`
+- `conformance/R5/reject_a_method_changes_a_field_its_line_does_not_name.em:11`
+  - `fn note(msg: String) changes log:`
+  - `fn note(msg: String):`
+- `conformance/R5/reject_a_reads_method_called_before_its_field_is_set.em:18`
+  - `fn load_assets() reads renderer -> Array[String]:`
+  - `fn load_assets() -> Array[String]:`
+- `conformance/R5/reject_a_reads_method_reads_a_field_it_does_not_name.em:19`
+  - `fn load_assets() reads renderer -> Array[String]:`
+  - `fn load_assets() -> Array[String]:`
+- `conformance/R5/reject_an_implementation_changes_more_than_its_interface_method.em:15`
+  - `fn area() changes calls -> float:    #$ error[E2113]: `Square.area` changes `calls`, but it implements `Shape.area`, whose first line changes nothing, and callers of `Shape` rely on that; write `fn area() changes this -> float` in `Shape``
+  - `fn area() -> float:    #$ error[E2113]: `Square.area` changes `calls`, but it implements `Shape.area`, whose first line changes nothing, and callers of `Shape` rely on that; write `fn area() changes this -> float` in `Shape``
+- `conformance/R5/reject_an_override_changes_more_than_its_virtual.em:14`
+  - `override fn on_update(dt: float) changes angle:    #$ error[E2113]: `SwingDoor.on_update` changes `angle`, but it overrides `Door.on_update`, whose first line changes nothing, and callers of `Door` rely on that; write `virtual fn on_update(dt: float) changes this:` in `Door``
+  - `override fn on_update(dt: float):    #$ error[E2113]: `SwingDoor.on_update` changes `angle`, but it overrides `Door.on_update`, whose first line changes nothing, and callers of `Door` rely on that; write `virtual fn on_update(dt: float) changes this:` in `Door``
+- `conformance/R5/reject_cached_reading_a_field_other_threads_change.em:14`
+  - `fn add(v: f64) changes verts:`
+  - `fn add(v: f64):`
+- `conformance/R5/reject_cached_reading_a_field_other_threads_change.em:19`
+  - `fn radius() reads verts -> f64:    #$ error[E2117]: `radius` reads `verts`, which other threads change under `lock`; a kept result could be stale; remove `@cached``
+  - `fn radius() -> f64:    #$ error[E2117]: `radius` reads `verts`, which other threads change under `lock`; a kept result could be stale; remove `@cached``
+- `conformance/R5/reject_cached_reading_a_field_other_threads_change.em:26`
+  - `fn main() changes Mesh:`
+  - `fn main():`
+- `conformance/R5/reject_cached_reading_a_field_other_threads_change.em:28`
+  - `t = thread.spawn(fn() with thread_shared m changes Mesh: m.add(2.0))`
+  - `t = thread.spawn(fn() thread_shared m: m.add(2.0))`
+- `conformance/R5/reject_cached_reading_a_shares_field.em:14`
+  - `fn radius() reads shape -> f64:    #$ error[E2117]: `radius` reads `shape`, which its other owners may change without `Model` seeing it, so a kept result could be stale; remove `@cached``
+  - `fn radius() -> f64:    #$ error[E2117]: `radius` reads `shape`, which its other owners may change without `Model` seeing it, so a kept result could be stale; remove `@cached``
+- `conformance/R5/reject_cached_with_another_parameter.em:11`
+  - `fn radius(scale: f64) reads verts -> f64:    #$ error[E2117]: `@cached` keeps one result, and `radius` takes `scale`; remove `@cached`, or keep the results in a field: `radii: Map[f64, f64]``
+  - `fn radius(scale: f64) -> f64:    #$ error[E2117]: `@cached` keeps one result, and `radius` takes `scale`; remove `@cached`, or keep the results in a field: `radii: Map[f64, f64]``
+- `conformance/R5/reject_cached_with_changes.em:12`
+  - `fn radius() reads verts changes calls -> f64:    #$ error[E2117]: a cached method only reads, and `radius` changes `calls` (line 16); remove `@cached`, or remove `changes calls` and line 16`
+  - `fn radius() -> f64:    #$ error[E2117]: a cached method only reads, and `radius` changes `calls` (line 16); remove `@cached`, or remove `changes calls` and line 16`
+- `conformance/R5/reject_changes_this_beside_a_field.em:11`
+  - `fn reset() changes this, count:    #$ error[E2107]: `reset` says `changes this`, which already lets it change every field; write `fn reset() changes this:` or `fn reset() changes count:``
+  - `fn reset():    #$ error[E2107]: `reset` says `changes this`, which already lets it change every field; write `fn reset() changes this:` or `fn reset() changes count:``
+- `conformance/R5/reject_changes_this_beside_reads.em:11`
+  - `fn reset() reads limit changes this:    #$ error[E2107]: `reset` says `changes this`, which already lets it read and change every field; write `fn reset() changes this:``
+  - `fn reset():    #$ error[E2107]: `reset` says `changes this`, which already lets it read and change every field; write `fn reset() changes this:``
+- `conformance/R5/reject_changes_this_on_a_drop.em:12`
+  - `fn drop() changes this, LOG:    #$ error[E2122]: remove `changes this`: a `drop` always changes its own object; name only what it changes outside it: `fn drop() changes LOG:``
+  - `fn drop():    #$ error[E2122]: remove `changes this`: a `drop` always changes its own object; name only what it changes outside it: `fn drop() changes LOG:``
+- `conformance/R5/reject_changes_this_on_a_drop.em:15`
+  - `fn use_one() changes LOG:`
+  - `fn use_one():`
+- `conformance/R5/reject_changes_this_on_a_drop.em:19`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R5/reject_changes_this_on_a_drop_that_changes_nothing_outside.em:10`
+  - `fn drop() changes this:    #$ error[E2122]: remove `changes this`: a `drop` always changes its own object, and this one changes nothing outside it; write `fn drop():``
+  - `fn drop():    #$ error[E2122]: remove `changes this`: a `drop` always changes its own object, and this one changes nothing outside it; write `fn drop():``
+- `conformance/R5/reject_changes_this_on_init.em:10`
+  - `fn init() changes this:    #$ error[E2108]: `init` may always set the fields of the object it builds; write `fn init():``
+  - `fn init():    #$ error[E2108]: `init` may always set the fields of the object it builds; write `fn init():``
+- `conformance/R5/reject_main_does_not_name_a_module_variable_its_callee_changes.em:9`
+  - `fn tick() changes FRAME:`
+  - `fn tick():`
+- `conformance/R5/reject_owns_this_beside_changes_this.em:10`
+  - `fn finish() owns this changes this -> u64:    #$ error[E2107]: `finish` says `owns this`, which takes the whole object over and so may also change it; write `fn finish() owns this -> u64:``
+  - `fn finish() owns this -> u64:    #$ error[E2107]: `finish` says `owns this`, which takes the whole object over and so may also change it; write `fn finish() owns this -> u64:``
+- `conformance/R5/reject_reads_names_a_field_the_body_never_reads.em:19`
+  - `fn load_assets() reads renderer, frame -> Array[String]:    #$ error[E2105]: `load_assets` says `reads renderer, frame`, but it never reads `frame`; write `fn load_assets() reads renderer -> Array[String]:``
+  - `fn load_assets() -> Array[String]:    #$ error[E2105]: `load_assets` says `reads renderer, frame`, but it never reads `frame`; write `fn load_assets() reads renderer -> Array[String]:``
+- `conformance/R5/reject_this_given_another_object.em:10`
+  - `fn reset() changes this:`
+  - `fn reset():`
+- `conformance/R5/reject_virtual_in_a_class_that_cannot_be_subclassed.em:10`
+  - `virtual fn on_update(dt: float) changes this:    #$ error[E2112]: `Door` cannot be subclassed, so `virtual` on `on_update` changes nothing; to let subclasses replace it write `open class Door:`, or remove `virtual``
+  - `virtual fn on_update(dt: float):    #$ error[E2112]: `Door` cannot be subclassed, so `virtual` on `on_update` changes nothing; to let subclasses replace it write `open class Door:`, or remove `virtual``
+- `conformance/R5/run_a_cached_result_is_cleared_by_a_change_to_what_it_reads.em:14`
+  - `fn radius() reads verts -> f64:`
+  - `fn radius() -> f64:`
+- `conformance/R5/run_a_turret_aimed_at_itself_changes_itself.em:15`
+  - `fn fire() changes this, Turret -> int:`
+  - `fn fire() -> int:`
+- `conformance/R5/run_a_turret_aimed_at_itself_changes_itself.em:20`
+  - `fn main() changes Turret:`
+  - `fn main():`
+- `conformance/R6/accept_from_src_lets_the_parser_move_on.em:12`
+  - `fn next_word() changes pos -> StrView from src:`
+  - `fn next_word() -> StrView from src:`
+- `conformance/R6/reject_a_method_result_points_into_its_whole_object.em:11`
+  - `fn next_word() changes pos -> StrView:`
+  - `fn next_word() -> StrView:`
+- `conformance/R6/reject_a_result_outside_what_its_from_names.em:10`
+  - `fn next_word(line: StrView) changes pos -> StrView from src:`
+  - `fn next_word(line: StrView) -> StrView from src:`
+- `conformance/R6/reject_a_word_of_a_local_parser_returned_without_from.em:12`
+  - `fn next_word() changes pos -> StrView:`
+  - `fn next_word() -> StrView:`
+- `conformance/R6/reject_from_names_a_parameter_and_a_field.em:11`
+  - `fn next_word(src: StrView) changes pos -> StrView from src:    #$ error[E2118]: `src` is both a parameter of `next_word` and a field of `Parser`, so `from src` could mean either; rename the parameter: for a view of the field write `fn next_word(line: StrView) changes pos -> StrView from src:`, for a view of the parameter `fn next_word(line: StrView) changes pos -> StrView from line:``
+  - `fn next_word(src: StrView) -> StrView from src:    #$ error[E2118]: `src` is both a parameter of `next_word` and a field of `Parser`, so `from src` could mean either; rename the parameter: for a view of the field write `fn next_word(line: StrView) changes pos -> StrView from src:`, for a view of the parameter `fn next_word(line: StrView) changes pos -> StrView from line:``
+- `conformance/R7/accept_a_camera_owning_a_share_may_be_returned.em:14`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `conformance/R7/accept_a_camera_owning_a_share_may_be_returned.em:22`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/accept_a_push_keeps_a_kept_link_to_an_object_in_its_own_block.em:15`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/accept_from_naming_a_field_after_renaming_the_parameter.em:12`
+  - `fn next_word(line: StrView) changes pos -> StrView from src:`
+  - `fn next_word(line: StrView) -> StrView from src:`
+- `conformance/R7/accept_reading_again_after_another_holder_reshapes.em:15`
+  - `fn main() changes Registry:`
+  - `fn main():`
+- `conformance/R7/accept_removing_after_the_kept_links_last_use.em:14`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/accept_sharedref_mut_holders_and_the_owner_all_change_one_player.em:19`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `conformance/R7/accept_sharedref_mut_holders_and_the_owner_all_change_one_player.em:25`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/accept_text_written_in_the_program_in_a_from_field.em:15`
+  - `fn add_mark() changes words:`
+  - `fn add_mark():`
+- `conformance/R7/reject_a_method_that_may_change_the_target_inside_a_loop_over_it.em:15`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `conformance/R7/reject_a_method_that_may_change_the_target_inside_a_loop_over_it.em:21`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/reject_a_push_moves_the_inline_players_a_kept_link_points_at.em:15`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/reject_a_push_through_one_holder_while_a_loop_walks_through_another.em:18`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/reject_a_view_into_a_part_used_after_another_holder_reshapes_it.em:15`
+  - `fn main() changes Registry:`
+  - `fn main():`
+- `conformance/R7/reject_changing_the_let_field_views_point_into.em:15`
+  - `fn shout() changes text:`
+  - `fn shout():`
+- `conformance/R7/reject_from_naming_both_a_parameter_and_a_field.em:11`
+  - `fn next_word(src: StrView) changes pos -> StrView from src:    #$ error[E2118]: `src` is both a parameter of `next_word` and a field of `Parser`, so `from src` could mean either; rename the parameter: for a view of the field write `fn next_word(line: StrView) changes pos -> StrView from src:`, for a view of the parameter `fn next_word(line: StrView) changes pos -> StrView from line:``
+  - `fn next_word(src: StrView) -> StrView from src:    #$ error[E2118]: `src` is both a parameter of `next_word` and a field of `Parser`, so `from src` could mean either; rename the parameter: for a view of the field write `fn next_word(line: StrView) changes pos -> StrView from src:`, for a view of the parameter `fn next_word(line: StrView) changes pos -> StrView from line:``
+- `conformance/R7/reject_removing_a_player_a_kept_link_points_at.em:15`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R7/reject_storing_a_view_of_other_text_in_a_from_field.em:15`
+  - `fn add_word(line: StrView) changes words:`
+  - `fn add_word(line: StrView):`
+- `conformance/R8/accept_a_change_reaches_the_enemy_the_line_names.em:11`
+  - `fn heal() changes hp:`
+  - `fn heal():`
+- `conformance/R8/accept_a_function_that_ends_an_enemy_names_log.em:13`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R8/accept_a_function_that_ends_an_enemy_names_log.em:16`
+  - `fn reset(ref mut es: Array[Enemy]) changes LOG:`
+  - `fn reset(ref mut es: Array[Enemy]):`
+- `conformance/R8/accept_a_function_that_ends_an_enemy_names_log.em:19`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/accept_a_function_value_that_changes_nothing_runs_inside_a_loop.em:19`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/accept_a_library_call_that_changes_the_list_after_the_loop.em:14`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/accept_a_library_call_that_changes_the_list_after_the_loop.em:19`
+  - `scores.iter().for_each(fn(s) changes LOG: LOG.push(copy of s.name))`
+  - `scores.iter().for_each(fn(s): LOG.push(copy of s.name))`
+- `conformance/R8/accept_a_link_opened_in_a_walk_proved_different_from_the_loop_name.em:14`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R8/accept_a_link_proved_different_from_the_ref_mut_parameter.em:13`
+  - `fn hit(ref mut a: Turret) changes Turret:`
+  - `fn hit(ref mut a: Turret):`
+- `conformance/R8/accept_a_link_proved_different_from_the_ref_mut_parameter.em:19`
+  - `fn main() changes Turret:`
+  - `fn main():`
+- `conformance/R8/accept_a_method_on_a_temporary_that_also_changes_a_module_variable.em:13`
+  - `fn heal_and_log() changes hp, LOG:`
+  - `fn heal_and_log():`
+- `conformance/R8/accept_a_method_on_a_temporary_that_also_changes_a_module_variable.em:20`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/accept_a_method_that_changes_another_field_inside_the_loop.em:16`
+  - `fn note(msg: String) changes log:`
+  - `fn note(msg: String):`
+- `conformance/R8/accept_a_method_that_changes_another_field_inside_the_loop.em:19`
+  - `fn tick() changes players, log:`
+  - `fn tick():`
+- `conformance/R8/accept_a_method_that_changes_hp_while_a_ref_mut_name_of_name_is_used.em:11`
+  - `fn heal() changes hp:`
+  - `fn heal():`
+- `conformance/R8/accept_a_method_that_reads_its_object_before_clearing_the_list_holding_it.em:15`
+  - `fn show() changes SHOWN:`
+  - `fn show():`
+- `conformance/R8/accept_a_method_that_reads_its_object_before_clearing_the_list_holding_it.em:19`
+  - `fn main() changes SHOWN:`
+  - `fn main():`
+- `conformance/R8/accept_a_shares_owner_sees_a_change_through_another_owner.em:9`
+  - `fn main() changes Array[int]:`
+  - `fn main():`
+- `conformance/R8/accept_a_span_given_to_a_function_that_reads_it_before_growing_what_it_shows.em:10`
+  - `fn record(xs: Span[int]) changes SCORES:`
+  - `fn record(xs: Span[int]):`
+- `conformance/R8/accept_a_span_given_to_a_function_that_reads_it_before_growing_what_it_shows.em:15`
+  - `fn main() changes SCORES:`
+  - `fn main():`
+- `conformance/R8/accept_a_view_survives_a_push_to_a_fresh_object.em:12`
+  - `fn refill(owns a: shares mut Bag) changes Bag:`
+  - `fn refill(owns a: shares mut Bag):`
+- `conformance/R8/accept_a_view_survives_a_push_to_a_fresh_object.em:18`
+  - `fn main() changes Bag:`
+  - `fn main():`
+- `conformance/R8/accept_a_view_survives_a_push_to_an_object_known_to_differ.em:12`
+  - `fn refill(owns a: shares mut Bag, owns b: shares mut Bag) changes Bag:`
+  - `fn refill(owns a: shares mut Bag, owns b: shares mut Bag):`
+- `conformance/R8/accept_a_view_survives_a_push_to_an_object_known_to_differ.em:18`
+  - `fn main() changes Bag:`
+  - `fn main():`
+- `conformance/R8/accept_a_view_survives_a_push_to_an_object_of_another_type.em:15`
+  - `fn refill(owns a: shares mut Bag, owns c: shares mut Crate) changes Crate:`
+  - `fn refill(owns a: shares mut Bag, owns c: shares mut Crate):`
+- `conformance/R8/accept_a_view_survives_a_push_to_an_object_of_another_type.em:20`
+  - `fn main() changes Crate:`
+  - `fn main():`
+- `conformance/R8/accept_a_view_whose_last_use_is_an_argument_does_not_live_across_the_call.em:10`
+  - `fn note(s: StrView) changes LOG:`
+  - `fn note(s: StrView):`
+- `conformance/R8/accept_a_view_whose_last_use_is_an_argument_does_not_live_across_the_call.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/accept_copies_out_of_a_lock.em:18`
+  - `fn clear(scores: Mutex[Array[String]]) changes Mutex[Array[String]]:`
+  - `fn clear(scores: Mutex[Array[String]]):`
+- `conformance/R8/accept_copies_out_of_a_lock.em:22`
+  - `fn main() changes Mutex[Array[String]]:`
+  - `fn main():`
+- `conformance/R8/accept_ending_an_object_whose_drop_pushes_to_log_after_the_walk.em:16`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R8/accept_ending_an_object_whose_drop_pushes_to_log_after_the_walk.em:19`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/reject_a_call_through_a_function_value_that_changes_the_walked_list.em:9`
+  - `fn replay(hook: fn() changes LOG) changes LOG:`
+  - `fn replay(hook: fn()):`
+- `conformance/R8/reject_a_call_through_a_function_value_that_changes_the_walked_list.em:14`
+  - `fn note() changes LOG:`
+  - `fn note():`
+- `conformance/R8/reject_a_call_through_a_function_value_that_changes_the_walked_list.em:17`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/reject_a_change_to_a_temporary_that_would_be_lost.em:11`
+  - `fn heal() changes hp:`
+  - `fn heal():`
+- `conformance/R8/reject_a_function_that_ends_an_enemy_without_naming_log.em:13`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R8/reject_a_function_that_ends_an_enemy_without_naming_log.em:19`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/reject_a_library_call_given_a_function_that_changes_the_walked_list.em:13`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R8/reject_a_library_call_given_a_function_that_changes_the_walked_list.em:17`
+  - `scores.iter().for_each(fn(s) changes LOG: LOG.push(copy of s.name))    #$ error[E3020]: this loop walks `LOG` (line 16), and `scores.iter().for_each(...)` (line 17) changes `LOG` (the function it is given says `changes LOG`); write `scores.iter().for_each(fn(s) changes LOG: LOG.push(copy of s.name))` after the loop`
+  - `scores.iter().for_each(fn(s): LOG.push(copy of s.name))    #$ error[E3020]: this loop walks `LOG` (line 16), and `scores.iter().for_each(...)` (line 17) changes `LOG` (the function it is given says `changes LOG`); write `scores.iter().for_each(fn(s) changes LOG: LOG.push(copy of s.name))` after the loop`
+- `conformance/R8/reject_a_link_opened_in_a_walk_changes_what_the_loop_name_reads.em:12`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R8/reject_a_link_that_may_be_the_ref_mut_parameters_object.em:13`
+  - `fn hit(ref mut a: Turret) changes Turret:`
+  - `fn hit(ref mut a: Turret):`
+- `conformance/R8/reject_a_link_that_may_be_the_ref_mut_parameters_object.em:18`
+  - `fn main() changes Turret:`
+  - `fn main():`
+- `conformance/R8/reject_a_method_that_changes_hp_while_a_ref_mut_name_of_hp_is_used.em:12`
+  - `fn heal() changes hp:`
+  - `fn heal():`
+- `conformance/R8/reject_a_method_that_changes_the_walked_field_inside_the_loop.em:15`
+  - `fn add_player(owns p: Player) changes players:`
+  - `fn add_player(owns p: Player):`
+- `conformance/R8/reject_a_method_that_changes_the_walked_field_inside_the_loop.em:18`
+  - `fn tick() changes players:`
+  - `fn tick():`
+- `conformance/R8/reject_a_method_that_reads_its_object_after_clearing_the_list_holding_it.em:13`
+  - `fn show() changes SHOWN:`
+  - `fn show():`
+- `conformance/R8/reject_a_method_that_reads_its_object_after_clearing_the_list_holding_it.em:17`
+  - `fn main() changes SHOWN:`
+  - `fn main():`
+- `conformance/R8/reject_a_method_whose_first_line_changes_the_list_ends_a_view.em:12`
+  - `fn add(x: int) changes items:`
+  - `fn add(x: int):`
+- `conformance/R8/reject_a_method_whose_first_line_changes_the_list_ends_a_view.em:15`
+  - `fn refill(owns a: shares mut Bag, owns b: shares mut Bag) changes Bag:`
+  - `fn refill(owns a: shares mut Bag, owns b: shares mut Bag):`
+- `conformance/R8/reject_a_method_whose_first_line_changes_the_list_ends_a_view.em:20`
+  - `fn main() changes Bag:`
+  - `fn main():`
+- `conformance/R8/reject_a_push_through_another_link_of_the_same_type_ends_a_view.em:13`
+  - `fn refill(owns a: shares mut Bag, owns b: shares mut Bag) changes Bag:`
+  - `fn refill(owns a: shares mut Bag, owns b: shares mut Bag):`
+- `conformance/R8/reject_a_push_through_another_link_of_the_same_type_ends_a_view.em:18`
+  - `fn main() changes Bag:`
+  - `fn main():`
+- `conformance/R8/reject_a_span_given_to_a_function_that_grows_what_it_shows.em:10`
+  - `fn record(xs: Span[int]) changes SCORES:`
+  - `fn record(xs: Span[int]):`
+- `conformance/R8/reject_a_span_given_to_a_function_that_grows_what_it_shows.em:14`
+  - `fn main() changes SCORES:`
+  - `fn main():`
+- `conformance/R8/reject_ending_an_object_whose_drop_pushes_to_the_walked_list.em:13`
+  - `fn drop() changes LOG:`
+  - `fn drop():`
+- `conformance/R8/reject_ending_an_object_whose_drop_pushes_to_the_walked_list.em:16`
+  - `fn main() changes LOG:`
+  - `fn main():`
+- `conformance/R9/accept_a_change_through_a_shares_mut_owner.em:7`
+  - `fn main() changes Array[int]:`
+  - `fn main():`
+- `conformance/R9/accept_a_field_change_through_a_shares_mut_field.em:13`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `conformance/R9/accept_a_field_change_through_a_shares_mut_field.em:16`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/accept_a_number_changed_through_one_owner_while_a_loop_walks_the_other.em:18`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/accept_a_number_in_a_sharedref_target_changed_while_another_holder_walks_its_list.em:17`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/accept_a_ref_mut_name_of_a_shares_mut_link_changes_the_player.em:14`
+  - `fn hurt(ref mut ws: Array[Watcher]) changes Player:`
+  - `fn hurt(ref mut ws: Array[Watcher]):`
+- `conformance/R9/accept_a_ref_mut_name_of_a_shares_mut_link_changes_the_player.em:19`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/accept_a_scene_two_panels_own_and_change.em:10`
+  - `fn add(e: int) changes entities:`
+  - `fn add(e: int):`
+- `conformance/R9/accept_a_scene_two_panels_own_and_change.em:16`
+  - `fn main() changes Scene:`
+  - `fn main():`
+- `conformance/R9/accept_a_shared_list_element_changed_through_its_ref_mut_name.em:11`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/accept_a_thread_shared_object_filled_where_it_is_made.em:13`
+  - `h = thread.spawn(fn() with thread_shared names: names.items.len())`
+  - `h = thread.spawn(fn() thread_shared names: names.items.len())`
+- `conformance/R9/accept_a_thread_shared_owner_reaching_another_thread.em:18`
+  - `h = thread.spawn(fn() with owns names: names.items.len())`
+  - `h = thread.spawn(fn() owns names: names.items.len())`
+- `conformance/R9/accept_a_view_used_before_another_owner_removes_its_element.em:7`
+  - `fn main() changes Array[String]:`
+  - `fn main():`
+- `conformance/R9/accept_moving_items_between_two_shared_players_proved_apart.em:14`
+  - `fn transfer(a: shares Player, ref mut b: shares mut Player) changes Player:`
+  - `fn transfer(a: shares Player, ref mut b: shares mut Player):`
+- `conformance/R9/accept_moving_items_between_two_shared_players_proved_apart.em:19`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/accept_one_scoped_task_sets_a_player_through_a_sharedref_link.em:16`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/accept_one_scoped_task_sets_a_player_through_a_sharedref_link.em:20`
+  - `scope.spawn(fn() changes Player: a.target.hp = 1)`
+  - `scope.spawn(fn(): a.target.hp = 1)`
+- `conformance/R9/reject_a_change_through_a_shares_owner.em:9`
+  - `fn main() changes Array[int]:`
+  - `fn main():`
+- `conformance/R9/reject_a_field_change_through_a_shares_field.em:14`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `conformance/R9/reject_a_field_change_through_a_shares_field.em:17`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_a_list_changed_through_one_owner_while_a_loop_walks_the_other.em:19`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_a_list_in_a_sharedref_target_changed_while_another_holder_walks_it.em:18`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_a_plain_parameter_changes_a_player_behind_a_shares_link.em:13`
+  - `fn hurt(ws: Array[Watcher]) changes Player:`
+  - `fn hurt(ws: Array[Watcher]):`
+- `conformance/R9/reject_a_plain_parameter_changes_a_player_behind_a_shares_link.em:17`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_a_shared_list_element_changed_while_a_view_reads_it.em:11`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_a_shares_owner_reaching_another_thread.em:18`
+  - `h = thread.spawn(fn() with owns names: names.items.len())    #$ error[E7015]: the thread gets `names`, which holds `cache`, and `cache`'s other owner `c` (line 16) stays on this thread; `shares` owners count without atomics, so two threads would change one count; share the cache between threads: write `cache: thread_shared Cache` in `Names`, `c = thread_shared Cache()` instead of line 16 and `names = Names(cache=thread_shared c)` instead of line 17`
+  - `h = thread.spawn(fn() owns names: names.items.len())    #$ error[E7015]: the thread gets `names`, which holds `cache`, and `cache`'s other owner `c` (line 16) stays on this thread; `shares` owners count without atomics, so two threads would change one count; share the cache between threads: write `cache: thread_shared Cache` in `Names`, `c = thread_shared Cache()` instead of line 16 and `names = Names(cache=thread_shared c)` instead of line 17`
+- `conformance/R9/reject_a_thread_shared_object_changed_directly.em:14`
+  - `h = thread.spawn(fn() with thread_shared names: names.items.len())`
+  - `h = thread.spawn(fn() thread_shared names: names.items.len())`
+- `conformance/R9/reject_a_view_used_after_another_owner_removed_its_element.em:7`
+  - `fn main() changes Array[String]:`
+  - `fn main():`
+- `conformance/R9/reject_an_unscoped_thread_holding_a_sharedref_link.em:14`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_an_unscoped_thread_holding_a_sharedref_link.em:17`
+  - `t = thread.spawn(fn() with owns a changes Player: a.target.hp = 1)    #$ error[E7015]: the thread gets `a`, whose `target` is a link to `p`, a player of `main` on this thread, and a thread started with `thread.spawn` may outlive it; change it in a task that ends before `p` does: write `with scope = thread.scope():` and, inside it, `scope.spawn(fn() changes Player: a.target.hp = 1)` instead of lines 17 and 18`
+  - `t = thread.spawn(fn() owns a: a.target.hp = 1)    #$ error[E7015]: the thread gets `a`, whose `target` is a link to `p`, a player of `main` on this thread, and a thread started with `thread.spawn` may outlive it; change it in a task that ends before `p` does: write `with scope = thread.scope():` and, inside it, `scope.spawn(fn() changes Player: a.target.hp = 1)` instead of lines 17 and 18`
+- `conformance/R9/reject_moving_items_between_two_shared_players_that_may_be_one.em:13`
+  - `fn transfer(a: shares Player, ref mut b: shares mut Player) changes Player:`
+  - `fn transfer(a: shares Player, ref mut b: shares mut Player):`
+- `conformance/R9/reject_moving_items_between_two_shared_players_that_may_be_one.em:17`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_two_tasks_set_one_player_through_two_sharedref_links.em:15`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/reject_two_tasks_set_one_player_through_two_sharedref_links.em:20`
+  - `scope.spawn(fn() changes Player: a.target.hp = 1)`
+  - `scope.spawn(fn(): a.target.hp = 1)`
+- `conformance/R9/reject_two_tasks_set_one_player_through_two_sharedref_links.em:21`
+  - `scope.spawn(fn() changes Player: b.target.hp = 2)    #$ error[E7007]: two tasks change `p.hp` (lines 20 and 21), through `a.target` and `b.target`, links to one `Player`, each without a lock; make it an atomic: write `from std.sync import Atomic` at the top, `hp: Atomic[int]` in `Player` instead of line 10, `fn main() changes Atomic[int]:` instead of line 15, `p = Player(hp=Atomic(10))` instead of line 16, `scope.spawn(fn() changes Atomic[int]: a.target.hp.store(1))` instead of line 20, `scope.spawn(fn() changes Atomic[int]: b.target.hp.store(2))` instead of line 21 and `println(p.hp.load())` instead of line 22`
+  - `scope.spawn(fn(): b.target.hp = 2)    #$ error[E7007]: two tasks change `p.hp` (lines 20 and 21), through `a.target` and `b.target`, links to one `Player`, each without a lock; make it an atomic: write `from std.sync import Atomic` at the top, `hp: Atomic[int]` in `Player` instead of line 10, `fn main() changes Atomic[int]:` instead of line 15, `p = Player(hp=Atomic(10))` instead of line 16, `scope.spawn(fn() changes Atomic[int]: a.target.hp.store(1))` instead of line 20, `scope.spawn(fn() changes Atomic[int]: b.target.hp.store(2))` instead of line 21 and `println(p.hp.load())` instead of line 22`
+- `conformance/R9/run_a_shares_owner_sees_what_the_first_owner_changes.em:9`
+  - `fn main() changes Array[int]:`
+  - `fn main():`
+- `conformance/R9/run_a_thread_shared_object_read_by_a_thread_and_its_maker.em:15`
+  - `h = thread.spawn(fn() with thread_shared names: names.items.len())`
+  - `h = thread.spawn(fn() thread_shared names: names.items.len())`
+- `conformance/R9/run_a_tree_child_with_two_owners_changed_through_either.em:16`
+  - `fn main() changes Node:`
+  - `fn main():`
+- `conformance/R9/run_two_sharedref_mut_holders_and_the_owner_change_one_player.em:16`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `conformance/R9/run_two_sharedref_mut_holders_and_the_owner_change_one_player.em:22`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/run_two_shares_mut_owners_both_change_one_list.em:9`
+  - `fn main() changes Array[int]:`
+  - `fn main():`
+- `conformance/R9/run_two_shares_mut_owners_change_one_counter_with_no_run_time_check.em:13`
+  - `fn main() changes Counter:`
+  - `fn main():`
+- `conformance/R9/run_two_tasks_take_hp_off_one_player_through_two_sharedref_links.em:17`
+  - `fn main() changes Player:`
+  - `fn main():`
+- `conformance/R9/run_two_tasks_take_hp_off_one_player_through_two_sharedref_links.em:22`
+  - `scope.spawn(fn() changes Player: a.target.hp -= 1)`
+  - `scope.spawn(fn(): a.target.hp -= 1)`
+- `conformance/R9/run_two_tasks_take_hp_off_one_player_through_two_sharedref_links.em:23`
+  - `scope.spawn(fn() changes Player: b.target.hp -= 2)`
+  - `scope.spawn(fn(): b.target.hp -= 2)`
+- `area-A.md:944`
+  - `fn keep_alive(e: Enemy) changes LOG -> bool:`
+  - `fn keep_alive(e: Enemy) -> bool:`
+- `area-A.md:1090`
+  - `type DeathHandler[C] = fn(ref mut Array[Enemy], int) changes C`
+  - `type DeathHandler[C] = fn(ref mut Array[Enemy], int)`
+- `area-A.md:1093`
+  - `fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]) changes C:`
+  - `fn update(ref mut enemies: Array[Enemy], on_death: DeathHandler[C]):`
+- `area-A.md:1166`
+  - `update(ref mut es, fn(ref mut list: Array[Enemy], i: int) changes kills: kills += 1)`
+  - `update(ref mut es, fn(ref mut list: Array[Enemy], i: int): kills += 1)`
+- `area-A.md:2084`
+  - `fn heal() changes hp:`
+  - `fn heal():`
+- `area-B.md:264`
+  - `fn note(msg: String) changes log:`
+  - `fn note(msg: String):`
+- `area-B.md:267`
+  - `fn tick() changes players, log:`
+  - `fn tick():`
+- `area-B.md:408`
+  - `fn note(msg: String) changes log:`
+  - `fn note(msg: String):`
+- `area-B.md:411`
+  - `fn reset() changes this:`
+  - `fn reset():`
+- `area-B.md:537`
+  - `fn open() changes angle:`
+  - `fn open():`
+- `area-B.md:784`
+  - `fn radius() reads verts -> f64:`
+  - `fn radius() -> f64:`
+- `area-B.md:958`
+  - `fn next_word() changes pos -> StrView from src:`
+  - `fn next_word() -> StrView from src:`
+- `area-B.md:981`
+  - `fn get_mut(e: int) changes pools -> ref mut T:`
+  - `fn get_mut(e: int) -> ref mut T:`
+- `area-B.md:1002`
+  - `fn put(k: u128, e: int, owns c: T) changes pools:`
+  - `fn put(k: u128, e: int, owns c: T):`
+- `area-B.md:2123`
+  - `fn clear(scores: Mutex[Array[String]]) changes Mutex[Array[String]]:`
+  - `fn clear(scores: Mutex[Array[String]]):`
+- `area-B.md:2127`
+  - `fn main() changes Mutex[Array[String]]:`
+  - `fn main():`
+- `area-B.md:2280`
+  - `fn load_assets() reads renderer -> Array[String]:`
+  - `fn load_assets() -> Array[String]:`
+- `area-B.md:2370`
+  - `fn open() changes angle:`
+  - `fn open():`
+- `area-B.md:2453`
+  - `fn add(v: int) changes items:`
+  - `fn add(v: int):`
+- `area-C.md:160`
+  - `fn two_owners() changes Array[int]:    # it changes a list through a link (`other`)`
+  - `fn two_owners():    # it changes a list through a link (`other`)`
+- `area-C.md:166`
+  - `fn owner_that_reads() changes Array[int]:    # `items` no longer owns the list alone when it pushes`
+  - `fn owner_that_reads():    # `items` no longer owns the list alone when it pushes`
+- `area-C.md:438`
+  - `fn main() changes Node:                  # it changes a node through a link (R5)`
+  - `fn main():                  # it changes a node through a link (R5)`
+- `area-C.md:558`
+  - `fn update() changes state:`
+  - `fn update():`
+- `area-C.md:649`
+  - `fn update() changes state:`
+  - `fn update():`
+- `area-C.md:735`
+  - `fn build() changes Mesh -> (Entity, Entity):    # it changes a mesh through a link (R5)`
+  - `fn build() -> (Entity, Entity):    # it changes a mesh through a link (R5)`
+- `area-C.md:1056`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `area-C.md:1176`
+  - `fn get_mut(i: int) changes pools -> ref mut T:`
+  - `fn get_mut(i: int) -> ref mut T:`
+- `area-C.md:1181`
+  - `fn emplace(e: int, owns value: T) changes pools:`
+  - `fn emplace(e: int, owns value: T):`
+- `area-C.md:1381`
+  - `fn main() changes Player:      # it changes a player through a link, `p2` (R5)`
+  - `fn main():      # it changes a player through a link, `p2` (R5)`
+- `area-C.md:1627`
+  - `job = fn() with owns report changes Report: submit(report)   # takes `report` over; when it runs, `submit` ends it`
+  - `job = fn() owns report: submit(report)   # takes `report` over; when it runs, `submit` ends it`
+- `area-C.md:1729`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `area-C.md:1735`
+  - `fn main() changes Player:                      # it changes the player through links (R5)`
+  - `fn main():                      # it changes the player through links (R5)`
+- `area-C.md:1747`
+  - `fn transfer(a: shares Player, ref mut b: shares mut Player) changes Player:`
+  - `fn transfer(a: shares Player, ref mut b: shares mut Player):`
+- `area-C.md:1762`
+  - `fn shake() changes target:`
+  - `fn shake():`
+- `area-C.md:1768`
+  - `fn main() changes Player:                      # it changes the player through links (R5)`
+  - `fn main():                      # it changes the player through links (R5)`
+- `area-C.md:1895`
+  - `fn add(e: int) changes entities:`
+  - `fn add(e: int):`
+- `area-C.md:1901`
+  - `fn bump() changes n:`
+  - `fn bump():`
+- `area-C.md:2056`
+  - `fn step(ref mut ws: Array[Watcher], frame: i32) changes Player -> u64:    # called as `step(ref mut ws, frame)``
+  - `fn step(ref mut ws: Array[Watcher], frame: i32) -> u64:    # called as `step(ref mut ws, frame)``
+- `area-D.md:199`
+  - `handlers: Array[fn() changes captured] = []      # each may change the one variable it captured`
+  - `handlers: Array[fn()] = []      # each may change the one variable it captured`
+- `area-D.md:201`
+  - `fn on_click(owns f: fn() changes captured) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `area-D.md:204`
+  - `fn click() changes handlers, captured:`
+  - `fn click():`
+- `area-D.md:211`
+  - `b.on_click(fn() changes score: score += 1)       # row 6: game's real `score``
+  - `b.on_click(fn(): score += 1)       # row 6: game's real `score``
+- `area-D.md:218`
+  - `b.on_click(fn() with copy of score: score += 1)   # row 6's copy: the handler's own `score``
+  - `b.on_click(fn() copy of score: score += 1)   # row 6's copy: the handler's own `score``
+- `area-D.md:473`
+  - `cb = fn() with owns name, copy of score:`
+  - `cb = fn() owns name, copy of score:`
+- `area-D.md:579`
+  - `_n = xs.iter().inspect(fn(v) changes seen: seen.push(v)).count()   # the real `seen``
+  - `_n = xs.iter().inspect(fn(v): seen.push(v)).count()   # the real `seen``
+- `area-D.md:580`
+  - `h = thread.spawn(fn() with owns xs: work(xs))                      # `xs` handed to the thread`
+  - `h = thread.spawn(fn() owns xs: work(xs))                      # `xs` handed to the thread`
+- `area-D.md:698`
+  - `fn each_name(owns f: fn(owns String) changes C) changes C:`
+  - `fn each_name(owns f: fn(owns String)):`
+- `area-D.md:703`
+  - `each_name(fn(owns s) changes names: names.push(s))   # takes `s` over, keeps it in the real `names``
+  - `each_name(fn(owns s): names.push(s))   # takes `s` over, keeps it in the real `names``
+- `area-D.md:810`
+  - `b.on_click(fn() changes total: total += 1)`
+  - `b.on_click(fn(): total += 1)`
+- `area-D.md:927`
+  - `hs: Array[fn() changes score] = []`
+  - `hs: Array[fn()] = []`
+- `area-D.md:928`
+  - `hs.push(fn() changes score: score += 1)`
+  - `hs.push(fn(): score += 1)`
+- `area-D.md:1029`
+  - `call_once(fn() with owns s: consume(s))      # the function owns `s` and gives it away: once`
+  - `call_once(fn() owns s: consume(s))      # the function owns `s` and gives it away: once`
+- `area-D.md:1152`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `area-D.md:1158`
+  - `fn remove_current() changes handlers, current:`
+  - `fn remove_current():`
+- `area-D.md:1170`
+  - `handlers: Array[fn() changes Ui] = []`
+  - `handlers: Array[fn()] = []`
+- `area-D.md:1172`
+  - `fn on_click(owns f: fn() changes Ui) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `area-D.md:1176`
+  - `bump_ui = fn() with weakref ui changes Ui:     # a link that does not keep the Ui alive`
+  - `bump_ui = fn() weakref ui:     # a link that does not keep the Ui alive`
+- `area-D.md:1384`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `area-D.md:1394`
+  - `fn fire() changes this:`
+  - `fn fire():`
+- `area-D.md:1514`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `area-D.md:1523`
+  - `fn depth_total() changes on_visit -> int:`
+  - `fn depth_total() -> int:`
+- `area-D.md:1541`
+  - `on_visit: fn(Node) changes Node            # may change nodes, remove them included`
+  - `on_visit: fn(Node)            # may change nodes, remove them included`
+- `area-D.md:1543`
+  - `fn depth_total() changes on_visit, Node -> int:`
+  - `fn depth_total() -> int:`
+- `area-D.md:1871`
+  - `fn add(owns child: Node) changes children:`
+  - `fn add(owns child: Node):`
+- `area-D.md:1875`
+  - `fn take(i: int) changes children -> Node:`
+  - `fn take(i: int) -> Node:`
+- `area-D.md:2355`
+  - `fn get_mut(k: u128, i: int) changes pools -> ref mut T:`
+  - `fn get_mut(k: u128, i: int) -> ref mut T:`
+- `area-D.md:2742`
+  - `virtual fn on_update(dt: float) changes this:`
+  - `virtual fn on_update(dt: float):`
+- `area-D.md:2746`
+  - `override fn on_update(dt: float) changes angle:`
+  - `override fn on_update(dt: float):`
+- `area-E.md:322`
+  - `scope.spawn(fn() with copy of t changes total: total += t.split_whitespace().count())`
+  - `scope.spawn(fn() copy of t: total += t.split_whitespace().count())`
+- `area-E.md:330`
+  - `h = thread.spawn(fn() with owns names: names.items.len())`
+  - `h = thread.spawn(fn() owns names: names.items.len())`
+- `area-E.md:335`
+  - `h = thread.spawn(fn() with thread_shared names: names.items.len())`
+  - `h = thread.spawn(fn() thread_shared names: names.items.len())`
+- `area-E.md:445`
+  - `scope.spawn(fn() with copy of p changes sum: for x in p: sum += x)`
+  - `scope.spawn(fn() copy of p: for x in p: sum += x)`
+- `area-E.md:478`
+  - `h = thread.spawn(fn() with owns names: names.items.len())`
+  - `h = thread.spawn(fn() owns names: names.items.len())`
+- `area-E.md:500`
+  - `h = thread.spawn(fn() with thread_shared names: names.items.len())`
+  - `h = thread.spawn(fn() thread_shared names: names.items.len())`
+- `area-E.md:586`
+  - `scope.spawn(fn() with copy of t changes total: total = total * 2 + t.len())`
+  - `scope.spawn(fn() copy of t: total = total * 2 + t.len())`
+- `area-E.md:711`
+  - `scope.spawn(fn() with copy of n changes total: total.fetch_add(n))`
+  - `scope.spawn(fn() copy of n: total.fetch_add(n))`
+- `area-E.md:865`
+  - `fn add_all(text: StrView) changes words, tags:`
+  - `fn add_all(text: StrView):`
+- `area-E.md:876`
+  - `scope.spawn(fn() with copy of t changes stats: stats.add_all(t))`
+  - `scope.spawn(fn() copy of t: stats.add_all(t))`
+- `area-E.md:1021`
+  - `scope.spawn(fn() with copy of t changes stats: if stats.total < 10: stats.total += t.len())`
+  - `scope.spawn(fn() copy of t: if stats.total < 10: stats.total += t.len())`
+- `area-E.md:1138`
+  - `fn push(s: StrView) changes lines:`
+  - `fn push(s: StrView):`
+- `area-E.md:1142`
+  - `fn start(log: thread_shared Log) changes Log:`
+  - `fn start(log: thread_shared Log):`
+- `area-E.md:1143`
+  - `a = thread.spawn(fn() with thread_shared log changes Log: log.push("a"))`
+  - `a = thread.spawn(fn() thread_shared log: log.push("a"))`
+- `area-E.md:1144`
+  - `b = thread.spawn(fn() with thread_shared log changes Log: log.push("b"))`
+  - `b = thread.spawn(fn() thread_shared log: log.push("b"))`
+- `area-E.md:1148`
+  - `fn main() changes Log:`
+  - `fn main():`
+- `area-E.md:1353`
+  - `fn tick() changes FRAME, LOG:`
+  - `fn tick():`
+- `area-E.md:1360`
+  - `fn worker(x: int) changes RESULTS:`
+  - `fn worker(x: int):`
+- `area-E.md:1365`
+  - `fn main() changes FRAME, LOG, RESULTS:`
+  - `fn main():`
+- `area-E.md:1367`
+  - `a = thread.spawn(fn() changes RESULTS: worker(1))`
+  - `a = thread.spawn(fn(): worker(1))`
+- `area-E.md:1368`
+  - `b = thread.spawn(fn() changes RESULTS: worker(2))`
+  - `b = thread.spawn(fn(): worker(2))`
+- `area-E.md:1376`
+  - `type Handler = fn() changes LOG`
+  - `type Handler = fn()`
+- `area-E.md:1381`
+  - `fn on_click(owns f: Handler) changes handlers:`
+  - `fn on_click(owns f: Handler):`
+- `area-E.md:1384`
+  - `fn click() changes handlers, LOG:`
+  - `fn click():`
+- `area-E.md:1389`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `area-E.md:1391`
+  - `fn report(ref mut b: Button) changes LOG:`
+  - `fn report(ref mut b: Button):`
+- `area-E.md:1568`
+  - `fn on_click(owns f: fn()) changes handlers:`
+  - `fn on_click(owns f: fn()):`
+- `area-E.md:1571`
+  - `fn click() changes handlers:`
+  - `fn click():`
+- `area-E.md:1576`
+  - `b.on_click(fn() changes LOG: LOG.push(String("clicked")))`
+  - `b.on_click(fn(): LOG.push(String("clicked")))`
+- `area-E.md:1918`
+  - `fn add_point() changes score:`
+  - `fn add_point():`
+- `area-E.md:1929`
+  - `fn setup(owns game: shares mut Game) changes Game -> Retained[ForeignCallback]:`
+  - `fn setup(owns game: shares mut Game) -> Retained[ForeignCallback]:`
+- `area-E.md:1930`
+  - `return register_cb(fn() with owns game changes Game: game.add_point())`
+  - `return register_cb(fn() owns game: game.add_point())`
+- `area-E.md:1932`
+  - `fn main() changes Game:`
+  - `fn main():`
+- `area-E.md:2319`
+  - `fn note(n: int) changes words, longest:`
+  - `fn note(n: int):`
+- `area-E.md:2332`
+  - `fn main() changes Stats:`
+  - `fn main():`
+- `area-E.md:2334`
+  - `a = thread.spawn(fn() with thread_shared st changes Stats: st.note(3))`
+  - `a = thread.spawn(fn() thread_shared st: st.note(3))`
+- `area-E.md:2689`
+  - `fn bump() changes HITS:`
+  - `fn bump():`
+- `area-E.md:2747`
+  - `fn bump() changes HITS:`
+  - `fn bump():`

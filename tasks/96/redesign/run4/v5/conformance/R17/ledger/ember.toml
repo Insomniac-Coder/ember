@@ -1,0 +1,5 @@
+# The package the R17 tests import: its bodies are on the other side of a package's edge.
+[package]
+name = "ledger"
+version = "0.1.0"
+kind = "lib"

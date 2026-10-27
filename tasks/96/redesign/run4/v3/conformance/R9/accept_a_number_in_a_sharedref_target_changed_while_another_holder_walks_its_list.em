@@ -1,0 +1,22 @@
+#$ test: compile-pass
+#$ rules: R9, R7, R8
+## R9, R7: the nearest allowed program: while one holder's loop walks the player's list, another holder
+## changes a number of the player (AN-48 (b)).
+
+struct Player:
+    hp: int
+    inventory: Array[String]
+
+struct Camera:
+    target: sharedref mut Player
+
+struct Hud:
+    target: sharedref mut Player
+
+fn main():
+    p = Player(hp=100, inventory=[])
+    cam = Camera(target=sharedref mut p)
+    hud = Hud(target=sharedref mut p)
+    hud.target.inventory.push(String("key"))
+    for item in hud.target.inventory:
+        cam.target.hp -= item.len()

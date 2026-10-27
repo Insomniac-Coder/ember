@@ -258,7 +258,8 @@ acceptable it hurt readability too, if you want something to have a copy use the
     `main`, which starts threads running `fn() changes RESULTS: worker(1)`, says
     `fn main() changes FRAME, LOG, RESULTS:`. The thread rules (locks, `guarded by`, E7012) still do
     the safety work; a `spawn` inside a loop over `RESULTS` is now refused (start it after the loop).
-    Owner: "b".
+    Owner: "b". **Narrowed by 52:** a `spawn` in a loop that holds the lock the thread changes under is
+    allowed; joining it inside that lock is refused.
 31. **A C call counts as possibly running the callbacks C keeps, unless its declaration says it never
     calls back** (area E, reading 3; AN-78). The compiler cannot see inside C, so every C function
     counts as possibly running the kept callbacks, and a call to it makes the changes their first lines
@@ -408,10 +409,203 @@ acceptable it hurt readability too, if you want something to have a copy use the
 
 52. **A thread may be started inside a loop over what it changes when it makes that change under the
     lock the loop holds; joining it inside that lock is refused** (area E's note). With `RESULTS` guarded
-    by `RESULTS_LOCK` and the loop inside `with RESULTS_LOCK:`, `thread.spawn(fn() changes RESULTS:
-    worker(r))` in the loop is allowed (the thread waits for the lock until the loop ends), as Rust
+    by `RESULTS_LOCK` and the loop inside `with RESULTS_LOCK:`, `thread.spawn(fn() with copy of r changes
+    RESULTS: worker(r))` in the loop is allowed (line corrected, verdict 65) (the thread waits for the lock until the loop ends), as Rust
     allows it; `t.join()` inside the lock, which freezes (each waits for the other; Rust compiles it and
     it hangs, `run4/v3/probes/rust_spawn_in_loop.txt`), is refused when compiling (E7018). Owner: "B".
+53. **A function that uses a view parameter after changing what it changes is caught at the call, by a
+    fact the compiler works out from its body** (safety validation (b), hole 1: `run4/v3/safety/findings.md`
+    section 1, check-V3). With `fn note(s: StrView) changes LOG:` whose body is `LOG.clear()` then
+    `println(s)`, the compiler works out from `note`'s body that it uses `s` after changing `LOG` (its own
+    lines, and the same fact of the functions it calls; a call whose body it cannot see counts as doing
+    so), keeps that fact with `note` (in the package's interface file, R17), and checks it at each call:
+    `note(LOG[0])` is refused, the message giving both fixes (`note(copy of LOG[0])`, or use `s` before
+    `LOG.clear()` in `note`); `note("bye")` is allowed; a `note` that prints before it clears is allowed
+    with `note(LOG[0])`. Nothing is checked while running. A change of the fact by reordering lines inside
+    a library function is reported as a change to its interface (R17). Owner: "C", over (a) checking only
+    the `fn` line (it refused the print-then-clear `note` called with `note(LOG[0])`, the owner's own
+    counter-example) and (b) checking only inside the function (it refused the clear-then-print `note`
+    called only with other text).
+54. **Verdict 53 covers a method's object too** (safety validation (b), hole 2: C1's G19). `this` counts like
+    a view parameter: with `fn hit() changes hp, ENEMIES:` whose body is `ENEMIES.clear()` then
+    `this.hp -= 1`, the compiler works out that `hit` uses `this` after changing `ENEMIES`, and refuses
+    `ENEMIES[0].hit()` (the enemy is part of `ENEMIES`); the message says to change `this.hp` before
+    `ENEMIES.clear()`. A `hit` that uses `this` only before the clear is allowed. Owner: "yes, cover it
+    too".
+55. **A function that may destroy objects it owns says so in its type** (safety validation (b), hole 3:
+    V4's note on R10 point 1). R12's "its own state is itself, and a change to it needs no word" no longer
+    covers ending an object of a class type (one a `weakref` elsewhere may point at): that is named by the
+    object's type, `reset = fn() with owns players changes Player: players.clear()`. The compiler then
+    sees that `reset()` may destroy players, and a view opened from a link (`if cam.target exists as p:`)
+    is not used after it: `println(p.hp)` after `reset()` is refused (use `p` before `reset()`, or open the
+    link again after it). Nothing runs while the program runs. Owner: "b", over (a), protecting such views
+    with a count around every call through a stored function. The owner then asked why `with` is needed
+    (the capture list, verdict 22 and row 6).
+56. **An object counts as ended the moment its last owner lets it go, before its `drop` runs**
+    (safety validation (b), hole 4, first part: C1's G14, W4's question 7). A `weakref` opened during its
+    `drop`, or during the `drop` of anything it owns (a child's `drop` opening `this.parent` while the
+    parent is being destroyed), finds it ended, so the `if ... exists as p:` block is skipped and the
+    half-destroyed object is never read, nor counted again (the count pair that would end it a second
+    time cannot arise). As C++'s `weak_ptr` and Rust's `Weak`. Ending the link itself
+    (`this.parent = None`) stays allowed: it only subtracts the link's weak count in the target's header,
+    which the weak count keeps in memory (section 0). Owner: "a".
+57. **Destroying an object counts as calling its `drop`** (safety validation (b), hole 4, second part: C1's
+    G12). Anything that may end an object (a list cleared, a value replaced, a local ending with its
+    function) counts as a call of the object's `drop`, with what its `fn` line says it changes. So with
+    `class Enemy:` whose `fn drop() changes LOG:` pushes to `LOG`, `enemies.clear()` inside
+    `for line in LOG:` is refused (E3020: clear after the loop), as C++'s `~Enemy()` pushing to the vector
+    a range-for walks breaks the loop; and, by verdict 30, a function that may destroy an `Enemy` says
+    `changes LOG`. A `drop` may still change things outside its object (a log line, leaving a list).
+    Owner: "a that makes sense", over (b), a `drop` changing nothing outside its own object.
+58. **`mem.forget` is removed** (safety validation (b), hole 5's discussion). The owner, on what forgetting an
+    owner is good for: "what is so good about leaving a count higher and causing a leak", then "REMOVE
+    FORGET". Ending a value without its clean-up leaves a shared count too high for good (a leak), and was
+    the cheap way to roll a count over (hole 5); handing an object to C goes through the `Retained` token
+    and the checked trampoline instead. To do when the rules are next revised: the vocabulary's
+    `mem.forget` row (and `@must_drop`'s "no `forget`"), and what in today's library and tests uses it.
+59. **A count of owners is checked before it rolls over** (safety validation (b), hole 5: C1's G16). The
+    owner count is a 32-bit number in the object's header (R9); with `p = shares Player()` and
+    4,294,967,296 more owners pushed into a list, it would roll over to 1, and one owner ending would
+    delete the player while the others still point at it. Before each +1 the count is compared with its
+    maximum, and the program stops with "too many owners of a `Player`" (as Rust's `Rc`); one compare per
+    added owner, no extra memory. Owner: "a", over (b), 64-bit counts (every shared object 4 to 8 bytes
+    bigger). The weak count (also 32 bits) gets the same check: owner, "yes, same check".
+60. **Anything that can break a safety promise is possible only inside an `unsafe` block** (the owner, after
+    `mem.forget` turned out to need no `unsafe`: "for unsafe stuff it should only be possible in an unsafe
+    block"). The inventory of escape hatches and leaky features (planned next, for the owner's approval)
+    checks every one against this: today's marked ones (`unsafe` blocks and `unsafe fn`, raw pointers,
+    `assume_disjoint`, the `@ffi(...)` promises written in an `unsafe extern "C":` block) and every
+    feature that is not marked but can leak, skip a check, or reach memory the rules cannot see.
+61. **A function type says whether any thread may run its functions: `thread_shared fn()`** (safety
+    validation (b), hole 6a: C1's G26). A function that holds a one-thread value (`with shares mut count`)
+    stored in an object threads share (`bus = thread_shared Bus()`) and run by another thread
+    (`bus.fire()`) would let two threads change `count` at once. A list or parameter whose functions may
+    run on any thread says so in its type: `handlers: Array[thread_shared fn() changes Counter] guarded by
+    lock = []`, `fn on_event(owns f: thread_shared fn() changes Counter) changes handlers:`; such a
+    function may hold `thread_shared` values or copies, never a `shares` or `shares mut` value, and a
+    `thread_shared` object's fields that hold functions use such types. So `bus.on_event(fn() with shares
+    mut count changes Counter: count.n += 1)` is refused (make the counter shareable:
+    `count = thread_shared Counter()` with `n: Atomic[int]`). As Rust's `Send`. Owner: "b", over (a), the
+    compiler finding it from the whole program with no word in `Bus`.
+62. **A C callback that removes its own token stays alive until it finishes** (safety validation (b), hole
+    6b: C1's G27). With `callback = fn() with owns my_game changes Game:` whose body is
+    `my_game.token = None` then `my_game.add_point()`, the first line destroys the token (the field owns it),
+    and the compiler-inserted drop runs the generated `callback_release`, which unregisters the callback and
+    frees its block, where `my_game` lives, while the callback is still running; the second line would read
+    `my_game` from freed memory. Now: when a token is destroyed while its callback is running, C forgets
+    the callback at once, but `drop_env` and `ember_free` of its block wait until the callback returns, so the
+    second line works, as the program reads (the same protection R12 gives an Ember function that removes
+    itself). Owner: "a", over (b), refusing a callback that destroys its own token. What finally explained
+    it: the generated C (`=` inserts the old token's drop, which ends in `callback_release`), then "my_game
+    is the link and lives in the callback block; the programmer still calls add_point because nothing
+    tells them line 1 kills my_game".
+63. **A change through a link is named with `changes T` even when the link came in as a `ref mut`
+    parameter** (safety validation (b), open question 1, raised by W2, V2, V3, W4, V4, W5 and V5: R5's
+    "`changes T` for objects it changes through a link" against "a change through a `ref mut` parameter
+    needs no clause"). `fn tick(ref mut c: shares mut Clock) changes Clock:` with `c.frame += 1`; the
+    `ref mut` parameter alone is not enough when what it reaches is behind a link. R5's "needs no clause"
+    is narrowed to a `ref mut` parameter that is not a link. Owner: "b", over (a), `ref mut c` alone.
+64. **A change through a link that is the function's own local is named too** (open question 2: R5's "a
+    change to an own local needs no clause" against "`changes T` through a link"). `fn main() changes
+    Clock:` with `clock = shares mut Clock()` and `clock.frame += 1`. So a change through a link always
+    says `changes T`, whatever holds the link (verdicts 63 and 64). Owner: "b".
+65. **Verdict 52's example line takes its own copy of the loop's variable**: `thread.spawn(fn() with copy of r
+    changes RESULTS: worker(r))`. `r` changes every round and a `thread.spawn` thread may still run in a
+    later round, so it keeps its own copy (a `thread.spawn` function names what it keeps; the loop's own
+    variable needs `with copy of` for scoped tasks too; a module variable such as `RESULTS` needs no word).
+    Owner: "yes, correct it".
+66. **`exists as copy of v` stays, and the two-line form is valid too** (open question 4). Both
+    `if scores.get("ana") exists as copy of v:` and `if scores.get("ana") exists as v:` followed by
+    `mine = copy of v` are allowed. Owner: "let it be the way it is as long c is also valid". (Whether the
+    `v` of `exists as copy of v` may be changed is asked next.)
+67. **The `v` of `exists as copy of v` may be changed**: it is a copy of your own, as `boss = copy of
+    enemies[0]` then `boss.hp = 1`; the map is untouched. A name `exists as` makes without `copy of` still
+    never changes. Owner: "yes a".
+68. **A `Copy` type always works with `copy of`** (open question 5): `@derive(Copy)` gives `Clone` too, as
+    in Rust, so `b = copy of a` for a `Point` marked only `Copy` makes a copy of your own; E2116 is not
+    given for it. Owner: "allow making copy of copy".
+69. **`drop` never writes `changes this`** (open question 6). Changing its own object is a given for
+    `drop`, since it destroys it, so its first line names only what it changes outside `this`:
+    `fn drop():` for one that only reads or cleans up its object, `fn drop() changes LOG:` for one that
+    also pushes to `LOG` (verdict 57). Owner: "make exception for drop since it's a given that it will
+    change this as it destroys it so no changes this for it unless it changes something outside the
+    scope of this". (Writing `changes this` on a `drop` anyway: the message says to remove it.)
+70. **A call to a `const ref mut` parameter writes the same words** (open question 7): with
+    `fn blend(const ref mut dst: MutSpan[float], src: Span[float]):`, the call is
+    `blend(const ref mut d, s)`, as R4's "the same words as the parameter". Owner: "b", over (a),
+    `blend(ref mut d, s)`.
+71. **A lambda's parameter says what it receives, matching the function type** (open question 8: E2020
+    against AN-56). Where the type hands the value over (`fn(owns String)`), the lambda writes
+    `fn(owns s) => println(s.len())`; `fn(s) => ...` there is refused (E2020), the message giving the
+    `owns s` line. Owner: "b".
+72. **The loop rule covers everything a loop goes through: lists, maps, sets, strings** (open question 9).
+    `for k in counts.keys(): counts.insert(...)` is refused at the change, E3020, with the list's message
+    ("change it after the loop"), not at the next use of `k` (E3060). Owner: "a".
+73. **A message's fix must not run into another error; where two errors fit one line, the one whose fix
+    makes the program compile is shown** (open question 10, E3020 against E7018). In
+    `with log.lock: for line in log.lines: note()`, with `note` a `fn() ... changes Log` that pushes to
+    the log, the lock error (E7018: "move `note()` after the `with log.lock:` block") is shown, not the loop
+    error, whose fix (after the loop, still inside the lock) would still freeze. The owner: "a rule is
+    supposed to tell how to fix an issue not how to run into another issue". This is R18's "the line a
+    message gives compiles" made the tie-breaker for every pair of errors on one line (E7007 against
+    E3020, E3060 against E3022, and the rest).
+74. **`owns` is written on the line that makes a value for an `owns` field** (open question 11: verdict
+    24's spelling against R3's "no `owns` before a value its place hands over anyway"). With
+    `mesh: owns Mesh using LevelArena`, `boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0, 1.0]) using
+    current)` is required, and the line without `owns` is refused ("write `mesh=owns Mesh(...)`"); the
+    same for an `owns` field with no arena (AN-40's `Entity(mesh=Mesh(...))` becomes
+    `Entity(mesh=owns Mesh(...))`). R3's rule is narrowed accordingly. Owner: "a", over (b) both allowed
+    and (c) never written.
+75. **A function that changes an `Atomic` it captured names it by the variable** (open question 12):
+    `count_hit = fn() changes hits: hits.fetch_add(1)` for `main`'s real `hits = Atomic(0)`; naming by
+    type (`changes Atomic[int]`) is for an `Atomic` reached through a link, where no name is visible.
+    Owner: "a".
+76. **"Can see by name", for `captured`, means declared or imported in that file** (open question 13).
+    `class Button: handlers: Array[fn() changes captured] = []` in `game/button.em`, which does not import
+    `game.log`, may hold a function that changes `LOG`; `captured` covers it there, and the compiler
+    fills it in from the whole program (verdict 40). A name declared or imported in the file is written
+    by name. Owner: "a".
+77. **Adding to an object's field from several scoped tasks is a reduction too** (open question 14: the
+    reduction rule's `total += e` against E7007 naming `stats.total`). `scope.spawn(fn() with copy of x
+    changes stats: stats.total += x)` gives each task a private sum, added together at the end of the
+    scope (always the right total); nothing reads `stats.total` before then. A task that reads the
+    current value (`if stats.total < 10: stats.total += x`), or a `thread.spawn` thread, still needs an
+    `Atomic` or a lock (E7007). Owner: "okay so for reduction it should be fine" (after Rust's way, an
+    atomic, a lock or Rayon's explicit `sum`, was shown).
+78. **A field of a value may be handed over on its own, as in Rust** (open question 15, R2's "partly
+    handed over"). `names.push(p.name)` moves `p`'s name into the list; `p.hp` stays usable; `p.name` is
+    refused until it gets a new value ("`p.name` was handed over to `names` on line N; give it a new
+    value first, or keep a copy: `names.push(copy of p.name)`"), and so is `p` used whole. Owner: "a", over
+    (b), refusing a field hand-over. (For a class object, which other names may reach, taking a field out
+    stays refused, as today's EXP-6: others would see the hole; `mem.replace` or `mem.take` is the way.)
+79. **`copy of` a struct that holds links copies the links** (open question 16, C1's G17): for
+    `struct Team: captain: shares Player, scout: weakref Player`, `t2 = copy of t` is a new `Team` pointing
+    at the same player, with one more owner in `captain` and one more link in `scout` (as copying a C++
+    struct holding a `shared_ptr` and a `weak_ptr`, or Python's `copy.copy`). Fields the struct owns alone
+    are copied themselves. Owner: "a", over (b) a deep copy of the player and (c) refusing it.
+    (The owner reconsidered a deep copy for `shares` fields, then kept (a): "a next question".)
+80. **A function that outlives the function that made it takes the variables it keeps with `with owns`**
+    (open question 17: R12's placement of a real variable in the function's own state, against E3026).
+    `return fn() changes n: n += 1` in `make_counter`, whose local `n` ends when it returns, is refused
+    (E3026), the message giving `return fn() with owns n:`. With `with owns`, `n` is the function's own
+    state, and changing its own state needs no `changes` word (R12), so the returned type is a plain
+    `fn()`: `fn make_counter() -> fn():`. Without `with`, a function only borrows (the owner's own
+    summary of `with`). Owner: "b", over (a), the compiler moving `n` in by itself as Python does.
+81. **Adding to a list does not end a link to an object in its own block** (open question 18: R8 (b)'s
+    "any reshape ends a view into what the list owns" against AN-52). With `players: Array[Player]` (class
+    objects, each in its own block) and `w = Watcher(target=sharedref mut players[0])`,
+    `players.push(Player())` moves at most the list's addresses, not the players, so `w.target.hp -= 1`
+    after it is allowed. A link to a value stored inside the list's own block (an inline struct) is still
+    ended by a push. Removing, clearing or replacing still ends links to what may be destroyed. The owner
+    also noted that nothing on `players` says its players can be shared: a `sharedref mut` link owns
+    nothing, so the word sits on the line that makes it, as `ref mut enemies[0]` does. Owner: "a".
+82. **A name opened from a link is not used across a call that may destroy what it reads** (open question
+    19: R8 (b) against R10). With `if cam.target exists as p:` and `remove_all(ref mut players)` emptying
+    the list that owns the player, `println(p.hp)` after the call is refused ("`remove_all` may destroy the
+    player `p` reads; use `p` before that line, or open the link again after it"); nothing runs while the
+    program runs. R10's keep-alive (deferred-drop region, count pair) is no longer used for such a call; it
+    remains for a `thread_shared` object reached through a `weakref` (R10 point 4). As verdict 55. Owner:
+    "a", over (b), keeping the player alive with a count while `p` is used.
 
 ## Error messages are part of readability (owner, 2026-10-24)
 

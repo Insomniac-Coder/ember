@@ -1,0 +1,28 @@
+#$ test: compile-fail
+#$ rules: R14, R2
+## R14: "A cast of a place is a place: the name bound from it is read-only unless written `ref mut`
+## (`pool = ref mut cast this.pools[k] as Pool[T]`)" (AN-22's `get_mut`, with `ref mut` left out).
+
+interface AnyPool:
+    fn count() -> int
+
+[T]
+struct Pool implements AnyPool:
+    dense: Array[T]
+    sparse: Array[int]
+
+    fn count() -> int:
+        return this.dense.len()
+
+struct Registry:
+    pools: Map[u128, owns dyn AnyPool]
+
+    [T]
+    fn get_mut(k: u128, e: int) changes pools -> ref mut T:
+        pool = cast this.pools[k] as Pool[T]
+        return ref mut pool.dense[pool.sparse[e]]    #$ error[E3023]: `pool` reads the pool in `this.pools` and cannot change it; to return a changeable element, write `pool = ref mut cast this.pools[k] as Pool[T]`
+
+fn main():
+    reg = Registry(pools={7u128: Pool[int](dense=[10], sparse=[0])})
+    p = ref mut reg.get_mut[int](7u128, 0)
+    p += 1
