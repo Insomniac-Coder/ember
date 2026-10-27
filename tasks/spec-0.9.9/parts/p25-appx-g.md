@@ -138,7 +138,7 @@ clarified and the implementation must meet it. **GATE**: a test or CI obligation
 | F-127 — scope: the C++ importer is a project the size of the rest of the compiler | SPEC | C++ is an optional annex after C. | `[CONF-4]`, `[FFI-3]` |
 | F-128 — the "five count contracts" are never listed | SPEC | The count axis is listed: `one`, `count(n)`, `nul_terminated`, `fixed(N)`, `inout_count(p)`. | `[FFI-11]`, `[FFI-11a]` |
 | F-129 — the `[FFI-39]` example uses constructor syntax the grammar does not have | SPEC | Constructors are `fn init(self, …)` everywhere, including C++ subclasses. | `[FFI-39]`, `[CLS-2]` |
-| F-130 — two package settings turn memory-safety checks off for Safe code, and `[PHIL-10]` lists no such exception | SPEC | No setting removes a safety check; the two keys are gone. | `[PRF-1]`, `[EXC-14]`, `[GPU-1]` |
+| F-130 — two package settings turn memory-safety checks off for Safe code, and `[PHIL-10]` lists no such exception | SPEC | No setting removes a safety check; the two keys are gone. | `[PRF-1]`, `[PRF-4]`, `[GPU-1]` |
 | F-131 — XVII.5 writes `mut` at a call site | SPEC | No call-site modes in examples. | `[FN-2a]` |
 | F-132 — the mandated refusal report suggests a signature the rules reject | SPEC | Refusal reports do not suggest signatures; `migrate_from` returns `Result`. | `[HR-16]`, `[HR-18]` |
 | F-133 — `migrate_from` may not contain a single integer `+` | SPEC | Run-time check failures in `migrate_from` become `ReloadError.Migration`. | `[HR-35]` |
@@ -194,8 +194,8 @@ clarified and the implementation must meet it. **GATE**: a test or CI obligation
 | F-183 — a single-statement block lambda inside brackets is rejected | IMPL | A one-statement lambda body in brackets is legal. | `[GRM-17]` |
 | F-184 — range types reach the C compiler broken | IMPL | Range types print and compile; the C gate catches broken C. | `[CG-C-2]`, `[TST-27]` |
 | F-185 — a parent/child class pair with a constructor overflows the compiler's stack | IMPL | An internal compiler error is always a defect. | `[CG-C-2]` |
-| F-186 — the runtime exclusivity panic names a C symbol, not the Ember object | SPEC | Panics name Ember entities. | `[DIA-23]`, `[EXC-6]` |
-| F-187 — `L3011` fires on calls that cannot re-enter the cell | SPEC | `L3011` fires only for calls that can reach the cell. | `[CELL-7]` |
+| F-186 — the runtime exclusivity panic names a C symbol, not the Ember object | SPEC | Panics name Ember entities. | `[DIA-23]`, `[COST-6]` |
+| F-187 — `L3011` fires on calls that cannot re-enter the cell | OUT | `L3011` is gone with `RefCell` (0.9.15): what a call may change is worked out when compiling. | `[BRW-21]` |
 | F-188 — a view escaping its source gets two errors, the first wrong | SPEC | Storage end with a live loan is one diagnostic, shape B7. | `[BCK-4]`, `[DIA-7]` |
 | F-189 — `Array.iter()` does not exist | IMPL | `Array.iter()` is specified. | `[STD-15]` |
 | F-190 — growable-buffer arithmetic is unchecked | SPEC | Capacity arithmetic is checked. | `[HEAP-8]` |

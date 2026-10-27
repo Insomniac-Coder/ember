@@ -11,11 +11,13 @@ REASON = {
     'AST': 'compiler internals; out of the language document',
     'ATT': 'folded into the attribute table and `[GRM-20]`',
     'BEN': 'benchmark plan; replaced by the performance gate `[TST-28]`',
+    'CLS': 'in 0.9.15 a class needs no mark to be shared between threads: `thread_shared` says it on the value (§XI)',
+    'HEAP': 'in 0.9.15 `Shared[T]` and its checked `get`/`get_mut` are gone: several owners are `shares` and `shares mut` (§VIII), with no run-time access check',
     'BLD': 'build-system internals; the user-visible parts are §XVII.3',
     'BLD-FFI': 'C++ build integration; see Annex C',
     'BUD': 'compile-time budget details; condensed into `[BLD-10]`',
     'CAT': 'rule categories retired; conformance profiles (`[CONF-*]`) replace them',
-    'CELL': 'folded into `[CELL-6]` and the prelude (`[MOD-5]`)',
+    'CELL': 'folded into the prelude (`[MOD-5]`); in 0.9.15 `RefCell` and its run-time checks are gone, `Cell` stays (`[CELL-13]`), and the rest is `shares mut`, `thread_shared`, `Mutex` and `Atomic`',
     'CLI': 'condensed into the command listing of §XVII.1 and `[CLI-19]`',
     'CLO-ABI': 'compiler internals',
     'CMP': 'compiler internals',
@@ -29,8 +31,8 @@ REASON = {
     'DET-IMPL': 'compiler internals',
     'DIA': 'condensed into §XVII.6 (shape tables, `[DIA-21]`, `[DIA-24]`)',
     'DOC': 'folded into `[DOC-1]` and `[DOC-2]`',
-    'EFF': 'folded into `[EFF-11]`, `[EFF-16]` and `[EFF-19]`',
-    'EXC': 'performance gate folded into `[TST-28]`',
+    'EFF': 'folded into `[EFF-11]`, `[EFF-16]` and `[EFF-19]`; in 0.9.15 written effect clauses are gone: what a function changes is worked out from its body (`[EFF-1]`)',
+    'EXC': 'performance gate folded into `[TST-28]`; in 0.9.15 the run-time exclusivity checks are gone: who may change or read a place is checked when compiling (§VII)',
     'EXP': 'replaced by floor semantics, `[TYP-28]`',
     'FFI': 'C++ interop details (Annex C) or folded into the five-axis contract `[FFI-11]`',
     'FFI-CB': 'folded into `[FFI-21]`',
@@ -791,7 +793,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.10', 35)
+CURRENT = ('0.9.15', 1)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -827,6 +829,7 @@ V010_H31_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h31')
 V010_H32_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h32')
 V010_H33_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h33')
 V010_H34_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h34')
+V010_H35_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h35')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1684,8 +1687,47 @@ Generated: every rule whose text differs from 0.9.10_Hardened_34.
 """
 
 
-def v010_h34_to_now():
-    return H40_HEAD + rule_diff(V010_H34_PARTS, os.path.join(HERE, '..', 'parts'))
+def v010_h34_to_h35():
+    return H40_HEAD + rule_diff(V010_H34_PARTS, V010_H35_PARTS)
+
+
+H41_HEAD = """
+## H.41 Changes in 0.9.15_Hardened_1 (from 0.9.10_Hardened_35)
+
+**0.9.15_Hardened_1** is the memory-model rework the owner ordered on 2026-10-23 and decided, verdict by
+verdict, from 2026-10-24 to 2026-10-27 (`tasks/96/redesign/JOB.md`, verdicts 1 to 100; the design in
+`tasks/96/redesign/run4/v5/`, with its 842 conformance programs; the unsafe-features inventory,
+`run4/v5/unsafe-inventory.md`). Its goal, all at once: as fast as C and Rust; as memory-safe as Rust or
+safer, checked when compiling; readable like Python, every meaning written in words on the thing it
+describes. It replaces the memory model of 0.9.10:
+
+* Ownership is written in words on the value and in its type: `owns` (one owner, and the hand-over, for
+  every type, numbers included), `shares` and `shares mut` (several owners, counted), `thread_shared`
+  (several owners on several threads), `weakref` (a link that keeps nothing alive, opened with
+  `if x exists as y:`), `ref` and `ref mut` (views), `copy of` (a copy of your own); `Box`, `Shared`,
+  `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `owned`, `@sync`, `@borrows` and `mem.forget` are gone.
+* What a function changes and reads is worked out from its body, never written (no `changes`, no
+  `reads`); every refusal names the chain of calls that makes a change.
+* Every rule about who may change or read a place is checked when compiling; the run-time exclusivity
+  checks and the run-time index compare are gone. A run-time check is left only where the property is
+  data the program computes (an index, an overflow, a `weakref` target, a downcast, a count's limit).
+* Loops follow Rust's way: nothing changes a collection through its own name while a loop walks it;
+  the loop's `ref mut` handle changes the item it is on.
+* A loop of owners is refused unless the compiler proves it is opened again; anything that can break a
+  safety promise is possible only inside `unsafe` (`into_raw()`, C function pointers, `unsafe import c`,
+  `@unsafe(export(...))`, an `Allocator`'s free); the inventory's 34 fixes are applied.
+* The ECS is EnTT's design (ODR-279, verdict 100): a `Registry` of sparse-set pools and views, with no
+  scheduler.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_35.
+
+| Rule | 0.9.10_Hardened_35 → 0.9.15_Hardened_1 |
+|---|---|
+"""
+
+
+def v0915_h1_to_now():
+    return H41_HEAD + rule_diff(V010_H35_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1712,6 +1754,7 @@ def header_lines(n):
     0.9.10 ones and every 0.9.9 hardening, the last of them `n`."""
     version, hardening = CURRENT
     earlier = ', '.join([f'{version}_Hardened_{k}' for k in range(hardening - 1, 0, -1)]
+                        + [f'0.9.10_Hardened_{k}' for k in range(35, 0, -1)]
                         + [f'0.9.9_Hardened_{k}' for k in range(n, 0, -1)])
     return (f'**Version:** {version}_Hardened_{hardening}',
             f'**Supersedes:** {earlier}, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 '
@@ -1727,7 +1770,7 @@ def write_header():
     version, supersedes = header_lines(latest)
     text, a = re.subn(r'^\*\*Version:\*\* .*$', version, text, count=1, flags=re.M)
     text, b = re.subn(r'^\*\*Supersedes:\*\* .* This document is$', supersedes, text, count=1, flags=re.M)
-    assert a == 1 and b == 1, (a, b)
+    assert a == 1 and b <= 1, (a, b)  # 0.9.15: p00 keeps its hand-written Supersedes paragraph
     open(front, 'w', encoding='utf-8', newline='\n').write(text)
     return latest
 
@@ -1756,7 +1799,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1_to_now() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

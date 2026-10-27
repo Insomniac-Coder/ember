@@ -8,9 +8,9 @@ anything this Part leaves open.
 
 ## XV.1 Organisation and conventions
 
-* `[STD-6]` `std` is layered, and each layer depends only on the ones before it: **core** (scalars,
+* `[STD-6]` *(changed in 0.9.15)* `std` is layered, and each layer depends only on the ones before it: **core** (scalars,
   `Option`, `Result`, views, fixed-capacity containers, math, SIMD), **alloc** (`Array`, `String`,
-  `Box`, `Map`, `Set`, `Shared`), **sync** (atomics, locks, channels, threads, jobs), **io** (console,
+  `Map`, `Set`, and the heap blocks of `owns` and `shares` values), **sync** (atomics, locks, channels, threads, jobs), **io** (console,
   files, time, processes) and **ffi**. A package that declares `[package] layers = ["core"]` may use
   only core; this is how firmware and kernels use Ember.
 * `[STD-1]` Every function in `std.core`, `std.mem`, `std.math`, `std.simd` and `std.arena` is
@@ -21,11 +21,11 @@ anything this Part leaves open.
   is `E2072`, `no method 'append' on Array[int]`, whose help names the Ember method
   (the full table is Appendix E). A Python name that Ember keeps (`partition`, `items`, `count`, and
   the built-in functions of `[STD-26]`) keeps Python's meaning (`[PHIL-14]`).
-* `[STD-26]` *(new in 0.9.9)* *(changed in 0.9.10)* **Python's built-in functions.** The prelude has these functions, with
-  Python's meaning; each borrows its argument as a `for` loop would (`[CTL-1]`):
+* `[STD-26]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Python's built-in functions.** The prelude has these functions, with
+  Python's meaning; each reads its argument as a `for` loop does (`[CTL-1]`):
   * `len(x)` is `x.len()`: an `int` for a collection or view, and for a range its count
     (`[STD-19]`), in the smallest type that holds it by the numbers the compiler knows
-    (`len(0..n)` with `n: int` is an `int`). `len` of a `str` or `String` is
+    (`len(0..n)` with `n: int` is an `int`). `len` of a `StrView` or `String` is
     `E2073`: Python counts characters and Ember's `s.len()` counts bytes, so the help offers both
     `s.char_count()` and `s.len()`.
   * `range(stop)`, `range(start, stop)`, `range(start, stop, step)` count as Python's do, including a
@@ -35,14 +35,16 @@ anything this Part leaves open.
     backwards) return lazy iterators, as Python 3's do.
   * `sum(it, start=0)`, `any(it)` and `all(it)` consume an iterable (of numbers, of `bool`s);
     `any(x > 0 for x in xs)` uses a generator expression (`[GRM-38]`).
-  * `sorted(it, key=None, reverse=false) -> Array[T]` returns a new sorted array (stable). Over an
-    iterator of references (`sorted(m.keys())`) the array holds clones of the items (`T: Clone`), as
-    `sorted(m)`'s does: an `Array` cannot hold views of a local (`[TYP-15]`).
+  * `sorted(it, key=None, reverse=false) -> Array[T]` returns a new sorted array (stable) of the items
+    the iterator gives, and copies none. Over an iterator of views (`sorted(m.keys())`) it is a list of
+    views, a value that holds views, which lives no longer than what they point into (`[TYP-15]`): a
+    change that may reshape `m` ends it (`E3060` at a later use). A list of items of your own is
+    written `sorted(m.keys().copy_each())` (`[STD-19]`).
   `min` and `max` stay two-argument functions; `xs.iter().min()` gives an `Option` for a collection.
-* `[STD-14]` *(new in 0.9.9)* *(changed in 0.9.10)* Failure follows `[ERR-13]`: a caller's bug
+* `[STD-14]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Failure follows `[ERR-13]`: a caller's bug
   panics; a failure of the world returns `Result` or `Option`. The non-panicking twin `[ERR-13]` asks
   for is an accessor's (`Mat4.col`/`col_checked`, `CppShared.get`); a constructor's or a mutation's
-  caller's bug (`stepped(0)`, `BitSet.insert` of a negative, `Entity.new` out of range, `World.add` to
+  caller's bug (`stepped(0)`, `BitSet.insert` of a negative, `Entity.new` out of range, `Registry.emplace` on
   a dead entity, `normalize` of zero, `split` on an empty separator) panics with none. Every
   allocating function is documented as allocating and carries `Alloc`.
 
@@ -50,10 +52,10 @@ anything this Part leaves open.
 |---|---|
 | prelude | the names of `[MOD-5]` |
 | `std.core` | scalars, `Option`, `Result`, `AnyError`, `Ordering`, ranges, `NonZero`, the standard interfaces (§IV.8), iterator adapters |
-| `std.mem` | `size_of`, `align_of`, `offset_of`, `swap`, `replace`, `take`, `drop`, `forget`, `keep_alive`, `MaybeUninit`, `transmute`, `zeroed`, `copy`, `copy_nonoverlapping`, `Volatile`, `Layout`, `Allocator`, `Global`, `ptr`, `assert_disjoint`, `assert_disjoint_or_panic`, `assume_disjoint` (Part IX) |
-| `std.cell` | `Cell`, `RefCell`, `Ref`, `RefMut`, `UnsafeCell` |
+| `std.mem` | `size_of`, `align_of`, `offset_of`, `swap`, `replace`, `take`, `drop`, `keep_alive`, `MaybeUninit`, `transmute`, `zeroed`, `copy`, `copy_nonoverlapping`, `Volatile` (`[STD-29]`), `Layout`, `Allocator`, `Global`, `ptr`, `check_disjoint`, `assert_disjoint`, `assume_disjoint` (Part IX) |
+| `std.cell` | `Cell`, `UnsafeCell` |
 | `std.collections` | `Array`, `Map`, `Set`, `Deque`, `SmallArray`, `BitSet`, `FixedArray`, `FixedString`, `RingBuffer`, `Pool`, `Handle`, `SoA`, `ArenaArray`, `ArenaMap`, `ArenaSoA`, `DefaultHasher`, `RandomState`, `Hasher`, `CapacityError`; the iterator types `SpanIter`, `MutSpanIter`, `SpanChunks`, `MutSpanChunks`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter` (public, not in the prelude) |
-| `std.string` | `String`, `str` methods, `StringBuilder`, `ParseError`, `Utf8Error` |
+| `std.string` | `String`, `StrView` methods, `StringBuilder`, `ParseError`, `Utf8Error` |
 | `std.fmt` | `Formatter`, `FmtError`, `format`, `format_to`, the format-spec mini-language (`[LEX-19]`) |
 | `std.math` | constants, scalar functions, `Vec2/3/4`, `IVec2/3/4`, `UVec2/3/4`, `Mat2/3/4`, `Quat`, `Transform`, `Aabb`, `Sphere`, `Ray`, `Plane`, `Frustum`, `KahanSum`, `det` (`[DET-4]`) |
 | `std.simd`, `std.cpu` | Part XII; `prefetch`, `pause`, `cycle_counter`, `cache_line_size`, `logical_cores` |
@@ -66,18 +68,23 @@ anything this Part leaves open.
 | `std.ecs` | Part XII |
 | `std.ser` | Part XIV |
 | `std.testing`, `std.debug` | `assert_approx_eq`, `expect_panic`, the `bench` harness (Part XVII); `backtrace`, `leak_report`, `alloc_stats`, and profiler zones `with debug.zone("name"):` |
-| `std.ffi` | `CString`, `cstr`, `c_int` and the other C aliases, `c_wchar`, `WideString`, `ForeignBox`, `Retained`, `Callback`, `adopt` (Part XVI) |
+| `std.ffi` | `CString`, `CStrView`, `c_int` and the other C aliases, `c_wchar`, `WideString`, `Retained`, `Callback`, `adopt` (which gives an `owns T`) (Part XVI) |
 | `std.gpu` | Annex D |
+
+* `[STD-29]` *(new in 0.9.15)* `std.mem.Volatile[*T]`'s `read_volatile` and `write_volatile` are
+  `unsafe fn`s (`[UNS-5]`) whose `@safety` asks the caller for a pointer that is valid for a read (a
+  write) of a `T` **and aligned to `T`'s alignment**: a volatile access through a misaligned pointer is
+  undefined in the C it compiles to, so the caller's promise names it.
 
 ## XV.2 Console output, input and formatting
 
-* `[STD-9]` *(new in 0.9.9)* `print(a, b, …, sep=" ", end="")` and `println(a, b, …, sep=" ",
+* `[STD-9]` *(new in 0.9.9)* *(changed in 0.9.15)* `print(a, b, …, sep=" ", end="")` and `println(a, b, …, sep=" ",
   end="\n")` write their arguments' text to standard output separated by `sep`;
   `eprint`/`eprintln` write to standard error. They are compiler-known and are the only calls with a
   variable number of positional arguments (`[TYP-26]`). An argument's text is its `Display` text when
   its type has `Display`, and its `Debug` text otherwise, which is Python's `str` → `repr` fallback; a
-  type with neither (a `RefCell`, whose value is reached only through a checked borrow) is `E2040`,
-  whose help is to implement `Display`. A class handle always has `Debug`, its class and address
+  type with neither is `E2040`, whose help is to implement `Display`. A class object always has
+  `Debug`, its class and address
   (`[TYP-36]`), so a class without a written `Display` prints by it (ODR-113). `println()` prints an
   empty line.
 * `[STD-2]` Printing allocates only to build an f-string argument; `println("literal")`,
@@ -86,45 +93,52 @@ anything this Part leaves open.
   and returns it without the line ending. The prelude's console functions treat a console failure as
   fatal, as Python does when the exception is not caught: end of input or a closed stream panics, and
   the message names the `Result` forms in `std.io` (`stdin().read_line()`).
-* `[STD-18]` *(new in 0.9.9)* `format(value, spec="") -> String` formats one value with a format spec
+* `[STD-18]` *(new in 0.9.9)* *(changed in 0.9.15)* `format(value, spec="") -> String` formats one value with a format spec
   (`[LEX-19]`), like Python's `format`; the spec is a string literal, checked against the value's type
-  where it is written, as an f-string's is (`E2250`, ODR-168). `format_to(buf: MutSpan[u8], …) -> Result[str, FmtError]` formats
-  into a caller's buffer; its own machinery never allocates, so the call allocates only if a value's
+  where it is written, as an f-string's is (`E2250`, ODR-168).
+  `format_to(ref mut buf: MutSpan[u8], …) -> Result[StrView, FmtError] from buf` formats into a
+  caller's buffer, called `format_to(ref mut buf, …)`, and gives a view of the text it wrote there; its
+  own machinery never allocates, so the call allocates only if a value's
   `Display` does (`[EFF-1]`). An f-string lowers to a `StringBuilder` sized from its
   literal parts.
 
 ## XV.3 Text
 
-* `[TXT-1]` `str` is a borrowed `Span[u8]` known to be valid UTF-8; `String` owns a heap buffer with the
-  same guarantee. Safe code may rely on the invariant (`[UNS-4]`).
-* `[TXT-2]` Nothing becomes a `str` without validation: every conversion from bytes or foreign text
-  returns `Result[str, Utf8Error]`, or a `_lossy` form that substitutes U+FFFD. An importer or binding
-  that would hand foreign bytes to a `str` without validation is `E5063`.
-* `[TXT-3]` `str` and `String` are a pointer and a length, not null-terminated, and may contain `\0`. A
-  C boundary uses `cstr`/`CString` (Part XVI); a `c"…"` literal containing a NUL is `E5064`.
-* `[TXT-4]` *(changed in 0.9.9)* Slicing a string, `s[a..b]`, is by byte offset and panics in every
-  profile when a bound is not on a character boundary; `s.get(a..b) -> Option[str]` is the total form.
-  There is no indexing by character position, because it would be O(n).
-* `[TXT-5]` `str` → `String` allocates and copies; `String` → `str` is free; `Span[u8]` → `str`
-  validates in O(n) without allocating; `str` → `CString` is the fallible allocating
-  `.to_cstring()` of `[FFI-15]` (ODR-081).
-* `[TXT-6]` Across the C ABI a `str` is `{const uint8_t *ptr; size_t len}`.
+* `[TXT-1]` *(changed in 0.9.15)* `StrView` is a read-only view of bytes, a `Span[u8]`, known to be valid UTF-8; `String`
+  owns a heap buffer with the same guarantee. Safe code may rely on the invariant (`[UNS-4]`).
+* `[TXT-2]` *(changed in 0.9.15)* Nothing becomes a `StrView` without validation: every conversion from bytes or foreign text
+  returns `Result[StrView, Utf8Error]`, or a `_lossy` form that substitutes U+FFFD. An importer or
+  binding that would hand foreign bytes to a `StrView` without validation is `E5063`.
+* `[TXT-3]` *(changed in 0.9.15)* `StrView` and `String` are a pointer and a length, not null-terminated, and may contain
+  `\0`. A C boundary uses `CStrView`/`CString` (Part XVI); a `c"…"` literal containing a NUL is `E5064`.
+* `[TXT-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* Slicing a string, `s[a..b]`, is by byte offset and panics in every
+  profile when a bound is not on a character boundary; `s.get(a..b) -> Option[StrView]` is the total
+  form. There is no indexing by character position, because it would be O(n).
+* `[TXT-5]` *(changed in 0.9.15)* `StrView` → `String` allocates and copies, and is written `String(s)`; `String` →
+  `StrView` is free; `Span[u8]` → `StrView` validates in O(n) without allocating; `StrView` →
+  `CString` is the fallible allocating `.to_cstring()` of `[FFI-15]` (ODR-081).
+* `[TXT-6]` *(changed in 0.9.15)* Across the C ABI a `StrView` is `{const uint8_t *ptr; size_t len}`.
 * `[TXT-7]` Text is UTF-8 everywhere. `std.ffi.WideString` converts, explicitly, for APIs that need
   UTF-16.
-* `[TXT-8]` `str` is a view type and carries a region, like every `Span`.
-* `[TXT-9]` *(new in 0.9.9)* **A string literal initialises a `String`.** Wherever a `String` is
+* `[TXT-8]` *(changed in 0.9.15)* `StrView` is a view, like every `Span`: it lives no longer than the text it points into,
+  and a change that may reshape that text (replacing a `String`, `push_str`, `clear`) ends it.
+  A `String` place reads as a `StrView` wherever one is expected.
+* `[TXT-9]` *(new in 0.9.9)* *(changed in 0.9.15)* **A string literal initialises a `String`.** Wherever a `String` is
   expected — an initialiser, an argument, a field, a collection element, a return value — a string
   literal produces a new `String` holding its text. The allocation happens at the literal and is
-  reported there (`Alloc`); where a `str` is expected, a literal is a static `str` and allocates
-  nothing. A `str` *value* never converts implicitly: `s.to_string()` or `String.from(s)` is written.
-* `[TXT-10]` *(new in 0.9.9)* *(changed in 0.9.10)* **`str` operations.** `len()` is the length in bytes and
+  reported there (`Alloc`); where a `StrView` is expected, a literal is a view of text written in the
+  program and allocates nothing. A `StrView` *value* never converts implicitly: a `String` of your own
+  is written `String(s)` (`s.to_string()` and `String.from(s)` mean the same).
+* `[TXT-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`StrView` operations.** `len()` is the length in bytes and
   `char_count()` in characters; `is_empty`, `chars`, `char_indices`, `bytes`, `as_bytes`, `lines`,
   `split(sep)`, `split_whitespace()` (Python's `split()` with no argument), `split_once(sep) ->
-  Option[(str, str)]`, `partition(sep) -> (str, str, str)` (Python's), `trim`, `trim_start`, `trim_end`,
+  Option[(StrView, StrView)]`, `partition(sep) -> (StrView, StrView, StrView)` (Python's), `trim`,
+  `trim_start`, `trim_end`,
   `starts_with`, `ends_with`, `find(sub) -> Option[int]`, `rfind`, `count(sub)`, `replace(old, new)
   -> String`, `to_upper`, `to_lower`, `repeat(n)`, `parse[T]() -> Result[T, ParseError]`,
-  `to_string`, `get(range)`, `is_char_boundary(i)`, and `x in s` (`[STD-8b]`). Methods returning
-  several strings return iterators of `str` borrowing `s`. Case mapping and `char_count` are
+  `to_string`, `get(range)`, `is_char_boundary(i)`, and `x in s` (`[STD-8b]`). A method that gives
+  text it did not make (`trim`, `split`, `lines`) gives views pointing into `s`; one returning several
+  strings returns an iterator of such views. Case mapping and `char_count` are
   Unicode-aware; nothing depends on the locale. `char` has `is_alphabetic` (Unicode's Lu, Ll, Lt, Lm
   and Lo), `is_digit` (the digits of every script, and the superscripts), `is_alphanumeric`
   (alphabetic or numeric) and `is_whitespace` (what `split_whitespace` splits at), which mean what
@@ -138,10 +152,11 @@ anything this Part leaves open.
   optional `.`, fraction and exponent (`e` or `E`, an optional sign, digits), rounded to the nearest
   `T`; a `bool` is `true` or `false`; a `char` is exactly one character. `ParseError`, in `std.string`,
   is a unit-only enum, `Empty`, `Invalid` or `Overflow`, naming the first problem from the left.
-* `[TXT-11]` *(new in 0.9.9)* **`String` operations.** Everything `str` has (by read-through), plus
-  `String()`, `with_capacity(n)`, `push(c: char)`, `push_str(s)`, `insert`, `remove`, `truncate`,
-  `clear`, `capacity`, `reserve`, and `as_str`. `a + b` for `a: String, b: str` consumes `a` and
-  returns it extended; `s += t` appends. `str + str` is `E2040` whose help is an f-string.
+* `[TXT-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **`String` operations.** Everything `StrView` has (by read-through),
+  plus `String()`, `String(s)` (a `String` of your own made from text), `with_capacity(n)`,
+  `push(c: char)`, `push_str(s)`, `insert`, `remove`, `truncate`, `clear`, `capacity`, `reserve`, and
+  `as_str` (a `StrView` of the whole text). `a + b` for `a: String, b: StrView` takes `a` over and
+  returns it extended; `s += t` appends. `StrView + StrView` is `E2040` whose help is an f-string.
   ODR-098 defines the mutation and capacity methods: `String.with_capacity(n) -> String` makes an
   empty string with room for at least `n` bytes; zero allocates nothing. `capacity() -> int` reads
   the allocated byte capacity. `reserve(additional)` makes room for at least `len() + additional`
@@ -152,79 +167,99 @@ anything this Part leaves open.
   suffix as necessary; neither scans the prefix for a character position. `truncate(n)` retains
   the first `n` bytes when `n < len()` (then `n` must be a character boundary), and otherwise does
   nothing. `clear()` removes all text. `remove`, `truncate` and `clear` keep the capacity.
-  These mutations borrow `mut self` and return `void` unless a result is named above. Counts and
+  These change the string, through a name that may change it, and return `void` unless a result is
+  named above; each is a reshape, which ends every view into the text. Counts and
   offsets accept any integer type; a negative literal is `E2011`, and a negative run-time value or
   one not representable as a native length panics before conversion. An invalid offset or character
   boundary panics in every profile. Growth uses the checked allocation rules of `[HEAP-8]`.
-  The argument values are evaluated before the mutable borrow, as for `Array` mutation methods.
+  The arguments are evaluated before the string is changed, as for `Array`'s methods that change it.
 
 ## XV.4 Collections
 
-* `[STD-15]` *(new in 0.9.9)* **`Array[T]`** is a growable contiguous list (Python's `list`).
+* `[STD-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Array[T]`** is a growable contiguous list (Python's `list`).
   `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`, `insert(i, v)`, `remove(i) -> T`,
-  `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(pred)`,
+  `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(keep)`,
   `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: Ord`; an inconsistent order
-  permutes but never corrupts, `[HASH-3]`), `sort_by_key[K: Ord](f: fn(T) -> K)`,
-  `sort_by(cmp: fn(T, T) -> Ordering)`, `sorted() -> Array[T]`, `binary_search(x) -> Result[int, int]`,
-  `index_of(x) -> Option[int]`, `first`, `last`, `get(i) -> Option[ref T]`, `get_mut`,
-  `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]` (`[BRW-5]`), `iter`,
-  `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`, `windows(n)`, `join(sep)` (for elements that
-  are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics when `i < 0` or
-  `i >= len` (`[TYP-31]`). `sort_by` and `sort_by_key` are stable, and `sort_by_key` calls `f` once
-  for each element, in order. `windows(n)` yields every run of `n` neighbours, one step apart, as
-  shared views (there is no `windows_mut`); none when `n > len`, and `n == 0` panics as `chunks(0)`
-  does (`[SPN-4]`). `drain(r)` moves the elements in `r`, any range of integers (`a..b`, `a..=b`,
-  `a..`, `..b`), out into a new `Array` in order, and the rest close up; a range reaching outside
-  `0..=len`, or starting after it ends, panics.
-* `[STD-11]` *(new in 0.9.9)* **`Map[K, V, H = DefaultHasher, A = Global]`** is a hash map that **iterates in
+  permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() -> Array[T]`,
+  `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`, `first`, `last`,
+  `get(i) -> Option[ref T]`, `get_mut`, `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]`
+  (`[BRW-5]`), `iter`, `iter_mut`, `split_at`, `chunks(n)`, `chunks_mut(n)`, `windows(n)`, `join(sep)`
+  (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics
+  when `i < 0` or `i >= len` (`[TYP-31]`); `xs.get(i)` names an element as `xs[i]` does, as a
+  position. The methods given a function call it right away and take it as a type parameter:
+  `[F: fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: Ord, F: fn(T) -> K]` above
+  `fn sort_by_key(owns f: F):`, and `[F: fn(T, T) -> Ordering]` above `fn sort_by(owns cmp: F):`; the
+  call counts as making what the function given changes (`[STD-19]`), so `LOG.retain(keep)` with a
+  `keep` that pushes to `LOG` is `E3022`. Each changes the list it is called on, and every method that
+  adds, removes, reorders or replaces elements is a reshape: it ends every view into the list, and may
+  not run while a loop walks the list (`E3020`). `sort_by` and `sort_by_key` are stable, and
+  `sort_by_key` calls `f` once for each element, in order. `windows(n)` yields every run of `n`
+  neighbours, one step apart, as read-only views (there is no `windows_mut`); none when `n > len`, and
+  `n == 0` panics as `chunks(0)` does (`[SPN-4]`). `drain(r)` hands the elements in `r`, any range of
+  integers (`a..b`, `a..=b`, `a..`, `..b`), over to a new `Array` in order, and the rest close up; a
+  range reaching outside `0..=len`, or starting after it ends, panics.
+* `[STD-11]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map[K, V, H = DefaultHasher]`** is a hash map that **iterates in
   insertion order**, like Python's `dict`. Re-assigning an existing key keeps its position; removing
   a key keeps the order of the others. Lookup, insertion and removal take expected constant time,
   amortised: a map may grow, or close up removed entries, inside an insertion or a removal;
   iteration is linear in the number of entries. `H: Hasher + Default`, and a map makes a fresh `H`
-  for each hash; `A` is its allocator (`[ALC-1]`). `Set[T, H = DefaultHasher, A = Global]` is the
-  same with no values. Keys, values and elements may be views under `[TYP-15]`'s rule for heap
-  storage: only `static` ones, such as string literals (`labels: Map[str, int] = {"start": 1}`), and a
-  view that borrows a local is `E3063` at the call that would store it (ODR-069). A map of `static`
-  views is not itself a view. Because order is fixed by the program's operations and the default hasher is
+  for each hash. Its memory comes from the built-in memory manager, or from one of kind `A` written
+  `Map[K, V] using A`, whose instance the line that makes the map names (`[ALC-1]`).
+  `Set[T, H = DefaultHasher]` (and `Set[T] using A`) is the same with no values. Keys, values and
+  elements may be views (`labels: Map[StrView, int] = {"start": 1}`): a map that holds views is a value
+  that holds views, which lives no longer than what they point into (`[TYP-15]`), and keeping or
+  returning it where it would outlive them is `E3063` (ODR-069). A map of views of text written in the
+  program has no such bound. Because order is fixed by the program's operations and the default hasher is
   fixed-seed (`[HASH-2]`), iterating a `Map` or `Set` is not `Nondet`.
-* `[STD-16]` *(new in 0.9.9)* **`Map` operations.** `m[k]` reads the value and panics when the key is
+* `[STD-16]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map` operations.** `m[k]` reads the value and panics when the key is
   missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] = v` inserts or replaces
   (`[STD-17]`); `m[k] += 1` requires the key to exist and panics with the same message. The
   lookups take any `q: Q` with `Q: AsKey[K]` (`[STD-12]`): `get(q) -> Option[ref V]`,
   `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: Copy`),
   `contains_key(q) -> bool`, `remove(q) -> Option[V]`, `m[q]` and `q in m`. `insert(k, v) ->
   Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
-  `or_insert_with(f: fn() -> V)` and `or_default()` (for `V: Default`), each returning `ref mut V`.
+  `or_insert_with(f)` (`[F: fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
+  and `or_default()` (for `V: Default`), each returning `ref mut V`, a place
+  (`counts.entry(k).or_default() += 1`).
   `keys()`, `values()`, `values_mut()` and `items()` are the view iterators
   `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
   `(ref K, ref V)` in insertion order (`for k, v in m.items():`); `for k in m:` is by key, as
-  Python's `dict`. Also `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
-  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep: fn(ref K, ref V) -> bool)`,
-  `pop_item() -> Option[(K, V)]` (the newest entry, as `dict.popitem`), `update(other)` (inserts
-  `other`'s entries in its order) and `into_items() -> Array[(K, V)]` (consumes the map, in order).
+  Python's `dict`, and `for k, ref mut v in m:` names each value as a place the loop may change.
+  While a loop walks a map (its keys, its values or its items), nothing changes the map, through its
+  own name or through a call (`counts[k] *= 2` and `counts.insert(...)` inside it are `E3020`); the
+  loop's own name changes the value it is on (`for k, ref mut v in counts: v *= 2`).
+  Also `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
+  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep)` (`[F: fn(K, V) -> bool]` above
+  `fn retain(owns keep: F):`), `pop_item() -> Option[(K, V)]` (the newest entry, as `dict.popitem`),
+  `update(other)` (inserts `other`'s entries in its order) and `into_items() -> Array[(K, V)]` (takes
+  the map over, `owns this`, and gives its entries in order).
   `m1 == m2` compares as sets of entries: the same length, and every key of one in the other with an
-  equal value; order does not matter. `sorted(m)` sorts the keys into an `Array[K]` of clones.
+  equal value; order does not matter. `sorted(m)` is `sorted(m.keys())`, a sorted list of views of the
+  keys (`[STD-26]`).
   `Set`: `Set[T]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`, `reserve(n)`,
   `try_reserve(n)`, `clear`; `add(x) -> bool` (whether `x` was new; an element already there keeps
   its position); taking `q: AsKey[T]`, `remove(q) -> bool`, `contains(q) -> bool` and `q in s`;
-  `retain(keep: fn(ref T) -> bool)`, `pop() -> Option[T]` (the newest), `iter()` (a `SetIter`
-  yielding `ref T`); `union`, `intersection`, `difference` and `symmetric_difference` of a borrowed
-  `Set` return a new `Set` (for `T: Clone`), this set's elements first in its order and then the
+  `retain(keep)` (`[F: fn(T) -> bool]` above `fn retain(owns keep: F):`), `pop() -> Option[T]` (the
+  newest), `iter()` (a `SetIter` yielding `ref T`); `union`, `intersection`, `difference` and
+  `symmetric_difference` of another `Set`, which they read, return a new `Set` of copies (for
+  `T: Clone`), this set's elements first in its order and then the
   other's; `is_subset`, `is_superset`, `is_disjoint`; and the operators `|`, `&`, `-` and `^`.
   `s1 == s2` compares as sets.
-* `[STD-12]` *(new in 0.9.9)* **Borrowed keys.** Lookup methods, `m[k]` and `k in m` accept any key
-  type `Q` with `Q: AsKey[K]`: `K` itself, and `str` for `K = String`. `interface AsKey[K]: Hash` (in
-  `std.collections`, not the prelude) has `is_key(self, key: K) -> bool`; `interface ToKey[K]:
-  AsKey[K]` adds `to_key(self) -> K`, which makes the key (ODR-067). A lookup hashes `q` and compares
-  it with `is_key`, so it never converts or copies a key. `m[q] = v` needs `Q: ToKey[K]` and calls
-  `to_key()` only when the key is new, never to replace the value of an existing one. Every
-  `K: Eq + Hash` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also `Clone` (`to_key`
-  clones): a key type that cannot be cloned is looked up and removed by value and inserted with
-  `insert`, which moves the key in. std implements `AsKey[String]` and `ToKey[String]` for `str`. An
+* `[STD-12]` *(new in 0.9.9)* *(changed in 0.9.15)* **Keys looked up by a view.** Lookup methods, `m[k]` and `k in m` accept
+  any key type `Q` with `Q: AsKey[K]`: `K` itself, and `StrView` for `K = String`.
+  `interface AsKey[K]: Hash` (in `std.collections`, not the prelude) has the method
+  `fn is_key(key: K) -> bool`; `interface ToKey[K]: AsKey[K]` adds `fn to_key() -> K`, which makes the
+  key (ODR-067). A lookup hashes `q` and compares it with `is_key`, so it never converts or copies a
+  key. `m[q] = v` needs `Q: ToKey[K]` and calls `to_key()` only when the key is new, never to replace
+  the value of an existing one, so a new key written through a `StrView` is stored as the map's own
+  `String`. Every `K: Eq + Hash` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also
+  `Clone` (`to_key` gives `copy of` the key): a key type that cannot be copied is looked up and removed
+  by value and inserted with `insert`, which takes the key over. std implements `AsKey[String]` and
+  `ToKey[String]` for `StrView`. An
   implementation MUST hash and compare as the key it matches would, and `to_key()` MUST make that
   key; one that does not gives `[HASH-3]`'s wrong answers, never undefined behaviour.
-* `[STD-17]` *(new in 0.9.9)* **Index assignment.** `a[i] = v` calls `IndexSet.index_set(i, v)` when
-  the type implements `IndexSet[Idx, V]`, and otherwise assigns through `IndexMut` (dropping the old
+* `[STD-17]` *(new in 0.9.9)* *(changed in 0.9.15)* **Index assignment.** `a[i] = v` calls `IndexSet.index_set(i, v)` when
+  the type implements `IndexSet[Idx, V]`, and otherwise assigns through `IndexMut` (ending the old
   value). `Map` implements `IndexSet`; `Array` does not need to. A compound assignment `a[i] op= v`
   always goes through `IndexMut`. `Array` and `MutSpan` implement `Index[int]` and `IndexMut[int]`,
   and `Span` `Index[int]`, through their built-in indexing; `Map[K, V]` implements `Index[Q]` and
@@ -233,39 +268,51 @@ anything this Part leaves open.
 * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
   full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
-* `[STD-8]` **`Contains`.** `x in c` requires `c: Contains[typeof(x)]` (`E2226` otherwise, whose help
+* `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]` (`E2226` otherwise, whose help
   is `c.iter().any(fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
-  `Span`, `MutSpan` and `[T; N]` with `T: Eq`, as a linear scan; for `str`/`String`, as a substring or
+  `Span`, `MutSpan` and `[T; N]` with `T: Eq`, as a linear scan; for `StrView`/`String`, as a substring or
   character test; for ranges, as two comparisons. The compiler never synthesises an implementation.
 * `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so
   `x in array` is visibly linear and `x in set` visibly constant.
-* `[STD-8b]` `str` implements `Contains[char]` and `Contains[str]` only; matching happens at character
+* `[STD-8b]` *(changed in 0.9.15)* `StrView` implements `Contains[char]` and `Contains[StrView]` only; matching happens at character
   boundaries, so a character never matches inside another's encoding. A byte needle (`Span[u8] in s`)
   is `E2226`; byte search is on `s.as_bytes()`. `x not in c` is `not c.contains(x)`, with each operand
   evaluated once.
 
 ## XV.5 Iterators
 
-* `[STD-19]` *(new in 0.9.9)* *(changed in 0.9.10)* Every `Iterator` has the adapters `map`, `filter`, `filter_map`,
+* `[STD-19]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* Every `Iterator` has the adapters `map`, `filter`, `filter_map`,
   `enumerate`, `zip`, `chain`, `take`, `skip`, `take_while`, `skip_while`, `step_by`, `flat_map`,
-  `flatten`, `peekable`, `copied`, `cloned`, `inspect`, and `rev` where the iterator can run backwards;
+  `flatten`, `peekable`, `copy_each`, `inspect`, and `rev` where the iterator can run backwards;
   and the consumers `count`, `sum`, `product`, `min`, `max`, `min_by_key`, `max_by_key`, `fold`,
   `reduce`, `any`, `all`, `find`, `position`, `last`, `nth`, `min_by`, `max_by`, `for_each`,
   `collect[C]()`, `to_array()`,
-  and `join(sep)` for `Display` items. Adapters are lazy and allocate nothing themselves; what the
-  closures they apply do is the loop's effect (`[EFF-1]`). A chain of adapters in a
+  and `join(sep)` for `Display` items. `copy_each()` gives, for each item, what `copy of` the item
+  would make (for `Item: Clone`): `names = sorted(m.keys().copy_each())` is a list of strings of its
+  own, kept past changes to `m`; `.copied()` and `.cloned()` are not Ember (`E1010`, "write
+  `.copy_each()`"). Adapters are lazy and allocate nothing themselves; what the functions they apply
+  do counts where they run (`[EFF-1]`). A chain of adapters in a
   `for` loop compiles to one loop with no iterator object in memory (`[CTL-3]`). The adapters and
-  consumers can also be called directly on an `Iterable` value, borrowing it as `iter()` would:
+  consumers can also be called directly on an `Iterable` value, reading it as `iter()` would:
   `xs.enumerate()` is `xs.iter().enumerate()`, and a method of the collection's own of the same name
-  (`Array.join`) takes precedence. An adapter takes the iterator it wraps (`owned self`), and so
-  does a consumer; `zip` and `chain` take their other iterator too, so a named iterator given to
-  `zip` is moved (`.clone()` keeps the caller's). A callable is **borrowed**, by the adapters that
-  apply one and the consumers alike (`any`, `all`, `find`, `position`, `fold`, `reduce`, `for_each`,
-  the `…_by` and `…_by_key` forms): a named callable the caller passes stays the caller's, who may
-  pass it again; one that changes what it captured is lent with leave to change it, and what it
-  captured stays lent while it is still used (`[BRW-2]`). A lambda written at the call is given to
-  it, since nothing else can name it, so an adapter's iterator made from one can be kept or returned
-  (`return xs.iter().map(fn(x) => x * 2)`), its captures with it (`[CLO-15]`). What a caller
+  (`Array.join`) takes precedence. An adapter takes the iterator it wraps over (`owns this`), and so
+  does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator given to
+  `zip` is handed over (`copy of it` keeps the caller's). **A function is taken as a type
+  parameter**, by the adapters that apply one and the consumers alike (`any`, `all`, `find`,
+  `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: fn(Item)]` above
+  `fn for_each(owns f: F) owns this:`, `[F: fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
+  bool:`, `[F: fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
+  exact function given, so the adapter or consumer is compiled once for each function given to it and
+  the call through `f` is direct and may be inlined; the shared type, `owns f: fn(Item)`, is legal too,
+  and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). The function
+  is handed over as every argument for an `owns` parameter is, so an adapter made from a lambda can be
+  kept or returned
+  (`return xs.iter().map(fn(x) => x * 2)`), what the lambda holds with it. A function given may change
+  things: a consumer's call counts as making what the function changes, now
+  (`scores.for_each(fn(s): LOG.push(copy of s.name))` changes `LOG`, so inside a loop over `LOG` it is
+  `E3020`), and an adapter keeps the function and runs it at each step, so whatever drives the adapter
+  (`for x in it:`, `it.sum()`) makes its changes; driving an `owns dyn Iterator[Item = T]` makes the
+  changes of every adapter the program can put there. What a caller
   passes is an `int` (ODR-089): `take(n)` gives at most `n` items and
   `skip(n)` leaves out the first `n`, `nth(n)` is the item at index `n` (`None` past the end),
   `step_by(k)` gives the first item and then every `k`-th, and `enumerate(start=0)` numbers from
@@ -293,8 +340,8 @@ anything this Part leaves open.
   called on an iterator, the numbers it gives, and the count, are in the smallest of `int`, `u64`,
   `i128`, `u128` and `i256` that holds every value it can give, read from the numbers the compiler
   knows. It knows a number written as one; a name set once and never changed anywhere in its
-  function (no assignment, augmented assignment, mutable borrow, `mut` argument or `mut self` call
-  of it, in the function or a closure in it) holds what its value held, and a range or an `Array`
+  function (no assignment, augmented assignment, `ref mut` name or argument of it, or call of a method
+  that changes it, in the function or a lambda in it) holds what its value held, and a range or an `Array`
   literal so set has its bounds or its length; a loop's counter (`for i in a..b`, `range(a, b,
   step)`, and a range's value through `rev`, `skip`, `take` and `step_by`) holds its range's
   numbers; `+`, `-`, `*`, `//` and `%` give what their known operands allow; a list's, a view's or
@@ -311,28 +358,28 @@ anything this Part leaves open.
   that a line does not fit is refused there, naming the use (`in labels used with T = u8`); with
   `[TYP-5]` rule 12, `last = i` takes the numbers of a list of `int`s from 2 whether `last` is an
   `int` or a `u64`. An iterator can run backwards when it implements
-  `DoubleEndedIterator`, whose `next_back(mut self) -> Option[Item]` gives the last item not yet
+  `DoubleEndedIterator`, whose method `fn next_back() -> Option[Item]` gives the last item not yet
   given from either end (with `next`, the two ends meet and no item comes twice) and whose method
   `rev` is, so `rev` is exactly where an iterator can run backwards; `ExactSizeIterator`'s
-  `len(self) -> Count` is how many items are left (ODR-091). `skip_front(n)` and `skip_back(n)`
+  `fn len() -> Count` is how many items are left (ODR-091). `skip_front(n)` and `skip_back(n)`
   leave out up to `n` items (a `Count`) from either end and give how many of the `n` they could
   not, and `nth_back(n)` leaves out `n` from the back and gives the one before them; a range does
-  each at once, and `rev`, `copied`, `take`, `skip`, `zip`, `chain`, and `enumerate` from the back
+  each at once, and `rev`, `copy_each`, `take`, `skip`, `zip`, `chain`, and `enumerate` from the back
   pass them down, so none of them passes a gigantic run of items one at a time. `ItemCount`,
   `DoubleEndedIterator` and `ExactSizeIterator` are in `std.core` and are not prelude names
   (`[MOD-5]`). The iterators of the ranges with an end and the element iterators of the views run
-  backwards and know their length; `copied`, `cloned` and `chain` run backwards when what they wrap
+  backwards and know their length; `copy_each` and `chain` run backwards when what they wrap
   does, and `take`, `skip`, `step_by`, `enumerate` and `zip` when it also knows its length, giving
   the items `next` would, last first; each knows its length when what it wraps does. Run backwards,
   `enumerate` numbers its last item `start + len - 1` first, and the items `skip_back` leaves out
   need no numbers. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
-  `std.core` that is not a prelude name: `interface FromIterator[T]: fn from_iter[I: Iterator[Item =
-  T]](owned it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
+  `std.core` that is not a prelude name: `interface FromIterator[T]:` declares
+  `[I: Iterator[Item = T]]` above `static fn from_iter(owns it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
   value replacing an earlier one's for the same key) and `String` (from `char`s and from `String`s)
   implement it, and so may a program's own types. `C` is written (`it.collect[Array[int]]()`) or is
   the type the call is expected to give (`a: Array[int] = it.collect()`). `flatten` is for items that
-  are themselves iterable (`IntoIterator`). `peekable()` gives the same items with `peek(mut self) ->
-  Option[ref Item]` and `peek_mut(mut self) -> Option[ref mut Item]`, which take the next item early
+  are themselves iterable (`IntoIterator`). `peekable()` gives the same items with
+  `fn peek() -> Option[ref Item]` and `fn peek_mut() -> Option[ref mut Item]`, which take the next item early
   and keep it where it is until `next` gives it; `next_if(pred)` gives the next item when `pred` holds
   for it and leaves it otherwise, and `next_if_eq(v)` when it equals `v` (`Item: Eq`).
 * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
@@ -372,8 +419,8 @@ anything this Part leaves open.
   `f16.EPSILON` 2^-10), though only `f32` and `f64` have the methods (ODR-041). A float's `Display` is the shortest text that reads back as the same value, with `.0`
   for an integral value, as Python's `repr`: `0.1 + 0.2` prints `0.30000000000000004`, `1.0` prints
   `1.0`, and `1e300` prints `1e+300`; a format spec overrides it.
-* `[STD-3]` `math.fma(a, b, c)` (and `mul_add`) is a fused multiply-add with a single rounding, on every
-  target; it is how fused arithmetic is written without `@fp(contract)`. `std.math` uses it for matrix
+* `[STD-3]` *(changed in 0.9.15)* `math.fma(a, b, c)` (and `mul_add`) is a fused multiply-add with a single rounding, on every
+  target; it is how fused arithmetic is written without `@fp(allow_fma)`. `std.math` uses it for matrix
   products and transforms.
 * `[STD-4]` `NonZero[T]` for each integer `T` is a `Copy` wrapper with a niche (`Option[NonZero[T]]` is
   `T`-sized), made by `NonZero.new(v) -> Option[NonZero[T]]`. Dividing by a `NonZero` needs no
@@ -381,10 +428,10 @@ anything this Part leaves open.
   and the memberwise constructor are private, so no `NonZero` holds 0. `T` is one of the twelve
   integer types, and any other type is `E2040`. `x // d` and `x % d` take `d: NonZero[T]` for `x: T`
   and answer a `T`; an overflow still panics (`[TYP-8]`) (ODR-047).
-* `[STD-21]` *(new in 0.9.9)* `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, `acos`,
+* `[STD-21]` *(new in 0.9.9)* *(changed in 0.9.15)* `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, `acos`,
   `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`,
-  `hypot`, `lerp`, `smoothstep`, each taking any number type (`fn f[T: Number](x: T) -> T.Real`,
-  `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s
+  `hypot`, `lerp`, `smoothstep`, each taking any number type (`[T: Number]` above
+  `fn f(x: T) -> T.Real`, `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s
   an `f32`, and an `f64`'s an `f64`; and the vector, matrix, rotation and shape types of `[STD-28]`,
   with `dot`, `cross`, `length`, `normalize` (panics on a zero vector; `normalize_or_zero` does not)
   and the arithmetic operators. `PI`, `TAU` and `E` are
@@ -456,7 +503,8 @@ anything this Part leaves open.
 * `[STD-24]` *(new in 0.9.9)* `process.exit(code) -> Never` flushes the standard streams and exits
   without running destructors or `defer` blocks; returning from `main` is the clean exit.
   `process.args()` and `args_os()` follow `[FN-8]`; `env.var(name) -> Option[String]`.
-* `[STD-25]` *(new in 0.9.9)* `random.Rng.seeded(seed)` is a deterministic generator (the same seed
+* `[STD-25]` *(new in 0.9.9)* *(changed in 0.9.15)* `random.Rng.seeded(seed)` is a deterministic generator (the same seed
   gives the same sequence on every machine); `Rng.from_entropy()` seeds from the system and is `Nondet`.
   `rng.int_in(a..b)`, `rng.float()` (in `[0, 1)`), `rng.choice(span) -> Option[ref T]`,
-  `rng.shuffle(mut_span)`.
+  `rng.shuffle(ref mut span)` (its parameter is `ref mut s: MutSpan[T]`). Each call changes `rng`,
+  which is therefore a name that may change it.

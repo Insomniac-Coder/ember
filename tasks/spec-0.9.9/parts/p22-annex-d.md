@@ -12,32 +12,36 @@ type TextureHandle = Handle[gpu.Texture]
 type BufferHandle = Handle[gpu.Buffer]
 
 interface Device:
-    fn begin_frame(mut self) -> Option[Frame]           # None: skip this frame; no end_frame
-    fn end_frame(mut self, owned frame: Frame)
-    fn create_texture(mut self, desc: TextureDesc) -> Result[TextureHandle, GpuError]
-    fn create_buffer(mut self, desc: BufferDesc) -> Result[BufferHandle, GpuError]
-    fn destroy(mut self, h: TextureHandle)                 # physical destruction is deferred
-    fn frames_in_flight(self) -> int
+    fn begin_frame() -> Option[Frame]                   # None: skip this frame; no end_frame
+    fn end_frame(owns frame: Frame)
+    fn create_texture(desc: TextureDesc) -> Result[TextureHandle, GpuError]
+    fn create_buffer(desc: BufferDesc) -> Result[BufferHandle, GpuError]
+    fn destroy(h: TextureHandle)                        # physical destruction is deferred
+    fn frames_in_flight() -> int
 ```
 
 * `[GPU-1]` *(changed in 0.9.9)* GPU objects are named by generational handles (`[HND-1]`), which are
   `Copy` and `Send`. A stale handle is detected by its generation **in every profile**
   (`panic: stale TextureHandle (generation 7, current 9)`); there is no setting that removes the
   check.
-* `[GPU-2]` `device.begin_frame() -> Option[Frame]`; `None` is normal (a minimised window). `Frame` is
-  move-only and `end_frame(frame)` consumes it, so ending a frame that never began is a type error.
-* `[GPU-3]` `frame.arena()` is the frame's transient allocator; its region is the `Frame`, so nothing
-  allocated from it outlives `end_frame`.
+* `[GPU-2]` *(changed in 0.9.15)* `device.begin_frame() -> Option[Frame]`; `None` is normal (a minimised window). A `Frame` has
+  one owner and is not `Copy`, and `end_frame(owns frame: Frame)` takes it over (`device.end_frame(frame)`
+  ends the name `frame`), so ending a frame that never began, or ending one twice, is refused when
+  compiling.
+* `[GPU-3]` *(changed in 0.9.15)* `frame.arena()` is the frame's transient memory manager, an instance that lives as long as
+  the `Frame`: a value made `using` it (`[ALC-1]`) lives no longer than the frame (`E3063`), so nothing
+  made in it outlives `end_frame`.
 
 ## D.1 Recording and access states
 
 ```ember,fragment
-fn draw(mut frame: Frame, pipeline: PipelineHandle, vbo: BufferHandle, index_count: int):
+fn draw(ref mut frame: Frame, pipeline: PipelineHandle, vbo: BufferHandle, ibo: BufferHandle, index_count: int):
     with cmd = frame.command_list():
         cmd.begin_render_pass(RenderPassBegin(target=None))    # None: the swapchain
         cmd.bind_pipeline(pipeline)
         cmd.bind_vertex_buffer(0, vbo)
-        cmd.draw_indexed(index_count)
+        cmd.bind_index_buffer(ibo)
+        cmd.draw_indexed(index_count)                          # checked against `ibo` (`[GPU-12]`)
         cmd.end_render_pass()
 ```
 
@@ -51,17 +55,31 @@ later).
 * `[GPU-5]` Binding a resource declares its access; `cmd.read(h)`/`cmd.write(h)` declare it
   explicitly; barriers are derived from the declarations; `cmd.barrier(…)` remains available.
   `unsafe: cmd.native()` exposes the backend's command buffer.
-* `[GPU-6]` `device.destroy(h)` invalidates the handle at once and destroys the object after the GPU
-  has finished the frames that may use it. Dropping the device waits for the GPU and flushes every
+* `[GPU-12]` *(new in 0.9.15)* **Every draw and dispatch is checked against what is bound, in every profile.** The
+  command list keeps, for each bound vertex, instance and index buffer, how many elements it holds (its
+  size over its stride or index width), and before recording a draw compares the ranges the draw reads
+  with them: `draw(vertex_count, first_vertex, instance_count, first_instance)` against every bound
+  vertex buffer and every instance-rate buffer, `draw_indexed(index_count, first_index, …)` against the
+  bound index buffer, and `dispatch(x, y, z)` against the device's group-count limits. One compare per
+  range per draw; a range outside stops the program, naming the call, the numbers and the buffer
+  (`panic: cmd.draw_indexed(1000000) reads indices 0 to 999999, but the index buffer bound (ibo)
+  holds 3`). What these compares cannot see — the vertex numbers stored in an index buffer, an
+  indirect draw's arguments in GPU memory, a shader's own reads — is covered by robust buffer access,
+  which the device turns on wherever the backend offers it, so such a read past a buffer yields zero
+  or nothing instead of other memory. A device whose backend cannot offer it says so
+  (`device.robust_access()` is `false`), and its use is an asserted fact that `ember tcb` lists
+  (`[TCB-1]`). `unsafe: cmd.native()` records without these compares.
+* `[GPU-6]` *(changed in 0.9.15)* `device.destroy(h)` invalidates the handle at once and destroys the object after the GPU
+  has finished the frames that may use it. Ending the device waits for the GPU and flushes every
   retirement list.
-* `[GPU-7]` In `debug`, dropping a device while handles are still live reports each leaked handle
+* `[GPU-7]` *(changed in 0.9.15)* In `debug`, ending a device while handles are still live reports each leaked handle
   with the place it was created.
 * `[GPU-8]` `History[T]` owns the per-frame copies of a temporal resource
   (`gpu.History[TextureHandle].new(device, desc, count=2)`) and gives `(prev, cur)` each frame,
   forbidding reads of `cur` and writes of `prev` within a frame.
-* `[GPU-9]` `std.gpu.graph` is an optional render-graph layer over `CommandList`: passes declare reads
+* `[GPU-9]` *(changed in 0.9.15)* `std.gpu.graph` is an optional render-graph layer over `CommandList`: passes declare reads
   and writes, `graph.compile()` orders them, aliases transient resources with disjoint lifetimes and
-  inserts transitions, and `pass.native(fn(cmd) => …)` records directly inside a graph.
+  inserts transitions, and `pass.native(fn(ref mut cmd) => …)` records directly inside a graph.
 
 ## D.2 Shader interfaces
 

@@ -32,7 +32,8 @@ are rejected with a fix-it (`[DIA-21]`) rather than given a different meaning (`
 | generators, `yield` | `gen fn f() -> Generator[T]:` | |
 | `with open(p) as f:` | `with f = fs.File.open(p)?:` | the file closes at the end of the block, or whenever it is dropped |
 | `try` / `except` / `raise` | `Result`, `?`, `match`, `return Err(e)` | Part XIII |
-| classes, inheritance, `super()` | `class`, `open class`, `super.init(…)` | handles are reference-counted; `Weak` for back-pointers |
+| classes, inheritance, `super()` | `class`, `open class`, `super.init(…)` | an object has one owner; `shares` for a second owner, `weakref` for a back link the program sets |
+| `nonlocal x`, `global x` | not written | a lambda changes the real variable it uses (`fn(): score += 1`); a function changes a module variable (`static mut`) by its name |
 | `@dataclass` | `struct` | equality, debug printing and cloning are automatic |
 | `list.sort()`, `sorted(xs)` | same, or `xs.sorted()` | stable |
 | `dict.get(k, d)` | `m.get_or(k, d)` | `m.get(k)` returns an `Option` |
@@ -72,11 +73,21 @@ are rejected with a fix-it (`[DIA-21]`) rather than given a different meaning (`
 
 * **Types are checked before the program runs.** Most are inferred; function parameters and struct
   fields are written.
-* **Values have one owner.** Assigning or passing a list moves it unless the parameter only borrows it
-  (the default). A moved name cannot be used again; the error says where it moved and offers
-  `.clone()`.
-* **Objects are freed when their last handle goes**, at a predictable point, not by a collector. A
-  cycle of strong handles leaks; the debug build reports it at exit, with the field to make `Weak`.
+* **Values have one owner.** `b = a` hands a list over: `a` cannot be used again, and the error says
+  where it went and offers `b = copy of a` (a copy of your own) or `b = shares a` (two owners of one
+  list). A plain parameter reads the caller's value; a function that changes it says `ref mut` on the
+  parameter and at the call (`fn bump(ref mut c: Counter):`, `bump(ref mut a)`); `owns` on a parameter
+  takes the value over.
+* **Objects are freed when their last owner ends**, at a predictable point, not by a collector. A
+  loop of `shares` owners that nothing opens again would never be freed, so it is refused when
+  compiling, with the link to make `weakref`.
+* **A list does not change while a loop walks it.** `for x in xs: xs.push(x)` is refused; the loop's
+  own handle may change the item it is on (`for ref mut x in xs: x = 0`), and anything else is added or
+  removed after the loop.
+* **What each name may do is written on it.** A plain name reads; `ref mut` may change someone else's
+  value; `copy of` makes a copy of your own; a lambda keeps a copy only where its first line says so
+  (`fn() copy of score:`). The compiler works out what each function changes from its code, so no first
+  line lists it.
 * **Integers are 64-bit and overflow panics.** `@overflow(wrap)` or `wrapping_add` when wrapping is
   wanted.
 * **Threads run in parallel.** There is no global lock; the compiler rejects data races instead
@@ -123,14 +134,14 @@ class Player:
     hp: int = 10
     inventory: Array[String] = []
 
-fn roll(mut rng: random.Rng) -> int:
+fn roll(ref mut rng: random.Rng) -> int:
     return rng.int_in(1..7)
 
 rng = random.Rng.seeded(42)
 player = Player("Ada")
 counts: Map[int, int] = {}
 for turn in range(5):
-    r = roll(rng)
+    r = roll(ref mut rng)
     counts[r] = counts.get_or(r, 0) + 1
     if r == 6:
         player.inventory.push("gem")
@@ -141,8 +152,8 @@ for face in sorted(counts):
     println(face, counts[face])
 ```
 
-What changed: fields are declared, with types, in the class body; `roll` says it changes `rng`
-(`mut`); `append` is `push` and `dict.get(k, d)` is `get_or`; the generator is seeded explicitly and
+What changed: fields are declared, with types, in the class body; `roll` says it changes the caller's
+`rng`, with `ref mut` on its parameter and at the call; `append` is `push` and `dict.get(k, d)` is `get_or`; the generator is seeded explicitly and
 draws from a half-open range; `print` with a newline is `println`. Everything else — the script at
 the top level, `range`, `len`, `sorted`, iterating a map's keys, f-strings, `//` — reads as in Python.
 The two programs print different numbers only because their generators differ.

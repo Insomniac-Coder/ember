@@ -773,6 +773,17 @@ acceptable it hurt readability too, if you want something to have a copy use the
     refusal. Owner: "Can we make it so that this is only accepted if the compiler can prove that they get
     freed at some point, otherwise the error is thrown?", then "Yes" to the rule as written, over (a)
     refusing every such field and (b) keeping the warning as Rust does.
+100. **The ECS is EnTT's, written in the new model, and what runs at once is checked when compiling**
+    (the spec's writers: `[ECS-4]` checked systems given as values against each other while running).
+    The owner: "Refuse when compiling also I think you are talking about ECS system that ECS system is
+    going through a redesign too. It is supposed to be like EnTT". So the ECS follows ODR-279 (owner,
+    2026-10-23) and its mapping (`tasks/95/ecs-entt-design.md`): a `Registry` of sparse-set pools,
+    entities, `emplace`/`get`/`try_get`/`patch`/`remove`, views (`view[(A, B)]()` reads,
+    `view_mut[(A, B)]()` changes), signals, groups, snapshots; no scheduler, so `World`, `Query`,
+    `Commands`, `System`, `World.run`, `run_parallel` and `E7020` go, and ODR-286's pools are kept as
+    `owns dyn AnyPool` values. Where anything does run several pieces of work at once, a clash between
+    them is refused when compiling (worked out from every function the program can put there), never
+    checked while running, as verdict 98.
 
 ## Error messages are part of readability (owner, 2026-10-24)
 
