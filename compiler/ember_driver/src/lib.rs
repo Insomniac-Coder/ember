@@ -11,6 +11,7 @@ mod cores;
 mod foreign;
 mod incremental;
 mod llvm;
+mod memory;
 mod packages;
 mod reload;
 pub mod session;
@@ -3931,15 +3932,18 @@ fn prepare_callable_interface_cache(
     // by what its kept record knows of it.
     let (inputs, import_visible_contracts) =
         module_interface_inputs(modules, declarations, map, bodies, types, options, &|loaded| !kept_modules.contains_key(&module_identity(&loaded.path)))?;
-    let fresh = ember_build::interface::build_artifacts_known(&inputs, kept_modules, &compiler_identity()).map_err(|error| {
+    let built = ember_build::interface::build_artifacts_known(&inputs, kept_modules, &compiler_identity()).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot build interface artifact: {error}")
     })?;
+    drop(inputs);
     // The fresh record takes the same encode/decode path as a cache hit, so
     // every caller consumes the artifact representation even on its first
-    // build rather than only on a later, incidental cache reuse.
-    let fresh = round_trip_artifacts(&fresh).map_err(|error| {
+    // build rather than only on a later, incidental cache reuse. ODR-281: only the round-tripped
+    // artifacts are kept.
+    let fresh = round_trip_artifacts(&built).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot round-trip interface artifact: {error}")
     })?;
+    drop(built);
 
     let target_root = options
         .out_dir
@@ -3952,7 +3956,7 @@ fn prepare_callable_interface_cache(
         .to_string_lossy()
         .replace('\\', "/");
     let directory = cache_directory(&profile_root, &package_identity);
-    let mut prepared = prepare_interface_cache(&directory, &fresh).map_err(|error| {
+    let mut prepared = prepare_interface_cache(&directory, fresh).map_err(|error| {
         format!("internal compiler error: [LT-40] cannot load interface cache: {error}")
     })?;
     // `[BLD-1]` — the records of the modules kept whole, keyed by what they import as it is now.
@@ -5082,7 +5086,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let mut blocked = Vec::new();
     let mut passes = 0;
     let no_conditional = std::collections::HashSet::new();
-    let (mut types, common, checked) = loop {
+    let (mut types, common, mut checked) = loop {
         passes += 1;
         let (mut types, common) = TypeTable::new();
         let mark = sink.mark();
@@ -5219,6 +5223,18 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         mark("modules checked", &plan.checked_names());
         mark("functions checked", &plan.checked_functions(&checked));
     }
+    // ODR-281 — the type check was the last stage to read a function's statements: each module
+    // keeps its declarations, and its bodies' syntax goes (the trusted-base report, `--report tcb`,
+    // reads its `unsafe` blocks from them).
+    if options.tcb_report.is_none() {
+        for loaded in &mut modules {
+            let module = std::sync::Arc::get_mut(&mut loaded.module);
+            debug_assert!(module.is_some(), "a checked module's syntax is shared past the type check");
+            if let Some(module) = module {
+                module.drop_bodies();
+            }
+        }
+    }
     let program = &checked.program;
     mark("check", "all modules");
     // `[WK-5]`–`[WK-7]` — class-field ownership cycles are a package-visible
@@ -5242,14 +5258,19 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // as "type-check + borrow-check without codegen", so it cannot stop here.
     // `[IMP-11]` — from here to code generation the bodies change only through
     // `mir.pass`, which in a debug build of the compiler verifies them after each pass.
-    let mut lowered = ember_mir::lower_with(program, &types, &common, &map, &failed);
+    // ODR-281 — each checked body goes as soon as it is lowered (`lower_with`), and the rest of the
+    // checked program's functions after: lowering is the last stage to read them.
+    let mut lowered = ember_mir::lower_with(&mut checked.program, &types, &common, &map, &failed);
+    let has_main = checked.program.main.is_some();
+    let program_tests = std::mem::take(&mut checked.program.tests);
+    checked.program.functions = Vec::new();
     // `[BLD-1]` — the kept modules' MIR, after the program's: what only checks a body passes it by.
     let kept_facts = plan.as_mut().map(|plan| plan.inject(&mut lowered)).unwrap_or_default();
     let mut mir = ember_mir::verify::Pipeline::new(lowered, &types);
     // `[TST-3]` — the package's tests (not the standard library's), in the
     // order the test binary numbers them. The binary's entry calls each, so
     // none is inlined into another caller and removed.
-    let tests: Vec<&ember_hir::TestFn> = program.tests.iter()
+    let tests: Vec<&ember_hir::TestFn> = program_tests.iter()
         .filter(|test| !test.name.as_str().starts_with(&format!("{}.", ember_branding::STD_PACKAGE)))
         .collect();
     if command == "test" {
@@ -5284,15 +5305,12 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // `[BLD-1]` — the bodies checked here come first; the kept ones after them have been through
     // these checks and drop elaboration.
     let fresh = mir.bodies().iter().take_while(|body| !body.kept).count();
-    let initialization_facts = ember_analysis::analyze_definite_init_all(&mir.bodies()[..fresh]);
     // `[IMP-7]` — the fact verifier proves that the canonical initialization
     // fixpoint describes this initial MIR before diagnostics consume it and
     // before drop elaboration transforms the CFG. `[IMP-11]`: in the compiler's own debug
-    // builds (the `ci` profile every test uses), as the MIR verifier runs.
-    if cfg!(debug_assertions) {
-        ember_analysis::verify_initialization_facts_all(&mir.bodies()[..fresh], &initialization_facts);
-    }
-    ember_analysis::check_definite_init_all_with_facts(&mir.bodies()[..fresh], &initialization_facts, &mut sink);
+    // builds (the `ci` profile every test uses), as the MIR verifier runs. ODR-281 — each body's
+    // facts are made, verified, read and dropped in turn, never the program's at once.
+    ember_analysis::check_definite_init_all_verified(&mir.bodies()[..fresh], cfg!(debug_assertions), &mut sink);
     // `[LAY-2]` — a reference to a field of a `@packed` value is `E2170`.
     ember_analysis::check_packed_references_all(&mir.bodies()[..fresh], &types, &mut sink);
     mark("initialisation checks", "all modules");
@@ -5671,7 +5689,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // Emit C. Source-backed prelude modules are always available to name
     // resolution, but their unused implementation bodies are not part of an
     // executable's observable generated program.
-    if program.main.is_some() || command == "test" {
+    if has_main || command == "test" {
         let standard_files = modules
             .iter()
             .filter(|loaded| loaded.path.first().is_some_and(|package| package == ember_branding::STD_PACKAGE))
@@ -5697,7 +5715,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // At the end of a program's `main` the process ends: a drop there that
     // only frees memory changes nothing observable (`[PHIL-5]`). Debug
     // builds keep every drop, which their leak check counts.
-    if program.main.is_some() && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
+    if has_main && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
         mir.pass("skipping exit drops", &mut types, |bodies, types| ember_analysis::skip_exit_drops_all(bodies, types, &ember_branding::entry_symbol()));
     }
     // `[PRF-3]` — speed rewrites too: without them nothing is versioned, and nothing to verify.
@@ -5788,7 +5806,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             mir: verified_mir,
             map: &map,
             module_name: &module_name,
-            has_main: program.main.is_some() && !library && command != "test",
+            has_main: has_main && !library && command != "test",
             command,
             library,
             reload: reload_image.is_some(),
@@ -5808,12 +5826,29 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     let unit_plan: Option<Vec<(String, std::collections::BTreeSet<String>)>> =
         (options.emit.is_none() && !library && options.profile != Profile::Release && !instrumented)
             .then(|| module_units(&modules, &bodies));
+    // ODR-281 — each module's unit is written as soon as it is made (only when it changed, `[BLD-4]`)
+    // and not held: the program's C is never in memory at once. A program with nothing to build
+    // writes none, as before.
+    let unit_layout = match &unit_plan {
+        Some(_) if has_main || command == "test" => {
+            let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
+            Some(Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?)
+        }
+        _ => None,
+    };
+    let unit_failure: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let write_unit = |name: &str, text: String| {
+        let Some(layout) = &unit_layout else { return };
+        if let Err(error) = ember_build::ninja::write_if_changed(&layout.c.join(module_unit_file(&module_name, name)), &text) {
+            unit_failure.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert(error.to_string());
+        }
+    };
     let emitted = ember_codegen_c::emit(
         verified_mir,
         &map,
         &module_name,
         &package_name,
-        program.main.is_some() && !library && command != "test",
+        has_main && !library && command != "test",
         // `[FFI-31]` — a shared library reports its leaks at shutdown in `debug`.
         options.leak_check || (cdylib && options.profile == Profile::Debug),
         library,
@@ -5823,7 +5858,11 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         reload_image.as_ref(),
         instrumented,
         unit_plan.as_deref(),
+        unit_layout.as_ref().map(|_| &write_unit as ember_codegen_c::UnitSink<'_>),
     );
+    if let Some(error) = unit_failure.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        return Err(error);
+    }
     mark("C generation", "all modules");
     // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
     // `[SIMD-2]` — then each `@simd` loop's verdict.
@@ -5910,7 +5949,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         return Err(format!("unknown `--emit` stage `{other}`"));
     }
 
-    if program.main.is_none() && !library && command != "test" {
+    if !has_main && !library && command != "test" {
         return Err("this file declares no `main`, so there is nothing to run".to_string());
     }
 
@@ -5930,23 +5969,32 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         ember_build::ninja::write_if_changed(&path, source).map_err(|e| e.to_string())?;
         module_unit_paths.push(path);
     }
+    // The units written as they were made (above, `write_unit`).
+    if unit_layout.is_some() {
+        module_unit_paths.extend(unit_plan.iter().flatten().map(|(name, _)| layout.c.join(module_unit_file(&module_name, name))));
+    }
     if let Ok(entries) = std::fs::read_dir(&layout.c) {
         let prefix = module_unit_file(&module_name, "");
+        let written: std::collections::HashSet<&PathBuf> = module_unit_paths.iter().collect();
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with(&prefix) && name.ends_with(".c") && !module_unit_paths.contains(&path) {
+            if name.starts_with(&prefix) && name.ends_with(".c") && !written.contains(&path) {
                 let _ = std::fs::remove_file(&path);
             }
         }
     }
     let safety_path = layout.inspect.join(format!("{module_name}.safety.json"));
-    let safety_json = {
+    {
+        // Written in its pieces, not first copied into one string (ODR-281).
+        use std::io::Write;
         let table = emitted.safety_json.trim_end();
         let table = table.strip_suffix('}').unwrap_or(table);
-        format!("{table},\"functions\":{safety_functions},\"costs\":{safety_costs}}}\n")
-    };
-    std::fs::write(&safety_path, safety_json).map_err(|e| e.to_string())?;
+        let mut file = std::fs::File::create(&safety_path).map_err(|e| e.to_string())?;
+        for piece in [table, ",\"functions\":", &safety_functions, ",\"costs\":", &safety_costs, "}\n"] {
+            file.write_all(piece.as_bytes()).map_err(|e| e.to_string())?;
+        }
+    }
     // `[RC-6]` — the count operations left inside loops, read from the same
     // final MIR the backend was given.
     let counts_path = layout.inspect.join(format!("{module_name}.counts.json"));
@@ -7266,7 +7314,9 @@ fn report(sink: &Sink, map: &SourceMap, options: &Options) {
 /// `[BLD-9]` — each stage's time since the one before, with the module it
 /// ran on (`all modules` for a stage that runs over the program at once),
 /// in the order they ran. Off (`None`) unless `--timings` started it.
-type Timings = Option<(std::time::Instant, std::time::Instant, Vec<(String, String, std::time::Duration)>)>;
+/// With a compiler built to count its allocations (`memory`), each stage also has the megabytes
+/// live at its end and the most live during it.
+type Timings = Option<(std::time::Instant, std::time::Instant, Vec<(String, String, std::time::Duration, Option<(f64, f64)>)>)>;
 static TIMINGS: std::sync::Mutex<Timings> = std::sync::Mutex::new(None);
 
 fn start_timings() {
@@ -7277,7 +7327,7 @@ fn start_timings() {
 fn mark(stage: &str, module: &str) {
     if let Some((_, last, stages)) = TIMINGS.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         let now = std::time::Instant::now();
-        stages.push((stage.to_string(), module.to_string(), now - *last));
+        stages.push((stage.to_string(), module.to_string(), now - *last, memory::take()));
         *last = now;
     }
 }
@@ -7291,7 +7341,10 @@ fn report_timings(options: &Options) {
     if json {
         let stages: Vec<serde_json::Value> = stages
             .iter()
-            .map(|(stage, module, took)| serde_json::json!({ "stage": stage, "module": module, "ms": ms(*took) }))
+            .map(|(stage, module, took, held)| match held {
+                Some((live, peak)) => serde_json::json!({ "stage": stage, "module": module, "ms": ms(*took), "live_mb": live, "peak_mb": peak }),
+                None => serde_json::json!({ "stage": stage, "module": module, "ms": ms(*took) }),
+            })
             .collect();
         eprintln!(
             "{}",
@@ -7300,8 +7353,11 @@ fn report_timings(options: &Options) {
         return;
     }
     eprintln!("timings (ms):");
-    for (stage, module, took) in &stages {
-        eprintln!("  {stage:<22}{:>10.2}  {module}", ms(*took));
+    for (stage, module, took, held) in &stages {
+        match held {
+            Some((live, peak)) => eprintln!("  {stage:<22}{:>10.2}  live {live:>8.1} MB  peak {peak:>8.1} MB  {module}", ms(*took)),
+            None => eprintln!("  {stage:<22}{:>10.2}  {module}", ms(*took)),
+        }
     }
     eprintln!("  {:<22}{:>10.2}", "total", ms(last - start));
     // `[BLD-7]` — the threads the per-body analyses ran on.

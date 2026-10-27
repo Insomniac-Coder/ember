@@ -111,6 +111,9 @@ impl Parser<'_> {
             }
         }
         self.eat_dedent();
+        // ODR-281 — a block's statements at their count: grown one at a time, the list had room
+        // for as many again, and every module's syntax is held through the type check.
+        stmts.shrink_to_fit();
         Block { id, stmts, span: start.to(self.prev_span()) }
     }
 
@@ -1643,6 +1646,8 @@ impl Parser<'_> {
             }
         }
         self.expect_punct(Punct::RParen);
+        // ODR-281 — at their count, as a block's statements are (`parse_block_nested`).
+        args.shrink_to_fit();
         args
     }
 

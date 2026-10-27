@@ -23,34 +23,70 @@ use crate::{
 
 pub mod coroutines;
 
+/// Each function's place in its program, by its definition (the first, as `Program::function`
+/// finds it): what lowering a call reads of its callee is found through this, where searching the
+/// program's list for each call took time growing with the square of the program.
+pub type FunctionIndex = std::collections::HashMap<hir::DefId, usize>;
+
+pub fn function_index(program: &hir::Program) -> FunctionIndex {
+    let mut index = FunctionIndex::with_capacity(program.functions.len());
+    for (at, function) in program.functions.iter().enumerate() {
+        index.entry(function.def).or_insert(at);
+    }
+    index
+}
+
 pub fn lower(
     program: &hir::Program,
     types: &TypeTable,
     common: &CommonTypes,
     map: &SourceMap,
 ) -> Vec<Body> {
-    lower_with(program, types, common, map, &std::collections::HashSet::new())
+    // `[BLD-7]` — each function lowered on the driver's threads: lowering reads the checked program
+    // and the type table and writes only its own body; the bodies come back in the program's order.
+    let index = function_index(program);
+    let functions: Vec<&hir::Function> = program.functions.iter().filter(|f| !program.reused.contains(&f.def)).collect();
+    crate::parallel::each(&functions, &mut ember_diag::Sink::new(), |&f, _| lower_function(f, &f.body, program, &index, types, common, map))
+        .into_iter()
+        .map(|(body, _)| body)
+        .collect()
 }
 
 /// `[IDE-3]` — `lower`, with each function of `unreached` (by symbol), one whose check failed,
 /// lowered as a body that is never reached: its signature, and one block that ends unreachable.
 /// It has no effect and borrows nothing, so the checks of the functions that call it report
 /// nothing of it, and its own errors are the type checker's.
+///
+/// ODR-281 — each function's body is taken from `program` and dropped once it is lowered (each is
+/// read once, its callees only for their signatures and locals), so the program is never held as
+/// checked bodies and lowered ones at once; `program` keeps its functions without their bodies.
 pub fn lower_with(
-    program: &hir::Program,
+    program: &mut hir::Program,
     types: &TypeTable,
     common: &CommonTypes,
     map: &SourceMap,
     unreached: &std::collections::HashSet<String>,
 ) -> Vec<Body> {
-    // `[BLD-7]` — each function lowered on the driver's threads: lowering reads the checked program
-    // and the type table and writes only its own body; the bodies come back in the program's order.
-    let functions: Vec<&hir::Function> = program.functions.iter().filter(|f| !program.reused.contains(&f.def)).collect();
-    crate::parallel::each(&functions, &mut ember_diag::Sink::new(), |&f, _| {
+    let index = function_index(program);
+    let hir::Program { functions, reused, .. } = &mut *program;
+    let mut taken: Vec<(usize, Option<hir::Block>)> = functions
+        .iter_mut()
+        .enumerate()
+        .filter(|(_, f)| !reused.contains(&f.def))
+        .map(|(at, f)| {
+            let span = f.body.span;
+            (at, Some(std::mem::replace(&mut f.body, hir::Block { stmts: Vec::new(), span })))
+        })
+        .collect();
+    let program = &*program;
+    // `[BLD-7]` — each function lowered on the driver's threads, as `lower` lowers them.
+    crate::parallel::each_mut(&mut taken, &mut ember_diag::Sink::new(), |(at, body), _| {
+        let f = &program.functions[*at];
+        let body = body.take().expect("each function's body is lowered once");
         if unreached.contains(&f.symbol) {
-            unreached_function(f, program, types, common, map)
+            unreached_function(f, program, &index, types, common, map)
         } else {
-            lower_function(f, program, types, common, map)
+            lower_function(f, &body, program, &index, types, common, map)
         }
     })
     .into_iter()
@@ -63,40 +99,45 @@ pub fn lower_with(
 fn unreached_function(
     function: &hir::Function,
     program: &hir::Program,
+    index: &FunctionIndex,
     types: &TypeTable,
     common: &CommonTypes,
     map: &SourceMap,
 ) -> Body {
     // The body is never lowered: what the builder made for its locals goes, the parameters stay.
-    let mut body = Builder::new(function, program, types, common, map).finish();
+    let mut body = Builder::new(function, program, index, types, common, map).finish();
     body.locals.truncate(body.arg_count + 1);
     body.for_iterators.clear();
     body.loop_notes = LoopNotes::default();
     body
 }
 
-/// One function of `program`, lowered as `lower` lowers each.
+/// One function of `program`, lowered as `lower` lowers each (`index`: `function_index(program)`).
 pub fn lower_one(
     function: &hir::Function,
     program: &hir::Program,
+    index: &FunctionIndex,
     types: &TypeTable,
     common: &CommonTypes,
     map: &SourceMap,
 ) -> Body {
-    lower_function(function, program, types, common, map)
+    lower_function(function, &function.body, program, index, types, common, map)
 }
 
-fn lower_function(
-    function: &hir::Function,
-    program: &hir::Program,
-    types: &TypeTable,
+fn lower_function<'a>(
+    function: &'a hir::Function,
+    body: &'a hir::Block,
+    program: &'a hir::Program,
+    index: &'a FunctionIndex,
+    types: &'a TypeTable,
     common: &CommonTypes,
-    map: &SourceMap,
+    map: &'a SourceMap,
 ) -> Body {
-    let mut builder = Builder::new(function, program, types, common, map);
-    builder.build();
+    let mut builder = Builder::new(function, program, index, types, common, map);
+    builder.build(body);
     let mut body = builder.finish();
     prune_unreachable(&mut body);
+    body.shrink_to_fit();
     body
 }
 
@@ -228,6 +269,8 @@ struct Scope {
 struct Builder<'a> {
     function: &'a hir::Function,
     program: &'a hir::Program,
+    /// Each function's place in `program` (`function_of`).
+    index: &'a FunctionIndex,
     types: &'a TypeTable,
     /// `[CELL-5]` — source locations for the conflicting-borrow panic.
     /// Lowering needs file paths and line numbers, which live in the map.
@@ -303,9 +346,15 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
+    /// The function `def` names: its signature and locals (its body is not read here).
+    fn function_of(&self, def: hir::DefId) -> &'a hir::Function {
+        &self.program.functions[*self.index.get(&def).expect("every DefId names a function that was checked")]
+    }
+
     fn new(
         function: &'a hir::Function,
         program: &'a hir::Program,
+        index: &'a FunctionIndex,
         types: &'a TypeTable,
         common: &CommonTypes,
         map: &'a SourceMap,
@@ -407,6 +456,7 @@ impl<'a> Builder<'a> {
         Builder {
             function,
             program,
+            index,
             types,
             map,
             locals,
@@ -719,8 +769,8 @@ impl<'a> Builder<'a> {
         self.statement_temps.truncate(mark);
     }
 
-    fn build(&mut self) {
-        let body = &self.function.body;
+    /// Lower `body`, the function's (given apart from it: `lower_with` takes it from the program).
+    fn build(&mut self, body: &'a hir::Block) {
         self.lower_block(body);
         // A function whose body falls off the end returns the (void) return
         // slot as it stands. `[FN-8]`'s `main` is the common case. Owned
@@ -1672,7 +1722,7 @@ impl<'a> Builder<'a> {
         let after_default = self.new_block();
         self.terminate(Terminator::Call {
             func: FuncRef::Direct {
-                symbol: self.program.function(constructor).symbol.clone(),
+                symbol: self.function_of(constructor).symbol.clone(),
                 latebound: false,
             },
             args: Vec::new(),
@@ -1958,7 +2008,7 @@ impl<'a> Builder<'a> {
         let next = self.new_block();
         self.terminate(Terminator::Call {
             func: FuncRef::Direct {
-                symbol: self.program.function(constructor).symbol.clone(),
+                symbol: self.function_of(constructor).symbol.clone(),
                 latebound: false,
             },
             args: Vec::new(),
@@ -1996,7 +2046,7 @@ impl<'a> Builder<'a> {
         let after_default = self.new_block();
         self.terminate(Terminator::Call {
             func: FuncRef::Direct {
-                symbol: self.program.function(constructor).symbol.clone(),
+                symbol: self.function_of(constructor).symbol.clone(),
                 latebound: false,
             },
             args: Vec::new(),
@@ -2531,7 +2581,7 @@ impl<'a> Builder<'a> {
                     .map(|implementation| {
                         implementation.as_ref().map(|implementation| {
                             crate::InterfaceAdapterMethod {
-                                symbol: self.program.function(implementation.implementation).symbol.clone(),
+                                symbol: self.function_of(implementation.implementation).symbol.clone(),
                                 receiver: implementation.receiver,
                             }
                         })
@@ -2554,7 +2604,7 @@ impl<'a> Builder<'a> {
             }
             hir::ExprKind::Call { callee, arg_eval_order, default_arg_locals, args, latebound } => {
                 let write_back_mark = self.write_backs.len();
-                let function = self.program.function(*callee);
+                let function = self.function_of(*callee);
                 let symbol = function.symbol.clone();
                 // `[FN-1]` — the mode decides. `owned` consumes, so the
                 // argument is a move and `[OWN-3]`'s analysis sees it;
@@ -3135,7 +3185,7 @@ impl<'a> Builder<'a> {
                     }
                     operand => operand,
                 };
-                let body = Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone()));
+                let body = Operand::Const(Const::Fn(self.function_of(*closure).symbol.clone()));
                 self.at(expr.span);
                 let next = self.new_block();
                 self.terminate(Terminator::Call {
@@ -3162,7 +3212,7 @@ impl<'a> Builder<'a> {
                     }
                     operand => operand,
                 };
-                operands.push(Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone())));
+                operands.push(Operand::Const(Const::Fn(self.function_of(*closure).symbol.clone())));
                 operands.push(env);
                 self.at(expr.span);
                 let next = self.new_block();
@@ -3181,13 +3231,13 @@ impl<'a> Builder<'a> {
                 let mut operands: Vec<Operand> = args[..3].iter().map(|arg| self.lower_operand(arg)).collect();
                 match closure {
                     Some(closure) => {
-                        operands.push(Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone())));
+                        operands.push(Operand::Const(Const::Fn(self.function_of(*closure).symbol.clone())));
                         operands.push(self.lower_operand(&args[3]));
                     }
                     // A body that captures nothing is the function itself, named directly.
                     None => {
                         let body = match &args[3].kind {
-                            hir::ExprKind::FnValue(def) => Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())),
+                            hir::ExprKind::FnValue(def) => Operand::Const(Const::Fn(self.function_of(*def).symbol.clone())),
                             _ => self.lower_operand(&args[3]),
                         };
                         operands.push(body);
@@ -3195,7 +3245,7 @@ impl<'a> Builder<'a> {
                     }
                 }
                 if let Some(combine) = combine {
-                    operands.push(Operand::Const(Const::Fn(self.program.function(*combine).symbol.clone())));
+                    operands.push(Operand::Const(Const::Fn(self.function_of(*combine).symbol.clone())));
                     operands.extend(args[4..].iter().map(|arg| self.lower_operand(arg)));
                 }
                 self.at(expr.span);
@@ -3704,7 +3754,7 @@ impl<'a> Builder<'a> {
                     // `mut out: String` parameter takes by address.
                     if let hir::FStringPart::Write { writer, value } = part {
                         let operand = self.lower_operand_borrowed(value);
-                        let symbol = self.program.function(*writer).symbol.clone();
+                        let symbol = self.function_of(*writer).symbol.clone();
                         let next = self.new_block();
                         let sink = self.temp(void, expr.span);
                         self.terminate(Terminator::Call {
@@ -3857,7 +3907,7 @@ impl<'a> Builder<'a> {
         self.current = construct;
         let value = self.temp(elem, span);
         self.push(StmtKind::StorageLive(value));
-        let symbol = self.program.function(constructor).symbol.clone();
+        let symbol = self.function_of(constructor).symbol.clone();
         self.terminate(Terminator::Call {
             func: FuncRef::Direct { symbol, latebound: false },
             args: Vec::new(),
@@ -4792,7 +4842,7 @@ impl<'a> Builder<'a> {
         let equal = self.temp(self.bool_ty, span);
         let existing = Self::arena_map_slot(base, cursor).field(1).field(0);
         if let Some(equals) = equals {
-            let symbol = self.program.function(equals).symbol.clone();
+            let symbol = self.function_of(equals).symbol.clone();
             let existing = self.pass_by_address(Operand::Copy(existing), key, span);
             let wanted = self.pass_by_address(wanted, key, span);
             let after_call = self.new_block();
@@ -6525,7 +6575,7 @@ impl<'a> Builder<'a> {
                     .map(|implementation| {
                         implementation.as_ref().map(|implementation| {
                             crate::InterfaceAdapterMethod {
-                                symbol: self.program.function(implementation.implementation).symbol.clone(),
+                                symbol: self.function_of(implementation.implementation).symbol.clone(),
                                 receiver: implementation.receiver,
                             }
                         })
@@ -6567,10 +6617,10 @@ impl<'a> Builder<'a> {
             // `[FN-6]` — a named function as a value: its symbol identifies
             // the native descriptor (or the raw C entry for an extern body).
             hir::ExprKind::FnValue(def) => {
-                Rvalue::Use(Operand::Const(Const::Fn(self.program.function(*def).symbol.clone())))
+                Rvalue::Use(Operand::Const(Const::Fn(self.function_of(*def).symbol.clone())))
             }
             hir::ExprKind::MakeCallable { closure, env } => {
-                let closure = Operand::Const(Const::Fn(self.program.function(*closure).symbol.clone()));
+                let closure = Operand::Const(Const::Fn(self.function_of(*closure).symbol.clone()));
                 let env = self.lower_operand_kept(env);
                 Rvalue::Aggregate { kind: AggregateKind::Callable, operands: vec![closure, env] }
             }
@@ -7149,7 +7199,7 @@ impl<'a> Builder<'a> {
                     self.lower_into(place.clone().field(index), default);
                 }
             }
-            let function = self.program.function(init);
+            let function = self.function_of(init);
             let receiver_ty = function
                 .params
                 .first()
@@ -7250,7 +7300,7 @@ impl<'a> Builder<'a> {
             },
         });
 
-        let function = self.program.function(init);
+        let function = self.function_of(init);
         let receiver_ty = function
             .params
             .first()

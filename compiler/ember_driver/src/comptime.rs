@@ -94,8 +94,9 @@ pub fn evaluate(
     if !unreached.is_empty() {
         let symbols: std::collections::HashSet<String> = unreached.iter().map(|&index| bodies[index].symbol.clone()).collect();
         stub_incomplete(&mut checked.program, &symbols, common);
+        let functions = ember_mir::function_index(&checked.program);
         for index in unreached {
-            bodies[index] = ember_mir::lower_one(&checked.program.functions[index], &checked.program, types, common, map);
+            bodies[index] = ember_mir::lower_one(&checked.program.functions[index], &checked.program, &functions, types, common, map);
         }
     }
     // `[IMP-11]` — verified after each pass, as the program's own build is.

@@ -44,7 +44,8 @@ pub struct Output {
     /// unit declares them and does not define them.
     pub relaxed_units: Vec<(FpMode, String)>,
     /// `[BLD-4]` (ODR-244) — written one unit per module (`emit`'s `units`), each module's unit, by
-    /// the name it was given; the main unit (`c_source`) defines the functions of no module.
+    /// the name it was given (none when `emit` was given a `UnitSink`, which took each); the main
+    /// unit (`c_source`) defines the functions of no module.
     pub module_units: Vec<(String, String)>,
     /// `[DSP-5]` — each call made direct because the whole program showed
     /// one body for it, as `--emit-optimization-report` prints it (location
@@ -292,7 +293,7 @@ pub struct ComptimeRoot {
 /// and prints its value (`ComptimeRoot`), within the step and heap limits its
 /// second and third arguments give.
 pub fn emit_comptime(mir: VerifiedMir<'_>, map: &SourceMap, roots: Vec<ComptimeRoot>, for_msvc: bool) -> Output {
-    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false, None)
+    emit_with(mir, map, "comptime", "comptime", false, false, false, false, for_msvc, Some(roots), None, None, false, None, None)
 }
 
 /// `[TST-3]` — the line a test binary writes to standard error when its test
@@ -309,6 +310,10 @@ pub fn test_end_marker() -> String {
     format!("{}-test: returned", ember_branding::SYMBOL_PREFIX)
 }
 
+/// `[BLD-4]`, ODR-281 — where each module's unit goes as soon as it is written (its name, its
+/// text), on the thread that wrote it: a program's units are then never held together.
+pub type UnitSink<'a> = &'a (dyn Fn(&str, String) + Sync);
+
 #[allow(clippy::too_many_arguments)]
 pub fn emit(
     mir: VerifiedMir<'_>,
@@ -324,8 +329,9 @@ pub fn emit(
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
     units: Option<&[(String, BTreeSet<String>)]>,
+    unit_sink: Option<UnitSink<'_>>,
 ) -> Output {
-    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi, units)
+    emit_with(mir, map, module_name, package_name, has_main, leak_check, library_mode, module, for_msvc, None, tests, reload, instrument_ffi, units, unit_sink)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -344,6 +350,7 @@ fn emit_with(
     reload: Option<&ReloadImage>,
     instrument_ffi: bool,
     units: Option<&[(String, BTreeSet<String>)]>,
+    unit_sink: Option<UnitSink<'_>>,
 ) -> Output {
     let bodies = mir.bodies();
     let types = mir.types();
@@ -555,10 +562,17 @@ fn emit_with(
         let preamble = unit.module_preamble(bodies, module_name, leak_check);
         let written: Vec<(String, String)> = run
             .iter()
-            .map(|(name, symbols)| {
+            .filter_map(|(name, symbols)| {
                 let mut defines: Vec<usize> = symbols.iter().filter_map(|symbol| place.get(symbol.as_str()).copied()).collect();
                 defines.sort_unstable();
-                (name.clone(), unit.emit_module_unit(bodies, leak_check, defines, &preamble, &lazy_statics, &names))
+                let text = unit.emit_module_unit(bodies, leak_check, defines, &preamble, &lazy_statics, &names);
+                match unit_sink {
+                    Some(sink) => {
+                        sink(name, text);
+                        None
+                    }
+                    None => Some((name.clone(), text)),
+                }
             })
             .collect();
         (written, unit.direct_calls.take())
@@ -688,7 +702,10 @@ pub const FP_CONTRACT: [&str; 6] = [
 /// a serialization dependency: this artifact is a compiler output with a
 /// fixed, small schema rather than a user-facing data model.
 fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
-    let mut entries = Vec::new();
+    // ODR-281 — written into one buffer as it is found: each entry its own string, joined into
+    // a copy and formatted into another, held a large program's table three times over.
+    let mut out = String::from("{\"schema\":1,\"checks\":[");
+    let mut entries = Entries { out: &mut out, first: true };
     for body in bodies {
         for (block_index, block) in body.blocks.iter().enumerate() {
             for (statement_index, stmt) in block.stmts.iter().enumerate() {
@@ -774,7 +791,23 @@ fn safety_json(bodies: &[Body], map: &SourceMap) -> String {
             });
         }
     }
-    format!("{{\"schema\":1,\"checks\":[{}]}}\n", entries.join(","))
+    out.push_str("]}\n");
+    out
+}
+
+/// The safety table's entries, each written after a comma but the first.
+struct Entries<'a> {
+    out: &'a mut String,
+    first: bool,
+}
+
+impl Entries<'_> {
+    fn push(&mut self, entry: String) {
+        if !std::mem::replace(&mut self.first, false) {
+            self.out.push(',');
+        }
+        self.out.push_str(&entry);
+    }
 }
 
 fn json_string(value: &str) -> String {

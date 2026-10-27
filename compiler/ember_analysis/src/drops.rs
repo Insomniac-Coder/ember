@@ -43,11 +43,36 @@ use ember_types::{StructId, Ty, TypeTable, TyKind};
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct Owned(u8);
 
+/// ODR-281 — the states of a body's move paths at one point, two to a byte (an `Owned` is three
+/// bits): the elaboration holds one for each block, so a large body's took a byte per path per
+/// block (a 3,200-call `main`'s, 430 MB). The join is the bytes' or, as `Owned::join` is each one's.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct States(Vec<u8>);
+
+impl States {
+    fn get(&self, node: usize) -> Owned {
+        let byte = self.0[node / 2];
+        Owned(if node % 2 == 0 { byte & 0x0F } else { byte >> 4 })
+    }
+
+    fn set(&mut self, node: usize, value: Owned) {
+        let byte = &mut self.0[node / 2];
+        *byte = if node % 2 == 0 { (*byte & 0xF0) | value.0 } else { (*byte & 0x0F) | (value.0 << 4) };
+    }
+
+    fn join(&self, other: &States) -> States {
+        States(self.0.iter().zip(&other.0).map(|(a, b)| a | b).collect())
+    }
+}
+
 impl Owned {
     const LIVE: Owned = Owned(1);
     const MOVED: Owned = Owned(2);
     const PARTIAL: Owned = Owned(4);
 
+    /// The join of two states: their union, as sets of what may be (`States::join` joins two
+    /// points' states a byte at a time, two paths in each).
+    #[cfg(test)]
     fn join(self, other: Owned) -> Owned {
         Owned(self.0 | other.0)
     }
@@ -137,14 +162,15 @@ impl MovePaths {
         index
     }
 
-    fn initial(&self, body: &Body) -> Vec<Owned> {
-        self.places
-            .iter()
-            .map(|place| match body.local(place.local).kind {
+    fn initial(&self, body: &Body) -> States {
+        let mut state = States(vec![0; self.places.len().div_ceil(2)]);
+        for (node, place) in self.places.iter().enumerate() {
+            state.set(node, match body.local(place.local).kind {
                 LocalKind::Arg | LocalKind::Return => Owned::LIVE,
                 _ => Owned::MOVED,
-            })
-            .collect()
+            });
+        }
+        state
     }
 
     /// The exact node, or the deepest atomic ancestor when a projection goes
@@ -170,11 +196,11 @@ impl MovePaths {
         (self.handles[node] && self.places[node].projection.len() < place.projection.len()).then(|| &self.places[node])
     }
 
-    fn state(&self, place: &Place, state: &[Owned]) -> Owned {
-        state[self.node(place)]
+    fn state(&self, place: &Place, state: &States) -> Owned {
+        state.get(self.node(place))
     }
 
-    fn move_out(&self, place: &Place, state: &mut [Owned]) {
+    fn move_out(&self, place: &Place, state: &mut States) {
         // A field behind a class handle is the object's, never the handle's: dropping the old
         // value of `p.next` before a write leaves `p` as it was (D-698).
         if self.through_handle(place).is_some() {
@@ -185,7 +211,7 @@ impl MovePaths {
         self.recompute_ancestors(node, state);
     }
 
-    fn initialise(&self, place: &Place, state: &mut [Owned]) {
+    fn initialise(&self, place: &Place, state: &mut States) {
         let node = self.node(place);
         if self.through_handle(place).is_some() {
             return;
@@ -194,22 +220,22 @@ impl MovePaths {
         self.recompute_ancestors(node, state);
     }
 
-    fn set_subtree(&self, node: usize, value: Owned, state: &mut [Owned]) {
-        state[node] = value;
+    fn set_subtree(&self, node: usize, value: Owned, state: &mut States) {
+        state.set(node, value);
         for &child in &self.children[node] {
             self.set_subtree(child, value, state);
         }
     }
 
-    fn recompute_ancestors(&self, node: usize, state: &mut [Owned]) {
+    fn recompute_ancestors(&self, node: usize, state: &mut States) {
         let mut parent = self.parents[node];
         while let Some(index) = parent {
             // This ancestor was not itself moved or assigned. It is usable as
             // a whole only in combinations where every direct child is live;
             // every other possible combination is a partial value.
             let children = &self.children[index];
-            let all_may_live = children.iter().all(|child| state[*child].may_be_live());
-            let all_are_live = children.iter().all(|child| state[*child].is_live());
+            let all_may_live = children.iter().all(|child| state.get(*child).may_be_live());
+            let all_are_live = children.iter().all(|child| state.get(*child).is_live());
             let mut bits = 0;
             if all_may_live {
                 bits |= Owned::LIVE.0;
@@ -217,7 +243,7 @@ impl MovePaths {
             if !all_are_live {
                 bits |= Owned::PARTIAL.0;
             }
-            state[index] = Owned(bits);
+            state.set(index, Owned(bits));
             parent = self.parents[index];
         }
     }
@@ -242,7 +268,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
     errors += check_borrowed_moves(body, types, sink);
     let paths = MovePaths::build(body, types);
     let entry = paths.initial(body);
-    let mut block_entry: Vec<Option<Vec<Owned>>> = vec![None; body.blocks.len()];
+    let mut block_entry: Vec<Option<States>> = vec![None; body.blocks.len()];
     if body.blocks.is_empty() {
         return 0;
     }
@@ -255,8 +281,7 @@ pub fn elaborate(body: &mut Body, types: &TypeTable, sink: &mut Sink) -> usize {
         for successor in successors(body, index) {
             let merged = match &block_entry[successor] {
                 Some(existing) => {
-                    let joined: Vec<Owned> =
-                        existing.iter().zip(&exit).map(|(a, b)| a.join(*b)).collect();
+                    let joined = existing.join(&exit);
                     if joined == *existing {
                         continue;
                     }
@@ -375,7 +400,7 @@ impl DropAction {
 fn plan_drop(
     place: &Place,
     owned: Owned,
-    state: &[Owned],
+    state: &States,
     paths: &MovePaths,
     body: &Body,
     types: &TypeTable,
@@ -1300,10 +1325,10 @@ fn find_bool(types: &TypeTable) -> Option<Ty> {
 fn transfer(
     body: &Body,
     index: usize,
-    mut state: Vec<Owned>,
+    mut state: States,
     mut reporter: Option<&mut Reporter>,
     paths: &MovePaths,
-) -> Vec<Owned> {
+) -> States {
     for stmt in &body.blocks[index].stmts {
         step(stmt, &mut state, reporter.as_deref_mut(), body, paths);
     }
@@ -1318,7 +1343,7 @@ fn transfer(
 fn step_terminator(
     body: &Body,
     index: usize,
-    state: &mut [Owned],
+    state: &mut States,
     reporter: Option<&mut Reporter>,
     paths: &MovePaths,
 ) {
@@ -1344,7 +1369,7 @@ fn step_terminator(
 /// both come through here, so the state they reach is the same.
 fn consume_in_order<'o>(
     operands: impl IntoIterator<Item = &'o Operand>,
-    state: &mut [Owned],
+    state: &mut States,
     mut reporter: Option<&mut Reporter>,
     span: Span,
     body: &Body,
@@ -1384,7 +1409,7 @@ fn operands_of(rvalue: &Rvalue) -> Vec<&Operand> {
 
 fn step(
     stmt: &Stmt,
-    state: &mut [Owned],
+    state: &mut States,
     mut reporter: Option<&mut Reporter>,
     body: &Body,
     paths: &MovePaths,
@@ -1817,4 +1842,37 @@ pub fn check_scope_moves_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink
         }
     }
     errors
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Owned, States};
+
+    /// ODR-281 — two paths a byte read, written and joined as a byte each would be (brute force).
+    #[test]
+    fn packed_states_are_the_states_they_hold() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        for _ in 0..2000 {
+            let paths = 1 + next(15) as usize;
+            let mut plain = [Vec::new(), Vec::new()];
+            let mut packed = [States(vec![0; paths.div_ceil(2)]), States(vec![0; paths.div_ceil(2)])];
+            for side in 0..2 {
+                for node in 0..paths {
+                    let value = Owned(next(8) as u8);
+                    plain[side].push(value);
+                    packed[side].set(node, Owned(next(8) as u8));
+                    packed[side].set(node, value);
+                }
+                assert!((0..paths).all(|node| packed[side].get(node) == plain[side][node]));
+            }
+            let joined = packed[0].join(&packed[1]);
+            assert!((0..paths).all(|node| joined.get(node) == plain[0][node].join(plain[1][node])));
+        }
+    }
 }

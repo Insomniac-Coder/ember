@@ -56,7 +56,9 @@ jobs:
       - name: the figures
         shell: bash
         run: |
-          python tools/compile_budgets.py --after target/release/ember.exe $BEFORE --json compiler-speed.json --markdown compiler-speed.md \
+          # B9-curve (ODR-281) to 400k lines: a runner's memory and disk hold both compilers' builds
+          # of that size (the run of record, on the laptop, goes to 800k).
+          python tools/compile_budgets.py --after target/release/ember.exe $BEFORE --curve-sizes 50000,100000,200000,400000 --json compiler-speed.json --markdown compiler-speed.md \
             || echo "::warning title=compiler speed::a figure is slower, or over its bound, on this runner; reported only, the gate of record is the reference laptop's"
       - uses: actions/upload-artifact@v4
         if: always()

@@ -49,8 +49,10 @@ use ember_types::codec::{Found, TypeRecord};
 use ember_typeck::{CheckOutput, Kept, LoadedModule};
 use serde::{Deserialize, Serialize};
 
-/// A record of another schema is one this compiler cannot read: it is not used.
-const SCHEMA: u32 = 3;
+/// A record of another schema is one this compiler cannot read: it is not used. Schema 4
+/// (ODR-281): a record names its imports at their reach hashes, where schema 3 named every module
+/// it reached at its declarations.
+const SCHEMA: u32 = 4;
 const EXTENSION: &str = "emck";
 
 type Hash = [u8; 32];
@@ -83,7 +85,7 @@ struct Record {
     key: Hash,
     source: Hash,
     declarations: Hash,
-    /// Each module it imports, directly or not: its name and declarations when this was kept.
+    /// Each module it imports: its name and its reach hash (`Plan::reach`) when this was kept.
     deps: Vec<(String, Hash)>,
     /// The files its spans point into (numbered as its spans name them).
     files: Vec<FileRef>,
@@ -199,8 +201,12 @@ pub(crate) struct Plan {
     shapes: Vec<Shape>,
     /// Each module's place by its file.
     module_of_file: HashMap<FileId, usize>,
-    /// Each module's transitive imports, by their places in the loaded list.
-    deps: Vec<Vec<usize>>,
+    /// Each module's imports, by their places in the loaded list.
+    imports: Vec<Vec<usize>>,
+    /// ODR-281 — each module's reach hash: of its declarations and of those of every module it
+    /// reaches by its imports (`ember_build::interface::component_hashes`). A record names its
+    /// imports at theirs, so its size is its imports', not every module's below it.
+    reach: Vec<Hash>,
     clean: Vec<Clean>,
     /// The modules kept whole, and those kept in part with the bodies (their spans now) kept.
     whole_set: HashSet<usize>,
@@ -212,7 +218,7 @@ pub(crate) struct Plan {
     kept_bodies: HashMap<FileId, Vec<(u32, u32)>>,
     /// Each clean module's parts this build uses, read by `kept`: its module part (kept whole), its
     /// kept own units, its instances; each with its form.
-    read: std::cell::RefCell<Vec<Option<Vec<(Used, Form, Option<String>)>>>>,
+    read: std::sync::Mutex<Vec<Option<Vec<(Used, Form, Option<String>)>>>>,
     /// The kept parts this build uses, after `inject`: own parts by their first body's symbol,
     /// instances by theirs.
     used_parts: HashMap<String, Used>,
@@ -262,13 +268,24 @@ impl Plan {
             .as_bytes(),
         );
         let module_of_file = modules.iter().enumerate().map(|(index, loaded)| (loaded.module.span.file, index)).collect();
+        let imports = direct_imports(modules);
+        let reach = {
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let declarations: Vec<Hash> = shapes.iter().map(|shape| shape.declarations).collect();
+            ember_build::interface::component_hashes(&names, &declarations, &imports, 0..modules.len())
+                .expect("each import is a loaded module")
+                .into_iter()
+                .map(|hash| hash.expect("every module is a root"))
+                .collect()
+        };
         let mut plan = Plan {
             dir,
             key,
             names,
             shapes,
             module_of_file,
-            deps: transitive_imports(modules),
+            imports,
+            reach,
             clean: Vec::new(),
             whole_set: HashSet::new(),
             partial: HashMap::new(),
@@ -288,11 +305,11 @@ impl Plan {
             if record.key != plan.key || record.declarations != plan.shapes[index].declarations || attempts.forced.contains(&plan.names[index]) {
                 continue;
             }
-            // Each import as the record knows it: the same modules, declaring the same.
-            let now: BTreeSet<&str> = plan.deps[index].iter().map(|dep| plan.names[*dep].as_str()).collect();
+            // Each import as the record knows it: the same modules, reaching modules declaring the same.
+            let now: BTreeSet<&str> = plan.imports[index].iter().map(|dep| plan.names[*dep].as_str()).collect();
             let then: BTreeSet<&str> = record.deps.iter().map(|(name, _)| name.as_str()).collect();
             let deps_hold = now == then
-                && record.deps.iter().all(|(name, declared)| by_name.get(name.as_str()).is_some_and(|&dep| plan.shapes[dep].declarations == *declared));
+                && record.deps.iter().all(|(name, reach)| by_name.get(name.as_str()).is_some_and(|&dep| plan.reach[dep] == *reach));
             if !deps_hold {
                 continue;
             }
@@ -353,7 +370,7 @@ impl Plan {
         for bodies in plan.kept_bodies.values_mut() {
             bodies.sort_unstable();
         }
-        plan.read = std::cell::RefCell::new((0..plan.clean.len()).map(|_| None).collect());
+        plan.read = std::sync::Mutex::new((0..plan.clean.len()).map(|_| None).collect());
         plan
     }
 
@@ -482,14 +499,14 @@ impl Plan {
                 kept.holders.extend(part.kept.holders.iter().copied());
             }
         }
-        self.read.borrow_mut()[n] = Some(parts);
+        self.read.lock().unwrap_or_else(|e| e.into_inner())[n] = Some(parts);
         Ok(kept)
     }
 
     /// After the check: each clean module whose types were not found again, or whose parts could
     /// not be read, is checked whole by the next attempt. Whether this attempt can go on.
     pub(crate) fn found(&self, checked: &CheckOutput, attempts: &mut Attempts) -> bool {
-        let read = self.read.borrow();
+        let read = self.read.lock().unwrap_or_else(|e| e.into_inner());
         for ((clean, found), parts) in self.clean.iter().zip(&checked.found).zip(read.iter()) {
             if found.is_err() || parts.is_none() {
                 attempts.forced.insert(clean.record.name.clone());
@@ -516,7 +533,7 @@ impl Plan {
                 },
             );
         }
-        let parts: Vec<(Used, Form, Option<String>)> = self.read.get_mut().iter_mut().flatten().flat_map(std::mem::take).collect();
+        let parts: Vec<(Used, Form, Option<String>)> = self.read.get_mut().unwrap_or_else(|e| e.into_inner()).iter_mut().flatten().flat_map(std::mem::take).collect();
         let instances: HashSet<String> = parts.iter().filter_map(|(_, _, instance)| instance.clone()).collect();
         bodies.retain(|body| !instances.contains(&body.symbol));
         let mut present: HashSet<String> = bodies.iter().map(|body| body.symbol.clone()).collect();
@@ -565,7 +582,7 @@ impl Plan {
     /// reported by this build already.
     pub(crate) fn replay(&mut self, sink: &mut Sink, map: &SourceMap) {
         let diagnostics: Vec<Diagnostic> =
-            self.read.get_mut().iter_mut().flatten().flatten().flat_map(|(used, _, _)| std::mem::take(&mut used.diagnostics)).collect();
+            self.read.get_mut().unwrap_or_else(|e| e.into_inner()).iter_mut().flatten().flatten().flat_map(|(used, _, _)| std::mem::take(&mut used.diagnostics)).collect();
         report_again(diagnostics, sink, map);
     }
 
@@ -624,7 +641,7 @@ impl Plan {
         borrow: &BorrowFacts,
         sink: &Sink,
         types: &TypeTable,
-        made: &dyn Fn(ember_types::StructId) -> Option<Option<ember_types::codec::MadeCall>>,
+        made: &(dyn Fn(ember_types::StructId) -> Option<Option<ember_types::codec::MadeCall>> + Sync),
         map: &SourceMap,
     ) -> Result<(), String> {
         let by_symbol: HashMap<&str, &Body> = bodies.iter().map(|body| (body.symbol.as_str(), body)).collect();
@@ -632,9 +649,12 @@ impl Plan {
             artifacts.iter().map(|artifact| (artifact.module.as_str(), artifact)).collect();
         let reported = |places: &[usize]| -> Vec<Diagnostic> { places.iter().map(|&at| sink.diagnostics()[at].clone()).collect() };
         std::fs::create_dir_all(&self.dir).map_err(|error| format!("cannot write `{}`: {error}", self.dir.display()))?;
-        for (index, module) in checks.modules.iter().enumerate() {
-            let Some(module) = module else { continue };
-            let Some(artifact) = artifacts.get(checks.interface_names[index].as_str()) else { continue };
+        // `[BLD-7]`, ODR-281 — each module's record is made from what this build read of it alone,
+        // and written to a file of its own: the records are made on the `-j` threads.
+        let checked: Vec<usize> = (0..checks.modules.len()).filter(|&index| checks.modules[index].is_some()).collect();
+        let written = ember_analysis::parallel::each(&checked, &mut Sink::new(), |&index, _| -> Result<(), String> {
+            let Some(module) = &checks.modules[index] else { return Ok(()) };
+            let Some(artifact) = artifacts.get(checks.interface_names[index].as_str()) else { return Ok(()) };
             let interface = (artifact.module.clone(), artifact.dependencies.keys().cloned().collect(), artifact.interface_hash.bytes());
             // Each part: its symbols, and its form; a kept one's as its record had it.
             let form = |symbols: &[String], kept: Kept, diagnostics: Vec<Diagnostic>, body_diagnostics: Vec<Diagnostic>| Form {
@@ -687,7 +707,9 @@ impl Plan {
                         form(&unit.functions, fresh.kept.clone(), reported(&fresh.diagnostics), reported(&fresh.body_diagnostics)),
                     ),
                     None => {
-                        let Some(used) = self.used_parts.get(&format!("{index}\0{}", unit.functions.first().map_or("", String::as_str))) else { continue };
+                        let Some(used) = self.used_parts.get(&format!("{index}\0{}", unit.functions.first().map_or("", String::as_str))) else {
+                            continue;
+                        };
                         let symbols: Vec<String> = used.facts.iter().map(|(symbol, _)| symbol.clone()).collect();
                         (
                             Some(unit.body),
@@ -722,7 +744,7 @@ impl Plan {
                 let record = ember_types::codec::record(types, &mut numbering, made);
                 (written, record.map(|record| ember_span::codec::to_bytes(&record)))
             });
-            let (Ok(written), Ok(Ok(types_bytes))) = (written, types_bytes) else { continue };
+            let (Ok(written), Ok(Ok(types_bytes))) = (written, types_bytes) else { return Ok(()) };
             let ((files, at), pieces_of) = self.file_refs(extents, map);
             let mut records = parts.into_iter().zip(written).map(|((body, facts, uses, _), (bytes, scoped))| {
                 let mut pieces: Vec<(u32, u32)> =
@@ -739,7 +761,7 @@ impl Plan {
                 key: self.key,
                 source: hash(map.file(checks.files[index]).text.as_bytes()),
                 declarations: self.shapes[index].declarations,
-                deps: self.deps[index].iter().map(|&dep| (self.names[dep].clone(), self.shapes[dep].declarations)).collect(),
+                deps: self.imports[index].iter().map(|&dep| (self.names[dep].clone(), self.reach[dep])).collect(),
                 files,
                 types: types_bytes,
                 module: module_part,
@@ -754,8 +776,9 @@ impl Plan {
             if std::fs::rename(&partial, &path).is_err() {
                 let _ = std::fs::remove_file(&partial);
             }
-        }
-        Ok(())
+            Ok(())
+        });
+        written.into_iter().try_for_each(|(result, _)| result)
     }
 
     /// The files a record's spans point into (`ember_span::codec::encode`'s extents), as the record
@@ -1190,14 +1213,14 @@ fn declarations(loaded: &LoadedModule, map: &SourceMap) -> Shape {
     Shape { declarations: hash(whole.as_bytes()), open, bodies: bodies.iter().map(|body| (body.start, body.end)).collect(), ends }
 }
 
-/// Each module's imports, directly or not, by their places in `modules`. The prelude's modules are
-/// every module's (`[MOD-5]`).
-fn transitive_imports(modules: &[LoadedModule]) -> Vec<Vec<usize>> {
+/// Each module's imports, by their places in `modules`. The prelude's modules are every module's
+/// (`[MOD-5]`).
+fn direct_imports(modules: &[LoadedModule]) -> Vec<Vec<usize>> {
     let by_path: HashMap<String, usize> = modules.iter().enumerate().map(|(index, loaded)| (loaded.path.join("."), index)).collect();
     let std = ember_branding::STD_PACKAGE;
     let prelude: Vec<usize> =
         ["core", "collections", "mem", "string"].iter().filter_map(|module| by_path.get(&format!("{std}.{module}")).copied()).collect();
-    let direct: Vec<Vec<usize>> = modules
+    modules
         .iter()
         .enumerate()
         .map(|(index, loaded)| {
@@ -1226,18 +1249,6 @@ fn transitive_imports(modules: &[LoadedModule]) -> Vec<Vec<usize>> {
                 out.insert(ser);
             }
             out.into_iter().collect()
-        })
-        .collect();
-    (0..modules.len())
-        .map(|start| {
-            let mut seen = BTreeSet::new();
-            let mut stack = direct[start].clone();
-            while let Some(module) = stack.pop() {
-                if module != start && seen.insert(module) {
-                    stack.extend(direct[module].iter().copied());
-                }
-            }
-            seen.into_iter().collect()
         })
         .collect()
 }

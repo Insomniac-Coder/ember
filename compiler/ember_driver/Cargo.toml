@@ -36,3 +36,7 @@ workspace = true
 [[bin]]
 name = "ember"
 path = "src/ember.rs"
+
+[features]
+# ODR-281: count every allocation, so `--timings` says what each stage holds (`src/memory.rs`).
+count-allocations = []

@@ -40,6 +40,114 @@ impl InitializationState {
     }
 }
 
+/// A per-local (or per-place) dataflow lattice held sparsely (`SparseStates`): its join, and the
+/// value a state holds where nothing is listed.
+pub trait SparseState: Copy + Eq {
+    /// The value of every local a state does not list: where a body's locals start.
+    const ABSENT: Self;
+    fn join_state(self, other: Self) -> Self;
+}
+
+impl SparseState for InitializationState {
+    const ABSENT: Self = InitializationState::Uninit;
+    fn join_state(self, other: Self) -> Self {
+        self.join(other)
+    }
+}
+
+/// `[IMP-7]`, ODR-281 — the state of every local (or move path) at one point, held sparsely: each
+/// one whose state is not `T::ABSENT`, by number, in order. A point holds the locals live there,
+/// not every local of its body, so a body's dataflow grows with the body, where a state per local
+/// per block grew with its square (a 3,200-call `main`'s initialization facts were 700 MB). The
+/// lattice and its join are the dense one's, local by local.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SparseStates<T>(Vec<(u32, T)>);
+
+impl<T> Default for SparseStates<T> {
+    fn default() -> Self {
+        SparseStates(Vec::new())
+    }
+}
+
+/// `[IMP-7]` — the initialization state of every local at one point.
+pub type InitializationStates = SparseStates<InitializationState>;
+
+impl<T: SparseState> SparseStates<T> {
+    /// The state of local `local`.
+    pub fn get(&self, local: usize) -> T {
+        match self.0.binary_search_by_key(&(local as u32), |&(at, _)| at) {
+            Ok(found) => self.0[found].1,
+            Err(_) => T::ABSENT,
+        }
+    }
+
+    pub(crate) fn set(&mut self, local: usize, state: T) {
+        let local = local as u32;
+        // Locals are written mostly in the order they were made: look at the last first.
+        let found = match self.0.last() {
+            Some(&(last, _)) if last < local => Err(self.0.len()),
+            _ => self.0.binary_search_by_key(&local, |&(at, _)| at),
+        };
+        match found {
+            Ok(at) if state == T::ABSENT => {
+                self.0.remove(at);
+            }
+            Ok(at) => self.0[at].1 = state,
+            Err(_) if state == T::ABSENT => {}
+            Err(at) => self.0.insert(at, (local, state)),
+        }
+    }
+
+    /// The join of two points' states, local by local.
+    pub(crate) fn join(&self, other: &SparseStates<T>) -> SparseStates<T> {
+        let (mut left, mut right) = (self.0.iter().peekable(), other.0.iter().peekable());
+        let mut out = Vec::with_capacity(self.0.len().max(other.0.len()));
+        loop {
+            let (local, a, b) = match (left.peek(), right.peek()) {
+                (Some(&&(l, a)), Some(&&(r, b))) if l == r => {
+                    left.next();
+                    right.next();
+                    (l, a, b)
+                }
+                (Some(&&(l, a)), Some(&&(r, _))) if l < r => {
+                    left.next();
+                    (l, a, T::ABSENT)
+                }
+                (Some(&&(l, a)), None) => {
+                    left.next();
+                    (l, a, T::ABSENT)
+                }
+                (_, Some(&&(r, b))) => {
+                    right.next();
+                    (r, T::ABSENT, b)
+                }
+                (None, None) => break,
+            };
+            let joined = a.join_state(b);
+            if joined != T::ABSENT {
+                out.push((local, joined));
+            }
+        }
+        SparseStates(out)
+    }
+
+    /// Every local's state, of a body of `locals` locals.
+    pub fn dense(&self, locals: usize) -> Vec<T> {
+        let mut out = vec![T::ABSENT; locals];
+        for &(local, state) in &self.0 {
+            if let Some(slot) = out.get_mut(local as usize) {
+                *slot = state;
+            }
+        }
+        out
+    }
+
+    /// The highest local listed, if any (a fact naming a local its body has not is stale).
+    pub(crate) fn highest(&self) -> Option<usize> {
+        self.0.last().map(|&(local, _)| local as usize)
+    }
+}
+
 /// `[IMP-7]` — the canonical definite-initialization facts for one MIR body.
 ///
 /// Block entries and exits are retained together so downstream consumers do
@@ -49,8 +157,8 @@ impl InitializationState {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct InitializationFacts {
     pub(crate) body_symbol: String,
-    pub(crate) block_entry: Vec<Option<Vec<InitializationState>>>,
-    pub(crate) block_exit: Vec<Option<Vec<InitializationState>>>,
+    pub(crate) block_entry: Vec<Option<InitializationStates>>,
+    pub(crate) block_exit: Vec<Option<InitializationStates>>,
 }
 
 impl InitializationFacts {
@@ -58,12 +166,12 @@ impl InitializationFacts {
         &self.body_symbol
     }
 
-    pub fn block_entry(&self, block: usize) -> Option<&[InitializationState]> {
-        self.block_entry.get(block)?.as_deref()
+    pub fn block_entry(&self, block: usize) -> Option<&InitializationStates> {
+        self.block_entry.get(block)?.as_ref()
     }
 
-    pub fn block_exit(&self, block: usize) -> Option<&[InitializationState]> {
-        self.block_exit.get(block)?.as_deref()
+    pub fn block_exit(&self, block: usize) -> Option<&InitializationStates> {
+        self.block_exit.get(block)?.as_ref()
     }
 
     pub fn block_count(&self) -> usize {
