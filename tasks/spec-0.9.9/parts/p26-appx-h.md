@@ -2011,3 +2011,72 @@ Generated: every rule whose text differs from 0.9.10_Hardened_35.
 | `[WK-16]` | added |
 | `[WK-17]` | added |
 | `[WK-18]` | added |
+
+## H.42 Changes in 0.9.15_Hardened_2 (from 0.9.15_Hardened_1)
+
+**0.9.15_Hardened_2** writes in the owner's verdicts 101 to 106 and the lead's rulings for the compiler
+work (`tasks/96/redesign/JOB.md`; `tasks/96/redesign/compiler-0.9.15/decisions.md`, sections 4 to 6):
+
+* Verdict 101: a `thread_shared` value's owners are counted in two numbers, its making thread's own
+  (plain) and the other threads' (atomic), with a hand-over to the making thread through its queue and
+  the compiler's check points, and an immediate hand-over where an owner is stored where other threads
+  can reach it (biased counting; `[OBJ-1]`'s 32-byte header, `[RC-4]`, `[RC-5]`, `[WK-3]`, `[WK-12]`,
+  `[RT-7]`, `[RT-8]`, `[RT-10]`, `[COST-3]`'s measured row).
+* Verdict 102: a C contract writes `owns` for "C takes this object"; `owned` is refused everywhere.
+* Verdict 103: `shares`, `shares mut` and `thread_shared` are not made of a place that has one owner and
+  is not a local (`E2122`, new).
+* Verdict 104: a scoped task's claims end at its join, `h.join()` or the end of the `with scope:` block.
+* Verdict 105 (for now): a task's or a chunk's own whole-number total stops the program on overflow.
+* Verdict 106: a contract on a function type is written above its `type` line.
+* The lead's rulings: `from` names any field of `this`; when a store may close a loop of owners and the
+  two proofs that it does not (`E3032`); a deferred-drop region runs the drops at once; a `Retained`
+  token is an owner edge; a manager type with no fields has one instance; `=` on a `static` is `E3023`;
+  `E3100` for an unverified foreign call outside `unsafe`, `E5002` for a contract's own errors and two
+  destructors of one foreign type; two bounds that both declare a method are `E2070`; every function
+  has a type of its own (ODR-278); a cdylib exports its class handles' functions; the trampoline's
+  number on 32-bit targets; `std.core.type_name[T]()` and the ECS's `Storage[T]`; `@component` gone;
+  what `ember fmt --migrate` also rewrites.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_1.
+
+| Rule | 0.9.15_Hardened_1 → 0.9.15_Hardened_2 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ATT-1]` | changed |
+| `[BCK-7]` | changed |
+| `[BLD-FFI-5a]` | changed |
+| `[CLI-20]` | changed |
+| `[CLO-1]` | changed |
+| `[ECS-2]` | changed |
+| `[EFF-2]` | changed |
+| `[FFI-23]` | changed |
+| `[FFI-28]` | changed |
+| `[FFI-36a]` | changed |
+| `[FFI-39c]` | changed |
+| `[FFI-53]` | changed |
+| `[FFI-54]` | changed |
+| `[HEAP-10]` | changed |
+| `[LEX-15]` | changed |
+| `[LT-1a]` | changed |
+| `[OBJ-1]` | changed |
+| `[OWN-13]` | changed |
+| `[PAR-3]` | changed |
+| `[RC-1]` | changed |
+| `[RC-4]` | changed |
+| `[RC-5]` | changed |
+| `[RT-7]` | changed |
+| `[RT-8]` | changed |
+| `[RT-10]` | changed |
+| `[STA-1]` | changed |
+| `[THR-1]` | changed |
+| `[THR-2]` | changed |
+| `[THR-7]` | changed |
+| `[THR-11]` | changed |
+| `[THR-13]` | changed |
+| `[THR-21]` | changed |
+| `[TYP-24]` | changed |
+| `[TYP-45]` | changed |
+| `[WK-3]` | changed |
+| `[WK-5]` | changed |
+| `[WK-7]` | changed |
+| `[WK-12]` | changed |

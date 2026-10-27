@@ -100,9 +100,9 @@ None is an owner verdict, and the owner may overturn any. Rulings that change sp
 | area 8 Q3: `@component(layout=...)` | its row is removed; `@component` is E0104 | verdict 100 (EnTT, no SoA pools) |
 | area 8 Q4: `Pool[T]` or `Storage[T]` | one type, `Storage[T]` (EnTT's `storage<T>`); `std.collections.Pool` keeps its name | no collision |
 | area 8 Q5: CLI-20's migrate list | add the bracket lines (GRM-40), `x: ref T` parameters, `T: Sync` bounds, `iter_mut()` loops | the list must cover what M1's migrator does |
-| area 1 Q1: `owned` inside `@ffi(...)` | stays the contract word there (confirmation asked as Q-A) | verdicts 58 and 91 |
+| area 1 Q1: `owned` inside `@ffi(...)` | **overturned by the owner (verdict 102, Q-A): the contract word is `owns`**, and `owned` is refused everywhere | the owner: "owned is now owns" |
 
-## 5. For 0.9.15_Hardened_2: the owner's verdict 101 (two numbers for `thread_shared` counts)
+## 5. For 0.9.15_Hardened_2: the owner's verdict 101 (two numbers for `thread_shared` counts) — written into Hardened_2 (2026-10-28)
 
 To write into the spec with the other rulings above, in one hardening:
 - `[OBJ-1]`: a `thread_shared` object's header (A, the type index, the weak count, B with its flags, the
@@ -116,3 +116,17 @@ To write into the spec with the other rulings above, in one hardening:
 - the cost table (`[COST-3]`): the numbers measured in `measure-0.9.15/brc/REPORT.md`.
 
 The compiler work falls in milestone M9 (threads), with A3-4's header in M6b.
+
+## 6. Choices made while writing 0.9.15_Hardened_2 (lead, 2026-10-28)
+
+Each is the smallest sound reading of a verdict or ruling above; the owner may overturn any.
+
+| where | choice | why |
+|---|---|---|
+| `[OBJ-1]` (verdict 101) | a `thread_shared` value's header is 32 bytes: home count, type index, weak count, an unused word, the away word (count × 8 and three marks), the queue link | the measured layout (`measure-0.9.15/brc/brc.h`); the type index and the weak count stay at the offsets every other header uses |
+| `[RC-4]` point 3 (verdict 101) | check points at every loop's back edge, before every call that may block the thread, and when it ends | the report left placement "to design"; these bound how long a queued value waits by the thread's own progress, and each is one test of the queue |
+| `[RT-7]` (verdict 101) | the home count keeps the exact compare at 4,294,967,295; the away and weak counts the half-range stop | the home count is one thread's, as a `shares` count is |
+| `[WK-7]` (area 3 Q1) | the proofs that a store closes no loop: (1) the stored value was made in this function and nothing but such values were stored into what it owns; (2) the holder was made in this function and no owner of it was stored anywhere yet | both are sound and checkable within one function; (1) is the design tests' tree built top down |
+| `[PAR-3]` (verdict 105) | a `@parallel` whole-number reduction's chunk totals stop on overflow too | the same rule as `[THR-21]`'s task totals; chunk boundaries do not depend on the machine (`[PAR-5]`), so neither does the stop |
+| `[FFI-11]` (verdict 102) | `returns_owned(destructor=f)` keeps its name | it is one word, not the removed `owned`; the owner may rename it |
+| `E2122` (verdict 103) | the new code is `E2122`, next to `E2119` | never used in any spec or in the compiler |

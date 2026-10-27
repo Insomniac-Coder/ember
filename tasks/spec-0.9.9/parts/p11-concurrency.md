@@ -71,9 +71,9 @@ change one place unordered.
   written before a new value (`st = thread_shared Stats()`) or on a value already `thread_shared`
   (`fn() thread_shared st:`), and on a value made otherwise it is `E7017` ("`names` is
   `share_and_keep`'s own object, which it may change; to share it between threads, create it shared:
-  `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Both its
-  counts, of owners and of `weakref` links, are atomic, and each is compared with its limit before it
-  grows (Part VIII). Three rules keep it safe:
+  `names = thread_shared Names()`"). A `thread_shared` value lives until its last owner ends. Its
+  owners are counted in two numbers, its making thread's and the other threads' (atomic), and its weak
+  count is atomic (`[RC-4]`); each is compared with its limit before it grows (Part VIII). Three rules keep it safe:
   * **no owner changes a `thread_shared` value directly** (`E7014`: "`names` is shared between threads
     (line 5), so no owner changes it directly, and line 6 pushes to its list; fill the list where the
     object is made: write `names = thread_shared Names(items=[copy of s])` instead of lines 5 and 6");
@@ -106,8 +106,8 @@ change one place unordered.
   (`E7015`, whose message gives the words to write: the value made `thread_shared` from the start, or a
   copy). **Making, ending or opening a `weakref` link touches its target's header** (its weak count, and
   the test that it still lives): in a scoped task, a job, or any function that may run on another thread
-  than its target's owner, it is allowed only for a `thread_shared` target, whose counts are atomic and
-  whose opened view holds an atomic count (`E7015`: "`players[0]` counts its links without atomics, and
+  than its target's owner, it is allowed only for a `thread_shared` target, whose counts are kept for
+  several threads and whose opened view holds a count (`[RC-4]`, `[RC-5]` point 2; `E7015`: "`players[0]` counts its links without atomics, and
   the task on line 9 makes one too; make the links after the scope, or make the player
   `thread_shared`"). An object handed whole to another thread while a `weakref` link on this thread
   points at it is `E7015`, since this thread could open the link while the other thread ends the object
@@ -116,7 +116,7 @@ change one place unordered.
   write `h = thread.spawn(fn() copy of names: names.items.len())` in place of line 16"). So an object
   that stays on one thread needs no atomic count.
 * `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on several
-  threads, its counts are atomic, and no owner changes it directly (`[THR-1]`). It does not make a method
+  threads, its counts are kept for several threads (`[RC-4]`), and no owner changes it directly (`[THR-1]`). It does not make a method
   atomic: two operations on `Atomic` fields, or a read and a store of one
   (`if n > this.longest.load(): this.longest.store(n)`), are two steps another thread may come between;
   a read and a change that must stay together are made under one lock (`[THR-18]`). A diagnostic MUST
@@ -132,7 +132,7 @@ change one place unordered.
     lock, which the thread that touches it holds (`[THR-3]`, `[THR-18]`);
   * a value handed over to the other thread, which the giver no longer has, and from which no one-thread
     value is reachable (`[THR-2]`, `[THR-8]`);
-  * a `thread_shared` value: no owner changes it directly, and its counts are atomic (`[THR-1]`);
+  * a `thread_shared` value: no owner changes it directly, and its counts are kept for several threads (`[THR-1]`, `[RC-4]`);
   * a module variable: a `static` never changes (`[STA-1]`), and a `static mut` is reached only by the
     main thread and its scoped tasks, or is `guarded by` a lock (`[THR-20]`);
   * a `sharedref mut` target: a scoped task changes it directly only where neither another task nor the
@@ -377,7 +377,10 @@ fn count_words(texts: Array[String]) -> int:
   `fn spawn(owns f: fn() -> R) -> ScopedJoinHandle[R]:`. A task needs no capture words but for the
   loop's own variable and a local of one round (`[THR-17]`): it uses the caller's real variables, which
   outlive it. What each task changes and reads is worked out from its body and every function it may run
-  (`[EFF-24]`), and is checked against the other tasks and the parent until the join: two of them
+  (`[EFF-24]`), and is checked against the other tasks and the parent until the task's join: `h.join()`
+  on its handle, or the end of the `with scope:` block for a task not joined before it (verdict 104).
+  After `h.join()` the parent may change or read what that task used, in the same block
+  (`counts[0] += 1` after `h.join()`), checked only against the tasks not yet joined: two of them
   changing one place, or one reading a place another changes, is `E7007`, other than by a reduction
   (`[THR-21]`), under a lock, or through an `Atomic`. A task that reads a place before changing it needs
   the lock, which keeps the read and the change together ("two tasks change `stats.total` (line 19), and
@@ -397,10 +400,14 @@ fn count_words(texts: Array[String]) -> int:
   links to one object included, is a reduction: each task adds into a private accumulator, and the
   accumulators are combined into the place at the join, in spawn order. Nothing reads the place before
   the join (`E7007`: "tasks add their parts to `total`, which is known only once the `with` block (lines
-  11 to 14) ends; read it after the block: remove line 14 and write `println(total)` above line 15"). A
-  whole-number total is always the one adding one by one gives (`a.target.hp -= 1` and
-  `b.target.hp -= 2` from two tasks, `a` and `b` linking one player whose `hp` is 10, leave 7 every
-  time); a decimal total may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with
+  11 to 14) ends; read it after the block: remove line 14 and write `println(total)` above line 15").
+  Each task's accumulator has the place's type, and its operations are checked as the place's are, and
+  so are the combining operations at the join (verdict 105): a whole-number total is the one adding one
+  by one gives whenever no task's own total overflows (`a.target.hp -= 1` and `b.target.hp -= 2` from
+  two tasks, `a` and `b` linking one player whose `hp` is 10, leave 7 every time), and a task whose own
+  total overflows stops the program there (`[TYP-8]`), even where adding one by one would not
+  (`[[-100], [100, 100]]` summed into an `i8` by two tasks stops in the second, at 100 + 100, where
+  adding one by one gives 100); a decimal total may differ from it in the last digit (`for part in [[0.1], [0.2, 0.3]]:` with
   `scope.spawn(fn() copy of part: for x in part: total += x)` gives `0.6`, where adding one by one gives
   `0.6000000000000001`), and is the same on every run, so it is not `Nondet` (`[DET-2]`). A plain
   assignment from a task (`a.target.hp = 5`) and a task that reads the current value
@@ -460,7 +467,10 @@ fn hurt_all(ref mut players: Array[Player]):
   after the loop; inside the body each chunk has its own copy. Each chunk reduces its iterations left
   to right, and the chunk results are then combined in chunk order, so the result is the same on
   every machine (`[PAR-5]`); for floats it can differ from the serial left-to-right sum, which is
-  why a float reduction must be declared.
+  why a float reduction must be declared. A whole-number reduction's chunk results have the variable's
+  type and stop the program on overflow, as `[THR-21]`'s task totals do (verdict 105): the result is the
+  serial one whenever no chunk's own total overflows, and since chunk boundaries depend only on the trip
+  count and `chunk`, whether it stops does not depend on the machine.
 * `[PAR-4]` *(changed in 0.9.9)* A `@parallel` loop has the effects `Sync` and `Block` (it waits for
   its chunks) and not `Alloc`: its chunk descriptors live in the calling frame and the job queues have
   a fixed capacity; when they are full the calling thread runs the chunk itself.

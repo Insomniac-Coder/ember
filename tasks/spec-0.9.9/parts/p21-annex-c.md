@@ -27,7 +27,7 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
 * `[BLD-FFI-5a]` *(changed in 0.9.15)* With the C++ header, an exported function may take or return a
   `thread_shared` value of a class, the one owning Ember value that crosses (`[FFI-31b]`): the header
   presents it as a copyable handle class of the same name with the class's `pub` methods, each copy
-  one more owner on the value's atomic count (`[RT-8]`) and each end one fewer, its limit checked as an
+  one more owner on the value's away count (`[RC-4]`, `[RT-8]`) and each end one fewer, its limit checked as an
   Ember owner's is (`[RT-7]`). No other Ember value has a C++ handle, so C++ code never counts a
   one-thread value, from one thread or from two.
 
@@ -129,7 +129,7 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   argument types and runs it at `super.init(…)` (`[CLS-11]`); a base with no default constructor and
   no declared `init` is `E5058`.
 * `[FFI-39c]` *(changed in 0.9.10)* *(changed in 0.9.15)* A C++ parameter that keeps the pointer it is
-  given (contracted `owned` in the overlay) takes the object over: its class is declared
+  given (contracted `owns` in the overlay) takes the object over: its class is declared
   `@ffi(trampoline, owner="foreign")` (`[FFI-17d]`), the argument is handed over
   (`panel.add_child(b)`: `b` ends, upcast to the C++ base), and C++'s `delete` ends the object later.
   For a C++ function whose declaration cannot say so (a raw pointer it keeps), `b.into_raw()` inside

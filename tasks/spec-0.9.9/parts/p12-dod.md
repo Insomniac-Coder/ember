@@ -195,10 +195,12 @@ fn main():
   (`basic_sparse_set` with `basic_storage`); removal is swap-and-pop. A pool is one contiguous array, not
   paged: no Ember name can keep a view into a pool across a change that may move it (§VII), so a stable
   address is never needed, and one array walks at least as fast. A component type's identity is the
-  64-bit FNV-1a hash of its fully qualified name (`ecs.type_hash[T]()`), stable across builds and
-  modules. The registry keeps its pools as `pools: Map[u64, owns dyn AnyPool]`: each pool has one owner,
+  64-bit FNV-1a hash of its fully qualified name, which `std.core.type_name[T]()` gives (a function the
+  compiler knows, as Rust's `std::any::type_name`): `ecs.type_hash[T]()`, stable across builds and
+  modules. The registry keeps its pools as `pools: Map[u64, owns dyn AnyStorage]`: each pool has one owner,
   with no count, and `reg.storage[T]()` reaches its own pool as a place,
-  `pool = ref mut cast this.pools[ecs.type_hash[T]()] as Pool[T]` (`[TYP-44]`, `[DSP-4]`).
+  `pool = ref mut cast this.pools[ecs.type_hash[T]()] as Storage[T]` (`[TYP-44]`, `[DSP-4]`); the pool
+  type is `Storage[T]`, EnTT's `storage<T>` (`std.collections.Pool[T]` is the handle pool, `[HND-1]`).
 * `[ECS-3]` *(changed in 0.9.15)* **The registry.** `Registry` (EnTT's `entt::registry`) is a class:
   `create() -> Entity` and `create_at(hint: Entity) -> Entity`; `destroy(e) -> u32` (the entity's next
   generation); `valid(e)`, `current(e)`; `clear()` and `clear_of[T]()`; `emplace(e, owns value: T) -> ref

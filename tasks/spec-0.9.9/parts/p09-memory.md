@@ -16,7 +16,7 @@ pays a count for nothing.
 | `owns T` | one owner, in a heap block of its own | checked when compiling | when its owner ends | one owner, but it must be in a block of its own: recursion, a large value, `owns dyn I` |
 | `class` | one owner unless a line says `shares`; a heap block of its own | checked when compiling | when its last owner ends | the thing has identity (`is`), subclasses, or `weakref` links to it |
 | `shares T`, `shares mut T` | several owners on one thread, counted | checked when compiling | when its last owner ends | several places own one value; `shares mut` for owners that change it |
-| `thread_shared T` | several owners on any threads, atomically counted | changed only through `Atomic`, a lock, a channel or a `guarded by` field | when its last owner ends | the same across threads (`[HEAP-10]`) |
+| `thread_shared T` | several owners on any threads, counted for several threads (`[RC-4]`) | changed only through `Atomic`, a lock, a channel or a `guarded by` field | when its last owner ends | the same across threads (`[HEAP-10]`) |
 | `weakref T` | none | — | never | back links; observing without keeping alive |
 | `sharedref mut T` | none: a view several holders share | checked when compiling | never | several holders change one object they do not own, on one thread (`[LT-46]`) |
 | `Arena`, `FixedArena` | region | checked when compiling | all at once | many values with one lifetime: a frame, a parse |
@@ -70,8 +70,9 @@ pays a count for nothing.
   element stored inline) is `E2119` (`[WK-16]`).
 * `[HEAP-10]` *(new in 0.9.9)* *(changed in 0.9.15)* A `shares` owner, and a `weakref` link to a value
   held `shares`, never reach another thread: their counts are plain memory (`E7015`). Shared ownership
-  across threads is `thread_shared T`, whose counts, the weak count included, change with atomic
-  instructions; no owner changes a `thread_shared` value directly, only through an `Atomic`, a `Mutex`,
+  across threads is `thread_shared T`, whose counts are kept for several threads (its making thread's
+  owners with plain instructions, the other threads' owners and the weak count with atomic ones,
+  `[RC-4]`); no owner changes a `thread_shared` value directly, only through an `Atomic`, a `Mutex`,
   an `RwLock`, a channel or a `guarded by` field under its lock (`E7014`, Part XI).
 
 ## IX.2 Arenas
@@ -189,7 +190,9 @@ fn main():
   after the value: `boss = Enemy(hp=500, mesh=owns Mesh(points=[0.0, 1.0]) using current)` takes the
   mesh's block from the arena `current` by calling `current.allocate(…)`; a class object is made
   `Enemy(hp=5) using current`, a list `[0.0, 1.0] using current`, and `Array.new_in(current)` makes an
-  empty one. A manager with one instance (`Global`, `System`) needs none on the making line. Checked
+  empty one. A manager type with no fields has one instance (`Global`, `System`, and any such type a
+  program declares): it needs none on the making line, and its values keep no instance word; every
+  other manager type may have several instances. Checked
   when compiling: the instance is of the kind the place names, and a value given to a `using A` place
   was made in an instance of `A` (`E2020`: "`mesh` takes its memory from a `LevelArena`
   (`mesh: owns Mesh using LevelArena`), and this `Mesh` comes from the built-in manager; say which

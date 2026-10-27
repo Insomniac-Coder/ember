@@ -130,7 +130,8 @@ These words are used with these meanings throughout the specification.
 * `[OWN-13]` *(new in 0.9.15)* **Words before a value.** Before a value, a word acts on the object the
   value names (for a link or an owner, on its target): `copy of x` (`[OWN-8]`); `owns x`
   (`[OWN-9]`); `shares x`, one more owner, on this thread, that reads it, and `shares mut x`, one more
-  owner that may also change it (`[RC-1]`); `thread_shared x`, one more owner on any thread, written only
+  owner that may also change it, each written only before a new value, a local or an owner (`[RC-1]`,
+  `E2122`); `thread_shared x`, one more owner on any thread, written only
   before a new value (`names = thread_shared Names()`) or a value already `thread_shared` (`E7017`
   otherwise: "`names` is `share_and_keep`'s own object, which it may change; to share it between
   threads, create it shared: `names = thread_shared Names()`"); `weakref x`, a link that does not keep it
@@ -552,9 +553,11 @@ it must be valid, and the compiler infers every region.
   any other is `E3062` ("`next_word` returns a view of `this.buf`, but its first line says `from src`;
   return a view of `src`, or write `-> StrView from buf`"). A named parameter is a source parameter
   (`[LT-1]`) or a `ref mut` parameter; naming a plain `Copy` parameter, or an `owns` parameter that is
-  not a view, is `E2031`. A bare field name names a field of `this` whose type is a view, whatever the
-  method does with its object (`owns this`, or passed as a copy, `[BRW-8]`): the result points into
-  what the field points into, and the call's view of the object ends with the call. A result read
+  not a view, is `E2031`. A bare field name names any field of `this`, whatever the method does with its
+  object (`owns this`, or passed as a copy, `[BRW-8]`): for a field whose type is a view, the result
+  points into what the field points into, and the call's view of the object ends with the call; for any
+  other field (`from log` with `log: Array[int]`), the result points into that field and what it owns,
+  and the object is viewed for as long as the result lives. A result read
   through a `ref mut` field points into `this` as well, so it cannot name the field alone (`E3062`):
   an iterator gives no two changeable items. The field may instead be one whose type is a type
   parameter, with a result whose type names one (`Option[I.Item]`); each instance is checked, as a

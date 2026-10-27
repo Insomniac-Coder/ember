@@ -223,10 +223,14 @@ fn main():
     println(add5(1))
 ```
 
-* `[CLO-1]` *(changed in 0.9.15)* A lambda or local function has a unique type of its own, which
-  implements its callable type. Given to a type parameter (`[CLO-14]`) it keeps that type, and a call
-  through it is direct; wherever a callable type is written (`[CLO-3]`) it becomes a **function value**
-  of that type (`[CLO-10]`).
+* `[CLO-1]` *(changed in 0.9.15)* A named function, a lambda and a local function each have a type of
+  their own (ODR-278), which implements its callable type; one that keeps no state is a value of size
+  zero. Given to a type parameter (`[CLO-14]`) it keeps that type, and a call through it is direct;
+  wherever a callable type is written (`[CLO-3]`) it becomes a **function value** of that type
+  (`[CLO-10]`). Where two different functions meet in one place (`if c: f = a else: f = b`, a second
+  assignment, a conditional's two branches, a collection's elements), the place has the callable type
+  both convert to. A local holding a function that keeps no state is not captured: a lambda that uses
+  it keeps nothing for it (`[CLO-2]`), since giving it the same function again changes nothing.
 * `[CLO-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* **What a function captures is written after its
   brackets.** A name a lambda or a local function uses from the function that made it is the **real
   variable**, that very variable and not a copy, unless a capture word after its brackets names it:

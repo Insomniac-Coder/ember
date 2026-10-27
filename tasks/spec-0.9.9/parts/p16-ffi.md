@@ -269,7 +269,7 @@ unsafe overlay c "vulkan/vulkan.h":
 
   | Axis | Words | Ember type produced |
   |---|---|---|
-  | ownership | `borrowed` (valid for the call), `owned` (callee takes it), `returns_owned(destructor=f)`, `retained` (callee keeps the pointer after the call) | a parameter that views the caller's value for the call (`x: T`, `Span[T]`; `ref mut x: T`, `MutSpan[T]` with `exclusive`); an `owns x: owns T` parameter, whose argument is handed over and which Ember then never frees; an `owns T` result, whose end calls `f`; for a callback, `callback(retained)` (`[FFI-21]`), and on any other pointer no safe type, since C keeps Ember memory only when it is handed over (`owned`) or given with `into_raw()` (`[FFI-23]`, `[FFI-54]`): the call stays `unsafe`, with a raw pointer |
+  | ownership | `borrowed` (valid for the call), `owns` (callee takes it; verdict 102), `returns_owned(destructor=f)`, `retained` (callee keeps the pointer after the call) | a parameter that views the caller's value for the call (`x: T`, `Span[T]`; `ref mut x: T`, `MutSpan[T]` with `exclusive`); an `owns x: owns T` parameter, whose argument is handed over and which Ember then never frees; an `owns T` result, whose end calls `f`; for a callback, `callback(retained)` (`[FFI-21]`), and on any other pointer no safe type, since C keeps Ember memory only when it is handed over (`owns`) or given with `into_raw()` (`[FFI-23]`, `[FFI-54]`): the call stays `unsafe`, with a raw pointer |
   | count | `one`, `count(n)` (as many elements as parameter `n`, which then leaves the callable signature; a hand declaration writes its ABI witness under `[FFI-10]`, ODR-074; a result needs an input span sharing `n`, ODR-077; nullable input carriers follow ODR-079), `nul_terminated`, `fixed(N)`, `inout_count(p)` (`[FFI-11b]`) | one `T` (a parameter `x: T`, a result `ref T`), `Span[T]`/`MutSpan[T]`, `CStrView`, `[T; N]` (a parameter `x: [T; N]`, a result `ref [T; N]`) |
   | nullability | `nullable` | `Option[…]` |
   | lifetime (results) | `from(this)`, `from(p)`, `from(static)` | a view into the receiver, into `p`, or into what lives for the whole program (`[LT-1a]`, `[LT-3]`) |
@@ -341,7 +341,10 @@ unsafe overlay c "vulkan/vulkan.h":
   ownership of a foreign object, reading its destructor from the contract of `T`'s declaration,
   `@ffi(destroys(f))` on `type T`; the `owns T` value's end calls `f` once. Where the contract already
   records the transfer (`returns_owned(destructor=f)`), the import returns an `owns T` directly and
-  no `adopt` is written.
+  no `adopt` is written. A foreign type has one destructor: every `returns_owned(destructor=f)` giving
+  an `owns T` and `T`'s `@ffi(destroys(f))` name the same `f`, and two different ones are `E5002`
+  ("`Widget` is ended by `widget_free` (line 3), and line 12 says `widget_destroy`; a foreign type has
+  one destructor"), so an `owns T` foreign value stays one word.
 * `[FFI-36b]` Adopting a type whose overlay says `adopt = false` is `E5052`. Adopting one live object
   twice is caught at run time in every profile (a panic naming both sites) and, when both calls are on
   one local in one function, at compile time (`E5068`).
@@ -466,7 +469,8 @@ unsafe overlay c "vulkan/vulkan.h":
   for a callback: the user data it is given is a tagged number, the callback's slot in a table that
   never moves in the low 48 bits and the slot's generation in the top 16, which are never all zero, so
   the number is no user-space address and a C library that wrongly writes through it faults before
-  writing anything. Each call through the trampoline checks, in every profile, that the slot is inside
+  writing anything. On a 32-bit target the slot is the low 16 bits and the generation the top 16, and
+  the number may be a user-space address. Each call through the trampoline checks, in every profile, that the slot is inside
   the table, then the generation and the function's type in one compare, then, for a
   `threads(creator)` or `threads(main)` callback, the calling thread; a `callback(once)` slot carries a
   used-up mark. A failed check stops the program before the callback's state is read, with these
@@ -492,13 +496,13 @@ unsafe overlay c "vulkan/vulkan.h":
   Ember's side while C holds its tagged number, and its end unregisters the callback through
   `destroys(f)` and then ends the block (`[FFI-53]` for a callback that ends its own token). `Retained`
   gives no object away and keeps none for C: an Ember value C keeps is handed to a parameter whose
-  contract says `owned` (the name ends and Ember frees nothing, `[FFI-11]`) or, for a C function whose
+  contract says `owns` (the name ends and Ember frees nothing, `[FFI-11]`) or, for a C function whose
   declaration cannot say so, given with `into_raw()` inside `unsafe:` (`[FFI-54]`); C gives a foreign
   object back through `adopt` inside `unsafe:` (`[FFI-36a]`). An `ObjectPtr[C]` is the address of a
   class object, which `into_raw()` gives, with no count of its own (to C, one pointer): `Copy`, equal
   when it is the address of the same object.
 * `[FFI-54]` *(new in 0.9.15)* **Giving an object to C.** A C function declared as keeping an object
-  (`@ffi(param(widget, owned, one))` with `owns widget: owns Widget`) is given one by an ordinary
+  (`@ffi(param(widget, owns, one))` with `owns widget: owns Widget`) is given one by an ordinary
   hand-over, `widget_take(first)`: the name ends and Ember frees nothing, with no word. For a C function
   whose declaration cannot say so (a plain pointer, `fn set_user_data(p: *mut Widget)`, or a function
   with `...`), `w.into_raw()` gives the address of a value Ember holds alone in its own block, an
@@ -516,7 +520,7 @@ unsafe overlay c "vulkan/vulkan.h":
       fn widget_free(widget: *mut Widget)
       @ffi(result(returns_owned(destructor=widget_free), one))
       safe fn widget_new(id: i32) -> owns Widget
-      @ffi(param(widget, owned, one))
+      @ffi(param(widget, owns, one))
       safe fn widget_take(owns widget: owns Widget)
       fn set_user_data(p: *mut Widget)
 
@@ -636,7 +640,8 @@ pub extern "C" fn on_update(entity: u64, dt: f32) -> i32:
 * `[FFI-28]` *(changed in 0.9.10)* A package built as `kind = "staticlib"` produces a library and
   header to link into a C or C++ program; `kind = "cdylib"` a shared library exporting only its
   `@export` symbols, its `@export_table`s, `ember_module_init`, `ember_module_shutdown`, and the
-  marker `ember_module_protocol_vN`, `N` the module protocol's version (`[ABI-1]`).
+  marker `ember_module_protocol_vN`, `N` the module protocol's version (`[ABI-1]`), and the functions
+  its header declares for the `thread_shared` class handles its exports give (`[BLD-FFI-5a]`).
 * `[FFI-31]` *(changed in 0.9.10)* A `cdylib` links its own copy of the runtime. Before calling into it
   the host looks up the marker of the module protocol version it was built for and refuses a module
   without it; it calls `ember_module_init` before using the module and `ember_module_shutdown` before

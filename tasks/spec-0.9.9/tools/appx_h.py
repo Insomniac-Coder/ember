@@ -793,7 +793,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.15', 1)
+CURRENT = ('0.9.15', 2)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -830,6 +830,7 @@ V010_H32_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h32')
 V010_H33_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h33')
 V010_H34_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h34')
 V010_H35_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h35')
+V0915_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h1')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1726,8 +1727,45 @@ Generated: every rule whose text differs from 0.9.10_Hardened_35.
 """
 
 
-def v0915_h1_to_now():
-    return H41_HEAD + rule_diff(V010_H35_PARTS, os.path.join(HERE, '..', 'parts'))
+def v0915_h1():
+    return H41_HEAD + rule_diff(V010_H35_PARTS, V0915_H1_PARTS)
+
+
+H42_HEAD = """
+## H.42 Changes in 0.9.15_Hardened_2 (from 0.9.15_Hardened_1)
+
+**0.9.15_Hardened_2** writes in the owner's verdicts 101 to 106 and the lead's rulings for the compiler
+work (`tasks/96/redesign/JOB.md`; `tasks/96/redesign/compiler-0.9.15/decisions.md`, sections 4 to 6):
+
+* Verdict 101: a `thread_shared` value's owners are counted in two numbers, its making thread's own
+  (plain) and the other threads' (atomic), with a hand-over to the making thread through its queue and
+  the compiler's check points, and an immediate hand-over where an owner is stored where other threads
+  can reach it (biased counting; `[OBJ-1]`'s 32-byte header, `[RC-4]`, `[RC-5]`, `[WK-3]`, `[WK-12]`,
+  `[RT-7]`, `[RT-8]`, `[RT-10]`, `[COST-3]`'s measured row).
+* Verdict 102: a C contract writes `owns` for "C takes this object"; `owned` is refused everywhere.
+* Verdict 103: `shares`, `shares mut` and `thread_shared` are not made of a place that has one owner and
+  is not a local (`E2122`, new).
+* Verdict 104: a scoped task's claims end at its join, `h.join()` or the end of the `with scope:` block.
+* Verdict 105 (for now): a task's or a chunk's own whole-number total stops the program on overflow.
+* Verdict 106: a contract on a function type is written above its `type` line.
+* The lead's rulings: `from` names any field of `this`; when a store may close a loop of owners and the
+  two proofs that it does not (`E3032`); a deferred-drop region runs the drops at once; a `Retained`
+  token is an owner edge; a manager type with no fields has one instance; `=` on a `static` is `E3023`;
+  `E3100` for an unverified foreign call outside `unsafe`, `E5002` for a contract's own errors and two
+  destructors of one foreign type; two bounds that both declare a method are `E2070`; every function
+  has a type of its own (ODR-278); a cdylib exports its class handles' functions; the trampoline's
+  number on 32-bit targets; `std.core.type_name[T]()` and the ECS's `Storage[T]`; `@component` gone;
+  what `ember fmt --migrate` also rewrites.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_1.
+
+| Rule | 0.9.15_Hardened_1 → 0.9.15_Hardened_2 |
+|---|---|
+"""
+
+
+def v0915_h1_to_h2():
+    return H42_HEAD + rule_diff(V0915_H1_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1799,7 +1837,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1_to_now() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

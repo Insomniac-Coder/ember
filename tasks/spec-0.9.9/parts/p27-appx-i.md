@@ -206,7 +206,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[CLO-1]` | VI | *(changed in 0.9.15)* A lambda or local function has a unique type of … |
+| `[CLO-1]` | VI | *(changed in 0.9.15)* A named function, a lambda and a local function … |
 | `[CLO-2]` | VI | *(changed in 0.9.15)* What a function captures is written after its … |
 | `[CLO-3]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A callable type is one … |
 | `[CLO-4]` | VI | *(changed in 0.9.10)* *(changed in 0.9.15)* A function value does not … |
@@ -1117,7 +1117,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[RT-5]` | XVIII | Every runtime symbol, macro and header name derives from one … |
 | `[RT-6]` | XVIII | The runtime ABI version is `EMBER_RUNTIME_ABI`. |
 | `[RT-7]` | XVIII | *(changed in 0.9.15)* A count is checked before it rolls over. The … |
-| `[RT-8]` | XVIII | *(changed in 0.9.15)* Both counts of a `thread_shared` value, its … |
+| `[RT-8]` | XVIII | *(changed in 0.9.15)* A `thread_shared` value's away count and its … |
 | `[RT-10]` | XVIII | *(changed in 0.9.15)* Counting is inline. A count changes only where … |
 | `[RT-11]` | XVIII | Allocation statistics are kept per thread, or only in `debug`; no … |
 | `[RT-12]` | XVIII | *(changed in 0.9.15)* Stack overflow faults. The backend compiles … |

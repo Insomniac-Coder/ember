@@ -218,7 +218,7 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
   a call that may change an object of its type a read-only view of one does not live (`E3021`), so a
   walk across such a call keeps a `weakref` link and tests it at every step. Nothing is kept alive
   while the program runs for such a view, except a view of a `thread_shared` object opened from a
-  `weakref` link, which holds one atomic count for its life (`[RT-10]`).
+  `weakref` link, which holds one count for its life (`[RC-5]` point 2, `[RT-10]`).
 * `[BCK-8]` *(new in 0.9.15)* **Summaries.** For each function the compiler works out a summary from
   its body: what it may change, read and end, each with the chain of calls that does it, which
   messages name; which elements of a list it touches (a list parameter it only adds to, `push` or
@@ -258,17 +258,20 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
   `weakref` links may reach, are 32-bit numbers in its header. Before each +1 of a one-thread count it
   is compared with its maximum, and at the maximum the program stops: "too many owners of a `Player`
   (4,294,967,295)", and for the weak count "too many `weakref` links to a `Player` (4,294,967,295)";
-  one compare per added owner or link, no extra memory. A `thread_shared` value's count is raised by
-  one atomic add (`[RT-10]`), and the program stops when the value before the add is at or above
+  one compare per added owner or link, no extra memory. A `thread_shared` value's home count
+  (`[RC-4]`) is checked as a one-thread count is; its away count and its weak count are raised by one
+  atomic add (`[RT-10]`), and the program stops when the value before the add is at or above
   2,147,483,647, half the range, so that no number of threads adding at once can carry it past its
   maximum: "too many owners of a `Log` (2,147,483,647)", and the same for its weak count. The two test
   programs of these stops are compiled with an 8-bit count in each object (the test header
   `#$ count_bits: 8`), stored and compared as the real one is, so 255 owners or links of a one-thread
   value reach the limit and the next stops the program ("too many owners of a `Player` (255)"; 127
   for a `thread_shared` value); every other program keeps the 32-bit count.
-* `[RT-8]` *(changed in 0.9.15)* Both counts of a `thread_shared` value, its owner count and its weak
-  count, are atomic: an owner or a link made is a relaxed increment, one ended an acquire-release
-  decrement. A `shares` value's counts are plain adds, since no `shares` value reaches another thread.
+* `[RT-8]` *(changed in 0.9.15)* A `thread_shared` value's away count and its weak count (`[RC-4]`)
+  are atomic: an owner or a link made is a relaxed increment, one ended an acquire-release decrement;
+  putting a value in its making thread's queue is a release, and emptying the queue an acquire. Its home
+  count is plain: only its making thread reads or writes it. A `shares` value's counts are plain adds,
+  since no `shares` value reaches another thread.
   Publishing a new `thread_shared` value to another thread is a release, and taking it there an
   acquire.
 * `[RT-10]` *(new in 0.9.9)* *(changed in 0.9.15)* **Counting is inline.** A count changes only where a
@@ -276,11 +279,17 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
   view of a `thread_shared` object is opened from a `weakref` link; an object with one owner is never
   counted. The fast path of a +1 (the add and its limit test, `[RT-7]`) and of a -1 (the subtract and
   a test for zero) is defined in `ember_rt.h` and inlined into the caller; only ending the object is
-  out of line. Making an owner of a `thread_shared` value, or a `weakref` link to one, is one atomic
-  `fetch_add` followed by the limit test on the value it returns, never a compare-exchange loop.
-  Opening a `weakref` link to a `thread_shared` object is the one +1 that may find the owner count at
-  zero: it is a compare-exchange that then fails and finds the object ended, never raising a count
-  from zero (ODR-060). Opening a link to a one-thread object only tests its header. The subtract that
+  out of line. On a `thread_shared` value's making thread, until the value is handed over (`[RC-4]`
+  point 4), making or ending an owner is a plain add or subtract of its home count, inlined as a
+  one-thread count's is. On another thread, and after the hand-over, making an owner, or a `weakref`
+  link to the value, is one atomic `fetch_add` followed by the limit test on the value it returns, and
+  ending one is one atomic subtract, never a compare-exchange loop; a subtract that takes the away
+  count below zero puts the value in its making thread's queue in the same atomic step (out of line, as
+  are the hand-over and the queue's emptying at a check point). Opening a `weakref` link to a
+  `thread_shared` object is the one +1 that may find the object ended: on its making thread it tests
+  that the two counts add up to more than zero before adding to the home count; on another thread its
+  atomic add finds the ended mark and is undone; neither ever raises an ended object's count
+  (ODR-060). Opening a link to a one-thread object only tests its header. The subtract that
   reaches zero marks the object ended before its `drop` runs, so a `weakref` link opened during the
   `drop` finds it ended.
 * `[RT-11]` *(new in 0.9.9)* Allocation statistics are kept per thread, or only in `debug`; no

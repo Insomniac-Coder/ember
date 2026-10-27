@@ -106,7 +106,7 @@ where          while          with           yield
   name is `E0005`, whose message names the reservation): `async`, `await`, `macro`. **Reserved and
   not words of Ember** (lexed as keywords so that no program uses them as names; any use is `E1010`,
   whose message gives the word to write): `owned` (write `owns`: `owns x: T`, `owns this`, `mesh: owns
-  Mesh`, `fn() owns x:`) and `self` (inside a method its object is `this`, `[GRM-41]`).
+  Mesh`, `fn() owns x:`, and in a C contract `@ffi(param(widget, owns, one))`, verdict 102) and `self` (inside a method its object is `this`, `[GRM-41]`).
 * `[LEX-22]` *(changed in 0.9.9)* Ember has no lifetime syntax and never will. A `'` begins a
   character literal and nothing else; an unterminated one is `E0008`.
 

@@ -12,7 +12,7 @@ unsafe extern "C":
     fn widget_free(widget: *mut Widget)
     @ffi(result(returns_owned(destructor=widget_free), one))
     safe fn widget_new(id: i32) -> owns Widget
-    @ffi(param(widget, owned, one))
+    @ffi(param(widget, owns, one))
     safe fn widget_take(owns widget: owns Widget)
 
 fn main():

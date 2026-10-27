@@ -19,7 +19,7 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E0102': ('membership test chained (`a in b in c`)', ['GRM-23']),
  'E0103': ('match arms mix statement and expression form', ['GRM-10']),
  'E0104': ('attribute or construct not admitted here, among them an attribute that is gone, with the one to write '
-           '(`@sync`, `@static_safe`, `@no_runtime_checks`, `@fp(contract)`, `@borrows`)',
+           '(`@sync`, `@static_safe`, `@no_runtime_checks`, `@fp(contract)`, `@borrows`, `@component`)',
            ['ATT-1', 'PHIL-12']),
  'E0105': ('`;` is not a statement separator', ['GRM-18']),
  'E0106': ('a multi-statement closure cannot be written inside brackets', ['GRM-17']),
@@ -129,6 +129,9 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
            ['WK-16']),
  'E2120': ('inherent extension of a type from another package', ['IFC-2']),
  'E2121': ('an implementation outside the packages that may write it', ['TYP-20']),
+ 'E2122': ('`shares`, `shares mut` or `thread_shared` made of a place that has one owner and is not a local of this '
+           'function (a list element, a field, a plain parameter)',
+           ['RC-1', 'OWN-13']),
  'E2123': ('a value made for a place that owns it alone (an `owns` field, an `Option[owns T]`, a list of `owns` '
            'values), at first or later, without `owns` on the line that makes it',
            ['OWN-10', 'GRM-15', 'TYP-46']),
@@ -203,8 +206,8 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
            'as copy of` excepted; a `const ref mut` name given another ref); a read-only `ref` given to a `ref mut` '
            'name; a method that may change its object, or a stored function that may change its own state, called '
            'through a read-only name; an owner that may change made from one that only reads (a plain parameter of a '
-           '`shares mut` type included)',
-           ['BRW-14', 'BRW-15']),
+           '`shares mut` type included); `=` on a `static` (`HOOK = v`)',
+           ['BRW-14', 'BRW-15', 'STA-1']),
  'E3024': ('a struct field would point into another field of the same struct (shape B5)', ['TYP-15']),
  'E3026': ('a function value that may outlive a place it uses and does not own: a returned function that changes its '
            "maker's local without `owns`; a task or thread given a loop's name with no word, or with `ref` where it "
@@ -262,8 +265,10 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E4070': ('`@deterministic` function reaches a nondeterministic operation', ['DET-1']),
  'E4072': ('`@fastmath` or `@fp(allow_fma)` inside `@deterministic`', ['DET-5']),
  'E5001': ('imported type layout does not match', ['FFI-5']),
- 'E5002': ('foreign call requires `unsafe`: its contract is incomplete, or `safe fn` on a function whose contract is',
-           ['FFI-2', 'FFI-10']),
+ 'E5002': ('a foreign declaration whose contract cannot stand: `safe fn` on a function whose contract is incomplete, '
+           'or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is '
+           '`E3100`)',
+           ['FFI-2', 'FFI-10', 'FFI-36a']),
  'E5010': ('overlay does not match the C declaration; an overlay applied to a header other than the one it was written '
            'for (its hash differs)',
            ['FFI-12', 'FFI-55']),

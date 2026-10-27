@@ -63,7 +63,7 @@
 | **`static fn`** | a function in a type body that has no object (`this`), called on the type: `Counter.starting_at(5)` |
 | **summary** | what the compiler works out from a function's code, with no word written: what it may change, read and end, through which chain of calls, which locks it may take, and which view parameters it uses after a line that may end what they view; kept in a package's interface file |
 | **`this`** | inside a method, the object the method was called on; a method does not list it among its parameters |
-| **`thread_shared`** | a value with several owners on any threads, counted atomically, changed only through `Atomic`, a lock, a channel or `guarded by` fields; `thread_shared fn()` is a function type whose functions any thread may run |
+| **`thread_shared`** | a value with several owners on any threads, counted in two numbers (its making thread's owners, and the other threads' with atomic instructions, `[RC-4]`), changed only through `Atomic`, a lock, a channel or `guarded by` fields; `thread_shared fn()` is a function type whose functions any thread may run |
 | **trampoline subclass** | the generated C++ subclass through which an Ember class extends a C++ base (`[FFI-39]`) |
 | **unseen code** | code whose body the compiler cannot read, which is only a foreign (C) function: a call of one counts as possibly running every callback C keeps, unless its declaration says `@ffi(no_callbacks)` |
 | **view** | a name or value that points into a place someone else owns and may not outlive it: `ref T`, `ref mut T`, `sharedref mut T`, `Span[T]`, `MutSpan[T]`, `StrView`, a plain parameter, loop or pattern name, a name opened with `exists as` or named by a kind test, a name for a part (`[TYP-34]`) |

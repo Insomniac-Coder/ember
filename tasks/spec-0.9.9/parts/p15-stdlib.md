@@ -51,7 +51,7 @@ anything this Part leaves open.
 | Module | Contents |
 |---|---|
 | prelude | the names of `[MOD-5]` |
-| `std.core` | scalars, `Option`, `Result`, `AnyError`, `Ordering`, ranges, `NonZero`, the standard interfaces (§IV.8), iterator adapters |
+| `std.core` | scalars, `Option`, `Result`, `AnyError`, `Ordering`, ranges, `NonZero`, the standard interfaces (§IV.8), iterator adapters, `type_name[T]()` (a type's fully qualified name, which the compiler knows) |
 | `std.mem` | `size_of`, `align_of`, `offset_of`, `swap`, `replace`, `take`, `drop`, `keep_alive`, `MaybeUninit`, `transmute`, `zeroed`, `copy`, `copy_nonoverlapping`, `Volatile` (`[STD-29]`), `Layout`, `Allocator`, `Global`, `ptr`, `check_disjoint`, `assert_disjoint`, `assume_disjoint` (Part IX) |
 | `std.cell` | `Cell`, `UnsafeCell` |
 | `std.collections` | `Array`, `Map`, `Set`, `Deque`, `SmallArray`, `BitSet`, `FixedArray`, `FixedString`, `RingBuffer`, `Pool`, `Handle`, `SoA`, `ArenaArray`, `ArenaMap`, `ArenaSoA`, `DefaultHasher`, `RandomState`, `Hasher`, `CapacityError`; the iterator types `SpanIter`, `MutSpanIter`, `SpanChunks`, `MutSpanChunks`, `ArenaArrayIter`, `ArenaArrayIterMut`, `ArenaMapIter` (public, not in the prelude) |

@@ -36,21 +36,41 @@ with a header:
 
 ```text
 offset  size  field
-0       4     count   u32   its owners; atomic for a `thread_shared` value
+0       4     count   u32   its owners
 4       4     type    u32   its type index: its type information, and the interface tables reached
                             through it
-8       4     weak    u32   its `weakref` links, plus one for all its owners; atomic for a `thread_shared`
-                            value; present only in a value a `weakref` link may reach
+8       4     weak    u32   its `weakref` links, plus one for all its owners; present only in a value
+                            a `weakref` link may reach
 8 or 12 …     base-class fields, then own fields (or the shared value), naturally aligned
+```
+
+A `thread_shared` value's header (`[RC-4]`):
+
+```text
+offset  size  field
+0       4     home    u32   the owners its making thread holds; read and written only by that thread,
+                            with plain instructions
+4       4     type    u32   its type index
+8       4     weak    u32   its `weakref` links, plus one for all its owners; atomic
+12      4                   unused
+16      8     away    i64   atomic: the owners the other threads hold, times 8, and three marks: handed
+                            over (the making thread counts here too), queued (it waits in the making
+                            thread's queue), ended
+24      8     next    ptr   its place in the making thread's queue
+32      …     the shared value, naturally aligned
 ```
 
 * `[OBJ-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* The header is 8 bytes: a 32-bit count and a
   32-bit type index. A value a `weakref` link may reach has a third 32-bit number there, its weak
   count, making 12 bytes: every object of a class family (the classes that share one root base class)
   of which some `weakref` link in the program may name an object, and every shared value of a type some
-  `weakref` link may name. The header is part of the runtime ABI (`[VER-4]`). Foreign code never reads
-  it; it calls `ember_rt`. An object carries nothing else for the memory model: no access words and no
-  flags.
+  `weakref` link may name. A `thread_shared` value's header is 32 bytes (verdict 101): its making
+  thread's count of its owners, the type index, the weak count, the other threads' count with its
+  marks, and its place in the making thread's queue (`[RC-4]`). Which thread made a value is read from
+  the header of the memory chunk its block came from, written once when the chunk is made, never from
+  the value. The header is part of the runtime ABI (`[VER-4]`). Foreign code never reads it; it calls
+  `ember_rt`. An object carries nothing else for the memory model: no access words, and no flags but a
+  `thread_shared` value's three marks.
 * `[OBJ-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* An owner, a link or a view of a class object
   is one pointer, to offset 0. An object's interface tables are reached through its type index, so a
   `dyn I` value of a class object, and an `Option` of one, is one pointer wide. A bare interface name in
@@ -82,8 +102,16 @@ offset  size  field
   `thread_shared x` one more on any thread (`[OWN-13]`). A value made shared lives in a block of its own
   with the header of `[OBJ-1]` (a class object already does), and its owners are counted: making an
   owner adds one to the count, ending one subtracts one, and the subtraction that reaches zero ends the
-  value. A value with one owner is not counted: its owner ends it. **A count is checked before it rolls
-  over:** before each +1 of an owner count it is compared with its maximum, and at the maximum the
+  value. A value with one owner is not counted: its owner ends it. **Only a whole value is shared**
+  (verdict 103): `shares x`, `shares mut x` and `thread_shared x` are written before a new value, a
+  local of this function (which becomes one of the owners) or a name that is already such an owner. A
+  place that has one owner and is not a local of this function, a list element (`shares mut players[1]`
+  of an `Array[Player]`), a field (`shares this.items`) or a plain parameter (`fn keep(p: Player):
+  LIST.push(shares p)`), is `E2122`: "`players[1]` has one owner, the list `players`, and no second
+  owner can be made of one element; to let other names own the players, make the list share them from
+  the start: write `players = [shares mut Player(), shares mut Player()]` in place of line 15". So a
+  value in a one-owner place is ended by that place at once, with no count to test. **A count is checked
+  before it rolls over:** before each +1 of an owner count it is compared with its maximum, and at the maximum the
   program stops, in every profile: "too many owners of a `Player` (4,294,967,295)" (`[RT-7]`), as
   Rust's `Rc` and `Arc` stop (a `thread_shared` count stops at the lower limit of `[RC-4]`). That is one
   compare per added owner and no extra memory.
@@ -125,13 +153,40 @@ offset  size  field
   `with h:` and `mem.keep_alive(h)` state that where no Safe use does.
 * `[RC-4]` *(changed in 0.9.9)* *(changed in 0.9.15)* The counts of a value that is not
   `thread_shared` are changed with plain adds and subtracts, and never cross threads (`E7015`).
-  **Both counts of a `thread_shared` value, its owners' and its `weakref` links', are atomic:** a
-  relaxed increment and an acquire-release decrement (`[RT-8]`). A `thread_shared` count is raised with
-  one atomic add, and its limit is checked on the value the add returns: when the count before the add
-  was 2,147,483,647 or more, the program stops ("too many owners of a `Player` (2,147,483,647)"; "too
-  many `weakref` links to a `Player` (2,147,483,647)"). That limit is half the count's range, so threads
-  racing past it each stop before the count can roll over, whatever their number; a count that is not
-  `thread_shared` keeps the exact compare of `[RC-1]` and `[WK-11]`.
+  **A `thread_shared` value's owners are counted in two numbers** (verdict 101; biased counting, Choi,
+  Shull and Torrellas, 2018):
+  1. **Home and away.** The thread that made the value counts the owners it holds in the value's home
+     count, with plain adds and subtracts; every other thread counts its owners in the away count, with
+     atomic ones (`[RT-8]`). The value lives while the two add up to more than zero. Only the making
+     thread reads both.
+  2. **The hand-over to the making thread.** When another thread ends an owner the making thread
+     counted, the away count goes below zero: that thread puts the value in the making thread's queue,
+     marking it queued in the same atomic step as its subtract, and only the making thread then ends
+     it. The making thread empties its queue at each of its check points: it adds each value's home
+     count into its away count, and ends the value when the sum is zero. A queued value is ended by
+     nothing else.
+  3. **Check points.** The compiler places them: at every loop's back edge, before every call that may
+     block the thread (waiting for a lock, `join`, a channel's receive, a sleep) and when the thread
+     ends. A value whose making thread has ended is ended at once by the thread that ends its last
+     owner.
+  4. **Handed over at once.** A thread that stores an owner of a `thread_shared` value where other
+     threads can reach it (into a lock-guarded `thread_shared` container, through a channel, into the
+     capture of a thread it spawns or of a callback C keeps; every such place is known when compiling)
+     first adds its own count of the value into the away count and marks the value handed over; from
+     then on every thread, the making thread included, counts in the away count, and a later end on
+     another thread never goes through the queue.
+  5. **So a value's end is delayed only** when its last owner ends on a thread that did not make it
+     and the value was not handed over at a place of point 4 (it travelled inside another object): it
+     is ended at its making thread's next check point. Until then it is intact, and a `weakref` link
+     opened on another thread may still find it (`[WK-3]`).
+
+  The weak count of a `thread_shared` value is atomic. The away count, and the weak count, are raised
+  with one atomic add and their limit is checked on the value the add returns: when the count before
+  the add was 2,147,483,647 or more, the program stops ("too many owners of a `Player`
+  (2,147,483,647)"; "too many `weakref` links to a `Player` (2,147,483,647)"). That limit is half the
+  count's range, so threads racing past it each stop before the count can roll over, whatever their
+  number. The home count, and a count that is not `thread_shared`, keep the exact compare of `[RC-1]`
+  and `[WK-11]`.
 * `[RC-5]` *(changed in 0.9.15)* **A view of an object reached through a link.** A view of an object
   reached through a `shares`, `shares mut`, `thread_shared` or `weakref` link (a name opened from a link,
   `if cam.target exists as p:`; a view made through a `shares mut` field, `t = ref mut ws[i].target`; a
@@ -155,9 +210,11 @@ offset  size  field
      stored there on line 9 and the node it owns (`owns n`), and `p` reads that node
      (`if w exists as p:`, line 10) and is used on line 12; use `p` before line 11"). A one-owner object
      lent read-only cannot be ended while it is lent.
-  2. A view of a `thread_shared` object reached through a `weakref` link holds one atomic count for its
-     life, as Rust's `Weak::upgrade` does (`[WK-12]`): another thread may end the last owner at any
-     moment, which no line of this thread can be checked against.
+  2. A view of a `thread_shared` object reached through a `weakref` link holds one count for its life,
+     as Rust's `Weak::upgrade` does (`[WK-12]`): another thread may end the last owner at any moment,
+     which no line of this thread can be checked against. On the thread that made the object, until it
+     is handed over (`[RC-4]` point 4), that count is a plain add to its home count; on another thread,
+     one atomic add to its away count.
   Across a call that may change an object of the view's type (worked out from the functions it may run,
   `[EFF-1]`), a read-only view of such an object does not live at all (`[BRW-1]`, `E3021`): a walk
   across such a call keeps a `weakref` link and tests it at every step (`[WK-18]`). Where a call fits
@@ -288,10 +345,12 @@ no access words, and no change of a field begins or ends anything at run time.
   opening it with `exists as` (`[GRM-44]`): `if cam.target exists as p:` tests the target's header
   (does the object still live?) and runs its block, with `p` a view of the object, when it does;
   `else:` runs when the link holds nothing or its target is ended. Each opening is one test of the
-  header, except a parent-link read proved by `[WK-17]`. For a `thread_shared` target the opening is a
-  compare-exchange loop that adds one to the count only while the count is above zero, so an object
-  another thread is ending is never brought back, and the view holds that count for its life
-  (`[RC-5]` point 2).
+  header, except a parent-link read proved by `[WK-17]`. For a `thread_shared` target the opening adds
+  one owner only to a value that is not ended, so an object another thread is ending is never brought
+  back, and the view holds that count for its life (`[RC-5]` point 2): on the making thread, until the
+  value is handed over (`[RC-4]` point 4), it tests that the home and away counts add up to more than
+  zero and adds one to the home count; on any other thread it is one atomic add to the away count,
+  undone when the value is marked ended.
 * `[WK-2]` *(changed in 0.9.15)* An object is ended when its count of owners reaches zero, whatever
   `weakref` links remain; those links then find nothing when opened.
 * `[WK-3]` *(changed in 0.9.15)* **An object is ended the moment its last owner lets it go, before its
@@ -300,7 +359,9 @@ no access words, and no change of a field begins or ends anything at run time.
   parent is being ended), finds it ended, so the `if ... exists as p:` block is skipped and the
   half-ended object is never read, nor counted again. Ending the link itself (`this.parent = None`)
   stays allowed: it only subtracts the link's weak count in the target's header, which that count keeps
-  in memory.
+  in memory. A `thread_shared` value whose last owner ends on a thread that did not make it, and that
+  was not handed over, is ended at its making thread's next check point (`[RC-4]` point 5), and its
+  `drop` runs there.
 * `[WK-13]` *(changed in 0.9.15)* A `weakref` link to a value held `shares` names the same block as its
   owners.
 * `[WK-14]` *(changed in 0.9.15)* Ember's `weakref` and `shares` never convert to or from C++'s
@@ -357,8 +418,10 @@ while up exists as n:            # the node still lives: call it `n`
   no header test where `[WK-17]`'s condition 1 holds (its condition 2 holds there). **Where proof removes
   part of it**: when the node's class has no `drop` method of its own and its objects are ones no other
   thread can end (not `thread_shared`, and not reachable from a `thread_shared` value), the walk is
-  placed in a **deferred-drop region**: an object whose last owner ends during the walk is set aside
-  whole, it and everything it owns marked ended at once, and their memory is freed when the walk ends
+  placed in a **deferred-drop region**: an object whose last owner ends during the walk is ended at
+  once, as anywhere: the `drop`s of what it owns run then, in their usual order, so the program prints
+  what it would with no region, and it and everything it owns are marked ended; only their blocks'
+  memory waits, and is freed when the walk ends
   (one add and one subtract of a per-thread counter per region, nothing per step). A link that lives
   only inside the region and is given only objects that live at that moment (`up = weakref p` from the
   view `p`) then holds no weak count, so each step pays only the header test; the first link of each
@@ -368,7 +431,8 @@ while up exists as n:            # the node still lives: call it `n`
 * `[WK-5]` *(changed in 0.9.15)* **The graph of owners.** The compiler builds a graph of owner edges
   among types, after generic substitution, over the whole program: a field holding a `shares`,
   `shares mut` or `thread_shared` value, or a collection of them; a function value's state, from every
-  function the program can put there (`[EFF-1]`); a channel end that its own queue can hold. `weakref`
+  function the program can put there (`[EFF-1]`); a channel end that its own queue can hold; a
+  `Retained[ForeignCallback]` token, to the callback's state, which it keeps for C (`[FFI-23]`). `weakref`
   links, `sharedref mut` links, views and raw pointers are not owner edges. A `let` field, set when its
   object is made, can name only objects that exist already, so it never closes a loop.
 * `[WK-6]` *(changed in 0.9.15)* **A loop of owners is refused unless it is proved opened.** A line that
@@ -397,7 +461,17 @@ fn make_pair():
   `clear()` it always calls before its last owner ends). Refused: an opening that depends on what is only
   known while running, and a loop handed out of reach (returned, stored where the compiler cannot follow
   it). The same holds for loops through function values' state, `thread_shared` owners and channel
-  ends. A `weakref` link back always works.
+  ends. A `weakref` link back always works. **When a line may close a loop.** A store of an owner
+  (`shares`, `shares mut`, `thread_shared`, a value that holds one, or a function value whose state owns
+  one) into a place of an object may close a loop when the stored value's type can reach the holder's
+  type through owner edges (`[WK-5]`); such a line is `E3032` unless the loop it closes is proved opened
+  (above) or one of these proves it closes none, and every implementation applies exactly these
+  (XVIII.4): (1) the stored value was made in this function, on the line or earlier, and since then no
+  owner has been stored into it or into anything it owns but values that themselves meet (1)
+  (`root.children.push(shares mut child)` with `child = shares mut Node(...)` made above it: a tree
+  built from the top down closes nothing); (2) the holder was made in this function and no owner of it
+  has been stored anywhere yet (only this function's locals hold it), so nothing the stored value
+  reaches can own it.
 * `[WK-15]` *(new in 0.9.9)* *(changed in 0.9.15)* `ember run` and `ember test` in the `debug` profile
   report the objects still alive when the program exits, by default; `--no-leak-check` turns the report
   off. In Safe Ember nothing leaks through a loop of owners (`[WK-6]`) and nothing ends without its

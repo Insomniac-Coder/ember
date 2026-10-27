@@ -34,8 +34,10 @@ The compiler infers, for every function, an **effect set** drawn from:
   function stored into that type anywhere in the program, a library's included. For an interface, `dyn`
   or `virtual` method, it is every implementation and override the program has. A foreign function
   pointer (`extern "C" fn`) contributes the effects its type declares, and all effects if none are
-  declared. A contract written on a function type is checked against every function stored into it,
-  with the contract's code. An interface method may declare contracts; its implementations MUST satisfy
+  declared. A contract is written on a function type above a `type` line that names one (verdict 106):
+  `@noalloc` above `type Handler = fn()`; every function stored into a place of that type is checked
+  against it, with the contract's code, and a call through such a place has no effect the contract
+  excludes. An interface method may declare contracts; its implementations MUST satisfy
   them (`E4010`).
 * `[EFF-3]` *(changed in 0.9.15)* An `extern` function carries the effects its contract declares
   (`@ffi(effects=[…])`), `FFI` at least. What a call of one may change through the callbacks C keeps is
@@ -291,10 +293,11 @@ compute the same bits, on one machine and across machines running the same binar
 | A second pass of a loop, then `retain` | conditionally fused | a loop that queues removals and the `retain` that follows it are fused into one pass where nothing between them reads the list; otherwise two passes (1.71x of one-pass C as written, 1.00x fused) |
 | Floor `//` and `%` on signed integers | guaranteed present, small | one compare-and-adjust over C's truncation; free for a positive constant divisor; `div_trunc`/`rem_trunc` give C's |
 | Division-by-zero and shift-range checks | conditionally elided | removed for constants, `NonZero` divisors and range facts |
-| Owner count +1 / -1 | guaranteed present | only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner (`[THR-1]`), and nowhere else; a plain add for `shares`, an atomic one for `thread_shared`; each +1 is checked against the count's limit, one compare and a branch never taken (`[COST-6]`) |
+| Owner count +1 / -1 | guaranteed present | only where a line makes or ends a `shares`, `shares mut` or `thread_shared` owner (`[THR-1]`), and nowhere else; a plain add for `shares`, and for `thread_shared` on the thread that made the value until it is handed over (`[RC-4]`); an atomic one on other threads; each +1 is checked against the count's limit, one compare and a branch never taken (`[COST-6]`) |
+| A `thread_shared` value's two counts | guaranteed present | a 32-byte header, 16 bytes more than one atomic count's (`[OBJ-1]`); a test of the thread's queue at each check point (`[RC-4]`), and the queue's work for a value whose last owner ends on another thread without a hand-over. Measured against one atomic count (`tasks/96/redesign/measure-0.9.15/brc/REPORT.md`, 15 runs per cell): a thread's own values 25% faster on 1 to 8 threads, the camera program 89 ms against 544 ms; reading another thread's values 3% slower on 1 thread and 17% to 28% faster on 2 to 8; one thread handing copies to all 0.93x to 1.05x; a random mix 9% to 13% slower; a pipeline (made on one thread, ended on the next) 27% slower on 1 thread and the same on 2 to 8 |
 | `weakref` link made, given another target, or ended | guaranteed present | one add or one subtract of the target's weak count, the add checked against its limit; atomic for a `thread_shared` target; a parent link pays it too, one add when `child.parent = weakref this` runs and one subtract when the link changes or the child ends |
 | Opening a `weakref` link (`if w exists as p:`) | conditionally elided | one test of the target's header (during the target's `drop` the object is already ended, and the same test finds it gone); a parent-link read the compiler proves (Part VIII) is a load and a test for no link |
-| A view of a `thread_shared` object opened from a `weakref` link | guaranteed present | one atomic count held for the view's life, since another thread may end the last owner at any moment |
+| A view of a `thread_shared` object opened from a `weakref` link | guaranteed present | one count held for the view's life, since another thread may end the last owner at any moment: a plain add on the thread that made the object until it is handed over, an atomic one elsewhere (`[RC-5]` point 2) |
 | A walk up a tree across a call that may change nodes | guaranteed present | per step, one test of the node's header and one move of the link's weak count (a subtract and an add); where the node's class has no `drop` of its own and no other thread can end its nodes, the walk runs in a deferred-drop region and the count moves go, leaving the header test; a walk whose visit function changes no node keeps its views and pays nothing per step |
 | A view of an object reached through a link; a `sharedref mut` link | not observable | checked when compiling: no count and no deferred-drop region around the view |
 | Stale-handle check | guaranteed present, **every profile** | the guarantee is the check; `get_unchecked` in `unsafe` |

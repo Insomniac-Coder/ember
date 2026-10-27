@@ -1,15 +1,16 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.15_Hardened_1
-**Supersedes:** 0.9.10_Hardened_35 (development target) and every earlier file: 0.9.10_Hardened_1 to
-0.9.10_Hardened_34, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+**Version:** 0.9.15_Hardened_2
+**Supersedes:** 0.9.15_Hardened_1 (development target) and every earlier file: 0.9.10_Hardened_1 to
+0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
 (adopted). This document is the single specification of Ember; the earlier files are history.
 **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
 profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
 are tracked separately (§XVII.5, §XVII.8) and are not claimed by this text.
-**Authority:** **0.9.15_Hardened_1** is the owner's rework of the memory model
-(`tasks/96/redesign/JOB.md`, the owner's verdicts of 2026-10-24 to 2026-10-27, with the design in
-`tasks/96/redesign/run4/v5/` and its list of unsafe features). What a program means is written in
+**Authority:** **0.9.15** is the owner's rework of the memory model (`tasks/96/redesign/JOB.md`, the
+owner's verdicts of 2026-10-24 to 2026-10-27, with the design in `tasks/96/redesign/run4/v5/` and its
+list of unsafe features); **0.9.15_Hardened_2** adds the owner's verdicts 101 to 106 and the lead's
+rulings for building it (`tasks/96/redesign/compiler-0.9.15/decisions.md`). What a program means is written in
 words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
 value held alone; `copy of` for a copy; `ref mut` on a name, and at the call, for a change of someone
 else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
@@ -18,7 +19,7 @@ Every memory rule is checked when compiling; what still runs while a program run
 cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
 `@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
 exclusive access made while the program runs. It changes the set of accepted programs, so the
-language version moves (`[VER-9]`); Appendix H §H.41 lists every change. The revisions before it were
+language version moves (`[VER-9]`); Appendix H §H.41 and §H.42 list every change. The revisions before it were
 authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
 questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
 finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in

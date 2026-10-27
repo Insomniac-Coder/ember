@@ -68,7 +68,10 @@ ember --help | --version [--matrix]
   `if w exists as p:`, `cast x if D` and `as?` to `if x is D as d:`, `as!` to `cast x as D`,
   `@borrows(p)` to `from p`, `@static_safe` to `@no_alias_checks`, `@fp(contract)` to
   `@fp(allow_fma)`, `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to
-  `assert_disjoint`. It does not rewrite what needs a choice the source does not say: `Shared[T]`
+  `assert_disjoint`, a function's type parameters in brackets after its name to a line of their own
+  above it (`fn f[T: Add](x: T)` to `[T: Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
+  parameter to `x: T`, a `T: Sync` bound to `T: ThreadShared`, and `for x in xs.iter_mut():` to
+  `for ref mut x in xs:`. It does not rewrite what needs a choice the source does not say: `Shared[T]`
   (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
   `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
 * `[CLI-21]` *(new in 0.9.9)* `ember run --interp` runs a program on the compile-time evaluator instead

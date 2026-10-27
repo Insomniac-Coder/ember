@@ -401,7 +401,7 @@ fn main():
     mesh; say so where it is made: `mesh=owns Mesh(points=[0.0, 1.0]) using current`") (`[GRM-15]`);
   * `shares T` and `shares mut T`: one of several owners of a value on one thread, counted; a
     `shares` owner reads it and a `shares mut` owner may also change it (Part VIII);
-  * `thread_shared T`: one of several owners on any threads, counted atomically, and never changed
+  * `thread_shared T`: one of several owners on any threads, counted for several threads (`[RC-4]`), and never changed
     directly by any owner (Part XI);
   * `weakref T`: a link that does not keep its target alive and may hold none (`parent: weakref Node
     = None`); it is opened before its target is used (`[GRM-44]`). Used as its target without opening
@@ -536,7 +536,10 @@ implements Display:` block.
   interface (`Add[i64]` and `Add[i32]`) are told apart by a call's arguments: an instance whose
   parameter types are the arguments' own types, an untyped literal counting as its default type
   (`int`, `f64`), is chosen before one the arguments reach only through a coercion (`[RNG-5a2]`);
-  arguments that fit two equally are `E2070`, disambiguated as `I[A].m(recv, …)`. An operator chooses
+  arguments that fit two equally are `E2070`, disambiguated as `I[A].m(recv, …)`. Inside a generic
+  body the same holds for bounds: a method that two of a type parameter's bounds both declare is
+  `E2070`, whose message names both bounds and the call to write (`Shape.area(x)` or
+  `Drawable.area(x)`). An operator chooses
   among instances as its method's call does (`[TYP-21]`, ODR-096).
 
 **Marker interfaces**, derived automatically (`Send` written by hand only with `unsafe extend`, `[TYP-43]`):

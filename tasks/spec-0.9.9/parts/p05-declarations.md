@@ -455,7 +455,9 @@ extend Square implements Shape2D:
   `E6004` (`[CT-7]`) (ODR-045).
 * `[STA-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* `static NAME: T = e` is one value per program
   with a stable address, and it never changes; shared state that changes goes through an `Atomic`,
-  `Mutex`, `RwLock` or `Once` in it. `T` MUST be `ThreadShared` (`E7002`). `static mut NAME: T = e` is a
+  `Mutex`, `RwLock` or `Once` in it. An assignment to it (`HOOK = v` in a function) is `E3023`, whose
+  help names `static mut HOOK` or another name for a local; it never makes a local that hides the
+  `static`. `T` MUST be `ThreadShared` (`E7002`). `static mut NAME: T = e` is a
   module variable that may change, written with no `unsafe`: a function changes it by its name, with no
   word (Python's `global` is `E0100`: "`global` is Python's; in Ember a function changes a module
   variable by its name, with no word: remove line 9"), and what a function changes is worked out from
@@ -497,7 +499,7 @@ fn tick():
   write (`@sync`: "`@sync` is gone: a class needs no mark to be shared between threads; remove `@sync`",
   and the value says `thread_shared`, each field that changes `guarded by` or `Atomic`;
   `@static_safe`: `@no_alias_checks`; `@fp(contract)`: `@fp(allow_fma)`; `@borrows(p)`: `from p` after
-  the result type, `[LT-1a]`; `@no_runtime_checks`: no switch turns a safety check off, `[UNS-11]`). An
+  the result type, `[LT-1a]`; `@component`: any type is a component, with no mark (Part XII); `@no_runtime_checks`: no switch turns a safety check off, `[UNS-11]`). An
   attribute on a declaration it does not apply to is `E0104` naming the positions it does apply to.
 * `[ATT-4]` One attribute per line.
   A module attribute uses a `#! module` directive (`[GRM-37]`). Its effect and any item-level
@@ -515,7 +517,7 @@ fn tick():
 | `@layout(c)`, `@packed`, `@align(N)` | struct, enum | `[LAY-2]` |
 | `@repr(T)` | enum | `[LAY-2]` |
 | `@gpu_layout(std140\|std430\|scalar)` | struct | Annex D |
-| `@noalloc`, `@nosync`, `@noblock`, `@noio`, `@nolock`, `@nopanic(explicit)`, `@no_alias_checks`, `@deterministic`, `@realtime` | fn, interface method; `@deterministic` also module and fn type | Part X |
+| `@noalloc`, `@nosync`, `@noblock`, `@noio`, `@nolock`, `@nopanic(explicit)`, `@no_alias_checks`, `@deterministic`, `@realtime` | fn, interface method, and a `type` line naming a function type (`@noalloc` above `type Handler = fn()`, `[EFF-2]`); `@deterministic` also module | Part X |
 | `@overflow(panic\|wrap\|saturate)` | fn, module | `[TYP-8]` |
 | `@fastmath`, `@fp(allow_fma)` | fn | `[TYP-9]` |
 | `@inline`, `@noinline`, `@cold`, `@hot` | fn | `[CG-C-3a]` |
@@ -532,7 +534,7 @@ fn tick():
 | `@must_drop` | struct, class | `[THR-6]` |
 | `@allow(code, …)` | any item or statement | suppresses the named `W`/`L` diagnostics |
 | `@non_exhaustive` | enum | `[FFI-8]` |
-| `@component(layout=soa\|aos)`, `@soa(flatten)` | struct; field | Part XII |
+| `@soa(flatten)` | field | Part XII |
 | `@always_specialize`, `@never_specialize` | generic fn or type | `[MONO-7]` |
 | `@reloadable`, `@noreload`, `@renamed_from("n")`, `@reinit_on_reload`, `@allow_reload_terminate` | see Annex B | Annex B |
 | `@prelude` | module (standard library only) | `[MOD-5]` |
