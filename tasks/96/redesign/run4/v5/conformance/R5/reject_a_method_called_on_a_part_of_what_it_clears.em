@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R4, R8
+#$ rules: BRW-21
 #$ help: this.hp -= 1
+## design rules: R5, R4, R8
 ## R5, R4, verdict 54: `this` counts like a view parameter: `hit` clears `ENEMIES` and then changes
 ## `this.hp`, so it cannot be called on `ENEMIES[0]`, which the clear frees under it (E3031).
 

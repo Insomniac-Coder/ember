@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8, R1
+#$ rules: BRW-17
 #$ help: w = String(d.words[0])
+## design rules: R7, R8, R1
 ## R7: a view read out of a `from` field (`w = d.words[0]`) is a view of `d`, so `d` may not be handed
 ## over or ended while `w` is used (E3060 at the use). AN-25, rule 4.
 

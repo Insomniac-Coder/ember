@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: MOD-3
 #$ help: write `names: Array[String] using LevelArena`
+## design rules: R3
 ## R3 and the removed words of `V5/rules.md` section 3: `Array[T, A]` is written `Array[T] using A` (E1010; the
 ## `using` row of `V5/vocabulary.md`; completeness gap G8). The nearest program that is allowed is
 ## `accept_a_list_field_names_its_arena_and_the_making_line_its_instance`.

@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R10, R11, R13
+#$ rules: BRW-17, LT-3
 #$ stdout: a
 #$ stdout: gone
+## design rules: R12, R10, R11, R13
 ## Step 3's hole 3, part 2, R12 (rules.md lines 687-691): `p` is used before `h.keep = fn(): pass` ends
 ## the function value and the node its state owned, so it does not live across that line; the link
 ## opened again afterwards finds the node ended. The nearest allowed program to

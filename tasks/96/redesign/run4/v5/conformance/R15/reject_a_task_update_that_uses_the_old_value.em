@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-11, THR-21
 #$ help: to add each task's part, write `total += t.len()`; to combine the parts in order, write `parts: Array[int] = []` before the `with` block, `scope.spawn(fn() copy of t: parts.push(t.len()))` as the task, and `for p in parts: total = total * 2 + p` after the `with` block
+## design rules: R15
 ## R15: a change that is not one of the reductions, by two tasks, is E7007; the conflict is reported once,
 ## on the captured name that causes it (AN-72, with the loop variable's copy of verdict 65).
 

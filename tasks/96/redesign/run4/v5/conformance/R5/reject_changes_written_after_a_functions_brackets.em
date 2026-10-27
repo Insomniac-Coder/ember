@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: GRM-2
 #$ help: write `fn tick():`
+## design rules: R5
 ## R5, verdict 86: `changes` is not a word of Ember: the compiler works out what a function changes from
 ## its body. A first line that still writes it is refused with the line to write (E0100, a clause after a
 ## function's brackets that Ember does not have; `V5/rules.md` section 3's message in this program's

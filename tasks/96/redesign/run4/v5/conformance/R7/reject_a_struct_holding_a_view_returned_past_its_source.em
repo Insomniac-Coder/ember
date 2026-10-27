@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45
 #$ help: s: Array[int]
+## design rules: R7
 ## R7: a struct that holds a view lives no longer than what its view fields point into, with or without
 ## `@view`; returning it past the list it views is refused (E3063).
 

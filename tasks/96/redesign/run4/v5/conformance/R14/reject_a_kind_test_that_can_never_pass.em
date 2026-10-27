@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: TYP-44, DSP-4
+## design rules: R14
 ## R14: "a test that can never pass, of a type that does not implement the interface or derive from the
 ## base class (E2037: "`s` is a `Shape`, which can never be a `Path`; remove the test: the `if` line and
 ## its block")" (the lead's code and message, worklist section 3, U5; section 3's E2037 row, in this

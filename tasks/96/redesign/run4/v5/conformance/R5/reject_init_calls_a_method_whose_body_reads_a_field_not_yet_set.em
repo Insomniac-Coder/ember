@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: CLS-2
 #$ help: give it a value first: write `this.assets = []` above line 18
+## design rules: R5
 ## R5, row 7: `init` may call a method of the object it builds once every field that method's body reads
 ## is set, worked out from the body (verdict 86): `load_assets` reads `this.assets`, which only the line
 ## that calls it sets (E2100, `V5/rules.md` section 3's message in this program's lines). The nearest

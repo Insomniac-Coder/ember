@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: MOD-3
+## design rules: R14
 ## R14: "there is no "maybe a `Circle`" value to `match` on"; a choice among kinds is written with
 ## `if`/`elif`/`else` kind tests (AN-68).
 

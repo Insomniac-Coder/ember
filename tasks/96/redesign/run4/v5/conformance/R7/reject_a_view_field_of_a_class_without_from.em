@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45, TYP-15
 #$ help: name: String
+## design rules: R7
 ## R7: a class object is never a view; a view field of a class says what it points into (`from <let
 ## field>` or `from static`), and without it the field is refused (E2118). AN-26, point 6.
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R7
+#$ rules: LT-45, ALC-1
 #$ help: make it in an arena the caller keeps: `fn load_level(ref mut arena: LevelArena) -> Level:`, with `lvl = Level(mesh=owns Mesh(verts=[0]) using arena)`, and in the caller `current = LevelArena()` and `lvl = load_level(ref mut current)`
+## design rules: R3, R7
 ## R3, R7: a value made in a memory manager's instance lives no longer than that instance (E3063);
 ## the message moves the arena to the caller (AN-40's refused `load_level` and message).
 

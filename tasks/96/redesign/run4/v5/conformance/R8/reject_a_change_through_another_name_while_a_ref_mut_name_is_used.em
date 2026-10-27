@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-1
 #$ help: boss.hp = 1
+## design rules: R8
 ## R8 (f), verdict 2: while a `ref mut` name is still used, its place is changed only through it.
 ## AN-01, point 6; rules section 3's E3022 row, for a change.
 

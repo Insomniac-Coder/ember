@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-2a
 #$ help: bump(ref mut a)
+## design rules: R4
 ## R4, verdict 1: a call says `ref mut` before an argument the callee may change, with the same words
 ## as the parameter; a missing `ref mut` is refused (AN-27).
 

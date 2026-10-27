@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R5, R8, R15
+#$ rules: BRW-18, CTL-2
 #$ help: move line 44 below the loop
+## design rules: R12, R5, R8, R15
 ## Verdicts 31, 39 and 86, R12 (rules.md lines 740-751): "a call of a foreign function counts as possibly
 ## running every callback C keeps ..., and makes every change they make, for R8 and for every function
 ## that calls it"; `tick`, which calls `poll_events()`, changes what the kept callback changes (it pushes

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8
+#$ rules: BRW-18, CTL-2
 #$ help: move line 19 below the loop
+## design rules: R12, R8
 ## Verdicts 21, 38 and 86, R8 (c), R12 (rules.md lines 703-711): "The call counts as making what the
 ## function given changes: `scores.for_each(fn(s): LOG.push(copy of s.name))` changes `LOG`, so inside a
 ## loop over `LOG` it is refused (E3020)". rules.md section 3's line 1066 first message, in this program's

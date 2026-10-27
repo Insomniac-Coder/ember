@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R6
+#$ rules: LT-45, TYP-15
 #$ help: fn next_word(line: StrView) -> StrView from src:
+## design rules: R7, R6
 ## R7, R6: a `from` that names two things (a parameter and a field of one name) is refused (E2118, the
 ## R7 row of rules section 3). AN-22, point 6.
 

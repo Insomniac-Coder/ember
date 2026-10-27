@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R5
+#$ rules: FN-1, FN-4
 #$ stdout: 3 0
+## design rules: R4, R5
 ## R4: the nearest allowed program: `a` and `b` are two bags, so the method's object and its `ref mut`
 ## argument name two places (completeness G18).
 

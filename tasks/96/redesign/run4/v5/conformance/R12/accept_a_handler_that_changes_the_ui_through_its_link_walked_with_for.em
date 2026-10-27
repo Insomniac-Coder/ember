@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R8, R11, R13
+#$ rules: BRW-18, CTL-2
 #$ stdout: 1
+## design rules: R12, R8, R11, R13
 ## Run 3's G-05 handler, verdict 86, R12 (rules.md lines 662-670, 717-720), R8 (c): the handler changes
 ## a `Ui` through its `weakref ui`, which the compiler works out from its body; it changes that Ui's
 ## `clicks`, not its `handlers`, so the `for` walk of `this.handlers` around `h(this)` changes nothing it

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R3
+#$ rules: LT-45, TYP-15
 #$ stdout: x
+## design rules: R7, R3
 ## R7: `from` may name a `let` field of type `owns T`, whose value lives in a block of its own, so moving
 ## the object never moves it (`V5/changes.md` section 8, item 9). The nearest program to
 ## `reject_from_naming_an_inline_struct_field.em` that is allowed, with only the line its message gives

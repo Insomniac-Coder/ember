@@ -1,7 +1,8 @@
 #$ test: run-fail
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 1
 #$ panics: C called the callback registered on line 34 after its token ended; it was unregistered
+## design rules: R15
 ## R15: "a call after the token ended ... stops the program (section 2)": the trampoline compares the
 ## slot's generation, so the stale call runs no freed state (AN-78); the stop's text is section 2's, in
 ## this program's lines.

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: THR-17, THR-10, FFI-21
+## design rules: R15, R12
 ## R15: "An unscoped thread, and a C callback that C keeps, say in the capture list what they hold
 ## (`owns`, `thread_shared`, `copy of`; E7004 for a name with no word)" (AN-78's message, with the lines
 ## to write). The nearest allowed programs are `accept_a_c_function_marked_no_callbacks_inside_a_walk.em`

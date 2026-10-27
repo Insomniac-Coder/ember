@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: ann
+## design rules: R4
 ## R4: the nearest allowed program: `first` is a `String` of its own, so `src` reaches nothing `names`
 ## owns.
 

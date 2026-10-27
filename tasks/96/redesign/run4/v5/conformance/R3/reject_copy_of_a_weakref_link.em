@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R11
+#$ rules: OWN-8
 #$ help: for another link to the same player write `a = weakref cam.target`; for a copy of the player itself write `if cam.target exists as p:` and then `c = copy of p`
+## design rules: R3, R11
 ## R3, R11: `copy of` is refused before a `weakref` link (E2116): it would copy the link, not the
 ## player, whose target may be gone; the message gives both lines (verdict 10; AN-65's message).
 

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R2
+#$ rules: FN-1, BRW-12
 #$ stdout: 2.0 4.0
+## design rules: R4, R2
 ## R4, verdict 42: `const ref mut dst: MutSpan[float]` writes the caller's elements and is never given
 ## another ref, so the caller's span is the same span after the call; the call writes the same words,
 ## `blend(const ref mut d, ...)` (verdict 70).

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R7
+#$ rules: BRW-17
 #$ help: println(bag.items[0])
+## design rules: R8, R7
 ## R8 (b): a kept view is an address, never a position; a push that may move the list it points into
 ## ends it (E3060 at a later use).
 

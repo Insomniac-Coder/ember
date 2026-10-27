@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R6
+#$ rules: BRW-1
 #$ help: gen fn replay() -> Generator[int] from log:
+## design rules: R8, R6
 ## R6, R8 (g): a generator method without `from` gives a view of its whole object, so no field of `d`
 ## changes while `g` will still be used (E3021, at the change); `from log` narrows the view to `d.log`.
 ## AN-77, the v3 note's point 2; settled in step 4 (`V5/changes.md` section 8, item 8). The allowed

@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R2, R1
+#$ rules: BRW-12, OWN-1
 #$ stdout: pushed
 #$ end b
 #$ end a
+## design rules: R2, R1
 ## R2, R1: a part handed over on its own leaves its owner partly handed over (verdict 78): when `p`
 ## ends it ends only what it still owns (`right`), and `kept` ends the `left` it was given; each `Res`
 ## ends once, the later local first (completeness gap G11). Verified by its output and a clean

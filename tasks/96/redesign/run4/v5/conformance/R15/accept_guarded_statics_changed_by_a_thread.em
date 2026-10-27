@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R5
+#$ rules: THR-1, FN-4
 #$ stdout: 1 1
+## design rules: R15, R5
 ## R15: the lines E7012 gives: both module variables `guarded by` one `static` lock, `tick`'s body
 ## inside it.
 

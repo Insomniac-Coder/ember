@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R16
+#$ rules: UNS-8
+## design rules: R16
 ## R16: "before a block ... it says "this code vouches", with a `# SAFETY:` note saying why (W3012 when
 ## missing)" (today's message).
 

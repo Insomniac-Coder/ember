@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R7
+#$ rules: THR-1, THR-2, THR-10
+## design rules: R15, R7
 ## R15: "A one-thread owner or a lent value reaching another thread is E7015": a list of views of
 ## `main`'s text is lent (R7), and an unscoped thread may outlive it (completeness G21; the code as
 ## `V4/changes.md` section 5 reads R15).

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R5
+#$ rules: CLO-1, FN-4
 #$ stdout: 1 1
+## design rules: R12, R5
 ## Verdict 86, R12 (rules.md lines 662-672): one `Array[fn()]` keeps row 6's handler, which changes
 ## `main`'s real `score`, and a handler that pushes to `LOG`; `click` and `main` write nothing. AN-53
 ## part 6's button.

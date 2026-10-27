@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R11, R13
+#$ rules: WK-11, GRM-44
 #$ stdout: 7
 #$ stdout: gone
+## design rules: R11, R13
 ## R11: "Every `weakref` link holds one weak count on its target, with no exception: making one
 ## (`weakref x`, or `weakref this.keep` for another link to the same target) adds one, and its end, or
 ## giving it another target, subtracts one". Verdict 11 (run 3's hole G-01): a program that keeps a

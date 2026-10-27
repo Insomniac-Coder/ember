@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14
+#$ rules: TYP-44
 #$ stdout: 5 0 5
+## design rules: R14
 ## R14: the lines the E1010 messages give: the kind test for "not sure" (`if s is Circle as c:`) and
 ## `cast s as Circle` for "sure" (verdict 27).
 

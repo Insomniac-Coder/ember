@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R17
+#$ rules: BRW-16, BLD-14
 #$ stdout: 2 80
+## design rules: R8, R17
 ## R8 (a): a callee whose summary is "only adds to `enemies`" grows the list that holds `boss`'s
 ## position, which `boss` survives, and it is not a use of element 0 through another name (R8 (f)).
 ## AN-02's NEW program.

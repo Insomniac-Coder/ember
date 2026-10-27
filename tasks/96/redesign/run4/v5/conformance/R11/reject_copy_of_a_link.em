@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R11, R3
+#$ rules: OWN-8
+## design rules: R11, R3
 ## R11: "`copy of` a link is refused (E2116): another link to the same target is `weakref this.keep`, a
 ## copy of the target itself is `if this.keep exists as n:` then `copy of n`" (verdict 10; AN-65).
 ## `Player` has `Clone`, so the second way out compiles (rules section 3, E2116).

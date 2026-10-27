@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R3
+#$ rules: THR-1
+## design rules: R15, R3
 ## R3: `thread_shared` only on a value already `thread_shared` (E7017); a plain `log: Log` lends an
 ## object whose owner may be one-thread (AN-75). The nearest allowed program is
 ## `accept_threads_share_a_log_and_push_under_its_lock.em`.

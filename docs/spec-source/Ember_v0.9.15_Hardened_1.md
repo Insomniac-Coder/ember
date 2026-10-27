@@ -8269,10 +8269,10 @@ reused; retired codes are listed with the reason.
 | `E7001` | `@sync` is gone: a value shared between threads is `thread_shared`, its changing fields `guarded by` a lock or `Atomic` |
 | `E7003` | `@sync` is gone (as `E7001`); a `thread_shared` value changed directly is `E7014` |
 | `E7005` | a value reaching a task is `E7007`, `E7008` or `E7015` |
+| `E7020` | the ECS has no scheduler (EnTT's design): systems in one parallel run are gone |
 | `E9012` | reserved |
 | `E9032` | reserved |
 | `E9033` | a `release` build ignores `reload` with a note (`[MAN-7]`, ODR-118) |
-| `E7020` | the ECS has no scheduler (EnTT's design): systems in one parallel run are gone |
 | `L3001` | a loop of owners is refused when compiling (`E3032`) |
 | `L3011` | `RefCell` is gone |
 | `L3013` | no access is held while a program runs |

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-2a
 #$ help: show(clock)
+## design rules: R4
 ## R4: `ref mut` written before an argument whose parameter is not `ref mut` is refused, so the call
 ## never says a change the callee cannot make (AN-20).
 

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-18
+## design rules: R15
 ## R15: the lock "must be held for every read and change outside `init` (E7013)". The rules give the
 ## message for a change; this one, for a read, is written to R18.
 

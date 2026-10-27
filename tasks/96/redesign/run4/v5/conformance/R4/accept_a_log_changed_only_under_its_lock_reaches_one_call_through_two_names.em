@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R4, R15, R12
+#$ rules: THR-19
 #$ stdout: a
 #$ stdout: 2
+## design rules: R4, R15, R12
 ## R4 (overlap, exception 2), R15: a `thread_shared` object whose changes go only through its lock may
 ## reach one call through any number of names (verdict 89): `log` is a plain argument of `dump` and is
 ## held by the function value given beside it, and the lock keeps the two ways in apart, as Rust allows

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R3
+#$ rules: THR-1
+## design rules: R15, R3
 ## R3: "`thread_shared x` ... only before a new value ... or on a value already `thread_shared`, else
 ## E7017" (AN-71).
 

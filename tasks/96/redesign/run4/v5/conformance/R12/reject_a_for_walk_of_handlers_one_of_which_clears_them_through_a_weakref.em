@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8, R11, R13
+#$ rules: BRW-18, CTL-2
 #$ help: handlers: Array[fn(ref mut Ui)] = []
+## design rules: R12, R8, R11, R13
 ## Run 3's hole G-05, verdict 86, R8 (c) and R12 (rules.md lines 717-720): a handler typed `fn(Ui)` that
 ## clears the handlers of the `Ui` its `weakref ui` links to; the compiler works out that change from its
 ## body (no type says it), so `h(this)` may clear the list this `for` loop walks (E3020). rules.md section

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 3
+## design rules: R3
 ## R3: a plain value stored into an `owns T` place is put in its block at that store, and is held
 ## alone there (AN-40's `Entity`). `m` was made on its own line as `main`'s own mesh, and
 ## `Entity(mesh=m)` hands it over, so no `owns` is written (E0109 refuses one before a name that already

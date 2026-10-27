@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6, R7
+#$ rules: LT-45, TYP-15
 #$ help: fn next_word(line: StrView) -> StrView from src:
+## design rules: R6, R7
 ## R6: `from` names one parameter or one field of `this`; a name that is both is refused, so the line
 ## never means two things (AN-22, E2118).
 

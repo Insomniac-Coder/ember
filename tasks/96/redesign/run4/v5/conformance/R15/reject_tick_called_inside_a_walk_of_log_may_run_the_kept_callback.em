@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R15, R12, R8
 ## R12 (verdicts 39 and 86): `tick` calls `poll_events()`, a C function that may run the callback C
 ## keeps, so `tick` "changes what the callback changes, as does every function that calls `tick`",
 ## worked out with no word on any first line; the callback pushes to `LOG` (through `add_point`), so a

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: FFI-52
+## design rules: R15, R12
 ## R12: "`@ffi(no_callbacks)` ... on a function whose own contract takes a callback it is refused
 ## (E5069)" (AN-78, section 3's message).
 

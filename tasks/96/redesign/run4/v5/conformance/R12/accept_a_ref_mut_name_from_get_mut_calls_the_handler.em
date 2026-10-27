@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R2, R8
+#$ rules: BRW-14, BRW-15
 #$ stdout: 3
+## design rules: R12, R2, R8
 ## R8 (f) and R12 (rules.md lines 517-519, 768-770, 776-778): the stored handler changes its own state
 ## (its own copy of `n`), so it is called through a name that may change it: a `ref mut` name made from
 ## `get_mut`, or the list by position. "A call through a `ref mut` name of a stored function value uses

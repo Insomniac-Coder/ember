@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12, R9
+#$ rules: THR-1, CLO-1, RC-1
 #$ stdout: 1
+## design rules: R15, R12, R9
 ## R12 and R15 (verdict 61): the lines E7015 gives: a `thread_shared fn()` holds a `thread_shared`
 ## owner, and the counter it changes is an `Atomic`, changed by its own operation; another thread runs
 ## it under the bus's lock (completeness G26's nearest allowed; ThreadSanitizer: no report).

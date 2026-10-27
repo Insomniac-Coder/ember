@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R2
+#$ rules: BRW-14, BRW-15
 #$ help: fn fill(ref mut dst: MutSpan[float], ref mut spare: MutSpan[float]):
+## design rules: R4, R2
 ## R4, verdict 42: a `const ref mut` parameter writes the caller's elements and never points the
 ## caller's span elsewhere; giving it another ref is refused (E3023).
 

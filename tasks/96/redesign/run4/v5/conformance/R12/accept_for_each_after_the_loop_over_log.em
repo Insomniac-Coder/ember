@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R8
+#$ rules: BRW-18, CTL-2
 #$ stdout: 1
 #$ stdout: 3
+## design rules: R12, R8
 ## Verdicts 21, 38 and 86, R8 (c), R12 (rules.md lines 703-711): `for_each` takes the lambda as a
 ## template parameter, and the call changes `LOG`, worked out from the lambda, with no word on it or on
 ## `main`; the walk of `LOG` ends first, then `for_each` runs, as the E3020 message of the nearest

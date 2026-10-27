@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5, R8
+#$ rules: FN-2a
 #$ help: fn heal_all(ref mut players: Array[Player]):
+## design rules: R4, R5, R8
 ## R4: `ref mut` before something this function may not change is refused, a loop name over a list it
 ## only reads included: `players` is a plain parameter, so `p` would change the caller's players
 ## behind a read-only promise (AN-15, E3027; completeness G6).

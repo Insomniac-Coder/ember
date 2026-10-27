@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: ann 3
+## design rules: R3
 ## R3: the nearest program that is allowed: each captured name has its own word.
 
 fn main():

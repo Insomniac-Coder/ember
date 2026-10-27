@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R5, R8, R17
+#$ rules: BRW-18, CTL-2
 #$ stdout: [0] orc died
+## design rules: R5, R8, R17
 ## R5, row 3: `this.note(...)` runs while `p` is the only name of one player (R8 (f)), accepted because
 ## `note`'s body changes only `log` and reads only `frame` and `log`, worked out with no word on any
 ## first line (verdict 86; AN-17's NEW). Inside a loop over `this.log` the same call is refused

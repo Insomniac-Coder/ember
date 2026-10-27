@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R6, R8
+#$ rules: LT-1, BRW-16
 #$ stdout: 2
+## design rules: R6, R8
 ## R6: `-> Span[int] from a` narrows the result to `a`, so `y` may grow while `w` is used; the nearest
 ## allowed program to a result that points into both arguments.
 

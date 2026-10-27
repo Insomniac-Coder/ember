@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: ATT-1, PHIL-12
+## design rules: R15
 ## R15: what may go to another thread is inferred from the words; the class mark `@sync` is gone
 ## (AN-80; section 3's removed words, E0104).
 

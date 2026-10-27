@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R5
+#$ rules: BRW-18, CTL-2
 #$ help: joined: Array[Player] = []
+## design rules: R8, R5
 ## R8 (c): a list may not change while a loop walks it through a call that may change it, worked out
 ## from the callee's body (verdict 86): `add_player` pushes to `this.players`. AN-17, point 6.
 

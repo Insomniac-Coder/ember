@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 5
+## design rules: R15
 ## R15: the lock must be held "for every read and change outside `init`": `init` sets a guarded field
 ## with no lock.
 

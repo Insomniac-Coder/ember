@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R15
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
 #$ help: fn() thread_shared count: count.n.fetch_add(1)
+## design rules: R12, R15
 ## Verdict 61, R12 (rules.md lines 692-697): "A function of such a type may hold `thread_shared` values or
 ## copies, never a `shares` or `shares mut` value or a `weakref` link of one (E7015): `bus.on_event(fn()
 ## shares mut count: count.n += 1)` is refused, since another thread running it would change `count`'s

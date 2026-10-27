@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R1
+#$ rules: OWN-3
 #$ help: to keep both, write `snapshot = copy of items` (a copy of your own) or `snapshot = shares items` (two owners of one list)
+## design rules: R1
 ## R1: `b = a`, where `a` is a whole name that owns a value whose type is not `Copy`, hands `a` over:
 ## `a` ends, and a later use of it is refused (E3040), naming both ways out, `copy of` and `shares`
 ## (row 9; AN-34's refused program, with the message of `V4/rules.md` section 3).

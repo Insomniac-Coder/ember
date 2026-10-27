@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ stdout: start
 #$ stdout: 2
+## design rules: R12, R5, R8
 ## Verdict 86, R12 (rules.md lines 662-672): a lambda that pushes to `LOG` writes nothing about it, and
 ## neither does `main`, which runs it; the compiler works out the change from the body. The walk of `LOG`
 ## ends first, then `click()` runs. The nearest allowed program to

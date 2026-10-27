@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45, TYP-15
 #$ help: let text: String
+## design rules: R7
 ## R7: `from` names a `let` field, which never changes after `init`; a field that may change is refused
 ## (E2118). AN-25, point 6.
 

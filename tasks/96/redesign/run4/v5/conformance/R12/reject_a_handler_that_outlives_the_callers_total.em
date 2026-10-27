@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R4
+#$ rules: CLO-4
 #$ help: b.on_click(fn() owns count: count.n += 1)
+## design rules: R12, R4
 ## R12 (rules.md lines 752-759, 785-786): "The real variables a lambda captures ... are checked in the
 ## function that writes the lambda, which sees every place the function value goes: the value may not
 ## outlive them (E3026)". AN-57's program; rules.md section 3's line 1095 first message, word for word,

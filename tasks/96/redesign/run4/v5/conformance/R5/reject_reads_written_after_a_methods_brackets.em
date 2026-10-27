@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: GRM-2
 #$ help: write `fn load_assets() -> Array[String]:`
+## design rules: R5
 ## R5, verdict 86: `reads` is not a word of Ember: the compiler works out what a method reads from its
 ## body (row 7: `fn load_assets() -> Array[String]:`). A first line that still writes it is refused with
 ## the line to write (E0100). The nearest program that is allowed is

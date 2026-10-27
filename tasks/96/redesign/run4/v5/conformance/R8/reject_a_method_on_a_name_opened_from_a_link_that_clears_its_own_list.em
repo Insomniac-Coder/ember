@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R4, R5
+#$ rules: BRW-21
 #$ help: in `hit`, change `this.hp` before `ENEMIES.clear()`
+## design rules: R8, R4, R5
 ## R8 (b), R4, R5 (verdict 54, hole 2 reached through a link): `e` is opened from a `weakref` and may be
 ## any `Enemy`, one of `ENEMIES` included; `hit` clears `ENEMIES` and then changes `this` (E3031).
 

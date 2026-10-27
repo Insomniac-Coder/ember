@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R12, R5
+#$ rules: BRW-18, CTL-2
+## design rules: R15, R12, R5
 ## R12 (verdicts 39 and 86): `tick` calls `poll_events()`, which may run the kept callback that changes
 ## the game and pushes to `LOG`; `tick` and `main` make those changes with no word on their first lines
 ## (the compiler works them out, R5), and `tick()` comes after the walk of `LOG` (the line E3020 gives in

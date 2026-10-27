@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R8
+#$ rules: CLO-1, BRW-16
 #$ stdout: 1
+## design rules: R12, R8
 ## R12 (rules.md lines 752-759): the list never leaves `game`, so the function value provably ends before
 ## `score`, which stays at its own address, and nothing is refused (today's E3026 is gone); the list
 ## writes nothing about what its functions change (verdict 86). AN-58's NEW program.

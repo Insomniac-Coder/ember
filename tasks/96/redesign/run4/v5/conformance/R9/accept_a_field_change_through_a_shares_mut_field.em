@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R9, R5
+#$ rules: RC-1, FN-4
+## design rules: R9, R5
 ## R9: an owner made with `shares mut`, here a field, may change the shared player; `shake` changes it
 ## through the field, which the compiler works out from its body (R5, verdict 86; AN-48 (a)).
 

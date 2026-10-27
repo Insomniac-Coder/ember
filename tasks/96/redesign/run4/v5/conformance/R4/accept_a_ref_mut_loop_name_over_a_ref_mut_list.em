@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R5
+#$ rules: FN-1, FN-4
 #$ stdout: 11
+## design rules: R4, R5
 ## R4: the nearest allowed program: `heal_all` takes the list as `ref mut`, so its loop name may change
 ## the caller's players (completeness G6).
 

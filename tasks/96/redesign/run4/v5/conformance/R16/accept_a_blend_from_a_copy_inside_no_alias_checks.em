@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R16, R4
+#$ rules: TIER-1, FN-1
+## design rules: R16, R4
 ## R16 and R4: the lines E4030 gives: a blend from a list of its own is proved apart when compiling,
 ## so nothing runs that `@no_alias_checks` forbids (AN-14's way out).
 

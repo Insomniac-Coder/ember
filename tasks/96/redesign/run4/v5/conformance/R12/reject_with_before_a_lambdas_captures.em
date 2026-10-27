@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R3
+#$ rules: GRM-2
 #$ help: b.on_click(fn() copy of name: println(name))
+## design rules: R12, R3
 ## Verdict 83, R3 (rules.md lines 230-234) and R12 (lines 766-767): a lambda's capture words follow its
 ## brackets on their own (`fn() copy of a, owns b, ...:`); `with` keeps one meaning, a block. `with` before
 ## the captures is E0100 (rules.md section 3, line 1051: "a function's captures follow its brackets with

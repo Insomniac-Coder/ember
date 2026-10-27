@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14, R5
+#$ rules: TYP-44, FN-4
 #$ stdout: ok
+## design rules: R14, R5
 ## R14: "a value tested in its place stays a place, `if this.pools[k] is Pool[T] as ref mut pool:`
 ## names a view of the registry's pool that may change it (where the function may change the
 ## place)" (AN-22's `put`); that `put` changes `this.pools` is worked out from its body, and its first

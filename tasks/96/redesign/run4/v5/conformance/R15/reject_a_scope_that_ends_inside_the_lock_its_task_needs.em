@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-19
+## design rules: R15
 ## E7018: "a join of a thread (a scope's end included) whose function changes what the lock guards",
 ## inside that lock's `with` block (section 4). The rules give the message for `join` only; this one is
 ## written to R18, and names both lines it moves (check-V6's fix: the lock's block keeps a line of its

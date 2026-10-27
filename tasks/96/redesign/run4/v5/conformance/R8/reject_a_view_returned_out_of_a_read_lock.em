@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-19
 #$ help: return a copy, or do the work inside the `with` block
+## design rules: R8
 ## R8 (e): the same for `RwLock`'s `read()`: a view of the read guard does not leave its `with` block.
 ## AN-30, point 6.
 

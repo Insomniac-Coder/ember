@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1, R2
+#$ rules: OWN-1, BRW-12
 #$ stdout: 9
+## design rules: R1, R2
 ## R1, R2: the nearest program that is allowed: `cur = ref mut p` names the caller's player through
 ## `p` and may change it.
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R13, R5
+#$ rules: BRW-1
 #$ help: if t is not a:
+## design rules: R8, R13, R5
 ## R8 (f): another name that may name a `ref mut` name's place, a link of the same type included, is
 ## refused unless the compiler proves the two differ. Rules section 3's E3022 message for the turret, in
 ## this program's lines. `a` is a `ref mut` parameter, which is alone while it is used; a method's

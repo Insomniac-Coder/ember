@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8
+#$ rules: BRW-18, CTL-2
 #$ help: new_items: Array[String] = []
+## design rules: R7, R8
 ## R7, R8 (c): a list in a `sharedref mut` target may not change while a `for` loop walks it, whichever
 ## holder reaches it. AN-48, point 6 (its message for form (a), here for form (b), as one line).
 

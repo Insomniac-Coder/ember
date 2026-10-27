@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R10, R13, R18
+#$ rules: BRW-17, LT-3
+## design rules: R10, R13, R18
 ## R10 point 1 (verdict 82): `remove_all(ref mut players)` is given the list that owns the player `p`
 ## reads, so it may end it; a name opened from a link is not used after such a call (E3060). R10 keeps
 ## nothing alive for it while the program runs (rules section 2, "Gone": the count pair).

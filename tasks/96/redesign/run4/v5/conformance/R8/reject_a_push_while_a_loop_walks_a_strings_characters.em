@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-18, CTL-2
 #$ help: extra = String("")
+## design rules: R8
 ## R8 (c), verdict 72: a string a loop goes through, here by its characters, does not change while the
 ## loop walks it; the change is refused where it is made (E3020), with the list's message.
 

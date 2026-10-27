@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R5
+#$ rules: BRW-15
 #$ help: walk the handlers with `for ref mut h in this.handlers:`
+## design rules: R12, R5
 ## R12 (rules.md lines 776-779): "A call through a stored function value whose functions may change their
 ## own state is a change of the place that holds it: the holder is reached through a name that may change
 ## it (`for ref mut h in this.handlers: h()`; E3023 for a plain `h`)". The handler the program stores keeps

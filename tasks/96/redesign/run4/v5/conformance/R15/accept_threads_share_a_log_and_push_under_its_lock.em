@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12, R5, R3
+#$ rules: THR-1, CLO-1, FN-4, OWN-8
 #$ stdout: 2
+## design rules: R15, R12, R5, R3
 ## R15 and R12 (verdicts 44, 86 and 94): each thread holds one more owner (`fn() thread_shared log`),
 ## and changes the log only under its lock; what the threads, `start` and `main` change is worked out,
 ## and no first line says it (AN-75's NEW, with a line that prints what the threads did).

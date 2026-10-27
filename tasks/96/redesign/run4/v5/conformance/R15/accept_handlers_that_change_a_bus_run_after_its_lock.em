@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 1
+## design rules: R15, R12
 ## R15: the lines E7018 gives: the handlers are taken out under the lock and run after it, so a handler
 ## that changes a `Bus`, this one included, takes the lock itself; they are put back under the lock.
 

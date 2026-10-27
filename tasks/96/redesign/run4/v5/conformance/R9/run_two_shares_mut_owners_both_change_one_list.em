@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R9, R3
+#$ rules: RC-1, OWN-8
 #$ stdout: 4
 #$ stdout: 5
+## design rules: R9, R3
 ## R9: "after `other = shares mut items` both `items` and `other` may change the list"; each owner sees
 ## the other's change, and nothing is checked while the program runs (AN-34's `two_owners`, verdict 23).
 

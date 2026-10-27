@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 3
+## design rules: R2
 ## R2: a name declared with `=` stands for its own place; if its value is a view, `=` makes the name
 ## view something else (`cur = p`), checked by R8 against its new target. The "best so far" walk,
 ## which today's `[BRW-1]` refuses (`reject_a_reference_is_not_re_pointed`).

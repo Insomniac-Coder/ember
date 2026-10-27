@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R12, R8
+#$ rules: THR-1, CLO-1, BRW-16
+## design rules: R15, R12, R8
 ## R12: "With no kept callback ... a foreign call changes nothing": a program that hands C no callback
 ## to keep may call an unmarked C function inside a walk.
 

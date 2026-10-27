@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 100
+## design rules: R4
 ## R4: a `ref mut` parameter may be handed on to another `ref mut` parameter, with the word at each
 ## call; the change reaches `main`'s player.
 

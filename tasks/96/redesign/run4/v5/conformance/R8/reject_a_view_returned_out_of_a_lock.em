@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-19
 #$ help: return a copy, or do the work inside the `with` block
+## design rules: R8
 ## R8 (e), row 4: a view made through a lock's guard points into the guard and does not leave its
 ## `with` block; row 4's message, word for word. AN-30, point 6.
 

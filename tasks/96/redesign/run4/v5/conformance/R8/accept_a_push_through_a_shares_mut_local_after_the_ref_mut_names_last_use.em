@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R9
+#$ rules: BRW-1
 #$ stdout: 9 2
+## design rules: R8, R9
 ## R8 (a), (f): the way out E3022's message gives: the push through the link `t` comes after the last use
 ## of `boss`, the `ref mut` address of a member stored inline. The nearest program to
 ## `reject_a_push_through_a_shares_mut_local_while_a_ref_mut_name_of_its_member_is_used.em` that is

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R1
+#$ rules: OWN-8, OWN-1
 #$ stdout: 2
+## design rules: R3, R1
 ## R3, R1: the nearest programs that are allowed: `b = a` and `return xs` hand over with no word.
 
 fn make() -> Array[int]:

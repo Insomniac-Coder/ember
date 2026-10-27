@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R1
+#$ rules: OWN-8, OWN-1
 #$ stdout: 3
+## design rules: R3, R1
 ## R3, R1: `e.mesh = m` hands `m`, a mesh that already has a name, over to the field with no word, as
 ## `b = a` does; `owns` is written only on a line that makes a value (verdict 97: E0109 keeps only `owns`
 ## before a name that already exists).

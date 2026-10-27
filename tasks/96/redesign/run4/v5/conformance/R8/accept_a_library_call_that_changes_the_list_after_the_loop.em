@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R8, R12
+#$ rules: BRW-16, CLO-1
 #$ stdout:
 #$ start
 #$ 2
+## design rules: R8, R12
 ## R8 (c), R12: the way out the refusal gives: the `for_each` whose function pushes to `LOG` runs
 ## after the loop over `LOG` (verdicts 21, 86: the lambda writes no word).
 

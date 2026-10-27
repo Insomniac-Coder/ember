@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45, TYP-15
 #$ help: let buf: Array[u8]
+## design rules: R7
 ## R7: `from` names a field whose contents live in their own heap block; a fixed array is stored inside
 ## the object and moves with it, so it is refused (E2118). The message of rules section 3
 ## (`let buf: String`, `let` kept so that the line it gives compiles), in this program's names.

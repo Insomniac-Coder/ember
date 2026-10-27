@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout:
 #$ 10
 #$ 1
+## design rules: R8
 ## R8 (g): the first way out: the change comes after `boss`'s last use.
 
 struct Enemy:

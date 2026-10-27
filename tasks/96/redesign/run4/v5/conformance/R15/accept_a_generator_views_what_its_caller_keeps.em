@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R15, R6
+#$ rules: THR-1, LT-1
 #$ stdout: 2
 #$ stdout: 1
+## design rules: R15, R6
 ## R15: the lines E2221 gives: the list is the caller's, and a view of it may be held across `yield`
 ## (AN-77; the link made for the `Option[owns Link]` field says `owns`, verdict 85).
 

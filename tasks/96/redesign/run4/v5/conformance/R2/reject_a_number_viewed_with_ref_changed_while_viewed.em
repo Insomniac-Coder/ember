@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2, R8
+#$ rules: BRW-1
 #$ help: change it after `r`'s last use, or write `r = ref mut counts[0]` and change it through `r`: `r = 9`
+## design rules: R2, R8
 ## R2, R8 (g): `ref` before a part is needed only to view a number (`r = ref counts[0]`); the view
 ## then promises that the number does not change while `r` is used (E3021, with the two ways out of
 ## `V4/rules.md` section 3).

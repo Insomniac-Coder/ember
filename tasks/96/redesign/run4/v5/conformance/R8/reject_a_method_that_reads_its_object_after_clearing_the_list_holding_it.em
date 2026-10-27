@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R4, R5
+#$ rules: BRW-21
 #$ help: move line 15 above line 14
+## design rules: R8, R4, R5
 ## R8 (b), (g), verdict 54: `this` counts as a view parameter. `show` only reads its object, and reads it
 ## after clearing `SHOWN`, which owns it, so `SHOWN[0].show()` is refused (E3031). Verdict 54's own
 ## example changes `this`; this one only reads it, which the same check covers.

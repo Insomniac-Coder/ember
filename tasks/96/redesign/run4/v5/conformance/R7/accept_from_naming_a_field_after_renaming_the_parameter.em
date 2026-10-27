@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R6
+#$ rules: LT-45, LT-1
 #$ stdout: let x
+## design rules: R7, R6
 ## R7, R6: with the parameter renamed, `from src` names only the field, so the two words point into the
 ## text and may be kept while `p.pos` changes. AN-22's NEW program, with the parameter of E2118's
 ## message.

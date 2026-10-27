@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-2a
 #$ help: blend(const ref mut d, b.as_span())
+## design rules: R4
 ## R4, verdict 70: a call writes the parameter's words, `const` included: for `const ref mut dst`, the
 ## call says `const ref mut d`, so the line shows that `d` is written and never pointed elsewhere
 ## (E3028).

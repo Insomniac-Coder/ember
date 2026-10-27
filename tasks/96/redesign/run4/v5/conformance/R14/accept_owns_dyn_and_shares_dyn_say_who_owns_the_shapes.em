@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R14, R3
+#$ rules: TYP-44, OWN-8
 #$ stdout: 1
 #$ stdout: 2
 #$ stdout: 7
 #$ stdout: 7
+## design rules: R14, R3
 ## R3 and R14: `owns dyn Shape` (the list is each shape's one owner) and `shares dyn Shape` (one of
 ## several owners, reading it); `dyn Shape` as a parameter's type is a read-only view (AN-66's NEW,
 ## made a whole program). Each shape made for the list of `owns dyn Shape` says `owns` (verdict 85;

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R8
+#$ rules: BRW-18, CTL-2
 #$ help: update after the loop: move line 25 below the loop
+## design rules: R5, R8
 ## R5, R8 (c), verdict 86: what a call through a `virtual` method changes is worked out from every
 ## override the program has (it replaces E2113, which compared an override with the virtual's first
 ## line): `SwingDoor.on_update` pushes to `this.log`, so `d.on_update(0.5)` inside a loop over `d.log` is

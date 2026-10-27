@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R5
+#$ rules: FN-4
 #$ stdout: 7
+## design rules: R5
 ## R5: `owns this` takes the object over; a caller that does not use the name again is accepted.
 
 class Job:

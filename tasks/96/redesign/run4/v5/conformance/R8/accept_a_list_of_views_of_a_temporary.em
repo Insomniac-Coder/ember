@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R7
+#$ rules: BRW-16, LT-45
 #$ stdout: 3
+## design rules: R8, R7
 ## R8 (d): a temporary lives until the last use of every view made from it, a list of views included;
 ## R7 bounds the list `words` owns by the lowered text. AN-07's NEW program.
 

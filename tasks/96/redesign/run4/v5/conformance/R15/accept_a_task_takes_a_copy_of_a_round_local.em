@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12, R5
+#$ rules: THR-1, CLO-1, FN-4
 #$ stdout: 3
+## design rules: R15, R12, R5
 ## R15: "a local of one round ... [is] given to a task ... with a word": `copy of n`; two tasks changing
 ## one `Atomic` is not E7007, the atomic instruction orders each change (AN-73's NEW); that the task
 ## changes `total` is worked out from its body (verdict 86).

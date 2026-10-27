@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8
+#$ rules: BRW-17
 #$ help: println(eds[0].reg.hp[0])
+## design rules: R7, R8
 ## R7, R8 (b): every view into a `sharedref mut` target ends at a reshape made through any of its
 ## holders. AN-24, point 6.
 

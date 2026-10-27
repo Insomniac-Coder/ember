@@ -1,7 +1,8 @@
 #$ test: run-fail
-#$ rules: R15
+#$ rules: THR-1
 #$ profiles: debug, development, release
 #$ panics: C called the callback registered on line 35 on another thread, but its contract says `threads(creator)`
+## design rules: R15
 ## R15: a call "on a thread the callback's contract does not allow, stops the program (section 2)",
 ## "checked by the trampoline in every profile" (today: debug only, `tests/conformance/FFI-33b`); this
 ## check is what lets a kept callback hold a one-thread owner (`owns game` of a `shares mut` game).

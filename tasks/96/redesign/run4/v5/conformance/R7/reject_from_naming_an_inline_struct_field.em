@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45, TYP-15
 #$ help: let pair: owns Pair
+## design rules: R7
 ## R7: `from` names a `let` field whose contents live in their own heap block; a struct stored inline
 ## moves with its object, so a `from` naming one is refused (E2118), and the message gives the field
 ## with a block of its own (rules section 3's E2118 message word for word; settled in step 4,

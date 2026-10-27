@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R13, R2
+#$ rules: GRM-44, BRW-12
 #$ stdout: 5
+## design rules: R13, R2
 ## R13, R2: `while cur.next exists as n:` repeats while the `Option` holds a node, naming it `n` in
 ## each round; `cur = ref n` points the view at the next node (R2).
 

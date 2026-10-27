@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-1
 #$ help: fn show(c: Counter):
+## design rules: R4
 ## R4: `ref` in a parameter's type is refused: the mode goes on the parameter's name, and a plain
 ## parameter already reads the caller's counter (AN-27, rules section 3's E0117 case `c: ref Counter`).
 

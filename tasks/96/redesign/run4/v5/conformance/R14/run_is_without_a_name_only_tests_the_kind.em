@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14
+#$ rules: TYP-44
 #$ stdout: 2
+## design rules: R14
 ## R14: "`if s is Circle:` tests without a name"; one type-id compare (section 2). Each shape made for
 ## the list of `owns dyn Shape` says `owns` (verdict 85).
 

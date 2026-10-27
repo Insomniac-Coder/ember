@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R4, R5, R15
+#$ rules: CLO-1, FN-1, FN-4, THR-1
 #$ stdout: 1
+## design rules: R12, R4, R5, R15
 ## Verdict 44 ("Keep guarded by and the same way as mutex"), R4 (rules.md lines 265-269: "`fn
 ## add_line(log: Log): log.push("hi")`"), R5 (lines 405-410): a `guarded by` field is changed through a
 ## plain name inside its lock, with no word at the call; what `add_line` changes is worked out from its

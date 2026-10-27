@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: -1.0
+## design rules: R4
 ## R4: where the compiler proves two positions differ (`j` from `i + 1..`), the call runs no compare;
 ## both parameters are compiled with noalias (AN-03's `all_pairs`).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R9
+#$ rules: BRW-14, BRW-15
 #$ help: to change it through `other`, write `other = shares mut items`
+## design rules: R3, R9
 ## R3, R9: `shares x` makes one more owner that reads it; a change through it is refused (E3023;
 ## AN-34's message). The help's line compiles as it is: no first line names a change (verdict 86).
 

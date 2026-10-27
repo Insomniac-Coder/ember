@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R5, R15
+#$ rules: CLO-1, FN-4, THR-1
 #$ stdout: 1 1
 #$ stdout: 2
+## design rules: R12, R5, R15
 ## Verdicts 30, 86 and 94, R12 (rules.md lines 726-729), R15 (lines 835-842): `thread.spawn` takes a
 ## `thread_shared fn()`, and "starting a thread counts as making what its function changes", worked out
 ## from its body (`worker` pushes to `RESULTS` under `RESULTS_LOCK`); `main` writes nothing for it, nor

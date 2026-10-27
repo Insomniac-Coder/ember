@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R10, R12
+#$ rules: BRW-17
 #$ help: s = String(p.name.trim())
+## design rules: R8, R10, R12
 ## R8 (b), R12 (safety validation (b), hole 3, part 1): what a call through a function value changes is
 ## worked out from the function stored there (verdict 86): `rename` replaces the name of the node its
 ## state owns, which frees the text `s` views through the link `w`, so `s` is not used after `rename()`

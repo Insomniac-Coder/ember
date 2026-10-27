@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: OWN-10, TYP-46
 #$ help: write `e.mesh = owns Mesh(verts=[1, 2])`
+## design rules: R3
 ## R3: a value made later for an `owns` place says `owns` too (verdict 97): `e.mesh = Mesh(...)` makes a
 ## new mesh for a field that owns its mesh alone, so the line says so, as the line that first made one
 ## does (E2123, `V5/rules.md` section 3's message in this program's names). The nearest programs that

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R15
+#$ rules: CLS-12
 #$ help: remove `@cached` (line 18)
+## design rules: R5, R15
 ## R5, R15: a cached method may not read a field other threads change under a lock: a kept result could
 ## be stale (AN-21, area E's ruling, E2117; completeness G1).
 

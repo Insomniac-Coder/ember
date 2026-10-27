@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: GRM-45, DSP-4
+## design rules: R14
 ## R14: the name a kind test gives "is new (E2106)" (AN-68).
 
 interface Shape:

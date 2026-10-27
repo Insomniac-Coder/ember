@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 0
+## design rules: R4
 ## R4: an argument given to a plain parameter takes no word at the call; the parameter reads the
 ## caller's value (AN-20's `show`).
 

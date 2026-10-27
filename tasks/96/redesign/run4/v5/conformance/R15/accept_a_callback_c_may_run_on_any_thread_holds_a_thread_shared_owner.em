@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R9, R12, R5
+#$ rules: THR-1, RC-1, CLO-1, FN-4
+## design rules: R15, R9, R12, R5
 ## R15: the lines E7015 gives: a `threads(any)` callback holds a `thread_shared` owner, and the score
 ## it changes is an `Atomic`, changed by its own operation through any name (R5); no first line says
 ## what changes (verdict 86).

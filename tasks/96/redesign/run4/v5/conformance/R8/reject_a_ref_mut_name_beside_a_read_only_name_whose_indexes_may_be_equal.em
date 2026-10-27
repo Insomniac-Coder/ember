@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R4
+#$ rules: BRW-1, BRW-11
 #$ help: write `if i != j:` above line 12 and indent lines 12 to 14 under it
+## design rules: R8, R4
 ## R8 (f), (g) (verdict 98): a read-only name promises that what it reads does not change while it is
 ## used; `dst` may change `bodies[j]`, which is the body `src` reads when `i == j`, and the indexes are
 ## not proved different, so the change is refused (E3021).

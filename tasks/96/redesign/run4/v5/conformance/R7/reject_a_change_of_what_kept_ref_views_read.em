@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8
+#$ rules: BRW-1
 #$ help: reg: sharedref mut Registry
+## design rules: R7, R8
 ## R7, R8 (g): a kept `ref` view reads; what it reads does not change through another name while the
 ## list that keeps it is used (E3021 at the change). AN-24, point 6.
 

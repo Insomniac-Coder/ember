@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R17, R5, R8
+#$ rules: BRW-1
 #$ help: write `died: Array[String] = []` above line 13, `died.push(f"{p.name} died")` in place of line 16, and `for msg in died: g.note_any(msg)` below the loop
+## design rules: R17, R5, R8
 ## R17: across a package's edge what a function reads is recorded in the package's interface file, as
 ## every fact worked out from a body is (verdict 86; no `reads` word): `ledger`'s `note_any` reads
 ## `this.players` (it counts them), which this loop changes through `p`, so the call inside the loop is

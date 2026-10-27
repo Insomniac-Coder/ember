@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: TYP-4, CLO-3
 #$ help: make it in one: `lvl = Level(mesh=owns Mesh(verts=[0]) using current)`
+## design rules: R3
 ## R3: the instance on the making line must be of the kind the place names (E2020; `V5/rules.md`
 ## section 3's second message, in this program's names).
 

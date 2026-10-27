@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1, R3
+#$ rules: OWN-1, OWN-8
 #$ stdout: 3 3
+## design rules: R1, R3
 ## R1, R3: the nearest program that is allowed: the branch takes a copy of its own, so `items` is
 ## whole on every path.
 

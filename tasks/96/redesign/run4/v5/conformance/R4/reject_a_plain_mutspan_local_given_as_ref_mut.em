@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R2
+#$ rules: FN-2a
 #$ help: d = ref mut xs.as_mut_span()
+## design rules: R4, R2
 ## R4, verdict 34: `ref mut` before a plain local that holds a `MutSpan` is refused: the local only
 ## reads the elements, so this function may not hand them on to be written (AN-14, E3027).
 

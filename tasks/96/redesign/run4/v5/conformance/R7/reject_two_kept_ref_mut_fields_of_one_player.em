@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8, R5
+#$ rules: BRW-1
 #$ help: target: sharedref mut Player
+## design rules: R7, R8, R5
 ## R7, R8 (f): a kept `ref mut` view is alone: while its holder is still used, the place is not lent to
 ## another `ref mut` field. AN-48's OLD struct form; the E3022 message of rules section 3, in this
 ## program's lines, so the lines it gives compile (verdict 73).

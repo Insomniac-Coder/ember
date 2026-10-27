@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8
+#$ rules: BRW-17
 #$ help: target: shares mut Player
+## design rules: R7, R8
 ## R7, R8 (b): while a kept link is used, nothing it points at may be removed from the list that owns it
 ## (E3060 at a later use). AN-52, point 6 (form (b), with a `class Player` list), its second way out
 ## written as whole lines (R18).

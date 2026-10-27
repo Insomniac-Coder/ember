@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R15, R8
 ## R15: "a scoped task started inside a walk of what it changes is refused as any call that changes the
 ## walked list is (E3020: start it after the loop)"; R18 (verdict 73): E3020, not E7007, whose fix (a
 ## lock or an `Atomic`) would leave the walk refused (section 3's E3020 message, in this program's

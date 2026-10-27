@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R13
+#$ rules: BRW-1
 #$ help: write `if q is not p:` above line 20
+## design rules: R8, R13
 ## R8 (f): `for ref mut p` makes `p` the only name for its player while it is used; a name opened from a
 ## link to a `Player` inside the walk may be that player, so reading through it is refused (E3021).
 ## Completeness check, G25.

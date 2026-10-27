@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R3, R9
+#$ rules: OWN-8, RC-1
 #$ stdout: a ended
 #$ end one
 #$ b ended
+## design rules: R3, R9
 ## R3, R9 and `V4/rules.md` section 2 ("a count +1 / -1, a `shares` owner made or ended"): a `shares`
 ## value lives until the last of its owners ends: ending the first owner only subtracts one, and the
 ## object ends with the second, once. Verified by its output and a clean AddressSanitizer and leak

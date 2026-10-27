@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 1
+## design rules: R3
 ## R3: `match owns e:` hands the value over to the `match`, so a branch's pattern name owns the
 ## payload and may hand it on.
 

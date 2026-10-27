@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R17, R14
+#$ rules: IFC-6, TYP-17, BLD-14
 #$ help: [T: Add[T, Output = T]]
+## design rules: R17, R14
 ## R17: a `pub` function's bounds are written, because they are its promise to other packages; the
 ## compiler never decides them from a body (AN-69, E2040, today's code).
 

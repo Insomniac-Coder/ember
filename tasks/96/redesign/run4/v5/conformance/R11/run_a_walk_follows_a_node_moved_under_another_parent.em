@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R11, R12, R13
+#$ rules: WK-11, CLO-1, GRM-44
 #$ stdout: visit mid
 #$ stdout: visit root
 #$ stdout: depth 2
+## design rules: R11, R12, R13
 ## R11: the walk with a link reads each node's parent afresh at every step, so when the visit function
 ## moves `p` under another parent (taking it out and giving it a new link, AN-63's `take` and `add`)
 ## "the walk goes on up the new parents" (AN-62 (b)): `top`, `mid`'s old parent, is never visited.

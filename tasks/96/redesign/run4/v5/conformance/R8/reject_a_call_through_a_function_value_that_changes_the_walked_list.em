@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R12
+#$ rules: BRW-18, CTL-2
 #$ help: move line 12 below the loop
+## design rules: R8, R12
 ## R8 (c), R12: a call through a function value makes the changes of every function the program can
 ## put there (verdict 86): `hook` may run `note`, which pushes to `LOG`, so a loop over `LOG` may not
 ## call it. The message names the chain (R18).

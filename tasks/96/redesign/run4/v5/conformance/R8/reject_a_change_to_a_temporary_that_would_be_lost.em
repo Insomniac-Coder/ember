@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R6
+#$ rules: BRW-19
 #$ help: es[0].heal()
+## design rules: R8, R6
 ## R8 (d), verdict 13: a method that changes its object, called on a temporary that ends with the line,
 ## is refused when the change is the call's only effect. AN-10, point 6.
 

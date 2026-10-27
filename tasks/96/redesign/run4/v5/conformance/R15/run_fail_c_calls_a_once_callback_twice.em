@@ -1,7 +1,8 @@
 #$ test: run-fail
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 1
 #$ panics: C called the callback registered on line 29 a second time; it was registered `callback(once)`, so it may run only once
+## design rules: R15, R12
 ## R12 and R15: a `callback(once)` function is used up by its one call; when C calls it again the
 ## trampoline's used-up mark stops the program before the used-up state is read (completeness G24;
 ## AddressSanitizer: no report). The stop's text is section 2's (the lead's, worklist section 3, F-14,

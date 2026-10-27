@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7
+#$ rules: LT-45, TYP-15
 #$ stdout: 2
+## design rules: R7
 ## R7: `from` may name a `let` field that is an `Array`, whose elements live in a block of their own,
 ## so moving the object never moves them (area B, ruling 2). The nearest program to
 ## `reject_from_naming_a_fixed_array_field.em` that is allowed.

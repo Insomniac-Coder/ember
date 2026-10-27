@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R16
+#$ rules: TIER-1
 #$ stdout: 1
+## design rules: R16
 ## R16: "before a declaration it says "whoever uses this must vouch", with `@safety` saying what they
 ## must make true ...; before a block ... "this code vouches", with a `# SAFETY:` note saying why"; the
 ## `unsafe fn`'s own steps sit in an `unsafe:` block (AN-79's NEW).

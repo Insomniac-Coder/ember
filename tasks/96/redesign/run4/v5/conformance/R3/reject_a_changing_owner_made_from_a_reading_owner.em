@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: BRW-14, BRW-15
 #$ help: write `g2 = shares game`, or, for two owners that both change the game, write `game = shares mut Game()` instead of line 11
+## design rules: R3
 ## R3: an owner made from another may do no more than it: `shares mut x` needs `x` to be a name that
 ## may change the value (E3023; `V4/rules.md` section 3's message).
 

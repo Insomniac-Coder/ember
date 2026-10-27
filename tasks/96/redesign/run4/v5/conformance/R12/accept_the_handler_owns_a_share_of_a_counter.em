@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R3, R4, R9
+#$ rules: CLO-4
 #$ stdout: 1
+## design rules: R12, R3, R4, R9
 ## R12 (rules.md lines 681-683, 766-767, 785-786), verdict 32: the E3026 message of the nearest refused
 ## program followed (reject_a_handler_that_outlives_the_callers_total): the handler owns a share of the
 ## counter (`owns count`, its own state), so it outlives nothing it uses; it changes the `Counter`

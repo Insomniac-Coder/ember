@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R5
+#$ rules: CLO-1, FN-4
 #$ stdout: 1 2
+## design rules: R12, R5
 ## Verdict 86, R12 (rules.md lines 662-672, 752-756): a handler that changes two of `game`'s real
 ## variables is kept in a button's `Array[fn()]` like any other function; neither the list, `click` nor
 ## `game` writes anything about what it changes.

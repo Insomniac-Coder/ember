@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R5, R12
+#$ rules: THR-1, FN-4, CLO-1
 #$ stdout: 3
+## design rules: R15, R5, R12
 ## R15: two tasks changing one place "under a lock" is not E7007; `guarded by lock` fields are changed
 ## inside `with this.lock:` (AN-74's NEW `Stats` and `count`, with the loop variable's copy of verdict
 ## 65).

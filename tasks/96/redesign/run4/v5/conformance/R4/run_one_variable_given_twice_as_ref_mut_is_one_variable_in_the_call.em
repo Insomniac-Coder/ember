@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R8
+#$ rules: FN-1, BRW-16
 #$ stdout: 2
+## design rules: R4, R8
 ## R4 (overlap, exception 1), R8 (f): the same whole variable under two names, proved when compiling,
 ## is allowed: `add_both(ref mut x, ref mut x)` is compiled against a copy of `add_both` in which `a` and
 ## `b` are one variable, so both adds reach `x` and `println(a)` prints 2 (verdict 88; Rust refuses it,

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R16
+#$ rules: UNS-1, UNS-12, FFI-54
+## design rules: R16
 ## R16: an `unsafe fn` says "whoever uses this must vouch"; calling it outside `unsafe` is E3100
 ## (section 3's message, in this program's names and lines; it replaces today's, which gave no line).
 

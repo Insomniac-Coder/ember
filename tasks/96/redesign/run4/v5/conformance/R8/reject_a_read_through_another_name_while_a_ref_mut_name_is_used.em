@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-1
 #$ help: boss.hp
+## design rules: R8
 ## R8 (f), verdict 2: while a `ref mut` name is still used, its place is not read through another name
 ## either. The E3021 message of rules section 3.
 

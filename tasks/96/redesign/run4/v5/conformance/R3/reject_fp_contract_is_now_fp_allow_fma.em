@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R16
+#$ rules: ATT-1, PHIL-12
 #$ help: write `@fp(allow_fma)` in place of line 9
+## design rules: R3, R16
 ## R3, R16 and the removed words of `V5/rules.md` section 3: `@fp(contract)` is written `@fp(allow_fma)`,
 ## an attribute that is gone (E0104, `V5/rules.md` section 4; the `@fp` row of `V5/vocabulary.md`;
 ## step 3's re-check: a refusal with no test). The nearest program that is allowed is

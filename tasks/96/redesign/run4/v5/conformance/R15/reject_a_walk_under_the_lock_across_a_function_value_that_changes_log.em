@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R8, R12
+#$ rules: THR-19
+## design rules: R15, R8, R12
 ## R8 (c), R15 and R18 (verdict 73): "A call through a function value that may take a lock this thread
 ## holds, inside a walk under that lock, is E7018, not E3020": E3020's fix (after the loop, still inside
 ## the lock) would still wait for ever (section 3's E7018 "in a walk" message, in this program's lines;

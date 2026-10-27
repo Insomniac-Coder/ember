@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R2
+#$ rules: BRW-1
 #$ help: r = ref mut counts[0]
+## design rules: R8, R2
 ## R8 (g): `ref` before a number part makes a read-only view of it (R2); the promise holds for it as
 ## for any read-only name.
 

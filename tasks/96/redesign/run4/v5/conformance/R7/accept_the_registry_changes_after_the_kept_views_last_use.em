@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R7, R8
+#$ rules: LT-45, BRW-16
 #$ stdout:
 #$ 0
 #$ 1
 #$ 5
+## design rules: R7, R8
 ## R7, R8 (g): the first way out E3021's message gives: the registry changes below the loop, after the
 ## last use of the list of `ref` views. AN-24, point 6.
 

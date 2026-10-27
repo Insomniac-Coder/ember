@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R9, R11
+#$ rules: RC-1, WK-11
 #$ stdout: 300 300
 #$ assert-c: contains("too many owners of a `Player` (4,294,967,295)")
 #$ assert-c: contains("too many `weakref` links to a `Player` (4,294,967,295)")
+## design rules: R9, R11
 ## R9, R11 (verdict 96): every program but the two count-limit tests keeps the 32-bit owner count and
 ## weak count, whose limit is 4,294,967,295: 300 owners and 300 `weakref` links of one player, more than
 ## an 8-bit count holds, run to the end, and the emitted C compares each count with the 32-bit maximum,

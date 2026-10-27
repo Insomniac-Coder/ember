@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7
+#$ rules: LT-45
 #$ stdout: positive
+## design rules: R7
 ## R7: `from static` on a struct's field does not make the struct a view, so it may be returned from
 ## anywhere and kept in a class field with no `from`.
 

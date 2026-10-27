@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: CLS-2
 #$ help: give it a value first: move line 17 above line 16
+## design rules: R5
 ## R5, row 7: `init` may call a method of the object it builds only once every field that method's body
 ## reads is set, worked out from the body (verdict 86; AN-31, E2100).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R4
+#$ rules: BRW-11
 #$ help: clear the handlers after the click instead
+## design rules: R12, R4
 ## R12 (rules.md lines 722-725): "a function value is not stored in a place that a real variable it
 ## changes owns, all the way down: `b.on_click(fn(): b.handlers.clear())` ... [is] refused (E3022), since
 ## the function would change its own holder while it runs, as Rust refuses". AN-53 part 6; rules.md

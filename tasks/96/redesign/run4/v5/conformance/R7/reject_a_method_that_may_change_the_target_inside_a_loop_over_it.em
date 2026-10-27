@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8, R5
+#$ rules: BRW-18, CTL-2
 #$ help: move line 29, `cam.empty_target()`, below the loop
+## design rules: R7, R8, R5
 ## R7, R8 (c): a list in a `sharedref mut` target may not change while a `for` loop walks it, through a
 ## call that may change it either: the compiler works out from `empty_target`'s body that it clears the
 ## inventory of the player `cam.target` links to (R5, verdict 86), and `cam.target` may be the player

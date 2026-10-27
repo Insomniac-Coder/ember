@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R16, R4
+#$ rules: TIER-1, FN-1
 #$ stdout: 2 1
+## design rules: R16, R4
 ## R16 and R4 (verdict 98): inside `if i != j:` the compiler proves the two elements differ, so the
 ## call is allowed in a `@no_alias_checks` function; nothing is compared while running.
 

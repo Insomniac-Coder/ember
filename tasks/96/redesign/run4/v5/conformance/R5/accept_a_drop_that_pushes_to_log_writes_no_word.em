@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R5
+#$ rules: FN-4
 #$ stdout: a
 #$ stdout: 1 a
+## design rules: R5
 ## R5, verdicts 57, 86: a `drop` that pushes to `LOG` is written `fn drop():`, and `use_one`, whose
 ## local `r` ends with it and so calls `drop`, and `main`, which calls `use_one`, write nothing either:
 ## what each changes is worked out from the bodies.

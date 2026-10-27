@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: CLO-4
+## design rules: R15, R12
 ## R15: "a local of one round, which ends with it, [is] given to a task or a thread with a word"; without
 ## it the task may outlive the round's `n` (E3026, AN-73). `ref n` would not do either (the task may
 ## outlive the round), so the message gives only `copy of n`, with the line to write (R18). The nearest

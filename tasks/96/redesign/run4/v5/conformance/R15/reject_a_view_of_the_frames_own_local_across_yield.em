@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: CORO-6
+## design rules: R15
 ## R15: "E2221 for a view into its frame held across `yield`" (AN-77).
 
 gen fn numbers() -> Generator[int]:

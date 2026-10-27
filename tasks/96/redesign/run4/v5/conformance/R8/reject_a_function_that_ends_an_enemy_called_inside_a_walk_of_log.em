@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R5
+#$ rules: BRW-18, CTL-2
 #$ help: move line 26, `reset(ref mut enemies)`, below the loop
+## design rules: R8, R5
 ## R8 (c), R5, verdicts 57, 86: ending an object counts as a call of its `drop`, and a function that may
 ## end one makes what that `drop` changes, worked out from its body with no word on its first line: so
 ## `reset(ref mut enemies)`, which clears the enemies, pushes to `LOG` through `Enemy`'s `drop`, and

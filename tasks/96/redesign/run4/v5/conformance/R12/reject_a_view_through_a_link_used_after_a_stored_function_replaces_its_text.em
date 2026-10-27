@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8, R10
+#$ rules: BRW-17
 #$ help: use `s` before line 20
+## design rules: R12, R8, R10
 ## Step 3's hole 3, part 1 (`safety/recheck.md` section 6.1), R12 (rules.md lines 681-687): "A change to
 ## its own state, and the end of what its state owns, are worked out from its body like every change:
 ## ... `rename = fn() owns n: n.name = String("b")` replaces the node's text, so a view into that text

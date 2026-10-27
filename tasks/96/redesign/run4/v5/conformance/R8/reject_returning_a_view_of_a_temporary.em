@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-19
 #$ help: return String(word)
+## design rules: R8
 ## R8 (d), row 5: returning a view of a temporary is refused with row 5's message. AN-09, point 6.
 
 fn clean(line: StrView) -> StrView:

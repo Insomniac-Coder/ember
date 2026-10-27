@@ -1,7 +1,8 @@
 #$ test: run-fail
-#$ rules: R16
+#$ rules: TIER-1
 #$ stdout: 6
 #$ panics: index 3 is out of bounds for a length of 3
+## design rules: R16
 ## R16: `@no_alias_checks` forbids only the run-time alias checks; "No switch turns safety checks off":
 ## the bounds check still runs (AN-81; today's message).
 

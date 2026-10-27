@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R5, R4
+#$ rules: BRW-1, BRW-11
 #$ help: change it through `h`: `h += 1`
+## design rules: R8, R5, R4
 ## R8 (f), R5: the compiler works out from `heal`'s body that it changes `hp` (verdict 86), and `h` is
 ## the only name for `p.hp` while it is used, so `p.heal()` there changes one place through two names
 ## (E3022). Completeness check, G22; the allowed neighbour is

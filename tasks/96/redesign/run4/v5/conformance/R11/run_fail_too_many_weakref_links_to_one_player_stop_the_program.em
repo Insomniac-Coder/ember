@@ -1,7 +1,8 @@
 #$ test: run-fail
-#$ rules: R11
+#$ rules: WK-11
 #$ count_bits: 8
 #$ panics: too many `weakref` links to a `Player` (255)
+## design rules: R11
 ## R11 (verdicts 59, 96): every `weakref` link adds one to its target's weak count, and "before each +1
 ## the count is compared with its maximum, and at the maximum the program stops". This program is
 ## compiled with an 8-bit count in each object (`#$ count_bits: 8`), stored and compared as the real

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R3
+#$ rules: FN-1, OWN-8
 #$ stdout: 5
+## design rules: R4, R3
 ## R4, verdict 32: `owns game: shares mut Game` makes `setup` one more owner that may change the game;
 ## the call writes the word before the value, `setup(shares mut game)`, and `setup` hands its owner on
 ## with no word (AN-78's `setup`).

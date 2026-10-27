@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R11, R8, R10, R12
+#$ rules: BRW-1
 #$ help: up = weakref leaf
+## design rules: R11, R8, R10, R12
 ## R11: "When the walk calls a function that may change nodes (`this.on_visit(p)`, where the program
 ## stores in `on_visit: fn(Node)` a function that removes nodes from their parents' lists, and so ends
 ## them), no view of a node lives across the call (R8 (g)): the walk with views is refused (E3021)"

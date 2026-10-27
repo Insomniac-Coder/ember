@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R8
+#$ rules: BRW-18, CTL-2
 #$ help: note after the loop: move line 20 below the loop
+## design rules: R5, R8
 ## R5, R8 (c), row 3: what a method changes is worked out from its body (verdict 86): `note` pushes to
 ## `this.log`, so `this.note(...)` inside a loop over `this.log` is refused (E3020), and the message names
 ## the chain; inside a loop over `this.players` it is allowed

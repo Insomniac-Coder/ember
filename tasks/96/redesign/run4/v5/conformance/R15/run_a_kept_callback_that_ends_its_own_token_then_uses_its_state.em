@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 1
+## design rules: R15, R12
 ## R12 and R15 (verdict 62): for a C callback that ends its own `Retained` token while it runs, "the
 ## token's end unregisters the callback at once, so C never runs it again, but the block that holds its
 ## state ... is ended and freed only when the callback returns, so the rest of its body runs as

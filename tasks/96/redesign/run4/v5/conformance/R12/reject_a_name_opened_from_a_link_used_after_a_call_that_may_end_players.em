@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R10, R13
+#$ rules: BRW-17, LT-3
 #$ help: use `p` before line 24
+## design rules: R12, R10, R13
 ## Verdicts 55, 82 and 86, R12 (rules.md lines 684-685: "`reset = fn() owns players: players.clear()` may
 ## end players, so a view of a player opened from a link is not used after `reset()` (R10, E3060)"), R10
 ## point 1 (lines 564-574): the compiler works out from the function stored in `reset` that the call may end

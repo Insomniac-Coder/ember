@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 16512
 #$ stdout: 1
+## design rules: R15
 ## R15: "C holds a tagged number, never an address, with the callback's generation in its top 16 bits
 ## and its slot in its low 48 (AN-78's callback carries `0x4080`, 16512, in the top 16 bits)" (the
 ## layout is the lead's, worklist section 3, U8).

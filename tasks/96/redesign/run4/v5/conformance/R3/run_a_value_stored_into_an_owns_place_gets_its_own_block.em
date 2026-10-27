@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 3
+## design rules: R3
 ## R3 and `V5/rules.md` section 2 ("an allocation where `owns` puts a value in its own block"):
 ## `Option[owns Tree]` holds each child alone in its own heap block, so a type may contain itself
 ## (AN-41's NEW), and the line that makes the child says so inside the `Some(...)`:

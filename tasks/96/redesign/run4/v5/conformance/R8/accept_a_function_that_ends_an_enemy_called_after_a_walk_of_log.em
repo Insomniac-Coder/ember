@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R8, R5
+#$ rules: BRW-18, CTL-2
 #$ stdout:
 #$ start
 #$ 2
+## design rules: R8, R5
 ## R8 (c), R5, verdicts 57, 86: the way out the refusal gives: `reset`, which may end an `Enemy` whose
 ## `drop` pushes to `LOG`, is called after the loop over `LOG`. No first line names the change: the
 ## compiler works it out from `reset`'s body and `Enemy`'s `drop`. The nearest program to

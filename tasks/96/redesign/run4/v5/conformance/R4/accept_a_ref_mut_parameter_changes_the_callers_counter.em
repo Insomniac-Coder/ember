@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 1
+## design rules: R4
 ## R4: `ref mut c: Counter` names the caller's place, and every change through `c` reaches the
 ## caller's value; the call says the same words, `bump(ref mut counter)` (AN-20, verdict 1).
 

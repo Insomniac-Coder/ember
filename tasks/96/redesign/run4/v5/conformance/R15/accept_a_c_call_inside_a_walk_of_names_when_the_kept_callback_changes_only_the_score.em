@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R12, R8, R5
+#$ rules: THR-1, CLO-1, BRW-16, FN-4
+## design rules: R15, R12, R8, R5
 ## R12 and R8 (c) (verdict 86): what the kept callback changes is worked out from its body: `add_point`
 ## changes `game.score` and not `game.names`, so `poll_events()`, which may run it, is allowed inside a
 ## walk of `game.names` (R8 (c) refuses a change of the walked list, and a number of the same object is

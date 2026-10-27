@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12, R4, R5
+#$ rules: CLO-3, BRW-18, CTL-2
 #$ stdout: a
 #$ stdout: 3
 #$ stdout: 2
+## design rules: R12, R4, R5
 ## Verdicts 71 and 86, R12 (rules.md lines 676-680, 703-711): a lambda's parameter says what it
 ## receives, matching the function type: `each_name` hands each name over (`fn(owns String)`), so the
 ## lambdas write `fn(owns s)`; the first call pushes to `main`'s own `names`, after the loop over it,

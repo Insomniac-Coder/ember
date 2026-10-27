@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R13
+#$ rules: GRM-44
 #$ help: write `if cam.target exists as p:`
+## design rules: R13
 ## R13: `Some(...)` is written to make a value and in a `match` branch, not in an `if` header (E0115;
 ## the owner's verdict on run 3's `if Some(ref mut me) = ui:`; AN-65's message).
 

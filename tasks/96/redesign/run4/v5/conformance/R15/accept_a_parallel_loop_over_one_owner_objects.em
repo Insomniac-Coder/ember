@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R1
+#$ rules: THR-1, OWN-1
 #$ stdout: 9 1
+## design rules: R15, R1
 ## R15: each element of `Array[Player]` has one owner (R1), so `for ref mut p in players` in a
 ## `@parallel` loop hands each chunk its own objects, with no run-time claim (AN-74's `hurt_all`).
 

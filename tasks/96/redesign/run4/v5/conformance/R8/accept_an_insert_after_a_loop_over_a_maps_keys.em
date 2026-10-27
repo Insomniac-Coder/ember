@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout:
 #$ a
 #$ 2
+## design rules: R8
 ## R8 (c), verdict 72: the way out E3020's message gives: the new keys are collected during the walk
 ## and inserted after the loop.
 

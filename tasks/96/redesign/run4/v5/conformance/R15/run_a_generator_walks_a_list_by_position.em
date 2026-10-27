@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R15, R6
+#$ rules: THR-1, LT-1
 #$ stdout: a
 #$ stdout: b
 #$ stdout: 4
 #$ stdout: 5
+## design rules: R15, R6
 ## R15: "A generator's `for` over a list walks by position across `yield`, so it holds no address into
 ## its own frame"; the generator protocol runs per `yield` (section 2; AN-77's NEW).
 

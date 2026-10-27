@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8, R11, R13
+#$ rules: BRW-1
 #$ help: move line 33, `println(before)`, above line 31
+## design rules: R12, R8, R11, R13
 ## Verdict 86, R12 (rules.md lines 717-720): "A call through a function value makes the changes of the
 ## functions it may run. R8 then applies: ... no read-only view of what they change ... lives across the
 ## call". The handler changes a `Ui` through its `weakref ui`, which the compiler works out from its body,

@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R10, R13
+#$ rules: BRW-17, LT-3
 #$ stdout: 10
 #$ stdout: gone
+## design rules: R12, R10, R13
 ## Verdicts 55 and 82, R12 (rules.md lines 684-685), R10 point 1 (lines 564-574): `p`'s last use comes
 ## before `reset()`, so it does not live across the call; the link opened again after it finds the player
 ## ended. The nearest allowed program to

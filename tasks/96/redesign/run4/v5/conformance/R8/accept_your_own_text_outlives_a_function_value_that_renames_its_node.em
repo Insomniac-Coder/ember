@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R10, R12
+#$ rules: BRW-17
 #$ stdout: a
+## design rules: R8, R10, R12
 ## R8 (b), R12 (hole 3, part 1): the way out E3060's message gives: `s` is a `String` of your own, so
 ## `rename()`, which replaces the name of the node its state owns, does not end it. The nearest program
 ## to `reject_a_view_of_text_used_after_a_function_value_renames_its_node.em` that is allowed.

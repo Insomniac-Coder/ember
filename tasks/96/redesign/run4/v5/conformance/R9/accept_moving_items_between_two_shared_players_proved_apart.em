@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R9, R8, R4, R5
+#$ rules: RC-1, BRW-16, FN-1, FN-4
+## design rules: R9, R8, R4, R5
 ## R9, R8 (b): "unless the compiler knows they differ (... inside `if a is not b:`)": with the test
 ## the loop over `a.inventory` may add to `b.inventory` (AN-48's `transfer`).
 

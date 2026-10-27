@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R3
+#$ rules: BRW-16, OWN-8
 #$ stdout: 10 1
+## design rules: R8, R3
 ## R8 (g), verdict 5: a copy of your own (`copy of`) is restricted by nothing; the list's element may
 ## change while the copy is used, and the copy keeps its old value.
 

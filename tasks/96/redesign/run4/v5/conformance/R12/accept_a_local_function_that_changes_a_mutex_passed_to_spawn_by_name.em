@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R5, R15
+#$ rules: CLO-1, FN-4, THR-1
 #$ stdout: 1
+## design rules: R12, R5, R15
 ## Verdicts 51 and 86, R12 (rules.md lines 674-676: "a local function captures as a lambda does, so a
 ## long lambda may be written inside the call or as a named local function passed by its name"), R15
 ## (lines 840-842): the local function holds a `thread_shared` owner of the `Mutex` and changes the

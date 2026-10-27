@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R5
+#$ rules: GRM-2
 #$ help: enemies.retain(fn(e) => keep(e, ref mut removed))
+## design rules: R12, R5
 ## Verdict 86 (verdict 45 keeps its meaning without the clause), R12 (rules.md lines 670-672): a lambda
 ## written with `=>` writes nothing about what it changes either: "`enemies.retain(fn(e) => keep(e, ref mut
 ## removed))` adds to `update`'s `removed`". A clause between its parameters and `=>` is E0100 (rules.md

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R17, R8
+#$ rules: BLD-14, BRW-16
 #$ stdout: 2 80
+## design rules: R17, R8
 ## R17: where no word exists for a fact, it is recorded in the package's interface file: `ledger`'s
 ## `spawn_minion` only adds at the end of its `ref mut` list, so `boss`, a position of that list, stays
 ## usable across the call (R8 (a), (f)). The fact decides only that the line compiles: `boss` names

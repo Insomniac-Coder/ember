@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 1
+## design rules: R3
 ## R3: a manager with one instance (`Global`, `System`) needs none on the making line, and costs no
 ## word in the value.
 

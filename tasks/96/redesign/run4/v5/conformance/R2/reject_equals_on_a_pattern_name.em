@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2
+#$ rules: BRW-14, BRW-15
 #$ help: to replace that list write `State.Walking(ref mut path):`
+## design rules: R2
 ## R2: a pattern name stands for what the `match` gave and keeps it for the whole branch: `=` on it is
 ## refused (E3023), unless it is `ref mut`.
 

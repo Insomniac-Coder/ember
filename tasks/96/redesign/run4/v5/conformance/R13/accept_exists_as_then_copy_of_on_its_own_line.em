@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R13, R3
+#$ rules: GRM-44, OWN-8
 #$ stdout: 4 3
+## design rules: R13, R3
 ## R13, R3: the two-line form is valid too (verdict 66): `exists as v` names what the map holds, read
 ## only, and `mine = copy of v` makes a number of your own, which may change; `copy of` works on every
 ## `Copy` type (verdict 68).

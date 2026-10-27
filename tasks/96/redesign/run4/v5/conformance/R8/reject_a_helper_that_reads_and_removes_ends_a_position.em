@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-17
 #$ help: boss = ref mut enemies[0]
+## design rules: R8
 ## R8 (a), (f): a helper that reads elements of the list and removes from it, called while `boss`, a
 ## `ref mut` position of that list, is still used, ends the position: E3060 at the later use, by R8 (a),
 ## the rule that names a position after a removal (R18), not E3021 at the call. Settled in step 4

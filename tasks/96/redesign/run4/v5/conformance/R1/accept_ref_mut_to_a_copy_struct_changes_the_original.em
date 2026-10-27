@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1, R2
+#$ rules: OWN-1, BRW-12
 #$ stdout: 2
+## design rules: R1, R2
 ## R1, R2: the second way out: `q = ref mut p` names `p` itself, so the change is `p`'s; `p` is read
 ## after `q`'s last use.
 

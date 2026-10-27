@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 0.6
+## design rules: R15
 ## R15 (verdict 92): "a decimal total may differ from [adding one by one] in the last digit
 ## (`for part in [[0.1], [0.2, 0.3]]:` with `scope.spawn(fn() copy of part: for x in part: total += x)`
 ## gives `0.6`, where adding one by one gives `0.6000000000000001`) and is the same on every run, as

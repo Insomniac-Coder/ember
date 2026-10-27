@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-2a
 #$ help: integrate(ref mut p.as_mut_span(), v.as_span(), 0.5)
+## design rules: R4
 ## R4, verdict 3: a `MutSpan` argument says `ref mut` at the call; before a `MutSpan` the word names
 ## its elements, so it stands before a span made in the call (AN-11).
 

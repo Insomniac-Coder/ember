@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R9, R15
+#$ rules: RC-1, THR-1
+## design rules: R9, R15
 ## R9: the nearest allowed program: the cache is `thread_shared`, whose count is atomic, so an owner of
 ## it may go to another thread (AN-71's message, applied).
 

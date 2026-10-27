@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: TYP-4, CLO-3
 #$ help: say which arena: `lvl = Level(mesh=owns Mesh(verts=[0]) using current)`
+## design rules: R3
 ## R3: a value given to a `using A` place must have been made in an instance of `A` (E2020); the
 ## message says which arena to name (verdict 24; AN-40's message). `owns` is written on the making line
 ## (verdict 74), so the arena is the line's one fault.

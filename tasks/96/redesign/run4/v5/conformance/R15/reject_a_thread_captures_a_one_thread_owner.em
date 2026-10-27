@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R9, R12
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
+## design rules: R15, R9, R12
 ## R15 (verdict 94): "`thread.spawn` takes a function any thread may run ..., so a function holding a
 ## one-thread value is refused by R12's rule (E7015)"; `shares log` is such a value (AN-75). The nearest
 ## allowed program is `accept_threads_share_a_log_and_push_under_its_lock.em`.

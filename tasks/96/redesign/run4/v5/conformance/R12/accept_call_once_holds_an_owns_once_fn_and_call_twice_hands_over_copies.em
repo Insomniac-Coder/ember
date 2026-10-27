@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12, R4
+#$ rules: CLO-1, FN-1
 #$ stdout: a
 #$ stdout: b
 #$ stdout: b
+## design rules: R12, R4
 ## R12 (rules.md lines 782-784): `call_once` holds the `once fn()` it uses up; `call_twice` calls a
 ## read-only `f` twice, allowed since the function has no state of its own to change (lines 776-779), and
 ## each run hands `consume` a new copy of the real `t`. AN-59's NEW program, the nearest allowed program to

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout: hi
+## design rules: R8
 ## R8 (d), row 5: the way out the refusal gives: `String(word)` hands back a copy of your own. AN-09's
 ## NEW program.
 

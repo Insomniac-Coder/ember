@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: MOD-3
+## design rules: R14
 ## R14: "`cast s when Circle`, are not Ember (E1010 ...)"; verdict 27 removed verdict 25's spelling
 ## (AN-68).
 

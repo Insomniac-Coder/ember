@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-11
 #$ help: write `assert_disjoint(d, s)` before line 17, with `from std.mem import assert_disjoint` at the top
+## design rules: R4
 ## R4: two spans the compiler cannot tell apart (two keys of one map) given to one call, one of them
 ## changeable, are refused until they are proved apart (AN-14's `mix` without its check, E3021); the
 ## way out imports `assert_disjoint` (step 3's re-check, wrong 3-6).

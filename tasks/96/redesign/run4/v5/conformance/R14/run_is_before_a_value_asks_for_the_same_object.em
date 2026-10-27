@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R14
+#$ rules: TYP-44
 #$ stdout: true false
 #$ stdout: true
+## design rules: R14
 ## R14: "`is` before a type name means "is of this kind" ...; before a value it means "the same
 ## object" (`a is b`, `x is None`)".
 

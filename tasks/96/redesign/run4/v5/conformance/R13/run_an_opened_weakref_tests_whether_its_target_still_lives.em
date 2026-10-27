@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R13, R11
+#$ rules: GRM-44, WK-11
 #$ stdout: gone
 #$ 100
 #$ gone
+## design rules: R13, R11
 ## R13, R11 and `V4/rules.md` section 2 ("one test of the target's header, each read of a `weakref`
 ## link"): `if cam.target exists as p:` runs its block only while the player still lives, and `else:`
 ## when the link holds no target or its target has ended; nothing stops the program (AN-65). Verified

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R15
+#$ rules: THR-1
+## design rules: R9, R15
 ## R9: "A `thread_shared` value is never changed directly by any owner: only through `Atomic`, `Mutex`,
 ## `RwLock`, a channel, or a `guarded by` field under its lock" (AN-71's refused `share_and_keep`).
 

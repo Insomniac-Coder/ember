@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5
+#$ rules: FN-2a
 #$ help: best = top(m)
+## design rules: R4, R5
 ## R4, verdict 3: an argument given to a `Mutex` parameter takes no word at the call; its own
 ## "only me" is the lock's block (AN-30).
 

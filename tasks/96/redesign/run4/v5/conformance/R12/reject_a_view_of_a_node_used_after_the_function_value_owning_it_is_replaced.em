@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R10, R5
+#$ rules: BRW-17, LT-3
 #$ help: use `p` before line 22
+## design rules: R12, R10, R5
 ## Step 3's hole 3, part 2 (`safety/recheck.md` section 6.2), R12 (rules.md lines 687-691): "Replacing or
 ## ending a function value ends what its state owns, as ending an object runs its `drop` (R5):
 ## `h.keep = fn(): pass` ends the function stored there before and the node its `owns n` held, so a view

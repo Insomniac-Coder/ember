@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R4
+#$ rules: BRW-11
 #$ help: LOG.retain(fn(s) => s != "")
+## design rules: R12, R4
 ## R12 (rules.md lines 720-722), R4 (lines 286-296): "For R4's overlap rule a function value given to a
 ## call counts as an argument that changes every place its functions change ..., so `LOG.retain(keep)`,
 ## where `keep` pushes a note to `LOG`, is refused (E3022)"; what `keep` changes is worked out from its

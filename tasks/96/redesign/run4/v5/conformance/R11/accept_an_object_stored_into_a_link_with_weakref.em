@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R11, R1
+#$ rules: WK-11, OWN-1
+## design rules: R11, R1
 ## R11: the nearest allowed program: `weakref player` makes the link, and `player` stays `main`'s.
 
 class Player:

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: THR-19
+## design rules: R15, R12
 ## R15 (verdict 43): "The compiler cannot tell which `Log` a stored function holds, so a function that
 ## takes another `Log`'s lock is refused too; the way out moves one line" (section 3's E7018 message, in
 ## this program's lines).

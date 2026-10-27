@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45
 #$ help: target: shares mut Player
+## design rules: R7
 ## R7: a struct holding a `sharedref mut` link is a view, so it lives no longer than its target (E3063).
 ## AN-48, point 6.
 

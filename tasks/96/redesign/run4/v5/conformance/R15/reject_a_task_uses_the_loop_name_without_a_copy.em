@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: CLO-4
+## design rules: R15, R12
 ## R15 (verdicts 65 and 93): "The loop's name used with no word is refused: E3026 for a scoped task,
 ## whose message gives both words" (`copy of t`, its own copy, or `ref t`, a look at this round's
 ## element; section 3's E3026 message, with the line to write). The nearest allowed programs are

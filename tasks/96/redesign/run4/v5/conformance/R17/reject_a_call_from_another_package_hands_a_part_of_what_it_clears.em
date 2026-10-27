@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R17, R4
+#$ rules: BRW-21
 #$ help: record(copy of HISTORY[0])
+## design rules: R17, R4
 ## R17, R4, verdict 53: across a package's edge the fact "uses `s` after a change" has no word, so
 ## `ledger`'s interface file records it for `record`, and the call is checked by it: `HISTORY[0]` is
 ## part of `HISTORY`, which `record` clears before it reads `s` (E3031).

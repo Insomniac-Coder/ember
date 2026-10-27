@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R8
+#$ rules: LT-45, BRW-16
 #$ stdout: 98
+## design rules: R7, R8
 ## R7: a kept `ref mut` view is alone only while its holder is still used; after the holder's last use
 ## the owner reads and changes the player again.
 

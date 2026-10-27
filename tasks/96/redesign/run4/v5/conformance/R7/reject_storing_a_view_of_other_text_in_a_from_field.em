@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45
 #$ help: this.words.push(String(other_word))
+## design rules: R7
 ## R7: a `from text` field takes only views into `text` (or text written in the program); a view of a
 ## parameter's text is refused (E3063). AN-25, point 6.
 

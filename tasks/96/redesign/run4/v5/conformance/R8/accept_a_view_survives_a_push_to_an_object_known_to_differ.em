@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R9, R5
+#$ rules: BRW-16, RC-1, FN-4
 #$ stdout: 1
+## design rules: R8, R9, R5
 ## R8 (b): inside `if a is not b:` the compiler knows the two links name different objects, so a push
 ## through `b` does not end a view into `a`.
 

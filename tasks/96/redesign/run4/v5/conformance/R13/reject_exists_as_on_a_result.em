@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R13
+#$ rules: GRM-19
 #$ help: to run the block when `r` succeeded write `if Ok(v) = r:`
+## design rules: R13
 ## R13: a `Result` always holds a value (`Ok` or `Err`), so `exists as` is refused on it (E2036); a
 ## test of another variant is written as a pattern (`V4/rules.md` section 3's `Result` message).
 

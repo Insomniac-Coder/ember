@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R3
+#$ rules: MOD-3
 #$ help: fn drift(ref mut q: Query[(ref mut Position, Velocity)], dt: float):
+## design rules: R4, R3
 ## R4, rules section 3's removed words: `Mut[T]` in a query is gone; a query item the system changes is
 ## `ref mut T` (AN-15, E1010; completeness G8).
 

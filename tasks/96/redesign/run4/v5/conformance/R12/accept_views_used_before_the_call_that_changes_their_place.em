@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R8
+#$ rules: BRW-1
 #$ stdout: 0
 #$ stdout: 11
+## design rules: R12, R8
 ## R12 (rules.md lines 717-720), R8 (f), (g): a read-only view and a `ref mut` name of `c.n` whose last
 ## uses come before the call through `bump` do not live across it. The nearest allowed program to
 ## reject_a_read_only_view_across_a_call_that_changes_what_it_reads and

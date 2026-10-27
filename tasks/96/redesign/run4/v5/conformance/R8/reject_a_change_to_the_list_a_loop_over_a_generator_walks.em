@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R6
+#$ rules: BRW-18, CTL-2
 #$ help: move line 18, `d.log.clear()`, below the loop
+## design rules: R8, R6
 ## R8 (c), verdict 16: a `for` loop over a generator method walks what the generator views, here
 ## `d.log` (`from log`). AN-77, point 6.
 

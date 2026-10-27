@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R3
+#$ rules: MOD-3
 #$ help: f = fn() owns name => println(name)
+## design rules: R12, R3
 ## R12 (rules.md lines 752-753, 766-767) and section 3's removed words (line 1113: "the capture words after
 ## the brackets for `owned fn`"): `owned fn` handed some captures over and silently copied others; a
 ## function says what it takes or copies on each captured name, after its brackets with no `with`

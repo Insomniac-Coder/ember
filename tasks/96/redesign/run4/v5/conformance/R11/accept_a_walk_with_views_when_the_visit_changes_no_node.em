@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R11, R10, R12
+#$ rules: WK-11, RC-5, CLO-1
+## design rules: R11, R10, R12
 ## R11: "A walk whose visit function changes no node (every function the program stores in `on_visit`
 ## only reads its node) keeps its views and pays nothing per step" (verdict 28; AN-62 (a)): the only
 ## function stored there, `fn(n: Node): pass`, changes nothing and ends no `Node` (R12, verdict 86), so

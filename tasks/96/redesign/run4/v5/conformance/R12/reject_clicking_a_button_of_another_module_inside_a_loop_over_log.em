@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8, R17
+#$ rules: BRW-18, CTL-2
 #$ help: move line 21, `b.click()`, below the loop
+## design rules: R12, R8, R17
 ## Verdict 86, R12 (rules.md lines 665-670): "a library's `Button` holding a program's handler that pushes
 ## to `LOG` makes `b.click()` a change of `LOG` in that program (inside a loop over `LOG`, E3020)"; R17
 ## (lines 938-939): the function values a package stores are counted wherever such a value is called.

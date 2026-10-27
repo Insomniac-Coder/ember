@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R4
+#$ rules: BRW-21
 #$ help: write `first = xs[0]` above line 11 and `println(first)` in place of line 12
+## design rules: R8, R4
 ## R8 (b), (g), verdict 53: a view whose last use is an argument does not live across the call, and the
 ## callee is held to its promise: `record` uses its `Span` parameter after a push to `SCORES`, which may
 ## move the numbers the span shows, so a call that hands it a span of `SCORES` is refused (E3031).

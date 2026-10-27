@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R11, R13, R5
+#$ rules: WK-11, GRM-44, FN-4
 #$ stdout: end a under root
 #$ stdout: root ends
 #$ stdout: end b, its parent already ended
+## design rules: R11, R13, R5
 ## R11 (verdict 56): a `weakref` link opened "during the `drop` of anything it owns (a child's `drop`
 ## opening `this.parent` while the parent is being ended), finds it ended", and "Ending the link itself
 ## (`this.parent = None`) stays allowed: it only subtracts the link's weak count in the target's

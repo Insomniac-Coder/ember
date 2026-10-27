@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 1
 #$ 1 0
+## design rules: R3
 ## R3 and `V5/rules.md` section 2 ("one word in the value: its instance's address"): a `LevelArena`
 ## may have several instances, so each value made in one keeps that instance's address, and its end
 ## goes back to the instance it came from, not to another of the same kind (verdict 47). The counts

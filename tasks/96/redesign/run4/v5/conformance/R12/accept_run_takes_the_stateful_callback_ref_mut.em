@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12, R4, R3
+#$ rules: BRW-14, BRW-15
 #$ stdout: ann 1
 #$ stdout: ann 2
 #$ stdout: 0
+## design rules: R12, R4, R3
 ## R12 (rules.md lines 681-683, 776-781), R4: "such a function value is refused where it is given to a
 ## parameter that only reads (`run(cb)` with `fn run(f: fn()):`, E3023; write `ref mut f: fn()` and
 ## `run(ref mut cb)`)". The callback's own copy of `score` and its own `name` are its state, kept across

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R16
+#$ rules: ATT-1, PHIL-12
+## design rules: R16
 ## R16: the contract is spelled by what it forbids, `@no_alias_checks` (AN-81's message; section 3's
 ## removed words, E0104).
 

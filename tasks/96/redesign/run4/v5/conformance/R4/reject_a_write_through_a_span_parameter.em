@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5
+#$ rules: BRW-15
 #$ help: fn integrate(ref mut pos: MutSpan[float], ref mut vel: MutSpan[float], dt: float):
+## design rules: R4, R5
 ## R4, R5: a plain `Span` parameter reads; writing through it is refused, with the lines that make it
 ## a span that may be written (AN-11).
 

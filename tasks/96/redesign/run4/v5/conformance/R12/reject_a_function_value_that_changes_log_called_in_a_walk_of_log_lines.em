@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R15, R18
+#$ rules: THR-19
 #$ help: move line 27 below the block
+## design rules: R12, R15, R18
 ## Verdicts 43, 73 and 86, R15 (rules.md lines 881-890), R8 (c) (lines 492-494), R18 (lines 954-957): a
 ## call through a function value that may run a function taking a `Log`'s lock (worked out from the
 ## function stored in `note`), inside a walk of a log's list under its lock, would take the lock this

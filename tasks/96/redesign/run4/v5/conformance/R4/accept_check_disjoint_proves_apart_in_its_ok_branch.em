@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 2.0
 #$ stdout: 1.0
+## design rules: R4
 ## R4: `check_disjoint(d, s)` only reports; in its `Ok` branch the two are known apart and the call is
 ## accepted, in its `Err` branch nothing is blended and nothing stops (AN-14's `mix_any`).
 

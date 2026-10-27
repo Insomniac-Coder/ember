@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: MOD-3
+## design rules: R15
 ## R15: "`ThreadShared` and `Send` are inferred and written only in bounds"; `Sync` names the effect
 ## `@nosync` forbids (AN-80).
 

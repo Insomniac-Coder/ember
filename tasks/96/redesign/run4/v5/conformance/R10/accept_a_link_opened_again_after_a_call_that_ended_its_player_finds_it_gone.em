@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R10, R11, R13
+#$ rules: BRW-17, LT-3
 #$ stdout: 100
 #$ stdout: gone
+## design rules: R10, R11, R13
 ## R10 point 1 (verdict 82): the nearest allowed program to
 ## `reject_a_view_from_a_link_used_after_a_call_that_may_end_its_player.em`, with both of its message's
 ## fixes: `p` is used before `remove_all`, and the link is opened again after it, which tests the

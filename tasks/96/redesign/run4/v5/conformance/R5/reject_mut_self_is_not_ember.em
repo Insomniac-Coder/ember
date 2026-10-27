@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: MOD-3
 #$ help: write `fn reset():` in place of line 10 and `this.count = 0` in place of line 11
+## design rules: R5
 ## R5, rules section 3's removed words: `mut self` is gone; a method names its object `this` and changes
 ## it with no word (E1010; completeness G8; verdict 86).
 

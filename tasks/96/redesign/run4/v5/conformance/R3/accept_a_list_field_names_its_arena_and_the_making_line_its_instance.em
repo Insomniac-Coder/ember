@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 0 1
+## design rules: R3
 ## R3: the nearest program that is allowed: an `Array` has heap memory of its own, so its field may
 ## name the kind of arena, and the list is made in an instance (`[...] using current`).
 

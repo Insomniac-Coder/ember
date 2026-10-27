@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R11, R10, R12, R13
+#$ rules: WK-11, RC-5, CLO-1, GRM-44
 #$ stdout: visit mid
 #$ stdout: end mid
 #$ stdout: depth 1
+## design rules: R11, R10, R12, R13
 ## R11: with a `drop` method of its own, `Node` gets no deferred-drop region (R11 places one only when
 ## the node's class has no `drop` method) and its parent links no proof (condition 1), so every read
 ## tests the header and the walk's link keeps a weak count on every target: "one move of the link's weak

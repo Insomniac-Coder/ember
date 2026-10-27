@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R5
+#$ rules: FN-1, FN-4
 #$ stdout: ann 3
+## design rules: R4, R5
 ## R4, R5, verdict 3: a `Mutex` is changed through a plain name by its own operation, under its lock,
 ## and the call takes no word. What `clear` changes is worked out from its body; no first line names it
 ## (verdict 86).

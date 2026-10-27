@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R1
+#$ rules: OWN-3
 #$ help: to keep your own, write `m = take(copy of n)` in place of line 14
+## design rules: R4, R1
 ## R4, R1: `owns x: T` takes the value over for every type, numbers included (verdict 84): the caller's
 ## name ends at the call, as for any other type, and a later use is refused (E3040). The machine copies
 ## the number either way. The nearest program that is allowed is

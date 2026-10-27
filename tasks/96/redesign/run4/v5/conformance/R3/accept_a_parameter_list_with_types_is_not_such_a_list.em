@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R12
+#$ rules: OWN-8, CLO-1
 #$ stdout: 5
+## design rules: R3, R12
 ## R3, R12: the nearest programs that are allowed: each untyped parameter says its word, or the
 ## parameters have types, which is not such a list (a parameter's word is on its own name, R4).
 

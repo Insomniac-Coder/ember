@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5
+#$ rules: BRW-15
 #$ help: fn tick(ref mut s: shares mut Clock):
+## design rules: R4, R5
 ## R4, verdict 32: the type after the colon says what the caller's value is, never what the function
 ## may do with it; a plain `s: shares mut Clock` only reads, so it does not set the clock's `Cell`
 ## (AN-20).

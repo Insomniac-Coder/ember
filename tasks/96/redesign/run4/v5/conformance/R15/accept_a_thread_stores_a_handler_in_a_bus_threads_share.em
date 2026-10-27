@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 1
+## design rules: R15, R12
 ## R15 and R12 (verdict 61): the lines E7015 gives: the bus is `thread_shared`, its handlers field is
 ## guarded by its lock and holds `thread_shared fn()` functions (the fields of a `thread_shared` object
 ## that hold functions use such types), and the thread holds one more owner of it.

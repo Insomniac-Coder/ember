@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R16, R4, R1
+#$ rules: OWN-3
+## design rules: R16, R4, R1
 ## R16 (verdict 91): `widget_take(first)` hands the widget to C: "the name ends and Ember frees nothing";
 ## a later use of `first` is E3040 (R1, R4), so C is never given one widget twice (which would free it
 ## twice). The nearest allowed program is

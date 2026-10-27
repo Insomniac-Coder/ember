@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
+## design rules: R15, R12
 ## R12 and R15 (verdict 61): "A function of such a type [`thread_shared fn()`] may hold `thread_shared`
 ## values or copies, never a `shares` or `shares mut` value ... (E7015)"; section 3's E7015 message, in
 ## this program's lines (completeness G26: the one-thread owner hidden in a function value's state). The

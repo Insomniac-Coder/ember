@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R14
+#$ rules: OWN-8, TYP-44
 #$ stdout: 13
+## design rules: R3, R14
 ## R3, R14: the nearest program that is allowed: `owns dyn Shape` says the list is each shape's one
 ## owner, and the line that makes each shape says so, `owns Square(...)`, as for an `owns` field
 ## (verdict 85); each is put in its own block (AN-66's NEW).

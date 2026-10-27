@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R9, R5
+#$ rules: BRW-17
 #$ help: if a is not b:
+## design rules: R8, R9, R5
 ## R8 (b): two paths may reach the same object when they lead to values of one type and at least one
 ## goes through a link, unless the compiler knows they differ; a push through `b` may move the list
 ## `s` points into through `a`.

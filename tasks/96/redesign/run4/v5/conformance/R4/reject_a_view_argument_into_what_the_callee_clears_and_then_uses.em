@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R8, R17
+#$ rules: BRW-21
 #$ help: note(copy of LOG[0])
+## design rules: R4, R8, R17
 ## R4, R8 (g), verdict 53: the compiler works out from `note`'s body that it uses its view parameter
 ## `s` after `LOG.clear()`, keeps that fact with `note`, and refuses a call that hands `s` a part of
 ## `LOG`: `s` would read freed text (E3031). Nothing is checked while the program runs.

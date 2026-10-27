@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-18, CTL-2
 #$ help: enemies.retain(fn(e) => e.hp > 0)
+## design rules: R8
 ## R8 (c): a removal from the list a `for` loop walks is refused; the dead are removed after the loop.
 ## AN-04, point 6.
 

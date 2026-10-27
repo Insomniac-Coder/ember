@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R10, R12, R13
+#$ rules: BRW-17, LT-3
 #$ stdout: 100
 #$ stdout: gone
+## design rules: R10, R12, R13
 ## R10 point 1, R12 (verdicts 55, 82): the nearest allowed program to
 ## `reject_a_view_from_a_link_used_after_a_function_that_ends_the_players_it_owns.em`: `p` is used before
 ## `reset()`, and the link is opened again after it, which finds the player ended. Checked under

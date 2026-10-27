@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R17, R8
+#$ rules: BRW-17
 #$ help: boss = ref mut enemies[0]
+## design rules: R17, R8
 ## R17: `ledger`'s interface file records that `kill_weak` does more than add to its `ref mut` list,
 ## so it may remove or reorder enemies, and `boss`, a position of that list, ends at the call (R8 (a);
 ## AN-02, E3060).

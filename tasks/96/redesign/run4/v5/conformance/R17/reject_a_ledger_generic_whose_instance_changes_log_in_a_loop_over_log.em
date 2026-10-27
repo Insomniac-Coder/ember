@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R17, R12, R8
+#$ rules: BRW-18, CTL-2
 #$ help: call it after the loop: move line 16 below the loop
+## design rules: R17, R12, R8
 ## R17, R12: what `ledger`'s generic `each` changes is worked out for each instance, compiled by the
 ## package that makes it: here the function it is given pushes to `LOG`, so the call inside a loop over
 ## `LOG` is refused (R8 (c), E3020; check-V2's fix of matrix row R17-6), the message naming the chain.

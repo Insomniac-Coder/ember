@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: BRW-15
 #$ help: for ref mut p in players:
+## design rules: R5
 ## R5: a method that may change its object, worked out from its body (verdict 86), is refused on a name
 ## that only reads it (rules section 3, E3023).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R13
+#$ rules: BRW-17
 #$ help: println(v)
+## design rules: R8, R13
 ## R8 (b), (g): a name opened with `exists as` is a read-only view of what the `Option` holds; replacing
 ## the `Option` frees that value, which ends the name (E3060 at a later use).
 

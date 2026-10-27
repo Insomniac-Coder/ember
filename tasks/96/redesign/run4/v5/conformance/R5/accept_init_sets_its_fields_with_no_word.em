@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R5
+#$ rules: FN-4
 #$ stdout: 0.0
 #$ stdout: 90.0
+## design rules: R5
 ## R5: `init` sets its object's fields through `this` with no word, and `open` changes `angle` with no
 ## word either (verdict 86; AN-32's NEW).
 

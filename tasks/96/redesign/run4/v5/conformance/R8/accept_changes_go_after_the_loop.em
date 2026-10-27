@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R12
+#$ rules: BRW-16, CLO-1
 #$ stdout: 2 2 5
+## design rules: R8, R12
 ## R8 (c): the agreed way: the loop changes elements through `ref mut e`, and the removal and the
 ## addition go after it (`retain`, `extend`). AN-04's NEW program.
 

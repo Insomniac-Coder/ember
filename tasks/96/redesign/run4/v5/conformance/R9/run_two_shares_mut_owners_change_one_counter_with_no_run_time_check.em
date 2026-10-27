@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R9
+#$ rules: RC-1
 #$ stdout: 6
+## design rules: R9
 ## R9: "Nothing is checked while running: no access words, no borrow flags". Today's `Shared` stops
 ## the same two changes through two handles while running
 ## (`tests/conformance/HEAP-5/run_fail_aliased_shared_get_mut.em`); here each line is one change, and

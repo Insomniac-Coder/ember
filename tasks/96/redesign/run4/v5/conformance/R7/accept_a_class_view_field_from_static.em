@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7
+#$ rules: LT-45
 #$ stdout: ann human
+## design rules: R7
 ## R7: a view field of a class may say `from static`: it holds only text written in the program, so it
 ## lives as long as any object. AN-26's NEW program.
 

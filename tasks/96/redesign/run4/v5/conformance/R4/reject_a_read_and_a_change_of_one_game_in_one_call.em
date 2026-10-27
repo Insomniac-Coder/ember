@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-11
 #$ help: fn tick(ref mut g: Game):
+## design rules: R4
 ## R4: an argument that is read and a changeable argument of the same call may not name one place;
 ## where both name `g` it is refused (AN-18, E3021).
 

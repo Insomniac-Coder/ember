@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ help: move line 17 below the loop
+## design rules: R12, R5, R8
 ## Verdict 86 (verdict 21 keeps its meaning without the change list), R12 (rules.md lines 703-711): a
 ## function that runs the function it is given makes that function's changes, worked out from it ("the
 ## call counts as making what the function given changes"); `each_name` runs a lambda that pushes to

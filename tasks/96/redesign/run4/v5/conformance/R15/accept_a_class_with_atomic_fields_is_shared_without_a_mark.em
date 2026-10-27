@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R9, R12
+#$ rules: THR-1, RC-1, CLO-1
 #$ stdout: 3
+## design rules: R15, R9, R12
 ## R15: no mark: the value is created `thread_shared` where it is shared, and its `Atomic` field is
 ## changed by its own operations from any name (R5); no first line says what changes (verdict 86).
 

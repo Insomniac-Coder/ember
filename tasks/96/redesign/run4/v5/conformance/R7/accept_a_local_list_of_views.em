@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R8
+#$ rules: LT-45, BRW-16
 #$ stdout: 30
+## design rules: R7, R8
 ## R7: a value that holds views, a local list of views included, lives no longer than what they point
 ## into, with nothing written; any number of `ref` views may read one place. AN-24's NEW program.
 

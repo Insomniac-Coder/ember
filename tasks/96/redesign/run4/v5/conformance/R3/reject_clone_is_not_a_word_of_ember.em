@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: MOD-3
 #$ help: for a new player write `b = copy of a`; for a second owner of this one that changes it write `b = shares mut a`
+## design rules: R3
 ## R3 and the removed words of `V5/rules.md` section 3: `a.clone()` is written `copy of a` (E1010;
 ## AN-45's message).
 

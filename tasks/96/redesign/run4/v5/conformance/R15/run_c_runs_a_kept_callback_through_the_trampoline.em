@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 2
+## design rules: R15, R12
 ## R15: "C callbacks go through the checked trampoline"; each C call of the kept callback adds a point
 ## to the game it holds (section 2: the checked trampoline, 1.02x to 1.05x of plain C, with its thread
 ## check in every profile; AN-78).

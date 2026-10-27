@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R10, R11, R9
+#$ rules: RC-5, WK-11, RC-1
 #$ stdout: 3
+## design rules: R10, R11, R9
 ## R10 point 2: "A view of a `thread_shared` object reached through a `weakref` link holds one atomic
 ## count for its life, as Rust's `Weak::upgrade` does: another thread may end the last owner at any
 ## moment, which no line of this thread can be checked against". Always: even here, where no line of

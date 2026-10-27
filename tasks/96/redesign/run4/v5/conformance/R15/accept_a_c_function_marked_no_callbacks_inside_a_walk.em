@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R12, R5
+#$ rules: THR-1, CLO-1, FN-4
+## design rules: R15, R12, R5
 ## R12 and R15 (verdicts 31 and 86): handing C a callback to keep counts as making its changes, worked
 ## out from the callback's body, with no word on `setup`'s or `main`'s first line; a foreign function
 ## marked `@ffi(no_callbacks)` runs none of them, so it may be called inside a walk of `game.names`;

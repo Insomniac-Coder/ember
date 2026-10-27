@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 0
 #$ stdout: 1
+## design rules: R15
 ## E7018's way out: the scope starts after the `with RESULTS_LOCK:` block, so its task takes the lock
 ## once this thread has let it go, and the scope's end waits for nothing this thread holds.
 

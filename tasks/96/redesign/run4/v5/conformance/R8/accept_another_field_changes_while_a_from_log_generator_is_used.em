@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R6
+#$ rules: BRW-16, LT-1
 #$ stdout: 4 90.0
+## design rules: R8, R6
 ## R8 (c), R6: `from log` narrows what the generator walks to `d.log`, so another field of `d` may
 ## change while `g` will still be used. AN-77, the v3 note's point 2.
 

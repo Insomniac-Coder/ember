@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R13
+#$ rules: GRM-44
 #$ stdout: 4
 #$ none
+## design rules: R13
 ## R13: `if e exists as v:` runs its block when the `Option` holds a value and names it `v` there;
 ## `else:` runs when it holds nothing (verdict 26).
 

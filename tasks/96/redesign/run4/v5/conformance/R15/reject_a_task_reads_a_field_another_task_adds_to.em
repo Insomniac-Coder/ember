@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: THR-11, THR-21
+## design rules: R15, R12
 ## R15 (verdict 77): "a task that reads the current value (`if stats.total < 10: stats.total += x`) ...
 ## still need[s] a lock (E7007)" (section 3's E7007 message, which gives only the lock, which keeps the
 ## read and the add together: F-10; in this program's lines; the task is a local function, verdict 51).

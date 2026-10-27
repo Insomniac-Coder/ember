@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R4
+#$ rules: ERR-5
+## design rules: R4
 ## R4, rules section 3's warnings: a `check_disjoint` result left unused proves nothing and is warned,
 ## with the lines to write, the import of `assert_disjoint` included, so the first way out compiles
 ## (W2190; completeness G3; step 3's re-check, wrong 3-6).

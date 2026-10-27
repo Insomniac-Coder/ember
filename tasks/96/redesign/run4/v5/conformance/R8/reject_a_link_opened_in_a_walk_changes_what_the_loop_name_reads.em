@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R13, R5
+#$ rules: BRW-1
 #$ help: write `if q is not p:` above line 19
+## design rules: R8, R13, R5
 ## R8 (b), (g): a name opened from a link inside a loop over the list that holds the link's target may
 ## be the loop name's player (two paths to values of one type, one through a link); a change through it
 ## while the loop name still reads is refused at the change (E3021). Completeness check, G25.

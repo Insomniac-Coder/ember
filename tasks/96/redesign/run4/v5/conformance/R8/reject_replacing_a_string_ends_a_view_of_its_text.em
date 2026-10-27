@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-17
 #$ help: n = String(boss.name.trim())
+## design rules: R8
 ## R8 (b): a view into a value's own contents (a `String`'s text) ends at any change that may reshape
 ## what it points into; replacing the `String` frees its old text. AN-01, point 6.
 

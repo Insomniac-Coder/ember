@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R2
+#$ rules: OWN-11
 #$ help: to take the elements out of `xs` write `for x in owns xs:`; to keep copies write `kept.push(copy of x)`
+## design rules: R3, R2
 ## R3, R2: without `owns` the loop name only reads each element, so storing it elsewhere would hand
 ## over what it does not own (E3013).
 

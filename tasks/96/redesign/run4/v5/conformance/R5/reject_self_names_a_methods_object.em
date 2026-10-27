@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: MOD-3
 #$ help: write `fn reset():` in place of line 10, and `this.count = 0` in place of line 11
+## design rules: R5
 ## R5: inside a method its object is `this`, and a method does not list it among its parameters;
 ## `self` is not a word of Ember (owner, 2026-10-25; rules section 3, E1010).
 

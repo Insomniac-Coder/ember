@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: TYP-45, TYP-46, ALC-1
 #$ help: remove `using`
+## design rules: R3
 ## R3: `using A` after a type whose value has no heap memory of its own is refused (E2114;
 ## `V5/rules.md` section 3's message).
 

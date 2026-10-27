@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R1
+#$ rules: OWN-3
 #$ help: v = a.v
+## design rules: R4, R1
 ## R4: `owns n: Node` takes the caller's object over: the caller's name ends at the call, and a later
 ## use of it is refused (AN-43).
 

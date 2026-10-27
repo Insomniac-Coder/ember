@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R10, R12, R5
+#$ rules: BRW-17, LT-3
 #$ help: use `p` before line 20: move line 21 above it
+## design rules: R10, R12, R5
 ## R10 point 1, R12 (safety validation (b), hole 3, part 2): replacing a function value ends what its
 ## state owns, as ending an object runs its `drop` (R5): `h.keep = fn(): pass` ends the function stored
 ## on line 18 and the node its `owns n` held, so `p`, which reads that node through the link `w`, is not

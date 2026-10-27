@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R11, R13, R5
+#$ rules: WK-11, GRM-44, FN-4
 #$ stdout: made
 #$ stdout: ended
+## design rules: R11, R13, R5
 ## R11 (verdict 56; safety validation (b), hole 4): "An object is ended the moment its last owner lets
 ## it go, before its `drop` runs ... a `weakref` link opened during its `drop` ... finds it ended, so the
 ## `if ... exists as p:` block is skipped and the half-ended object is never read, nor counted again".

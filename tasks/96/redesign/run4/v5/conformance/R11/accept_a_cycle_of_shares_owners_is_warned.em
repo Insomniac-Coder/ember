@@ -1,7 +1,8 @@
 #$ test: compile-pass
-#$ rules: R11
+#$ rules: WK-11
 #$ warning[L3001]: `Person.best` and `Person.friends` can hold each other: a cycle of `shares` owners is never freed
 #$ help: a link that should not keep its person alive is `weakref`: `best: weakref Person = None`
+## design rules: R11
 ## R11: "The cycle warning (L3001) is given for a type whose `shares` fields can form a cycle of
 ## owners, and names the link to make `weakref`" (AN-64). A warning, not a refusal: a leak, not a
 ## memory error.

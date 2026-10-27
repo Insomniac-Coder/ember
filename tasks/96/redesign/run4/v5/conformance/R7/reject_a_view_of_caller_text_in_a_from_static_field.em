@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45
 #$ help: this.kind = String(name)
+## design rules: R7
 ## R7: a `from static` field takes only text written in the program; a view of the caller's text is
 ## refused (E3063). AN-26, point 6.
 

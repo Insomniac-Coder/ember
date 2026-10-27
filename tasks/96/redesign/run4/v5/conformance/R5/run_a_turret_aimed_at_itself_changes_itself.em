@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R5, R4, R11, R13
+#$ rules: FN-4, FN-1, WK-11, GRM-44
 #$ stdout: 9
+## design rules: R5, R4, R11, R13
 ## R5, verdict 18: that a method may change its own object (worked out from its body, verdict 86)
 ## promises nothing about other names. A turret whose `target` is itself reaches itself through `this.target`,
 ## which is accepted with no check, and `this` is never compiled with noalias (R4), so the write

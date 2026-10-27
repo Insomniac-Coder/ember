@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R2
+#$ rules: FN-1, BRW-12
 #$ stdout: 0.0
+## design rules: R4, R2
 ## R4, verdict 34: a local made with `ref mut` from `as_mut_span()` may let its elements be written,
 ## and is given to the call as `ref mut d` (AN-14).
 

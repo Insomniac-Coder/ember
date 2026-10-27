@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1, R2
+#$ rules: OWN-1, BRW-12
 #$ stdout: 6
+## design rules: R1, R2
 ## R1, R2: the nearest program that is allowed: the child is set before it is handed over, and
 ## changed afterwards through the list that owns it (AN-36's first NEW form).
 

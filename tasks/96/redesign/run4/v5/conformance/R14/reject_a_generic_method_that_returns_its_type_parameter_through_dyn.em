@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: IFC-5, TYP-22
+## design rules: R14
 ## R14: only a generic method whose type parameter is only the type of a `ref` or `ref mut` parameter
 ## gets a `dyn` entry; one that returns its `V` makes the interface unusable as `dyn` (E2050, AN-67).
 

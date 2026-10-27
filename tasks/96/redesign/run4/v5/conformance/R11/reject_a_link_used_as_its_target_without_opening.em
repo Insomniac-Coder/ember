@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R11, R13
+#$ rules: TYP-4, CLO-3
+## design rules: R11, R13
 ## R11: reading a link "is written as an opening (R13)"; a link used as its target without one is
 ## refused (AN-65, still refused). The message gives the lines that replace line 16.
 

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R4
+#$ rules: FN-2a
+## design rules: R15, R4
 ## R4 (verdict 3): "An argument given to a `Mutex`, `RwLock` or `Atomic` parameter, or a channel end,
 ## takes no word" (the message follows section 3's `Mutex` one). The nearest allowed program is
 ## `accept_main_receives_through_its_own_end_while_a_thread_sends.em`.

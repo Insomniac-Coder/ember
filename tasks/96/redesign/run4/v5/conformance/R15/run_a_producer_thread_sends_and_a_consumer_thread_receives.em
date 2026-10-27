@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12, R5, R4
+#$ rules: THR-1, CLO-1, FN-4, FN-1
 #$ stdout: 285
+## design rules: R15, R12, R5, R4
 ## R5 and R12 (verdict 86): a send, and taking values out through an end a function was given, are
 ## worked out from the body like every change, and no first line says them (the words verdicts 36 and
 ## 37 asked for are gone with verdict 86); the ends take no word at a call (R4).

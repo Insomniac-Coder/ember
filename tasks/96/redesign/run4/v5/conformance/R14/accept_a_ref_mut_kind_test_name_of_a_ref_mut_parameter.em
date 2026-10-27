@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14, R4
+#$ rules: TYP-44, FN-1
 #$ stdout: 2
+## design rules: R14, R4
 ## R14: "`ref mut v: dyn I` may change it", and the kind test's `ref mut c` names the caller's circle.
 
 interface Shape:

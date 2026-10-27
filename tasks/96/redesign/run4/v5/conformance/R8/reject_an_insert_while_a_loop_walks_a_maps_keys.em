@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-18, CTL-2
 #$ help: added: Array[String] = []
+## design rules: R8
 ## R8 (c), verdict 72: the loop rule covers everything a loop goes through, a map's keys included; the
 ## change is refused where it is made (E3020), with the list's message, not at the next use of `k`.
 

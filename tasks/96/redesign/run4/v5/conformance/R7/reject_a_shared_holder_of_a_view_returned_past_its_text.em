@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R9
+#$ rules: LT-45
 #$ help: word: String
+## design rules: R7, R9
 ## R7: a value that holds views lives no longer than what they point into, whoever owns it; an owner made
 ## with `shares` is counted while the program runs, but the count keeps the holder alive, not the text
 ## its view points into, so the bound is still checked when compiling (E3063). Completeness check, G20.

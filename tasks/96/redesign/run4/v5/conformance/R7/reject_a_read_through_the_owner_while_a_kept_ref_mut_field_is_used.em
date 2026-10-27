@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8
+#$ rules: BRW-1
 #$ help: cam.target.hp
+## design rules: R7, R8
 ## R7, R8 (f): while the holder of a kept `ref mut` view is still used, the place is not read through
 ## another name, its owner included (verdict 2).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6, R8
+#$ rules: BRW-1
 #$ help: fn next_word() -> StrView from src:
+## design rules: R6, R8
 ## R6: with no `from`, a method's result points into all of its object, so a change of any field of
 ## `p` while the result is used is refused (R8 (g); AN-22, E3021).
 

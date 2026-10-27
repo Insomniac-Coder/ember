@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: THR-19
+## design rules: R15, R12
 ## R15 (verdicts 43 and 86): "A call through a function value ... that may run a function taking a lock
 ## of the kind this thread holds is refused, with no loop needed (E7018)": what `note` may run is worked
 ## out from the program (here the function `main` passes, whose `log.push` takes a `Log`'s lock; section

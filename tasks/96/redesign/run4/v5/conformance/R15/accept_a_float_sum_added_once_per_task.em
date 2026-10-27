@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 1.75
+## design rules: R15
 ## R15: one add per task, combined at the join in spawn order (AN-71); a reduction of decimal numbers,
 ## as `run_a_float_sum_added_more_than_once_per_task_is_a_reduction.em` is with several adds per task
 ## (verdict 92).

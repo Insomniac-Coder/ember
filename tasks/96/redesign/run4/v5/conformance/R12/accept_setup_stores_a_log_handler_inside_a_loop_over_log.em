@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ stdout: start
 #$ stdout: 2
+## design rules: R12, R5, R8
 ## Verdict 86, R12 (rules.md lines 735-739): "Storing a function value is not a change: putting it in a
 ## field, a list, a local or an iterator adapter ... changes nothing the function changes; the call that
 ## later runs it does". `setup` hands a handler that pushes to `LOG` to `on_click`, which keeps it, so

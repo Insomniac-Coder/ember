@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R8
+#$ rules: THR-1, BRW-16
 #$ stdout: 2
+## design rules: R15, R8
 ## R15: "A `spawn` inside a loop over what the thread changes under a lock the loop holds is allowed,
 ## the thread waiting for the lock" (verdict 52; AN-76); the loop's own variable is given with
 ## `copy of` (verdicts 65 and 83: `thread.spawn(fn() copy of r: worker(r))`); the handles are joined

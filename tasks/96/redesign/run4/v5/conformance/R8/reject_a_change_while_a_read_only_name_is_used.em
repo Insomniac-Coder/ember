@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-1
 #$ help: boss = ref mut enemies[0]
+## design rules: R8
 ## R8 (g), verdict 5: a read-only name promises that what it reads does not change while it is used;
 ## the message gives both ways out. AN-01, point 6; the E3021 message of rules section 3.
 

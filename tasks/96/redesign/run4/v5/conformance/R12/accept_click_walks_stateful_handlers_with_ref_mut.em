@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R5
+#$ rules: BRW-15
 #$ stdout: 1
 #$ stdout: 2
+## design rules: R12, R5
 ## R12 (rules.md lines 776-779): `click` walks with `ref mut h`, a name that may change the handler, so a
 ## handler may change its own state (its own copy of `n`, kept across the two clicks); nothing on `click`'s
 ## first line says so (verdict 86). The nearest allowed program to

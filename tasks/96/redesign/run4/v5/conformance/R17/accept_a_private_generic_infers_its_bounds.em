@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R17, R14
+#$ rules: BLD-14, TYP-44
 #$ stdout: 5 5
+## design rules: R17, R14
 ## R17: inside a package a fact is used freely: a function that is not `pub` gets its bounds from its
 ## body; a `pub` one writes them (AN-69).
 

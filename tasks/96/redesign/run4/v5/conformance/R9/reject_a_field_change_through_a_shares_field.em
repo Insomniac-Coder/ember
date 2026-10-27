@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R5
+#$ rules: BRW-15
+## design rules: R9, R5
 ## R9: a field written `shares T` is an owner that only reads its value; the camera changes the
 ## player only through a `shares mut` field (AN-48, still refused). The two lines the message gives make
 ## the program compile (`accept_a_field_change_through_a_shares_mut_field.em`).

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R5
+#$ rules: CLO-1, FN-4
 #$ stdout: 1
+## design rules: R12, R5
 ## Verdict 86, R12 (rules.md lines 662-665, 674-675): "A named function is a value of its type
 ## (`fn log_click():` is a `fn()`)"; a function that pushes to `LOG` and one that changes nothing are kept
 ## in one `Array[fn()]`, and `main`, which runs them, writes nothing: what the call changes is worked out

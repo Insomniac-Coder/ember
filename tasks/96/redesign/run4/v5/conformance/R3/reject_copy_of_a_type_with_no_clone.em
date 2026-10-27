@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: OWN-8
 #$ help: give it one: `@derive(Clone)` above `class Player`
+## design rules: R3
 ## R3: `copy of` is refused before a type with no `Clone` (E2116); the message says how to give it one
 ## (`V4/rules.md` section 3; AN-45). The nearest program that is allowed is
 ## `run_copy_of_makes_an_independent_object`.

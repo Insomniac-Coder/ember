@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: TYP-26
+## design rules: R15
 ## Section 4: E1030 has one meaning, "two items with the same name in one scope, such as a second
 ## `main`" (completeness G4; the message is written to R18).
 

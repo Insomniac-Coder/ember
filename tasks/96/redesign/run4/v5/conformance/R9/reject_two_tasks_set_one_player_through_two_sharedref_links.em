@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R9, R15
+#$ rules: THR-11, THR-21
 #$ help: lock: Lock = Lock()
+## design rules: R9, R15
 ## R9: "A scoped task that reaches a `sharedref mut` target changes it directly only where neither
 ## another task nor the parent may touch it before the join, or by a reduction (R15); otherwise only
 ## as a `thread_shared` value is changed (E7007 ...)". `=` is not a reduction. A plain assignment from

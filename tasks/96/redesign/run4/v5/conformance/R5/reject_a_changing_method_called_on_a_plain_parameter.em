@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R4
+#$ rules: BRW-15
 #$ help: fn revive(ref mut p: Player):
+## design rules: R5, R4
 ## R5, R4: a plain parameter never changes anything, so a method that changes its object is refused on
 ## it, as on a plain loop name (AN-18's `g.reset()`, E3023).
 

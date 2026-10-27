@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-46
 #$ help: target: ref Player
+## design rules: R7
 ## R7: `sharedref` is always followed by `mut` (E0114): a link that only reads is `ref T`, which any
 ## number of names may hold already. AN-52, point 6.
 

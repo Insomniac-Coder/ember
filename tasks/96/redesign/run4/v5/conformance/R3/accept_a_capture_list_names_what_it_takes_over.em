@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R3, R12
+#$ rules: OWN-8, CLO-1
 #$ stdout: done
 #$ 0
+## design rules: R3, R12
 ## R3, R12: the nearest program that is allowed: `task` captures nothing, and `job` says on the
 ## captured name that it takes `report` over (AN-47's NEW).
 

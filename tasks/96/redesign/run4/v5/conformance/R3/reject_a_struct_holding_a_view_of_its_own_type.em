@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R7
+#$ rules: TYP-14
 #$ help: for a link back to the parent make `Node` a class with `children: Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before `this.children.push(child)`
+## design rules: R3, R7
 ## R3, R7: a struct cannot keep a view of the struct that holds it (E2200); the link back to a parent
 ## is a `weakref` field of a class (AN-41's message).
 

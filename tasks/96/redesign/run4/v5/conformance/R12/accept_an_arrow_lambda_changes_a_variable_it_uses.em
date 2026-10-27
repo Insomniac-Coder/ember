@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R5
+#$ rules: CLO-1, FN-4
 #$ stdout: 2 1
+## design rules: R12, R5
 ## Verdicts 45 and 86, R12 (rules.md lines 670-672, 703-711): "`enemies.retain(fn(e) => keep(e, ref mut
 ## removed))` adds to `update`'s `removed`", with no word; `retain` takes the function as a template
 ## parameter, and the call counts as making what the function changes, worked out from it.

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R15
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
 #$ help: handlers: Array[thread_shared fn()] guarded by lock = []
+## design rules: R12, R15
 ## Step 3's hole 6a, its original form (`safety/recheck.md` section 5), R12 (rules.md lines 698-702): "A
 ## class whose objects are made `thread_shared` holds functions only in such types: `bus = thread_shared
 ## Bus()`, for a `class Bus:` with `handlers: Array[fn()] = []`, is refused at that line (E7015)": a

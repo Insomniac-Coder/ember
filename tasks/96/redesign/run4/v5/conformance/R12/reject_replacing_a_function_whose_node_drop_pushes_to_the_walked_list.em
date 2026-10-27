@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8, R5
+#$ rules: BRW-18, CTL-2
 #$ help: replace it after the loop: move line 24 below the loop
+## design rules: R12, R8, R5
 ## R12 ("replacing or ending a function value ends what its state owns ... and that node's `drop`
 ## counts as called there (inside a walk of what it changes, E3020)"), R8 (c), R5: `Node`'s `drop`
 ## adds to `LOG`, and replacing `h.keep` inside a loop over `LOG` ends the node `h.keep` owned.

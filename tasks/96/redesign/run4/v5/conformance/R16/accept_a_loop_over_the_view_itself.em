@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R16
+#$ rules: TIER-1
 #$ stdout: 6
+## design rules: R16
 ## R16: the function the programmer can write instead of switching checks off: a loop over the view
 ## itself reads each element once, with no index to check (AN-82's NEW).
 

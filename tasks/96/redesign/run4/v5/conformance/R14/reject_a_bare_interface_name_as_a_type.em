@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14, R3
+#$ rules: TYP-45, IFC-5
+## design rules: R14, R3
 ## R3 and R14: who owns a `dyn` value is written, `owns dyn I`, `shares dyn I`, `shares mut dyn I`;
 ## "a bare interface name used as a type is refused, E2173" (AN-66).
 

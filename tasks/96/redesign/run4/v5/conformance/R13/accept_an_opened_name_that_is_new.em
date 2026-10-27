@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R13
+#$ rules: GRM-44
 #$ stdout: 100
 #$ 1
+## design rules: R13
 ## R13: the nearest program that is allowed: the opening declares a new name (AN-65's NEW).
 
 class Player:

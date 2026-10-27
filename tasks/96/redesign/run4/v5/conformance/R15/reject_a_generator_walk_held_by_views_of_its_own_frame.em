@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: CORO-6
+## design rules: R15
 ## R15: a walk with no position, held by views of the generator's own local, is E2221 (AN-77's
 ## `countdown`; the link made for the `Option[owns Link]` field says `owns`, verdict 85).
 

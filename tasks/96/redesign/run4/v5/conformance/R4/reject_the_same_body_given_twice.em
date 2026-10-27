@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-11
 #$ help: write `if i != j:` above this line and `collide(ref mut bodies[i], ref mut bodies[j])` under it
+## design rules: R4
 ## R4: two arguments of one call that may both be changed may not name one place; known when
 ## compiling, it is refused (AN-03, E3022).
 

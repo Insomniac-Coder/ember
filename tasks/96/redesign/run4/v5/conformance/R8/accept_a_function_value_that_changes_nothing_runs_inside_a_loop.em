@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R8, R12
+#$ rules: BRW-18, CTL-2
 #$ stdout:
 #$ ping
 #$ start
+## design rules: R8, R12
 ## R8 (c), R12: what a call through `hook` changes is worked out from every function the program can
 ## put there (verdict 86): only `ping`, which changes nothing, so calling it inside a loop over `LOG` is
 ## allowed. The nearest program to `reject_a_call_through_a_function_value_that_changes_the_walked_list.em`.

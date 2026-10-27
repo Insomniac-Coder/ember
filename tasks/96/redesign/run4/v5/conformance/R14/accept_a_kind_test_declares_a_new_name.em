@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14
+#$ rules: TYP-44
 #$ stdout: 2
+## design rules: R14
 ## R14: "`if s is Circle as c:` ... names it `c` there. The name is new."
 
 interface Shape:

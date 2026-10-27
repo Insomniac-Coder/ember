@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R7
+#$ rules: BRW-16, LT-45
 #$ stdout: 1 1
+## design rules: R8, R7
 ## R8 (b): the ways out E3060's message gives: the kept view is used before the push, and the number is
 ## read again through the list after it.
 

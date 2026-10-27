@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R5, R8
+#$ rules: FN-4, BRW-16
 #$ stdout: start
 #$ stdout: 2
+## design rules: R5, R8
 ## R5, R8 (c), verdict 86: the nearest program that is allowed: `tick()`, which adds to `LOG` through
 ## `note`, runs after the loop over `LOG`; no first line names what either changes.
 

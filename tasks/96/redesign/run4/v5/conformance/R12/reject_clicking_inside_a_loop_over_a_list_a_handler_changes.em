@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8
+#$ rules: BRW-18, CTL-2
 #$ help: move line 27, `b.click()`, below the loop
+## design rules: R12, R8
 ## R12 (rules.md lines 752-756): in the function that wrote the lambda, "a place that holds the function
 ## value counts as reaching every real variable it captures, and a call that may run it as a change of
 ## each one it changes", so `b.click()` is refused inside a loop over `names` (AN-53 part 6, "The same

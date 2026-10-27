@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5, R8
+#$ rules: BRW-21
 #$ help: note(copy of LOG[0])
+## design rules: R4, R5, R8
 ## R4, verdict 53: the fact is worked out through the functions the callee calls: `note` calls `wipe`,
 ## which clears `LOG`, and then uses `s`, so `note(LOG[0])` is refused as if `note` cleared `LOG`
 ## itself (E3031).

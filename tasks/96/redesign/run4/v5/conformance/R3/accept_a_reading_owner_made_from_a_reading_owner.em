@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 0
+## design rules: R3
 ## R3: the nearest program that is allowed: an owner that reads, made from one that reads.
 
 class Game:

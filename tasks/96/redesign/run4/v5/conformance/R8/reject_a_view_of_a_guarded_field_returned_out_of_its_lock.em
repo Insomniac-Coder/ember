@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R15
+#$ rules: BRW-19
 #$ help: return a copy, or do the work inside the `with` block
+## design rules: R8, R15
 ## R8 (e): the same for a `guarded by` field inside `with x.lock:`: a view of `log.lines` does not leave
 ## the block (row 4's message).
 

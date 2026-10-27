@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R11, R5
+#$ rules: WK-11, FN-4
+## design rules: R11, R5
 ## R11: "That count is a number in the target's header that no name reads, so making or ending a link
 ## is not a change of the target: any name may make one (`up = weakref p` from a read-only `p`;
 ## `child.parent = weakref this` in a method that otherwise changes only `this.children`)" (AN-41,

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R9, R12
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
+## design rules: R15, R9, R12
 ## R15: "`shares`, `shares mut` and `weakref` only where the function stays on this thread"; R12: a
 ## function C may run on any thread holds no one-thread value (E7015): a `threads(any)` callback may not
 ## hold a `shares mut` owner (AN-78; section 3's E7015 message, with the line each part replaces). The

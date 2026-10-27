@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R4
+#$ rules: THR-1, FN-1
 #$ stdout: [2, 0, 1]
+## design rules: R15, R4
 ## R15: a `@parallel` loop over a range, each chunk writing only its own `xs[i]` (AN-84's `place`).
 
 fn place(ref mut xs: MutSpan[int], idx: Span[int]):

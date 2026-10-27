@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R16
+#$ rules: UNS-1, UNS-12, FFI-54
+## design rules: R16
 ## R16: "Inside an `unsafe fn` body every unsafe operation sits in its own `unsafe:` block (E3100)"
 ## (AN-79's OLD helper; section 3's message, in this program's lines).
 

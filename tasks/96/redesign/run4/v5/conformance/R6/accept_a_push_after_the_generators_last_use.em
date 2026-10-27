@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R6, R8
+#$ rules: LT-1, BRW-16
 #$ stdout: 4
 #$ stdout: 2
+## design rules: R6, R8
 ## R6, verdict 16: the nearest allowed program: the push comes after `g`'s last use, and `d.angle`,
 ## which `from log` leaves out, may change while `g` walks (AN-77).
 

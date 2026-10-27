@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R5
+#$ rules: FN-4
 #$ stdout: 0.0 0.0
+## design rules: R5
 ## R5: a struct method may change any field or replace the whole value (`this = Point(x=0.0, y=0.0)`;
 ## vocabulary, `this` row), with no word (verdict 86).
 

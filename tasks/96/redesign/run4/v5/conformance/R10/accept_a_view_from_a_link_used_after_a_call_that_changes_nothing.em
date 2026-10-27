@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R10, R8, R12
+#$ rules: BRW-17
+## design rules: R10, R8, R12
 ## R10 point 1: the nearest allowed program to
 ## `reject_a_view_from_a_link_used_after_a_call_that_may_change_players.em`: the only function the
 ## program stores in `on_hit`, `fn(): pass`, changes nothing and so ends no `Player` (R12, verdict 86:

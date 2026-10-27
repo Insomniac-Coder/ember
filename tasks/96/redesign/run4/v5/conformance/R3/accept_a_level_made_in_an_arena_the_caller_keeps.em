@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R7
+#$ rules: OWN-8, LT-45
 #$ stdout: 1
+## design rules: R3, R7
 ## R3, R7: the nearest program that is allowed: the caller makes the arena and keeps it longer than
 ## the level (AN-40's help).
 

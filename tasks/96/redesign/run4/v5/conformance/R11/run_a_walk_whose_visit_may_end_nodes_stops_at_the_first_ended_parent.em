@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R11, R10, R12, R13
+#$ rules: WK-11, RC-5, CLO-1, GRM-44
 #$ stdout: visit mid
 #$ stdout: depth 1
+## design rules: R11, R10, R12, R13
 ## R11: "A walk across a call that may change nodes holds a link and tests it at every step", and "A
 ## walk up a tree stops at the first ended parent": the visit function, on `mid`, takes `top` out of
 ## `root` and so ends it with everything under it; the next `while up exists as n:` finds `mid` ended

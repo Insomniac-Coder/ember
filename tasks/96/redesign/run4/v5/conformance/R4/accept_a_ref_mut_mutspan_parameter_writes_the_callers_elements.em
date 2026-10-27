@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R6, R2
+#$ rules: FN-1, LT-1, BRW-12
 #$ stdout: 0.5 7
+## design rules: R4, R6, R2
 ## R4, verdict 34: `ref mut pos: MutSpan[float]` writes the caller's elements; the call says `ref mut`
 ## before the span made in the call. `first_even` gives back an element as a place (R6), and
 ## `r = 7` writes `a[1]` (AN-11).

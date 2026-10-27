@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R16
+#$ rules: FFI-8
+## design rules: R16
 ## Section 3's E5013 row: "a further argument of a variadic C function that C would promote to another
 ## type" (AN-84; completeness G2). C passes an `i16` further argument as an `int`; the message is the
 ## lead's (worklist section 3), in this program's names and lines: it names only the promotion, since

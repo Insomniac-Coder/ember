@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R3
+#$ rules: OWN-9
 #$ help: x = take(a)
+## design rules: R4, R3
 ## R4: a hand-over to an `owns` parameter is written as `=` writes one, with no word at the call;
 ## `owns` before a value its place already hands over is refused (rules section 3, E0109).
 

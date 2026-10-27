@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R12
+#$ rules: BRW-17
 #$ help: boss = ref mut enemies[0]
+## design rules: R8, R12
 ## R8 (a), (b): what may remove is worked out from every function the program can put in a function
 ## value (R12, verdict 86): `on_hit` may run `drop_last`, which pops, so the call ends a position.
 ## AN-02, point 6.

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R15, R7
+#$ rules: THR-1, THR-2, THR-10
+## design rules: R9, R15, R7
 ## R9: "An unscoped thread never holds one (E7015: a lent value reaching another thread)": a
 ## `sharedref mut` link is a view of `main`'s player, and a thread from `thread.spawn` may outlive it.
 

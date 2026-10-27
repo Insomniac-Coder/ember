@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-8, THR-3
+## design rules: R15
 ## R15: "a thread-bound value sent away is E7008" (section 3's message, with every line it replaces
 ## named, R18). The scope is opened before the guard, so the way out does not end the scope inside the
 ## lock its task takes (E7018; check-V6's fix). The nearest allowed program is

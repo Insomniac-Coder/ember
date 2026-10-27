@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R6
+#$ rules: BRW-18, CTL-2
 #$ help: move `d.log.push(String("open"))` below line 21
+## design rules: R8, R6
 ## R8 (c), verdict 16: a generator paused in the middle of a list is a loop over it; while `g` will
 ## still be used, `d.log` does not change. AN-77, point 6; the message of rules section 3.
 

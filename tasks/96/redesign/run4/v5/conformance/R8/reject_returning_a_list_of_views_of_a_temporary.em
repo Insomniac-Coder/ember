@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R7
+#$ rules: LT-45, BRW-19
 #$ help: fn words_of(line: StrView) -> Array[String]:
+## design rules: R8, R7
 ## R8 (d): a list of views of a temporary may not be returned; it would outlive the lowered text.
 ## AN-07, point 6.
 

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R1
+#$ rules: THR-1, OWN-1
 #$ stdout: 1
+## design rules: R15, R1
 ## R15: `fn() owns names` hands the object to the thread (AN-71's `share_plain`; the capture follows
 ## the brackets with no `with`, verdict 83).
 

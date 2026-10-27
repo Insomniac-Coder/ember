@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ stdout: start
 #$ stdout: start
 #$ stdout: clicked
+## design rules: R12, R5, R8
 ## Verdicts 48 and 86, R12 (rules.md lines 672-674, 735-739): AN-76's button. The handler type is named
 ## once with `type` (`type Handler = fn()`); `setup` only stores the handler, which is not a change;
 ## `report` walks `LOG` and clicks after the walk. No first line names what anything changes. The

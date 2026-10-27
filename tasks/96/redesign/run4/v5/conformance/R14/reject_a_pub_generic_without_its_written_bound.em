@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14, R17
+#$ rules: IFC-6, TYP-17, BLD-14
+## design rules: R14, R17
 ## R14: "a `pub` one writes them" (AN-69's `total`, in section 3's form: one operation, so the one line
 ## the missing bound fails on carries the message); R17: across a package's edge only the written word
 ## counts. Section 3's E2040 message.

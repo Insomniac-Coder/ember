@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 10
+## design rules: R3
 ## R3: the nearest program that is allowed: a plain `Player` field holds the object alone.
 
 class Player:

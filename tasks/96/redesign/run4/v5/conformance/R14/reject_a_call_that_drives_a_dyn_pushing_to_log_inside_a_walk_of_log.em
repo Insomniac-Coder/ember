@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R12, R14, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R12, R14, R8
 ## R12 and R8 (c) (verdict 86): "driving an `owns dyn Iterator[Item = int]` makes the changes of every
 ## adapter the program can put there", and a call makes the changes of what it drives; `show` drives
 ## `it`, here an adapter whose function pushes to `LOG`, so `show(...)` inside a walk of `LOG` is E3020,

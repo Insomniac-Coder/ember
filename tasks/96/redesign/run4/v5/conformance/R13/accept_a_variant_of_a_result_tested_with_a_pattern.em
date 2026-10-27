@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R13
+#$ rules: GRM-44
 #$ stdout: 1
+## design rules: R13
 ## R13: the nearest program that is allowed for both E2036 tests: a test of another variant is written
 ## as a pattern (`if Ok(v) = r:`).
 

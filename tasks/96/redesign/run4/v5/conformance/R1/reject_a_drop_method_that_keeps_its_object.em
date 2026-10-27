@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R1, R5
+#$ rules: OWN-11, EXP-6, CLO-6
 #$ help: keep what you need from it instead: write `static mut KEPT_HP: Array[int] = []` in place of line 10 and `KEPT_HP.push(this.hp)` in place of line 16
+## design rules: R1, R5
 ## R1, R5: a `drop` ends its object and does not own it to give away: `KEPT.push(this)` would hand over
 ## the enemy being ended, which would live on in `KEPT` after its memory is freed (E3013, a hand-over out
 ## of a name that does not own the value; completeness gap G13). The help's two lines are the whole fix:

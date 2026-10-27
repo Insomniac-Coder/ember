@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R1, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ help: call `spawn_one()` after the loop: move line 26 below the loop
+## design rules: R1, R5, R8
 ## R1, R5, R8 (c): a local's value ends with its function, and ending an object counts as a call of its
 ## `drop` (verdict 57): `e` ends when `spawn_one` returns, and an `Enemy`'s `drop` pushes to `LOG`, so a
 ## call of `spawn_one()` adds to `LOG`. The compiler works that out from the bodies, with no word on any

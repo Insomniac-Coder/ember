@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R14
+#$ rules: OWN-8, TYP-44
 #$ stdout: 13
+## design rules: R3, R14
 ## R3, R14: the nearest program that is allowed: the line that makes each shape for an
 ## `Array[owns dyn Shape]` says `owns`, in the list it is made in and at a `push` (verdict 85).
 

@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R9
+#$ rules: RC-1
 #$ stdout: consumed 1
 #$ stdout: still 1
 #$ stdout: end 1
 #$ stdout: done
+## design rules: R9
 ## R9: a `shares` value is "freed when its last owner ends"; its owners are counted with plain adds
 ## (section 2: "a count +1 / -1, and before each +1 one compare with the count's maximum"). Ending one owner
 ## of two ends nothing; ending the last one ends the object.

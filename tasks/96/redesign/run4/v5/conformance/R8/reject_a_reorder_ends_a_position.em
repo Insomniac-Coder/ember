@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-17
 #$ help: top = ref mut scores[0]
+## design rules: R8
 ## R8 (a): a reorder (`sort`) may put another element in a position's place, so it ends the position
 ## (E3060 at a later use), for a number as for any element.
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R1
+#$ rules: OWN-3
 #$ help: keep a copy instead: write `b = n` in place of line 9
+## design rules: R3, R1
 ## R3, R1 (verdict 84): `owns` hands over every type the same way, numbers included; after `b = owns n`
 ## the name `n` has ended (E3040), as it would for a list. `b = n` copies the number and keeps `n`.
 

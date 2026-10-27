@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8
+#$ rules: BRW-1
 #$ help: move line 18, `println(r)`, above line 17
+## design rules: R12, R8
 ## R12 (rules.md lines 717-720): across a call through a function value, "no read-only view of what they
 ## change ... lives across the call"; R8 (g) (lines 521-525) refuses the change at the call (E3021).
 ## `Counter` owns no memory, so the change is not a reshape. rules.md section 3's line 1043 message shape,

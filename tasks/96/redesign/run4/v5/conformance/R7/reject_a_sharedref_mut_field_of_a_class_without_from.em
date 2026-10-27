@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45, TYP-15
 #$ help: target: shares mut Player
+## design rules: R7
 ## R7: a `sharedref mut` field is a view field, and a class object is never a view, so in a class it
 ## needs a usable `from` (E2118; the vocabulary's `sharedref` row). The message is this file's, in R18's
 ## form; the rules give none for this case.

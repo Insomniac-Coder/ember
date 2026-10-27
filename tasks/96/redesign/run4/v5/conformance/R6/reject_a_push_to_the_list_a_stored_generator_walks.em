@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6, R8
+#$ rules: BRW-18, CTL-2
 #$ help: d.log.push(String("x"))
+## design rules: R6, R8
 ## R6, verdict 16: a generator method's result is a view that walks what it views (`from log`), so the
 ## list does not change while the generator will still be used (R8 (c); AN-77, E3020).
 

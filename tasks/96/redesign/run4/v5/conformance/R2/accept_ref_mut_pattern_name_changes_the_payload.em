@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 1
+## design rules: R2
 ## R2: the nearest program that is allowed for the two refusals above: row 8's `ref mut path`
 ## (AN-38's NEW).
 

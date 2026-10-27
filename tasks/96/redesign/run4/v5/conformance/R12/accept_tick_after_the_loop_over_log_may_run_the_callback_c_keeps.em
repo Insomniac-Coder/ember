@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R12, R5, R15
+#$ rules: BRW-18, CTL-2
+## design rules: R12, R5, R15
 ## Verdicts 30, 31, 39 and 86, R12 (rules.md lines 726-751): `setup` hands C a callback to keep, which
 ## changes the game and pushes to `LOG`; `tick` makes a foreign call that may run it; no first line says
 ## what either changes, the compiler works it out. The walk of `LOG` ends before `tick()` runs. The nearest

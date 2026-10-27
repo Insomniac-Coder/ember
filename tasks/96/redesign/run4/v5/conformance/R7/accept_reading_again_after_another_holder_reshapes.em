@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R8
+#$ rules: LT-45, BRW-16
 #$ stdout: 10 3
+## design rules: R7, R8
 ## R7, R8 (b): the way out E3060's message gives: the number is read again after the push made through
 ## the other holder. AN-24, point 6.
 

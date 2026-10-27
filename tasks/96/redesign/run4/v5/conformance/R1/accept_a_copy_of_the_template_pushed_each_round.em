@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R1, R3
+#$ rules: OWN-1, OWN-8
 #$ stdout: 3
 #$ ann
+## design rules: R1, R3
 ## R1, R3: the nearest program that is allowed for both refusals above: each round pushes a player
 ## of its own, and the caller keeps its player (AN-35's NEW `spawn_all`).
 

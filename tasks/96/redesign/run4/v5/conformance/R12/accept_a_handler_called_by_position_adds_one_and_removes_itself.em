@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R8
+#$ rules: BRW-18, CTL-2
 #$ stdout: 1 1
+## design rules: R12, R8
 ## R12 (rules.md lines 768-770), R8 (c) (lines 491-492: "A `while` loop that tests its position against
 ## the list's current length at every step may add and remove"): AN-60's `Ui`. `fire` walks by position
 ## and gives each handler the whole Ui `ref mut`; the call copies the handler's two words out first, so

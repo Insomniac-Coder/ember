@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout: 1 1
+## design rules: R8
 ## R8 (g): the second way out: name the element `ref mut` and change it through that name.
 
 struct Enemy:

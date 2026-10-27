@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 1
+## design rules: R4
 ## R4, verdict 32: `ref mut s: shares mut Clock` names the caller's place, which holds a `shares mut`
 ## owner, so `tick` may change the clock; no first line names the change (verdict 86). The nearest
 ## allowed program to the plain parameter (AN-20).

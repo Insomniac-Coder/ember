@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R5
+#$ rules: FN-4
 #$ stdout: made
 #$ stdout: end a
+## design rules: R5
 ## R5: `fn drop():` reads its object and changes nothing outside it; `r` ends with `main`, after the
 ## print. Every `drop` is written `fn drop():` (verdict 86; verdict 69's spelling is void).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R6
+#$ rules: BRW-18, CTL-2
 #$ help: move `d.log.push(String("open"))` below line 23
+## design rules: R8, R6
 ## R8 (c), R6, verdict 16: a generator is a walk of what it views however it walks it; one that walks
 ## by position (`while i < this.log.len():`) is refused the same way, with no way out by position.
 ## AN-77, the v3 note's point 1.

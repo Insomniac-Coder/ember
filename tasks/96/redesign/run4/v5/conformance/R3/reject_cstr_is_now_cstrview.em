@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: MOD-3
 #$ help: write `name: CStrView`
+## design rules: R3
 ## R3 and the removed words of `V4/rules.md` section 3: `cstr` is written `CStrView` (E1010; the `cstr` row of
 ## `V4/vocabulary.md`; completeness gap G8).
 

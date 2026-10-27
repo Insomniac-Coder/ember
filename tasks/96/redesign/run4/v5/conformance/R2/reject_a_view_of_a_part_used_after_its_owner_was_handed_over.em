@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2, R8
+#$ rules: BRW-17
 #$ help: use `n` before line 16, or keep your own copy: write `n = copy of p.name` in place of line 15
+## design rules: R2, R8
 ## R2, R8 (b): a name for a part views into its owner; handing the owner over while the name is still
 ## used would leave it pointing at a value that moved (E3060; AN-35's refused program and message).
 

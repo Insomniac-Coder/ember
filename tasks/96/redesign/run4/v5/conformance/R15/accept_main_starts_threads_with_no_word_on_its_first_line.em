@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R5, R12
+#$ rules: THR-1, FN-4, CLO-1
 #$ stdout: 1 1 2
+## design rules: R15, R5, R12
 ## R15: "Starting a thread counts as making what its function changes" (R5, R12), worked out from the
 ## program: `main` changes `FRAME` and `LOG` itself and `RESULTS` through its threads, and its first line
 ## says none of it (verdict 86; AN-76's NEW, with a line that prints what the threads did). Renamed

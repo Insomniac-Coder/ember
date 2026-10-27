@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R6
+#$ rules: LT-45, LT-1
 #$ stdout: 30
+## design rules: R7, R6
 ## R7: the way out E3063's message gives: the registry is made in the caller, and the list of views
 ## returned with `from reg` lives as long as it. AN-24, point 6.
 

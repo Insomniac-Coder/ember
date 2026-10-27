@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: LT-45
 #$ help: fn views(reg: Registry) -> Array[View] from reg:
+## design rules: R7
 ## R7: a list of views lives no longer than what its views point into, whoever owns the list; returned
 ## past `reg` it is refused (E3063). AN-24, point 6 (its message, naming every line it replaces, R18).
 

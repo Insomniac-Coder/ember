@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R12
+#$ rules: FN-1, CLO-1
 #$ stdout: 1
+## design rules: R4, R12
 ## R4: a callable type writes the same words as a parameter (`fn(ref mut Counter)`), and a call through
 ## a function value says `ref mut` before the argument it may change.
 

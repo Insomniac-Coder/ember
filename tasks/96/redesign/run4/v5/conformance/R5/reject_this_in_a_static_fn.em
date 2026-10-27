@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: MOD-3
 #$ help: return Counter(n=k)
+## design rules: R5
 ## R5: a `static fn` has no `this`; using it there is refused (rules section 3, E1010). The way out
 ## keeps `main`'s `Counter.starting_at(5)` compiling (R18), which removing `static` would not.
 

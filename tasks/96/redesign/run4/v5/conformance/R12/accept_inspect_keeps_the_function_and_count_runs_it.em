@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12
+#$ rules: CLO-1
 #$ stdout: 0
 #$ stdout: 3
+## design rules: R12
 ## R12 (rules.md lines 711-714, 735-739): "An iterator adapter keeps the function it is given and runs it
 ## at each step"; storing it in the adapter changes nothing (`seen` is still empty after `inspect`), and
 ## driving the adapter runs it, so `count()` is the call that pushes to `seen`. AN-55's iterator line,

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R1
+#$ rules: OWN-3
 #$ help: id = j.id
+## design rules: R5, R1
 ## R5: `owns this` takes the object over, and the caller's name ends at the call (E3040).
 
 class Job:

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R6
+#$ rules: BRW-17
 #$ help: n = String(first(names))
+## design rules: R8, R6
 ## R8 (b): every view a call gives is an address, which ends at a change that may reshape what it points
 ## into (here all of `names`, R6). AN-26, point 6.
 

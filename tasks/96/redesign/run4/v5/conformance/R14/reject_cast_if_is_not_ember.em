@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: MOD-3
+## design rules: R14
 ## R14: "Today's `cast s if Circle` ... are not Ember (E1010, with the line to write:
 ## `if s is Circle as c:`)" (AN-68's OLD line). Each shape made for the list of `owns dyn Shape` says
 ## `owns` (verdict 85).

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R11, R4, R12
+#$ rules: BRW-21, FFI-52
 #$ help: move line 51 above line 48
+## design rules: R11, R4, R12
 ## R11, R4 (verdict 53, its corrected record): the walk's call `this.on_visit(p)` compiles when no
 ## function the program stores in `on_visit` uses its node after a line that may end it. `prune` clears
 ## `root`'s children, which may end the node it is given (`mid`, under `top`), and then reads that node,

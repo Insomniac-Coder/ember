@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R13
+#$ rules: BRW-16, GRM-44
 #$ stdout: hi
+## design rules: R8, R13
 ## R8 (b): the way out E3060's message gives: the view of the payload is used before the line that
 ## changes the variant.
 

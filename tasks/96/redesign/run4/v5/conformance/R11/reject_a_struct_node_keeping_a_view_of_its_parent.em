@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R11, R7
+#$ rules: TYP-14
+## design rules: R11, R7
 ## R11: a link back to the parent needs an object that lives on its own: a class with a `weakref`
 ## field; a struct cannot keep a view of the struct that holds it (AN-41, still refused).
 

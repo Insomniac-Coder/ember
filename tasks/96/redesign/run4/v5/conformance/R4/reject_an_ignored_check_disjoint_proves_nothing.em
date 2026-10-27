@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-11
 #$ help: write `assert_disjoint(d, s)` in place of line 18, with `from std.mem import assert_disjoint` at the top
+## design rules: R4
 ## R4: a `check_disjoint` result bound and never looked at proves nothing, so the call stays refused
 ## as in `mix` without a check (AN-14, E3021). The way out imports `assert_disjoint`, which this program
 ## does not, so it compiles (step 3's re-check, wrong 3-6).

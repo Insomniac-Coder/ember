@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R1
+#$ rules: BRW-14, BRW-15
 #$ help: for a copy of your own write `q = copy of p`; to change `p` write `q = ref mut p`
+## design rules: R1
 ## R1: a `Copy` struct copied with `=` from a name that is still used afterwards is not then changed
 ## through the new name (E3023): the line says `copy of` (a copy of your own) or `ref mut` (the
 ## original), so no copy is changed by mistake (AN-44's struct case, which prints 1 silently today).

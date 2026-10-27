@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 1.0
+## design rules: R4
 ## R4: inside `if i != j:` the two positions are proved different, so the call needs no compare, and
 ## `step(ref mut bs, 1, 1)` skips it with nothing stopped.
 

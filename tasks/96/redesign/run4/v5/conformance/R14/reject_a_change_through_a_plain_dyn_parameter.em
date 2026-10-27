@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14, R5
+#$ rules: BRW-15
+## design rules: R14, R5
 ## R14: "`dyn I` as a parameter's type is a read-only view (`ref mut v: dyn I` may change it)"; R5
 ## (verdict 86): "A method that may change its object is not called through a name that only reads it
 ## (E3023)", what `grow` changes being worked out from every implementation the program has (here

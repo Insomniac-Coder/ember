@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: MOD-3
 #$ help: fn bump(c: Counter) -> int:
+## design rules: R5
 ## R5: only a method has an object; `this` in a free function is refused (rules section 3's "a free
 ## function", E1010; completeness G7).
 

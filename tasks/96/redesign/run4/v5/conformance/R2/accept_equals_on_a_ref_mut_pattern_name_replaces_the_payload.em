@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 0
+## design rules: R2
 ## R2: the nearest program that is allowed: `=` on a `ref mut` pattern name puts the new list in the
 ## payload's place, and the old list ends.
 

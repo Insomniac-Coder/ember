@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R5
+#$ rules: FN-4
 #$ stdout: 100 100
+## design rules: R5
 ## R5: through a `ref mut` loop name a method that changes its object may be called; the call on the
 ## object carries no word (R4).
 

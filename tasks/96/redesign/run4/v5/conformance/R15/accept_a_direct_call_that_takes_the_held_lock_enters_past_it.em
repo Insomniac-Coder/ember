@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 1
+## design rules: R15
 ## R15: "A call whose body the compiler sees enters the callee past the lock it already holds (static
 ## re-entry)" (AN-74).
 

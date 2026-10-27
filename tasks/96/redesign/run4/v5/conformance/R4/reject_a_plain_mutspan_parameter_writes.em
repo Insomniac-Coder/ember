@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5
+#$ rules: BRW-15
 #$ help: fn integrate(ref mut pos: MutSpan[float], vel: Span[float], dt: float):
+## design rules: R4, R5
 ## R4, verdict 34: a `MutSpan` parameter that writes the caller's elements says `ref mut`; a plain
 ## `pos: MutSpan[float]` only reads them, and the call to it takes no word (AN-11, the spec's own
 ## `integrate`).

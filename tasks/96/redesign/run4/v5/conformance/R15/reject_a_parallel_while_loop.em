@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: PAR-1
+## design rules: R15
 ## R15: "A `@parallel` loop splits a range or a list walked by element into chunks (E7016 for anything
 ## else)" (section 3's message; AN-84).
 

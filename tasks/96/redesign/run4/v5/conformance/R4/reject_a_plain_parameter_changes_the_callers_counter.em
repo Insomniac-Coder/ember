@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5
+#$ rules: BRW-15
 #$ help: fn bump(ref mut c: Counter):
+## design rules: R4, R5
 ## R4: what a function may do with a parameter is set by the word in front of its name; a plain
 ## parameter only reads the caller's value, for every type, a class object included (AN-20).
 

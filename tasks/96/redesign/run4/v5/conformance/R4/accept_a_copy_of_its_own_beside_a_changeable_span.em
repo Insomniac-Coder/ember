@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 0.5 1.5
+## design rules: R4
 ## R4: the nearest allowed program: `old` is a list of its own, so the two arguments are two lists and
 ## the call needs no check (AN-11).
 

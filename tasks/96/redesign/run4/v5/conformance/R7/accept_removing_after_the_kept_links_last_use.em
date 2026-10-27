@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R8
+#$ rules: LT-45, BRW-16
 #$ stdout: 1 10
+## design rules: R7, R8
 ## R7, R8 (b): the first way out E3060's message gives: the removal comes after the last use of the
 ## watcher. AN-52, point 6.
 

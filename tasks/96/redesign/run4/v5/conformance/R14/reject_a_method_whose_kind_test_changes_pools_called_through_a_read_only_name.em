@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14, R5
+#$ rules: BRW-15
+## design rules: R14, R5
 ## R14 with R5 (verdict 86): `put` changes `this.pools` through the `ref mut` name its kind test gives,
 ## so the compiler works out that `put` changes its object, and "A method that may change its object is
 ## not called through a name that only reads it (E3023)" (AN-22's `put`; verdict 86 moved the check

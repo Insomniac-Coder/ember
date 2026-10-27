@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R6, R8
+#$ rules: BRW-17
 #$ help: println(best.len())
+## design rules: R4, R6, R8
 ## R4, R6: after the call, `best` may point into any of the call's arguments, so a change that may
 ## move `b`'s elements ends it (R8 (b), E3060).
 

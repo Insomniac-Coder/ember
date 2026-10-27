@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R4
+#$ rules: CLO-3
 #$ help: fn(s): names.push(copy of s)
+## design rules: R12, R4
 ## Verdict 71, R12 (rules.md lines 676-680): a lambda's parameter matches the function type it is given
 ## to; `each_name` lends each name read-only (`fn(String)`), so a lambda that takes it over (`fn(owns s)`)
 ## would hand over a name it was only lent (E2020). rules.md section 3's line 1092 first message, word for

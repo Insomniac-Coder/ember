@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7, R8
+#$ rules: BRW-17
 #$ help: w = Watcher(target=sharedref mut players[1])
+## design rules: R7, R8
 ## R7, R8 (b): a kept link is an address, not a position; into a list that holds its structs inline, a
 ## push may move the player it points at, so the push ends it (E3060 at a later use); verdict 81 keeps
 ## only a link to an object in its own block. The line the message gives compiles.

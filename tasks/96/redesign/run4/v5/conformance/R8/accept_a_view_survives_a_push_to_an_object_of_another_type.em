@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R9, R5
+#$ rules: BRW-16, RC-1, FN-4
 #$ stdout: 1 2
+## design rules: R8, R9, R5
 ## R8 (b): two paths that lead to values of different types never reach one object, so a push through
 ## the `Crate` does not end a view into the `Bag`.
 

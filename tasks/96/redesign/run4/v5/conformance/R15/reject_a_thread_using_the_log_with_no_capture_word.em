@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-17, THR-10
+## design rules: R15
 ## R15: an unscoped thread names what it holds (E7004); `owns log` is not offered, since `start` does not
 ## own the log (AN-75). The nearest allowed program is
 ## `accept_threads_share_a_log_and_push_under_its_lock.em`.

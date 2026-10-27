@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R2
+#$ rules: BRW-14, BRW-15
 #$ help: r = ref mut b
+## design rules: R4, R2
 ## R2, verdict 42: a `ref mut` name is given another ref only with `ref mut`; `ref b` only reads `b`
 ## (AN-28).
 

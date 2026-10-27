@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12, R14, R5
+#$ rules: CLO-1, TYP-44, FN-4
 #$ stdout: 1
 #$ stdout: 2
 #$ stdout: 2
+## design rules: R12, R14, R5
 ## R12 and R5 (verdict 86): a `dyn` type says nothing about what its values' methods change; driving
 ## `it` makes the changes of every adapter the program can put there, worked out from the program (here
 ## the function given to `inspect`, which pushes to `LOG`), and no first line says it. Renamed from

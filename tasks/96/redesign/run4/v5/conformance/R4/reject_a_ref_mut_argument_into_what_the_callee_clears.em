@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R8
+#$ rules: BRW-21
 #$ help: write `mine = copy of LOG[0]` and `rename(ref mut mine)` in place of line 16
+## design rules: R4, R8
 ## R4, verdicts 53 and 87: the call check covers a `ref mut` parameter too: `rename` writes `s` after
 ## `LOG.clear()`, which frees the string `s` names when it is `LOG[0]`, so the call is refused (E3031,
 ## `V5/rules.md` section 3's message in this program's lines).

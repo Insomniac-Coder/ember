@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R7
+#$ rules: OWN-8
 #$ help: make the copy from its text: `d2 = Document(String(d.text))`
+## design rules: R3, R7
 ## R3, R7: `copy of` is refused before a value whose views point into its own `let` field (E2116): a
 ## copy's words would point into the first document's text (AN-25's message).
 

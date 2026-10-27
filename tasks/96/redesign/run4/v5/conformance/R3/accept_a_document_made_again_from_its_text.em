@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R7
+#$ rules: OWN-8, LT-45
 #$ stdout: 3
+## design rules: R3, R7
 ## R3, R7: the nearest program that is allowed: a second document made from a copy of the text, whose
 ## words point into its own text (AN-25).
 

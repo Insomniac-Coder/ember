@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2, R3
+#$ rules: GRM-42
 #$ help: to change that list through `path`, write `State.Walking(ref mut path):`
+## design rules: R2, R3
 ## R2, R3: `mut` alone on a name says it may change but not whose list it is, so it is refused (E0113)
 ## with row 8's line (AN-38's message; `V5/rules.md` section 3, the `mut` row of
 ## `V5/vocabulary.md`).

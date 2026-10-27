@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1, R3
+#$ rules: OWN-1, OWN-8
 #$ stdout: 1 2
+## design rules: R1, R3
 ## R1, R3: the first way out: `q = copy of p` says the copy is your own; changing it leaves `p` as
 ## it was.
 

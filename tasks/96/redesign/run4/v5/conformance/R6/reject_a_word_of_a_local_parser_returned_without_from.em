@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6, R8
+#$ rules: BRW-19
 #$ help: fn next_word() -> StrView from src:
+## design rules: R6, R8
 ## R6: with no `from`, `p.next_word()` points into `p`, a local that ends when `first_word` returns, so
 ## returning it is refused (AN-22, E3063). The compiler works the source out from the body to write
 ## the line, and never applies it silently (R17).

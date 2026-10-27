@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R1, R5, R8
+#$ rules: OWN-1, FN-4, BRW-16
 #$ stdout: start
 #$ 1
 #$ 2
+## design rules: R1, R5, R8
 ## R1, R5, R8 (c): the nearest program that is allowed: `spawn_one()` runs after the loop over `LOG`, so
 ## the push its local's `drop` makes (verdict 57) changes no list a loop walks; no first line names it
 ## (verdict 86). The `drop` runs once, when `spawn_one` returns.

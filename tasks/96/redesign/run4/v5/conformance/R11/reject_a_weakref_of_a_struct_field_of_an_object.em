@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R11
+#$ rules: WK-16
 #$ help: cam.target = weakref player
+## design rules: R11
 ## R11: "a `weakref` of a part, a field or an element stored inline, is refused (E2119)": `player.pos`
 ## is a `Pos` stored inside the player, with no header of its own a link could test. The field form of
 ## rules section 3's E2119 row (the element form is `reject_a_weakref_of_a_struct_stored_inline_in_a_list.em`);

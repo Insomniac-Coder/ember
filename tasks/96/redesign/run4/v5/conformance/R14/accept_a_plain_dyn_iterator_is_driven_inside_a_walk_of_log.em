@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R14, R8
+#$ rules: BRW-18, CTL-2
 #$ stdout: 33
+## design rules: R12, R14, R8
 ## R12 and R8 (c) (verdict 86): driving `it` makes the changes of every iterator the program puts there;
 ## here only `xs.iter()`, which changes nothing, so driving it inside a walk of `LOG` is allowed. The
 ## same walk given an adapter that pushes to `LOG` is refused

@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R6, R8
+#$ rules: LT-1, BRW-16
 #$ stdout: key
 #$ stdout: 2 1
+## design rules: R6, R8
 ## R6: the nearest allowed program: `w` is used before `bag` changes, so nothing it points into
 ## changes while it is used.
 

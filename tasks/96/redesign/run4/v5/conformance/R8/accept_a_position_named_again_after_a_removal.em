@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R2
+#$ rules: BRW-16, BRW-12
 #$ stdout: 1 19
+## design rules: R8, R2
 ## R8 (a): after a removal the position is named again, the way out E3060's message gives; a `ref mut`
 ## name may be given another ref (R2, verdict 42).
 

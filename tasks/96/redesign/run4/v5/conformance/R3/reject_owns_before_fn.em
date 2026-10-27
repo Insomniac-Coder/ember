@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R12
+#$ rules: OWN-9
 #$ help: name it on each captured name (`fn() owns report:`); `task` captures nothing, so write `task = fn() => println("done")`; a name not listed is the real variable
+## design rules: R3, R12
 ## R3, R12: `owns` before `fn` is refused (E0109): it does not say what the function takes or copies;
 ## a capture list names it on each captured name (AN-47's message).
 

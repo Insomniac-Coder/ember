@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout: 10 2
+## design rules: R8
 ## R8 (a), (g): adding to the list that holds a read-only position is allowed; the element is found
 ## again at its next use.
 

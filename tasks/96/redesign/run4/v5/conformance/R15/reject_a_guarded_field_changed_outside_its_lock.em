@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-18
+## design rules: R15
 ## R15: a `guarded by` field is changed only while its lock is held (section 3's E7013 message; AN-74).
 
 from std.sync import Lock

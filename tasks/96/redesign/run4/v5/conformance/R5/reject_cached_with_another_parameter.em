@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: CLS-12
 #$ help: radii: Map[f64, f64]
+## design rules: R5
 ## R5: `@cached` keeps one result, so a method with another parameter is refused (AN-21, E2117;
 ## completeness G1).
 

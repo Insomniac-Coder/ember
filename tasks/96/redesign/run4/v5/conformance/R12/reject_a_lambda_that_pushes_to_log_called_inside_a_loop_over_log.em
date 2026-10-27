@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ help: move line 16, `click()`, below the loop
+## design rules: R12, R5, R8
 ## Verdict 86, R12 (rules.md lines 662-672): "A lambda writes nothing about what it changes"; "wherever a
 ## function value is called, the compiler counts the changes of every function the program can put in
 ## that place". The lambda pushes to `LOG`, so `click()` inside a loop over `LOG` is refused (R8 (c),

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: CLO-4
+## design rules: R15, R12
 ## R15 (verdict 93): "`ref t` is refused where the function may still run after the element changes or
 ## ends: a `thread.spawn` thread may outlive the loop (E3026: "the thread may still run after the loop has
 ## moved on and `texts` is gone; give it its own copy: `thread.spawn(fn() copy of t: ...)`")" (the lead's

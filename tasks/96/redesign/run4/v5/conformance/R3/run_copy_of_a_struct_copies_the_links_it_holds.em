@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R3, R9, R11
+#$ rules: OWN-8, RC-1, WK-11
 #$ stdout: 5
 #$ 5
 #$ player ended
 #$ done
+## design rules: R3, R9, R11
 ## R3, R9, R11 and `V5/rules.md` section 2 ("a count +1 / -1"; "one add and one subtract of the
 ## target's weak count"): `copy of` a struct that holds links copies the links (verdict 79): `t2.captain`
 ## is one more owner of the same player and `t2.scout` one more link to it, so a change through `t2` is

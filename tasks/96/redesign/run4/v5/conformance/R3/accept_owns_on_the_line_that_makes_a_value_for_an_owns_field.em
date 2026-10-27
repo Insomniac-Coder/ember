@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 3
+## design rules: R3
 ## R3: the nearest program that is allowed: the line that makes the mesh for the `owns` field says
 ## `owns` (verdict 74); the mesh is put in its own block and held alone there.
 

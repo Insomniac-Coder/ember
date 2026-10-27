@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-18
+## design rules: R15
 ## R15: the field is guarded by its own object's lock: "the lock of another object (E7013)" (AN-74).
 
 from std.sync import Lock

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R15, R12, R8
 ## R15: "Every foreign call counts as possibly running the callbacks C keeps, unless the foreign
 ## function's declaration says `@ffi(no_callbacks)`"; R12: it "makes every change they make", worked out
 ## from the callback's body (verdict 86); inside a walk of what they change it is E3020 (verdict 31;

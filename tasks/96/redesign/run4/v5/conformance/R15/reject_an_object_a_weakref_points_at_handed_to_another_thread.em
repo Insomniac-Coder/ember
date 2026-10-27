@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R15, R12, R11
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
 #$ help: give the thread a copy of its own: write `h = thread.spawn(fn() copy of names: names.items.len())` in place of line 16
+## design rules: R15, R12, R11
 ## R15, R12, R11 (step 4's safety re-check): a class object that a `weakref` link on this thread points
 ## at is not handed whole to another thread (E7015): this thread could open `w` while the other thread
 ## ends `names`, a race on the object's one-thread header and a read of freed contents.

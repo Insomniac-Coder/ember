@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 3
+## design rules: R15, R12
 ## R15 (verdict 77; F-10): the lines E7007 gives a task that reads the place before it adds: the field is
 ## guarded by its object's lock, and `add_below` reads and adds inside it, so no task sees a total
 ## another is changing and the total never passes 10. It replaces step 3's

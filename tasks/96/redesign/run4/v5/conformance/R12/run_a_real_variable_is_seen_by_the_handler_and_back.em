@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12
+#$ rules: CLO-1
 #$ stdout: 1
 #$ stdout: 11
+## design rules: R12
 ## Row 6, R12 (rules.md lines 752-759; section 2, line 985, "nothing" for a captured real variable at
 ## its own address): the handler changes `game`'s real `score`, and a write by `game` is seen by the
 ## handler ("a write in the lambda is seen by the function, and back", area-D.md line 43). "Without a

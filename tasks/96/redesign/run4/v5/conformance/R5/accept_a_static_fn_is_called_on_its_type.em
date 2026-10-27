@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R5
+#$ rules: FN-4
 #$ stdout: 5
+## design rules: R5
 ## R5, verdict 7: a function in a type body written `static fn` has no `this` and is called on the
 ## type.
 

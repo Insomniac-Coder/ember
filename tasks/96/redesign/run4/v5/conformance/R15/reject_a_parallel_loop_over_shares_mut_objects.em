@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R9
+#$ rules: PAR-2
+## design rules: R15, R9
 ## R15: E7010 where chunks may write one place: a list of `shares mut` objects may hold one object twice
 ## (section 3's message, which gives only "give each player one owner", T-W6 11: guarding the fields
 ## would send a `shares mut` object to other threads, E7015; with the lines it replaces named, R18;

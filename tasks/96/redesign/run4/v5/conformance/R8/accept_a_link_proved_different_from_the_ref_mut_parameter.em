@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R13, R5
+#$ rules: BRW-16, GRM-44, FN-4
 #$ stdout: 9 9
+## design rules: R8, R13, R5
 ## R8 (f): inside `if t is not a:` the compiler knows `t` names another turret, so it may change it
 ## while `a` is still used.
 

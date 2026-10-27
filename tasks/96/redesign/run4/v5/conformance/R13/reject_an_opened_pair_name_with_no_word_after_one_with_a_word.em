@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R13, R3
+#$ rules: GRM-42
 #$ help: say what `b` is: `if pair exists as (ref mut a, ref b):`, or `ref mut b` to change it too
+## design rules: R13, R3
 ## R13, R3: the names after `exists as` are a list of names without types, so a name with no word may
 ## not follow a name with a word (E0116).
 

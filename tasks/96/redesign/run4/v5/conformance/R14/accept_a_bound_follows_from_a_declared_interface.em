@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14
+#$ rules: TYP-44
 #$ stdout: 5
+## design rules: R14
 ## R14: with the interface E2072's message gives declared, a non-`pub` body's bound is worked out from
 ## it.
 

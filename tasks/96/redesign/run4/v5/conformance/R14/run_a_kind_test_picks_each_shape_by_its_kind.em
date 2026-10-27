@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R14
+#$ rules: TYP-44
 #$ stdout: circle 3
 #$ stdout: square 4
 #$ stdout: other
+## design rules: R14
 ## R14: "`if s is Circle as c:` runs its block when `s` is a `Circle` and names it `c` there ... Other
 ## kinds are tested with `elif s is Square as q:` and `else:`"; each test is one type-id compare
 ## (section 2). AN-68's NEW, made a whole program; each shape made for the list of `owns dyn Shape`

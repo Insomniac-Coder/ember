@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R11, R3
+#$ rules: OWN-8
+## design rules: R11, R3
 ## R11: the other way out of `reject_copy_of_a_link.em`: open the link, then copy the player itself
 ## (verdict 10: the copy word copies the thing itself, never a link).
 

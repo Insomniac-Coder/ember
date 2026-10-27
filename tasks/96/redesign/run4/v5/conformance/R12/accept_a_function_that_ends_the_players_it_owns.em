@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R5, R13
+#$ rules: BRW-17, LT-3
 #$ stdout: gone
+## design rules: R12, R5, R13
 ## Verdicts 55 and 86, R12 (rules.md lines 681-685): "`reset = fn() owns players: players.clear()` may end
 ## players", worked out from its body with no word on it or on `main`, which runs it; the link opened after
 ## the call finds its player ended. A name opened before the call and used after it is refused

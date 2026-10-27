@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R15
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
 #$ stdout: event
+## design rules: R12, R15
 ## Step 3's hole 6a, its original form, R12 (rules.md lines 692-702): a `thread_shared` object holds its
 ## functions in a `thread_shared fn()` type, so every function stored there holds only `thread_shared`
 ## values or copies, and another thread may run them (here `fire`, on the thread `spawn` starts); the list

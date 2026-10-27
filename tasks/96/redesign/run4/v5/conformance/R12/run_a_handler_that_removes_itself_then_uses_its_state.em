@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12, R8
+#$ rules: CLO-1, BRW-16
 #$ stdout: once
 #$ stdout: 8
 #$ stdout: 8
+## design rules: R12, R8
 ## R12 (rules.md lines 770-771; section 2, line 987, "one count on a handler's own state"): "A body that
 ## may end its own state (it removes itself) and uses that state afterwards holds one count on it across
 ## that call." The handler removes itself from the list (which ends the list's function value, and so

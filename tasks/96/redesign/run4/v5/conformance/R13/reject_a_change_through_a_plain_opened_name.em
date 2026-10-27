@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R13, R5
+#$ rules: BRW-14, BRW-15
 #$ help: to change it through `p`, write `if cam.target exists as ref mut p:`
+## design rules: R13, R5
 ## R13, R5: plain `p` after `exists as` is a read-only view; a change through it is refused (E3023)
 ## with the word that allows it.
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: OWN-9
 #$ help: remove `owns`: write `return xs`
+## design rules: R3
 ## R3: `owns` is refused after `return` too, which already hands the value over (E0109;
 ## `V4/rules.md` section 4).
 

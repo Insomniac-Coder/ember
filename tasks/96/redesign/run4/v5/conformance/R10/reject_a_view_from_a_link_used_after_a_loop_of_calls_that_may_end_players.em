@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R10, R13, R18
+#$ rules: BRW-17, LT-3
+## design rules: R10, R13, R18
 ## R10 point 1 (verdict 82): a loop of calls that may end a `Player` is in `p`'s life, so `p` is not
 ## used after it (E3060). The v3 rules kept the player alive with a deferred-drop region around `p`'s
 ## life; R10 no longer does (rules section 2, "Gone").

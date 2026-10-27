@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 10 30
+## design rules: R2
 ## R2: a name that holds a `MutSpan` likewise: `d[i] = v` writes through it, and
 ## `d = ref mut ys.as_mut_span()` points it at another span; nothing is written into `xs` by that
 ## line (verdicts 34, 42; AN-28).

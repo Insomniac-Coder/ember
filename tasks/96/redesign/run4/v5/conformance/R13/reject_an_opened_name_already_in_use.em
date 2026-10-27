@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R13
+#$ rules: GRM-44
 #$ help: `exists as` declares a new name: write `if cam.target exists as t:`
+## design rules: R13
 ## R13: the name after `exists as` is new: a name already in use is refused (E2106; `V4/rules.md`
 ## section 3's message).
 

@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R16
+#$ rules: TIER-1
+## design rules: R16
 ## R16 (verdict 91): the lines E3100 gives: `into_raw()` inside `unsafe:`, with a `# SAFETY:` note saying
 ## why it is sound; the widget's name ends with `address_for_c`'s `owns w`, and Ember frees nothing.
 

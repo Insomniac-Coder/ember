@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2, R5
+#$ rules: BRW-14, BRW-15
 #$ help: to change `p`'s position write `pos = ref mut p.pos`; to change your own copy write `pos = copy of p.pos`
+## design rules: R2, R5
 ## R2, R5: `pos = p.pos` names a part of `p` read-only (a struct with fields is viewed, not copied),
 ## so `pos.x += 1` is refused (E3023) with both words that would allow it (AN-44's message).
 

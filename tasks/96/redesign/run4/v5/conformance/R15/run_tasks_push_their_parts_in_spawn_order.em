@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 2
 #$ stdout: 1
 #$ stdout: 5
+## design rules: R15
 ## R15: "`push` ... get one private accumulator per task, combined at the join in spawn order"; the
 ## program E7007's help leads to (AN-72), which gives what one thread would.
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R8, R14
+#$ rules: BRW-18, CTL-2
 #$ help: write `a = s.area()` above line 24 and `println(line, a)` in place of line 25
+## design rules: R5, R8, R14
 ## R5, R8 (c), verdict 86: what a call through an interface method changes is worked out from every
 ## implementation the program can put behind it (it replaces E2113, which compared an implementation
 ## with the interface method's first line): `Square.area` pushes to `LOG`, so `s.area()` inside a loop

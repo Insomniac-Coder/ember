@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5
+#$ rules: FN-2a
 #$ help: fn revive(ref mut p: Player):
+## design rules: R4, R5
 ## R4: `ref mut` before a plain parameter is refused: `p` only reads the caller's player, so this
 ## function may not hand it on to be changed (rules section 3, E3027).
 

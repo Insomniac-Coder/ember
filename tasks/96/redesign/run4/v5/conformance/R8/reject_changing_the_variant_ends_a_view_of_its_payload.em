@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R13
+#$ rules: BRW-17
 #$ help: println(t)
+## design rules: R8, R13
 ## R8 (b): a view into an enum's payload ends when the enum changes its variant, a reshape that frees the
 ## payload (E3060 at a later use).
 

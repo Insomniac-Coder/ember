@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R15, R12, R8
 ## R12 (verdicts 30 and 86): handing C a callback to keep counts as making what the callback changes, now
 ## or later, worked out from its body; this one adds to `game.names` (through `add_point`), so handing
 ## it over inside a walk of `game.names` is E3020 (AN-78; the message names the chain, R18). The nearest

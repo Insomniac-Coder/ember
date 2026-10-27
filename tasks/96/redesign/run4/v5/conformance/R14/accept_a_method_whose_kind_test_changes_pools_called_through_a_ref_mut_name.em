@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14, R5, R4
+#$ rules: TYP-44, FN-4, FN-1
 #$ stdout: ok
+## design rules: R14, R5, R4
 ## R14 with R5 and R4: the lines E3023 gives: `fill` takes the registry `ref mut`, the call says so, and
 ## `put`, which changes `this.pools` through its kind test's `ref mut` name, is called through it.
 

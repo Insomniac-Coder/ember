@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 2
+## design rules: R2
 ## R2: the nearest program that is allowed: a local of your own, made from the parameter.
 
 fn bump(n: int) -> int:

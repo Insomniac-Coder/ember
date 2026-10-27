@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R3
+#$ rules: FN-1, OWN-8
 #$ stdout: renamed 0
+## design rules: R4, R3
 ## R4, verdict 53: the nearest allowed program, the lines E3031's message gives: `mine` is a string of
 ## `main`'s own, no part of `LOG`, so `rename` may clear `LOG` and then change it.
 

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-11, THR-21
+## design rules: R15
 ## R15: reductions are combined at the join; "nothing reads the place before the join" (E7007; AN-71;
 ## the message gives the line to remove and the line to write, R18). The nearest allowed program is
 ## `run_scoped_tasks_add_their_parts_to_a_total.em`, which reads `total` after the block.

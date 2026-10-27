@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12, R4, R5
+#$ rules: THR-1, CLO-1, FN-1, FN-4
 #$ stdout: 3
+## design rules: R15, R12, R4, R5
 ## R15: the lines E7008 gives: the task takes the lock itself, after the parent's `with g` block ends; a
 ## `Mutex` takes no word at the call (R4); what `add_one`, the task and `main` change is worked out, and
 ## no first line says it (R5, verdict 86).

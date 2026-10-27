@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R4
+#$ rules: BRW-1, BRW-11
 #$ help: write `if i != j:` above line 11 and indent lines 11 to 15 under it
+## design rules: R8, R4
 ## R8 (f) (verdict 98): two `ref mut` names of elements of one list whose indexes are not proved
 ## different are refused as R4 refuses two such arguments (E3022): `i` and `j` may be equal.
 

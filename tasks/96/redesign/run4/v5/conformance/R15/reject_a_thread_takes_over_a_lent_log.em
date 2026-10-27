@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R3
+#$ rules: OWN-11, EXP-6, CLO-6
+## design rules: R15, R3
 ## R3 and R15: a name that does not own the value cannot hand it over (E3013); `start`'s plain `log`
 ## is lent (AN-75). The nearest allowed program is
 ## `accept_threads_share_a_log_and_push_under_its_lock.em`.

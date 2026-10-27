@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6, R8
+#$ rules: BRW-1
 #$ help: f = 5
+## design rules: R6, R8
 ## R6, R2: a name bound to a call whose result is `ref mut T` is a `ref mut` name of that place, and it
 ## is alone while it is used (R8 (f); AN-23, E3022).
 

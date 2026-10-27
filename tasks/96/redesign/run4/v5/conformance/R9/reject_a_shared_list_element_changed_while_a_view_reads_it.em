@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R8
+#$ rules: BRW-1
+## design rules: R9, R8
 ## R9, R8 (g): a read-only view of a shared value promises that what it reads does not change through
 ## any other owner while it is used; today's `Shared` panics on the same overlap while running
 ## (`tests/conformance/HEAP-5/run_fail_aliased_shared_get_mut.em`), the new model refuses it when

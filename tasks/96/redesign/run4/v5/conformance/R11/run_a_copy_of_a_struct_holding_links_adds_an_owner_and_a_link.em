@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R11, R3, R9
+#$ rules: WK-11, OWN-8, RC-1
 #$ stdout: 10
 #$ stdout: done
 #$ stdout: player ends
+## design rules: R11, R3, R9
 ## R3, R11 (verdict 79): "`copy of` a struct that holds links copies the links": `copy of t` is a new
 ## `Team` whose `captain` is one more owner of the same player (+1) and whose `scout` is one more link
 ## to it (one more weak count). When `keep_copy` returns, `p` and `t` end, and the copy's `captain`

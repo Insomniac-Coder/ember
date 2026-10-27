@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R10, R12, R5
+#$ rules: BRW-17, LT-3
 #$ stdout: 1
 #$ stdout: gone
+## design rules: R10, R12, R5
 ## R10 point 1, R12 (hole 3, part 2): the way out E3060's message gives: `p` is used before
 ## `h.keep = fn(): pass`, which ends the function stored there and the node it owns; the link opened
 ## again after it finds the node ended. The nearest program to

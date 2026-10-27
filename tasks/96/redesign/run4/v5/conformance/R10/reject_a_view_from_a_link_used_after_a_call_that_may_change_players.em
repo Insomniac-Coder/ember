@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R10, R8, R12, R18
+#$ rules: BRW-17
 #$ help: if this.target exists as q:
+## design rules: R10, R8, R12, R18
 ## R10 point 1 (verdicts 82, 86): no call in the view's life may end an object of its type, a call
 ## through a function value included, by every function the program can put there: `on_hit` holds
 ## `fn() owns players: players.clear()`, which ends the players its state owns, so `p` is not used after

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: CLS-12
 #$ help: remove `@cached` (line 12), or remove line 17
+## design rules: R5
 ## R5: a cached method only reads: a kept result of a method that changes its object would skip the
 ## change on every later call (AN-21, E2117; completeness G1). What it changes is worked out from its body
 ## (verdict 86).

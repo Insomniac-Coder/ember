@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14, R5
+#$ rules: BRW-15
+## design rules: R14, R5
 ## R14: "plain `c` is a read-only view, and since a value tested in its place stays a place,
 ## `if this.pools[k] is Pool[T] as ref mut pool:` names a view of the registry's pool that may change
 ## it" (AN-22's `put`, with the name written plain). The pool made for the map's `owns dyn AnyPool`

@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: BRW-21
 #$ stdout: 10
 #$ stdout: 11
+## design rules: R4
 ## R4: the nearest allowed program to `reject_a_ref_mut_argument_the_callee_also_reads_by_its_own_name`:
 ## `heal` reads the player through `p`, the only way into it while it is used.
 

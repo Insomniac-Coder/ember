@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R9, R12
+#$ rules: THR-1, RC-1, CLO-1
 #$ stdout: 8 5
+## design rules: R15, R9, R12
 ## R15: the read and the write of `longest` sit under one lock, so it ends as 5 whichever thread runs
 ## first; "a lock: where the program takes one" is all that runs (section 2; AN-80's NEW, with a line
 ## that prints the result).

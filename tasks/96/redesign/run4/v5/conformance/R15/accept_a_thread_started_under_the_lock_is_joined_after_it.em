@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15
+#$ rules: THR-1
 #$ stdout: 1
+## design rules: R15
 ## R15: the line E7018's message gives: the thread started inside the lock is joined after the
 ## `with RESULTS_LOCK:` block, so it gets the lock once this thread lets it go (verdict 52).
 

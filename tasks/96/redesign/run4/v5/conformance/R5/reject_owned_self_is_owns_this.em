@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: MOD-3
 #$ help: fn finish() owns this -> u64:
+## design rules: R5
 ## R5, rules section 3's removed words: `owned self` is gone; a method that takes its object over says
 ## `owns this` after the brackets (E1010; completeness G8).
 

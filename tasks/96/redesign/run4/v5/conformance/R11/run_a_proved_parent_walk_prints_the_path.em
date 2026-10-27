@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R11, R13
+#$ rules: WK-11, GRM-44
 #$ stdout: root/a/leaf
 #$ stdout: leaf
 #$ stdout: root/leaf
+## design rules: R11, R13
 ## R11: parent links are ordinary `weakref` fields the program sets (verdict 14), and "A read of one is
 ## compiled with no header test (a plain load and a test for no link) where the compiler proves its
 ## target lives": the only line that gives `parent` a target (`add`) is followed by a push into the

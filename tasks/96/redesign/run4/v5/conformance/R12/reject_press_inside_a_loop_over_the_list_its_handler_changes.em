@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ help: move line 29, `press(ref mut b)`, below the loop
+## design rules: R12, R5, R8
 ## Verdict 86, R5 (rules.md lines 362-367, 379-383: "the message names the chain of calls"), R12 (lines
 ## 752-756): `press` runs the handlers through `b.click()`, and the handler `game` stored pushes to
 ## `names`; the compiler works out that chain with no word on any first line, so `press(ref mut b)` inside

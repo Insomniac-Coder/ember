@@ -1,6 +1,7 @@
 #$ test: compile-pass
-#$ rules: R16
+#$ rules: UNS-8
 #$ warning[W3013]: `read_u32_le` says what its callers must make true with `@safety`; a `# SAFETY:` note says why one block is sound and goes above each `unsafe:` block inside it: remove this line
+## design rules: R16
 ## R16: "W3013 for a `# SAFETY:` note on an `unsafe fn` line" (AN-79's OLD note, kept above the
 ## `unsafe fn` line; the warning is on that note's line, so it is written in the header).
 

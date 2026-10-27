@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 3
 #$ 7
+## design rules: R3
 ## R3: the nearest program that is allowed: `ref b` says `b`'s default (a read-only view) and may be
 ## written on any declared name.
 

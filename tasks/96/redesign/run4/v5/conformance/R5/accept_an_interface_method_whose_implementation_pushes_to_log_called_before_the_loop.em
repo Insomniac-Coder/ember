@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R5, R8, R14
+#$ rules: FN-4, BRW-16, TYP-44
 #$ stdout: start 4.0
 #$ stdout: area 4.0
+## design rules: R5, R8, R14
 ## R5, R8 (c), verdict 86: the nearest program that is allowed: `s.area()`, which may run `Square.area`
 ## and push to `LOG`, runs before the loop over `LOG`.
 

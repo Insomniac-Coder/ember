@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12
+#$ rules: CLO-4
 #$ help: write `return fn() owns n:` in place of this line
+## design rules: R12
 ## Verdicts 80 and 84, R12 (rules.md lines 761-765): "A function that outlives the function that made it
 ## takes what it keeps with `owns`. `return fn(): n += 1` in `make_counter`, whose local `n` ends when it
 ## returns, is refused (E3026)". `n` is an `int`: `owns` hands over every type the same way, numbers

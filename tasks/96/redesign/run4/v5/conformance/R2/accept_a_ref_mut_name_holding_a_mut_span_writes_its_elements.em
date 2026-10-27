@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 0
+## design rules: R2
 ## R2: before a `MutSpan` a call gives, `ref mut` says the name may write the span's elements
 ## (verdict 34).
 

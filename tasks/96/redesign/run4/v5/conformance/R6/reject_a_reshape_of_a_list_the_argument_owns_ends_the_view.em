@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6, R8
+#$ rules: BRW-17
 #$ help: println(w)
+## design rules: R6, R8
 ## R6: pointing into an argument means pointing into everything it owns, so a reshape of a list `bag`
 ## owns ends the view (R8 (b), E3060).
 

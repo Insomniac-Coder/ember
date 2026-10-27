@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R10
+#$ rules: BRW-17, LT-3
 #$ help: use `p` before line 34
+## design rules: R12, R10
 ## R12 ("an `owns dyn I` value replaced or ended does the same with what it owns"), R10: replacing
 ## `slot` ends the `Keeper` it held and the node the keeper owned, so the name `p` opened from a link
 ## to that node is not used after the line (E3060; step 4's re-check: only the function-value form

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 0 0
+## design rules: R2
 ## R2: the nearest program that is allowed: `=` on a `ref mut` loop name writes the element it
 ## names.
 

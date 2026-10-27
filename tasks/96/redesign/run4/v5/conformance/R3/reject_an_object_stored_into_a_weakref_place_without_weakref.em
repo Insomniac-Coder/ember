@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R11
+#$ rules: TYP-4, CLO-3
 #$ help: write `cam.target = weakref player`
+## design rules: R3, R11
 ## R3, R11: a `weakref T` place takes a link made with `weakref`; `=` alone would hand the player over
 ## (E2020; the `Weak` row of `V4/vocabulary.md`, AN-65's message).
 

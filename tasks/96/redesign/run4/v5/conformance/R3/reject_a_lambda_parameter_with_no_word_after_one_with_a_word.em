@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R12
+#$ rules: GRM-42
 #$ help: say what `dx` is: `fn(ref mut ui, ref dx)`, or give both their types: `fn(ref mut ui: Ui, dx: int)`
+## design rules: R3, R12
 ## R3, R12: the same rule for a lambda's parameters written without types (E0116; `V4/rules.md`
 ## section 3's message).
 

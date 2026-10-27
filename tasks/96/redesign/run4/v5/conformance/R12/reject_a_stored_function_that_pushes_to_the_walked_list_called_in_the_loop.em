@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8
+#$ rules: BRW-18, CTL-2
 #$ help: write `n = xs.len()` above line 14
+## design rules: R12, R8
 ## R8 (c), R12 (rules.md lines 717-720, 752-756): "a call that may run [the function value is] a change of
 ## each [real variable] it changes", so `hs[0]()` is refused inside a loop over `xs` (E3020; the phase
 ## before's `attacks2.exe 11` showed the use after free). AN-58 part 6's message, in this program's lines,

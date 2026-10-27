@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R12, R8
+#$ rules: THR-1, CLO-1, BRW-16
+## design rules: R15, R12, R8
 ## R12: "With no kept callback, or one that changes nothing, a foreign call changes nothing" (verdict
 ## 31: "with a kept callback that changes nothing (`fn(): println("event")`) it is allowed").
 

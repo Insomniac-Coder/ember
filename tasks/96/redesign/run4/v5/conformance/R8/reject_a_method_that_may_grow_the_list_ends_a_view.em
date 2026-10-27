@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R5, R9
+#$ rules: BRW-17
 #$ help: if a is not b:
+## design rules: R8, R5, R9
 ## R8 (b): what may reshape is worked out from the callee's body (R5, verdict 86): `add` pushes to
 ## `this.items`, and `b` may be the same `Bag` as `a`, so the call may move the list `s` points into.
 

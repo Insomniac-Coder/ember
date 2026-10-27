@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-2a
 #$ help: zero(ref mut d)
+## design rules: R4
 ## R4, verdict 70: `const` at the call is refused where the parameter does not say it: a plain
 ## `ref mut dst` may point the caller's span elsewhere, which `const` would deny (E3028).
 

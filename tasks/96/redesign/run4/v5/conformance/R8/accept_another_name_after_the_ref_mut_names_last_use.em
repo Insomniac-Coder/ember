@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout: 14
+## design rules: R8
 ## R8 (f): a `ref mut` name is alone only until its last use; after it, the list's own name reads and
 ## changes the element.
 

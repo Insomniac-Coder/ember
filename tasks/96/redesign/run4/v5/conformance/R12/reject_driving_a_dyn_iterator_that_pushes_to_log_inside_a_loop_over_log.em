@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8, R14
+#$ rules: BRW-18, CTL-2
 #$ help: move line 21 below the loop
+## design rules: R12, R8, R14
 ## Verdicts 46 and 86, R12 (rules.md lines 711-715): "driving an `owns dyn Iterator[Item = int]` makes the
 ## changes of every adapter the program can put there"; the `dyn` type says nothing about changes, and
 ## the compiler works out that `show` drives an adapter whose steps push to `LOG`, so the call inside a

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 2
+## design rules: R2
 ## R2: the nearest program that is allowed: a local view of your own; a name declared with `=` that
 ## holds a view may later view something else.
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6
+#$ rules: LT-1a
 #$ help: fn next_word(line: StrView) -> StrView from line:
+## design rules: R6
 ## R6: with `from src` the body may give back only a view of what `src` names (AN-22, E3062).
 
 struct Parser:

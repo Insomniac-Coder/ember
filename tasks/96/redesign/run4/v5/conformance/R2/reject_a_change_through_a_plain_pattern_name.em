@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2, R5
+#$ rules: BRW-14, BRW-15
 #$ help: to change that list through `path`, write `State.Walking(ref mut path):`
+## design rules: R2, R5
 ## R2, R5: a plain pattern name is a read-only view of the payload; `path.pop()` through it is refused
 ## (E3023) with row 8's line (AN-38).
 

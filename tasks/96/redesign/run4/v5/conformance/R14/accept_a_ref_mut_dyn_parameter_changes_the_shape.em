@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14, R4, R5
+#$ rules: TYP-44, FN-1, FN-4
 #$ stdout: 2
+## design rules: R14, R4, R5
 ## R14: "`ref mut v: dyn I` may change it"; the call says `ref mut` (R4); that `grow` changes the shape
 ## is worked out from `Circle`'s body, and no first line says it (R5, verdict 86).
 

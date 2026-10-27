@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R16
+#$ rules: UNS-1, UNS-12, FFI-54
+## design rules: R16
 ## R16 (verdicts 91 and 58's corrected record): for a C function whose declaration cannot say it keeps
 ## the object (a plain pointer, `fn set_user_data(p: *mut Widget)`), "`second.into_raw()` gives the
 ## object's address and stops Ember freeing it ...; the compiler makes that step itself ... Outside

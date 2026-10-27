@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R17
+#$ rules: BRW-17
 #$ help: boss = ref mut enemies[0]
+## design rules: R8, R17
 ## R8 (a), (b): what may remove is read from the callee's body, its summary inside the package (R17);
 ## a helper that removes ends a position. AN-02, point 6. The helper reads no element already in the
 ## list, so the call is not also a read of `boss`'s place through another name (R8 (f)): one fault.

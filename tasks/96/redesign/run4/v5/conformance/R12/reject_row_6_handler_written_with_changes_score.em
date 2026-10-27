@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R5
+#$ rules: GRM-2
 #$ help: b.on_click(fn(): score += 1)
+## design rules: R12, R5
 ## Verdict 86, row 6, R12 (rules.md lines 670-671): "A lambda writes nothing about what it changes:
 ## `b.on_click(fn(): score += 1)` changes `game`'s real `score` (row 6)". `changes` is not a word of Ember
 ## any more; a clause after a function's brackets is E0100 (rules.md section 3, line 1051), with the line

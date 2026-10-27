@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7, R8, R5
+#$ rules: BRW-18, CTL-2
 #$ stdout: 99
+## design rules: R7, R8, R5
 ## R7, R8 (c): the nearest allowed program to
 ## `reject_a_method_that_may_change_the_target_inside_a_loop_over_it.em`: the compiler works out from
 ## `shake`'s body that it writes only `hp` of the player `cam.target` links to (R5, verdict 86), a

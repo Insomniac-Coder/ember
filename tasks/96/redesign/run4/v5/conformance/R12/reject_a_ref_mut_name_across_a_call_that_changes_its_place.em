@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8
+#$ rules: BRW-1
 #$ help: move line 17, `w += 10`, above line 16
+## design rules: R12, R8
 ## R12 (rules.md lines 717-720): across a call through a function value, no `ref mut` name of a place it
 ## changes lives; R8 (f) (lines 505-509) refuses the change through another name (E3022). rules.md
 ## section 3's line 1063 message shape. The nearest allowed program is

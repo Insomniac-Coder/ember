@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R3
+#$ rules: GRM-2
 #$ help: handlers: Array[fn()] = []
+## design rules: R12, R3
 ## Verdict 86, R12 (rules.md lines 662-665): "A function type says its parameters, its result, and
 ## whether any thread may run its functions; what they change is worked out from the program", and R3
 ## (lines 205-208): a function type says "nothing about what they change". A `changes` clause in a

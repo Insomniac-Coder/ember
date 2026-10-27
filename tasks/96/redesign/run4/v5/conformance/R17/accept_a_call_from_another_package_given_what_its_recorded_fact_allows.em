@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R17, R4
+#$ rules: BLD-14, FN-1
 #$ stdout: a
 #$ stdout: a
+## design rules: R17, R4
 ## R17, R4, verdict 53: the nearest allowed program, the line E3031's message gives (a copy), and a
 ## `ledger` function whose recorded fact says it uses `s` before it clears `HISTORY`, given
 ## `HISTORY[0]` itself.

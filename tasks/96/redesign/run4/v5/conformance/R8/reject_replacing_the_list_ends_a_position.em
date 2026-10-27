@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R2
+#$ rules: BRW-17
 #$ help: boss = ref mut enemies[0]
+## design rules: R8, R2
 ## R8 (a): `=` on the list's name replaces the list (R2), which ends every position of the old one
 ## (E3060 at a later use).
 

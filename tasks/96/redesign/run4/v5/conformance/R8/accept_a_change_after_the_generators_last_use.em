@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R8, R6
+#$ rules: BRW-16, LT-1
 #$ stdout:
 #$ 4
 #$ 4
 #$ 6
+## design rules: R8, R6
 ## R8 (c): the list changes after the stored generator's last use, as the refusal's message says; a
 ## second walk sees the new entry.
 

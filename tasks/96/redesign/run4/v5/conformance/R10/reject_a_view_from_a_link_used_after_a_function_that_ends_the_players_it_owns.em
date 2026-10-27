@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R10, R12, R18
+#$ rules: BRW-17, LT-3
+## design rules: R10, R12, R18
 ## R10 point 1, R12 (verdicts 55, 82, 86; safety validation (b), hole 3): `reset` owns the list of
 ## players and clears it, which the compiler works out from its body, so a call of it may end the player
 ## `p` reads; `p` is not used after the call (E3060, verdict 73: the fix compiles, where R8 (g)'s

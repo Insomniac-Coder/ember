@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R11, R1
+#$ rules: OWN-11, EXP-6, CLO-6
+## design rules: R11, R1
 ## R11: a link back to the parent is a `weakref` field the program sets; the Python spelling, a strong
 ## field, would hand over a node that `this` does not own (AN-63, still refused).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R3
+#$ rules: BRW-14, BRW-15
 #$ help: fn setup(owns game: shares mut Game) -> Holder:
+## design rules: R4, R3
 ## R4, verdict 32: `game: shares mut Game` only reads the caller's game, so an owner made from it
 ## that may change the game (`shares mut game`) is refused; a function that hands one on takes one
 ## (`owns game: shares mut Game`, AN-78's `setup`).

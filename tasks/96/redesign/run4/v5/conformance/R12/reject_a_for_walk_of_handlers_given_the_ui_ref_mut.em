@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8
+#$ rules: BRW-18, CTL-2
 #$ help: while this.current < len(this.handlers):
+## design rules: R12, R8
 ## R8 (c), R12 (rules.md lines 662-670, 717-720): a handler given the whole Ui `ref mut` that adds to and
 ## removes from `this.handlers` (`add_once`, worked out from its body, verdict 86), so the list may not be
 ## walked by a `for` loop around the call (the agreed limitation); it is walked by position. AN-60 part

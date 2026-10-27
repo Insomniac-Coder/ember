@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1, R3
+#$ rules: OWN-1, OWN-8
 #$ stdout: 3 4
+## design rules: R1, R3
 ## R1, R3: the first way out of row 9: `copy of` makes a list of your own, so the push to `items`
 ## is not seen in `snapshot` (AN-34's NEW `main`).
 

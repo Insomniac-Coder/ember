@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: OWN-8
 #$ help: to make your own copy write `String(w)`
+## design rules: R3
 ## R3: `copy of` is refused before a value of a view type (E2116): a `StrView` is not the text, so the
 ## message gives the call that makes a `String` of your own (AN-07's message).
 

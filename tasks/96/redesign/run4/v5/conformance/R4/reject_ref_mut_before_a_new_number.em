@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-2a
 #$ help: b = a + 1
+## design rules: R4
 ## R4: `ref mut` before something this function may not change is refused: `a + 1` is a new number,
 ## not a place (AN-27).
 

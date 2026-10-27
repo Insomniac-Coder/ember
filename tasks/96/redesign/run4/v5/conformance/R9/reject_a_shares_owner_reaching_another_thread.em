@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R15
+#$ rules: THR-1, THR-2, THR-10
+## design rules: R9, R15
 ## R9: "a `shares` value never reaches another thread (E7015)": its count is a plain add, so two
 ## threads would change one count (AN-71's refused `share_cached`).
 

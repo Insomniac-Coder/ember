@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R5
+#$ rules: BRW-16, FN-4
 #$ stdout: ['[0] orc died']
+## design rules: R8, R5
 ## R8 (c), (f), row 3: `note` changes only `log`, by its body, so it may run while the loop walks
 ## `players` and while `p` is the only name for one player. AN-17's NEW program.
 

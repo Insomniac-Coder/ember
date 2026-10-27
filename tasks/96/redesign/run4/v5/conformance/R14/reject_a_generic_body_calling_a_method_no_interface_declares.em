@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: STD-13
+## design rules: R14
 ## R14: "a method its bounds' interfaces do not declare is E2072" (section 3's E2072 message, AN-69, in
 ## this program's lines).
 

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R7
+#$ rules: LT-45
 #$ stdout: 4 !
+## design rules: R7
 ## R7: a `from text` field takes views into `text` or text written in the program (AN-25, rule 3); the
 ## nearest program to `reject_storing_a_view_of_other_text_in_a_from_field.em` that is allowed.
 

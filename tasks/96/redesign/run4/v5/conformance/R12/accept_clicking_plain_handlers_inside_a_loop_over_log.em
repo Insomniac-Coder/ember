@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R12, R8
+#$ rules: CLO-1, BRW-16
 #$ stdout: a
 #$ stdout: click
 #$ stdout: b
 #$ stdout: click
+## design rules: R12, R8
 ## R12 (rules.md lines 665-670): "calling what a list holds whose functions change nothing is allowed
 ## inside such a loop". The only handler the program stores in `Button.handlers` prints, so `b.click()`
 ## changes nothing in `LOG` and runs inside the loop over `LOG` (G-07, now settled by what the program

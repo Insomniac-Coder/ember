@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-21
 #$ help: in `heal`, read it through `p`: `println(p.hp)`
+## design rules: R4
 ## R4 (E3031, section 3's fourth message): a `ref mut` parameter is the only way into its place while
 ## it is used; `heal` reads `PARTY[0]` by its own name while `p` is `PARTY[0]` (step 4's re-check:
 ## no test). Verdict 88's one-variable copy is for a whole variable, not an element.

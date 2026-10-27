@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R8, R4
+#$ rules: BRW-18, CTL-2
+## design rules: R9, R8, R4
 ## R9, R8 (c): two `shares` links may lead to one player, so a loop over one link's list may not add
 ## to the list reached through the other until the program proves the two differ (AN-48's `transfer`
 ## without its test, still refused).

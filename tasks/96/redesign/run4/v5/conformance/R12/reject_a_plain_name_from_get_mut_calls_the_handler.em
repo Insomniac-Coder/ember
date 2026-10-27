@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R2, R8
+#$ rules: BRW-14, BRW-15
 #$ help: h = ref mut this.handlers.get_mut(i).unwrap()
+## design rules: R12, R2, R8
 ## R12 (rules.md lines 776-778), R2: a plain name for a part is a read-only view, and calling a stored
 ## handler that changes its own state (its own copy of `n`, worked out from the only function the program
 ## stores there) is a change of the place that holds it (E3023). AN-61 part 6's message, with the cause

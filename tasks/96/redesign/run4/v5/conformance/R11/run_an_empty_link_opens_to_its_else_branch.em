@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R11, R13
+#$ rules: WK-11, GRM-44
 #$ stdout: gone
 #$ stdout: 100
 #$ stdout: gone
+## design rules: R11, R13
 ## R11: a link "may hold no target (`... = None`)"; "Reading one tests the target's header (does the
 ## object still live?) and is written as an opening (R13)": an empty link and a link whose player ended
 ## both open to `else:`. Section 2: "one test of the target's header, each read of a `weakref` link".

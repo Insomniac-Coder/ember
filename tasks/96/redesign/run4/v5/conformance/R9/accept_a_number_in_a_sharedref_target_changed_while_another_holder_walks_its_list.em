@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R9, R7, R8, R5
+#$ rules: RC-1, LT-45, BRW-16, FN-4
+## design rules: R9, R7, R8, R5
 ## R9, R7: the nearest allowed program: while one holder's loop walks the player's list, another holder
 ## changes a number of the player (AN-48 (b)).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-18, CTL-2
 #$ help: enemies.retain(fn(e) => e.hp > 0)
+## design rules: R8
 ## R8 (c): a counting loop, whose range is fixed when it starts, may add to the list but not remove
 ## from it. The message of rules section 3, in this program's lines.
 

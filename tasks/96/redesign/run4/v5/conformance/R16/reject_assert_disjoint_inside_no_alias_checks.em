@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R16, R4
+#$ rules: DSJ-6, EFF-12
+## design rules: R16, R4
 ## R16: `assert_disjoint` is the one run-time alias check left, and `@no_alias_checks` forbids it
 ## (E4030; AN-14's `mix`; the message is section 3's, verdict 98 removed R4's index compare). The program
 ## imports `assert_disjoint`, as every program that calls it does (step 3's re-check, wrong 3 to 6), so

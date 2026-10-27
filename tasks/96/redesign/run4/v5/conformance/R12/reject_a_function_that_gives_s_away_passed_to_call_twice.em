@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12
+#$ rules: CLO-6
 #$ help: call_twice(fn(): consume(copy of s))
+## design rules: R12
 ## R12 (rules.md lines 782-784): "a function value that gives a capture away is" a `once fn()`; passed
 ## where it may run twice it is refused (E3013). AN-59 part 6; rules.md section 3's line 1096 second
 ## message, word for word. The nearest allowed program is

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R12
+#$ rules: BRW-11
 #$ help: LOG.retain(fn(s) => s != "")
+## design rules: R4, R12
 ## R4, R12: a function value given to a call counts as an argument that changes every place the
 ## functions it may run change, worked out from their bodies (verdict 86), so `keep`, which pushes to
 ## `LOG`, may not be given to `LOG.retain` (rules section 3, E3022).

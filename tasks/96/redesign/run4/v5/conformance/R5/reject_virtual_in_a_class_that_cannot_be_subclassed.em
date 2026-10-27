@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: CLS-4
 #$ help: open class Door:
+## design rules: R5
 ## R5: `virtual` lets subclasses replace a method; in a class that cannot be subclassed there are none,
 ## and `virtual` is refused (AN-70, E2112).
 

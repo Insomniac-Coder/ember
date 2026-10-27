@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R5
+#$ rules: CLO-1, FN-4
 #$ stdout: 8
 #$ stdout: 2
+## design rules: R12, R5
 ## Verdicts 38, 50 and 86, R12 (rules.md lines 703-711): a function that calls a function right away may
 ## take it as a template parameter (`[F: fn(int)]` above it: `F` names the exact function given, one
 ## instance each, called directly) or as a function value (`owns f: fn(int)`, called through its two

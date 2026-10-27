@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R9, R7
+#$ rules: RC-1, LT-45
 #$ stdout: 106 106
+## design rules: R9, R7
 ## R9: "any holder of a `sharedref mut` link to it may change it too"; R7: "On one thread any of them
 ## may change it at any time", the owner included. No count and no check: a plain pointer in each
 ## struct (AN-48 (b); section 2's `sharedref mut` row, "nothing").

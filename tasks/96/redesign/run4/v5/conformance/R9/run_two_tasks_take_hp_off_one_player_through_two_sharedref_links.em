@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R9, R15, R7
+#$ rules: THR-11, THR-21
 #$ stdout: 7
+## design rules: R9, R15, R7
 ## R9, R15 (verdict 77): two scoped tasks that change one place only by `-=` make a reduction: each task
 ## keeps its own part, and the parts are added at the join, so `p.hp` is always 10 - 1 - 2. It is the
 ## nearest allowed program to `reject_two_tasks_set_one_player_through_two_sharedref_links.em`, whose

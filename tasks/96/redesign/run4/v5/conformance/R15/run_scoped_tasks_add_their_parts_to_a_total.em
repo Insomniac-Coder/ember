@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 3
+## design rules: R15, R12
 ## R15: "Scoped tasks need no capture words but for a loop's own variable ...: they use the real
 ## variables"; what a task changes is worked out from its body (verdict 86); the loop's own variable is
 ## given with `copy of` (verdicts 65, 83); "Reductions (`total += e` ...) get one private accumulator per

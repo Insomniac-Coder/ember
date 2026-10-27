@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: 2
+## design rules: R2
 ## R2: a word before the part says otherwise: `pos = ref mut p.pos` is a name for that very place
 ## that may change it (AN-44's NEW).
 

@@ -1,6 +1,7 @@
 #$ test: run-fail
-#$ rules: R4
+#$ rules: FN-1
 #$ panics: `assert_disjoint(d, s)` on line 18: the two spans overlap (`dst_name` and `src_name` name one track)
+## design rules: R4
 ## R4, rules section 2: `assert_disjoint(d, s)` stops the program when the two spans overlap, here
 ## when `mix` is given one track's name twice, before `blend` runs with two names for one list
 ## (AN-14; the stop's text is rules section 2's).

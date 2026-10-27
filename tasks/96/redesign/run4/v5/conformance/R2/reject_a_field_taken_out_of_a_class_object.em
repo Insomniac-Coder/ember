@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2
+#$ rules: OWN-11
 #$ help: take it and leave a value in its place: write `names.push(mem.take(ref mut q.name))`, with `import std.mem` at the top
+## design rules: R2
 ## R2: a field of a class object is not handed out on its own, since other names may reach the object
 ## and would see the hole (E3013; verdict 78, today's `EXP-6/reject_moving_out_of_a_class_field.em`);
 ## `mem.take` takes it and leaves a value in its place.

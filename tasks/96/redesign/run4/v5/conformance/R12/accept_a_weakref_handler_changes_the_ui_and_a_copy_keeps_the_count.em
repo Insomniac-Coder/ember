@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R3, R11, R13
+#$ rules: BRW-1
 #$ stdout: 0 1
+## design rules: R12, R3, R11, R13
 ## Verdict 86, R12 (rules.md lines 662-670, 717-720): the handler changes a `Ui` through its `weakref ui`
 ## with no word; `watch` only stores it (lines 735-737: "Storing a function value is not a change"); the
 ## count taken before the handlers run is a copy of `main`'s own (R8 (g): "A copy of your own ... is not

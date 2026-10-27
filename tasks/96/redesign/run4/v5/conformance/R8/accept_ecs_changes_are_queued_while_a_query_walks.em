@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R12
+#$ rules: BRW-16, CLO-1
 #$ stdout: 2
+## design rules: R8, R12
 ## R8 (c): the change goes after the walk: a system destroys, creates and adds through the query's
 ## `Commands`, applied after the system returns (as Bevy). AN-06's NEW program, with a `main`.
 

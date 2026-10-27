@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R12, R14, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R12, R14, R8
 ## R12 and R8 (c) (verdict 86): driving `it` runs the function `main` gives to `inspect`, which pushes to
 ## `LOG`, worked out from the program (no `dyn` type says it); inside a walk of `LOG` that is E3020, the
 ## message naming the chain. Its way out walks a copy of its own, which nothing restricts (R8 (g)).

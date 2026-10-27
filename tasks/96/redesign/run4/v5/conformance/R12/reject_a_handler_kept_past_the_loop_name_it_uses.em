@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R2
+#$ rules: CLO-4
 #$ help: b.on_click(fn() copy of name: println(name))
+## design rules: R12, R2
 ## R12 (rules.md lines 752-759, 785-786): "A function value may not outlive a place it uses and does not
 ## own (E3026)". The handler uses the real loop name `name`, a view of this round's element, and `b` keeps
 ## the handler after the round ends. AN-57 part 6's message shape, at the lambda's line (rules.md section

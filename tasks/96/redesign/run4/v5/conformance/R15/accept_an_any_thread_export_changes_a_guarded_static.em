@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15
+#$ rules: THR-1
+## design rules: R15
 ## R15: the lines E7012's help gives: `HITS` guarded by a `static` lock, the export's body inside it
 ## (AN-84's NEW).
 

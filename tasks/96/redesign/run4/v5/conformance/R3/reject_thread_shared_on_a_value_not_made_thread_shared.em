@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3, R15
+#$ rules: THR-1
 #$ help: to share it between threads, create it shared: `names = thread_shared Names()`
+## design rules: R3, R15
 ## R3, R15: `thread_shared x` is written only before a new value or on a value already
 ## `thread_shared` (E7017): a plain local's object has a one-thread count (AN-71's message).
 

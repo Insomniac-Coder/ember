@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R13, R3
+#$ rules: GRM-44, OWN-8
 #$ stdout: 3 2
+## design rules: R13, R3
 ## R13, R3: `if pair exists as (ref mut a, ref b):` opens an `Option` of a pair, each name with its
 ## own word.
 

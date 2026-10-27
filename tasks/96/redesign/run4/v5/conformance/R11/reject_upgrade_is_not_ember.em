@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R11, R13
+#$ rules: MOD-3
+## design rules: R11, R13
 ## R11, R13: a link is opened with `exists as`; today's `upgrade` is gone (AN-65, still refused). The
 ## message gives every line it replaces, so following it compiles.
 

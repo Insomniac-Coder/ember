@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R17, R12, R8
+#$ rules: BRW-18, CTL-2
 #$ help: click after the loop: move line 19, `b.click()`, below the loop
+## design rules: R17, R12, R8
 ## R17, R12, verdict 86: `ledger`'s `Button` keeps plain `fn()` values; what a call through them changes
 ## is worked out from every function the whole program stores there, this program's handler included,
 ## so `b.click()` pushes to `LOG` here and is refused inside a loop over `LOG` (R8 (c), E3020), the

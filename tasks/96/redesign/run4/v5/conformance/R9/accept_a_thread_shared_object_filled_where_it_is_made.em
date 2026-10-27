@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R9, R15
+#$ rules: RC-1, THR-1
+## design rules: R9, R15
 ## R9: the nearest allowed program: the list is filled on the line that makes the `thread_shared`
 ## object, and afterwards every owner only reads it (AN-71's message, applied).
 

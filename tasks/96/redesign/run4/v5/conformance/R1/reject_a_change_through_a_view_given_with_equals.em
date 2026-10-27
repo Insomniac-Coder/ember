@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R1, R5
+#$ rules: BRW-15
 #$ help: to change it through `cur`, write `cur = ref mut p`
+## design rules: R1, R5
 ## R1, R5: `cur = p`, where `p` is a view (here a `ref mut` parameter), makes `cur` a read-only view,
 ## so a change through `cur` is refused (E3023) with the word that makes it a changing view.
 

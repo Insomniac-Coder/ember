@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12
+#$ rules: CLO-1
 #$ stdout: 1
 #$ stdout: 2
 #$ stdout: 1
+## design rules: R12
 ## Verdicts 80 and 84, R12 (rules.md lines 761-767; section 2, line 985, "nothing beyond the function
 ## value's own block" for a variable a function keeps with `owns`): each counter keeps its own `n` in its
 ## own state, which outlives `make_counter` and ends with the function value; two counters never share

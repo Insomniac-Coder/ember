@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-1
 #$ help: fn bump(ref mut n: int):
+## design rules: R4
 ## R4: the mode goes on the parameter's name, not in its type; the type says only what the caller's
 ## value is (AN-27, E0117).
 

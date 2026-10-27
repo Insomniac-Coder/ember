@@ -1,7 +1,8 @@
 #$ test: compile-fail
-#$ rules: R9, R7, R8
+#$ rules: BRW-18, CTL-2
 #$ note: `cam.target` and `hud.target` may be the same `Player`, and adding can move the list's elements while the loop reads them
 #$ help: add after the loop: write `new_items: Array[String] = []` before the loop, `new_items.push(copy of item)` in place of line 24, and `cam.target.inventory.extend(new_items)` after the loop; or walk a list of your own: `for item in copy of hud.target.inventory:`
+## design rules: R9, R7, R8
 ## R9, R7: "a list in it may not change while a loop walks it, whichever holder reaches it" (R8 (c)):
 ## the HUD and the camera hold `sharedref mut` links to one player (AN-48 (b)).
 

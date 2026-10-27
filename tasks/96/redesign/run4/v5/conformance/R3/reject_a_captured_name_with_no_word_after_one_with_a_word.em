@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: GRM-42
 #$ help: say what the function does with `score`: `fn() copy of name, copy of score:`, or leave `score` out to use the real `score`
+## design rules: R3
 ## R3: in a list of names declared without types each word belongs to the one name after it, and a
 ## name with no word may not follow a name with a word (E0116; `V5/rules.md` section 3's message, in
 ## verdict 83's spelling).

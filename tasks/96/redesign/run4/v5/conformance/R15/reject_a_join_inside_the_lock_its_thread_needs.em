@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-19
+## design rules: R15
 ## R15: "joining it inside that lock is refused (E7018)": each would wait for the other for ever
 ## (verdict 52; section 3's E7018 message, in this program's lines, naming the chain, R18). The nearest
 ## allowed program is `accept_a_thread_started_under_the_lock_is_joined_after_it.em`.

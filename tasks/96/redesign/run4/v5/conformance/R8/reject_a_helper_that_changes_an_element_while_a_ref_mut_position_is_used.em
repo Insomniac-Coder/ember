@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-1
 #$ help: boss = ref mut enemies[0]
+## design rules: R8
 ## R8 (f): while a `ref mut` name is used, its place is read or changed only through it; a helper that
 ## changes elements already in the list is another name for them. AN-02, point 6.
 

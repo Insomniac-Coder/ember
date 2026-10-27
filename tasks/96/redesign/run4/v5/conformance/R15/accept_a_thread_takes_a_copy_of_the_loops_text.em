@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R12
+#$ rules: THR-1, CLO-1
 #$ stdout: 3
+## design rules: R15, R12
 ## R15 (verdicts 65, 93 and 94): the line E3026 gives: each `thread.spawn` thread takes its own copy of
 ## the loop's text, `copy of t` (one allocation and copy per thread), so it may outlive the loop; the
 ## function holds only its copy, so any thread may run it (`thread_shared fn()`).

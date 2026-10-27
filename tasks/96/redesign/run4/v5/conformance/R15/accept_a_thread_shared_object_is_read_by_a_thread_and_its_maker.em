@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R15, R3, R9
+#$ rules: THR-1, OWN-8, RC-1
 #$ stdout: 1 1
+## design rules: R15, R3, R9
 ## R15: `fn() thread_shared names` makes one more owner, on any thread, of a value created
 ## `thread_shared`; neither owner changes it directly (AN-71's `share_and_keep`).
 

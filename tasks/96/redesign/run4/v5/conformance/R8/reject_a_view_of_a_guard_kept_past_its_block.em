@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R2
+#$ rules: BRW-19
 #$ help: println(best)
+## design rules: R8, R2
 ## R8 (e): a view of a guard stored in a name made before the `with` block, and used after the block,
 ## would outlive the guard. AN-30, point 6 (its message, with the way out that compiles here, R18).
 

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R4, R5
+#$ rules: BRW-16, FN-1, FN-4
 #$ stdout: ann 3
+## design rules: R8, R4, R5
 ## R8 (e): what leaves the `with` block is a copy of your own (`copy of g[0]`) or a number; `clear(m)`
 ## cannot end `best`. AN-30's NEW program.
 

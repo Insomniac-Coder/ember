@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R8
+#$ rules: CLO-1, BRW-16
 #$ stdout: 3
 #$ stdout: 3
+## design rules: R12, R8
 ## R12 (rules.md lines 665-670), R8 (c): the only function the program puts in `handlers` is `show`, which
 ## changes nothing (worked out from its body, verdict 86), so no handler can change `this.handlers` while
 ## the `for` loop walks them, and the walk is allowed (AN-60 part 6, the second way out).

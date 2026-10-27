@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14, R17
+#$ rules: TYP-44, BLD-14
 #$ stdout: 6
+## design rules: R14, R17
 ## R14: "A non-`pub` function's bounds are worked out from its body" (AN-69's `sum`).
 
 [T]

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R1
+#$ rules: FN-1, OWN-1
 #$ stdout: 1 2
+## design rules: R4, R1
 ## R4: `owns n: Node` takes the object over, and the hand-over is written as `=` writes one, with no
 ## word at the call; a number parameter is copied in (AN-43).
 

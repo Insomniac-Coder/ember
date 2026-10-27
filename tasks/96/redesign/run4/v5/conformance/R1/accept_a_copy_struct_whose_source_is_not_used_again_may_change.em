@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1
+#$ rules: OWN-1
 #$ stdout: 2
+## design rules: R1
 ## R1: the E3023 rule for a `Copy` struct copied with `=` holds only while the name it was copied
 ## from is still used; here `p` is never used again, so `q` may change and nothing could be meant for
 ## `p`.

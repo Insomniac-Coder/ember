@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2
+#$ rules: BRW-14, BRW-15
 #$ help: to point `r` at `b` write `r = ref mut b`, or for a read-only name `rb = ref b`
+## design rules: R2
 ## R2: the line that gives a `ref mut` name another ref says so with `ref mut` again, for every type;
 ## `r = ref b` is refused (E3023; AN-28's message).
 

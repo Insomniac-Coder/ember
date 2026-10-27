@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R16
+#$ rules: THR-1, TIER-1
+## design rules: R15, R16
 ## R15: "`Send` is declared only by an `unsafe extend` author"; R16: before an implementation `unsafe`
 ## says "this code vouches", with a `# SAFETY:` note saying why.
 

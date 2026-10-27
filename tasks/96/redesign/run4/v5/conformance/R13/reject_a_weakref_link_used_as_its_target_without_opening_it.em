@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R13, R11
+#$ rules: TYP-4, CLO-3
 #$ help: open it: `if cam.target exists as p:`
+## design rules: R13, R11
 ## R13, R11: a `weakref` link's target may be gone, so it is read only by opening it; using the link
 ## as its target is refused (E2020; AN-65's message).
 

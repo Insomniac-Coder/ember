@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R8
+#$ rules: BRW-17
+## design rules: R9, R8
 ## R9, R8 (a), (b): a removal made through any owner of a shared list ends the views of its elements;
 ## two owners of one list are two names of one place.
 

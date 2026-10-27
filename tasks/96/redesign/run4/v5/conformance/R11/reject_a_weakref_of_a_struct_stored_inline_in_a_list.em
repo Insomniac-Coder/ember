@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R11
+#$ rules: WK-16
+## design rules: R11
 ## R11: "its target lives on its own (a class object, or a value held `shares` or `thread_shared`), so
 ## a `weakref` of a part, a field or an element stored inline, is refused (E2119)": a `Pos` is stored
 ## inside the list's buffer, so there is no header a link could test once it is gone.

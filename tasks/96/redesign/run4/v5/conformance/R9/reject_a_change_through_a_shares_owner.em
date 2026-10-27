@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R9, R3, R5
+#$ rules: BRW-15
 #$ help: to change it through `other`, write `other = shares mut items` in place of line 10
+## design rules: R9, R3, R5
 ## R9: "a `shares` owner only reads it"; only an owner made with `shares mut`, and the name the value
 ## was first shared from, change it (AN-34, still refused; the vocabulary's `shares` row). The help's
 ## one line makes the program compile (it is `accept_a_change_through_a_shares_mut_owner.em`).

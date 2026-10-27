@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R8
+#$ rules: BRW-17
 #$ help: name it again after the call
+## design rules: R12, R8
 ## R8 (a), (f) and R12 (rules.md lines 517-520): "a later use of the name is checked against what the call
 ## may have done (rule (a))"; the only handler the program stores clears the handlers (worked out from
 ## its body, verdict 86), so after the call `h` may name another handler or none (E3060). AN-61 part 6's

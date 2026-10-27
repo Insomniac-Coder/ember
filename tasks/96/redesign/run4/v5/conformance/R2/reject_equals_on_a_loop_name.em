@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2
+#$ rules: BRW-14, BRW-15
 #$ help: to change the elements of `xs` write `for ref mut x in xs:`
+## design rules: R2
 ## R2: a loop name stands for what the loop gave and keeps it for the whole round: `=` on it is
 ## refused (E3023), unless it is `ref mut`.
 

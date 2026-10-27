@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R15, R12, R8
 ## R12: "a `callback(borrowed)` parameter runs it during the call, as `for_each` does", so the call
 ## makes the function's changes now; inside a walk of what it changes it is E3020 (R8 (c); completeness
 ## G23; the message is in the form of section 3's `for_each` one, naming the chain, R18). The nearest

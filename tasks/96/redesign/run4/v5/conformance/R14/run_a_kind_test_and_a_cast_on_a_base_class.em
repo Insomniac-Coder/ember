@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R14
+#$ rules: TYP-44
 #$ stdout: 7
 #$ stdout: 3
 #$ stdout: 7
+## design rules: R14
 ## R14: "A value of an interface type (`dyn I`, `owns dyn I`, `shares dyn I`) or of a base class is
 ## tested for its kind with `is`"; "`cast s as Circle` gives the `Circle`"; "A cast of a place is a
 ## place: the name bound from it is read-only".

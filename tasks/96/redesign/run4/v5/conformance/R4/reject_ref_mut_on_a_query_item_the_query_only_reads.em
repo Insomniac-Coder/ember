@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: FN-2a
 #$ help: fn slow(ref mut q: Query[(ref mut Position, ref mut Velocity)], dt: float):
+## design rules: R4
 ## R4: a query item the query only reads is not given a `ref mut` loop name: the query's type says what
 ## the system may change (AN-15, E3027; completeness G6).
 

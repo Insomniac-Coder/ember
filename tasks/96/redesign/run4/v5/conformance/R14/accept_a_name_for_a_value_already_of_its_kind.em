@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14, R2
+#$ rules: TYP-44, BRW-12
 #$ stdout: 3
+## design rules: R14, R2
 ## R14: the nearest allowed program to a kind test that always passes: a value already a `Circle` is
 ## named with `=` (a read-only view, R2), as E2036's message says.
 

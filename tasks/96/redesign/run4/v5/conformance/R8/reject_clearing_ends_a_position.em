@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-17
 #$ help: move `enemies.clear()` below line 13
+## design rules: R8
 ## R8 (a): `clear` empties the list, so it ends every position of it (E3060 at a later use).
 
 struct Enemy:

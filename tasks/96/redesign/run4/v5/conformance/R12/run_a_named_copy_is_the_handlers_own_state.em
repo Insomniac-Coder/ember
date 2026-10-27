@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R12, R3
+#$ rules: CLO-1, OWN-8
 #$ stdout: 1
 #$ stdout: 2
 #$ stdout: 0
+## design rules: R12, R3
 ## Row 6, R12 (rules.md lines 681-683, 766-767; section 2, line 985, "nothing beyond the function value's
 ## own block"): `copy of score` makes the handler's own copy, kept in its state across calls, and
 ## `game`'s `score` stays 0. AN-53's `game_copy`. Checked by stdout, and by AddressSanitizer on the

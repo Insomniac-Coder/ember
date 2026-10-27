@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-18, CTL-2
 #$ help: for k, ref mut v in counts:
+## design rules: R8
 ## R8 (c), verdict 95 (which reverses verdict 90): while a loop walks a map's keys, nothing changes the
 ## map through its own name, a value under a key it already has included, as Rust refuses it; the
 ## loop's own handle changes the value it is on. AN-12; rules section 3's E3020 message, in this

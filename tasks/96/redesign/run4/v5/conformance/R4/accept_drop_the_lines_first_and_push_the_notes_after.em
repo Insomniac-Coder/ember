@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R4, R12
+#$ rules: FN-1, CLO-1
 #$ stdout: 2
 #$ stdout: dropped an empty line
+## design rules: R4, R12
 ## R4, R12: the nearest allowed program, the lines the E3022 message gives: the test given to
 ## `retain` changes nothing, and the notes are pushed after the walk.
 

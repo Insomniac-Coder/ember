@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R11, R13
+#$ rules: OWN-8, WK-11, GRM-44
 #$ stdout: 7
+## design rules: R3, R11, R13
 ## R3, R11, R13: the nearest program that is allowed: a class whose children are held by their parent
 ## and whose `parent` is a `weakref` link the program sets (AN-41's `Node`).
 

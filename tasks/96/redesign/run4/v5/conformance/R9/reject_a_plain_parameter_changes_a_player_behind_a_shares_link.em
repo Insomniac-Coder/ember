@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R9, R5, R4
+#$ rules: BRW-15
+## design rules: R9, R5, R4
 ## R9, R5: "a plain name never changes anything", an object behind a `shares` link included; the
 ## players the watchers share are changed through a name that may change the list (AN-51). The one
 ## fault is `ws`'s mode.

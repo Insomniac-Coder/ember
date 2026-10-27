@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R8, R15
+#$ rules: THR-19
 #$ stdout: a
 #$ stdout: 2
+## design rules: R12, R8, R15
 ## R15 (rules.md lines 881-890), R12 (lines 717-720): the walk of `log.lines` ends, the lock is let go,
 ## and then `note()` runs, as the E7018 message of the nearest refused program says
 ## (reject_a_function_value_that_changes_log_called_in_a_walk_of_log_lines).

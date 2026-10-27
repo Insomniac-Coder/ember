@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R1
+#$ rules: OWN-1
 #$ stdout: 1 2
+## design rules: R1
 ## R1: for a `Copy` type `=` copies: `n2` is a number of its own, and changing it leaves `n` as it was
 ## (AN-44's `n2 = n`).
 

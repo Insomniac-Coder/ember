@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R4
+#$ rules: BRW-1, BRW-11
 #$ stdout: 2.0 1.0
+## design rules: R8, R4
 ## R8 (f) (verdict 98): inside `if i != j:` the two `ref mut` names are proved apart, so they are
 ## allowed, and the equal pair is skipped; without the `if`, the names are refused
 ## (`R8/reject_two_ref_mut_names_of_one_list_whose_indexes_may_be_equal.em`).

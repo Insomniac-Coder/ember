@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R9, R12
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
+## design rules: R15, R9, R12
 ## R15 (verdict 94): "`thread.spawn` takes a function any thread may run ..., so a function holding a
 ## one-thread value is refused by R12's rule (E7015)": a `shares mut` owner captured by an unscoped
 ## thread (completeness G26, the duty's case as written). The nearest allowed program is

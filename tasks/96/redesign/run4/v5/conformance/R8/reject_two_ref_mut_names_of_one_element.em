@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-1
 #$ help: b = ref mut bodies[1]
+## design rules: R8
 ## R8 (f): two `ref mut` names of one place known when compiling are refused (E3022), as R4 refuses
 ## `collide(ref mut bodies[i], ref mut bodies[i])`.
 

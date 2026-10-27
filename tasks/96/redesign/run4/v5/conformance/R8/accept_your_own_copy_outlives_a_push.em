@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R6
+#$ rules: BRW-16, LT-1
 #$ stdout: ann 3
+## design rules: R8, R6
 ## R8 (b): the way out E3060's message gives: a `String` of your own is not a view, so the push does
 ## not end it. AN-26, point 6.
 

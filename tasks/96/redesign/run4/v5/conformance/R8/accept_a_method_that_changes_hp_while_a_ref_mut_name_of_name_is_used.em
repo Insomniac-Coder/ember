@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R5
+#$ rules: BRW-16, FN-4
 #$ stdout: bo 11
+## design rules: R8, R5
 ## R8 (f), R5: the compiler works out from `heal`'s body that it changes `hp` only (verdict 86), so it
 ## may run while `n` is the only name for `p.name`: the two never name one place. Completeness check,
 ## G22.

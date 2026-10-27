@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2
+#$ rules: BRW-12
 #$ stdout: ann 0
+## design rules: R2
 ## R2: the nearest program that is allowed: `mem.take(ref mut q.name)` takes the name out of the class
 ## object and leaves an empty `String` in its place (verdict 78).
 

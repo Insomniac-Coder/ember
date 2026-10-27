@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R9
+#$ rules: BRW-1
 #$ help: move line 19 below line 20
+## design rules: R8, R9
 ## R8 (a), (f): a list reached through a local that holds a link (`t`, a `shares mut` owner) gives
 ## addresses, not positions, and a push may move the members stored inline in it; while `boss`, a
 ## `ref mut` address, is still used, such a reshape through another name is refused at the reshape

@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14, R2
+#$ rules: FN-2a
+## design rules: R14, R2
 ## R14: "A cast of a place is a place: the name bound from it is read-only unless written `ref mut`
 ## (`pool = ref mut cast this.pools[k] as Pool[T]`), and `ref mut` taken through a plain one
 ## (`return ref mut pool.dense[pool.sparse[e]]`) is refused (E3027)" (AN-22's `get_mut`, with `ref mut`

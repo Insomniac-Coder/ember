@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R16
+#$ rules: UNS-1, UNS-12, FFI-54
+## design rules: R15, R16
 ## R15: "`Send` is declared only by an `unsafe extend` author" (section 3's E3100 message, in this
 ## program's names; it replaces today's, which gave no line).
 

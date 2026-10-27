@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: BRW-15
 #$ help: for ref mut p in players:
+## design rules: R5
 ## R5: a plain name never changes anything; a plain loop name only reads the element it names
 ## (AN-17, AN-20, E3023).
 

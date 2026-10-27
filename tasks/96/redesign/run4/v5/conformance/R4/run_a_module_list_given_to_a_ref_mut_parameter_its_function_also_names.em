@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R4, R8
+#$ rules: BRW-1, BRW-11, BRW-21
 #$ stdout: 1
 #$ stdout: renamed
+## design rules: R4, R8
 ## R4 (overlap, exception 1), R8 (f): `rename(ref mut LOG)` gives `s` the whole of `LOG`, which `rename`
 ## also names by its own name; the compiler proves they are one whole variable and compiles this call
 ## against a copy of `rename` in which `s` is `LOG` (verdict 88). It frees nothing: `LOG.clear()` empties

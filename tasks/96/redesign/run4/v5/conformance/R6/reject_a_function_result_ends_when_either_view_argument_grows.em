@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R6, R8
+#$ rules: BRW-17
 #$ help: println(w.len())
+## design rules: R6, R8
 ## R6: with no `from`, a function's result points into every view argument it could come from, so a
 ## change that may move either list ends it (R8 (b), E3060).
 

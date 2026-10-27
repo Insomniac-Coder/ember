@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R9, R15
+#$ rules: THR-11, THR-21, THR-1, THR-2, THR-10
+## design rules: R9, R15
 ## R9: one scoped task changes the `sharedref mut` target directly, since no other task and not the
 ## parent touch it before the join (the nearest allowed program to
 ## `reject_two_tasks_set_one_player_through_two_sharedref_links.em` and to

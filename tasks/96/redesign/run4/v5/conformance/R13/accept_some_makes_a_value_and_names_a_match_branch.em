@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R13
+#$ rules: GRM-44
 #$ stdout: 5
+## design rules: R13
 ## R13: the nearest program that is allowed for both E0115 tests: `Some(...)` makes a value
 ## (`best = Some(5)`) and names a `match` branch.
 

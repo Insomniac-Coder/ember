@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R9
+#$ rules: OWN-8, RC-1
 #$ stdout: 4
+## design rules: R3, R9
 ## R3, R9: `shares mut items` makes one more owner that may change the list; a change through either
 ## is seen by both (AN-34's `two_owners`). No first line names the change (verdict 86).
 

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: CLS-7
 #$ help: this.v = 0
+## design rules: R5
 ## R5: `this` in a class method is the object the method was called on; it is never given another
 ## object, whatever else the method may change (AN-50, E2103).
 

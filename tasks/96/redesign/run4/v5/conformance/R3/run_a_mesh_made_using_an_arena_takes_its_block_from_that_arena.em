@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 1 2
 #$ 1
+## design rules: R3
 ## R3 and `V5/rules.md` section 2 ("the memory manager's own work"): the field names the kind
 ## (`owns Mesh using LevelArena`), the making line names the instance (`using current`), which is asked
 ## for the mesh's block once (`current.allocate(...)`); the mesh's own `verts` list comes from the

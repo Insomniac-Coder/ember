@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5, R9
+#$ rules: CLS-12
 #$ help: remove `@cached` (line 13)
+## design rules: R5, R9
 ## R5: a cached method may not read a field its object shares with other owners: they may change it
 ## without the object seeing it, so a kept result could be stale (AN-21, E2117; completeness G1).
 

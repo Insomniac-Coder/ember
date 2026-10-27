@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R11, R3
+#$ rules: OWN-8
+## design rules: R11, R3
 ## R11: the nearest allowed program to `reject_copy_of_a_link.em`: `weakref` before a link makes
 ## another link to the same target, with its own weak count (verdict 10).
 

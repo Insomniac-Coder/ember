@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R12, R5, R8
+#$ rules: BRW-18, CTL-2
 #$ stdout: a
 #$ stdout: 2
+## design rules: R12, R5, R8
 ## Verdict 86, R5, R12 (rules.md lines 752-756): `press` runs the handlers through `b.click()`; neither
 ## `press`, `click` nor `game` writes what they change. The walk of `names` ends first, then `press`
 ## runs the handler that pushes to it. The nearest allowed program to

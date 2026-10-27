@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R16, R4
+#$ rules: TIER-1, FN-1
+## design rules: R16, R4
 ## R16 (verdict 91): "a C function declared as keeping an object (`@ffi(param(widget, owned, one))` with
 ## `owns widget: owns Widget`) is given one by an ordinary hand-over, `widget_take(first)`: the name ends
 ## and Ember frees nothing, with no word" (R4: an argument for an `owns` parameter is handed over with no

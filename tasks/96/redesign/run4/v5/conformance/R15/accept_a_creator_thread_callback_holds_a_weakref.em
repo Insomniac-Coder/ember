@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R15, R11, R12, R13
+#$ rules: THR-1, WK-11, CLO-1, GRM-44
+## design rules: R15, R11, R12, R13
 ## R15: "`shares`, `shares mut` and `weakref` only where the function stays on this thread
 ## (`threads(creator)` or `threads(main)`, checked by the trampoline in every profile)": E7004's second
 ## way out, a link that lets the game end, written as a named local function (verdict 51) whose capture

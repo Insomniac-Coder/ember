@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R1
+#$ rules: MOD-3
 #$ help: to end `a` here with its clean-up write `mem.drop(a)` in place of line 21; to give it to a C function that keeps it, hand it to a parameter its declaration says it takes (`owns`), or, inside `unsafe:`, give it `a.into_raw()`
+## design rules: R1
 ## R1: a value always ends with its clean-up: when its last owner ends, its `drop` runs, and nothing
 ## ends an owner without it. `mem.forget` is not Ember (E1010; verdict 58: it left a shared count too
 ## high for good, and was the cheap way to roll a count over). Handing an object to C goes to an `owns`

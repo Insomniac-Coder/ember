@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R3
+#$ rules: OWN-10, TYP-46
 #$ help: write `e = Entity(mesh=owns Mesh(verts=[1, 2]))`
+## design rules: R3
 ## R3: `owns` is written on the line that makes a value for an `owns` field, with or without a memory
 ## manager (verdict 74; AN-40's `Entity(mesh=owns Mesh(...))`): `mesh` holds its mesh alone in its own
 ## block, and the line that makes it says so (E2123).

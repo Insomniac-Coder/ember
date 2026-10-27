@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R4
+#$ rules: CLO-3
 #$ help: fn(owns s) => println(s.len())
+## design rules: R12, R4
 ## Verdict 71, R12 (rules.md lines 676-680): "A lambda's parameter says what it receives, matching the
 ## function type it is given to": `each_name` hands each name over (`fn(owns String)`), so a lambda that
 ## writes `fn(s)` there is refused (E2020). rules.md section 3's line 1092 second message, word for word.

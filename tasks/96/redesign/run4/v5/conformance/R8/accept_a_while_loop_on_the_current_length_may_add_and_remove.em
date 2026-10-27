@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout: [1, 3, 4, 5]
+## design rules: R8
 ## R8 (c): a `while` loop that tests its position against the list's current length at every step is
 ## not a walk: it may add and remove, and each index is checked.
 

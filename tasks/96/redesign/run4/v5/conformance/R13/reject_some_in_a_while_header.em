@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R13
+#$ rules: GRM-44
 #$ help: write `while cur.next exists as n:`
+## design rules: R13
 ## R13: the same for a `while` header (E0115; AN-63's message).
 
 class Node:

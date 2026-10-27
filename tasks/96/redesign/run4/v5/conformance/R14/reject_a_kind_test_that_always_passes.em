@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14
+#$ rules: GRM-19
+## design rules: R14
 ## R14: "A test that always passes (`s` is already a `Circle`) is refused (E2036)" (AN-68).
 
 struct Circle:

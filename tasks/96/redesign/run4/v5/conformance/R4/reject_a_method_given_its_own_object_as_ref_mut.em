@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R5
+#$ rules: BRW-11
 #$ help: a.merge(ref mut b)
+## design rules: R4, R5
 ## R4: the object a method is called on counts as one of the call's arguments, so `a.merge(ref mut a)`
 ## gives `merge` two names for one bag, both changeable: `merge` would push to the list it walks
 ## (completeness G18, E3022).

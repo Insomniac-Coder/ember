@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R5
+#$ rules: THR-20
+## design rules: R15, R5
 ## R15: "`static mut NAME: T = e` ... is reached only by the main thread and its scoped tasks unless it
 ## is `guarded by` a `static` lock (E7012)" (section 3's message, in this program's lines; AN-76).
 

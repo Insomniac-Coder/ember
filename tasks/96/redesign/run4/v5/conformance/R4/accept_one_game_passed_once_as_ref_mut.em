@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4, R5
+#$ rules: FN-1, FN-4
 #$ stdout: orc moved
+## design rules: R4, R5
 ## R4: the nearest allowed program to a read and a change of one game in one call: the game is passed
 ## once, as `ref mut g`; the loop name `p` reads `g.players` while `g.note(...)` changes only `log`
 ## (AN-18's NEW).

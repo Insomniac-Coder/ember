@@ -1,9 +1,10 @@
 #$ test: run-pass
-#$ rules: R12, R14
+#$ rules: BRW-18, CTL-2
 #$ stdout: 0
 #$ stdout: 1
 #$ stdout: 2
 #$ stdout: 3
+## design rules: R12, R14
 ## Verdicts 46 and 86, R12 (rules.md lines 711-715): `inspect`'s adapter keeps the lambda and runs it at
 ## each step; made into an `owns dyn Iterator[Item = int]`, whose type says nothing about changes, it is
 ## driven by `show` after the loop over `LOG`, and `show` writes nothing. The nearest allowed program to

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R8
+#$ rules: BRW-1, BRW-11
 #$ help: write `n = xs[i]` above line 15, `grow(ref mut xs, ref mut n)` in place of line 15, and `xs[i] = n` below it
+## design rules: R4, R8
 ## R4, R8 (f): verdict 88 allows one whole variable under two names, and only that: a part whose position
 ## is not known when compiling, given beside its whole list, stays refused (E3022), since `grow` may
 ## reshape `a` while `b` points into it (the `LOG[0]` problem). The help gives `grow` a number of its own

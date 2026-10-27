@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-16
 #$ stdout: ['a'] 2
+## design rules: R8
 ## R8 (b): `.copy_each()` makes strings of your own (verdict 33), which a change of the map does not end.
 
 from std.collections import Map

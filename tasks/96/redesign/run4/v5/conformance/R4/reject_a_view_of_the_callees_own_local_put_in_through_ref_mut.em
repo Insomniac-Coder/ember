@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4, R6
+#$ rules: LT-45, BRW-19, ALC-1
 #$ help: best = other
+## design rules: R4, R6
 ## R4: inside the callee only a view of another view argument, a part of one, or text written in the
 ## program may be put into the caller's view through `ref mut`; a view of the callee's own local would
 ## outlive it (rules section 3, E3063).

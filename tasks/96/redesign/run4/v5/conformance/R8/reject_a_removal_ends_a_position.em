@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-17
 #$ help: boss = ref mut enemies[0]
+## design rules: R8
 ## R8 (a): anything that may remove, insert, reorder, clear or replace the list ends a position (E3060
 ## at a later use). AN-01, point 6. A removal through another name while `boss`, a `ref mut` name, is
 ## still used is E3060, not E3022 (R8 (f), R18: the rule that names the case decides, verdict 73).

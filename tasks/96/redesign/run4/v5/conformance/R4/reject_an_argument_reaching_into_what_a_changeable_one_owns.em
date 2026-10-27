@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-11
 #$ help: first = copy of names[0]
+## design rules: R4
 ## R4: an argument may not reach into what a changeable argument of the same call owns: `names[0]`'s
 ## text belongs to `names`, which `refill` may clear (rules section 3, E3021).
 

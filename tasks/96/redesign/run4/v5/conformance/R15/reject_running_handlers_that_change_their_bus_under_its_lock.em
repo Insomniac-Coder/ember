@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12
+#$ rules: THR-19
+## design rules: R15, R12
 ## R15 (verdicts 43 and 86): a call through a function value that may run a function taking a lock this
 ## thread holds is E7018: `h()` may run `poke`, which takes a `Bus`'s lock, inside `with this.lock:`;
 ## inside the walk of `this.handlers` too, E7018 and not E3020 (R18, verdict 73) (completeness G26; the

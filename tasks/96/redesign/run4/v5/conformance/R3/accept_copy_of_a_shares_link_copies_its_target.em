@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3
+#$ rules: OWN-8
 #$ stdout: 2 2 3
+## design rules: R3
 ## R3: before a `shares` link, `copy of` copies its target, never the link: `mine` is a list of its
 ## own, and a push to it is not seen through `items` or `other`.
 

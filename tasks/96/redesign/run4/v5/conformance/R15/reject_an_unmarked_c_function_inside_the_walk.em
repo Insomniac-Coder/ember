@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15, R12, R8
+#$ rules: BRW-18, CTL-2
+## design rules: R15, R12, R8
 ## R12 (verdict 31): a C function that never calls back but is declared without the mark counts as
 ## possibly running the kept callback; "a missing mark only refuses such a loop, and the message names
 ## the mark" (AN-78; section 3's message in this program's lines; its other way out, moving the call

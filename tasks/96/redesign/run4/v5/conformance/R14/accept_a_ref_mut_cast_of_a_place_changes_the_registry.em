@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R14, R2, R6
+#$ rules: TYP-44, BRW-12, LT-1
 #$ stdout: 11
+## design rules: R14, R2, R6
 ## R14: "A cast of a place is a place" (AN-22's `get_mut`): `ref mut cast` names the registry's own
 ## pool, so the element returned `ref mut` points into `reg`, and `p += 1` writes it (R2, R6). The pool
 ## made for the map's `owns dyn AnyPool` values says `owns` (verdict 85).

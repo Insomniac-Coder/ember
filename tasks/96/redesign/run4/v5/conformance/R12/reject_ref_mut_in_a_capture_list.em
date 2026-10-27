@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R3
+#$ rules: GRM-42, CLO-2
 #$ help: bump = fn(): score += 1
+## design rules: R12, R3
 ## R3 (rules.md lines 236-239: "`ref mut` is not a capture word: a name not listed already is the real
 ## variable (`fn() ref mut x: x += 1` is refused, E0120 ...)") and R12 (lines 752-753). rules.md section
 ## 3's line 1085 message, in this program's names, with the whole line to write. The nearest allowed

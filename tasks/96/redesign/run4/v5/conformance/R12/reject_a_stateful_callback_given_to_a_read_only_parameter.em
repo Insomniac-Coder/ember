@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R12, R4
+#$ rules: BRW-14, BRW-15
 #$ help: write `fn run(ref mut f: fn()):` and call `run(ref mut cb)`
+## design rules: R12, R4
 ## R12 (rules.md lines 776-781): "A call through a stored function value whose functions may change their
 ## own state is a change of the place that holds it ... and such a function value is refused where it is
 ## given to a parameter that only reads (`run(cb)` with `fn run(f: fn()):`, E3023)". AN-54 part 6;

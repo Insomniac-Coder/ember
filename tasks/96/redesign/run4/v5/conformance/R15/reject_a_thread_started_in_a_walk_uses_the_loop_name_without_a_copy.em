@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-17, THR-10
+## design rules: R15
 ## R15 (verdicts 65 and 93): "The loop's name used with no word is refused: ... E7004 for a
 ## `thread.spawn` thread, whose message gives `copy of t`" (verdict 52's line as first written; section
 ## 3's E7004 loop message, with the line to write). The nearest allowed program is

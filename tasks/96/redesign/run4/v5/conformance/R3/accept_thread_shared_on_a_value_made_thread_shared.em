@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R3, R15
+#$ rules: OWN-8, THR-1
 #$ stdout: 0
+## design rules: R3, R15
 ## R3, R15: the nearest program that is allowed: the object is created shared between threads, and
 ## `thread_shared names` makes one more owner of it.
 

@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R4
+#$ rules: FN-1
 #$ stdout: 2.0
+## design rules: R4
 ## R4, rules section 2: `assert_disjoint(d, s)` compares the two address ranges once; afterwards the
 ## two names are known apart and the call is compiled with noalias (AN-14's `mix`).
 

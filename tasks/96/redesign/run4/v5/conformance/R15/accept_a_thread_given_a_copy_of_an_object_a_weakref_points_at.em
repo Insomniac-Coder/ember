@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R15, R12, R11
+#$ rules: THR-1, THR-2, THR-10, CLO-16, FFI-22
 #$ stdout: 0
 #$ stdout: 0
+## design rules: R15, R12, R11
 ## R15, R12, R11: the nearest allowed program to
 ## `reject_an_object_a_weakref_points_at_handed_to_another_thread`: the thread gets a copy of its own,
 ## and `names`, which `w` points at, stays on this thread.

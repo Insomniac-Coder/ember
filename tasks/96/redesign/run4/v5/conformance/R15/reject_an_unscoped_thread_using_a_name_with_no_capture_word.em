@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-17, THR-10
+## design rules: R15
 ## R15: "An unscoped thread ... say[s] in the capture list what [it holds] (`owns`, `thread_shared`,
 ## `copy of`; E7004 for a name with no word)" (AN-71; section 3's E7004 message, with the lines to
 ## write). The nearest allowed programs are `accept_an_unscoped_thread_takes_its_object_over.em` and

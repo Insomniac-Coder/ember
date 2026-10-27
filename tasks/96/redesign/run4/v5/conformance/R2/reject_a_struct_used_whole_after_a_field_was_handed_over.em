@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R2, R1
+#$ rules: OWN-3
 #$ help: give `p.name` a new value first, `p.name = String("")` above line 15, or keep a copy: write `names.push(copy of p.name)` in place of line 14
+## design rules: R2, R1
 ## R2, R1: after a field is handed over on its own, the owner is not whole, so using it whole is refused
 ## until the field gets a new value (E3040; verdict 78; completeness gap G11, whose code is now settled).
 

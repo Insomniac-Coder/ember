@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2, R3
+#$ rules: BRW-12, OWN-8
 #$ stdout: 7 1
+## design rules: R2, R3
 ## R2, R3: `boss = copy of enemies[0]` makes a copy of your own (rows 6, 9); changing it leaves the
 ## list's enemy as it was, and nothing restricts it (R8 (g)).
 

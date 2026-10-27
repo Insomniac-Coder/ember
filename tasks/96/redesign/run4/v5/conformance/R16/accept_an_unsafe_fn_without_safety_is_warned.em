@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R16
+#$ rules: UNS-7
+## design rules: R16
 ## R16: "`@safety` saying what they must make true (L3015 when missing, on every `unsafe fn`)", not only
 ## a `pub` one (section 3's message, word for word: it names no promise the compiler cannot know).
 

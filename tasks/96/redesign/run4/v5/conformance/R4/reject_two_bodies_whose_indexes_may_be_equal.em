@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-11
 #$ help: write `if i != j:` above this line and indent it under it
+## design rules: R4
 ## R4 (verdict 98): two elements of one list whose positions are not proved different may not be given
 ## to one call that may change both; `i` and `j` may be equal, so the call is refused when compiling
 ## (E3022), with `if i != j:` as the way out (R4/accept_two_bodies_inside_if_i_is_not_j.em).

@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8, R5
+#$ rules: BRW-18, CTL-2
 #$ help: move line 20, `enemies.clear()`, below the loop
+## design rules: R8, R5
 ## R8 (c), R5, verdict 57: ending an object counts as a call of its `drop`; `enemies.clear()` ends an
 ## `Enemy`, whose `drop` pushes to `LOG`, so inside a loop over `LOG` it is refused at the change
 ## (E3020). Completeness check, G12.

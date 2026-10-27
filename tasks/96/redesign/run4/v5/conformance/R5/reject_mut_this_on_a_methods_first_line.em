@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R5
+#$ rules: GRM-42, FN-1
 #$ help: write `fn reset():`
+## design rules: R5
 ## R5: a method changes its object through `this` with no word (verdict 86); `mut this` is `mut` alone on
 ## a name, which says "may change" but not whose (rules section 3, E0113, its message word for word).
 

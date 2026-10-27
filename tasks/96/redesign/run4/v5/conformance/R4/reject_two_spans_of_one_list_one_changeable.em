@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R4
+#$ rules: BRW-11
 #$ help: old = copy of p
+## design rules: R4
 ## R4: two spans of one list given to one call, one of them changeable, are proved apart or refused,
 ## numbers included (AN-11, E3021).
 

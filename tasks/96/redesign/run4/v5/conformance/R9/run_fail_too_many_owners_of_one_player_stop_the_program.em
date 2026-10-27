@@ -1,7 +1,8 @@
 #$ test: run-fail
-#$ rules: R9
+#$ rules: RC-1
 #$ count_bits: 8
 #$ panics: too many owners of a `Player` (255)
+## design rules: R9
 ## R9 (verdicts 59, 96): "A count is checked before it rolls over: before each +1 of an owner count ... it
 ## is compared with its maximum, and at the maximum the program stops". This program is compiled with an
 ## 8-bit count in each object (`#$ count_bits: 8`), stored and compared as the real 32-bit one is, so the

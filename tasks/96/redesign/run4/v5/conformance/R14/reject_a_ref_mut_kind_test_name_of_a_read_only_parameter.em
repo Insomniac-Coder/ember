@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R14, R4
+#$ rules: FN-2a
+## design rules: R14, R4
 ## R14: the name a kind test gives may be `ref mut` "where the function may change the place"; `s`, a
 ## plain `dyn Shape` parameter, is "a read-only view" (R14), so a `ref mut` name of it is E3027.
 

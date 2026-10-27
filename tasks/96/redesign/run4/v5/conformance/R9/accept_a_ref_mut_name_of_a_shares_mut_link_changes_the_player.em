@@ -1,5 +1,6 @@
 #$ test: compile-pass
-#$ rules: R9, R10, R5
+#$ rules: BRW-15
+## design rules: R9, R10, R5
 ## R9: "Any `ref mut` name of it ... may change it"; R10 point 1: nothing in `t`'s life can end an
 ## object of type `Player`, so `t` costs no count (AN-51: 0 count operations per step where today makes
 ## 2). The nearest program to `reject_a_plain_parameter_changes_a_player_behind_a_shares_link.em` that

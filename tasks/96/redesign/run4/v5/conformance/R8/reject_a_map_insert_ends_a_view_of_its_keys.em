@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-17
 #$ help: ks = sorted(m.keys().copy_each())
+## design rules: R8
 ## R8 (b): a list of views a call made from a map's keys ends when the map may reshape; the way out
 ## keeps strings of your own (`.copy_each()`, verdict 33). The E3060 message of rules section 3.
 

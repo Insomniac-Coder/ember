@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R7
+#$ rules: TYP-34
 #$ help: remove `@view`
+## design rules: R7
 ## R7: `from static` on a struct's field does not make the struct a view, so a struct whose only view
 ## field says `from static` holds no view, and `@view` on it is refused (E2030, "`@view` on a type that is
 ## not a view"). The allowed neighbour is `accept_a_struct_whose_view_field_is_from_static_is_not_a_view.em`.

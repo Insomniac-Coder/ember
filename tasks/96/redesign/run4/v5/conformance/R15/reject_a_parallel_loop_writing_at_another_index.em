@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: PAR-2
 #$ help: run the loop on one thread: remove `@parallel` (line 7)
+## design rules: R15
 ## R15: "E7010 where chunks may write one place" (AN-84; the message gives the line that compiles, R18).
 
 fn scatter(ref mut xs: MutSpan[int], idx: Span[int]):

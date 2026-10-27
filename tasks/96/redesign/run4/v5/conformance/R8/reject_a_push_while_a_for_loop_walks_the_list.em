@@ -1,6 +1,7 @@
 #$ test: compile-fail
-#$ rules: R8
+#$ rules: BRW-18, CTL-2
 #$ help: spawned: Array[Enemy] = []
+## design rules: R8
 ## R8 (c): a list may not change while a `for` loop walks it; the change goes after the loop. AN-04,
 ## point 6; the message of rules section 3.
 

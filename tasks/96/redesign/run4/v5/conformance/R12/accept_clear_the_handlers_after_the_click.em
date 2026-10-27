@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12
+#$ rules: BRW-11
 #$ stdout: 1 0
+## design rules: R12
 ## R12 (rules.md lines 722-725): the way out of the nearest refused program
 ## (reject_a_handler_stored_in_the_button_it_changes): the handlers are cleared after the click, by the
 ## function that owns the button, not by a handler the button holds.

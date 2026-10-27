@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R2, R4
+#$ rules: BRW-12, FN-1
 #$ stdout: 3
+## design rules: R2, R4
 ## R2, R4: a `ref mut` parameter of a view given another view points the caller's view at it, for
 ## the rest of the program (the caller's `best` now views `ys`; R4 allows only another view argument
 ## to be put there).

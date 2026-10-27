@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R6, R8
+#$ rules: LT-1, BRW-16
 #$ stdout: let x let
+## design rules: R6, R8
 ## R6: `-> StrView from src` narrows a method's result to what one field of `this` views, so the
 ## result points into the text, not into `p`: `p.next_word()` may change `p.pos` while `a` is used,
 ## and `first_word` may return a word of a parser that ends (AN-22's NEW).

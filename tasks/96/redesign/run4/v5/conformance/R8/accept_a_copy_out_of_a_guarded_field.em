@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R8, R15
+#$ rules: BRW-19
 #$ stdout: hi
+## design rules: R8, R15
 ## R8 (e): what leaves `with log.lock:` is a `String` of your own, not a view of the guarded list. The
 ## nearest program to `reject_a_view_of_a_guarded_field_returned_out_of_its_lock.em` that is allowed.
 

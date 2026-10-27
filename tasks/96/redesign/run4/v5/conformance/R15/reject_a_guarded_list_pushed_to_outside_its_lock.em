@@ -1,5 +1,6 @@
 #$ test: compile-fail
-#$ rules: R15
+#$ rules: THR-18
+## design rules: R15
 ## R15: "`guarded by lock` ... names the `Lock` that must be held for every read and change outside
 ## `init` (E7013)" (AN-75's refused `start`).
 

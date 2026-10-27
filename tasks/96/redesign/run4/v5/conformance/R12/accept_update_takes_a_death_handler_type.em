@@ -1,6 +1,7 @@
 #$ test: run-pass
-#$ rules: R12, R4
+#$ rules: CLO-1, FN-1
 #$ stdout: 2 1
+## design rules: R12, R4
 ## Verdicts 49 and 86, R12 (rules.md lines 672-674: "`type DeathHandler = fn(ref mut Array[Enemy],
 ## int)`"): the long function type is named once with `type`, with no change list; `update` runs the
 ## handler it is given, and each call makes what that handler changes, worked out from it: `main`'s own

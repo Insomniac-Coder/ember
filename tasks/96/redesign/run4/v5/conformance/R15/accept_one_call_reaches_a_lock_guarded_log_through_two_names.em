@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R15, R4, R12
+#$ rules: THR-19
 #$ stdout: a
 #$ stdout: 2
+## design rules: R15, R4, R12
 ## R4, exception 2 (verdict 89): "A `thread_shared` object whose every field that may change is `guarded
 ## by` its lock ... may reach one call through any number of names, a plain argument and a function
 ## value that holds it included: `dump(log, fn() thread_shared log: log.push("seen"))`, whose `dump`

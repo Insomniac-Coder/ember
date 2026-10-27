@@ -1,8 +1,9 @@
 #$ test: run-pass
-#$ rules: R8
+#$ rules: BRW-18, CTL-2
 #$ stdout:
 #$ a
 #$ 2
+## design rules: R8
 ## R8 (c), verdict 72: the way out E3020's message gives: the new names are collected during the walk of
 ## the set and added after the loop. The nearest program to `reject_an_add_while_a_loop_walks_a_set.em`
 ## that is allowed.

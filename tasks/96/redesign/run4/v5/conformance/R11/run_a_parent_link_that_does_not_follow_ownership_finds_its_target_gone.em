@@ -1,7 +1,8 @@
 #$ test: run-pass
-#$ rules: R11, R13
+#$ rules: WK-11, GRM-44
 #$ stdout: other/leaf
 #$ stdout: leaf
+## design rules: R11, R13
 ## R11: "where condition 1 fails, every read tests": a line here gives a node's `parent` a target that
 ## does not own it (`root.children[0].parent = weakref other`), so the proof fails for the whole
 ## package, the program is accepted, and every read of `parent` tests the target's header, which finds
