@@ -156,12 +156,16 @@ pub fn merge_profiles(toolchain: &Toolchain, inputs: &[PathBuf], output: &Path) 
     run(command)
 }
 
-/// `llvm-profdata` beside the Clang the build uses (its real file: `/usr/bin/clang` is a link into
-/// LLVM's own folder), else the one the `PATH` finds.
+/// `llvm-profdata` beside the Clang the build uses (a bare `clang` found on `PATH` first, then its
+/// real file: `/usr/bin/clang` is a link into LLVM's own folder, and Ubuntu puts only
+/// `llvm-profdata-21` on `PATH`), else the one the `PATH` finds.
 fn profdata_tool(toolchain: &Toolchain) -> PathBuf {
     let name = if cfg!(windows) { "llvm-profdata.exe" } else { "llvm-profdata" };
     let clang = match toolchain {
-        Toolchain::Clang(path) => Some(path.canonicalize().unwrap_or_else(|_| path.clone())),
+        Toolchain::Clang(_) => {
+            let path = toolchain.compiler_path();
+            Some(path.canonicalize().unwrap_or(path))
+        }
         Toolchain::Msvc { cl, .. } if is_clang_cl(cl) => Some(cl.clone()),
         _ => None,
     };
