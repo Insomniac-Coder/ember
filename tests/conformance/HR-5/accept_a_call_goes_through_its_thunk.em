@@ -18,8 +18,9 @@
 # to its symbol, which is its thunk: the thunk loads the current target from the image's copy of
 # the call table and calls it. The body has a name of its own and is never inlined, however small
 # and however few its callers; a virtual method with one implementation is still called through
-# its method table, since a reload may add an override. A value of the function is the descriptor
-# the runtime keeps one of for the whole process. The manifest lists the function by its mangled
+# its method table, since a reload may add an override. A value of the function (`held`: `add_one`
+# itself is a type of its own, holding nothing, ODR-278) is the descriptor the runtime keeps one of
+# for the whole process. The manifest lists the function by its mangled
 # name, beside the protocol's version, in the image's own section.
 
 fn add_one(x: int) -> int:
@@ -37,5 +38,6 @@ fn measure(s: Shape) -> int:
 
 fn main():
     println(add_one(11))
-    println(apply(add_one, 20))
+    held: fn(int) -> int = add_one
+    println(apply(held, 20))
     println(measure(Shape()))

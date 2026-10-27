@@ -319,7 +319,8 @@ impl<'a, 'io> Interp<'a, 'io> {
     }
 
     pub fn is_void(&self, ty: Ty) -> bool {
-        matches!(self.types.kind(ty), TyKind::Void | TyKind::Never | TyKind::Error)
+        // ODR-278 — a function item holds nothing, as `void` does.
+        matches!(self.types.kind(ty), TyKind::Void | TyKind::Never | TyKind::Error | TyKind::FnItem { .. })
     }
 
     /// The integer type `ty` is computed as: an integer, a `char` (its scalar value), a `bool`, a

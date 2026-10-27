@@ -391,3 +391,61 @@ fn a_package_checks_and_builds_alike_on_one_thread_and_on_several() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+const ITEMS_LIB: &str = r#"
+pub fn offset(x: int) -> int:
+    return x + 1
+
+pub fn twice[F: fn(int) -> int](f: F, x: int) -> int:
+    return f(f(x))
+
+pub fn doubled(xs: Span[int]) -> int:
+    return xs.iter().map(fn(x: ref int) -> int => x * 2).sum()
+
+pub fn shifted(x: int) -> int:
+    f = offset
+    return twice(f, x) + f(x)
+"#;
+
+const ITEMS_MAIN: &str = r#"
+import lib
+
+fn main():
+    xs = [1, 2, 3]
+    f = lib.offset
+    k = fn(x: int) -> int => x * 3
+    total = xs.iter().map(fn(x: ref int) -> int => lib.offset(x)).sum()
+    println(f(1), lib.twice(f, 2), lib.shifted(1), lib.twice(k, 1), total, lib.doubled(xs.as_span()))
+"#;
+
+/// ODR-278, `[BLD-1]` — a function's and a lambda's own types are kept with a module's checked form
+/// by the symbol that names the function, and the generics a kept module made for them (`twice`
+/// given `lib.offset` or a lambda, `map` given a lambda) are made again by the same symbols: after each edit,
+/// every C unit is a clean build's, and the program prints what the clean build's prints.
+#[test]
+fn function_items_are_kept_across_builds_as_a_clean_build_makes_them() {
+    let dir = scratch();
+    std::fs::write(dir.join("ember.toml"), "[package]\nname = \"items\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, "lib.em", ITEMS_LIB);
+    write(&dir, "main.em", ITEMS_MAIN);
+    let first = build(&dir, "target-incremental", false);
+    assert!(first.ok, "{}", first.report);
+    let edits = [
+        ("a body the items name", ITEMS_LIB.replace("return x + 1", "return x + 10"), "lib.em"),
+        ("the importer's body", ITEMS_MAIN.replace("x * 3", "x * 4"), "main.em"),
+        ("a lambda added before the others", ITEMS_LIB.replace("pub fn doubled", "pub fn tripled(xs: Span[int]) -> int:\n    return xs.iter().map(fn(x: ref int) -> int => x * 3).sum()\n\npub fn doubled"), "lib.em"),
+    ];
+    for (step, text, file) in edits {
+        write(&dir, file, &text);
+        let incremental = build(&dir, "target-incremental", false);
+        let clean = build(&dir, "target-clean", true);
+        assert!(incremental.ok && clean.ok, "{step}:\n{}\n{}", incremental.report, clean.report);
+        assert_eq!(incremental.report, clean.report, "{step}: what the builds report");
+        assert_eq!(incremental.units.keys().collect::<Vec<_>>(), clean.units.keys().collect::<Vec<_>>(), "{step}: the C units");
+        for (name, text) in &incremental.units {
+            assert!(clean.units[name] == *text, "{step}: `{name}` is not the clean build's");
+        }
+        assert_eq!(runs(&dir, "target-incremental"), runs(&dir, "target-clean"), "{step}: what the programs print");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

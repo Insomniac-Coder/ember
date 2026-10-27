@@ -5337,6 +5337,7 @@ impl Emitter<'_> {
             | TyKind::Ref { .. }
             | TyKind::Ptr { .. }
             | TyKind::Fn { .. }
+            | TyKind::FnItem { .. }
             | TyKind::Infer(_)
             | TyKind::IntLit
             | TyKind::FloatLit
@@ -6830,7 +6831,7 @@ impl Emitter<'_> {
             }
             fields.push(format!("{}* env", self.c_type(callback.callable)));
         } else {
-            fields.push(format!("{} env", self.c_type(callback.callable)));
+            fields.push(format!("{} env", self.c_member_type(callback.callable)));
         }
         if creator {
             fields.push("uint32_t creator".to_string());
@@ -6888,6 +6889,10 @@ impl Emitter<'_> {
             }
             None => (format!("(({env_c}*){data})"), None),
         };
+        // ODR-278 — a function item holds no state: where it is kept is not read.
+        if matches!(self.types.kind(callback.callable), TyKind::FnItem { .. }) {
+            self.line(&format!("    (void){};", if record.is_some() { "_record".to_string() } else { format!("_cb{}", callback.slot) }));
+        }
         let thread = thread.or_else(|| (callback.threads == ExportThreadPolicy::Main).then(|| format!("EMBER_FFI_MAIN_THREAD")));
         if let Some(thread) = thread {
             self.line("#ifdef EMBER_RT_DEBUG_ACCESS");
@@ -6899,11 +6904,18 @@ impl Emitter<'_> {
         let closure = callback.closure.as_ref().and_then(|symbol| bodies.iter().find(|candidate| &candidate.symbol == symbol));
         let (call, consumed) = match closure {
             Some(closure) => {
+                // ODR-278 — a function's own type holds no state: its function takes none.
+                let item = matches!(self.types.kind(callback.callable), TyKind::FnItem { .. });
                 let mut closure_args = closure.args();
-                let (_, env_param) = closure_args.next().expect("a closure takes its environment first");
-                let by_address = matches!(self.types.kind(env_param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
+                let environment = if item {
+                    None
+                } else {
+                    let (_, env_param) = closure_args.next().expect("a closure takes its environment first");
+                    let by_address = matches!(self.types.kind(env_param.ty), TyKind::Ref { .. } | TyKind::Ptr { .. });
+                    Some(if by_address { env.clone() } else { format!("(*{env})") })
+                };
                 let locals: Vec<Ty> = closure_args.map(|(_, decl)| decl.ty).collect();
-                let arguments: Vec<String> = std::iter::once(if by_address { env.clone() } else { format!("(*{env})") })
+                let arguments: Vec<String> = environment.into_iter()
                     .chain(others.iter().zip(&locals).map(|((at, param), local)| {
                         if param.mode == FnParamMode::Borrow && matches!(self.types.kind(*local), TyKind::Ref { .. } | TyKind::Ptr { .. }) {
                             format!("&_cb{at}")
@@ -6913,7 +6925,7 @@ impl Emitter<'_> {
                     }))
                     .collect();
                 // A lambda that takes its environment over ends it itself.
-                (format!("{}({})", closure.symbol, arguments.join(", ")), closure.param_modes.first() == Some(&ParameterMode::Owned))
+                (format!("{}({})", closure.symbol, arguments.join(", ")), !item && closure.param_modes.first() == Some(&ParameterMode::Owned))
             }
             None => {
                 let native: Vec<String> = std::iter::once("void*".to_string())
@@ -12145,7 +12157,7 @@ impl Emitter<'_> {
     }
 
     fn is_void(&self, ty: ember_types::Ty) -> bool {
-        matches!(self.types.kind(ty), TyKind::Void | TyKind::Never | TyKind::Error)
+        matches!(self.types.kind(ty), TyKind::Void | TyKind::Never | TyKind::Error | TyKind::FnItem { .. })
     }
 
     /// A member's or a parameter's C type. Ember's `void` is a unit value, and
@@ -12206,7 +12218,8 @@ impl Emitter<'_> {
                 FloatTy::F64 => "double",
             }
             .into(),
-            TyKind::Void | TyKind::Never | TyKind::Error => "void".into(),
+            // ODR-278 — a function item holds nothing, as `void` does.
+            TyKind::Void | TyKind::Never | TyKind::Error | TyKind::FnItem { .. } => "void".into(),
             TyKind::Str => format!("{RT}str"),
             TyKind::CStr => "const char*".into(),
             // A view is a pointer and a length. One C struct serves

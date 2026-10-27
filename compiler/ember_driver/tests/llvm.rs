@@ -291,3 +291,32 @@ fn cg_ll_1_an_unknown_backend_is_refused() {
     let said = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     assert!(said.contains("gcc-jit"), "{said}");
 }
+
+/// ODR-278, `[CLO-1]`, `[STD-19]` — a lambda that captures nothing has a type of its own, which
+/// `map`'s generic argument keeps: the adapter is made for the lambda, holds nothing for it, and
+/// its `next` calls the lambda directly. No callable value is made or called through (in `debug`,
+/// where Ember inlines nothing, ODR-259, the call is there to read).
+#[test]
+fn clo_1_a_lambda_in_an_adapter_is_called_directly() {
+    let ir = ir(
+        "\
+fn main():
+    xs = [1, 2, 3]
+    it = xs.iter().map(fn(x: ref int) -> int => x * 2)
+    total = 0
+    for v in it:
+        total += v
+    println(total)
+",
+        "debug",
+    );
+    let symbol_of = |needle: &str| -> String {
+        let line = ir.lines().find(|line| line.starts_with("define ") && line.contains(needle)).unwrap_or_else(|| panic!("a function `{needle}`:\n{ir}"));
+        let at = line.find('@').expect("a symbol") + 1;
+        line[at..at + line[at..].find('(').expect("its parameters")].to_string()
+    };
+    let lambda = symbol_of("closure_4main");
+    let next = function(&ir, &symbol_of("3Map4next"));
+    assert!(next.contains(&format!("@{lambda}(")), "the adapter calls its lambda directly:\n{next}");
+    assert!(!ir.contains("fn_value"), "no callable value:\n{ir}");
+}

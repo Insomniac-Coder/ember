@@ -221,6 +221,13 @@ pub enum TyKind {
     /// `send` (ODR-264): `fn(A) -> R + Send`, an owned callable value holding only what is
     /// `Send`; the same value, and it converts to the one without.
     Fn { abi: Option<Symbol>, latebound: bool, stateless: bool, is_unsafe: bool, once: bool, send: bool, params: Vec<FnParam>, ret: Ty },
+    /// ODR-278, `[CLO-1]`, `[FN-6]` — a function item: the type of exactly one function (a
+    /// function or an instance named as a value, a lambda or local function that captures
+    /// nothing). `symbol` is that function's C symbol, which names it across builds; `shape` is
+    /// the stateless `fn(A) -> R` it converts to where a callable type is wanted; `name` is how a
+    /// diagnostic shows it. It holds nothing: zero-sized and `Copy`, laid out and passed as
+    /// `void` is, and a call through it is a direct call to `symbol`.
+    FnItem { symbol: Symbol, name: Symbol, shape: Ty },
     /// `[TYP-22]` — an unsized interface value. The interface identities are
     /// retained in declaration order; runtime fat-pointer/vtable lowering is
     /// a later backend slice, so this kind must never acquire a guessed
@@ -884,6 +891,8 @@ impl TypeTable {
                 params.iter().any(|param| self.is_generic_in(param.ty, seen))
                     || self.is_generic_in(*ret, seen)
             }
+            // A lambda checked over opaque parameters: never one function that runs.
+            TyKind::FnItem { shape, .. } => self.is_generic_in(*shape, seen),
             // An instance over a parameter is generic whether or not a field holds it: a phantom
             // argument (`Not[T]`, `[TYP-35]`) and `SoA[T]`'s element (its columns are known only
             // per instance) are arguments no field shows.
@@ -933,6 +942,7 @@ impl TypeTable {
             TyKind::Array { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => self.mentions_error_in(*elem, seen),
             TyKind::Tuple(items) => items.iter().any(|&t| self.mentions_error_in(t, seen)),
             TyKind::Fn { params, ret, .. } => params.iter().any(|param| self.mentions_error_in(param.ty, seen)) || self.mentions_error_in(*ret, seen),
+            TyKind::FnItem { shape, .. } => self.mentions_error_in(*shape, seen),
             TyKind::Struct(id) => {
                 seen.insert(ty)
                     && (self.struct_def(*id).fields.iter().any(|field| self.mentions_error_in(field.ty, seen))
@@ -1161,14 +1171,23 @@ impl TypeTable {
                     return true;
                 }
                 match args[slot] {
-                    // A parameter met twice must be met with the same type.
-                    Some(existing) => existing == actual,
+                    // A parameter met twice must be met with the same type, except that two
+                    // functions of one shape meet at it (ODR-278): `pick(add_one, sub_one)`.
+                    Some(existing) => match self.join_items(existing, actual) {
+                        Some(joined) => {
+                            args[slot] = Some(joined);
+                            true
+                        }
+                        None => false,
+                    },
                     None => {
                         args[slot] = Some(actual);
                         true
                     }
                 }
             }
+            // ODR-278 — a function given where a callable type is written solves it by its shape.
+            (TyKind::Fn { .. }, TyKind::FnItem { shape, .. }) => self.unify_with_fixed(declared, shape, args, fixed),
             (TyKind::Ref { inner: a, .. }, TyKind::Ref { inner: b, .. })
             | (TyKind::Ptr { inner: a, .. }, TyKind::Ptr { inner: b, .. })
             | (TyKind::Array { elem: a, .. }, TyKind::Array { elem: b, .. }) => {
@@ -1309,6 +1328,28 @@ impl TypeTable {
             // A concrete declared type has nothing to infer; the ordinary
             // coercion check decides whether the argument fits.
             _ => true,
+        }
+    }
+
+    /// ODR-278 — the type two values meet at: the same type, or for two functions of one shape
+    /// (or a function and a value of its shape) that shape; `None` when they do not meet.
+    pub fn join_items(&self, a: Ty, b: Ty) -> Option<Ty> {
+        if a == b {
+            return Some(a);
+        }
+        let shape = |ty: Ty| match self.kind(ty) {
+            TyKind::FnItem { shape, .. } => *shape,
+            _ => ty,
+        };
+        let (a_shape, b_shape) = (shape(a), shape(b));
+        (a_shape == b_shape && (a_shape != a || b_shape != b)).then_some(a_shape)
+    }
+
+    /// ODR-278 — the stateless `fn(A) -> R` a function item converts to; `None` for any other type.
+    pub fn item_shape(&self, ty: Ty) -> Option<Ty> {
+        match self.kind(ty) {
+            TyKind::FnItem { shape, .. } => Some(*shape),
+            _ => None,
         }
     }
 
@@ -1559,7 +1600,8 @@ impl TypeTable {
             // `[FFI-8]` — the target's `long double`, as the C compiler lays it out.
             TyKind::CLongDouble => c_long_double_layout(self.pointer_size),
             TyKind::VaList => va_list_layout(self.pointer_size),
-            TyKind::Void | TyKind::Never => Layout::ZERO,
+            // ODR-278 — a function item holds nothing.
+            TyKind::Void | TyKind::Never | TyKind::FnItem { .. } => Layout::ZERO,
             // A view: pointer plus length.
             TyKind::Str | TyKind::Span { .. } => Layout {
                 size: self.pointer_size * 2,
@@ -1798,7 +1840,7 @@ impl TypeTable {
             TyKind::VaList => (false, false),
             TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_)
             | TyKind::Float(_) | TyKind::CLongDouble | TyKind::Void | TyKind::Never | TyKind::Str
-            | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::Error => (true, true),
+            | TyKind::Range(_) | TyKind::Fn { .. } | TyKind::FnItem { .. } | TyKind::Error => (true, true),
             TyKind::Newtype(id) => both(self.newtype_def(*id).repr, visiting),
             TyKind::Class(id) => {
                 let safe = self.class_def(*id).is_sync;
@@ -2070,6 +2112,7 @@ impl TypeTable {
     /// `[LT-7]` — the source parameters of a callable type, which a call
     /// through a value of that type borrows (`None` for anything else).
     pub fn callable_sources(&self, callee: Ty) -> Option<Vec<usize>> {
+        let callee = self.item_shape(callee).unwrap_or(callee);
         let TyKind::Fn { params, .. } = self.kind(callee) else { return None };
         Some(
             params
@@ -2101,6 +2144,7 @@ impl TypeTable {
             | TyKind::CStr
             | TyKind::Ptr { .. }
             | TyKind::Fn { .. }
+            | TyKind::FnItem { .. }
             | TyKind::IntLit
             | TyKind::FloatLit
             | TyKind::Error => true,
@@ -2619,7 +2663,8 @@ impl TypeTable {
             // `{null, 0, 0}`. It is valid even though the value owns storage
             // once grown and therefore is not Copy.
             TyKind::Vec { .. } => true,
-            TyKind::Error => true,
+            // ODR-278 — no bytes: the one value a function item has.
+            TyKind::Error | TyKind::FnItem { .. } => true,
             TyKind::Void
             | TyKind::Never
             | TyKind::Str
@@ -3049,6 +3094,9 @@ impl TypeTable {
                     if *send { " + Send" } else { "" },
                 )
             }
+            // ODR-278 — the shape and the one function: `fn(int) -> int {add_one}`.
+            TyKind::FnItem { name, shape, .. } if user => format!("{} {{{name}}}", self.render(*shape, user)),
+            TyKind::FnItem { symbol, .. } => format!("fn{{{symbol}}}"),
             TyKind::Infer(_) => "_".into(),
             // A diagnostic should never name these; if one does, say something
             // a reader recognises rather than an internal name.
@@ -3184,6 +3232,7 @@ impl TypeTable {
                 }
                 out
             }
+            TyKind::FnItem { symbol, .. } => format!("fn{{{symbol}}}"),
             TyKind::Param { index, .. } => format!("$P{index}"),
             TyKind::Assoc { name } => format!("Self.{name}"),
             TyKind::Infer(_) => return Err(CanonicalTypeError::InferenceVariable),
@@ -3985,6 +4034,40 @@ mod tests {
             open: false,
         });
         assert_eq!(table.enum_unused_discriminant(unsigned_id), None);
+    }
+
+    /// ODR-278, `[FN-6]`, `[CLO-1]` — a function item holds nothing (zero bytes, `Copy`, nothing to
+    /// drop, `Send` and `Sync`), is shown with its shape and spelled by its symbol; two functions
+    /// of one shape meet at it, a parameter met by both is solved by it, and a callable type
+    /// written is solved by a function's shape.
+    #[test]
+    fn a_function_item_holds_nothing_and_meets_another_at_its_shape() {
+        let (mut table, _) = TypeTable::new();
+        let int = table.intern(TyKind::Int(IntTy::I64));
+        let param = FnParam { ty: int, mode: FnParamMode::Borrow };
+        let shape = table.intern(TyKind::Fn { abi: None, latebound: false, stateless: true, is_unsafe: false, once: false, send: false, params: vec![param], ret: int });
+        let item = |table: &mut TypeTable, name: &str| {
+            table.intern(TyKind::FnItem { symbol: Symbol::intern(&format!("em_{name}")), name: Symbol::intern(name), shape })
+        };
+        let (add_one, sub_one) = (item(&mut table, "add_one"), item(&mut table, "sub_one"));
+        assert_ne!(add_one, sub_one);
+        assert_eq!(table.layout(add_one), Layout::ZERO);
+        assert!(table.is_copy(add_one) && !table.needs_drop(add_one) && !table.is_view(add_one));
+        assert!(table.is_send(add_one) && table.is_sync(add_one));
+        assert_eq!(table.display(add_one), "fn(i64) -> i64 {add_one}");
+        assert_eq!(table.spelling(add_one), "fn{em_add_one}");
+        assert_eq!(table.join_items(add_one, add_one), Some(add_one));
+        assert_eq!(table.join_items(add_one, sub_one), Some(shape));
+        assert_eq!(table.join_items(add_one, shape), Some(shape));
+        assert_eq!(table.join_items(add_one, int), None);
+        let t = table.intern(TyKind::Param { index: 0, name: Symbol::intern("T") });
+        let mut solved = vec![None];
+        assert!(table.unify(t, add_one, &mut solved) && table.unify(t, sub_one, &mut solved));
+        assert_eq!(solved, vec![Some(shape)]);
+        let written = table.intern(TyKind::Fn { abi: None, latebound: false, stateless: false, is_unsafe: false, once: false, send: false, params: vec![FnParam { ty: t, mode: FnParamMode::Borrow }], ret: t });
+        let mut solved = vec![None];
+        assert!(table.unify(written, add_one, &mut solved));
+        assert_eq!(solved, vec![Some(int)]);
     }
 
     /// `[MNG-6]` — the canonical spelling of a generic instance's arguments, which `[MNG-1]` hashes:
