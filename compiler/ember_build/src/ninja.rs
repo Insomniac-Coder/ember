@@ -67,6 +67,9 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     let units: Vec<PathBuf> = program.units.iter().map(absolute).collect();
     let linked: Vec<PathBuf> = program.objects.iter().map(absolute).collect();
     let include_dirs: Vec<PathBuf> = program.include_dirs.iter().map(absolute).collect();
+    // An image links against the shared runtime by its path; the image names the runtime by its
+    // soname, so the absolute path reaches no output.
+    let link_with: Option<PathBuf> = program.image.map(|image| absolute(&image.link_with.to_path_buf()));
     let program = &Program {
         units: &units,
         objects: &linked,
@@ -75,7 +78,7 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
         profile: program.profile,
         dir: absolute(&program.dir),
         jobs: program.jobs,
-        image: program.image,
+        image: program.image.map(|image| Image { link_with: link_with.as_deref().unwrap_or(image.link_with), ..image }),
     };
     let lto = build_lto(toolchain, program.profile, Link::Here);
     let objects: Vec<PathBuf> = program.units.iter().map(|unit| object_of(toolchain, &program.dir, unit)).collect();
