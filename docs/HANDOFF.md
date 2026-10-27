@@ -11,6 +11,18 @@
 > merged on `main` at the old spec, each checked: AK `158cc9a0`, AJ `b8fed8ae`, AI `8fa95b5f`
 > (`tasks/96/helpers-stopped.md`). The first clang-cl run since `[BLD-4]` found D-917 and D-918
 > (`docs/DEFECTS.md`), both fixed after the merges.
+>
+> **2026-10-28.** After them on `main`: D-919 (PGO on Linux), D-921 (a reloadable image's link on
+> Linux), the branding check's 105 hard-coded names, and the ledger rows D-911..D-916 (AI's) and
+> D-920 (open: the compiler panics on `tests/firstweek/helped/21_particles.em` in `development` and
+> `release`). Checked on `c9e2bebd`: MSVC suite 668/0/1, clang-cl 668/0/1, every gate, no C warning
+> from MSVC, Clang or GCC, the LLVM backend's matrix 2152/2152 and its driver tests, the laptop bench
+> 25/25 with no baseline. WSL: every test binary passes with gcc and clang but two, whose `ember run
+> --hot` ends the WSL machine itself (D-922, open). The rework's state is on the branch
+> `pause/redesign-run4-step2`: the gap map re-checked after the merges
+> (`tasks/96/redesign/compiler-0.9.15/AFTER-MERGES.md`), the owner's verdicts 102-106, and the spec
+> `Ember_v0.9.15_Hardened_2` (verdict 101's two counts for `thread_shared`, verdicts 102-106, the
+> lead's rulings).
 
 ## 0. Current state — the authoritative snapshot (updated 2026-09-23)
 
