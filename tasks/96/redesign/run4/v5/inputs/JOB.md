@@ -3,6 +3,10 @@
 The first phase 3 missed this: it replaced compile-time checking with run-time checks, so every
 design came out slower than C and still not safe. This is the job as the owner set it.
 
+**The spec this rework produces is named `Ember_v0.9.15_Hardened_1`** (owner, 2026-10-27: "The spec that
+will be formed now will be called 0.9.15_Hardened_1 because there have been major changes in this"). It
+follows today's development target, `Ember_v0.9.10_Hardened_35`.
+
 ## The goals, all at once
 
 1. **Speed on par with C and Rust.**
@@ -753,6 +757,22 @@ acceptable it hurt readability too, if you want something to have a copy use the
     compiler can see they differ: under `if i != j:` written above it, or in `for j in i + 1..n:`. The
     run-time compare that stopped the program when `i == j` (run 3 to step 4, AN-03) goes. Rust refuses
     the same line. Owner: "b", over (a), one compare before the call that stops the program.
+99. **A loop of owners is allowed only where the compiler proves it is opened again before its objects lose
+    their last owner from outside; otherwise it is refused** (the unsafe-features inventory, C19: a loop of
+    `shares` owners leaked with only warning L3001). With `class Node:` holding `next: Option[shares mut
+    Node] = None`, `make_pair` doing `a.next = Some(shares mut b)` then `b.next = Some(shares mut a)` is
+    refused at the line that closes the loop ("this closes a loop of owners (`a` → `b` → `a`) that nothing
+    opens again before `a` and `b` end, so neither node is ever freed; open it before the function ends:
+    `b.next = None`, or make the link back `weakref`: `next: Option[weakref Node]`"); the same with
+    `b.next = None` before `a` and `b` end is accepted. Proved: a loop made and opened again in code the
+    compiler can follow (the same function, the functions it calls), or opened by its owning object (a
+    `clear()` it always calls before its last owner ends). Refused: an opening that depends on what is only
+    known while running, or a loop handed out of reach; `weakref` always works, and a `let` field (set
+    when the object is made) cannot close a loop. The same for loops through function values' state,
+    `thread_shared` owners and channel ends. Nothing runs while the program runs; L3001 becomes this
+    refusal. Owner: "Can we make it so that this is only accepted if the compiler can prove that they get
+    freed at some point, otherwise the error is thrown?", then "Yes" to the rule as written, over (a)
+    refusing every such field and (b) keeping the warning as Rust does.
 
 ## Error messages are part of readability (owner, 2026-10-24)
 
