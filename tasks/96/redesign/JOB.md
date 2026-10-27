@@ -812,6 +812,47 @@ acceptable it hurt readability too, if you want something to have a copy use the
       kept the view's count on every read ("why the fuck would remove the counter for a read
       operation?"), and asked for a fix for the language, not for one benchmark.
 
+102. **In a C contract the word for "C takes this object" is `owns`** (owner, 2026-10-27, gap map Q-A:
+    "owned is now owns").
+    - `@ffi(param(widget, owns, one))`: `[FFI-11]`'s table and its examples write `owns`, as verdict 19
+      does everywhere else.
+    - `owned` is refused everywhere, a C contract included (E1010, Part II's removed words).
+103. **`shares` cannot be made from a place that has one owner** (owner, 2026-10-27, gap map Q-B, (a)).
+    - A list element (`shares mut players[1]` of an `Array[Player]`), a field (`shares this.items`) or a
+      plain parameter (`fn keep(p: Player): LIST.push(shares p)`) is refused when compiling, with a code
+      of its own (a sibling of E2119).
+    - The help names the rewrite: the holder shares its values from the start, as the help of R7's
+      `reject_removing_a_player_a_kept_link_points_at.em` writes it
+      (`players = [shares mut Player(), shares mut Player()]`, then `shares mut players[1]`).
+    - Why: a value in a one-owner place has no other owner, so its end frees at once with no check;
+      only values written `shares` pay for counting. Allowing it for class objects would make every end
+      of a one-owner place of that class test the count; allowing it for inline values would change the
+      holder's layout everywhere in the program.
+    - Owner, after the shorter explanation (one program, the table of who owns the second player on
+      each line): "yes a".
+104. **After `h.join()` the parent may use what the task used** (owner, 2026-10-27, gap map Q-C: "okay
+    cool use it").
+    - `[THR-11]` and `[THR-13]` check a task's claims until its join, not until the end of the
+      `with scope:` block: `counts[0] += 1` after `h.join()`, inside the same block, is allowed.
+    - Safe: after the join the task has finished.
+105. **For now, a sum split across tasks stops where a task's own total overflows** (owner, 2026-10-27,
+    gap map Q-D, (b): "b for now might revise it later").
+    - Each task's private total (`[THR-21]`'s "one private accumulator per task, combined at the join")
+      has the reduction variable's type, and its `+=` stops the program on overflow as any `+=` does
+      (`[TYP-8]`); the join's additions are checked the same way.
+    - So `[[-100], [100, 100]]` summed into an `i8` by two tasks stops in the second task (100 + 100),
+      though adding one by one gives 100, which fits. `[THR-21]`'s sentence that the total is "always
+      the one adding one by one gives" is narrowed for whole numbers: equal when no task's total
+      overflows.
+    - Rust does the same in a debug build (a panic in the thread); its release build wraps and can print a
+      wrong total with no error, which `[TYP-8]` does not allow. The other choice, (a), keeps each
+      task's total in a wider type so that only a real total that does not fit stops the program; the
+      owner may revisit it.
+106. **A contract on a function type is written above its `type` line** (owner, 2026-10-27, gap map Q-G,
+    (a): "a works").
+    - `@noalloc` over `type Handler = fn()`: `[EFF-2]`'s "a contract written on a function type is
+      checked against every function stored into it" has its place in the grammar.
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."
