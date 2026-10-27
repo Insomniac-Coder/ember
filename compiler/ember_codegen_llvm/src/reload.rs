@@ -767,8 +767,8 @@ impl Writer for LlvmWriter<'_, '_> {
         let table = |name: &str| global_name(&image::table(name));
         let manifest_symbol = image::manifest_symbol();
         let section = match self.0.ty.target {
-            crate::abi::Target::Win64 => ".emrl",
-            crate::abi::Target::SysV | crate::abi::Target::Aapcs64 => "ember_reload",
+            crate::abi::Target::Win64 => ".emrl".to_string(),
+            crate::abi::Target::SysV | crate::abi::Target::Aapcs64 => ember_branding::runtime("reload"),
         };
         let (fns_n, statics_n, types_n, identities_n, headers_n) = counts;
         self.0.global(format!(
@@ -878,7 +878,11 @@ mod tests {
     /// magic and protocol are the header's.
     #[test]
     fn hr_8_reload_records_are_the_headers() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/ember_rt/include/ember_rt.h");
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../runtime")
+            .join(format!("{}_rt", ember_branding::SYMBOL_PREFIX))
+            .join("include")
+            .join(ember_branding::runtime_header());
         let header = std::fs::read_to_string(&root).expect("the runtime header is readable");
         for (name, fields) in RECORDS {
             assert_eq!(header_fields(&header, name), fields.iter().map(|field| field.to_string()).collect::<Vec<_>>(), "ember_{name}");

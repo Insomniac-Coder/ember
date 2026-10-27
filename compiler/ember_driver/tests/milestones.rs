@@ -4879,7 +4879,8 @@ fn the_compilers_speed_over_bigpkg() {
 #[test]
 fn a_direct_ffi_call_is_the_c_functions_own_call() {
     let root = workspace_root();
-    let built = ember(&["build", "tests/perf/ffi_direct_call.em", "--emit", "c", "--profile", "release"], &root);
+    let source = format!("tests/perf/{}", ember_branding::source_file("ffi_direct_call"));
+    let built = ember(&["build", &source, "--emit", "c", "--profile", "release"], &root);
     assert_eq!(built.exit, 0, "{}", built.stderr);
     let c = &built.stdout;
     let alias = c

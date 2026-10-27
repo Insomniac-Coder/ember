@@ -68,6 +68,16 @@ fn check(dir: &Path, out: &str, clean: bool) -> Checked {
     Checked { ok: output.status.success(), report, modules, functions }
 }
 
+/// A module's file, `geom.em`: its extension is the branding's (`[RT-5]`).
+fn source(stem: &str) -> String {
+    ember_branding::source_file(stem)
+}
+
+/// Each stem's file, in order.
+fn sources(stems: &[&str]) -> Vec<String> {
+    stems.iter().map(|stem| source(stem)).collect()
+}
+
 fn write(dir: &Path, file: &str, text: &str) {
     std::fs::write(dir.join("src").join(file), text).expect("source written");
 }
@@ -86,7 +96,7 @@ fn agree(dir: &Path, step: &str, ok: bool) -> (Vec<String>, Vec<String>) {
         .modules
         .expect("an incremental check says what it checked")
         .into_iter()
-        .filter(|name| ["geom.em", "shapes.em", "extra.em", "main.em"].contains(&name.as_str()))
+        .filter(|name| sources(&["geom", "shapes", "extra", "main"]).contains(name))
         .collect();
     modules.sort();
     (modules, incremental.functions)
@@ -172,69 +182,69 @@ fn main():
 #[test]
 fn an_edited_package_checks_as_a_clean_one_does_and_checks_again_what_the_edit_reaches() {
     let dir = scratch();
-    std::fs::write(dir.join("ember.toml"), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
-    write(&dir, "geom.em", GEOM);
-    write(&dir, "shapes.em", SHAPES);
-    write(&dir, "extra.em", EXTRA);
-    write(&dir, "main.em", MAIN);
-    let geom_only = vec!["geom.em".to_string()];
-    let symbols = |names: &[&str]| -> Vec<String> { names.iter().map(|name| name.to_string()).collect() };
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, &source("geom"), GEOM);
+    write(&dir, &source("shapes"), SHAPES);
+    write(&dir, &source("extra"), EXTRA);
+    write(&dir, &source("main"), MAIN);
+    let geom_only = vec![source("geom")];
+    let symbols = |names: &[&str]| -> Vec<String> { names.iter().map(|name| format!("{}{name}", ember_branding::mangle_prefix())).collect() };
 
-    let all = vec!["extra.em", "geom.em", "main.em", "shapes.em"];
+    let all = sources(&["extra", "geom", "main", "shapes"]);
     assert_eq!(agree(&dir, "the first check", true).0, all, "the first check checks every module");
     assert_eq!(agree(&dir, "nothing edited", true), (vec![], vec![]), "nothing edited, nothing checked again");
 
     // A body: that function alone; its callers use no fact of it that changed.
     let geom = GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2");
-    write(&dir, "geom.em", &geom);
-    assert_eq!(agree(&dir, "a body", true), (geom_only.clone(), symbols(&["em_4geom4work"])));
+    write(&dir, &source("geom"), &geom);
+    assert_eq!(agree(&dir, "a body", true), (geom_only.clone(), symbols(&["4geom4work"])));
 
     // A body above a generic its importer instantiates: the rest of the file, the generic and the
     // instance kept with the importer among it, moves; only the edited function is checked.
     let geom = geom.replace("return x + 1", "return x + 1000");
-    write(&dir, "geom.em", &geom);
-    assert_eq!(agree(&dir, "a body above a generic", true), (geom_only.clone(), symbols(&["em_4geom6offset"])));
+    write(&dir, &source("geom"), &geom);
+    assert_eq!(agree(&dir, "a body above a generic", true), (geom_only.clone(), symbols(&["4geom6offset"])));
 
     // A body that changes what a caller's borrows read of it: its callers in its module and in its
     // importers are checked again, and nothing else.
     let geom = geom.replace("pub fn first(a: str, b: str) -> str:\n    return a", "pub fn first(a: str, b: str) -> str:\n    return b");
-    write(&dir, "geom.em", &geom);
+    write(&dir, &source("geom"), &geom);
     assert_eq!(
         agree(&dir, "a borrow fact", true),
-        (vec!["geom.em".to_string(), "shapes.em".to_string()], symbols(&["em_4geom4pick", "em_4geom5first", "em_6shapes5label"]))
+        (vec![source("geom"), source("shapes")], symbols(&["4geom4pick", "4geom5first", "6shapes5label"]))
     );
     assert_eq!(agree(&dir, "nothing edited after it", true), (vec![], vec![]), "what was checked again is kept");
 
     // A signature in a leaf: the leaf and its importer, whole.
-    write(&dir, "extra.em", &EXTRA.replace("(x: int) -> int", "(x: i64) -> i64"));
-    assert_eq!(agree(&dir, "a leaf's signature", true).0, vec!["extra.em", "main.em"]);
+    write(&dir, &source("extra"), &EXTRA.replace("(x: int) -> int", "(x: i64) -> i64"));
+    assert_eq!(agree(&dir, "a leaf's signature", true).0, sources(&["extra", "main"]));
 
     // A field of a widely imported type: every importer.
-    write(&dir, "geom.em", &geom.replace("    pub y: int\n", "    pub y: int\n    pub z: int = 0\n"));
-    assert_eq!(agree(&dir, "a type", true).0, vec!["geom.em", "main.em", "shapes.em"]);
+    write(&dir, &source("geom"), &geom.replace("    pub y: int\n", "    pub y: int\n    pub z: int = 0\n"));
+    assert_eq!(agree(&dir, "a type", true).0, sources(&["geom", "main", "shapes"]));
 
     // A subclass overriding a virtual method: every module sees the class hierarchy.
-    write(&dir, "main.em", &format!("{MAIN}\nclass Square(shapes.Shape):\n    override fn area(self) -> int:\n        return self.size * self.size\n"));
+    write(&dir, &source("main"), &format!("{MAIN}\nclass Square(shapes.Shape):\n    override fn area(self) -> int:\n        return self.size * self.size\n"));
     assert_eq!(agree(&dir, "a subclass", true).0, all);
 
-    write(&dir, "main.em", MAIN);
+    write(&dir, &source("main"), MAIN);
     assert_eq!(agree(&dir, "the subclass removed", true).0, all);
 
     // An error in one module: the kept modules' warnings are reported as a clean check reports them —
     // the body checks run on every function a type error is not in (`[IDE-3]`: `L1001` is a body
     // check's, in `geom`'s `helper`), and on all of them after an error a body check finds.
-    write(&dir, "main.em", &MAIN.replace("extra.leaf_value(3)", "extra.leaf_value(\"three\")"));
-    assert_eq!(agree(&dir, "a type error", false).0, vec!["main.em"]);
+    write(&dir, &source("main"), &MAIN.replace("extra.leaf_value(3)", "extra.leaf_value(\"three\")"));
+    assert_eq!(agree(&dir, "a type error", false).0, sources(&["main"]));
     let errored = check(&dir, "target-incremental", false);
     assert!(errored.report.contains("E2020") && errored.report.contains("L1001"), "{}", errored.report);
-    write(&dir, "main.em", &MAIN.replace("    p = geom.Pt(3, 4)\n", "    p = geom.Pt(3, 4)\n    xs: Array[int] = [1]\n    ys = xs\n    println(xs.len(), ys.len())\n"));
-    assert_eq!(agree(&dir, "a body check's error", false).0, vec!["main.em"]);
+    write(&dir, &source("main"), &MAIN.replace("    p = geom.Pt(3, 4)\n", "    p = geom.Pt(3, 4)\n    xs: Array[int] = [1]\n    ys = xs\n    println(xs.len(), ys.len())\n"));
+    assert_eq!(agree(&dir, "a body check's error", false).0, sources(&["main"]));
     let errored = check(&dir, "target-incremental", false);
     assert!(errored.report.contains("E3040") && errored.report.contains("L1001"), "{}", errored.report);
 
     // The error mended, `main` as it was: a check that found an error keeps nothing, so the record
     // `main` had before the errors holds, and nothing is checked again.
-    write(&dir, "main.em", MAIN);
+    write(&dir, &source("main"), MAIN);
     assert_eq!(agree(&dir, "the error mended", true), (vec![], vec![]));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -287,11 +297,11 @@ fn runs(dir: &Path, out: &str) -> String {
 #[test]
 fn an_edited_package_builds_as_a_clean_one_does_and_compiles_again_what_the_edit_changed() {
     let dir = scratch();
-    std::fs::write(dir.join("ember.toml"), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
-    write(&dir, "geom.em", GEOM);
-    write(&dir, "shapes.em", SHAPES);
-    write(&dir, "extra.em", EXTRA);
-    write(&dir, "main.em", MAIN);
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, &source("geom"), GEOM);
+    write(&dir, &source("shapes"), SHAPES);
+    write(&dir, &source("extra"), EXTRA);
+    write(&dir, &source("main"), MAIN);
     let mut before = build(&dir, "target-incremental", false);
     assert!(before.ok, "{}", before.report);
     let units: Vec<&String> = before.units.keys().collect();
@@ -299,13 +309,13 @@ fn an_edited_package_builds_as_a_clean_one_does_and_compiles_again_what_the_edit
         assert!(units.iter().any(|unit| *unit == module), "one C unit per module: {units:?}");
     }
     let edits = [
-        ("a body", GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2"), "geom.em", Some(vec!["main.m.geom"])),
-        ("a body above a generic", GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2").replace("return x + 1", "return x + 1000"), "geom.em", None),
-        ("a leaf's signature", EXTRA.replace("(x: int) -> int", "(x: i64) -> i64"), "extra.em", None),
-        ("a widely imported type", GEOM.replace("    pub y: int\n", "    pub y: int\n    pub z: int = 0\n"), "geom.em", None),
+        ("a body", GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2"), source("geom"), Some(vec!["main.m.geom"])),
+        ("a body above a generic", GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2").replace("return x + 1", "return x + 1000"), source("geom"), None),
+        ("a leaf's signature", EXTRA.replace("(x: int) -> int", "(x: i64) -> i64"), source("extra"), None),
+        ("a widely imported type", GEOM.replace("    pub y: int\n", "    pub y: int\n    pub z: int = 0\n"), source("geom"), None),
     ];
     for (step, text, file, recompiled) in edits {
-        write(&dir, file, &text);
+        write(&dir, &file, &text);
         let incremental = build(&dir, "target-incremental", false);
         let clean = build(&dir, "target-clean", true);
         assert!(incremental.ok && clean.ok, "{step}:\n{}\n{}", incremental.report, clean.report);
@@ -368,19 +378,19 @@ fn on_threads(dir: &Path, command: &str, jobs: usize, out: &str) -> (bool, Strin
 #[test]
 fn a_package_checks_and_builds_alike_on_one_thread_and_on_several() {
     let dir = scratch();
-    std::fs::write(dir.join("ember.toml"), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
-    write(&dir, "geom.em", GEOM);
-    write(&dir, "shapes.em", SHAPES);
-    write(&dir, "extra.em", EXTRA);
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"shapes\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, &source("geom"), GEOM);
+    write(&dir, &source("shapes"), SHAPES);
+    write(&dir, &source("extra"), EXTRA);
     // Warnings in several modules and a body check's error, each reported where its body is.
-    write(&dir, "main.em", &MAIN.replace("    p = geom.Pt(3, 4)\n", "    p = geom.Pt(3, 4)\n    xs: Array[int] = [1]\n    ys = xs\n    println(xs.len(), ys.len())\n"));
+    write(&dir, &source("main"), &MAIN.replace("    p = geom.Pt(3, 4)\n", "    p = geom.Pt(3, 4)\n    xs: Array[int] = [1]\n    ys = xs\n    println(xs.len(), ys.len())\n"));
     let one = on_threads(&dir, "check", 1, "target-one");
     let several = on_threads(&dir, "check", 4, "target-several");
     assert!(!one.0 && one.1.contains("E3040") && one.1.contains("L1001"), "{}", one.1);
     assert_eq!((one.0, &one.1), (several.0, &several.1), "a check's report on one thread and on four");
     assert_eq!((one.2, several.2), (1, 4), "the threads the timings name");
 
-    write(&dir, "main.em", MAIN);
+    write(&dir, &source("main"), MAIN);
     let one = on_threads(&dir, "build", 1, "target-one");
     let several = on_threads(&dir, "build", 4, "target-several");
     assert!(one.0 && several.0, "{}\n{}", one.1, several.1);
@@ -425,18 +435,18 @@ fn main():
 #[test]
 fn function_items_are_kept_across_builds_as_a_clean_build_makes_them() {
     let dir = scratch();
-    std::fs::write(dir.join("ember.toml"), "[package]\nname = \"items\"\nversion = \"0.1.0\"\n").expect("manifest");
-    write(&dir, "lib.em", ITEMS_LIB);
-    write(&dir, "main.em", ITEMS_MAIN);
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"items\"\nversion = \"0.1.0\"\n").expect("manifest");
+    write(&dir, &source("lib"), ITEMS_LIB);
+    write(&dir, &source("main"), ITEMS_MAIN);
     let first = build(&dir, "target-incremental", false);
     assert!(first.ok, "{}", first.report);
     let edits = [
-        ("a body the items name", ITEMS_LIB.replace("return x + 1", "return x + 10"), "lib.em"),
-        ("the importer's body", ITEMS_MAIN.replace("x * 3", "x * 4"), "main.em"),
-        ("a lambda added before the others", ITEMS_LIB.replace("pub fn doubled", "pub fn tripled(xs: Span[int]) -> int:\n    return xs.iter().map(fn(x: ref int) -> int => x * 3).sum()\n\npub fn doubled"), "lib.em"),
+        ("a body the items name", ITEMS_LIB.replace("return x + 1", "return x + 10"), source("lib")),
+        ("the importer's body", ITEMS_MAIN.replace("x * 3", "x * 4"), source("main")),
+        ("a lambda added before the others", ITEMS_LIB.replace("pub fn doubled", "pub fn tripled(xs: Span[int]) -> int:\n    return xs.iter().map(fn(x: ref int) -> int => x * 3).sum()\n\npub fn doubled"), source("lib")),
     ];
     for (step, text, file) in edits {
-        write(&dir, file, &text);
+        write(&dir, &file, &text);
         let incremental = build(&dir, "target-incremental", false);
         let clean = build(&dir, "target-clean", true);
         assert!(incremental.ok && clean.ok, "{step}:\n{}\n{}", incremental.report, clean.report);

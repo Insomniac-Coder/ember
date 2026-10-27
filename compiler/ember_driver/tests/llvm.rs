@@ -32,6 +32,11 @@ fn ir(source: &str, profile: &str) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
+/// An item's symbol from its mangled path (`7shifted`): the prefix is the branding's (`[RT-5]`).
+fn sym(mangled: &str) -> String {
+    format!("{}{mangled}", ember_branding::mangle_prefix())
+}
+
 /// The text of the function `symbol`'s definition.
 fn function<'a>(ir: &'a str, symbol: &str) -> &'a str {
     let header = format!("@{symbol}(");
@@ -70,11 +75,11 @@ fn cg_ll_2_checked_arithmetic_is_the_overflow_intrinsics_and_nothing_is_assumed(
     for intrinsic in ["llvm.sadd.with.overflow.i64", "llvm.ssub.with.overflow.i64", "llvm.smul.with.overflow.i64", "llvm.uadd.with.overflow.i8"] {
         assert!(ir.contains(intrinsic), "no `{intrinsic}` in the module");
     }
-    assert!(ir.contains("@ember_panic_overflow"), "an overflow is not the runtime's panic");
+    assert!(ir.contains(&format!("@{}", ember_branding::runtime("panic_overflow"))), "an overflow is not the runtime's panic");
     for claim in [" nsw ", " nuw ", " inbounds ", "noundef", " exact "] {
         assert!(!ir.contains(claim), "the module assumes `{}`", claim.trim());
     }
-    let shifted = function(&ir, "em_7shifted");
+    let shifted = function(&ir, &sym("7shifted"));
     assert!(shifted.contains("and i64"), "a shift's amount is not masked:\n{shifted}");
 }
 
@@ -98,12 +103,12 @@ fn main():
 ",
         "release",
     );
-    let strict = function(&ir, "em_6strict");
+    let strict = function(&ir, &sym("6strict"));
     assert!(strict.contains("fmul double") && strict.contains("fadd double"), "{strict}");
     for flag in ["fast", "reassoc", "contract", "nnan", "ninf", "nsz", "arcp", "afn"] {
         assert!(!strict.contains(flag), "a strict function's IR has `{flag}`:\n{strict}");
     }
-    let relaxed = function(&ir, "em_7relaxed");
+    let relaxed = function(&ir, &sym("7relaxed"));
     assert!(relaxed.contains("reassoc") && relaxed.contains("contract"), "{relaxed}");
     assert!(!relaxed.contains("nnan") && !relaxed.contains("ninf"), "`@fastmath` assumed finite values:\n{relaxed}");
 }
@@ -152,9 +157,9 @@ fn main():
 ",
         "debug",
     );
-    let total = function(&ir, "em_5total");
+    let total = function(&ir, &sym("5total"));
     assert!(total.lines().next().is_some_and(|header| header.contains("ptr nonnull")), "{total}");
-    let make = function(&ir, "em_4make");
+    let make = function(&ir, &sym("4make"));
     assert!(make.lines().next().is_some_and(|header| header.contains("ptr noalias sret(")), "{make}");
 }
 
@@ -223,11 +228,11 @@ fn main():
         "release",
     );
     let header = |symbol: &str| function(&ir, symbol).lines().next().unwrap_or_default().to_string();
-    assert!(header("em_3sum").contains("ptr nonnull dereferenceable(16) readonly"), "{}", header("em_3sum"));
-    let bump = header("em_4bump");
+    assert!(header(&sym("3sum")).contains("ptr nonnull dereferenceable(16) readonly"), "{}", header(&sym("3sum")));
+    let bump = header(&sym("4bump"));
     assert!(bump.contains("ptr nonnull dereferenceable(16)") && !bump.contains("readonly"), "{bump}");
-    for (symbol, size) in [("em_4poke", 8), ("em_4grow", 32), ("em_4tick", 16), ("em_6locked", 16)] {
-        let header = header(symbol);
+    for (symbol, size) in [("4poke", 8), ("4grow", 32), ("4tick", 16), ("6locked", 16)] {
+        let header = header(&sym(symbol));
         assert!(header.contains(&format!("ptr nonnull dereferenceable({size})")) && !header.contains("readonly"), "{header}");
     }
     let export = header("pair_total");
@@ -256,7 +261,7 @@ fn main():
 ",
         "release",
     );
-    let total = function(&ir, "em_5total");
+    let total = function(&ir, &sym("5total"));
     assert!(
         total.lines().next().is_some_and(|header| header.contains("\"target-cpu\"=\"x86-64\"") && header.contains("\"target-features\"=\"+cx16\"")),
         "{total}"
@@ -293,8 +298,8 @@ fn main():
 ",
         "release",
     );
-    let totals = function(&ir, "em_6totals");
-    assert_eq!(totals.matches("@ember_ll_sum_bytes(").count(), 2, "{totals}");
+    let totals = function(&ir, &sym("6totals"));
+    assert_eq!(totals.matches(&format!("@{}(", ember_branding::runtime("ll_sum_bytes"))).count(), 2, "{totals}");
     assert!(totals.contains("zeroext false)") && totals.contains("zeroext true)"), "the sums do not say which bytes are signed:\n{totals}");
 }
 
@@ -304,12 +309,12 @@ fn main():
 fn cg_ll_3_debug_information_names_functions_and_lines() {
     for profile in ["debug", "release"] {
         let ir = ir(ARITHMETIC, profile);
-        assert!(ir.contains("!DISubprogram(name: \"em_3mix\""), "{profile}: no subprogram for `mix`");
+        assert!(ir.contains(&format!("!DISubprogram(name: \"{}\"", sym("3mix"))), "{profile}: no subprogram for `mix`");
         assert!(ir.contains("!DILocation(line: 3,"), "{profile}: no location on the line of `mix`'s `return`");
         assert!(ir.contains("!\"Debug Info Version\", i32 3"));
         let format = if cfg!(windows) { "!\"CodeView\"" } else { "!\"Dwarf Version\"" };
         assert!(ir.contains(format), "{profile}: not {format}");
-        let mix = function(&ir, "em_3mix");
+        let mix = function(&ir, &sym("3mix"));
         assert!(mix.lines().next().is_some_and(|header| header.contains("!dbg !")), "{mix}");
     }
 }
@@ -453,7 +458,7 @@ fn main():
     let tool = clang.with_file_name(format!("llvm-profdata{}", std::env::consts::EXE_SUFFIX));
     let shown = Command::new(&tool).args(["show", "--all-functions", "--counts"]).arg(&merged).output().expect("llvm-profdata runs");
     let text = String::from_utf8_lossy(&shown.stdout);
-    let at = text.find("em_4work:").unwrap_or_else(|| panic!("`work` is not in the profile:\n{text}"));
+    let at = text.find(&format!("{}:", sym("4work"))).unwrap_or_else(|| panic!("`work` is not in the profile:\n{text}"));
     let work: Vec<&str> = text[at..].lines().take(5).collect();
     assert!(work.iter().any(|line| line.trim().starts_with("Block counts: [3003, 3,")), "{text}");
     // A profile that is not one stops the build at Clang.

@@ -484,7 +484,7 @@ impl Param {
             Param::Ptr => Shape::Scalar(abi::Scalar::Ptr),
             Param::Int => Shape::Scalar(abi::Scalar::Int { bytes: 4, signed: true }),
             Param::Size => Shape::Scalar(abi::Scalar::Int { bytes: 8, signed: false }),
-            Param::Loc => runtime::c_type("$loc").shape().expect("ember_loc has a shape"),
+            Param::Loc => runtime::c_type("$loc").shape().expect("the runtime's location type has a shape"),
         }
     }
 
@@ -3022,7 +3022,8 @@ impl<'m, 'a> FnCx<'m, 'a> {
                 self.emit(format!("store i64 {capacity}, ptr {cap}, align 8"));
             }
             abi::Target::SysV | abi::Target::Aapcs64 => {
-                let (low, high) = ("@ember_stack_low", "@ember_stack_high");
+                let (low, high) = (format!("@{}", ember_branding::runtime("stack_low")), format!("@{}", ember_branding::runtime("stack_high")));
+                let (low, high) = (low.as_str(), high.as_str());
                 self.m.declare(low, || format!("{low} = external thread_local global i64, align 8"));
                 self.m.declare(high, || format!("{high} = external thread_local global i64, align 8"));
                 let known = self.load(Sc::I(64), high, 8);
@@ -3193,7 +3194,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     if which.is_some() {
         // A test's panic is marked for the runner.
         let on_panic = cx.gep(&cfg, config::ON_PANIC);
-        cx.emit(format!("store ptr @ember_ll_test_on_panic, ptr {on_panic}, align 8"));
+        cx.emit(format!("store ptr @{}ll_test_on_panic, ptr {on_panic}, align 8", ember_branding::RUNTIME_PREFIX));
         cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "1".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
     } else {
         cx.call_rt("rt_set_args", vec![Val::Imm(Sc::I(32), "%argc".to_string()), Val::Imm(Sc::Ptr, "%argv".to_string())], None);
@@ -3201,14 +3202,14 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     cx.call_rt("rt_init_v3", vec![Val::Imm(Sc::Ptr, cfg.clone()), Val::Imm(Sc::I(32), runtime::RUNTIME_ABI.to_string())], None);
     let (named, sites) = if options.profile != Profile::Release { frame_tables(cx.m, bodies) } else { (0, 0) };
     if named > 0 {
-        cx.call_rt("backtrace_names", vec![Val::Imm(Sc::Ptr, "@em_frame_names".to_string()), Val::Imm(Sc::I(64), named.to_string())], None);
+        cx.call_rt("backtrace_names", vec![Val::Imm(Sc::Ptr, format!("@{}", ember_branding::generated("frame_names"))), Val::Imm(Sc::I(64), named.to_string())], None);
         if sites > 0 {
-            cx.call_rt("backtrace_sites", vec![Val::Imm(Sc::Ptr, "@em_call_sites".to_string()), Val::Imm(Sc::I(64), sites.to_string())], None);
+            cx.call_rt("backtrace_sites", vec![Val::Imm(Sc::Ptr, format!("@{}", ember_branding::generated("call_sites"))), Val::Imm(Sc::I(64), sites.to_string())], None);
         }
     }
     let coded = code_names(cx.m, bodies);
     if coded > 0 {
-        cx.call_rt("stack_names", vec![Val::Imm(Sc::Ptr, "@em_code_names".to_string()), Val::Imm(Sc::I(64), coded.to_string())], None);
+        cx.call_rt("stack_names", vec![Val::Imm(Sc::Ptr, format!("@{}", ember_branding::generated("code_names"))), Val::Imm(Sc::I(64), coded.to_string())], None);
     }
     // `[WK-8]` — the leak check's ownership edges.
     if options.leak_check {
@@ -3225,7 +3226,7 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
             cx.emit(format!("br label %{done}"));
         }
         cx.start(&done);
-        cx.emit("call void @ember_ll_test_end()");
+        cx.emit(format!("call void @{}ll_test_end()", ember_branding::RUNTIME_PREFIX));
         cx.call_rt("rt_shutdown", Vec::new(), None);
         cx.emit("ret i32 0");
         let attrs = fn_attrs(cx.m);
@@ -3383,18 +3384,20 @@ fn entry_head(m: &Module<'_>) -> String {
 fn test_argument(cx: &mut FnCx<'_, '_>, count: usize) -> String {
     let panicked = format!("{}-test: panicked", ember_branding::SYMBOL_PREFIX);
     let returned = format!("{}-test: returned", ember_branding::SYMBOL_PREFIX);
+    let rt = ember_branding::RUNTIME_PREFIX;
     let shim = format!(
         "\n/* [TST-3] what a test binary's runner reads. */\n\
          #if defined(_WIN32)\n__declspec(dllimport) unsigned int __stdcall SetErrorMode(unsigned int mode);\n#endif\n\
-         void ember_ll_test_quiet(void) {{\n#if defined(_WIN32)\n    SetErrorMode(0x0001u | 0x0002u);\n#endif\n}}\n\
-         void ember_ll_test_on_panic(const char* msg, size_t len) {{ (void)msg; (void)len; fputs(\"{panicked}\\n\", stderr); }}\n\
-         void ember_ll_test_end(void) {{ fflush(stdout); fputs(\"{returned}\\n\", stderr); }}\n"
+         void {rt}ll_test_quiet(void) {{\n#if defined(_WIN32)\n    SetErrorMode(0x0001u | 0x0002u);\n#endif\n}}\n\
+         void {rt}ll_test_on_panic(const char* msg, size_t len) {{ (void)msg; (void)len; fputs(\"{panicked}\\n\", stderr); }}\n\
+         void {rt}ll_test_end(void) {{ fflush(stdout); fputs(\"{returned}\\n\", stderr); }}\n"
     );
-    cx.m.shim_functions.insert("ember_ll_test".to_string(), shim);
-    cx.m.declare("ember_ll_test_quiet", || "declare void @ember_ll_test_quiet()".to_string());
-    cx.m.declare("ember_ll_test_on_panic", || "declare void @ember_ll_test_on_panic(ptr, i64)".to_string());
-    cx.m.declare("ember_ll_test_end", || "declare void @ember_ll_test_end()".to_string());
-    cx.emit("call void @ember_ll_test_quiet()");
+    cx.m.shim_functions.insert(format!("{rt}ll_test"), shim);
+    let (quiet, on_panic, end) = (format!("{rt}ll_test_quiet"), format!("{rt}ll_test_on_panic"), format!("{rt}ll_test_end"));
+    cx.m.declare(&quiet, || format!("declare void @{quiet}()"));
+    cx.m.declare(&on_panic, || format!("declare void @{on_panic}(ptr, i64)"));
+    cx.m.declare(&end, || format!("declare void @{end}()"));
+    cx.emit(format!("call void @{quiet}()"));
     let (bad, read, head, step, end) = (cx.label(), cx.label(), cx.label(), cx.label(), cx.label());
     let few = cx.value("icmp sle i32 %argc, 1");
     cx.emit(format!("br i1 {few}, label %{bad}, label %{read}"));
@@ -3478,7 +3481,8 @@ fn frame_tables(m: &mut Module<'_>, bodies: &[Body]) -> (usize, usize) {
             })
             .collect();
         m.global(format!(
-            "@em_frame_names = internal constant [{} x {{ ptr, ptr, ptr, i32 }}] [{}], align 8",
+            "@{} = internal constant [{} x {{ ptr, ptr, ptr, i32 }}] [{}], align 8",
+            ember_branding::generated("frame_names"),
             rows.len(),
             rows.join(", ")
         ));
@@ -3492,7 +3496,8 @@ fn frame_tables(m: &mut Module<'_>, bodies: &[Body]) -> (usize, usize) {
             })
             .collect();
         m.global(format!(
-            "@em_call_sites = internal constant [{} x {{ ptr, ptr, ptr, i32, i32 }}] [{}], align 8",
+            "@{} = internal constant [{} x {{ ptr, ptr, ptr, i32, i32 }}] [{}], align 8",
+            ember_branding::generated("call_sites"),
             rows.len(),
             rows.join(", ")
         ));
@@ -3523,7 +3528,7 @@ fn code_names(m: &mut Module<'_>, bodies: &[Body]) -> usize {
             format!("{{ ptr, ptr }} {{ ptr {}, ptr {name} }}", global_name(symbol))
         })
         .collect();
-    m.global(format!("@em_code_names = internal constant [{} x {{ ptr, ptr }}] [{}], align 8", rows.len(), rows.join(", ")));
+    m.global(format!("@{} = internal constant [{} x {{ ptr, ptr }}] [{}], align 8", ember_branding::generated("code_names"), rows.len(), rows.join(", ")));
     entries.len()
 }
 

@@ -4080,7 +4080,7 @@ mod tests {
         assert!(table.is_copy(add_one) && !table.needs_drop(add_one) && !table.is_view(add_one));
         assert!(table.is_send(add_one) && table.is_sync(add_one));
         assert_eq!(table.display(add_one), "fn(i64) -> i64 {add_one}");
-        assert_eq!(table.spelling(add_one), "fn{em_add_one}");
+        assert_eq!(table.spelling(add_one), format!("fn{{{}add_one}}", ember_branding::mangle_prefix()));
         assert_eq!(table.join_items(add_one, add_one), Some(add_one));
         assert_eq!(table.join_items(add_one, sub_one), Some(shape));
         assert_eq!(table.join_items(add_one, shape), Some(shape));

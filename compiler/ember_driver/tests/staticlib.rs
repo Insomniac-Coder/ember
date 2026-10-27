@@ -502,16 +502,17 @@ fn static_libraries_calling_the_same_runtime_functions_link_side_by_side() {
     let lib = out.join("debug/lib");
     let runtime_header = format!("{}_runtime/{}", ember_branding::SYMBOL_PREFIX, ember_branding::runtime_header());
     let host = scratch.join("host.c");
+    let (init, shutdown) = (ember_branding::runtime("rt_init"), ember_branding::runtime("rt_shutdown"));
     std::fs::write(&host, format!("#include \"{runtime_header}\"
 int32_t words_a(int32_t n);
 int32_t words_b(int32_t n);
 int main(void) {{
-    {}(NULL);
+    {init}(NULL);
     int ok = words_a(1) == 1 && words_b(1) == 1 && words_b(2) == 0;
-    {}();
+    {shutdown}();
     return ok ? 0 : 1;
 }}
-", ember_branding::runtime("rt_init"), ember_branding::runtime("rt_shutdown"))).unwrap();
+")).unwrap();
     let runtime_archive = lib.join(format!("{}_runtime", ember_branding::SYMBOL_PREFIX))
         .join(ember_build::archive_name(&toolchain, &format!("{}_rt", ember_branding::SYMBOL_PREFIX)));
     let executable = scratch.join(if cfg!(windows) { "host.exe" } else { "host" });

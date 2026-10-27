@@ -474,7 +474,7 @@ fn a_module_s_ir_built_for_another_runtime_abi_is_refused_first(dir: &Path, tool
     // The IR, then its shim's C as comments.
     let (ir, shim) = printed.split_once("\n; the runtime's inline functions, called through this C:\n").unwrap_or((&printed, ""));
     let check = ", 3 ; EMBER_RUNTIME_ABI";
-    assert_eq!(ir.matches(check).count(), 1, "`ember_module_init` checks the runtime ABI once:\n{ir}");
+    assert_eq!(ir.matches(check).count(), 1, "the module's init entry checks the runtime ABI once:\n{ir}");
     let module = dir.join("module.ll");
     std::fs::write(&module, ir.replace(check, ", 4 ; EMBER_RUNTIME_ABI")).unwrap();
     let mut sources = vec![module];

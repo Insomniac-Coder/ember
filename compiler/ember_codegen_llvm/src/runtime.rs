@@ -624,7 +624,7 @@ mod tests {
         assert!(header.contains(&format!("#define EMBER_MODULE_INIT_ABI_MISMATCH {MODULE_INIT_ABI_MISMATCH}\n")));
         assert!(header.contains(&format!("#define EMBER_RT_DEBUG_OBJECTS UINT32_C({})\n", config::DEBUG_OBJECTS)));
         // `ember_rt_config`'s members, in order: a `size_t`, four pointers, a `uint32_t`.
-        let start = header.find("typedef struct ember_rt_config {").expect("the config struct");
+        let start = header.find(&format!("typedef struct {} {{", ember_branding::runtime("rt_config"))).expect("the config struct");
         let members: Vec<&str> = header[start..].lines().skip(1).take_while(|line| !line.starts_with('}')).map(str::trim).collect();
         let kinds: Vec<&str> = members.iter().map(|member| if member.starts_with("size_t ") { "size" } else if member.starts_with("uint32_t ") { "u32" } else { "ptr" }).collect();
         assert_eq!(kinds, ["size", "ptr", "ptr", "ptr", "ptr", "u32"], "{members:?}");
