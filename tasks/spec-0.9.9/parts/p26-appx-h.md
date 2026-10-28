@@ -62,9 +62,10 @@ is never reused for another meaning.
 | BLD-FFI | BLD-FFI-4a | C++ build integration; see Annex C |
 | BUD | BUD-1a, BUD-2a, BUD-4, BUD-4a, BUD-5a, BUD-6, BUD-7, BUD-8 | compile-time budget details; condensed into `[BLD-10]` |
 | CAT | CAT-1, CAT-2, CAT-3, CAT-4, CAT-5 | rule categories retired; conformance profiles (`[CONF-*]`) replace them |
-| CELL | CELL-6a, CELL-11 | folded into `[CELL-6]` and the prelude (`[MOD-5]`) |
+| CELL | CELL-5, CELL-6, CELL-6a, CELL-7, CELL-8, CELL-9, CELL-10, CELL-11, CELL-12 | folded into the prelude (`[MOD-5]`); in 0.9.15 `RefCell` and its run-time checks are gone, `Cell` stays (`[CELL-13]`), and the rest is `shares mut`, `thread_shared`, `Mutex` and `Atomic` |
 | CLI | CLI-3, CLI-14, CLI-16, CLI-17 | condensed into the command listing of §XVII.1 and `[CLI-19]` |
 | CLO-ABI | CLO-ABI-1, CLO-ABI-2 | compiler internals |
+| CLS | CLS-8 | in 0.9.15 a class needs no mark to be shared between threads: `thread_shared` says it on the value (§XI) |
 | CMP | CMP-1, CMP-2, CMP-3 | compiler internals |
 | COMP | COMP-1 | compiler internals |
 | CONF | CONF-6 | folded into `[CONF-1]` |
@@ -74,7 +75,8 @@ is never reused for another meaning.
 | CXX | CXX-2, CXX-3, CXX-4, CXX-5, CXX-6, CXX-7 | C++ corpus details; `[CXX-1]` in Annex C |
 | DET-IMPL | DET-IMPL-1, DET-IMPL-2 | compiler internals |
 | DIA | DIA-17, DIA-19 | condensed into §XVII.6 (shape tables, `[DIA-21]`, `[DIA-24]`) |
-| EFF | EFF-11a, EFF-19a, EFF-19b, EFF-22 | folded into `[EFF-11]`, `[EFF-16]` and `[EFF-19]` |
+| EFF | EFF-6a, EFF-11a, EFF-13, EFF-19a, EFF-19b, EFF-22 | folded into `[EFF-11]`, `[EFF-16]` and `[EFF-19]`; in 0.9.15 written effect clauses are gone: what a function changes is worked out from its body (`[EFF-1]`) |
+| EXC | EXC-3a, EXC-4, EXC-5, EXC-6, EXC-7, EXC-8, EXC-9, EXC-10, EXC-11, EXC-12, EXC-13, EXC-14 | performance gate folded into `[TST-28]`; in 0.9.15 the run-time exclusivity checks are gone: who may change or read a place is checked when compiling (§VII) |
 | EXP | EXP-7 | replaced by floor semantics, `[TYP-28]` |
 | FFI | FFI-11d, FFI-11e, FFI-18, FFI-19, FFI-20, FFI-24a, FFI-32a, FFI-32b, FFI-32c, FFI-32d, FFI-32e, FFI-34, FFI-34a, FFI-35, FFI-37e, FFI-37f, FFI-43a | C++ interop details (Annex C) or folded into the five-axis contract `[FFI-11]` |
 | FFI-CB | FFI-CB-1 | folded into `[FFI-21]` |
@@ -83,6 +85,7 @@ is never reused for another meaning.
 | GATE | GATE-1, GATE-2, GATE-3, GATE-4, GATE-5, GATE-6, GATE-7, GATE-8, GATE-8a | implementation plan; out of the language document |
 | GEN-COH | GEN-COH-1, GEN-COH-2 | folded into `[TYP-20]` |
 | GRM | GRM-9, GRM-14, GRM-22 | folded into Part III (`GRM-14` retired with the access-mode generic kind, F-024) |
+| HEAP | HEAP-4, HEAP-5 | in 0.9.15 `Shared[T]` and its checked `get`/`get_mut` are gone: several owners are `shares` and `shares mut` (§VIII), with no run-time access check |
 | HIR | HIR-1, HIR-2 | compiler internals |
 | HOT | HOT-1, HOT-3, HOT-5, HOT-10 | compiler internals of hot reload |
 | HR | HR-12b, HR-21a, HR-22a, HR-23a, HR-26, HR-40 | condensed into Annex B |
@@ -92,7 +95,7 @@ is never reused for another meaning.
 | JOB | JOB-4 | debug-only access-set verification removed (a check in one profile is not a guarantee, `[PHIL-13]`) |
 | LAY | LAY-1 | replaced by `[LAY-2]` |
 | LEX | LEX-14a, LEX-15a, LEX-15b | folded into `[LEX-14]` and `[LEX-15]` |
-| LT | LT-2, LT-2a, LT-4a, LT-4b, LT-8, LT-8a, LT-9, LT-10, LT-11, LT-11a, LT-12, LT-13, LT-15, LT-19, LT-28, LT-29, LT-31, LT-31a, LT-32, LT-33, LT-37, LT-40, LT-41 | `with_views*` removed (F-168); multi-region rules condensed into §VII.4 |
+| LT | LT-1b, LT-2, LT-2a, LT-4a, LT-4b, LT-8, LT-8a, LT-9, LT-10, LT-11, LT-11a, LT-12, LT-13, LT-15, LT-19, LT-28, LT-29, LT-31, LT-31a, LT-32, LT-33, LT-37, LT-40, LT-41 | `with_views*` removed (F-168); multi-region rules condensed into §VII.4 |
 | MAN | MAN-4, MAN-5, MAN-6 | folded into `[MAN-8]` |
 | MIR | MIR-1, MIR-2, MIR-3, MIR-4, MIR-5, MIR-6 | compiler internals |
 | MIR-REG | MIR-REG-1 | compiler internals |
@@ -1455,3 +1458,718 @@ Generated: every rule whose text differs from 0.9.10_Hardened_34.
 | `[STD-19]` | changed |
 | `[THR-8]` | changed |
 | `[TYP-36]` | changed |
+
+## H.41 Changes in 0.9.15_Hardened_1 (from 0.9.10_Hardened_35)
+
+**0.9.15_Hardened_1** is the memory-model rework the owner ordered on 2026-10-23 and decided, verdict by
+verdict, from 2026-10-24 to 2026-10-27 (`tasks/96/redesign/JOB.md`, verdicts 1 to 100; the design in
+`tasks/96/redesign/run4/v5/`, with its 842 conformance programs; the unsafe-features inventory,
+`run4/v5/unsafe-inventory.md`). Its goal, all at once: as fast as C and Rust; as memory-safe as Rust or
+safer, checked when compiling; readable like Python, every meaning written in words on the thing it
+describes. It replaces the memory model of 0.9.10:
+
+* Ownership is written in words on the value and in its type: `owns` (one owner, and the hand-over, for
+  every type, numbers included), `shares` and `shares mut` (several owners, counted), `thread_shared`
+  (several owners on several threads), `weakref` (a link that keeps nothing alive, opened with
+  `if x exists as y:`), `ref` and `ref mut` (views), `copy of` (a copy of your own); `Box`, `Shared`,
+  `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `owned`, `@sync`, `@borrows` and `mem.forget` are gone.
+* What a function changes and reads is worked out from its body, never written (no `changes`, no
+  `reads`); every refusal names the chain of calls that makes a change.
+* Every rule about who may change or read a place is checked when compiling; the run-time exclusivity
+  checks and the run-time index compare are gone. A run-time check is left only where the property is
+  data the program computes (an index, an overflow, a `weakref` target, a downcast, a count's limit).
+* Loops follow Rust's way: nothing changes a collection through its own name while a loop walks it;
+  the loop's `ref mut` handle changes the item it is on.
+* A loop of owners is refused unless the compiler proves it is opened again; anything that can break a
+  safety promise is possible only inside `unsafe` (`into_raw()`, C function pointers, `unsafe import c`,
+  `@unsafe(export(...))`, an `Allocator`'s free); the inventory's 34 fixes are applied.
+* The ECS is EnTT's design (ODR-279, verdict 100): a `Registry` of sparse-set pools and views, with no
+  scheduler.
+
+Generated: every rule whose text differs from 0.9.10_Hardened_35.
+
+| Rule | 0.9.10_Hardened_35 → 0.9.15_Hardened_1 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ALC-2]` | changed |
+| `[ALC-5]` | added |
+| `[ARN-1]` | changed |
+| `[ARN-2]` | changed |
+| `[ARN-3]` | changed |
+| `[ARN-4]` | changed |
+| `[ARN-6]` | changed |
+| `[ARN-7]` | changed |
+| `[ARN-8]` | changed |
+| `[ATT-1]` | changed |
+| `[ATT-2]` | changed |
+| `[BCK-1]` | changed |
+| `[BCK-2]` | changed |
+| `[BCK-3]` | changed |
+| `[BCK-4]` | changed |
+| `[BCK-5]` | changed |
+| `[BCK-6]` | changed |
+| `[BCK-7]` | changed |
+| `[BCK-8]` | added |
+| `[BEN-6]` | changed |
+| `[BLD-2]` | changed |
+| `[BLD-14]` | added |
+| `[BLD-FFI-1]` | changed |
+| `[BLD-FFI-3]` | changed |
+| `[BLD-FFI-5a]` | changed |
+| `[BRW-1]` | changed |
+| `[BRW-2]` | changed |
+| `[BRW-3]` | changed |
+| `[BRW-4]` | changed |
+| `[BRW-5]` | changed |
+| `[BRW-6]` | changed |
+| `[BRW-7]` | changed |
+| `[BRW-8]` | changed |
+| `[BRW-9]` | changed |
+| `[BRW-10]` | changed |
+| `[BRW-11]` | changed |
+| `[BRW-12]` | added |
+| `[BRW-13]` | added |
+| `[BRW-14]` | added |
+| `[BRW-15]` | added |
+| `[BRW-16]` | added |
+| `[BRW-17]` | added |
+| `[BRW-18]` | added |
+| `[BRW-19]` | added |
+| `[BRW-20]` | added |
+| `[BRW-21]` | added |
+| `[BRW-22]` | added |
+| `[CELL-1]` | changed |
+| `[CELL-2]` | changed |
+| `[CELL-3]` | changed |
+| `[CELL-5]` | removed |
+| `[CELL-6]` | removed |
+| `[CELL-7]` | removed |
+| `[CELL-8]` | removed |
+| `[CELL-9]` | removed |
+| `[CELL-10]` | removed |
+| `[CELL-12]` | removed |
+| `[CELL-13]` | added |
+| `[CG-C-4]` | changed |
+| `[CG-C-9]` | changed |
+| `[CG-C-11]` | changed |
+| `[CG-LL-3]` | changed |
+| `[CLI-2]` | changed |
+| `[CLI-18]` | changed |
+| `[CLI-20]` | changed |
+| `[CLO-1]` | changed |
+| `[CLO-2]` | changed |
+| `[CLO-3]` | changed |
+| `[CLO-4]` | changed |
+| `[CLO-5]` | changed |
+| `[CLO-6]` | changed |
+| `[CLO-6a]` | changed |
+| `[CLO-7]` | changed |
+| `[CLO-10]` | changed |
+| `[CLO-12]` | changed |
+| `[CLO-13]` | removed |
+| `[CLO-14]` | changed |
+| `[CLO-15]` | removed |
+| `[CLO-16]` | added |
+| `[CLO-17]` | added |
+| `[CLO-18]` | added |
+| `[CLO-19]` | added |
+| `[CLS-1]` | changed |
+| `[CLS-2]` | changed |
+| `[CLS-4]` | changed |
+| `[CLS-5]` | changed |
+| `[CLS-6]` | changed |
+| `[CLS-7]` | changed |
+| `[CLS-7a]` | changed |
+| `[CLS-8]` | removed |
+| `[CLS-9]` | changed |
+| `[CLS-9a]` | changed |
+| `[CLS-11]` | changed |
+| `[CLS-12]` | added |
+| `[CORO-3]` | changed |
+| `[CORO-5]` | changed |
+| `[CORO-6]` | changed |
+| `[CORO-12]` | changed |
+| `[CORO-13]` | changed |
+| `[CORO-14]` | added |
+| `[COST-3]` | changed |
+| `[COST-6]` | added |
+| `[CT-5]` | changed |
+| `[CTL-1]` | changed |
+| `[CTL-2]` | changed |
+| `[CTL-3b]` | changed |
+| `[CTL-7]` | changed |
+| `[CTL-11]` | added |
+| `[DET-2]` | changed |
+| `[DET-3]` | changed |
+| `[DET-5]` | changed |
+| `[DIA-2]` | changed |
+| `[DIA-3]` | changed |
+| `[DIA-7]` | changed |
+| `[DIA-8]` | changed |
+| `[DIA-9]` | changed |
+| `[DIA-10]` | changed |
+| `[DIA-11]` | changed |
+| `[DIA-16]` | changed |
+| `[DIA-21]` | changed |
+| `[DIA-22]` | changed |
+| `[DIA-23]` | changed |
+| `[DIA-25]` | added |
+| `[DIA-26]` | added |
+| `[DIA-27]` | added |
+| `[DIA-28]` | added |
+| `[DOC-3]` | changed |
+| `[DRP-1]` | changed |
+| `[DRP-5]` | changed |
+| `[DRP-6]` | changed |
+| `[DRP-7]` | changed |
+| `[DRP-8]` | added |
+| `[DRV-1]` | changed |
+| `[DSJ-1]` | changed |
+| `[DSJ-2]` | changed |
+| `[DSJ-3]` | changed |
+| `[DSJ-5]` | changed |
+| `[DSJ-6]` | changed |
+| `[DSJ-7]` | changed |
+| `[DSJ-9]` | changed |
+| `[DSJ-10]` | added |
+| `[DSP-1]` | changed |
+| `[DSP-3]` | changed |
+| `[DSP-4]` | changed |
+| `[DSP-5]` | changed |
+| `[DSP-6]` | added |
+| `[ECS-1]` | changed |
+| `[ECS-2]` | changed |
+| `[ECS-3]` | changed |
+| `[ECS-4]` | changed |
+| `[ECS-5]` | changed |
+| `[ECS-7]` | changed |
+| `[ECS-8]` | added |
+| `[ECS-9]` | added |
+| `[EFF-1]` | changed |
+| `[EFF-2]` | changed |
+| `[EFF-3]` | changed |
+| `[EFF-4]` | changed |
+| `[EFF-6a]` | removed |
+| `[EFF-9]` | changed |
+| `[EFF-11]` | changed |
+| `[EFF-12]` | changed |
+| `[EFF-13]` | removed |
+| `[EFF-14]` | changed |
+| `[EFF-15]` | changed |
+| `[EFF-16]` | changed |
+| `[EFF-18]` | changed |
+| `[EFF-24]` | added |
+| `[EFF-25]` | added |
+| `[EFF-26]` | added |
+| `[EFF-27]` | added |
+| `[ERR-2]` | changed |
+| `[ERR-3]` | changed |
+| `[ERR-4]` | changed |
+| `[ERR-8]` | changed |
+| `[ERR-9]` | changed |
+| `[ERR-13]` | changed |
+| `[EXC-1]` | changed |
+| `[EXC-2]` | changed |
+| `[EXC-3]` | changed |
+| `[EXC-3a]` | removed |
+| `[EXC-4]` | removed |
+| `[EXC-5]` | removed |
+| `[EXC-6]` | removed |
+| `[EXC-7]` | removed |
+| `[EXC-8]` | removed |
+| `[EXC-9]` | removed |
+| `[EXC-10]` | removed |
+| `[EXC-11]` | removed |
+| `[EXC-12]` | removed |
+| `[EXC-13]` | removed |
+| `[EXC-14]` | removed |
+| `[EXC-15]` | changed |
+| `[EXC-16]` | changed |
+| `[EXC-17]` | changed |
+| `[EXC-18]` | removed |
+| `[EXC-19]` | changed |
+| `[EXP-4]` | changed |
+| `[EXP-5]` | changed |
+| `[EXP-6]` | changed |
+| `[EXP-9]` | changed |
+| `[EXP-10]` | changed |
+| `[FFI-1]` | changed |
+| `[FFI-2a]` | changed |
+| `[FFI-8]` | changed |
+| `[FFI-10]` | changed |
+| `[FFI-11]` | changed |
+| `[FFI-11b]` | changed |
+| `[FFI-15]` | changed |
+| `[FFI-17a]` | changed |
+| `[FFI-17d]` | changed |
+| `[FFI-17e]` | changed |
+| `[FFI-21]` | changed |
+| `[FFI-21a]` | changed |
+| `[FFI-22]` | changed |
+| `[FFI-23]` | changed |
+| `[FFI-25]` | changed |
+| `[FFI-26]` | changed |
+| `[FFI-29b]` | changed |
+| `[FFI-30c]` | changed |
+| `[FFI-31b]` | changed |
+| `[FFI-32]` | changed |
+| `[FFI-33]` | changed |
+| `[FFI-33a]` | changed |
+| `[FFI-33b]` | changed |
+| `[FFI-33c]` | changed |
+| `[FFI-36]` | changed |
+| `[FFI-36a]` | changed |
+| `[FFI-37d]` | changed |
+| `[FFI-39]` | changed |
+| `[FFI-39c]` | changed |
+| `[FFI-39d]` | changed |
+| `[FFI-40]` | changed |
+| `[FFI-40a]` | changed |
+| `[FFI-41]` | changed |
+| `[FFI-42a]` | changed |
+| `[FFI-51]` | added |
+| `[FFI-52]` | added |
+| `[FFI-53]` | added |
+| `[FFI-54]` | added |
+| `[FFI-55]` | added |
+| `[FFI-56]` | added |
+| `[FMT-1]` | changed |
+| `[FN-1]` | changed |
+| `[FN-1a]` | changed |
+| `[FN-2]` | changed |
+| `[FN-2a]` | changed |
+| `[FN-3]` | changed |
+| `[FN-4]` | changed |
+| `[FN-6]` | changed |
+| `[FN-8]` | changed |
+| `[FN-9]` | changed |
+| `[GPU-2]` | changed |
+| `[GPU-3]` | changed |
+| `[GPU-6]` | changed |
+| `[GPU-7]` | changed |
+| `[GPU-9]` | changed |
+| `[GPU-12]` | added |
+| `[GRM-3]` | changed |
+| `[GRM-4]` | changed |
+| `[GRM-8a]` | changed |
+| `[GRM-8b]` | changed |
+| `[GRM-13]` | changed |
+| `[GRM-15]` | changed |
+| `[GRM-19]` | changed |
+| `[GRM-27]` | changed |
+| `[GRM-28]` | changed |
+| `[GRM-30]` | changed |
+| `[GRM-35]` | changed |
+| `[GRM-36]` | changed |
+| `[GRM-37]` | changed |
+| `[GRM-38]` | changed |
+| `[GRM-40]` | added |
+| `[GRM-41]` | added |
+| `[GRM-42]` | added |
+| `[GRM-43]` | added |
+| `[GRM-44]` | added |
+| `[GRM-45]` | added |
+| `[GRM-46]` | added |
+| `[HASH-1]` | changed |
+| `[HASH-3]` | changed |
+| `[HEAP-1]` | changed |
+| `[HEAP-3]` | changed |
+| `[HEAP-4]` | removed |
+| `[HEAP-5]` | removed |
+| `[HEAP-6]` | changed |
+| `[HEAP-7]` | changed |
+| `[HEAP-9]` | changed |
+| `[HEAP-10]` | changed |
+| `[HND-3]` | changed |
+| `[HR-2]` | changed |
+| `[HR-2a]` | changed |
+| `[HR-3b]` | changed |
+| `[HR-6a]` | changed |
+| `[HR-8]` | changed |
+| `[HR-10]` | changed |
+| `[HR-11]` | changed |
+| `[HR-12]` | changed |
+| `[HR-14]` | changed |
+| `[HR-15]` | changed |
+| `[HR-15a]` | changed |
+| `[HR-16]` | changed |
+| `[HR-17a]` | changed |
+| `[HR-19]` | changed |
+| `[HR-20]` | changed |
+| `[HR-35]` | changed |
+| `[HR-41]` | changed |
+| `[HR-44]` | added |
+| `[HR-45]` | added |
+| `[HR-46]` | added |
+| `[HR-47]` | added |
+| `[IDE-4]` | changed |
+| `[IDE-6]` | changed |
+| `[IFC-5]` | added |
+| `[IFC-6]` | added |
+| `[IMP-11]` | changed |
+| `[JOB-2]` | changed |
+| `[JOB-3]` | changed |
+| `[LEX-14]` | changed |
+| `[LEX-15]` | changed |
+| `[LEX-20]` | changed |
+| `[LEX-21]` | changed |
+| `[LEX-23]` | changed |
+| `[LNT-6]` | changed |
+| `[LT-1]` | changed |
+| `[LT-1a]` | changed |
+| `[LT-1b]` | removed |
+| `[LT-4]` | changed |
+| `[LT-5]` | changed |
+| `[LT-6]` | changed |
+| `[LT-7]` | changed |
+| `[LT-14]` | changed |
+| `[LT-18]` | changed |
+| `[LT-22]` | changed |
+| `[LT-23]` | changed |
+| `[LT-25]` | changed |
+| `[LT-26]` | changed |
+| `[LT-27]` | changed |
+| `[LT-34]` | changed |
+| `[LT-35]` | changed |
+| `[LT-36]` | changed |
+| `[LT-39]` | changed |
+| `[LT-42]` | changed |
+| `[LT-44]` | changed |
+| `[LT-45]` | added |
+| `[LT-46]` | added |
+| `[LT-47]` | added |
+| `[MNG-1]` | changed |
+| `[MNG-2]` | changed |
+| `[MNG-6]` | changed |
+| `[MOD-1]` | changed |
+| `[MOD-5]` | changed |
+| `[MOD-9]` | added |
+| `[MONO-10]` | added |
+| `[OBJ-1]` | changed |
+| `[OBJ-2]` | changed |
+| `[OBJ-3]` | changed |
+| `[OBJ-4]` | changed |
+| `[OBJ-5]` | changed |
+| `[OPT-1]` | changed |
+| `[OWN-1]` | changed |
+| `[OWN-2]` | changed |
+| `[OWN-3]` | changed |
+| `[OWN-4]` | changed |
+| `[OWN-6]` | changed |
+| `[OWN-7]` | changed |
+| `[OWN-8]` | changed |
+| `[OWN-9]` | added |
+| `[OWN-10]` | added |
+| `[OWN-11]` | added |
+| `[OWN-12]` | added |
+| `[OWN-13]` | added |
+| `[PAR-1]` | changed |
+| `[PAR-2]` | changed |
+| `[PHIL-2]` | changed |
+| `[PHIL-3]` | changed |
+| `[PHIL-4]` | changed |
+| `[PHIL-8]` | changed |
+| `[PHIL-9]` | changed |
+| `[PHIL-10]` | changed |
+| `[PHIL-11]` | changed |
+| `[PHIL-15]` | changed |
+| `[PHIL-16]` | added |
+| `[PRF-1]` | changed |
+| `[PRF-4]` | added |
+| `[RC-1]` | changed |
+| `[RC-2]` | changed |
+| `[RC-2a]` | changed |
+| `[RC-2b]` | changed |
+| `[RC-2c]` | changed |
+| `[RC-2d]` | changed |
+| `[RC-2e]` | changed |
+| `[RC-3]` | changed |
+| `[RC-4]` | changed |
+| `[RC-5]` | changed |
+| `[RC-6]` | changed |
+| `[RC-7]` | added |
+| `[RFL-2]` | changed |
+| `[RT-7]` | changed |
+| `[RT-8]` | changed |
+| `[RT-10]` | changed |
+| `[RT-12]` | changed |
+| `[SEL-1]` | changed |
+| `[SEL-2]` | changed |
+| `[SER-1]` | changed |
+| `[SIMD-3]` | changed |
+| `[SIMD-9]` | changed |
+| `[SOA-2]` | changed |
+| `[SOA-6]` | changed |
+| `[SPN-1]` | changed |
+| `[SPN-3]` | changed |
+| `[SPN-4]` | changed |
+| `[SPN-5]` | changed |
+| `[STA-1]` | changed |
+| `[STA-3]` | changed |
+| `[STD-3]` | changed |
+| `[STD-6]` | changed |
+| `[STD-8]` | changed |
+| `[STD-8b]` | changed |
+| `[STD-9]` | changed |
+| `[STD-11]` | changed |
+| `[STD-12]` | changed |
+| `[STD-14]` | changed |
+| `[STD-15]` | changed |
+| `[STD-16]` | changed |
+| `[STD-17]` | changed |
+| `[STD-18]` | changed |
+| `[STD-19]` | changed |
+| `[STD-21]` | changed |
+| `[STD-25]` | changed |
+| `[STD-26]` | changed |
+| `[STD-29]` | added |
+| `[STR-1]` | changed |
+| `[STR-3]` | changed |
+| `[STR-5]` | changed |
+| `[STR-6]` | changed |
+| `[STR-7]` | changed |
+| `[TCB-4]` | changed |
+| `[THR-1]` | changed |
+| `[THR-2]` | changed |
+| `[THR-3]` | changed |
+| `[THR-5]` | changed |
+| `[THR-6]` | changed |
+| `[THR-7]` | changed |
+| `[THR-8]` | changed |
+| `[THR-9]` | changed |
+| `[THR-10]` | changed |
+| `[THR-11]` | changed |
+| `[THR-12]` | changed |
+| `[THR-13]` | changed |
+| `[THR-15]` | changed |
+| `[THR-17]` | added |
+| `[THR-18]` | added |
+| `[THR-19]` | added |
+| `[THR-20]` | added |
+| `[THR-21]` | added |
+| `[TIER-1]` | changed |
+| `[TST-6]` | changed |
+| `[TST-11]` | changed |
+| `[TST-31]` | added |
+| `[TXT-1]` | changed |
+| `[TXT-2]` | changed |
+| `[TXT-3]` | changed |
+| `[TXT-4]` | changed |
+| `[TXT-5]` | changed |
+| `[TXT-6]` | changed |
+| `[TXT-8]` | changed |
+| `[TXT-9]` | changed |
+| `[TXT-10]` | changed |
+| `[TXT-11]` | changed |
+| `[TYP-1]` | changed |
+| `[TYP-5]` | changed |
+| `[TYP-6]` | changed |
+| `[TYP-9]` | changed |
+| `[TYP-9b]` | changed |
+| `[TYP-13]` | changed |
+| `[TYP-14]` | changed |
+| `[TYP-15]` | changed |
+| `[TYP-17]` | changed |
+| `[TYP-19]` | changed |
+| `[TYP-21]` | changed |
+| `[TYP-22]` | changed |
+| `[TYP-23]` | changed |
+| `[TYP-24]` | changed |
+| `[TYP-31]` | changed |
+| `[TYP-34]` | changed |
+| `[TYP-35]` | changed |
+| `[TYP-36]` | changed |
+| `[TYP-38]` | changed |
+| `[TYP-39]` | changed |
+| `[TYP-43]` | changed |
+| `[TYP-44]` | added |
+| `[TYP-45]` | added |
+| `[TYP-46]` | added |
+| `[UNS-1]` | changed |
+| `[UNS-2]` | changed |
+| `[UNS-4]` | changed |
+| `[UNS-7]` | changed |
+| `[UNS-8]` | changed |
+| `[UNS-10]` | changed |
+| `[UNS-10a]` | changed |
+| `[UNS-11]` | added |
+| `[UNS-12]` | added |
+| `[WK-1]` | changed |
+| `[WK-2]` | changed |
+| `[WK-3]` | changed |
+| `[WK-4]` | changed |
+| `[WK-5]` | changed |
+| `[WK-6]` | changed |
+| `[WK-7]` | changed |
+| `[WK-8]` | changed |
+| `[WK-9]` | changed |
+| `[WK-11]` | changed |
+| `[WK-12]` | changed |
+| `[WK-13]` | changed |
+| `[WK-14]` | changed |
+| `[WK-15]` | changed |
+| `[WK-16]` | added |
+| `[WK-17]` | added |
+| `[WK-18]` | added |
+
+## H.42 Changes in 0.9.15_Hardened_2 (from 0.9.15_Hardened_1)
+
+**0.9.15_Hardened_2** writes in the owner's verdicts 101 to 106 and the lead's rulings for the compiler
+work (`tasks/96/redesign/JOB.md`; `tasks/96/redesign/compiler-0.9.15/decisions.md`, sections 4 to 6):
+
+* Verdict 101: a `thread_shared` value's owners are counted in two numbers, its making thread's own
+  (plain) and the other threads' (atomic), with a hand-over to the making thread through its queue and
+  the compiler's check points, and an immediate hand-over where an owner is stored where other threads
+  can reach it (biased counting; `[OBJ-1]`'s 32-byte header, `[RC-4]`, `[RC-5]`, `[WK-3]`, `[WK-12]`,
+  `[RT-7]`, `[RT-8]`, `[RT-10]`, `[COST-3]`'s measured row).
+* Verdict 102: a C contract writes `owns` for "C takes this object"; `owned` is refused everywhere.
+* Verdict 103: `shares`, `shares mut` and `thread_shared` are not made of a place that has one owner and
+  is not a local (`E2122`, new).
+* Verdict 104: a scoped task's claims end at its join, `h.join()` or the end of the `with scope:` block.
+* Verdict 105 (for now): a task's or a chunk's own whole-number total stops the program on overflow.
+* Verdict 106: a contract on a function type is written above its `type` line.
+* The lead's rulings: `from` names any field of `this`; when a store may close a loop of owners and the
+  two proofs that it does not (`E3032`); a deferred-drop region runs the drops at once; a `Retained`
+  token is an owner edge; a manager type with no fields has one instance; `=` on a `static` is `E3023`;
+  `E3100` for an unverified foreign call outside `unsafe`, `E5002` for a contract's own errors and two
+  destructors of one foreign type; two bounds that both declare a method are `E2070`; every function
+  has a type of its own (ODR-278); a cdylib exports its class handles' functions; the trampoline's
+  number on 32-bit targets; `std.core.type_name[T]()` and the ECS's `Storage[T]`; `@component` gone;
+  what `ember fmt --migrate` also rewrites.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_1.
+
+| Rule | 0.9.15_Hardened_1 → 0.9.15_Hardened_2 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ATT-1]` | changed |
+| `[BCK-7]` | changed |
+| `[BLD-FFI-5a]` | changed |
+| `[CLI-20]` | changed |
+| `[CLO-1]` | changed |
+| `[ECS-2]` | changed |
+| `[EFF-2]` | changed |
+| `[FFI-23]` | changed |
+| `[FFI-28]` | changed |
+| `[FFI-36a]` | changed |
+| `[FFI-39c]` | changed |
+| `[FFI-53]` | changed |
+| `[FFI-54]` | changed |
+| `[HEAP-10]` | changed |
+| `[LEX-15]` | changed |
+| `[LT-1a]` | changed |
+| `[OBJ-1]` | changed |
+| `[OWN-13]` | changed |
+| `[PAR-3]` | changed |
+| `[RC-1]` | changed |
+| `[RC-4]` | changed |
+| `[RC-5]` | changed |
+| `[RT-7]` | changed |
+| `[RT-8]` | changed |
+| `[RT-10]` | changed |
+| `[STA-1]` | changed |
+| `[THR-1]` | changed |
+| `[THR-2]` | changed |
+| `[THR-7]` | changed |
+| `[THR-11]` | changed |
+| `[THR-13]` | changed |
+| `[THR-21]` | changed |
+| `[TYP-24]` | changed |
+| `[TYP-45]` | changed |
+| `[WK-3]` | changed |
+| `[WK-5]` | changed |
+| `[WK-7]` | changed |
+| `[WK-12]` | changed |
+
+## H.43 Changes in 0.9.15_Hardened_3 (from 0.9.15_Hardened_2)
+
+**0.9.15_Hardened_3** writes in the owner's verdicts 107 to 117 (`tasks/96/redesign/JOB.md`) and the
+lead's details for them (`tasks/96/redesign/compiler-0.9.15/decisions.md`, section 7):
+
+* Verdict 107: a value made in a memory manager keeps no word naming its instance when the manager frees
+  nothing one by one (and the value does not grow), or implements `FoundByAddress`, whose pieces start at
+  a multiple of 65,536 bytes with the instance's address in their first word (`[ALC-1]`, `[ALC-2]`,
+  `[OBJ-4]`, `[COST-3]`).
+* Verdicts 108 and 113: a `pub` generic writes everything its type parameters need; one that is not
+  `pub` writes all of it or none, and part of a list is `E2040` with the whole line in the message
+  (`[TYP-17]`, `[IFC-6]`).
+* Verdicts 109 to 112: what a type parameter needs is written after `needs`, one bare and several in
+  round brackets (`[T: needs (Add[T, Output = T], Copy)]`), in type-parameter lines, `extend`
+  brackets, an interface's parents, associated types and `where` clauses; `+` between needs is gone
+  (`E0100`), kept only after `dyn` and `some` (`[TYP-17]`, `[LEX-15]`, Part III).
+* Verdict 114: an object handed whole to another thread while a `weakref` link on this thread points
+  at it goes, and the links here find it ended: its contents move when a link exists (Rust's
+  `Rc::try_unwrap`), objects it owns of `weakref`-target classes too, a view opened from a link is not
+  used after it, and an object C keeps never moves (a link to it stops the program) (`[THR-2]`,
+  `[RC-5]`, `[WK-12]`, `[FFI-35a]`, `[UNS-4]`; `E7015` no longer covers it).
+* Verdicts 115 and 116: typed variadic generics and functions in C++'s spelling, `[Ts...: needs
+  Display]` above `fn log(values: Ts...):` (`[TYP-47]`, new); a view lists any number of components,
+  `reg.view[Position, Velocity]()` (`[ECS-3]`, `[ECS-4]`); `zip` takes any number (`[STD-26]`).
+* Verdict 117: `print`, `println`, `eprint`, `eprintln` and `format_to` are library functions with a
+  pack, `[Ts...: needs Printable]`; the compiler implements `Printable` for every type with `Display` or
+  `Debug` (`[STD-9]`, `[STD-18]`, `[TYP-26]`, §IV.8).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_2.
+
+| Rule | 0.9.15_Hardened_2 → 0.9.15_Hardened_3 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ALC-2]` | changed |
+| `[ARN-3]` | changed |
+| `[ARN-5d]` | changed |
+| `[ARN-11]` | changed |
+| `[CELL-1]` | changed |
+| `[CLI-20]` | changed |
+| `[CLO-14]` | changed |
+| `[ECS-3]` | changed |
+| `[ECS-4]` | changed |
+| `[ECS-8]` | changed |
+| `[EFF-2]` | changed |
+| `[ERR-1]` | changed |
+| `[ERR-4]` | changed |
+| `[ERR-8]` | changed |
+| `[ERR-12]` | changed |
+| `[FFI-35a]` | changed |
+| `[FN-8]` | changed |
+| `[GRM-31]` | changed |
+| `[GRM-34]` | changed |
+| `[GRM-40]` | changed |
+| `[HASH-1]` | changed |
+| `[HASH-4]` | changed |
+| `[IFC-3]` | changed |
+| `[IFC-4]` | changed |
+| `[IFC-5]` | changed |
+| `[IFC-6]` | changed |
+| `[LEX-15]` | changed |
+| `[LEX-21]` | changed |
+| `[OBJ-4]` | changed |
+| `[RC-5]` | changed |
+| `[RNG-5a1]` | changed |
+| `[SER-1]` | changed |
+| `[SOA-6]` | changed |
+| `[STD-8]` | changed |
+| `[STD-9]` | changed |
+| `[STD-11]` | changed |
+| `[STD-12]` | changed |
+| `[STD-15]` | changed |
+| `[STD-16]` | changed |
+| `[STD-17]` | changed |
+| `[STD-18]` | changed |
+| `[STD-19]` | changed |
+| `[STD-21]` | changed |
+| `[STD-26]` | changed |
+| `[STD-27]` | changed |
+| `[THR-2]` | changed |
+| `[THR-8]` | changed |
+| `[THR-9]` | changed |
+| `[TYP-17]` | changed |
+| `[TYP-19]` | changed |
+| `[TYP-22]` | changed |
+| `[TYP-26]` | changed |
+| `[TYP-36]` | changed |
+| `[TYP-37]` | changed |
+| `[TYP-43]` | changed |
+| `[TYP-47]` | added |
+| `[UNS-4]` | changed |
+| `[UNS-5]` | changed |
+| `[WK-12]` | changed |

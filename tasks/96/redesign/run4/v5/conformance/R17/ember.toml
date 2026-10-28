@@ -1,0 +1,5 @@
+# The R17 tests stand on both sides of a package's edge: `ledger` is another package, which these
+# tests import. What `ledger`'s bodies do reaches a test only through what its interface file records
+# (R17; verdict 86: no first line says what a function changes or reads).
+[dependencies]
+ledger = { path = "ledger" }

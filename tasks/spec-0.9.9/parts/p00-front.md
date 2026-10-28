@@ -1,33 +1,29 @@
 # Ember Programming Language — Specification
 
-**Version:** 0.9.10_Hardened_35
-**Supersedes:** 0.9.10_Hardened_34, 0.9.10_Hardened_33, 0.9.10_Hardened_32, 0.9.10_Hardened_31, 0.9.10_Hardened_30, 0.9.10_Hardened_29, 0.9.10_Hardened_28, 0.9.10_Hardened_27, 0.9.10_Hardened_26, 0.9.10_Hardened_25, 0.9.10_Hardened_24, 0.9.10_Hardened_23, 0.9.10_Hardened_22, 0.9.10_Hardened_21, 0.9.10_Hardened_20, 0.9.10_Hardened_19, 0.9.10_Hardened_18, 0.9.10_Hardened_17, 0.9.10_Hardened_16, 0.9.10_Hardened_15, 0.9.10_Hardened_14, 0.9.10_Hardened_13, 0.9.10_Hardened_12, 0.9.10_Hardened_11, 0.9.10_Hardened_10, 0.9.10_Hardened_9, 0.9.10_Hardened_8, 0.9.10_Hardened_7, 0.9.10_Hardened_6, 0.9.10_Hardened_5, 0.9.10_Hardened_4, 0.9.10_Hardened_3, 0.9.10_Hardened_2, 0.9.10_Hardened_1, 0.9.9_Hardened_52, 0.9.9_Hardened_51, 0.9.9_Hardened_50, 0.9.9_Hardened_49, 0.9.9_Hardened_48, 0.9.9_Hardened_47, 0.9.9_Hardened_46, 0.9.9_Hardened_45, 0.9.9_Hardened_44, 0.9.9_Hardened_43, 0.9.9_Hardened_42, 0.9.9_Hardened_41, 0.9.9_Hardened_40, 0.9.9_Hardened_39, 0.9.9_Hardened_38, 0.9.9_Hardened_37, 0.9.9_Hardened_36, 0.9.9_Hardened_35, 0.9.9_Hardened_34, 0.9.9_Hardened_33, 0.9.9_Hardened_32, 0.9.9_Hardened_31, 0.9.9_Hardened_30, 0.9.9_Hardened_29, 0.9.9_Hardened_28, 0.9.9_Hardened_27, 0.9.9_Hardened_26, 0.9.9_Hardened_25, 0.9.9_Hardened_24, 0.9.9_Hardened_23, 0.9.9_Hardened_22, 0.9.9_Hardened_21, 0.9.9_Hardened_20, 0.9.9_Hardened_19, 0.9.9_Hardened_18, 0.9.9_Hardened_17, 0.9.9_Hardened_16, 0.9.9_Hardened_15, 0.9.9_Hardened_14, 0.9.9_Hardened_13, 0.9.9_Hardened_12, 0.9.9_Hardened_11, 0.9.9_Hardened_10, 0.9.9_Hardened_9, 0.9.9_Hardened_8, 0.9.9_Hardened_7, 0.9.9_Hardened_6, 0.9.9_Hardened_5, 0.9.9_Hardened_4, 0.9.9_Hardened_3, 0.9.9_Hardened_2, 0.9.9_Hardened_1, 0.9.8_Hardened_3 (development target) and 0.8.5_Hardened_1 (adopted). This document is
-the single specification of Ember; the earlier files are history.
+**Version:** 0.9.15_Hardened_3
+**Supersedes:** 0.9.15_Hardened_1 (development target) and every earlier file: 0.9.10_Hardened_1 to
+0.9.10_Hardened_35, 0.9.9_Hardened_1 to 0.9.9_Hardened_52, 0.9.8_Hardened_3 and 0.8.5_Hardened_1
+(adopted). This document is the single specification of Ember; the earlier files are history.
 **Status:** Consolidated language revision. Language rules are complete for the Core and Systems
 profiles; the Native and Dynamic profiles are specified in annexes. Implementation and conformance
 are tracked separately (§XVII.5, §XVII.8) and are not claimed by this text.
-**Authority:** Authored at the owner's direction of 2026-09-23 with delegated authority to decide open
-language questions against the project goal. Every decision that changes 0.9.8's meaning is listed in
-Appendix H, and every finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214)
-is resolved in Appendix G. Hardened_2 applies the memory-safety, consistency-and-speed and
-ergonomics passes over Hardened_1 (`tasks/spec-0.9.9/passes/`); Appendix H §H.4 lists every change.
-Hardened_3 and later record the ODRs raised while implementing 0.9.9 (from ODR-021, ruled under the
-owner's delegation); Appendix H §H.5 lists them. **0.9.10_Hardened_1** is the owner's design G8-4
-(`docs/proposals/G8-4-counts-and-positions.md`, decided 2026-10-05): every iterator counts and
-numbers its items in a type that holds every count and number it can have, stepping up only as far
-as the values need; it replaces ODR-089's `int` counts and ODR-091's backwards-`enumerate` panic and
-adds the count types `u256` and `i256`. It changes the set of accepted programs, so the language
-version moves (`[VER-9]`); Appendix H §H.6 lists every change. **0.9.10_Hardened_2** records the
-owner's rulings of 2026-10-06 on three of the audit's decisions: `parse` reads the 256-bit counts;
-the known-numbers rule, which reads what names set once, loop counters and lengths hold; and
-`enumerate` numbers in a type that holds every number, so none overflows; and the one that followed:
-a whole number converts by itself to another whole-number type where it is known to fit. Appendix H
-§H.7 lists every change. **0.9.10_Hardened_3** records ODR-099, the owner's choice of 2026-10-11: a
-function whose value C may call returns no pointer into a parameter C passes as a copy (`[FFI-21a]`,
-`E5042`). Appendix H §H.8 lists every change. **0.9.10_Hardened_4** records ODR-100, the owner's
-choice of 2026-10-11: the iterator adapters take over the callable and the iterator they keep, and
-a lambda written at one keeps its borrows; only a callable that must carry the static region moves
-its captures (`[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]`). Appendix H §H.9 lists every change.
+**Authority:** **0.9.15** is the owner's rework of the memory model (`tasks/96/redesign/JOB.md`, the
+owner's verdicts of 2026-10-24 to 2026-10-27, with the design in `tasks/96/redesign/run4/v5/` and its
+list of unsafe features); **0.9.15_Hardened_2** adds the owner's verdicts 101 to 106 and the lead's
+rulings for building it (`tasks/96/redesign/compiler-0.9.15/decisions.md`). What a program means is written in
+words on the thing it describes: one owner unless a line says `shares`; `owns` for a hand-over and a
+value held alone; `copy of` for a copy; `ref mut` on a name, and at the call, for a change of someone
+else's value; `weakref` for a link that does not keep its target alive; `this` for a method's object.
+What a function changes, reads and ends is worked out from its code, never written on its first line.
+Every memory rule is checked when compiling; what still runs while a program runs is listed with its
+cost (§X.4). It replaces `Box`, `Shared`, `Weak`, `RefCell`, `SyncShared`, `ForeignBox`, `@sync`,
+`@borrows`, the mode `owned`, `self`, `mem.forget`, effect clauses on a first line and every check of
+exclusive access made while the program runs. It changes the set of accepted programs, so the
+language version moves (`[VER-9]`); Appendix H §H.41 and §H.42 list every change. The revisions before it were
+authored at the owner's direction of 2026-09-23 with delegated authority to decide open language
+questions against the project goal; Appendix H lists each one's changes (§H.1 to §H.40), and every
+finding of the 2026-09-23 research pass (`tasks/audit/FINDINGS.md`, F-001–F-214) is resolved in
+Appendix G.
 
 ---
 
@@ -35,16 +31,22 @@ its captures (`[CLO-15]`, `[CLO-4]`, `[CLO-7]`, `[STD-19]`). Appendix H §H.9 li
 
 Ember is built to meet three requirements at once:
 
-1. **Fast like C.** Code that uses values, views and plain loops compiles to what a careful C
-   programmer would write, with every remaining cost named in §X.4.
-2. **Types like Python.** Programs read like Python: indentation, few annotations, inference inside
-   functions, literals for lists, maps and sets, f-strings, generators, comprehensions, and errors
-   that name the fix. Where Python's meaning and C's meaning differ, Ember takes Python's unless doing
-   so costs speed that cannot be recovered, and says so.
-3. **Memory safety like Rust, without Rust's ceremony.** Safe Ember cannot use freed memory, race on
-   data, or read out of bounds. Ember gets there without lifetime names, without trait-import rules,
-   without orphan-rule surprises, and without asking the programmer to prove what the compiler can
-   infer.
+1. **Fast like C and Rust.** Code that uses values, views and plain loops compiles to what a careful
+   C programmer would write, with every remaining cost named in §X.4.
+2. **Memory safety like Rust's, or better, checked when compiling.** Safe Ember cannot use freed
+   memory, race on data, read out of bounds, or leak through a loop of owners. Every memory rule is
+   checked when compiling wherever it can be; what still runs while the program runs is listed, with
+   its cost, in §X.4. Ember gets there without lifetime names, without trait-import rules, without
+   orphan-rule surprises, and without asking the programmer to prove what the compiler can work out.
+3. **Readable like Python.** Programs read like Python: indentation, few annotations, inference
+   inside functions, literals for lists, maps and sets, f-strings, generators, comprehensions. What
+   the code means is written in words on the thing it describes (`owns`, `shares`, `weakref`,
+   `copy of`, `ref mut`), and the compiler never decides what the code does not say. Readable means
+   how a program reads, not Python's meaning: where Python's meaning and C's differ, Ember takes
+   Python's only where that costs neither safety nor speed that cannot be recovered, and says so.
+   Safety is never traded for looking like Python. Error messages are part of readability: each
+   names what was refused in the program's own words, says why in one line and gives the exact line
+   to write, which compiles (§XVII.6).
 
 Each goal has an instrument, and a release is judged by the instruments rather than by this prose:
 the performance suite (`[TST-28]`), the first-week newcomer corpus (`[TST-8]`), and the Safe Ember
@@ -60,10 +62,10 @@ invariant (`[PHIL-10]`) with its conformance tests.
 | IV | Types |
 | V | Declarations: modules, functions, structs, enums, classes, interfaces, statics, attributes |
 | VI | Expressions, statements, closures, generators |
-| VII | Ownership, borrowing, regions, destruction, views |
-| VIII | Classes and reference counting |
-| IX | Memory facilities: heap types, arenas, raw pointers, interior mutability |
-| X | Effects, contracts, determinism, the cost model |
+| VII | Ownership: owners, hand-over, views, `ref mut`, destruction |
+| VIII | Classes, `this`, shared owners (`shares`) and links (`weakref`) |
+| IX | Memory facilities: values held alone (`owns`), memory managers (`using`), arenas, raw pointers, `unsafe` |
+| X | Effects (worked out from the code), contracts, determinism, the cost model |
 | XI | Concurrency |
 | XII | Data-oriented programming |
 | XIII | Error handling |
@@ -79,16 +81,18 @@ invariant (`[PHIL-10]`) with its conformance tests.
 | Appendix E | Coming from Python (non-normative) |
 | Appendix F | Glossary |
 | Appendix G | Resolution of findings F-001–F-214 |
-| Appendix H | Changes from 0.9.8_Hardened_3, from 0.9.9_Hardened_1 (§H.4), from 0.9.9_Hardened_2 (§H.5), in 0.9.10 (§H.6), from 0.9.10_Hardened_1 (§H.7), from 0.9.10_Hardened_2 (§H.8), from 0.9.10_Hardened_3 (§H.9) and from 0.9.10_Hardened_4 (§H.10) |
+| Appendix H | Changes from 0.9.8_Hardened_3 (§H.1 to §H.3), in 0.9.9 (§H.4, §H.5), in 0.9.10 (§H.6 to §H.40) and in 0.9.15 (§H.41) |
 | Appendix I | Rule index |
 
 **Normative words.** MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are used as in RFC 2119. Text marked
 *Note* or *Example* is not normative.
 
 **Rule identifiers.** Normative rules carry identifiers of the form `[XXX-n]`. A rule identifier is
-never reused for a different meaning. Rules carried from 0.9.8 keep their identifiers; a rule whose
-meaning this revision changes is marked *(changed in 0.9.9)*; new rules take numbers above every
-number the family has used before. Appendix I lists every rule.
+never reused for a different meaning. A rule keeps its identifier while its meaning stays; a rule
+whose meaning a revision changes is marked *(changed in 0.9.N)* with that revision's version, and a
+rule a revision adds is marked *(new in 0.9.N)* and takes a number above every number its family has
+used before. A rule whose subject a revision removes is listed in Appendix H and its identifier is
+never used again. Appendix I lists every rule.
 
 **Examples.** Every ` ```ember ` block is a valid program or sequence of items under this
 specification and passes `ember check`. A block marked ` ```ember,fragment ` parses but names items it

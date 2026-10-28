@@ -1,0 +1,513 @@
+Phase 0: `holds` -> `exists as` in code (verdict 26). 88 lines changed.
+
+rules.md:27
+  - plain loop or pattern name, a name opened with `holds`, a name for a part. A **read-only view** is
+  + plain loop or pattern name, a name opened with `exists as`, a name for a part. A **read-only view** is
+rules.md:107
+  - `b`'s value into `a` (E3023). A parameter, a loop name, a pattern name and a name opened with `holds`
+  + `b`'s value into `a` (E3023). A parameter, a loop name, a pattern name and a name opened with `exists as`
+rules.md:212
+  - turret aimed at itself: `if this.target holds ref mut t: t.health -= 1`, accepted with no check), so
+  + turret aimed at itself: `if this.target exists as ref mut t: t.health -= 1`, accepted with no check), so
+rules.md:339
+  - `if cam.target holds p:`; a view made through a `shares mut` field, `t = ref mut ws[i].target`; a
+  + `if cam.target exists as p:`; a view made through a `shares mut` field, `t = ref mut ws[i].target`; a
+rules.md:364
+  - `if cam.target holds p:`. `copy of` a link is refused (E2116): another link to the same target is
+  + `if cam.target exists as p:`. `copy of` a link is refused (E2116): another link to the same target is
+rules.md:365
+  - `weakref this.keep`, a copy of the target itself is `if this.keep holds n:` then `copy of n`.
+  + `weakref this.keep`, a copy of the target itself is `if this.keep exists as n:` then `copy of n`.
+rules.md:382
+  - A walk up a tree (`cur = ref leaf`, `while cur.parent holds p:`, `cur = p`) is then compiled with no
+  + A walk up a tree (`cur = ref leaf`, `while cur.parent exists as p:`, `cur = p`) is then compiled with no
+rules.md:440
+  - **R13. Opening an `Option` or a `weakref` link: `holds`.** `if cam.target holds p:` runs its block when
+  + **R13. Opening an `Option` or a `weakref` link: `exists as`.** `if cam.target exists as p:` runs its block when
+rules.md:442
+  - names that thing `p` inside the block; `else:` runs when it holds nothing; `while cur.parent holds p:`
+  + names that thing `p` inside the block; `else:` runs when it holds nothing; `while cur.parent exists as p:`
+rules.md:443
+  - repeats while it holds something. The name after `holds` is declared there with its words, as a pattern
+  + repeats while it holds something. The name after `exists as` is declared there with its words, as a pattern
+rules.md:444
+  - name is (R2): plain `p` is a read-only view; `if ui holds ref mut me:` may change what the link points
+  + name is (R2): plain `p` is a read-only view; `if ui exists as ref mut me:` may change what the link points
+rules.md:445
+  - at; `if scores.get(name) holds copy of v:` is a copy of your own; `if pair holds (ref mut a, ref b):`
+  + at; `if scores.get(name) exists as copy of v:` is a copy of your own; `if pair exists as (ref mut a, ref b):`
+rules.md:456
+  - (`if cast s if Circle holds c:`; `if cast this.pools[k] if Pool[T] holds ref mut pool:`). A cast of a
+  + (`if cast s if Circle exists as c:`; `if cast this.pools[k] if Pool[T] exists as ref mut pool:`). A cast of a
+rules.md:592
+  - | `copy of` before what it cannot copy as itself (R3, R11; AN-07, AN-25) | E2116 | "`copy of this.keep` would copy the link, not the node; for another link to the same node write `a = weakref this.keep`; for a copy of the node itself write `if this.keep holds n:` and then `c = copy of n`"; "`w` is a view of `line`'s text; to make your own copy write `String(w)`"; "`d.words` points into `d.text`, so a copy's words would point into `d`'s text; make the copy from its text: `d2 = Document(String(d.text))`"; "`Player` has no `Clone`, so `copy of` cannot make one; give it one: `@derive(Clone)` above `class Player`" |
+  + | `copy of` before what it cannot copy as itself (R3, R11; AN-07, AN-25) | E2116 | "`copy of this.keep` would copy the link, not the node; for another link to the same node write `a = weakref this.keep`; for a copy of the node itself write `if this.keep exists as n:` and then `c = copy of n`"; "`w` is a view of `line`'s text; to make your own copy write `String(w)`"; "`d.words` points into `d.text`, so a copy's words would point into `d`'s text; make the copy from its text: `d2 = Document(String(d.text))`"; "`Player` has no `Clone`, so `copy of` cannot make one; give it one: `@derive(Clone)` above `class Player`" |
+rules.md:594
+  - | `Some(...)` in an `if` or `while` header (R13; owner, 2026-10-25) | E0115 | "an `Option` or a `weakref` link is opened with `holds`: write `if ui holds ref mut me:`" |
+  + | `Some(...)` in an `if` or `while` header (R13; owner, 2026-10-25) | E0115 | "an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`" |
+rules.md:596
+  - | an opening that names a name already in use (R13) | E2106 | "`target` already names a value (line 2); `holds` declares a new name: `if cam.target holds t:`" |
+  + | an opening that names a name already in use (R13) | E2106 | "`target` already names a value (line 2); `exists as` declares a new name: `if cam.target exists as t:`" |
+rules.md:604
+  - | a lambda parameter whose mode differs from the expected function type; a `weakref` link used as its target without opening it, or an object stored into a `weakref` place without `weakref` (AN-56, AN-65) | E2020 | "`each_name` gives each name read-only, so this function cannot take it over; to keep your own, write `fn(s) => names.push(copy of s)`"; "`cam.target` may be gone; open it: `if cam.target holds p:`"; "`=` alone would hand `player` over; write `cam.target = weakref player`" |
+  + | a lambda parameter whose mode differs from the expected function type; a `weakref` link used as its target without opening it, or an object stored into a `weakref` place without `weakref` (AN-56, AN-65) | E2020 | "`each_name` gives each name read-only, so this function cannot take it over; to keep your own, write `fn(s) => names.push(copy of s)`"; "`cam.target` may be gone; open it: `if cam.target exists as p:`"; "`=` alone would hand `player` over; write `cam.target = weakref player`" |
+rules.md:622
+  - | the removed words (AN-40, AN-45, AN-47, AN-49, AN-54, AN-65, AN-80 to AN-83) | E1010, E0104 | each with the line to write: `owns T` for `Box[T]`, `owns T using A` for `Box[T, A]`, `Array[T] using A` for `Array[T, A]`, `shares T` or `shares mut T` for `Shared[T]`, `thread_shared T` for `SyncShared[T]`, `weakref T` for `Weak[T]`, `if w holds p:` for `upgrade`, `copy of x` for `.clone()`, `StrView` for `str`, `CStrView` for `cstr`, `ref mut T` for `Mut[T]`, `from x` for `@borrows`, `@no_alias_checks` for `@static_safe`, `@fp(allow_fma)` for `@fp(contract)`, `owns` for the mode `owned` (`owns x: T`, `owns this`), the capture list for `owned fn`, `cast` for `as?` and `as!`, `this` for `self`, `changes this` for `mut self`, `owns this` for `owned self`, `if e holds x:` for `if Some(x) = e:`; `RefCell` and `@sync` with the lines of AN-49 and AN-80; `@no_runtime_checks` with AN-82's |
+  + | the removed words (AN-40, AN-45, AN-47, AN-49, AN-54, AN-65, AN-80 to AN-83) | E1010, E0104 | each with the line to write: `owns T` for `Box[T]`, `owns T using A` for `Box[T, A]`, `Array[T] using A` for `Array[T, A]`, `shares T` or `shares mut T` for `Shared[T]`, `thread_shared T` for `SyncShared[T]`, `weakref T` for `Weak[T]`, `if w exists as p:` for `upgrade`, `copy of x` for `.clone()`, `StrView` for `str`, `CStrView` for `cstr`, `ref mut T` for `Mut[T]`, `from x` for `@borrows`, `@no_alias_checks` for `@static_safe`, `@fp(allow_fma)` for `@fp(contract)`, `owns` for the mode `owned` (`owns x: T`, `owns this`), the capture list for `owned fn`, `cast` for `as?` and `as!`, `this` for `self`, `changes this` for `mut self`, `owns this` for `owned self`, `if e exists as x:` for `if Some(x) = e:`; `RefCell` and `@sync` with the lines of AN-49 and AN-80; `@no_runtime_checks` with AN-82's |
+vocabulary.md:28
+  - with `holds`). A read-only view promises that what it reads does not change while it is used (R8 (g)).
+  + with `exists as`). A read-only view promises that what it reads does not change while it is used (R8 (g)).
+vocabulary.md:66
+  - | `holds` | **new**: `if e holds name:` and `while e holds name:` open an `Option` or a `weakref` link; the name carries its words (`holds ref mut me`, `holds copy of v`) | decision 1 ("c, holds reads the best") |
+  + | `exists as` | **new**: `if e exists as name:` and `while e exists as name:` open an `Option` or a `weakref` link; the name carries its words (`exists as ref mut me`, `exists as copy of v`) | decision 1 ("c, holds reads the best") |
+vocabulary.md:67
+  - | `if`, `while`, `Some` | run 4's opening `if name = e:` replaced by `holds`; `Some(...)` stays out of their headers, and is written to make a value and in a `match` branch | decisions 1 and 9 |
+  + | `if`, `while`, `Some` | run 4's opening `if name = e:` replaced by `exists as`; `Some(...)` stays out of their headers, and is written to make a value and in a `match` branch | decisions 1 and 9 |
+vocabulary.md:117
+  - | `if` | condition; `if pattern = e`; guard; conditional expression; comprehension filter (645-652, 693, 749) | same; and **`if e holds name:` opens an `Option` or a `weakref` link**: the block runs when `e` holds something, and `name`, with its words, names it there (`if cam.target holds p:`, `if ui holds ref mut me:`, `if scores.get(name) holds copy of v:`, `if cast s if Circle holds c:`); `else:` runs when it holds nothing (R13). `if Variant(...) = e:` stays the test of another variant (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) | before a condition | `if Some(x) = e:` for opening an `Option`; `w.upgrade()` for a weak link | `if Some(ref mut me) = ui:` (E0115: "an `Option` or a `weakref` link is opened with `holds`: write `if ui holds ref mut me:`"); `if n holds v:` where `n` always holds a value (E2036: "to name it write `v = n` on the line before; to compare write `if v == n:`"); an opening that names a name already in use (E2106) | keep the word; the opening reads with `holds` (owner's decision 1: "c, holds reads the best"), the rework of `if Some(ref mut me) = ui:` ("it is so not readable") |
+  + | `if` | condition; `if pattern = e`; guard; conditional expression; comprehension filter (645-652, 693, 749) | same; and **`if e exists as name:` opens an `Option` or a `weakref` link**: the block runs when `e` holds something, and `name`, with its words, names it there (`if cam.target exists as p:`, `if ui exists as ref mut me:`, `if scores.get(name) exists as copy of v:`, `if cast s if Circle exists as c:`); `else:` runs when it holds nothing (R13). `if Variant(...) = e:` stays the test of another variant (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) | before a condition | `if Some(x) = e:` for opening an `Option`; `w.upgrade()` for a weak link | `if Some(ref mut me) = ui:` (E0115: "an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`"); `if n exists as v:` where `n` always holds a value (E2036: "to name it write `v = n` on the line before; to compare write `if v == n:`"); an opening that names a name already in use (E2106) | keep the word; the opening reads with `exists as` (owner's decision 1: "c, holds reads the best"), the rework of `if Some(ref mut me) = ui:` ("it is so not readable") |
+vocabulary.md:135
+  - | `ref mut` | a reference that may change what it points at: type `ref mut T`, expression `ref mut e`, pattern `ref mut x`, result `-> ref mut T` (607, 706, 828, 1112-1117, 1906, 2280-2320; 52 uses in lines 1-6930); `r = e` on a `ref mut` local writes through it (`[BRW-1]` 2286, `[TYP-14]` 1116); as a parameter's type it cannot be written through (01 t3) | **a name for someone else's place that may change it, and the only name that reads or changes that place until its last use** (row 8; owner's decisions 2 and 18), in every position: a pattern or opened name (`State.Walking(ref mut path):`, `if ui holds ref mut me:`), an expression (`boss = ref mut enemies[0]`), a result (`-> ref mut T`), a local, a parameter's name (`ref mut b: B`, the in-out parameter), a lambda parameter, a callable type's parameter, a loop name (`for ref mut v in xs:`), an ECS query (`Query[(ref mut Position, Velocity)]`), a view kept in a struct or a list, and **an argument the callee may change** (`bump(ref mut a)`, and every `MutSpan` argument: `integrate(ref mut ps, vs, 0.5)`; R4). While it is used, another name that may reach the place, a link of the same type included, is refused unless proved different; adding to the list that holds a position stays allowed (R8 (f)). `=` on a `ref mut` name writes the place it names (R2). A call whose result type is `ref mut T` is a place (`first(ref mut xs) += 1`). A method's object is not marked with it: `changes this` says that, and `this` is never alone (R5). A changeable link that several holders share is `sharedref mut` (R7) | before a type, a place, a pattern or opened name, a parameter or loop name, a call's argument, a component in a query | `Mut[T]` in ECS queries; the in-out parameter `mut b: B`; `for v in xs.iter_mut():` in a loop header; run 3's kept `ref mut` views that may name one object (now `sharedref mut`) | `x: ref mut T` as a parameter's type (E0117: "write `ref mut x: T`"); `r = ref mut b` on a `ref mut` name (E3023: "`r` always refers to `a`, so this would put `b`'s value into `a`; to refer to `b`, use a new name: `rb = ref mut b`"); one place given to two `ref mut` parameters, known when compiling (E3022: "pass two different bodies, or write a one-body version"); a call without `ref mut` for a `ref mut` or `MutSpan` parameter, or with it for one that is neither (E3028: "say so at the call: `bump(ref mut a)`"); `ref mut` before something the function may not change (E3027); the place used through another name while the `ref mut` name is still used (E3022, E3021: "if both may change the player, write `target: sharedref mut Player`"); `ref mut` before a `Mutex`, `RwLock`, `Atomic` or channel argument (E3028: "a `Mutex` takes no word at the call") | keep: with area A (positions, AN-01, AN-03), area B (a call is a place, AN-23), the owner's call-site word (R18-16: "saying bump(ref mut a) seems reasonable and okay it tell you that the value is going to be touched") and one meaning, "only this name may touch it until it is done" (R18-22); reads kept out too (decision 2: "love your recommendation"); a `MutSpan` argument marked and the lock types not (decision 3); a method's `this` is not `ref mut`-alone (decision 18) |
+  + | `ref mut` | a reference that may change what it points at: type `ref mut T`, expression `ref mut e`, pattern `ref mut x`, result `-> ref mut T` (607, 706, 828, 1112-1117, 1906, 2280-2320; 52 uses in lines 1-6930); `r = e` on a `ref mut` local writes through it (`[BRW-1]` 2286, `[TYP-14]` 1116); as a parameter's type it cannot be written through (01 t3) | **a name for someone else's place that may change it, and the only name that reads or changes that place until its last use** (row 8; owner's decisions 2 and 18), in every position: a pattern or opened name (`State.Walking(ref mut path):`, `if ui exists as ref mut me:`), an expression (`boss = ref mut enemies[0]`), a result (`-> ref mut T`), a local, a parameter's name (`ref mut b: B`, the in-out parameter), a lambda parameter, a callable type's parameter, a loop name (`for ref mut v in xs:`), an ECS query (`Query[(ref mut Position, Velocity)]`), a view kept in a struct or a list, and **an argument the callee may change** (`bump(ref mut a)`, and every `MutSpan` argument: `integrate(ref mut ps, vs, 0.5)`; R4). While it is used, another name that may reach the place, a link of the same type included, is refused unless proved different; adding to the list that holds a position stays allowed (R8 (f)). `=` on a `ref mut` name writes the place it names (R2). A call whose result type is `ref mut T` is a place (`first(ref mut xs) += 1`). A method's object is not marked with it: `changes this` says that, and `this` is never alone (R5). A changeable link that several holders share is `sharedref mut` (R7) | before a type, a place, a pattern or opened name, a parameter or loop name, a call's argument, a component in a query | `Mut[T]` in ECS queries; the in-out parameter `mut b: B`; `for v in xs.iter_mut():` in a loop header; run 3's kept `ref mut` views that may name one object (now `sharedref mut`) | `x: ref mut T` as a parameter's type (E0117: "write `ref mut x: T`"); `r = ref mut b` on a `ref mut` name (E3023: "`r` always refers to `a`, so this would put `b`'s value into `a`; to refer to `b`, use a new name: `rb = ref mut b`"); one place given to two `ref mut` parameters, known when compiling (E3022: "pass two different bodies, or write a one-body version"); a call without `ref mut` for a `ref mut` or `MutSpan` parameter, or with it for one that is neither (E3028: "say so at the call: `bump(ref mut a)`"); `ref mut` before something the function may not change (E3027); the place used through another name while the `ref mut` name is still used (E3022, E3021: "if both may change the player, write `target: sharedref mut Player`"); `ref mut` before a `Mutex`, `RwLock`, `Atomic` or channel argument (E3028: "a `Mutex` takes no word at the call") | keep: with area A (positions, AN-01, AN-03), area B (a call is a place, AN-23), the owner's call-site word (R18-16: "saying bump(ref mut a) seems reasonable and okay it tell you that the value is going to be touched") and one meaning, "only this name may touch it until it is done" (R18-22); reads kept out too (decision 2: "love your recommendation"); a `MutSpan` argument marked and the lock types not (decision 3); a method's `this` is not `ref mut`-alone (decision 18) |
+vocabulary.md:150
+  - | `while` | loop | loop; `while e holds name:` repeats while `e` (an `Option` or a `weakref` link) holds something, naming it each round (`while cur.parent holds p:`, R13); a `while` loop that tests its position against a list's current length at every step may add to and remove from the list (R8 (c)) | before a loop | run 3's `while Some(p) = a:` | `while Some(p) = a:` (E0115: "write `while a holds p:`") | keep |
+  + | `while` | loop | loop; `while e exists as name:` repeats while `e` (an `Option` or a `weakref` link) holds something, naming it each round (`while cur.parent exists as p:`, R13); a `while` loop that tests its position against a list's current length at every step may add to and remove from the list (R8 (c)) | before a loop | run 3's `while Some(p) = a:` | `while Some(p) = a:` (E0115: "write `while a exists as p:`") | keep |
+vocabulary.md:255
+  - | `Weak` | a handle that does not keep its object alive (301, 1163, 2594) | **`weakref`** (3.6): in a type (`target: weakref Player`, `Array[weakref City]`), before a value (`cam.target = weakref player`; `a = weakref this.keep` for another link to the same target), in a capture list (`with weakref this`); every link holds a weak count (R11); reading it opens it, `if cam.target holds p:`, with one test of the target's header (R13), except a parent-link read the compiler proves (R11) | in a type, before a value, in a capture list | `Weak[T]`, `Weak(x)`, `Weak.empty()`, `upgrade` | `Weak[T]`, `Weak(x)`, `w.upgrade()` (E1010: "write `weakref T`", "write `weakref x`", "write `if w holds p:`"); `cam.target = player` into a `weakref` field (E2020: "`=` alone would hand `player` over; write `cam.target = weakref player`"); `cam.target.health` with no test (E2020: "`cam.target` may be gone; open it: `if cam.target holds p:`"); `copy of cam.target` (E2116) | **rename** (07, area D; owner's decision 9: "weak is not self explanatory make it weakref"): the link word joins the `ref` family |
+  + | `Weak` | a handle that does not keep its object alive (301, 1163, 2594) | **`weakref`** (3.6): in a type (`target: weakref Player`, `Array[weakref City]`), before a value (`cam.target = weakref player`; `a = weakref this.keep` for another link to the same target), in a capture list (`with weakref this`); every link holds a weak count (R11); reading it opens it, `if cam.target exists as p:`, with one test of the target's header (R13), except a parent-link read the compiler proves (R11) | in a type, before a value, in a capture list | `Weak[T]`, `Weak(x)`, `Weak.empty()`, `upgrade` | `Weak[T]`, `Weak(x)`, `w.upgrade()` (E1010: "write `weakref T`", "write `weakref x`", "write `if w exists as p:`"); `cam.target = player` into a `weakref` field (E2020: "`=` alone would hand `player` over; write `cam.target = weakref player`"); `cam.target.health` with no test (E2020: "`cam.target` may be gone; open it: `if cam.target exists as p:`"); `copy of cam.target` (E2116) | **rename** (07, area D; owner's decision 9: "weak is not self explanatory make it weakref"): the link word joins the `ref` family |
+vocabulary.md:299
+  - | `Some` | an `Option` holding a value | an `Option` holding a value; written to make a value (`best = Some(5)`) and in a `match` branch (`Some(p):`); in an `if` or `while` header an `Option` is opened with `holds` (`if e holds v:`, R13) | as a value; in a `match` branch | — | `Some(...)` in an `if` or `while` header (E0115: "write `if ui holds ref mut me:`") | keep the word; its use in `if` and `while` headers goes (owner's decision 9) |
+  + | `Some` | an `Option` holding a value | an `Option` holding a value; written to make a value (`best = Some(5)`) and in a `match` branch (`Some(p):`); in an `if` or `while` header an `Option` is opened with `exists as` (`if e exists as v:`, R13) | as a value; in a `match` branch | — | `Some(...)` in an `if` or `while` header (E0115: "write `if ui exists as ref mut me:`") | keep the word; its use in `if` and `while` headers goes (owner's decision 9) |
+vocabulary.md:316
+  - | `upgrade` | `Weak`: the object if it is still alive (2604, 2660) | nothing: a `weakref` link is opened directly, `if cam.target holds p:` (R13); no method | — | `Weak.upgrade` | `w.upgrade()` (E1010: "a `weakref` link is opened with `holds`: `if w holds p:`") | **remove**: 07, area D; 06's placeholder `get` dropped |
+  + | `upgrade` | `Weak`: the object if it is still alive (2604, 2660) | nothing: a `weakref` link is opened directly, `if cam.target exists as p:` (R13); no method | — | `Weak.upgrade` | `w.upgrade()` (E1010: "a `weakref` link is opened with `exists as`: `if w exists as p:`") | **remove**: 07, area D; 06's placeholder `get` dropped |
+vocabulary.md:378
+  - | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `holds`: `if cast s if Circle holds c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if cast this.pools[k] if Pool[T] holds ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if cast s if Circle holds c:`") | keep: one rule for areas B and D (clash 4) |
+  + | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `exists as`: `if cast s if Circle exists as c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if cast this.pools[k] if Pool[T] exists as ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if cast s if Circle exists as c:`") | keep: one rule for areas B and D (clash 4) |
+vocabulary.md:385
+  - | `copy of` | not a word: `snapshot = copy of items` is E1010 "cannot find `copy`" and E0100 (`q3_copy_of.em`, `target/redesign4/v2-01-rule-writer/probes/check_output.txt`); `copy` and `of` are ordinary names today (`mem.copy`, 4169; a count's `.of(...)`, 4395) | **a new, independent value equal to the thing named; nothing done to one is seen through the other** (rows 6, 9), made by the type's `Clone`. Written before a value (`snapshot = copy of items`, `boss = copy of enemies[0]`, `c = copy of n`, `return copy of g[0]`), in a capture list (`fn() with copy of score:`), and on a name opened with `holds` (`if scores.get(name) holds copy of v:`). Before a `shares` or `sharedref mut` link it copies the target; it never copies a link. `of` is a keyword only right after `copy`, and `copy` only before `of` | before a value; after `with` in a capture list; after `holds` | `.clone()`, `.copy()`, the copy half of `owned fn`; run 4's `copied` | (E2116) `copy of` a `weakref` link ("for another link to the same node write `a = weakref this.keep`; for a copy of the node itself write `if this.keep holds n:` and then `c = copy of n`"); of a value of a view type ("to make your own copy write `String(w)`", or an `Array[T]` of a `Span[T]`); of a type with no `Clone`; of a value whose views point into its own `let` field (AN-25). (Today's `s.to_array()` cannot be called on a `Span` at all: E3063 inside `std/src/core.em:988`, `k8_copied_span.em`; a library defect for the lead, not a word) | **new** (rows 6 and 9; owner's decision 12: "copy of"): it says what kind of copy it is (the owner, on `a = copied self.keep`: "a terrible statement it does not say what kind of copy it is"); it sits on the value or captured name it copies, means one thing for every type it is allowed on, and is refused where it could not |
+  + | `copy of` | not a word: `snapshot = copy of items` is E1010 "cannot find `copy`" and E0100 (`q3_copy_of.em`, `target/redesign4/v2-01-rule-writer/probes/check_output.txt`); `copy` and `of` are ordinary names today (`mem.copy`, 4169; a count's `.of(...)`, 4395) | **a new, independent value equal to the thing named; nothing done to one is seen through the other** (rows 6, 9), made by the type's `Clone`. Written before a value (`snapshot = copy of items`, `boss = copy of enemies[0]`, `c = copy of n`, `return copy of g[0]`), in a capture list (`fn() with copy of score:`), and on a name opened with `exists as` (`if scores.get(name) exists as copy of v:`). Before a `shares` or `sharedref mut` link it copies the target; it never copies a link. `of` is a keyword only right after `copy`, and `copy` only before `of` | before a value; after `with` in a capture list; after `exists as` | `.clone()`, `.copy()`, the copy half of `owned fn`; run 4's `copied` | (E2116) `copy of` a `weakref` link ("for another link to the same node write `a = weakref this.keep`; for a copy of the node itself write `if this.keep exists as n:` and then `c = copy of n`"); of a value of a view type ("to make your own copy write `String(w)`", or an `Array[T]` of a `Span[T]`); of a type with no `Clone`; of a value whose views point into its own `let` field (AN-25). (Today's `s.to_array()` cannot be called on a `Span` at all: E3063 inside `std/src/core.em:988`, `k8_copied_span.em`; a library defect for the lead, not a word) | **new** (rows 6 and 9; owner's decision 12: "copy of"): it says what kind of copy it is (the owner, on `a = copied self.keep`: "a terrible statement it does not say what kind of copy it is"); it sits on the value or captured name it copies, means one thing for every type it is allowed on, and is refused where it could not |
+vocabulary.md:391
+  - | `holds` | not a word: `if cam.target holds p:` is E2035 "condition must be `bool`", E0100 and E1010 "cannot find `holds`" (`q1_holds.em`) | **opens an `Option` or a `weakref` link and names what it holds**: `if cam.target holds p:` runs the block when the target still lives (or the `Option` holds a value) and names it `p`; `while cur.parent holds p:` repeats while it holds something; `else:` runs when it holds nothing. The name after it carries its words (R2, R13): plain `p` reads (a read-only view, kept alive by R10), `holds ref mut me` may change it, `holds copy of v` is a copy of your own; `holds (ref mut a, ref b)` opens an `Option` of a pair. A word only between the value and the name in an `if` or `while` header | in an `if` or `while` header, after the value | `if Some(x) = e:`; `w.upgrade()`; run 4's `if p = e:` | a left side that always holds a value (E2036); a name already in use (E2106); `Some(...)` in the header instead (E0115: "write `if ui holds ref mut me:`") | **new** (owner's decision 1: "c, holds reads the best"). Passes the owner's test: in `if ui holds ref mut me:`, `holds` says that `me` is what the link points at, if it still points at something, and `ref mut` that it may change it |
+  + | `exists as` | not a word: `if cam.target exists as p:` is E2035 "condition must be `bool`", E0100 and E1010 "cannot find `exists as`" (`q1_holds.em`) | **opens an `Option` or a `weakref` link and names what it holds**: `if cam.target exists as p:` runs the block when the target still lives (or the `Option` holds a value) and names it `p`; `while cur.parent exists as p:` repeats while it holds something; `else:` runs when it holds nothing. The name after it carries its words (R2, R13): plain `p` reads (a read-only view, kept alive by R10), `exists as ref mut me` may change it, `exists as copy of v` is a copy of your own; `exists as (ref mut a, ref b)` opens an `Option` of a pair. A word only between the value and the name in an `if` or `while` header | in an `if` or `while` header, after the value | `if Some(x) = e:`; `w.upgrade()`; run 4's `if p = e:` | a left side that always holds a value (E2036); a name already in use (E2106); `Some(...)` in the header instead (E0115: "write `if ui exists as ref mut me:`") | **new** (owner's decision 1: "c, holds reads the best"). Passes the owner's test: in `if ui exists as ref mut me:`, `exists as` says that `me` is what the link points at, if it still points at something, and `ref mut` that it may change it |
+vocabulary.md:396
+  - `copy of`, `shares`, `holds`, `owns` and `using` are the owner's spellings of 2026-10-25 (decisions 1, 4,
+  + `copy of`, `shares`, `exists as`, `owns` and `using` are the owner's spellings of 2026-10-25 (decisions 1, 4,
+vocabulary.md:406
+  - | `weakref` | not a word: `keep: weakref Node` is E1010 "cannot find type `weakref`" (`q2_weakref.em`) | **a link that does not keep its target alive**; it may hold no target (`= None`); it holds one weak count on its target, always (made: one add; ended, or given another target: one subtract; R11); reading it opens it (`if w holds p:`, R13), with one test of the target's header, except a parent-link read the compiler proves needs none (R11); a name opened from it is a read-only view kept alive under R10; `if w holds ref mut p:` may change the target; the target lives on its own (a class object, or a value held `shares`/`thread_shared`). Another link to the same target is `weakref this.keep`. A parent link is an ordinary `weakref` field the program sets (`child.parent = weakref this`, then `this.children.push(child)`), and a walk up through such links stops at the first ended parent (R11) | in a type, before a value, in a capture list | `Weak[T]`, `Weak(x)`, `Weak.empty()`, `upgrade`; run 4's `weak` and `weak T set by f` | see the `Weak` row; `weakref pos` of a part ("a `weakref` link needs an object that lives on its own; link to the player: `weakref player`"); `copy of` a link (E2116) | **new** (07, area D; owner's decision 9: "weak is not self explanatory make it weakref"; decision 10 for another link; counted with no exception, decision 11; parent links set by the program, decision 14) |
+  + | `weakref` | not a word: `keep: weakref Node` is E1010 "cannot find type `weakref`" (`q2_weakref.em`) | **a link that does not keep its target alive**; it may hold no target (`= None`); it holds one weak count on its target, always (made: one add; ended, or given another target: one subtract; R11); reading it opens it (`if w exists as p:`, R13), with one test of the target's header, except a parent-link read the compiler proves needs none (R11); a name opened from it is a read-only view kept alive under R10; `if w exists as ref mut p:` may change the target; the target lives on its own (a class object, or a value held `shares`/`thread_shared`). Another link to the same target is `weakref this.keep`. A parent link is an ordinary `weakref` field the program sets (`child.parent = weakref this`, then `this.children.push(child)`), and a walk up through such links stops at the first ended parent (R11) | in a type, before a value, in a capture list | `Weak[T]`, `Weak(x)`, `Weak.empty()`, `upgrade`; run 4's `weak` and `weak T set by f` | see the `Weak` row; `weakref pos` of a part ("a `weakref` link needs an object that lives on its own; link to the player: `weakref player`"); `copy of` a link (E2116) | **new** (07, area D; owner's decision 9: "weak is not self explanatory make it weakref"; decision 10 for another link; counted with no exception, decision 11; parent links set by the program, decision 14) |
+vocabulary.md:454
+  - | `get` (for `upgrade`) | dropped: a `weakref` link is opened with `holds` | 07, area D; the owner (decision 1) |
+  + | `get` (for `upgrade`) | dropped: a `weakref` link is opened with `exists as` | 07, area D; the owner (decision 1) |
+vocabulary.md:467
+  - | run 4's opening `if p = x:` | `if x holds p:` | the owner (decision 1) |
+  + | run 4's opening `if p = x:` | `if x exists as p:` | the owner (decision 1) |
+vocabulary.md:485
+  - - The downcast opening reads `if cast s if Circle holds c:`, with two `if`s.
+  + - The downcast opening reads `if cast s if Circle exists as c:`, with two `if`s.
+vocabulary.md:504
+  - | `upgrade` | reading the link: `if w holds p:`, `match w:` | 2604 2660 2810 2812 3216 6083 | 2604 `match c.parent.upgrade():` becomes `match c.parent:` |
+  + | `upgrade` | reading the link: `if w exists as p:`, `match w:` | 2604 2660 2810 2812 3216 6083 | 2604 `match c.parent.upgrade():` becomes `match c.parent:` |
+vocabulary.md:529
+  - | `if Some(x) = e:` | `if e holds x:` | 6216 | `if Some(p) = opt:` becomes `if opt holds p:` (R13) |
+  + | `if Some(x) = e:` | `if e exists as x:` | 6216 | `if Some(p) = opt:` becomes `if opt exists as p:` (R13) |
+vocabulary.md:552
+  - | `[GRM-19]` 676-678 | the pattern of a condition must be refutable; an irrefutable one is `E2036` | the same, and `if e holds name:` / `while e holds name:` open an `Option` or a `weakref` link (R13); `Some(...)` in such a header is E0115 | `if` |
+  + | `[GRM-19]` 676-678 | the pattern of a condition must be refutable; an irrefutable one is `E2036` | the same, and `if e exists as name:` / `while e exists as name:` open an `Option` or a `weakref` link (R13); `Some(...)` in such a header is E0115 | `if` |
+area-C.md:74
+  - `weakref` link, so `holds` appears in none of them.
+  + `weakref` link, so `exists as` appears in none of them.
+area-D.md:30
+  - - **opening**: R13's `if cam.target holds p:` (or `while cur.parent holds p:`): the block runs when the
+  + - **opening**: R13's `if cam.target exists as p:` (or `while cur.parent exists as p:`): the block runs when the
+area-D.md:57
+  - | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `holds`), but with a message that gives the line meant, `if cast s if Circle holds c:`, instead of today's "did you mean `c == ...`" |
+  + | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if cast s if Circle exists as c:`, instead of today's "did you mean `c == ...`" |
+area-D.md:60
+  - for `shared`, `copy of` for `copied`, `weakref` for `weak`, `if x holds p:` and `while x holds p:` for
+  + for `shared`, `copy of` for `copied`, `weakref` for `weak`, `if x exists as p:` and `while x exists as p:` for
+area-D.md:881
+  - if ui holds ref mut me:                    # the Ui still lives: call it `me`, which may change it
+  + if ui exists as ref mut me:                    # the Ui still lives: call it `me`, which may change it
+area-D.md:891
+  - `if ui holds ref mut me:` (was `if ref mut me = ui:`, R13); `with weakref ui` (was `with weak ui`); `owns
+  + `if ui exists as ref mut me:` (was `if ref mut me = ui:`, R13); `with weakref ui` (was `with weak ui`); `owns
+area-D.md:982
+  - Ui`), and `handlers` holds `fn(Ui)`, functions that change nothing outside themselves; give it the Ui
+  + Ui`), and `handlers` exists as `fn(Ui)`, functions that change nothing outside themselves; give it the Ui
+area-D.md:990
+  - - `if Some(ref mut me) = ui:`, E0115: "an `Option` or a `weakref` link is opened with `holds`: write
+  + - `if Some(ref mut me) = ui:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write
+area-D.md:991
+  - `if ui holds ref mut me:`" (R13).
+  + `if ui exists as ref mut me:`" (R13).
+area-D.md:1192
+  - if leaf holds n:                   # the leaf still lives: call it `n`
+  + if leaf exists as n:                   # the leaf still lives: call it `n`
+area-D.md:1194
+  - while cur.parent holds p:      # its parent, while there is one
+  + while cur.parent exists as p:      # its parent, while there is one
+area-D.md:1213
+  - while up holds n:                  # the node still lives: call it `n`
+  + while up exists as n:                  # the node still lives: call it `n`
+area-D.md:1214
+  - if n.parent holds p:           # its parent, if it has one
+  + if n.parent exists as p:           # its parent, if it has one
+area-D.md:1236
+  - `if leaf holds n:`, once per leaf (`leaves` holds ordinary links, not parent links). `cur = ref n` and
+  + `if leaf exists as n:`, once per leaf (`leaves` holds ordinary links, not parent links). `cur = ref n` and
+area-D.md:1242
+  - view and may outlive its target: each step opens it (`while up holds n:`, one header test), reads
+  + view and may outlive its target: each step opens it (`while up exists as n:`, one header test), reads
+area-D.md:1247
+  - the next `while up holds n:` finds it ended and the walk stops: it never visits an ended node, and
+  + the next `while up exists as n:` finds it ended and the walk stops: it never visits an ended node, and
+area-D.md:1327
+  - Mode 1: the walk visited `mid` once (`visited=m`), then `while up holds n:` found `mid` ended and stopped
+  + Mode 1: the walk visited `mid` once (`visited=m`), then `while up exists as n:` found `mid` ended and stopped
+area-D.md:1349
+  - and `while up holds n:` to go on from it" (R8 (g), R12).
+  + and `while up exists as n:` to go on from it" (R8 (g), R12).
+area-D.md:1357
+  - - `while Some(p) = a:`, E0115: "an `Option` or a `weakref` link is opened with `holds`: write
+  + - `while Some(p) = a:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write
+area-D.md:1358
+  - `while a holds p:`" (R13).
+  + `while a exists as p:`" (R13).
+area-D.md:1361
+  - node itself write `if n.parent holds q:` and then `c = copy of q`" (R3, R11).
+  + node itself write `if n.parent exists as q:` and then `c = copy of q`" (R3, R11).
+area-D.md:1388
+  - (b): per step, one header test (`while up holds n:`), one subtract and one add of weak counts
+  + (b): per step, one header test (`while up exists as n:`), one subtract and one add of weak counts
+area-D.md:1456
+  - if n.parent holds p:                       # `n` has a parent: call it `p`
+  + if n.parent exists as p:                       # `n` has a parent: call it `p`
+area-D.md:1660
+  - if cam.target holds p:              # the player still lives: call it `p`
+  + if cam.target exists as p:              # the player still lives: call it `p`
+area-D.md:1666
+  - Changed from run 4: `weakref` (was `weak`) and the opening `if cam.target holds p:` (was
+  + Changed from run 4: `weakref` (was `weak`) and the opening `if cam.target exists as p:` (was
+area-D.md:1701
+  - - `cam.target.upgrade()`, E1010: "a `weakref` link is opened with `holds`: `if cam.target holds p:`".
+  + - `cam.target.upgrade()`, E1010: "a `weakref` link is opened with `exists as`: `if cam.target exists as p:`".
+area-D.md:1703
+  - - `if Some(p) = cam.target:`, E0115: "an `Option` or a `weakref` link is opened with `holds`: write
+  + - `if Some(p) = cam.target:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write
+area-D.md:1704
+  - `if cam.target holds p:`".
+  + `if cam.target exists as p:`".
+area-D.md:1705
+  - - `cam.target.health`, E2020: "`cam.target` may be gone; open it: `if cam.target holds p:`".
+  + - `cam.target.health`, E2020: "`cam.target` may be gone; open it: `if cam.target exists as p:`".
+area-D.md:1709
+  - `if cam.target holds p:` and then `c = copy of p`" (decision 10).
+  + `if cam.target exists as p:` and then `c = copy of p`" (decision 10).
+area-D.md:1888
+  - if cast this.pools[k] if Pool[T] holds ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
+  + if cast this.pools[k] if Pool[T] exists as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
+area-D.md:1903
+  - `if cast this.pools[k] if Pool[T] holds ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+  + `if cast this.pools[k] if Pool[T] exists as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+area-D.md:1907
+  - it as a `D`, opened with `holds`: `ref mut pool` names a changeable view because the place is changeable
+  + it as a `D`, opened with `exists as`: `ref mut pool` names a changeable view because the place is changeable
+area-D.md:1962
+  - opened with `holds`: write `if cast this.pools[k] if Pool[T] holds ref mut pool:`".
+  + opened with `exists as`: write `if cast this.pools[k] if Pool[T] exists as ref mut pool:`".
+area-D.md:1964
+  - `cast x if D`, opened with `holds` (or `cast x as D`, which stops the program if it is not one)".
+  + `cast x if D`, opened with `exists as` (or `cast x as D`, which stops the program if it is not one)".
+area-D.md:2013
+  - if cast s if Circle holds c:       # `s` is a Circle: call it `c`
+  + if cast s if Circle exists as c:       # `s` is a Circle: call it `c`
+area-D.md:2018
+  - form. The owner chose `holds` for opening (decision 1), so the opening is
+  + form. The owner chose `exists as` for opening (decision 1), so the opening is
+area-D.md:2019
+  - `if cast s if Circle holds c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
+  + `if cast s if Circle exists as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
+area-D.md:2042
+  - Today's compiler does not know `holds` (`V2/changes.md` section 7, `q1_holds.em`).
+  + Today's compiler does not know `exists as` (`V2/changes.md` section 7, `q1_holds.em`).
+area-D.md:2047
+  - write `if cast s if Circle holds c:`".
+  + write `if cast s if Circle exists as c:`".
+area-D.md:2048
+  - - `if Some(c) = cast s if Circle:`, E0115: "an `Option` or a `weakref` link is opened with `holds`: write
+  + - `if Some(c) = cast s if Circle:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write
+area-D.md:2049
+  - `if cast s if Circle holds c:`".
+  + `if cast s if Circle exists as c:`".
+area-D.md:2050
+  - - `if s holds c:`, where `s` always holds a value, E2036: "`s` is a shape, which always holds a value, so
+  + - `if s exists as c:`, where `s` always holds a value, E2036: "`s` is a shape, which always holds a value, so
+area-D.md:2051
+  - this `if` would always run; to test whether it is a Circle write `if cast s if Circle holds c:`; to
+  + this `if` would always run; to test whether it is a Circle write `if cast s if Circle exists as c:`; to
+area-D.md:2053
+  - - `if cast s if Circle holds s:`, E2106: "`s` already names a value (line 1); `holds` declares a new
+  + - `if cast s if Circle exists as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
+area-D.md:2054
+  - name: `if cast s if Circle holds c:`".
+  + name: `if cast s if Circle exists as c:`".
+area-D.md:2281
+  - `while up holds n:` after it. It reads plainly and stops at the first deleted parent, as decision 15
+  + `while up exists as n:` after it. It reads plainly and stops at the first deleted parent, as decision 15
+area-E.md:48
+  - several fields share, so `holds`, parent links and `sharedref mut` appear only where a message names
+  + several fields share, so `exists as`, parent links and `sharedref mut` appear only where a message names
+area-E.md:344
+  - caller another owner of it, `error[E7015]: \`names\` holds \`cache\`, which has other owners on this
+  + caller another owner of it, `error[E7015]: \`names\` exists as \`cache\`, which has other owners on this
+area-E.md:796
+  - `players: Array[shares mut Player]`: `error[E7010]: \`players\` holds \`shares mut Player\` objects,
+  + `players: Array[shares mut Player]`: `error[E7010]: \`players\` exists as \`shares mut Player\` objects,
+
+Lines that still contain the word `holds` (146; English, or code the script did not recognise: check yours):
+
+rules.md:96: (R7 bounds the life of a value that holds views). A word before the part says otherwise: `ref mut`
+rules.md:156: place holds the link or the view (`ref mut b: shares mut Player` may re-point the caller's link and
+rules.md:182: otherwise. This holds for spans of numbers too: two spans of one list given to one call, one of them
+rules.md:206: link that a function value it calls holds (R12).
+rules.md:250: **R7. Kept views.** A struct that holds a view (`ref T`, `ref mut T`, `sharedref mut T`, `Span[T]`,
+rules.md:251: `MutSpan[T]`, `StrView`, or a struct that holds one) lives no longer than what its view fields point
+rules.md:252: into (`[TYP-34]`); `@view` may say so and is checked. A value that holds views (a local list of views,
+rules.md:305: compared once, as R4 compares two arguments. Growing the list that holds a position (`push`) is not a
+rules.md:314: that may reshape it ends it instead (E3060, at its later use). Adding to the list that holds a
+rules.md:329: and the parent changing one place). An unscoped thread never holds one (E7015: a lent value reaching
+rules.md:354: 4. A view of a `thread_shared` object reached through a `weakref` link always holds one atomic count
+rules.md:360: no target (`parent: weakref Node = None`). Every `weakref` link holds one weak count on its target,
+rules.md:375: handed over, replaced or exchanged whole while it holds them; the objects have one owner (not
+rules.md:395: objects it may change through a link it holds (a captured `weakref`, `shares mut` or
+rules.md:401: `fn() with weakref ui changes Ui:`. A field or a list that holds functions says it in its type:
+rules.md:406: an `Array[fn()]`, and calling what such a list holds inside a loop over `LOG` is allowed.
+rules.md:412: value may not outlive them (E3026). There a place that holds the function value counts as reaching
+rules.md:425: A body that may end its own state (it removes itself) and uses that state afterwards holds one count
+rules.md:428: change of the place that holds it: the holder is reached through a name that may change it
+rules.md:435: parameter that takes one holds it, `owns f: once fn()`. A plain `f: once fn()`, and a function value
+rules.md:441: `cam.target` holds something (an `Option` holds a value; a `weakref` link's target still lives) and
+rules.md:442: names that thing `p` inside the block; `else:` runs when it holds nothing; `while cur.parent exists as p:`
+rules.md:443: repeats while it holds something. The name after `exists as` is declared there with its words, as a pattern
+rules.md:483: - A generator's `for` over a list walks by position across `yield`, so it holds no address into its
+rules.md:486: holds a tagged `{slot, generation}` number, never an address.
+rules.md:589: | a kept view that outlives what it views (AN-52) | E3063 | "`ws` holds views of `players`, so it may not outlive it (returned here); return positions instead (`target: int`), or let the watchers own a share: `target: shares Player`" |
+rules.md:595: | an opening whose left side always holds something (R13) | E2036 | "`n` is an `int`, which always holds a value, so this `if` would always run; to name it write `v = n` on the line before; to compare write `if v == n:`"; for a `Result`: "to run the block when `r` succeeded write `if Ok(v) = r:`" |
+rules.md:598: | a type that contains itself, or a view of its own type, with no block of its own between (AN-41) | E2200 | "`Tree` contains itself through `left`, so a `Tree` would have no end; hold the child in its own block: `left: Option[owns Tree]`"; "`Node.parent` would be a view of the `Node` that holds this one, which no struct can keep; for a link back to the parent make `Node` a class with `children: Array[Node]` and `parent: weakref Node = None`, set with `child.parent = weakref this` before `this.children.push(child)`" |
+rules.md:603: | a function value that may change more than the type it is given to allows, and an override that changes more than the method it overrides says (R5, R12; AN-70) | E2113 | "`log_click` changes `LOG` (`fn() changes LOG`), and `handlers` holds `fn()`, functions that change nothing outside themselves; keep it in a list that says so: `handlers: Array[fn() changes LOG]`"; "`SwingDoor.on_update` changes `angle`, but it overrides `Door.on_update`, whose first line changes nothing, and callers of `Door` rely on that; write `virtual fn on_update(dt: float) changes this:` in `Door`" |
+rules.md:612: | an unscoped thread or a kept callback using a name with no capture word (R15; AN-71, AN-78) | E7004 | "this thread may outlive `share_plain`, so it cannot use `share_plain`'s `names`; say what the thread holds: `fn() with owns names:` (handed over), or create it shared, `names = thread_shared Names()`, and write `fn() with thread_shared names:` (one more owner)" |
+rules.md:616: | chunks of a parallel loop that may write one place (R15; AN-74, AN-84) | E7010 | "`players` holds `shares mut Player` objects, and one object may be in the list twice, so two chunks could change it at once; give each object one owner (`Array[Player]`), or change it under its lock (`hp: int guarded by lock`)" |
+rules.md:620: | an unsafe operation outside an `unsafe:` block, an `unsafe fn` body included (R16; AN-79) | E3100 | "`read_u32_le` is an `unsafe fn`, which says its callers must vouch; the read at line 4 is this function's own unsafe step: put it in an `unsafe:` block with a `# SAFETY:` note saying why it holds here" |
+rules.md:653: | E2036 | an `if` or `while` opening whose left side always holds a value (today's "this pattern always matches") |
+rules.md:672: | E2200 | a type that contains itself, or holds a view of its own type, with no block of its own between (an `owns` field, a list, a `shares` block) |
+vocabulary.md:66: | `exists as` | **new**: `if e exists as name:` and `while e exists as name:` open an `Option` or a `weakref` link; the name carries its words (`exists as ref mut me`, `exists as copy of v`) | decision 1 ("c, holds reads the best") |
+vocabulary.md:115: | `fn` | function, method, lambda, callable type (546, 615, 692) | same. **A function type says what the function changes outside itself**, after its parameters: `fn() changes LOG` (a module variable), `fn() changes Ui` (objects of that type it reaches through a link it holds); a plain `fn()` changes nothing outside itself (its own state, and the real variables it captures, are itself); a field or list of functions says it in its type (`handlers: Array[fn() changes LOG]`), and a function that may change more than the type it is given to is refused (R12). A lambda says it on its first line: `fn() changes LOG: LOG.push(String("clicked"))`. A lambda's capture list follows its parameters and names, one word per name, what the function holds: `with copy of x`, `with owns x`, `with shares x`, `with shares mut x`, `with thread_shared x`, `with weakref x`; a name not listed is the real variable (row 6), and where it lives (its address, the function value's own state, or a box) is chosen when compiling and never changes what the program does (R12). A function in a type body is a method, whose object is `this`, unless it is written `static fn` (R5). A lambda parameter's mode is what is written on it (`fn(owns s)`, `fn(ref mut ui)`); a plain one reads; written without types, the parameters follow the comma rule (R3). A call through a stored function value is a change of its holder (R12) | before a function or lambda; `changes` after its parameters, on a lambda and in a function type | the `owned fn` prefix | today's `owned fn(...)` (E1010: "name what the function takes or copies on each name: `fn() with owns name, copy of score:`"); `owns fn(...)` (E0109); a lambda that changes what its first line does not name (E2105: "say so on its first line: `fn() changes LOG:`"); a function value that may change more than the type it is given to (E2113: "keep it in a list that says so: `handlers: Array[fn() changes LOG]`"); `with copy of a, b` (E0116: "say what the function does with `b`"); `fn(ref mut ui, dx)` (E0116: "say what `dx` is: `fn(ref mut ui, ref dx)`, or give both their types"); `with ref mut x` ("remove `ref mut x`: the function already uses the real `x`"); `with owns x` of a `Copy` value (E2085: "write `with copy of x`"); a function value that may outlive a place it uses (E3026) | keep: capture words (07, area D); a method's object is `this` and `static fn` marks a function with no object (owner, 2026-10-25; decision 7); a function type says what it changes (decision 17: "yes"); where a real variable lives (R12) |
+vocabulary.md:117: | `if` | condition; `if pattern = e`; guard; conditional expression; comprehension filter (645-652, 693, 749) | same; and **`if e exists as name:` opens an `Option` or a `weakref` link**: the block runs when `e` holds something, and `name`, with its words, names it there (`if cam.target exists as p:`, `if ui exists as ref mut me:`, `if scores.get(name) exists as copy of v:`, `if cast s if Circle exists as c:`); `else:` runs when it holds nothing (R13). `if Variant(...) = e:` stays the test of another variant (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) | before a condition | `if Some(x) = e:` for opening an `Option`; `w.upgrade()` for a weak link | `if Some(ref mut me) = ui:` (E0115: "an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`"); `if n exists as v:` where `n` always holds a value (E2036: "to name it write `v = n` on the line before; to compare write `if v == n:`"); an opening that names a name already in use (E2106) | keep the word; the opening reads with `exists as` (owner's decision 1: "c, holds reads the best"), the rework of `if Some(ref mut me) = ui:` ("it is so not readable") |
+vocabulary.md:126: | `mut self` | struct: may change any field (1633); class: holds a write access on every field for the whole call (`[CLS-7]` 1740, `[EXC-15]`); `init`: accepted, means nothing more (1658, 1717) | nothing: **removed** with `self`. A method that may change any field of its object says `changes this` after its parameters (R5) | — | — | `mut self` (E1010 for `self`: "write `fn reset() changes this:`") | **remove**: the owner's verdict "no `self`"; its place is taken by `changes this` (owner's decision 6: "c, changes this reads better") |
+vocabulary.md:135: | `ref mut` | a reference that may change what it points at: type `ref mut T`, expression `ref mut e`, pattern `ref mut x`, result `-> ref mut T` (607, 706, 828, 1112-1117, 1906, 2280-2320; 52 uses in lines 1-6930); `r = e` on a `ref mut` local writes through it (`[BRW-1]` 2286, `[TYP-14]` 1116); as a parameter's type it cannot be written through (01 t3) | **a name for someone else's place that may change it, and the only name that reads or changes that place until its last use** (row 8; owner's decisions 2 and 18), in every position: a pattern or opened name (`State.Walking(ref mut path):`, `if ui exists as ref mut me:`), an expression (`boss = ref mut enemies[0]`), a result (`-> ref mut T`), a local, a parameter's name (`ref mut b: B`, the in-out parameter), a lambda parameter, a callable type's parameter, a loop name (`for ref mut v in xs:`), an ECS query (`Query[(ref mut Position, Velocity)]`), a view kept in a struct or a list, and **an argument the callee may change** (`bump(ref mut a)`, and every `MutSpan` argument: `integrate(ref mut ps, vs, 0.5)`; R4). While it is used, another name that may reach the place, a link of the same type included, is refused unless proved different; adding to the list that holds a position stays allowed (R8 (f)). `=` on a `ref mut` name writes the place it names (R2). A call whose result type is `ref mut T` is a place (`first(ref mut xs) += 1`). A method's object is not marked with it: `changes this` says that, and `this` is never alone (R5). A changeable link that several holders share is `sharedref mut` (R7) | before a type, a place, a pattern or opened name, a parameter or loop name, a call's argument, a component in a query | `Mut[T]` in ECS queries; the in-out parameter `mut b: B`; `for v in xs.iter_mut():` in a loop header; run 3's kept `ref mut` views that may name one object (now `sharedref mut`) | `x: ref mut T` as a parameter's type (E0117: "write `ref mut x: T`"); `r = ref mut b` on a `ref mut` name (E3023: "`r` always refers to `a`, so this would put `b`'s value into `a`; to refer to `b`, use a new name: `rb = ref mut b`"); one place given to two `ref mut` parameters, known when compiling (E3022: "pass two different bodies, or write a one-body version"); a call without `ref mut` for a `ref mut` or `MutSpan` parameter, or with it for one that is neither (E3028: "say so at the call: `bump(ref mut a)`"); `ref mut` before something the function may not change (E3027); the place used through another name while the `ref mut` name is still used (E3022, E3021: "if both may change the player, write `target: sharedref mut Player`"); `ref mut` before a `Mutex`, `RwLock`, `Atomic` or channel argument (E3028: "a `Mutex` takes no word at the call") | keep: with area A (positions, AN-01, AN-03), area B (a call is a place, AN-23), the owner's call-site word (R18-16: "saying bump(ref mut a) seems reasonable and okay it tell you that the value is going to be touched") and one meaning, "only this name may touch it until it is done" (R18-22); reads kept out too (decision 2: "love your recommendation"); a `MutSpan` argument marked and the lock types not (decision 3); a method's `this` is not `ref mut`-alone (decision 18) |
+vocabulary.md:140: | `static` | lives for the whole program: a static item, the static region (578, 1130, 3478) | same; plus **`static mut NAME: T = e`**, a module variable that may change (`static` alone never changes), with no `unsafe` (a foreign `static mut` keeps `[STA-1]`'s `unsafe`): a function whose body changes it says `changes NAME`; it is reached only by the main thread and its scoped tasks unless `guarded by` a `static` `Lock` (R15; area E, AN-76). **`from static`** after a view field's type: the view points only into text or data written in the program (`[LT-3]`) (R7; area B, AN-26). And **`static fn`** in a type body: a function of the type that has no object (`this`), called on the type: `static fn starting_at(k: int) -> Counter:`, `Counter.starting_at(5)` (R5); a function in a type body without `static` is a method | before an item or before `fn` in a type body; after `from` | a type-body function with no receiver (today's associated function, `[FN-4]`) | a function that changes a module variable its first line does not name (E2105); a `static mut` not `guarded by` a lock reached from another thread (E7012, naming `guarded by` and `Atomic`); a `from static` field given a view of something else (E3063: "`kind` holds only text written in the program, and `name` comes from the caller; write `this.kind = String(name)` with `kind: String`"); `static fn` outside a type body (E2115) | keep: `static mut` made safe (area E; owner's decision 8: "yes"); `from static` (area B); `static fn` (decision 7: "a, static fn"), as Java, C#, C++ and Swift write it; the word keeps its sense, one for the whole program rather than one per object |
+vocabulary.md:150: | `while` | loop | loop; `while e exists as name:` repeats while `e` (an `Option` or a `weakref` link) holds something, naming it each round (`while cur.parent exists as p:`, R13); a `while` loop that tests its position against a list's current length at every step may add to and remove from the list (R8 (c)) | before a loop | run 3's `while Some(p) = a:` | `while Some(p) = a:` (E0115: "write `while a exists as p:`") | keep |
+vocabulary.md:163: | `once` | `once fn`: may be called at most once; `callback(once)` (615, 4836) | same; a parameter that takes one holds it: `owns f: once fn()` | before `fn` in a type | — | a closure that gives a capture away passed where it may run more than once, and a plain `f: once fn()` (E3013: "declare the parameter `owns f: once fn()`") | keep |
+vocabulary.md:200: | `@view` | checked documentation that a type holds a view (1121-1124, 2325) | same: **optional**, checked documentation; a struct holding a view is a view whether or not it says `@view`, because its view fields' types already say so (`src: StrView`); `ember fmt --migrate` must not remove it (04: `[CLI-20]` 5067 contradicts `[TYP-34]`) | on a type | — | `@view` on a type that holds no view (E2030, help: "remove `@view`") | keep: "optional" written into the row: 14's R7 said "A struct that holds a view is `@view`", which read as a required mark, while AN-22's `Parser` has none; R7 is reworded in `combined-v2.md` (a required mark would say a second time what the field types say, the reason area E gave for removing `@sync`) |
+vocabulary.md:255: | `Weak` | a handle that does not keep its object alive (301, 1163, 2594) | **`weakref`** (3.6): in a type (`target: weakref Player`, `Array[weakref City]`), before a value (`cam.target = weakref player`; `a = weakref this.keep` for another link to the same target), in a capture list (`with weakref this`); every link holds a weak count (R11); reading it opens it, `if cam.target exists as p:`, with one test of the target's header (R13), except a parent-link read the compiler proves (R11) | in a type, before a value, in a capture list | `Weak[T]`, `Weak(x)`, `Weak.empty()`, `upgrade` | `Weak[T]`, `Weak(x)`, `w.upgrade()` (E1010: "write `weakref T`", "write `weakref x`", "write `if w exists as p:`"); `cam.target = player` into a `weakref` field (E2020: "`=` alone would hand `player` over; write `cam.target = weakref player`"); `cam.target.health` with no test (E2020: "`cam.target` may be gone; open it: `if cam.target exists as p:`"); `copy of cam.target` (E2116) | **rename** (07, area D; owner's decision 9: "weak is not self explanatory make it weakref"): the link word joins the `ref` family |
+vocabulary.md:259: | `MutSpan` | a changeable view; today a `MutSpan` parameter cannot be written through without `mut` as well (01-04; 04 t18-t21; spec 3576 and `[BCK-6]` 6045 write it without `mut`) | **a view whose elements the name that holds it may write, with no other word** (R5's exception); handed to a call it is marked `ref mut` (`integrate(ref mut ps, vs, 0.5)`, R4), and inside the callee the parameter is the only name for those elements while it is used (R8 (f)); re-pointing the caller's own view is `ref mut s: MutSpan[T]`, given as `f(ref mut s)`. Two spans of one list given to one call, one of them changeable, are proved apart (`assert_disjoint`) or refused (R4) | in a type | — | a `MutSpan` argument without `ref mut` (E3028: "say so at the call: `integrate(ref mut ps, vs, 0.5)`"); an argument that may reach into a `MutSpan` argument (E3021: "`refill` may replace strings of `names` through `dst` while `src` shows them; give it two different lists, or a copy: `old = copy of names`") | keep (settlement 13), amended for 06's C-1, for R4, and for the owner's decision 3 ("a `MutSpan` argument says `ref mut` at the call") |
+vocabulary.md:315: | `ForeignCallback` | today's standard-library type a registered C callback is kept as: the registering call returns a `Retained[ForeignCallback]` token whose drop unregisters it (`std/src/ffi.em:225-228`; `[FFI-21]` 4899 names only "a `Retained` token") | same | in a type: `-> Retained[ForeignCallback]` | — | as today | keep: AN-78's NEW writes it; it says what the token holds, and the vocabulary had no row for it |
+vocabulary.md:361: | `thread.spawn` | start a thread that may outlive the function that started it; takes its function `owned` (`[CLO-7]` 2123) | same; what the function holds is written in its capture list (`with owns`, `with thread_shared`, `with copy of`); a name not listed is the real variable, which the thread may outlive (R15, AN-71, AN-75) | as a call | — | a name used with no capture word (E7004, naming the words); a one-thread owner captured (E7015) | keep: R15 and E7004 are rules about this call, and AN-55, AN-71, AN-75, AN-76 and AN-80 write it; `[CLO-15]`'s capture by move at this call is gone (section 6) |
+vocabulary.md:389: | `changes` | not a word: `fn note(self, msg: String) changes log:` is E0100/E0110 (section 5.3) | **what this function may change**, besides through its `ref mut` parameters (row 3): on a method, after its parameters, the fields of `this` it may change and anything reached through them (`fn note(msg: String) changes log:`), or **`changes this`**, any field or the whole value; on any function, the module variables it changes (`fn tick() changes FRAME, LOG:`) and the types of objects it may change through links a function value it calls holds (`changes Ui`, R12); **in a function type**, what a function of that type may change outside itself (`fn() changes LOG`, `Array[fn() changes LOG]`, R12). `changes this` marks only that the method may change its own object and promises nothing about other names (R5). Checked against the body both ways and at every call, the calls it makes included. Order on the first line: parameters, `reads`, `changes`, `->`, `from`; `changes this` stands without `reads` or a field (R5). A call through a `virtual` or interface method is checked against that method's line, so an override's `changes` stays within it (see `override`) | after a function's parameters, after `reads`, before `->` or `:`; in a function type after its parameters | the class meaning of `mut self` (whole-call write access); `[BRW-10]`'s field set inferred only for private methods; run 4's `ref mut this` | the body changing something its first line does not name, or naming something it does not change (E2105, with the corrected line); `changes this` beside `reads` or a field (E2107); calling it while a loop walks a field it names (E3020); a function value that may change more than the function type it is given to (E2113) | **new** (row 3, spelling agreed): free-function position (07, area E); order and E2105 (clashes 4, 8); written without `self` (owner, 2026-10-25); `changes this` (decision 6) promising nothing about other names (decision 18); function types (decision 17) |
+vocabulary.md:391: | `exists as` | not a word: `if cam.target exists as p:` is E2035 "condition must be `bool`", E0100 and E1010 "cannot find `exists as`" (`q1_holds.em`) | **opens an `Option` or a `weakref` link and names what it holds**: `if cam.target exists as p:` runs the block when the target still lives (or the `Option` holds a value) and names it `p`; `while cur.parent exists as p:` repeats while it holds something; `else:` runs when it holds nothing. The name after it carries its words (R2, R13): plain `p` reads (a read-only view, kept alive by R10), `exists as ref mut me` may change it, `exists as copy of v` is a copy of your own; `exists as (ref mut a, ref b)` opens an `Option` of a pair. A word only between the value and the name in an `if` or `while` header | in an `if` or `while` header, after the value | `if Some(x) = e:`; `w.upgrade()`; run 4's `if p = e:` | a left side that always holds a value (E2036); a name already in use (E2106); `Some(...)` in the header instead (E0115: "write `if ui exists as ref mut me:`") | **new** (owner's decision 1: "c, holds reads the best"). Passes the owner's test: in `if ui exists as ref mut me:`, `exists as` says that `me` is what the link points at, if it still points at something, and `ref mut` that it may change it |
+vocabulary.md:406: | `weakref` | not a word: `keep: weakref Node` is E1010 "cannot find type `weakref`" (`q2_weakref.em`) | **a link that does not keep its target alive**; it may hold no target (`= None`); it holds one weak count on its target, always (made: one add; ended, or given another target: one subtract; R11); reading it opens it (`if w exists as p:`, R13), with one test of the target's header, except a parent-link read the compiler proves needs none (R11); a name opened from it is a read-only view kept alive under R10; `if w exists as ref mut p:` may change the target; the target lives on its own (a class object, or a value held `shares`/`thread_shared`). Another link to the same target is `weakref this.keep`. A parent link is an ordinary `weakref` field the program sets (`child.parent = weakref this`, then `this.children.push(child)`), and a walk up through such links stops at the first ended parent (R11) | in a type, before a value, in a capture list | `Weak[T]`, `Weak(x)`, `Weak.empty()`, `upgrade`; run 4's `weak` and `weak T set by f` | see the `Weak` row; `weakref pos` of a part ("a `weakref` link needs an object that lives on its own; link to the player: `weakref player`"); `copy of` a link (E2116) | **new** (07, area D; owner's decision 9: "weak is not self explanatory make it weakref"; decision 10 for another link; counted with no exception, decision 11; parent links set by the program, decision 14) |
+vocabulary.md:410: | `Lock` | not a type: `from std.sync import Lock` is E1061 | **a lock with no value inside**; `with x.lock:` holds it for the block (the bare `with`) | in a field or `static` type: `lock: Lock = Lock()` | `Mutex[void]` | a guarded field used without it (E7013) | **new** (area E); accepted (`combined.md` section 2); `Mutex[T]` stays for one value behind a lock |
+vocabulary.md:412: | `from static` | `static` exists; `from` after a field's type does not (07's `p08`) | **the view points only into text or data written in the program** (the static region, `[LT-3]`) | after a view field's type: `kind: StrView from static` | — | a view of something else stored in it ("`kind` holds only text written in the program ...; write `this.kind = String(name)` with `kind: String`") | **new position** of two words (area B); accepted (`combined.md` section 2) |
+vocabulary.md:481: - What a function type names for a change made through a link the function holds: settled here as the
+vocabulary.md:549: | `[CLS-7]` 1738-1744; examples 1704-1705 and 6159-6161 | any class method writes fields through `self`; `mut self` holds a write access on every field for the whole call; re-pointing a caller's handle is a `mut` parameter | a method's object is `this`, which only reads; `changes f` changes `f`; `changes this` any field, checked when compiling, with no exclusivity for `this` (R5); replacing the caller's object is a `ref mut` parameter. The `Door` examples become `virtual fn on_update(dt: float) changes this:` in the base and `override fn on_update(dt: float) changes angle:` in `Door` (row `override`) | `this`, `changes`, `override` |
+vocabulary.md:559: | `[CLO-7]` 2123-2128; `[CLO-15]` 2129-2137 | a lambda written at a consumed callable parameter that keeps it captures by move, "as if written `owned fn`" | removed: the capture list says what a kept function holds, and a missing word is E7004 with the line to write (AN-55, AN-71) | `owned fn` |
+area-A.md:426: element already there. So the call is growth of the list that holds `boss`'s position: `boss` stays
+area-A.md:569: if `i == j`. `Body` holds no link, so both parameters are compiled with noalias (R4).
+area-A.md:781: | `spawned` | none (default: the function's own new list) | none (default: its own; changing it changes nothing anyone else holds) |
+area-A.md:881: (`c/a4/common.h` holds the workload; `c/a4/rust_idiom.rs` is safe Rust's idiom for the same meaning.)
+area-A.md:1389: holds only its query); run 2's in-loop destroy with a cursor is not built.
+area-A.md:1395: the pool work after the loop (swap-remove, append), which C must do too. The loop holds the pool's
+area-A.md:1543: value, a list of views included, hands it to the name); because it holds views, R7 bounds its life:
+area-A.md:1552: | `words` | none (default: its own new list, which `collect()` hands to it (R2), of views into the lowered copy of `line`; the list lives no longer than that copy (R7, R8 (d)); its type `Array[StrView]` comes from its value, as row 5's `word`) | none (default: its own list; its views only read, so changing it changes nothing anyone else holds) |
+area-A.md:1565: views); `words` holds (pointer, length) pairs into it, no copy of any word; both are freed after
+area-A.md:2721: `d` holds a `MutSpan` (`as_mut_span()` says it), so writing its elements needs no other word (R5's
+area-A.md:3247: 2. **A local that holds a `MutSpan`** (AN-14's `d`). R8 (f) makes a `MutSpan` parameter the only name for
+area-B.md:43: - **guard**: what `m.lock()`, `rw.read()`, `rw.write()` return; it holds the lock until its `with`
+area-B.md:97: 3. **`Cell`**: "a plain name never changes anything" holds with no exception (R5). Setting a `Cell`
+area-B.md:320: every field word of the object ... at entry ... marks each as written": the loop holds a read access
+area-B.md:358: it changes only `log`, so `p`'s promise (R8 (g)) holds. The OLD `tick(g, g)` cannot be written for a one-owner object without saying it: with
+area-B.md:924: | `p` (in `first_word` and in `main`) | none (default: own local; a `Parser` holds a view of `text`, so it lives no longer than `text`, R7) | none (default: own local) |
+area-B.md:1227: Rule (R7): a value that holds views, a local list of views included, lives no longer than what they
+area-B.md:1242: | `vs` | none (default: own local list; its element type `View` holds a `ref`, so the list lives no longer than `reg`, R7) | none (default: own local) |
+area-B.md:1289: "`vs` holds views of `reg`, so it may not outlive it (returned here); keep the entity numbers instead
+area-B.md:1302: **1. Intent:** a `Document` holds its text and the list of its words, without copying each word.
+area-B.md:1420: - `this.words.push(other_word)` with a view of something else, E3063: "`words` holds views of `text`
+area-B.md:1540: - A view of something else stored in a `from static` field (`this.kind = name`), E3063: "`kind` holds
+area-B.md:1716: after `r`'s last use and `b` after `rb`'s, as R8 (f) asks. The same holds for a call whose result is
+area-C.md:40: to the name (R1), so changing it changes nothing anyone else holds. It never aliases (a second name
+area-C.md:348: | `value` | none (default: a field holds its value inside its node) | none (default: changed through a name that may change the node) |
+area-C.md:384: item C 3), as today's class form above does: "`Node.children` can lead back to a node that holds it;
+area-C.md:466: | `state` | none (default: a field holds its value inside the NPC) | `changes state` |
+area-C.md:551: | `state` | none (default: a field holds its value inside the NPC) | `changes state` |
+area-C.md:662: | `verts` | none (default: a field holds its value inside the mesh) | none (default: changed through a name that may change the mesh) |
+area-C.md:756: | `verts`, `items` | none (default: a field holds its value) | as `mesh` |
+area-C.md:854: | `value` | none (default: a field holds its value) | none (default: changed through a name that may change the tree or node) |
+area-C.md:874: error[E2200]: `Node.parent` would be a view of the `Node` that holds this one, which no struct can keep
+area-C.md:1087: | `v` | none (default: a field holds its number) | none (default: through a name that may change the node) |
+area-C.md:1181: | `hp`, `x`, `y` | none (default: a field holds its number) | through the name before them |
+area-C.md:1239: | `health` | none (default: a field holds its number) | through the name before it |
+area-C.md:1273: by spec 4155 the array holds clones of the keys.
+area-C.md:1381: | `lines` | none (default: a field holds its list) | through the name before it |
+area-C.md:1518: | `hp`, `inventory`, `log` | none (default: a field holds its value in the player) | through the name before them |
+area-C.md:1563: In (b), a function that makes `p` and returns `cam`: "`cam` holds a link to `p`, which ends when
+area-C.md:1631: | `entities`, `n` | none (default: a field holds its value) | `changes entities`, `changes n` on the methods |
+area-C.md:1694: = note: a `mut self` method holds every field of its object until it returns [EXC-15]
+area-C.md:1719: | `bag` | none (default: a field holds its `Bag` object alone, R3) | through the name before it |
+area-C.md:1720: | `items` | none (default: a field holds its list) | through the name before it |
+area-C.md:1792: | `hp`, `x`, `inventory` | none (default: a field holds its value) | through the name before them |
+area-C.md:1900: | `hp` | none (default: a field holds its number) | through the name before it |
+area-C.md:1914: error[E3063]: `ws` holds views of `players`, so it may not outlive it (returned here)
+area-C.md:1944: | AN-41 | the program means the same; the parent link that E2200's second message gives changes meaning in the same way (run 4: `parent: weak Node set by children`; v2: `parent: weakref Node = None`, set by the program, `V2/rules.md` section 3's message), and the answer now writes that `Node` class out and says what reading its link costs: 1.176x of plain C where the proof holds and 1.579x where it fails, measured in run 3 without the weak count, which comes on top unmeasured (`RUN3/26-timer.md` lines 20 to 22) |
+area-D.md:22: `fn() changes Ui` objects of type `Ui` it reaches through a link it holds.
+area-D.md:29: - **holder**: the object or list whose field or element holds a function value or another object.
+area-D.md:31: `Option` or the `weakref` link holds something, and names it `p` there.
+area-D.md:162: `handlers` holds plain `fn()`: a function that changes nothing outside itself (R12). Row 6's
+area-D.md:166: its own state, so it is a change of the place that holds it (R12); it names nothing more, since the
+area-D.md:416: xs`). The thread is not a call of `main`'s (R5), and what it holds is in its capture list (R15).
+area-D.md:451: cannot use `main`'s `xs`; say what the thread holds: `fn() with owns xs:` (handed over) or
+area-D.md:457: **7. Cost.** None beyond C: the lambda given to `inspect` holds `seen`'s address, the hand-over moves
+area-D.md:591: link it holds (`with shares mut count`), which is outside itself, so its type says `changes Counter`
+area-D.md:592: (R12, decision 17), and AN-53's `Button`, whose list holds plain `fn()`, could not keep it (E2113); the
+area-D.md:661: name that may change it (R12): the walk is `for ref mut h in hs:`, as AN-53's `click`. `hs` holds plain
+area-D.md:799: ## AN-60: A callback receiving the object that holds it, and a handler that removes itself (A32)
+area-D.md:899: **Meaning changed** for `watch` (decision 17): `bump_ui` changes a `Ui` through a link it holds
+area-D.md:901: and it is kept only in a list whose type says so. AN-53's `Button` holds plain `fn()`, so run 4's
+area-D.md:998: - Not refused, warned: a handler that captures the Ui that holds it with `with shares ui` makes a cycle
+area-D.md:1004: handler's body holds one count on its own state only across a call that may remove it and only when it
+area-D.md:1226: field that holds it (`changes on_visit`, R12), and in (b) names what that function changes
+area-D.md:1236: `if leaf exists as n:`, once per leaf (`leaves` holds ordinary links, not parent links). `cur = ref n` and
+area-D.md:1352: (`fn(Node) changes Node`), and `on_visit` holds `fn(Node)`, functions that change nothing outside
+area-D.md:1394: header); a node's header now holds its weak count too (R9). In (b) an ended node's block is kept until
+area-D.md:1537: to hand over; for a link back to the node whose `children` holds this one write
+area-D.md:1541: - `struct Node` with a view of its parent, E2200: "`Node.parent` would be a view of the `Node` that holds
+area-D.md:1559: `weak_h.txt`). Memory: each node's header holds a third 32-bit number, its weak count (R9). The program
+area-D.md:2050: - `if s exists as c:`, where `s` always holds a value, E2036: "`s` is a shape, which always holds a value, so
+area-E.md:39: | AN-78 | decisions 4 and 19: the game is `shares mut`; a plain parameter only reads (R4, R5), so `setup` takes one owner of the game, `owns game: shares mut Game`, called `setup(shares mut game)`, and the callback holds it `with owns game`; decision 17: the callback says `changes Game`; E7004, E7015 and `owned fn` messages in the new words | no: C still keeps one more owner that may change the game; the count is now made at `setup`'s call instead of at the capture |
+area-E.md:47: No answer of this area opens an `Option` or a `weakref` link, keeps a parent link, or holds a link
+area-E.md:63: - **lock**: an object at most one thread holds at a time; `with x.lock:` waits until it is free, holds
+area-E.md:82: | 2. an unscoped thread or a kept C callback says what it holds in its capture list | R15 (second point), R3 | the capture words are `with owns`, `with thread_shared`, `with copy of`, and, on this thread only, `with shares`, `with shares mut`, `with weakref`; E7004 |
+area-E.md:105: the parent may touch it before the join (E7007); an unscoped thread never holds one (E7015).
+area-E.md:108: unscoped thread holds only what its capture list names (an owner, a copy, or a `weakref` link, which is
+area-E.md:111: every task has finished its loop (run 3's attack, 3.1, kept); a C callback holds a checked slot, not an
+area-E.md:337: \`names\`; say what the thread holds: \`fn() with owns names:\` (handed over), or create it shared,
+area-E.md:343: - Handing over a value that holds a one-thread owner: if `Names` had `cache: shares Cache` and the
+area-E.md:691: the thread that holds it, except in `init`. Several fields may name one lock; a class may have several
+area-E.md:786: guarded by \`b.lock\`, and this block holds \`a.lock\`; write \`with b.lock:\``.
+area-E.md:787: - A lock held by the parent "protecting" tasks it spawns (the attack's `y14`): the task body holds no
+area-E.md:957: handlers each button holds" (G-07). Now the types say it: a loop over `LOG` across `b.click()` is
+area-E.md:1439: from a read-only name only reads (R3, E3023); the callback holds that owner (`with owns game`) and says
+area-E.md:1472: = note: a C function pointer has no room for captured state: `extern "C" fn` holds capture-free functions only ([CLO-3], [FFI-21])
+area-E.md:1513: - The capture list says what the callback C keeps holds (row 6, R15): here `setup`'s owner of the
+area-E.md:1518: - **Checked trampoline** (run 2's 8.3 with the attack's fixes, 7.1 and 7.2): C holds a tagged
+area-E.md:1582: use \`setup\`'s \`game\`; say what it holds: \`fn() with owns game changes Game:\` (\`setup\`'s owner
+area-E.md:1583: of the game), or \`fn() with weakref game changes Game:\` with \`if game holds ref mut g:
+area-E.md:1715: holds here`.
+
+Manual corrections by the lead after the script: vocabulary.md (row `exists as`, "today" column) and area-D.md ("Today's compiler does not know ...") quote today's compiler on run 4's probe `q1_holds.em`, which used `holds`; the script had changed the quoted word, so both were restored to say the probe used `holds`.
+
+
+Phase 0, part 2: `if cast X if T exists as n:` -> `if X is T as n:` (verdict 27) and `.copied()` -> `.copy_each()` (verdict 33), in code. 18 lines changed.
+
+rules.md:456
+  - (`if cast s if Circle exists as c:`; `if cast this.pools[k] if Pool[T] exists as ref mut pool:`). A cast of a
+  + (`if s is Circle as c:`; `if this.pools[k] is Pool[T] as ref mut pool:`). A cast of a
+vocabulary.md:117
+  - | `if` | condition; `if pattern = e`; guard; conditional expression; comprehension filter (645-652, 693, 749) | same; and **`if e exists as name:` opens an `Option` or a `weakref` link**: the block runs when `e` holds something, and `name`, with its words, names it there (`if cam.target exists as p:`, `if ui exists as ref mut me:`, `if scores.get(name) exists as copy of v:`, `if cast s if Circle exists as c:`); `else:` runs when it holds nothing (R13). `if Variant(...) = e:` stays the test of another variant (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) | before a condition | `if Some(x) = e:` for opening an `Option`; `w.upgrade()` for a weak link | `if Some(ref mut me) = ui:` (E0115: "an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`"); `if n exists as v:` where `n` always holds a value (E2036: "to name it write `v = n` on the line before; to compare write `if v == n:`"); an opening that names a name already in use (E2106) | keep the word; the opening reads with `exists as` (owner's decision 1: "c, holds reads the best"), the rework of `if Some(ref mut me) = ui:` ("it is so not readable") |
+  + | `if` | condition; `if pattern = e`; guard; conditional expression; comprehension filter (645-652, 693, 749) | same; and **`if e exists as name:` opens an `Option` or a `weakref` link**: the block runs when `e` holds something, and `name`, with its words, names it there (`if cam.target exists as p:`, `if ui exists as ref mut me:`, `if scores.get(name) exists as copy of v:`, `if s is Circle as c:`); `else:` runs when it holds nothing (R13). `if Variant(...) = e:` stays the test of another variant (`if Ok(v) = r:`, `if State.Walking(ref mut path) = n.state:`) | before a condition | `if Some(x) = e:` for opening an `Option`; `w.upgrade()` for a weak link | `if Some(ref mut me) = ui:` (E0115: "an `Option` or a `weakref` link is opened with `exists as`: write `if ui exists as ref mut me:`"); `if n exists as v:` where `n` always holds a value (E2036: "to name it write `v = n` on the line before; to compare write `if v == n:`"); an opening that names a name already in use (E2106) | keep the word; the opening reads with `exists as` (owner's decision 1: "c, holds reads the best"), the rework of `if Some(ref mut me) = ui:` ("it is so not readable") |
+vocabulary.md:378
+  - | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `exists as`: `if cast s if Circle exists as c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if cast this.pools[k] if Pool[T] exists as ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if cast s if Circle exists as c:`") | keep: one rule for areas B and D (clash 4) |
+  + | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `exists as`: `if s is Circle as c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if this.pools[k] is Pool[T] as ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if s is Circle as c:`") | keep: one rule for areas B and D (clash 4) |
+area-C.md:1287
+  - names = sorted(m.keys().copied())   # your own strings, kept past changes to m
+  + names = sorted(m.keys().copy_each())   # your own strings, kept past changes to m
+area-C.md:1299
+  - | `names` | `.copied()`: its own strings, each a copy of a key (the `.copied()` row); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
+  + | `names` | `.copy_each()`: its own strings, each a copy of a key (the `.copy_each()` row); `sorted` makes the list, which the name owns (R2) | none (default, own local) |
+area-C.md:1321
+  - = help: use `ks` before this line, or keep your own strings: `ks = sorted(m.keys().copied())`
+  + = help: use `ks` before this line, or keep your own strings: `ks = sorted(m.keys().copy_each())`
+area-C.md:1327
+  - `.copied()` is written.
+  + `.copy_each()` is written.
+area-D.md:57
+  - | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if cast s if Circle exists as c:`, instead of today's "did you mean `c == ...`" |
+  + | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if s is Circle as c:`, instead of today's "did you mean `c == ...`" |
+area-D.md:1888
+  - if cast this.pools[k] if Pool[T] exists as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
+  + if this.pools[k] is Pool[T] as ref mut pool:   # the pool at `k` is a `Pool[T]`: call it `pool`
+area-D.md:1903
+  - `if cast this.pools[k] if Pool[T] exists as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+  + `if this.pools[k] is Pool[T] as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+area-D.md:1962
+  - opened with `exists as`: write `if cast this.pools[k] if Pool[T] exists as ref mut pool:`".
+  + opened with `exists as`: write `if this.pools[k] is Pool[T] as ref mut pool:`".
+area-D.md:2013
+  - if cast s if Circle exists as c:       # `s` is a Circle: call it `c`
+  + if s is Circle as c:       # `s` is a Circle: call it `c`
+area-D.md:2019
+  - `if cast s if Circle exists as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
+  + `if s is Circle as c:` (R13, R14), and the programmer's line is refused again (E2036, as today),
+area-D.md:2047
+  - write `if cast s if Circle exists as c:`".
+  + write `if s is Circle as c:`".
+area-D.md:2049
+  - `if cast s if Circle exists as c:`".
+  + `if s is Circle as c:`".
+area-D.md:2051
+  - this `if` would always run; to test whether it is a Circle write `if cast s if Circle exists as c:`; to
+  + this `if` would always run; to test whether it is a Circle write `if s is Circle as c:`; to
+area-D.md:2053
+  - - `if cast s if Circle exists as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
+  + - `if s is Circle as s:`, E2106: "`s` already names a value (line 1); `exists as` declares a new
+area-D.md:2054
+  - name: `if cast s if Circle exists as c:`".
+  + name: `if s is Circle as c:`".
+
+A respelled span can sit in a sentence written for the old form (`cast x if D`, "opened with `exists as`", "`exists as` declares a new name"): the rule writer (rules, vocabulary) and area D reword those sentences under verdict 27.
+
+Lines that still contain `.copied()` or `cast ... if` (33), with the reason each was left (check yours):
+
+rules.md:447 [rule writer: rule text or a row to reword]: or `cast x if D` (R14); otherwise the block would always run, which is refused (E2036). The name is
+rules.md:455 [rule writer: rule text or a row to reword]: it is not one; `cast p if D` gives it only if it is one and is opened as R13 says
+vocabulary.md:295 [rule writer: rule text or a row to reword]: | `.copied()` | iterator adapter yielding copies (1451, 4367, 6202) | same: an iterator of copies, each what `copy of` would make | after an iterator | — | as today | keep: the adapter's name is today's (`[STD-19]` 4367), and it means what `copy of` means |
+vocabulary.md:376 [rule writer: rule text or a row to reword]: | `as?` | the spec's checked downcast to `Option` (810, 945, 1164) | nothing: today's compiler refuses it for `cast x if D` (section 5.4) | — | — | `as?`, with today's help (it already gives the line) | **merge** into `cast` (the spec text is behind the compiler, ODR-280) |
+vocabulary.md:378 [rule writer: rule text or a row to reword]: | `cast` | today's compiler only (ODR-280): `cast x as D` gives the `D` or panics, `cast x if D` gives `Some(d)` or `None` (section 5.4); not in the spec text | today's `cast x as D` (gives the `D` or stops) and `cast x if D` (gives it only if it is one, opened with `exists as`: `if s is Circle as c:`, R13), also on `owns dyn` and `shares dyn` values; **a `cast` of a place is a place**: the name bound from it is read-only unless written `ref mut` (`pool = ref mut cast this.pools[k] as Pool[T]`; `if this.pools[k] is Pool[T] as ref mut pool:`); one type-id compare (R14) | before a value | `as?`, `as!` | a cast between unrelated types (E2020, naming `owns dyn AnyPool` where `Box[dyn AnyPool]` was the cause); `if Some(c) = cast s if Circle:` (E0115: "write `if s is Circle as c:`") | keep: one rule for areas B and D (clash 4) |
+vocabulary.md:485 [rule writer: rule text or a row to reword]: - The downcast opening reads `if cast s if Circle exists as c:`, with two `if`s.
+vocabulary.md:514 [rule writer: rule text or a row to reword]: | `as?`, `as!` | `cast x if D`, `cast x as D` (today's compiler, ODR-280) | 471 476 705 730 810 945 1164 1931 2795 3190 3363 | 471, 476, 705, 730 and 810 are the lexer and grammar entries: they go |
+area-C.md:1264 [area updater: a statement or message to reword]: **v2:** meaning unchanged; `copy of` for `copied` (decision 12). `.copied()` stays: it is the iterator
+area-C.md:1265 [area updater: a statement or message to reword]: adapter whose items are each what `copy of` makes (the `.copied()` row of `V2/vocabulary.md`, kept), not
+area-C.md:1954 [area updater: a statement or message to reword]: | `copy of` for `copied` (decision 12; `.copied()`, the iterator adapter, kept) | AN-34, AN-35, AN-39, AN-43, AN-44, AN-45, AN-46, AN-48, AN-49, AN-50 |
+area-C.md:2001 [area updater: a statement or message to reword]: 4. **`.copied()` beside `copy of`.** The adapter keeps its name by the `.copied()` row ("keep"), while the
+area-C.md:2002 [area updater: a statement or message to reword]: keyword `copied` is renamed; AN-46 uses both `copy of` and `.copied()`. The readability check may want
+area-C.md:2003 [area updater: a statement or message to reword]: to look at whether `.copied()` reads as the old keyword.
+area-D.md:57 [area updater: a statement or message to reword]: | AN-68 | the programmer's line `if c = cast s if Circle:` is refused again (decision 1 opens with `exists as`), but with a message that gives the line meant, `if s is Circle as c:`, instead of today's "did you mean `c == ...`" |
+area-D.md:1841 [today's Ember (part 2)]: error[E2020]: `cast … as` and `cast … if` need related class handles, found `Box[dyn AnyPool]` and `Pool[T]`
+area-D.md:1869 [today's Ember (part 2)]: error[E0100]: `as?` is not Ember: a downcast is written `cast x if D`
+area-D.md:1875 [today's Ember (part 2)]: = help: `cast x as D` gives the `D` and panics if `x` is not one; `cast x if D` gives `Some(d)` or `None`
+area-D.md:1903 [area updater: a statement or message to reword]: `if this.pools[k] is Pool[T] as ref mut pool:` (was `if ref mut pool = cast ... if Pool[T]:`),
+area-D.md:1906 [area updater: a statement or message to reword]: `cast <place> if D` on an `owns dyn` (or `shares dyn`) place tests the value's type and gives a view of
+area-D.md:1935 [today's Ember (part 5)]: match cast self.pools[k] if Pool[int]:
+area-D.md:1959 [area updater: a statement or message to reword]: - `cast x as D` / `cast x if D` between unrelated types, E2020, with "`Box[dyn AnyPool]` is now
+area-D.md:1961 [area updater: a statement or message to reword]: - `if Some(ref mut pool) = cast this.pools[k] if Pool[T]:`, E0115: "an `Option` or a `weakref` link is
+area-D.md:1964 [area updater: a statement or message to reword]: `cast x if D`, opened with `exists as` (or `cast x as D`, which stops the program if it is not one)".
+area-D.md:1976 [area updater: a statement or message to reword]: ## AN-68: `if c = cast s if Circle:` gets E2036 with a help that is not what was meant
+area-D.md:1984 [today's Ember (part 2)]: if c = cast s if Circle:
+area-D.md:1992 [today's Ember (part 2)]: 12 |         if c = cast s if Circle:
+area-D.md:1995 [today's Ember (part 2)]: = help: did you mean `c == cast s if Circle`?
+area-D.md:1996 [today's Ember (part 2)]: = note: to declare `c`, write `c = cast s if Circle` on the line before
+area-D.md:2017 [area updater: a statement or message to reword]: **Meaning changed.** Run 4 accepted the programmer's own line, `if c = cast s if Circle:`, as its opening
+area-D.md:2021 [area updater: a statement or message to reword]: `c == cast s if Circle`?". The two `if`s in the line are in `V2/changes.md` section 11, question 5, for
+area-D.md:2035 [today's Ember (part 5)]: `if Some(c) = cast s if Circle:`):
+area-D.md:2045 [area updater: a statement or message to reword]: - `if c = cast s if Circle:` (the OLD line), E2036: "`c = cast s if Circle` always matches, since `c`
+area-D.md:2048 [area updater: a statement or message to reword]: - `if Some(c) = cast s if Circle:`, E0115: "an `Option` or a `weakref` link is opened with `exists as`: write

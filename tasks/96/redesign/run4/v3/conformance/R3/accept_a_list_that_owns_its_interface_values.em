@@ -1,0 +1,25 @@
+#$ test: run-pass
+#$ rules: R3, R14
+#$ stdout: 13
+## R3, R14: the nearest program that is allowed: `owns dyn Shape` says the list is each shape's one
+## owner; a plain value stored there is put in its own block (AN-66's NEW).
+
+interface Shape:
+    fn area() -> int
+
+struct Square:
+    side: int
+
+extend Square implements Shape:
+    fn area() -> int:
+        return this.side * this.side
+
+struct Scene:
+    shapes: Array[owns dyn Shape]
+
+fn main():
+    scene = Scene(shapes=[Square(side=2), Square(side=3)])
+    total = 0
+    for s in scene.shapes:
+        total += s.area()
+    println(total)

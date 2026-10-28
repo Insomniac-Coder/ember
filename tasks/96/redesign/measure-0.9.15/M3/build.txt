@@ -1,0 +1,41 @@
+# M3 build lines (Git Bash, from the repository root C:\Users\ism19\Code\ember). Every line was run
+# once by M3 to check that the program builds (clang 22.1.8, rustc 1.98.1); nothing was run.
+# m3_rt.c is the runtime's stand-in: always compiled as its own translation unit next to the
+# program, never #included, so no call into it can be inlined (as with Ember's runtime today).
+S=tasks/96/redesign/measure-0.9.15/M3
+O=target/measure-0.9.15/M3/bin
+CC="/c/Program Files/LLVM/bin/clang.exe"
+mkdir -p $O
+
+# W1 trees
+"$CC" -O2 $S/plain_trees_malloc.c -o $O/plain_trees_malloc.exe
+"$CC" -O2 $S/plain_trees_arena.c $S/m3_rt.c -o $O/plain_trees_arena.exe
+"$CC" -O2 $S/model_trees.c $S/m3_rt.c -o $O/model_trees.exe
+"$CC" -O2 -DM3_INLINE $S/model_trees.c $S/m3_rt.c -o $O/model_trees_inl.exe
+"$CC" -O2 -DM3_INLINE -DM3_NOWALK $S/model_trees.c $S/m3_rt.c -o $O/model_trees_inl_nowalk.exe
+"$CC" -O2 $S/salvage_trees_nofree.c $S/m3_rt.c -o $O/salvage_trees_nofree.exe
+"$CC" -O2 $S/salvage_trees_chunkhdr.c $S/m3_rt.c -o $O/salvage_trees_chunkhdr.exe
+rustc -C opt-level=2 --edition 2021 $S/rust_trees.rs -o $O/rust_trees.exe
+
+# W2 lists
+"$CC" -O2 $S/plain_lists_malloc.c -o $O/plain_lists_malloc.exe
+"$CC" -O2 $S/plain_lists_arena.c $S/m3_rt.c -o $O/plain_lists_arena.exe
+"$CC" -O2 $S/model_lists.c $S/m3_rt.c -o $O/model_lists.exe
+"$CC" -O2 -DM3_INLINE $S/model_lists.c $S/m3_rt.c -o $O/model_lists_inl.exe
+"$CC" -O2 $S/salvage_lists_known.c $S/m3_rt.c -o $O/salvage_lists_known.exe
+"$CC" -O2 $S/salvage_lists_chunkhdr.c $S/m3_rt.c -o $O/salvage_lists_chunkhdr.exe
+rustc -C opt-level=2 --edition 2021 $S/rust_lists.rs -o $O/rust_lists.exe
+
+# W3 churn
+"$CC" -O2 $S/plain_churn_malloc.c -o $O/plain_churn_malloc.exe
+"$CC" -O2 $S/plain_churn_pool.c $S/m3_rt.c -o $O/plain_churn_pool.exe
+"$CC" -O2 $S/model_churn.c $S/m3_rt.c -o $O/model_churn.exe
+"$CC" -O2 $S/salvage_churn_chunkhdr.c $S/m3_rt.c -o $O/salvage_churn_chunkhdr.exe
+rustc -C opt-level=2 --edition 2021 $S/rust_churn.rs -o $O/rust_churn.exe
+
+# MSVC (the lead's second build; not run by M3, no cl on this PATH): the same files and defines,
+# e.g. from a Developer Command Prompt in the repository root:
+#   cl /nologo /O2 /Fe:target\measure-0.9.15\M3\bin\msvc_model_trees_inl.exe /DM3_INLINE tasks\96\redesign\measure-0.9.15\M3\model_trees.c tasks\96\redesign\measure-0.9.15\M3\m3_rt.c
+# (no /GL: whole-program optimisation would inline m3_rt.c into the program and erase the
+# difference between model_trees and model_trees_inl). Programs without m3_rt.c in the clang line
+# (plain_trees_malloc, plain_lists_malloc, plain_churn_malloc) take only their own file.

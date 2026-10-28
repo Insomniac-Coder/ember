@@ -1,0 +1,81 @@
+# build.txt: job M4's build lines. Run from tasks/96/redesign/measure-0.9.15/M4/ (Git Bash).
+# CC="C:/Program Files/LLVM/bin/clang.exe" (clang 22.1.8, x86_64-pc-windows-msvc); rustc 1.98.1.
+# B=../../../../../target/measure-0.9.15/M4/bin
+# Every line was run once on 2026-10-27 and built without an error. Nothing was run.
+# MSVC: the same C sources build with `cl /O2 /nologo <defines as /D...> <files> /Fe:...` (no GCC-only
+# extension: overflow builtins sit behind __clang__, noinline/forceinline/thread/restrict are the
+# __declspec / __forceinline / __restrict spellings both compilers take).
+
+# --- workload this_tick (AN-17's tick: `this` without noalias)
+"$CC" -O2 plain_this_tick.c -o $B/plain_this_tick.exe
+"$CC" -O2 -DNOALIAS_THIS plain_this_tick.c -o $B/plain_this_tick_noalias.exe
+"$CC" -O2 model_this_tick.c -o $B/model_this_tick.exe
+"$CC" -O2 salvage_this_tick_typeproof.c -o $B/salvage_this_tick_typeproof.exe
+"$CC" -O2 salvage_this_tick_hoist.c -o $B/salvage_this_tick_hoist.exe
+rustc -C opt-level=2 --edition 2021 rust_this_tick.rs -o $B/rust_this_tick.exe
+
+# --- workload this_tally (int histogram into the object's own fields)
+"$CC" -O2 plain_this_tally.c -o $B/plain_this_tally.exe
+"$CC" -O2 -DNOALIAS_THIS plain_this_tally.c -o $B/plain_this_tally_noalias.exe
+"$CC" -O2 model_this_tally.c -o $B/model_this_tally.exe
+"$CC" -O2 salvage_this_tally_typeproof.c -o $B/salvage_this_tally_typeproof.exe
+"$CC" -O2 salvage_this_tally_hoist.c -o $B/salvage_this_tally_hoist.exe
+rustc -C opt-level=2 --edition 2021 rust_this_tally.rs -o $B/rust_this_tally.exe
+
+# --- workload this_mix (float mix with gain and peak in the object)
+"$CC" -O2 plain_this_mix.c -o $B/plain_this_mix.exe
+"$CC" -O2 -DNOALIAS_THIS plain_this_mix.c -o $B/plain_this_mix_noalias.exe
+"$CC" -O2 model_this_mix.c -o $B/model_this_mix.exe
+"$CC" -O2 salvage_this_mix_typeproof.c -o $B/salvage_this_mix_typeproof.exe
+"$CC" -O2 salvage_this_mix_hoist.c -o $B/salvage_this_mix_hoist.exe
+rustc -C opt-level=2 --edition 2021 rust_this_mix.rs -o $B/rust_this_mix.exe
+
+# --- workload samevar (one whole variable under two names; verdict 88), speed: argument one / two
+"$CC" -O2 plain_samevar.c -o $B/plain_samevar.exe
+"$CC" -O2 -DNOALIAS_ARGS plain_samevar.c -o $B/plain_samevar_noalias.exe
+"$CC" -O2 model_samevar.c -o $B/model_samevar.exe
+"$CC" -O2 salvage_samevar_generic.c -o $B/salvage_samevar_generic.exe
+rustc -C opt-level=2 --edition 2021 rust_samevar.rs -o $B/rust_samevar.exe
+# samevar, code size: objects only, read with llvm-objdump (not run)
+"$CC" -O2 -c -ffunction-sections samevar_size.c -o $B/samevar_size.obj
+"$CC" -O2 -c -ffunction-sections -DONLY_NORMAL samevar_size.c -o $B/samevar_size_normal.obj
+"C:/Program Files/LLVM/bin/llvm-objdump.exe" -h $B/samevar_size.obj         # section sizes
+"C:/Program Files/LLVM/bin/llvm-objdump.exe" -t $B/samevar_size.obj         # which function is in which section (sec N = row N-1 of -h)
+#   MSVC: cl /O2 /c /Gy samevar_size.c (/Gy: one COMDAT section per function), then dumpbin /headers
+
+# --- workload respan (a `ref mut` span the callee may re-point; pkg_respan.c is the other package)
+"$CC" -O2 plain_respan.c pkg_respan.c -o $B/plain_respan.exe
+"$CC" -O2 -DRUNTIME_LEN plain_respan.c pkg_respan.c -o $B/plain_respan_rtlen.exe
+"$CC" -O2 model_respan.c pkg_respan.c -o $B/model_respan.exe
+"$CC" -O2 -DRUNTIME_LEN model_respan.c pkg_respan.c -o $B/model_respan_rtlen.exe
+"$CC" -O2 -DWORDS model_respan.c pkg_respan.c -o $B/model_respan_words.exe
+"$CC" -O2 -DWORDS -DRUNTIME_LEN model_respan.c pkg_respan.c -o $B/model_respan_words_rtlen.exe
+"$CC" -O2 salvage_respan_flag.c pkg_respan.c -o $B/salvage_respan_flag.exe
+"$CC" -O2 -DRUNTIME_LEN salvage_respan_flag.c pkg_respan.c -o $B/salvage_respan_flag_rtlen.exe
+rustc -C opt-level=2 --edition 2021 rust_respan.rs -o $B/rust_respan.exe
+
+# --- workload cb_event (run 3's callback workload, AN-78: the checked trampoline)
+"$CC" -O2 plain_cb_event.c -o $B/plain_cb_event.exe
+"$CC" -O2 model_cb_event.c -o $B/model_cb_event.exe
+"$CC" -O2 -DNO_THREAD_CHECK model_cb_event.c -o $B/model_cb_event_nothread.exe
+"$CC" -O2 salvage_cb_event_fold.c -o $B/salvage_cb_event_fold.exe
+"$CC" -O2 salvage_cb_event_teb.c -o $B/salvage_cb_event_teb.exe
+rustc -C opt-level=2 --edition 2021 rust_cb_event.rs -o $B/rust_cb_event.exe
+
+# --- workload cb_parse (a callback-heavy C parser calling Ember back)
+"$CC" -O2 plain_cb_parse.c -o $B/plain_cb_parse.exe
+"$CC" -O2 model_cb_parse.c -o $B/model_cb_parse.exe
+"$CC" -O2 -DNO_THREAD_CHECK model_cb_parse.c -o $B/model_cb_parse_nothread.exe
+"$CC" -O2 salvage_cb_parse_fold.c -o $B/salvage_cb_parse_fold.exe
+"$CC" -O2 salvage_cb_parse_teb.c -o $B/salvage_cb_parse_teb.exe
+rustc -C opt-level=2 --edition 2021 rust_cb_parse.rs -o $B/rust_cb_parse.exe
+
+# --- workload cb_once (callback(once): the used-up mark)
+"$CC" -O2 plain_cb_once.c -o $B/plain_cb_once.exe
+"$CC" -O2 model_cb_once.c -o $B/model_cb_once.exe
+"$CC" -O2 -DNO_THREAD_CHECK model_cb_once.c -o $B/model_cb_once_nothread.exe
+"$CC" -O2 salvage_cb_once_genmark.c -o $B/salvage_cb_once_genmark.exe
+"$CC" -O2 salvage_cb_once_nomark.c -o $B/salvage_cb_once_nomark.exe
+rustc -C opt-level=2 --edition 2021 rust_cb_once.rs -o $B/rust_cb_once.exe
+
+# Expected checksums: python checksums.py (numpy; computes them without the programs).

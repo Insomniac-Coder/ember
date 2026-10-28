@@ -1,0 +1,21 @@
+#$ test: run-pass
+#$ rules: R15
+#$ stdout: 3
+## R15 (verdict 77): reductions "on a local or on a field of an object the tasks reach
+## (`scope.spawn(fn() with copy of x changes stats: stats.total += x)`), get one private accumulator per
+## task, combined at the join in spawn order (always the right total)"; v3 refused this program (E7007).
+
+import std.thread
+
+class Stats:
+    total: int = 0
+
+fn count(texts: Array[String]) -> int:
+    stats = Stats()
+    with scope = thread.scope():
+        for t in texts:
+            scope.spawn(fn() with copy of t changes stats: stats.total += t.len())
+    return stats.total
+
+fn main():
+    println(count([String("ab"), String("c")]))

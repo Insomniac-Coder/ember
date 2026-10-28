@@ -1,0 +1,19 @@
+#$ test: run-pass
+#$ rules: FN-1, BRW-16
+#$ stdout: hello
+#$ stdout: 0
+## design rules: R4, R8
+## R4, verdict 53: a `note` that prints `s` before it clears `LOG` uses `s` after no change, so
+## `note(LOG[0])` is allowed: the fact comes from the body, not from the first line, which is the same
+## as in the refused program (the owner's own counter-example to checking only the `fn` line).
+
+static mut LOG: Array[String] = []
+
+fn note(s: StrView):
+    println(s)
+    LOG.clear()
+
+fn main():
+    LOG.push(String("hello"))
+    note(LOG[0])
+    println(LOG.len())

@@ -1,0 +1,34 @@
+# runs.txt (agent M1): binary (in target/measure-0.9.15/M1/bin/), arguments, expected checksum.
+# No program takes arguments. Checksums: retarget = run 3's printed value (share_c.c, every run);
+# hotshare, weakview = worked out by hand (formulas in hotshare_body.h, weakview.h; checked with awk);
+# selfremove = 8 x run 3's W4 checksum 34,946,993,000. None of these programs has been run.
+plain_retarget.exe	-	80363660820
+model_retarget.exe	-	80363660820
+diag_retarget_nocompare.exe	-	80363660820
+model_retarget_ts.exe	-	80363660820
+diag_retarget_ts_nocompare.exe	-	80363660820
+salvage_retarget_fold.exe	-	80363660820
+salvage_retarget_wide.exe	-	80363660820
+salvage_retarget_ts_wide.exe	-	80363660820
+rust_retarget_rc.exe	-	80363660820
+rust_retarget_arc.exe	-	80363660820
+plain_hotshare.exe	-	41904175104
+model_hotshare.exe	-	41904175104
+diag_hotshare_nocompare.exe	-	41904175104
+model_hotshare_ts.exe	-	41904175104
+diag_hotshare_ts_nocompare.exe	-	41904175104
+salvage_hotshare_fold.exe	-	41904175104
+salvage_hotshare_wide.exe	-	41904175104
+salvage_hotshare_ts_wide.exe	-	41904175104
+rust_hotshare_rc.exe	-	41904175104
+rust_hotshare_arc.exe	-	41904175104
+plain_weakview.exe	-	33790885888
+model_weakview.exe	-	33790885888
+model_weakview_onethread.exe	-	33790885888
+salvage_weakview_plaindata.exe	-	33790885888
+rust_weakview_arc.exe	-	33790885888
+rust_weakview_rc.exe	-	33790885888
+plain_selfremove.exe	-	279575944000
+model_selfremove.exe	-	279575944000
+salvage_selfremove_hoist.exe	-	279575944000
+rust_selfremove.exe	-	279575944000

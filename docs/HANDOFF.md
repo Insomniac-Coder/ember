@@ -23,6 +23,16 @@
 > (`tasks/96/redesign/compiler-0.9.15/AFTER-MERGES.md`), the owner's verdicts 102-106, and the spec
 > `Ember_v0.9.15_Hardened_2` (verdict 101's two counts for `thread_shared`, verdicts 102-106, the
 > lead's rulings).
+>
+> **2026-10-28, later.** D-923 (gcc LTO turned glibc's `fwrite_unlocked` macro into a fall-through) and
+> D-924 (the compiler's worker threads had 2 MB stacks) fixed and pushed (`76152df2`, CI all green). Then,
+> on the owner's word ("yes go ahead"), the rework branch `pause/redesign-run4-step2` is merged into `main`:
+> the owner's verdicts 107-117 (`tasks/96/redesign/JOB.md`), the gap-map questions all answered, and the
+> spec **`Ember_v0.9.15_Hardened_3`**, now `main`'s development target (README Overall 78%, as
+> `tools/phase_progress.py` computes against it). The compiler on `main` still implements 0.9.10; the
+> 0.9.15 work starts with milestone M1 (`tasks/96/redesign/compiler-0.9.15/MILESTONES.md`: the 0.9.15
+> grammar, `needs (…)` and `...` included, and `ember fmt --migrate`, in one commit). D-920 and D-922
+> stay open (D-920 in M2).
 
 ## 0. Current state — the authoritative snapshot (updated 2026-09-23)
 

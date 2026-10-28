@@ -1,0 +1,9 @@
+q4_template_vs_function.cpp: the same work through a template parameter and through std::function
+(the shapes of verdict 38's (a) and (b)), 100,000,000 ints summed through a lambda; for_each itself
+noinline in both, so only the call to f differs.
+Built: g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, g++ -O2. Run: the cloud container of
+2026-10-26, unpinned, 4 cores (for finding what is slow only; never README numbers, AUTOPILOT.md 4).
+Five runs each, as printed:
+template      73.3 87.5 91.0 71.9 68.7   median 73.3 ms
+std::function 261.2 265.6 267.1 270.7 255.1   median 265.6 ms   (3.6x)
+Both totals 299999995.

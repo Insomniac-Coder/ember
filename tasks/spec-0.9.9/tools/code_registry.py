@@ -182,6 +182,13 @@ NEW = {
 }
 
 
+# 0.9.15_Hardened_1: the registry is p17a_0915.py's (the memory-model rework rewrote it by hand);
+# the 0.9.9 and 0.9.10 tables above are kept as history.
+sys.path.insert(0, HERE)
+from p17a_0915 import LIVE_0915, RETIRED_0915
+RETIRED = RETIRED_0915
+
+
 def registry():
     reg = open(os.path.join(ROOT, 'compiler', 'ember_diag', 'src', 'codes.rs'), encoding='utf-8').read()
     rows = {}
@@ -199,11 +206,7 @@ def defined_ids():
 
 
 def table():
-    rows = registry()
-    rows.update(OVERRIDE)
-    rows.update(NEW)
-    live = {c: v for c, v in rows.items() if c not in RETIRED}
-    return live
+    return {c: tuple(v) for c, v in LIVE_0915.items() if c not in RETIRED}
 
 
 def check():

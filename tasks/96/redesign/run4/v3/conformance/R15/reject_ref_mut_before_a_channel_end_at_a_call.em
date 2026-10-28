@@ -1,0 +1,20 @@
+#$ test: compile-fail
+#$ rules: R15, R4
+## R4 (verdict 3): "An argument given to a `Mutex`, `RwLock` or `Atomic` parameter, or a channel end,
+## takes no word" (the message follows section 3's `Mutex` one).
+
+import std.thread
+from std.sync import Receiver, Sender, channel
+
+fn produce(tx: Sender[int]) changes Sender[int]:
+    for i in 0..10:
+        tx.send(i * i).expect("receiver is gone")
+
+fn main() changes Sender[int]:
+    tx, rx = channel[int](capacity=64)
+    producer = thread.spawn(fn() with owns tx changes Sender[int]: produce(ref mut tx))    #$ error[E3028]: `produce` sends through `tx` by the channel's own operation; a channel end takes no word at the call: `produce(tx)`
+    total = 0
+    for v in rx:
+        total += v
+    producer.join()
+    println(total)

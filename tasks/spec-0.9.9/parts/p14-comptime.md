@@ -5,7 +5,7 @@
 Ember runs ordinary Ember code at compile time. There is no second language for it, no macro system,
 and no `comptime fn` marker: a function can run at compile time when what it does can.
 
-```ember
+```ember,fragment
 from std.math import TAU
 import math.det
 
@@ -60,17 +60,20 @@ comptime:
   at compile time and run time (`[TYP-8]`, ODR-084), including module constants and arithmetic
   inside a function; calling another function preserves that function's policy. A result is cached with its inputs (source,
   `read_file` contents, `env` values).
-* `[CT-5]` *(changed in 0.9.9)* **Where results live.** A compile-time result is placed in the image as
-  constant data. A value that owns heap memory (`Array`, `String`, `Map`, `Box`, …) is handled so that
-  no run-time code ever grows or frees constant data:
-  * in a `static` whose type gives Safe code no way to obtain `ref mut` to the value (no `Mutex`,
-    `RwLock`, `Cell`, `RefCell` or `Atomic` on the path to it), the value is materialised in
+* `[CT-5]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Where results live.** A compile-time result is placed in the image as
+  constant data. A value that owns heap memory (`Array`, `String`, `Map`, an `owns T`, …) is handled so
+  that no run-time code ever grows, changes or frees constant data:
+  * in a `static` (not `static mut`) whose type gives no name a way to change the value (no `Mutex`,
+    `RwLock`, `Cell`, `Atomic` or `guarded by` field on the path to it), the value is materialised in
     read-only memory; statics are never dropped;
-  * in any other `static` (`static LOG: Mutex[Array[String]] = Mutex([])`), the initialiser runs at
-    run time on first access (`[STA-3]`), producing an ordinary heap value;
-  * a `comptime(e)` whose type owns heap memory is materialised once, and each run-time evaluation of
-    the expression **clones** it into a fresh allocation (`Alloc`), so the program owns an ordinary
-    value it may grow. Binding the value to a `static` and borrowing it avoids the copy.
+  * in a `static mut`, and in any other `static` whose memory a safe operation may write
+    (`static LOG: Mutex[Array[String]] = Mutex([])`), the initialiser runs at run time on first access
+    (`[STA-3]`), producing an ordinary heap value, so `static mut LOG: Array[String] = [String("start")]`
+    may later grow, or replace its strings, without touching constant data;
+  * a `comptime(e)` whose type owns heap memory is materialised once, as constant data, and the
+    expression is a read-only view of it, with no copy: `t = comptime(table())` then `t[i]` reads the
+    table made when compiling, and a change through `t` is `E3023`. `copy of comptime(e)` makes a value
+    of your own, which may grow (`Alloc`).
 
   A `const` cannot own heap memory (§V.7).
 
@@ -78,8 +81,8 @@ comptime:
 
 * `[RFL-1]` `reflect[T]()` at compile time returns a `TypeDesc`: name, kind, size, alignment, fields
   (name, type, offset, attributes), variants, and attributes. It is not available at run time.
-* `[RFL-2]` `@reflect` on a type emits run-time type information: `type_info[T]()`, and
-  `h.type_info()` on a class handle, return a `ref TypeInfo` with the same field descriptors. Tables
+* `[RFL-2]` *(changed in 0.9.15)* `@reflect` on a type emits run-time type information: `type_info[T]()`, and
+  `h.type_info()` on a class object, return a `ref TypeInfo` with the same field descriptors. Tables
   no code reaches are removed at link time.
 * `[RFL-3]` *(changed in 0.9.9)* **User attributes are declared.** A struct marked `@attribute` may be
   written as an attribute on the fields and declarations of `@reflect` types: `@Range(min=0.0,
@@ -97,7 +100,7 @@ type. A class field's offset is counted from the end of the object header, which
 being `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` or `Char(char)`: a user attribute's
 argument is named by the field it sets, a built-in attribute's positional argument by its position,
 and a name written as an argument (`@derive(Eq)`) is its text. An `@attribute` struct's fields are
-of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: Reflect]()`
+of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: needs Reflect]()`
 asks for (`E2040` without it), and a class derived from a `@reflect` class is `@reflect` too;
 `reflect[T]()` outside what compile time evaluates is `E6010`.
 
@@ -115,13 +118,13 @@ skips a field it does not know. A field missing from the data takes its type's `
 
 ## XIV.3 Derives
 
-* `[DRV-1]` *(changed in 0.9.9)* `@derive(…)` requests generated implementations. The built-in derives,
+* `[DRV-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* `@derive(…)` requests generated implementations. The built-in derives,
   and exactly what each generates, are:
 
   | Derive | Generates |
   |---|---|
-  | `Copy` | the marker; every field MUST be `Copy` and the type MUST have no `drop` (`E2080`) |
-  | `Clone` | field-wise clone (implicit per `[STR-5]`) |
+  | `Copy` | the marker, and `Clone` with it, so `copy of` works on the type; every field MUST be `Copy`, the type MUST have no `drop`, and it MUST be a struct or an enum, since a class object is never `Copy` (`E2080`) |
+  | `Clone` | field-wise clone (implicit per `[STR-5]`), which `copy of` runs: a field the value owns alone is cloned itself, and a link field is copied as one more link to the same target (a `shares` or `shares mut` field one more owner, a `weakref` field one more `weakref` link, a `sharedref mut` field one more holder) |
   | `Eq` | field-wise equality in declaration order; enums compare variant first (implicit per `[STR-5]`) |
   | `Debug` | `Point(x=1.0, y=2.0)` for a struct, `Shape.Circle(r=1.0)` for a variant, `Mode.Fast` for a unit variant; strings quoted (implicit per `[STR-5]`) |
   | `Display` | on a unit-only enum, the variant name; on a struct or payload enum, the `Debug` text |
@@ -131,7 +134,6 @@ skips a field it does not know. A field missing from the data takes its type's `
   | `Error` | `[ERR-3]` |
   | `Serialize`, `Deserialize` | §XIV.4 |
   | `Zeroable` | `[ARN-11]` |
-  | `Component` | `[ECS-7]` |
 
   A derive whose requirement a field does not meet is `E2080`, naming the field. The generated code
   is ordinary Ember that `ember inspect --expand <type>` prints.
@@ -139,9 +141,11 @@ skips a field it does not know. A field missing from the data takes its type's `
 
 ## XIV.4 Serialisation (`std.ser`)
 
-* `[SER-1]` *(new in 0.9.9)* `@derive(Serialize, Deserialize)` implements `serialize[W: ser.Writer](self,
-  mut w: W) -> Result[void, SerError]` and `deserialize[R: ser.Reader](mut r: R) -> Result[Self,
-  SerError]` over a field-tagged, versioned format; both are monomorphised per format.
+* `[SER-1]` *(new in 0.9.9)* *(changed in 0.9.15)* `@derive(Serialize, Deserialize)` implements the method
+  `[W: needs ser.Writer]` above `fn serialize(ref mut w: W) -> Result[void, SerError]` and the function
+  `[R: needs ser.Reader]` above `static fn deserialize(ref mut r: R) -> Result[Self, SerError]`, over a
+  field-tagged, versioned format; both are monomorphised per format, and each call says `ref mut`
+  before the writer or reader (`p.serialize(ref mut w)`, `Point.deserialize(ref mut r)`).
   `std.ser.binary` and `std.ser.json` provide a writer and reader each. Field attributes: `@ser(skip)`, `@ser(rename="…")`,
   `@ser(default)`, `@ser(since=N)`.
 * `[SER-2]` *(new in 0.9.9)* Deserialising never produces an invalid value: a range-typed field is
