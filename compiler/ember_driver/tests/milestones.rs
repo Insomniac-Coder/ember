@@ -8163,7 +8163,7 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     let overlay = dir.join(format!("calc.overlay.{SOURCE_EXT}"));
     let written = std::fs::read_to_string(&overlay).expect("the starter overlay is written");
     for line in [
-        "unsafe overlay c \"calc.h\":",
+        "unsafe overlay c \"calc.h\" with (header_hash = \"blake3:",
         "    fn bind_add(a, b) -> unsafe",
         "    # derived: `items` is a read-only borrow (`const`)",
         "    fn bind_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)",
@@ -8192,6 +8192,9 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     assert!(after.contains("    fn bind_neg(a) -> unsafe\n"), "the new function is missing:\n{after}");
     assert_eq!(after.matches("fn bind_sum(").count(), 1, "an entry was added twice:\n{after}");
     assert_eq!(after.matches("# skipped: `bind_log`").count(), 1, "a skip was noted twice:\n{after}");
+    // `[FFI-55]` — the overlay records the hash of the header it was brought to.
+    let recorded = |text: &str| text.split("header_hash = \"").nth(1).and_then(|rest| rest.split('"').next()).map(str::to_string);
+    assert!(recorded(&after).is_some_and(|hash| Some(hash) != recorded(&written)), "`--merge` kept the old header's hash:\n{after}");
 }
 
 /// `[FFI-50]` — `ember bind <header> --emit-cpp` writes the thunk translation unit an `import cpp`

@@ -5,7 +5,8 @@
 # `[FFI-30c]` (ODR-149) — `overlay` takes a list, applied first to last: the package's own overlay,
 # listed after its dependency's, replaces `layers_scale`'s entry with `override` (it is now safe to
 # call), and adds a `rename` and an entry the first did not state. `[FFI-30a]` — no overlay changes
-# a type's identity: `Extent`, the first overlay's name for `Size`, is `Size`.
+# a type's identity: `Extent`, the first overlay's name for `Size`, is `Size`. Both files lie in this
+# package, so neither records the header's hash; a dependency's would (`[FFI-55]`).
 
 import c "layers.h" with (overlay = ["overlays/theirs.em", "overlays/ours.em"])
 

@@ -224,6 +224,9 @@ pub struct OverlayDecl {
     pub is_unsafe: bool,
     pub language: ForeignLanguage,
     pub header: String,
+    /// `[FFI-55]` — `with (header_hash = "blake3:…")`: the hash of the header it was written for, which
+    /// another package's application of it checks.
+    pub header_hash: Option<(String, Span)>,
     pub items: Vec<OverlayItem>,
 }
 

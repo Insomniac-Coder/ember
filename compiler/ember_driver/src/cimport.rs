@@ -5308,6 +5308,36 @@ fn bit_field_members(name: &str, plain: &[Plain], bits: &[BitField], size: u64, 
     Ok((lines, layout, methods.trim_end().to_string() + "\n"))
 }
 
+/// `[FFI-55]` — the package a folder is in: the nearest folder at or above it holding a manifest.
+fn package_of(dir: &Path) -> Option<PathBuf> {
+    let dir = std::path::absolute(dir).ok()?;
+    dir.ancestors().find(|folder| folder.join(ember_branding::MANIFEST).is_file()).map(Path::to_path_buf)
+}
+
+/// `[FFI-55]` — an overlay of another package (neither the importing module's nor the header's, which
+/// vouch for their own) is applied only to the header it was written for: it records that header's
+/// hash, and the header imported here must have it. The refusal when it does not, `E5010`.
+fn foreign_overlay(overlay: &ast::OverlayDecl, file: &Path, written: &str, at: Span, from_dir: &Path, header: &Path, shown: &str) -> Option<Diagnostic> {
+    let theirs = package_of(file.parent()?);
+    if theirs.is_none() || theirs == package_of(from_dir) || theirs == header.parent().and_then(package_of) {
+        return None;
+    }
+    let actual = format!("blake3:{}", ember_build::content_hash(&std::fs::read(header).ok()?));
+    let ways = "import the header the overlay was written for, or write this package's own overlay for the header it imports";
+    match &overlay.header_hash {
+        Some((recorded, _)) if *recorded == actual => None,
+        Some((recorded, span)) => Some(
+            Diagnostic::error(codes::E5010, at, format!("`{written}` is another package's overlay, written for a `{shown}` whose hash is `{recorded}`; the `{shown}` imported here has hash `{actual}`"))
+                .secondary(*span, "the hash of the header it was written for")
+                .help(format!("{ways} [FFI-55]")),
+        ),
+        None => Some(
+            Diagnostic::error(codes::E5010, at, format!("`{written}` is another package's overlay and records no `header_hash`, so nothing says it was written for the `{shown}` imported here (hash `{actual}`)"))
+                .help(format!("{ways}; the overlay's own package records the header it was written for on its first line: `unsafe overlay c \"{}\" with (header_hash = \"{actual}\"):` [FFI-55]", overlay.header)),
+        ),
+    }
+}
+
 /// The options an `import c` takes (`[FFI-6]`).
 #[derive(Default)]
 struct Options {
@@ -5715,7 +5745,10 @@ pub fn load(
                     })
                     .collect();
                 match overlays.as_slice() {
-                    [overlay] => apply(&mut applied, layer, overlay, &text, &shown, &imported, &symbol_stem, sink),
+                    [overlay] => match foreign_overlay(overlay, &overlay_file, written, *at, &from_dir, &imported.header, &shown) {
+                        Some(refusal) => sink.emit(refusal),
+                        None => apply(&mut applied, layer, overlay, &text, &shown, &imported, &symbol_stem, sink),
+                    },
                     _ => sink.emit(
                         Diagnostic::error(codes::E5010, *at, format!("`{written}` holds {} `overlay c` declarations: an import's overlay file holds one", overlays.len()))
                             .note("an overlay states the contracts of one header's declarations [FFI-12]"),
@@ -7928,8 +7961,21 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         for skip in skipped.iter().filter(|skip| !mentioned.contains(&format!("# skipped: `{}`", skip.name))) {
             let _ = writeln!(entries, "    # skipped: `{}` ({}): {}", skip.name, skip.at, skip.reason);
         }
+        // `[FFI-55]` — the hash of the header it is written for, which another package applying it checks;
+        // `--merge` brings the overlay to the header as it is now, so it records that header's hash.
+        let bytes = std::fs::read(&header).map_err(|error| format!("cannot read `{}`: {error}", header.display()))?;
+        let hash = format!("blake3:{}", ember_build::content_hash(&bytes));
         let text = match existing {
-            Some(mut text) => {
+            Some(text) => {
+                const RECORDED: &str = "header_hash = \"";
+                let mut text = match text.find(RECORDED) {
+                    Some(at) => {
+                        let value = at + RECORDED.len();
+                        let end = text[value..].find('"').map_or(value, |close| value + close);
+                        format!("{}{hash}{}", &text[..value], &text[end..])
+                    }
+                    None => text,
+                };
                 if !text.ends_with('\n') {
                     text.push('\n');
                 }
@@ -7938,7 +7984,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             None => format!(
                 "# A starter overlay for `{file}`, written by `ember bind --init` ([CLI-5]): replace each `TODO(…)` with\n\
                  # its fact, and remove `-> unsafe` from a function you assert safe to call ([FFI-2]).\n\n\
-                 unsafe overlay c \"{file}\":\n{entries}"
+                 unsafe overlay c \"{file}\" with (header_hash = \"{hash}\"):  # SAFETY(ffi): TODO(why each entry matches its declaration in the header)\n{entries}"
             ),
         };
         std::fs::write(&path, text).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;

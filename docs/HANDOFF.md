@@ -63,7 +63,9 @@
 >    - **A5-3** `@no_runtime_checks` is `E0104` with `[UNS-11]`'s message (`RESERVED_ATTRIBUTES`, `lib.rs`
 >      about 60656): moved to just after M1, since the message tells the reader to write `@no_alias_checks`,
 >      which M1's spelling item builds (the gap's own "depends on: area ATT's rename").
->    - **A6-16** an overlay names its header's hash (`[FFI-55]`, `E5010`), **A5-21** codes and pages.
+>    - **A6-16** an overlay names its header's hash (`[FFI-55]`, `E5010`): built after the stack's full check
+>      (see its commit); **A5-21** codes and pages land with each item (W3013's and E3100's are in).
+>      With A6-16, M0 is done but A5-3 (after M1's rename).
 > 2. M1: the 0.9.15 grammar (with `needs (…)` and `...`), the spelling-only forms and `ember fmt
 >    --migrate`, in one commit.
 >

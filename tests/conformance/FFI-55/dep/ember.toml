@@ -1,0 +1,4 @@
+# A package of its own: the FFI-55 tests apply its overlays, which makes them another package's.
+[package]
+name = "dep"
+version = "0.1.0"
