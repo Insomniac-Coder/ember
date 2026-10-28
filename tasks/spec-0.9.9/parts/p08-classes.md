@@ -446,6 +446,7 @@ while up exists as n:            # the node still lives: call it `n`
   link back `weakref`: `next: Option[weakref Node]`") (a deliberate error example, so the block is not compiled):
 
 ```ember,ignore
+## deliberate error example: a loop of owners nothing opens again (`E3032`)
 class Node:
     name: String
     next: Option[shares mut Node] = None

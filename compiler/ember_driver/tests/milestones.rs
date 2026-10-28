@@ -915,7 +915,7 @@ fn inspect_cost_reports_each_row_by_site() {
         "  Dynamic exclusivity check [conditionally elided]",
         "  Allocation [guaranteed present]",
         "  Interface call through `dyn` [guaranteed present]",
-        "  Retain / release, surviving [guaranteed present]",
+        "  Owner count +1 / -1 [guaranteed present]",
         "  `contains` [guaranteed present]",
     ] {
         assert!(out.contains(row), "no row `{row}`:\n{out}");
@@ -1003,14 +1003,14 @@ fn the_engine_report_summarises_the_build_and_changes_nothing() {
     assert_eq!(c(false), c(true), "`--report=engine` changed the program's C");
 }
 
-/// `[DIA-8]` — `ember explain --borrow <file>:<line>` prints, for each loan live at that line, where
-/// it was created, the last line its region covers and the later use that keeps it alive, from the
-/// borrow checker's own loans (`[BCK-1]`): a shared borrow kept by a later call, a mutable one kept
-/// by a later argument, a loan created on the line asked about, and a line with none.
+/// `[DIA-8]` — `ember explain --view <file>:<line>` prints, for each view in use at that line, where
+/// it was made, the last line it is in use and the later use that keeps it, from the checker's own
+/// facts (`[BCK-1]`): a view kept by a later call, a changing one kept by a later argument, a view
+/// made on the line asked about, and a line with none.
 #[test]
-fn explain_borrow_names_each_live_loan_and_the_use_that_keeps_it() {
+fn explain_view_names_each_view_in_use_and_the_use_that_keeps_it() {
     let root = workspace_root();
-    let directory = temporary_directory("explain-borrow");
+    let directory = temporary_directory("explain-view");
     let shared = directory.join(ember_branding::source_file("shared"));
     std::fs::write(&shared, "fn total(xs: Span[int]) -> int:\n    sum = 0\n    for x in xs:\n        sum += x\n    return sum\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    s = v.as_span()\n    n = v.len()\n    w = total(s)\n    println(w, n)\n")
         .expect("the program is writable");
@@ -1018,17 +1018,17 @@ fn explain_borrow_names_each_live_loan_and_the_use_that_keeps_it() {
     std::fs::write(&exclusive, "fn bump(mut xs: Array[int]):\n    xs.push(4)\n\nfn main():\n    v: Array[int] = [1, 2, 3]\n    r = ref mut v\n    r.push(9)\n    bump(r)\n    println(v.len())\n")
         .expect("the program is writable");
     let explain = |file: &Path, line: u32| {
-        let run = ember(&["explain", "--borrow", &format!("{}:{line}", file.display())], &root);
+        let run = ember(&["explain", "--view", &format!("{}:{line}", file.display())], &root);
         assert_eq!(run.exit, 0, "{}", run.stderr);
         run.stdout
     };
-    let kept = "borrow of v created at 9:9, live through 11, because s is used at 11:15\n";
+    let kept = "s views v (made at 9:9), in use through 11, because s is used at 11:15\n";
     assert_eq!(explain(&shared, 10), kept);
     assert_eq!(explain(&shared, 9), kept, "a loan created on the line is live there");
-    assert_eq!(explain(&shared, 12), "no borrow is live at line 12\n");
+    assert_eq!(explain(&shared, 12), "no view is in use at line 12\n");
     let mutable = explain(&exclusive, 6);
-    assert_eq!(mutable, "mutable borrow of v created at 6:9, live through 8, because r is used at 8:5\n");
-    assert!(explain(&exclusive, 8).starts_with("mutable borrow of v created at 6:9, live through 8, because r is used at 8:5\n"));
+    assert_eq!(mutable, "r views and may change v (made at 6:9), in use through 8, because r is used at 8:5\n");
+    assert!(explain(&exclusive, 8).starts_with("r views and may change v (made at 6:9), in use through 8, because r is used at 8:5\n"));
 }
 
 /// `[DOC-1]` — error pages ship with their errors: `ember explain <code>` prints the page from the
@@ -8722,12 +8722,54 @@ fn main():
 /// with `ember check` (one holding `#$ test: compile-fail` as the test it is, its `#$ error[…]`
 /// diagnostics on their lines), an `ember,fragment` with `--syntax-only`, an `ember,overlay` as the
 /// overlay it is, and an `ember,ignore` only with its reason, a signature sketch or a deliberate
-/// error example, stated on its first line. `[TST-29]` — the baseline of blocks known to fail is
-/// printed with its size, and a block in it that passes fails this test until it is taken out.
+/// error example, stated on its first line. `[TST-29]` — the baseline of blocks known to fail, counted
+/// under the heading they are under, is printed with its size; a heading with fewer failing blocks
+/// than its count fails this test until the count is lowered, and one with more fails it too.
 #[test]
 fn every_example_of_the_specification_checks() {
-    // A block known to fail, by the heading it is under, and why.
-    const BASELINE: &[(&str, &str)] = &[];
+    // The blocks known to fail: the heading they are under, how many, and why. The development
+    // target is 0.9.15 and this compiler implements 0.9.10; each milestone of
+    // `tasks/96/redesign/compiler-0.9.15/MILESTONES.md` that lands lowers these counts.
+    const WRITTEN_IN_0915: &str = "written in 0.9.15, which this compiler does not implement yet";
+    const BASELINE: &[(&str, usize, &str)] = &[
+        ("I.5 A complete small program", 1, WRITTEN_IN_0915),
+        ("IV.6a The words in a type: who owns a value, and where its memory comes from", 1, WRITTEN_IN_0915),
+        ("IV.9 Existential and opaque types", 1, WRITTEN_IN_0915),
+        ("V.2 Functions", 1, WRITTEN_IN_0915),
+        ("V.3 Structs", 1, WRITTEN_IN_0915),
+        ("V.4 Enums", 1, WRITTEN_IN_0915),
+        ("V.5 Classes", 1, WRITTEN_IN_0915),
+        ("V.6 Interfaces and `extend`", 1, WRITTEN_IN_0915),
+        ("V.7 Constants and statics", 1, WRITTEN_IN_0915),
+        ("VI.5 Lambdas and function values", 1, WRITTEN_IN_0915),
+        ("VI.5a Generators", 1, WRITTEN_IN_0915),
+        ("VII.6 Regions and their inference", 1, WRITTEN_IN_0915),
+        ("Views with several regions", 1, WRITTEN_IN_0915),
+        ("VII.7 Views over containers: `Span` and `MutSpan`", 1, WRITTEN_IN_0915),
+        ("VII.9 What a newcomer sees", 1, WRITTEN_IN_0915),
+        ("Part VIII — Classes, Shared Owners and Links", 1, WRITTEN_IN_0915),
+        ("VIII.5 `weakref` links, parent links and loops of owners", 1, WRITTEN_IN_0915),
+        ("IX.2 Arenas", 1, WRITTEN_IN_0915),
+        ("IX.3 Memory managers: `using` and `Allocator`", 1, WRITTEN_IN_0915),
+        ("IX.7 `Cell`, and changes checked when compiling", 1, WRITTEN_IN_0915),
+        ("IX.8 Establishing disjointness", 1, WRITTEN_IN_0915),
+        ("Part XI — Concurrency and Parallelism", 1, WRITTEN_IN_0915),
+        ("XI.2 Threads and synchronisation (`std.thread`, `std.sync`)", 1, WRITTEN_IN_0915),
+        ("XI.3 Scoped tasks", 1, WRITTEN_IN_0915),
+        ("XI.4 Parallel loops", 1, WRITTEN_IN_0915),
+        ("XI.5 The job system (`std.jobs`)", 1, WRITTEN_IN_0915),
+        ("XII.1 `SoA[T]`", 1, WRITTEN_IN_0915),
+        ("XII.2 SIMD", 1, WRITTEN_IN_0915),
+        ("XII.3 ECS (`std.ecs`)", 1, WRITTEN_IN_0915),
+        ("Part XIII — Error Handling", 1, WRITTEN_IN_0915),
+        ("Part XVI — Calling C", 1, WRITTEN_IN_0915),
+        ("XVI.7 Exporting Ember to C", 1, WRITTEN_IN_0915),
+        ("Annex A — Syntax Quick Reference", 1, WRITTEN_IN_0915),
+        ("Annex D — GPU Host Model (`std.gpu`)", 1, WRITTEN_IN_0915),
+        ("D.1 Recording and access states", 1, WRITTEN_IN_0915),
+        ("E.4 One program, side by side", 1, WRITTEN_IN_0915),
+    ];
+    let mut failing_under: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     let root = workspace_root();
     let pinned = std::fs::read_to_string(root.join("docs/spec-source/development-target.json")).expect("the pin");
     let path = pinned.split('"').skip_while(|part| *part != "path").nth(2).expect("the pin names the target");
@@ -8786,12 +8828,22 @@ fn every_example_of_the_specification_checks() {
             other => Some(format!("an unknown block kind `ember,{other}`")),
         };
         checked += 1;
-        let known = BASELINE.iter().find(|(part, _)| heading.starts_with(part));
+        let known = BASELINE.iter().find(|(part, _, _)| heading == *part);
         match (failed, known) {
-            (Some(_), Some((_, why))) => baselined.push(format!("{where_}: {why}")),
-            (None, Some(_)) => failures.push(format!("{where_} passes now: take it out of the baseline")),
+            (Some(_), Some((part, _, why))) => {
+                *failing_under.entry(part).or_insert(0) += 1;
+                baselined.push(format!("{where_}: {why}"));
+            }
             (Some(error), None) => failures.push(format!("{where_}:\n{error}")),
-            (None, None) => {}
+            (None, _) => {}
+        }
+    }
+    for (part, count, _) in BASELINE {
+        let now = failing_under.get(part).copied().unwrap_or(0);
+        if now < *count {
+            failures.push(format!("{} of the {count} blocks under `{part}` pass now: lower its count", count - now));
+        } else if now > *count {
+            failures.push(format!("{} more blocks under `{part}` fail than its count of {count}", now - count));
         }
     }
     println!("[TST-7] {checked} blocks checked; baseline {} of them ([TST-29]):", baselined.len());

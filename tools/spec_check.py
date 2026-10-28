@@ -30,7 +30,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SPEC = ROOT / "docs" / "spec-source" / "ember-spec.md"
+# `[TST-7]` — the development target the pin names (`docs/spec-source/development-target.json`).
+SPEC = ROOT / json.loads((ROOT / "docs" / "spec-source" / "development-target.json").read_text(encoding="utf-8"))["path"]
 BASELINE = ROOT / "tools" / "spec_check_baseline.json"
 NEWLINE = chr(10)
 
@@ -38,7 +39,7 @@ NEWLINE = chr(10)
 # examples are Rust, C and shell.
 START = re.compile(r"^# Part I\b")
 STOP = re.compile(r"^# Part XVIII\b")
-APPENDIX = re.compile(r"^# Appendix A\b")
+APPENDIX = re.compile(r"^# (Appendix|Annex) A\b")
 
 # `[TST-7]` names four: a `std` signature sketch, foreign-language source, a
 # deliberate error example, and overlay-language source until Part III defines
@@ -50,16 +51,23 @@ def blocks():
     """(identifier, first line number, source, ignored, reason) per block."""
     lines = SPEC.read_text(encoding="utf-8").split("\n")
     inside_range = False
+    fenced = False
     part = "?"
     out = []
     n = 0
     while n < len(lines):
         line = lines[n]
+        if line.startswith("```") and not line.startswith("```ember"):
+            fenced = not fenced  # a `#` line inside another language's block is not a heading
+        if fenced:
+            n += 1
+            continue
         if START.match(line) or APPENDIX.match(line):
             inside_range = True
-        if STOP.match(line):
+        elif STOP.match(line) or (line.startswith("# ") and not line.startswith("# Part ")):
+            # Part XVIII on, and every annex or appendix but A.
             inside_range = False
-        if line.startswith("# Part ") or line.startswith("# Appendix "):
+        if line.startswith("# Part ") or line.startswith("# Appendix ") or line.startswith("# Annex "):
             part = line[2:].split("—")[0].strip()
         if inside_range and line.startswith("```ember"):
             ignored = line.strip() == "```ember,ignore"
@@ -73,6 +81,9 @@ def blocks():
             # document shifts every line number and would invalidate the
             # whole baseline, which is exactly when a gate must not cry wolf.
             source = "\n".join(body) + "\n"
+            if body and body[0].lstrip().startswith("##"):
+                # `[TST-7]` — the development target states an ignored block's reason on its first line.
+                reason = body[0].strip()
             digest = hashlib.blake2s(source.encode("utf-8"), digest_size=6).hexdigest()
             out.append(
                 {

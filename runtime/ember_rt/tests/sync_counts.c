@@ -51,6 +51,7 @@ typedef struct job {
     volatile long* go;
     volatile long failures;
     long upgrades;
+    volatile long* ready; /* counted up once the thread runs, before it waits for `go` */
 } job;
 
 static bool start(worker_thread* thread, worker_body body, job* work) {
@@ -94,6 +95,7 @@ static WORKER_RESULT upgrade(void* raw) {
     job* work = (job*)raw;
     ember_rt_thread_attach();
     ember_obj_header* object = &work->object->header;
+    counter_add(work->ready);
     while (counter_read(work->go) == 0) {
     }
     for (;;) {
@@ -141,11 +143,16 @@ int main(void) {
     long upgrades = 0;
     for (int round = 0; round < UPGRADE_ROUNDS; ++round) {
         volatile long started = 0;
+        volatile long ready = 0;
         counted* object = (counted*)ember_obj_new(&counted_ti);
         ember_weak_retain(&object->header);
         for (int t = 0; t < THREADS; ++t) {
-            jobs[t] = (job){ object, &started, 0, 0 };
+            jobs[t] = (job){ object, &started, 0, 0, &ready };
             if (!start(&threads[t], upgrade, &jobs[t])) return 2;
+        }
+        /* Every thread is running and waiting before the release, so their upgrades race it: a
+         * thread scheduled only after the release finds the object gone and races nothing. */
+        while (counter_read(&ready) != THREADS) {
         }
         counter_add(&started);
         for (volatile int spin = 0; spin < (round % 7) * 200; ++spin) {

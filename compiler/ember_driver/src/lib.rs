@@ -84,7 +84,7 @@ this compiler does not have yet):
     ember update [package]                         re-resolve dependencies and rewrite ember.lock
                                                    (not built yet)
     ember explain <E-code | rule-id> [--json]      the error page or rule text
-    ember explain --borrow <file>:<line>           why each borrow live at that line is still live
+    ember explain --view <file>:<line>             why each view in use at that line is still in use
     ember explain --cycle <path> <Class[.field]>   one cycle-capable class or field
     ember inspect <item> [--safety [--elided-only] | --alloc | --cost | --deterministic <fn> | --cycle
                           | --expand | --counts | --generics] [--function <name>]
@@ -514,7 +514,7 @@ struct Options {
     demangle: bool,
     /// `[MONO-2]` — `--report=instantiations`.
     instantiation_report: bool,
-    /// `[DIA-8]` — `ember explain --borrow <file>:<line>`: the loans live at that line.
+    /// `[DIA-8]` — `ember explain --view <file>:<line>`: the views in use at that line.
     borrow_report: Option<u32>,
     /// `[DET-7]` — `--build-id`: print the hash of the build's inputs.
     build_id: bool,
@@ -622,10 +622,10 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         "new" => new_package(&args[1..]),
         "update" => packages::update(&args[1..]),
         // `[DIA-8]` — each loan live at a line, from the borrow checker's own loans.
-        "explain" if args.get(1).is_some_and(|argument| argument == "--borrow") => {
-            let target = args.get(2).ok_or("`ember explain --borrow` needs a place: <file>:<line>")?;
+        "explain" if args.get(1).is_some_and(|argument| argument == "--view") => {
+            let target = args.get(2).ok_or("`ember explain --view` needs a place: <file>:<line>")?;
             if let Some(extra) = args.get(3) {
-                return Err(format!("unexpected `ember explain --borrow` argument `{extra}`"));
+                return Err(format!("unexpected `ember explain --view` argument `{extra}`"));
             }
             let (file, line) = target
                 .rsplit_once(':')
@@ -1566,10 +1566,10 @@ fn check_cost_row<'a>(kind: &'a str, mechanism: &str) -> &'a str {
         ("Bounds", _) => "Bounds check on `a[i]`",
         ("Overflow", _) => "Overflow check on integer arithmetic",
         ("DivisionByZero" | "ShiftRange", _) => "Division-by-zero and shift-range checks",
-        ("Aliasing", "assert_disjoint") => "`assert_disjoint` comparison",
+        ("Aliasing", "assert_disjoint") => "`assert_disjoint`",
         ("Aliasing", _) => "Dynamic exclusivity check",
         ("Borrow", _) => "`RefCell` borrow",
-        ("Downcast", _) => "Downcast check",
+        ("Downcast", _) => "Kind test or cast",
         // A kind this compiler does not emit (a side table from another version): shown as named.
         _ => kind,
     }
@@ -1589,7 +1589,7 @@ fn inspect_cost(path: &Path, function: Option<&str>, json: bool) -> Result<ExitC
         let (kind, mechanism, status) = (field(check, "kind"), field(check, "mechanism"), field(check, "status"));
         let row = check_cost_row(&kind, &mechanism);
         let class = match row {
-            "`assert_disjoint` comparison" | "`RefCell` borrow" | "Downcast check" => "guaranteed present",
+            "`assert_disjoint`" | "`RefCell` borrow" | "Kind test or cast" => "guaranteed present",
             _ => "conditionally elided",
         };
         let what = if status == "elided" || check.get("classification").and_then(serde_json::Value::as_str) == Some("DYNAMIC_HOISTED_LOOP") {
@@ -2015,9 +2015,9 @@ impl EngineReport {
     }
 }
 
-/// `[DIA-8]` — `ember explain --borrow <file>:<line>`: for each loan live at a point of that line of
-/// `file`, where it was created, the last line its region covers and the later use that keeps it
-/// alive: `borrow of v created at 12:9, live through 19, because s is used at 19:14`.
+/// `[DIA-8]` — `ember explain --view <file>:<line>`: for each view in use at a point of that line of
+/// `file`, where it was made, the last line it is in use and the later use that keeps it:
+/// `s views v (made at 12:9), in use through 19, because s is used at 19:14`.
 fn print_borrow_report(map: &SourceMap, file: ember_span::FileId, line: u32, bodies: &[ember_mir::Body], types: &TypeTable) {
     let on_line = |span: &Span| span.file == file && map.line_col(*span).line == line;
     let mut printed = Vec::new();
@@ -2028,8 +2028,12 @@ fn print_borrow_report(map: &SourceMap, file: ember_span::FileId, line: u32, bod
         }
         let created = map.line_col(loan.created);
         let through = loan.live.iter().filter(|span| span.file == file).map(|span| map.line_col(*span).line).max().unwrap_or(created.line);
-        let kind = if loan.mutable { "mutable borrow" } else { "borrow" };
-        let mut text = format!("{kind} of {} created at {}:{}, live through {through}", loan.place, created.line, created.col);
+        let verb = if loan.mutable { "views and may change" } else { "views" };
+        let mut text = match &loan.keeper {
+            Some((name, _)) => format!("{name} {verb} {}", loan.place),
+            None => format!("a view of {}", loan.place),
+        };
+        text.push_str(&format!(" (made at {}:{}), in use through {through}", created.line, created.col));
         if let Some((name, span)) = &loan.keeper {
             let used = map.line_col(*span);
             text.push_str(&format!(", because {name} is used at {}:{}", used.line, used.col));
@@ -2040,7 +2044,7 @@ fn print_borrow_report(map: &SourceMap, file: ember_span::FileId, line: u32, bod
         }
     }
     if printed.is_empty() {
-        println!("no borrow is live at line {line}");
+        println!("no view is in use at line {line}");
     }
 }
 
@@ -2677,7 +2681,7 @@ fn safety_costs_json(
             match func {
                 ember_mir::FuncRef::Interface { .. } => add("Interface call through `dyn`", "guaranteed present", span, &body.name, "one indirect call".to_string()),
                 ember_mir::FuncRef::Virtual { .. } => add("Virtual method call", "conditionally elided", span, &body.name, "one indirect call through the class's method table".to_string()),
-                ember_mir::FuncRef::Indirect { .. } => add("Owned callable value", "guaranteed present", span, &body.name, "one indirect call".to_string()),
+                ember_mir::FuncRef::Indirect { .. } => add("A call through a function value (a parameter, field, list element or local of a function type)", "guaranteed present", span, &body.name, "one indirect call".to_string()),
                 ember_mir::FuncRef::Direct { symbol, .. } => {
                     if let Some(callee) = by_symbol.get(symbol.as_str()) && callee.contracts.foreign.is_some() {
                         // `[FFI-29c]` — a `static inline` function is reached through the shim's wrapper.
@@ -2720,7 +2724,7 @@ fn safety_costs_json(
     }
     for operation in ember_analysis::count_report::surviving_count_operations(bodies, types) {
         let what = if operation.retain { "a retain" } else { "a release" };
-        add("Retain / release, surviving", "guaranteed present", operation.span, &operation.function, format!("{what} in a loop: {}", operation.reason));
+        add("Owner count +1 / -1", "guaranteed present", operation.span, &operation.function, format!("{what} in a loop: {}", operation.reason));
     }
     for use_ in contains_uses {
         if standard_files.contains(&use_.span.file) {
