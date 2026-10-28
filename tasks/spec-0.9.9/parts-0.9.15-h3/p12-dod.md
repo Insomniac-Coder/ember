@@ -175,7 +175,7 @@ struct Velocity:
 
 @noalloc
 fn integrate(ref mut reg: Registry, dt: f32):
-    for e, ref mut pos, ref mut vel in reg.view_mut[(Position, Velocity)]():
+    for e, ref mut pos, ref mut vel in reg.view_mut[Position, Velocity]():
         pos.value += vel.value * dt
 
 fn main():
