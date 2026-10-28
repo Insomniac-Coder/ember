@@ -409,7 +409,7 @@ pub fn check(
     let modules: &[LoadedModule] = expanded_foreign.as_deref().unwrap_or(modules);
     let mut checker = Checker::new(types, common, sink);
     checker.module_asts = modules.iter().map(|loaded| loaded.module.clone()).collect();
-    checker.sources = modules.iter().map(|loaded| (loaded.module.span.file, loaded.module.source.clone())).collect();
+    checker.sources = modules.iter().map(|loaded| (loaded.module.span.file, SourceText::new(loaded.module.source.clone()))).collect();
     for (span, lift) in generators.iter().flat_map(|written| written.locals.iter()) {
         checker.local_frames.insert(lift.env_frame, (true, *span));
         checker.local_frames.insert(lift.plain_frame, (false, *span));
@@ -1552,8 +1552,7 @@ struct GenericLocalFn {
     generic: DefId,
     /// Its body did not check with its type parameters opaque: a call makes no instance.
     failed: bool,
-    /// Whether it is written in an `unsafe:` block, and whether it is an `unsafe fn` (`[UNS-12]`).
-    in_unsafe: bool,
+    /// Whether it is an `unsafe fn` (`[UNS-12]`): its body, as every function's, starts outside `unsafe`.
     is_unsafe: bool,
     /// The instances whose bodies are made.
     built: HashSet<DefId>,
@@ -1617,6 +1616,33 @@ struct LocalFnSelf {
     probing: bool,
 }
 
+/// A file's text, with where each of its lines starts.
+struct SourceText {
+    text: std::sync::Arc<str>,
+    lines: Vec<u32>,
+}
+
+impl SourceText {
+    fn new(text: std::sync::Arc<str>) -> SourceText {
+        let lines = std::iter::once(0).chain(text.match_indices('\n').map(|(at, _)| at as u32 + 1)).collect();
+        SourceText { text, lines }
+    }
+
+    /// The 1-based line `offset` is on.
+    fn line_of(&self, offset: u32) -> usize {
+        self.lines.partition_point(|&start| start <= offset)
+    }
+}
+
+/// `[UNS-1]` — the lines of the statement an unsafe step is in, which its block is written around;
+/// `alone` when the statement begins its line (one written after a header, `fn f(): s`, does not).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct StmtLines {
+    first: usize,
+    last: usize,
+    alone: bool,
+}
+
 /// `[UNS-12]` — an `unsafe fn` whose body is being checked: its unsafe steps are its own to vouch
 /// for, each in an `unsafe:` block.
 #[derive(Clone)]
@@ -1624,10 +1650,11 @@ struct UnsafeFnBody {
     name: Symbol,
     /// Its name as declared, where its `L3015` is reported (`[UNS-7]`).
     at: Span,
-    /// Where the body's diagnostics begin in the sink.
-    mark: usize,
     /// The first unsafe step the body takes, inside `unsafe:` or not, which its `L3015` names.
     first: Option<UnsafeStep>,
+    /// `[UNS-12]` — each statement's `E3100`, by the statement's span: its place in the sink and its
+    /// primary span, checked against the sink before it is amended (`refuse_unsafe`).
+    merged: HashMap<Span, (usize, Span)>,
 }
 
 /// `[UNS-1]` — an operation that needs `unsafe`, as an `E3100` names it. A raw pointer is as
@@ -1637,16 +1664,29 @@ enum UnsafeStep {
     Read(Option<String>),
     Write(Option<String>),
     Offset(Option<String>),
-    /// A call, the callee as written; `declared` when it names an `unsafe fn` whose `@safety` its
-    /// callers make true.
-    Call { callee: String, declared: bool },
-    /// Any other, as a noun phrase: "the cast between raw pointer types".
-    Other(String),
+    /// A call, the callee as written.
+    Call { callee: String, kind: CallKind },
+    /// Any other, as a noun phrase, one and several: "the cast between raw pointer types", "the casts
+    /// between raw pointer types".
+    Other(String, String),
+}
+
+/// `[UNS-1]` — what a call needing `unsafe` calls, which says what its callers vouch for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CallKind {
+    /// An `unsafe fn` declared in Ember, whose `@safety` its callers make true.
+    Declared,
+    /// A C function without a verified contract (area 5 Q1: `E3100`, not `E5002`).
+    Foreign,
+    /// A variadic C function, whose further arguments nothing checks (`[FFI-8]`).
+    Variadic,
+    /// One the compiler knows (`alloc`, `assume_init`, …), whose own message says what it needs.
+    Other,
 }
 
 impl UnsafeStep {
     fn call(callee: impl Into<String>) -> UnsafeStep {
-        UnsafeStep::Call { callee: callee.into(), declared: false }
+        UnsafeStep::Call { callee: callee.into(), kind: CallKind::Other }
     }
 }
 
@@ -3666,6 +3706,8 @@ struct Checker<'a> {
     in_unsafe: bool,
     /// `[UNS-12]` — the `unsafe fn` whose body is being checked (`enter_fn_body`).
     unsafe_fn: Option<UnsafeFnBody>,
+    /// `[UNS-1]` — the locals a local function's name declares, whose calls are calls of it.
+    local_fn_values: HashSet<LocalId>,
     /// `[UNS-7]` — the `unsafe fn`s with a body and no `@safety`, by their names' spans: each one's
     /// `L3015` is reported once its body is checked, naming the first unsafe step it takes.
     undocumented_unsafe: HashSet<Span>,
@@ -3673,7 +3715,9 @@ struct Checker<'a> {
     /// line's further steps join its first one's (`refuse_unsafe`).
     unsafe_fn_steps: HashMap<Span, Vec<(Span, UnsafeStep)>>,
     /// The program's text by file, for the messages that quote code or name its lines.
-    sources: HashMap<FileId, std::sync::Arc<str>>,
+    sources: HashMap<FileId, SourceText>,
+    /// `[UNS-1]` — the statement being checked: the one an unsafe step's block is written around.
+    current_stmt: Option<Span>,
     /// `[UNS-3]` — whether the statement of an `unsafe:` block being checked has held an operation
     /// that needs `unsafe` (`unsafe_context`).
     unsafe_used: bool,
@@ -4045,9 +4089,11 @@ impl<'a> Checker<'a> {
             in_defer: false,
             in_unsafe: false,
             unsafe_fn: None,
+            local_fn_values: HashSet::new(),
             undocumented_unsafe: HashSet::new(),
             unsafe_fn_steps: HashMap::new(),
             sources: HashMap::new(),
+            current_stmt: None,
             unsafe_used: false,
             unsafe_blocks: HashMap::new(),
             unsafe_statements: HashMap::new(),
@@ -8484,7 +8530,12 @@ impl<'a> Checker<'a> {
         let outer_captures = self.captures.take();
         let outer_class_init = self.class_init.take();
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, false);
+        // What runs while compiling is no step of the function it is written in.
+        let outer_unsafe_fn = self.unsafe_fn.take();
+        let outer_stmt = self.current_stmt.take();
         let value = check(self);
+        self.unsafe_fn = outer_unsafe_fn;
+        self.current_stmt = outer_stmt;
         let locals = std::mem::replace(&mut self.locals, outer_locals);
         self.callback_body = outer_callback_body;
         self.scopes = outer_scopes;
@@ -16359,7 +16410,7 @@ impl<'a> Checker<'a> {
                 span,
                 UnsafeStep::call("assume_disjoint"),
                 Diagnostic::error(codes::E3100, span, "`assume_disjoint` requires an `unsafe` block")
-                    .help("use `assert_disjoint`, which checks, or write the call in an `unsafe` block")
+                    .help("use `assert_disjoint`, which checks")
                     .note("two views assumed apart that overlap are undefined behaviour (DSJ-7)"),
             );
         }
@@ -16574,7 +16625,7 @@ impl<'a> Checker<'a> {
     /// naming both places), and with `threads(creator)` it keeps the thread that made it.
     fn synth_foreign_adopt(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        self.unsafe_step(span, UnsafeStep::Call { callee: "adopt".to_string(), declared: true },
+        self.unsafe_step(span, UnsafeStep::Call { callee: "adopt".to_string(), kind: CallKind::Declared },
             Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"));
         if args.len() != 1 || explicit.len() > 1 {
             self.error(codes::E2020, span, "`adopt` takes one type argument and one pointer, `adopt[T](h)`");
@@ -16635,7 +16686,7 @@ impl<'a> Checker<'a> {
         let ([pointee], [object, deleter]) = (explicit, args) else { return Some(error) };
         let ast::ExprKind::Path { segments } = &deleter.value.kind else { return Some(error) };
         let [destroys] = segments.as_slice() else { return Some(error) };
-        self.unsafe_step(span, UnsafeStep::Other("the adoption of a foreign object".to_string()),
+        self.unsafe_step(span, UnsafeStep::Other("the adoption of a foreign object".to_string(), "the adoptions of foreign objects".to_string()),
             Diagnostic::error(codes::E3100, span, "adopting a foreign object requires an `unsafe` block"));
         let expected = self.types.intern(TyKind::Ptr { mutable: true, inner: *pointee });
         let pointer = self.check_expr(&object.value, expected);
@@ -17448,7 +17499,7 @@ impl<'a> Checker<'a> {
         if !matches!(self.types.kind(*class), TyKind::Class(_)) || !matches!(self.types.kind(value.ty), TyKind::Ptr { .. }) {
             return Some(error);
         }
-        self.unsafe_step(span, UnsafeStep::Other("the handle made from an address".to_string()),
+        self.unsafe_step(span, UnsafeStep::Other("the handle made from an address".to_string(), "the handles made from addresses".to_string()),
             Diagnostic::error(codes::E3100, span, "a handle made from an address requires an `unsafe` block"));
         Some(Expr { ty: *class, kind: ExprKind::Builtin { which: Builtin::CppObjectHandle { adopt: which == 2 }, args: vec![value] }, span })
     }
@@ -20596,7 +20647,7 @@ impl<'a> Checker<'a> {
                     }
                     self.reject_dynamic_check_params(&signature_params);
                     self.check_declared_defaults(def, decl, &signature_params);
-                    let outer_unsafe = self.enter_fn_body(decl, false);
+                    let outer_unsafe = self.enter_fn_body(decl);
                     self.in_generic_template = true;
                     // `[BLD-1]` — a kept module's generic is checked still: checking its instances,
                     // which the package makes every build, reads what its own check found.
@@ -20668,7 +20719,7 @@ impl<'a> Checker<'a> {
             self.reject_dynamic_check_params(&signature_params);
 
             self.check_declared_defaults(def, decl, &signature_params);
-            let outer_unsafe = self.enter_fn_body(decl, false);
+            let outer_unsafe = self.enter_fn_body(decl);
             let body = match &decl.body {
                 Some(block) => {
                     let body = self.check_body(block);
@@ -22743,12 +22794,18 @@ impl<'a> Checker<'a> {
         self.in_unsafe
     }
 
-    /// `[UNS-12]` — into a function's body. `in_unsafe` is whether it starts inside an `unsafe:`
-    /// block (a local function's written in one does, a declaration's never); an `unsafe fn`'s body
-    /// is no `unsafe` context of its own, and its unsafe steps are its own (`refuse_unsafe`).
-    fn enter_fn_body(&mut self, decl: &ast::FnDecl, in_unsafe: bool) -> (bool, Option<UnsafeFnBody>) {
-        let body = decl.is_unsafe.then(|| UnsafeFnBody { name: decl.name.name, at: decl.name.span, mark: self.sink.mark(), first: None });
-        (std::mem::replace(&mut self.in_unsafe, in_unsafe), std::mem::replace(&mut self.unsafe_fn, body))
+    /// `[UNS-12]` — into a function's body, which starts outside `unsafe`: a local function's too,
+    /// though it is written inside an `unsafe:` block, since it runs wherever it is called from (as
+    /// Rust's nested `fn` does; a closure is the code around it, and keeps its `unsafe`). An `unsafe
+    /// fn`'s body is no `unsafe` context of its own, and its unsafe steps are its own (`refuse_unsafe`).
+    fn enter_fn_body(&mut self, decl: &ast::FnDecl) -> (bool, Option<UnsafeFnBody>) {
+        // The name as written: a generator's lifted body (`body`) is the `gen fn` the code names.
+        let name = self
+            .written_line(decl.name.span)
+            .filter(|written| written.chars().all(|c| c == '_' || c.is_alphanumeric()))
+            .map_or(decl.name.name, |written| Symbol::intern(&written));
+        let body = decl.is_unsafe.then(|| UnsafeFnBody { name, at: decl.name.span, first: None, merged: HashMap::new() });
+        (std::mem::replace(&mut self.in_unsafe, false), std::mem::replace(&mut self.unsafe_fn, body))
     }
 
     /// Out of a function's body. `[UNS-7]` — an `unsafe fn` without `@safety` is `L3015`, naming the
@@ -22778,82 +22835,130 @@ impl<'a> Checker<'a> {
     }
 
     /// `[UNS-1]` — the unsafe step `step`, at `span`: noted (`note_unsafe_step`), and outside `unsafe`
-    /// refused with `refusal` (`refuse_unsafe`).
-    fn unsafe_step(&mut self, span: Span, step: UnsafeStep, refusal: Diagnostic) {
+    /// refused with `refusal` (`refuse_unsafe`). Whether it was refused.
+    fn unsafe_step(&mut self, span: Span, step: UnsafeStep, refusal: Diagnostic) -> bool {
         self.note_unsafe_step(&step);
-        if !self.unsafe_context() {
+        let refused = !self.unsafe_context();
+        if refused {
             self.refuse_unsafe(span, step, refusal);
         }
+        refused
     }
 
     /// The 1-based line `span` starts on, when its file's text is known.
     fn line_of(&self, span: Span) -> Option<usize> {
-        let before = self.sources.get(&span.file)?.get(..span.start as usize)?;
-        Some(before.bytes().filter(|&byte| byte == b'\n').count() + 1)
+        let source = self.sources.get(&span.file)?;
+        (span.start as usize <= source.text.len()).then(|| source.line_of(span.start))
     }
 
     /// The code `span` covers as written, when it is on one line.
     fn written_line(&self, span: Span) -> Option<String> {
-        let text = self.sources.get(&span.file)?.get(span.start as usize..span.end as usize)?;
+        let text = self.sources.get(&span.file)?.text.get(span.start as usize..span.end as usize)?;
         (!text.is_empty() && !text.contains('\n')).then(|| text.to_string())
     }
 
-    /// `[UNS-1]` — a raw pointer as written, through the offsets made of it: `p` for `p.add(1)`.
+    /// `[UNS-1]` — the name of the function `def` declares, as written: its signature's span is its
+    /// name, or for some (a generic type's method) the whole declaration, `… fn name(…`.
+    fn declared_name(&self, def: DefId) -> Option<String> {
+        let span = self.signatures[def.0 as usize].decl;
+        let text = self.sources.get(&span.file)?.text.get(span.start as usize..span.end as usize)?;
+        let text = text.find("fn ").map_or(text, |at| text[at + 3..].trim_start());
+        let name: String = text.chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// `[UNS-1]` — a raw pointer as written, through the offsets and pointer casts made of it: `p` for
+    /// `p.add(1)` and for `p as *mut u8`.
     fn pointer_written(&self, pointer: &Expr) -> Option<String> {
         match &pointer.kind {
             ExprKind::Builtin { which: Builtin::PtrAdd, args } => self.pointer_written(&args[0]),
+            ExprKind::Cast { expr, .. } if matches!(self.types.kind(expr.ty), TyKind::Ptr { .. }) => self.pointer_written(expr),
             _ => self.written_line(pointer.span),
         }
     }
 
+    /// `[UNS-1]` — the lines of the statement being checked, around which an unsafe step's block is
+    /// written: none outside a function's body (a constant's value), where no block can be.
+    fn stmt_lines(&self) -> Option<StmtLines> {
+        let stmt = self.current_stmt?;
+        let source = self.sources.get(&stmt.file)?;
+        let first = self.line_of(stmt)?;
+        // A compound statement's span runs into the indentation of the line after it.
+        let written = source.text.get(stmt.start as usize..stmt.end as usize)?.trim_end();
+        let last = source.line_of(stmt.start + (written.len() as u32).saturating_sub(1));
+        let starts = *source.lines.get(first - 1)? as usize;
+        let alone = source.text.get(starts..stmt.start as usize)?.trim().is_empty();
+        Some(StmtLines { first, last, alone })
+    }
+
     /// `[UNS-1]`, `[UNS-12]` — `step`, at `span`, is outside an `unsafe:` block. In an `unsafe fn`'s
-    /// body a line's steps are one `E3100`, which says they are the function's own and gives the block
-    /// to write. Elsewhere `refusal` is reported with the block to write, and a call of a declared
-    /// `unsafe fn` says what its callers must make true.
+    /// body a statement's steps are one `E3100`, which says they are the function's own and gives the
+    /// block to write, with what each step's own refusal adds. Elsewhere `refusal` is reported with the
+    /// block to write, and a call says what its callers must make true. Outside a function's body no
+    /// block can be written, and `refusal` is reported as it is.
     fn refuse_unsafe(&mut self, span: Span, step: UnsafeStep, refusal: Diagnostic) {
-        let Some(line) = self.line_of(span) else {
+        let (Some(line), Some(lines), Some(stmt)) = (self.line_of(span), self.stmt_lines(), self.current_stmt) else {
             self.sink.emit(refusal);
             return;
         };
-        if let Some((name, mark)) = self.unsafe_fn.as_ref().map(|body| (body.name, body.mark)) {
+        if let Some((name, merged)) = self.unsafe_fn.as_ref().map(|body| (body.name, body.merged.get(&stmt).copied())) {
             let end = self.sink.mark();
-            let earlier = (mark.min(end)..end).find(|&at| {
-                let earlier = &self.sink.diagnostics()[at];
-                earlier.code == Some(codes::E3100)
-                    && earlier.primary.span.file == span.file
-                    && self.unsafe_fn_steps.contains_key(&earlier.primary.span)
-                    && self.line_of(earlier.primary.span) == Some(line)
+            // The statement's diagnostic, while it is in the sink (a check rolled back takes it).
+            let kept = merged.filter(|&(at, primary)| {
+                self.sink.diagnostics().get(at).is_some_and(|earlier| earlier.code == Some(codes::E3100) && earlier.primary.span == primary)
             });
-            let at = earlier.unwrap_or_else(|| {
-                // A check rolled back may have left steps at this span: this diagnostic starts afresh.
-                self.unsafe_fn_steps.insert(span, Vec::new());
-                self.sink.emit(Diagnostic::error(codes::E3100, span, String::new()));
-                end
-            });
-            let first = self.sink.diagnostics()[at].primary.span;
-            let steps = self.unsafe_fn_steps.entry(first).or_default();
+            let (at, primary) = match kept {
+                Some(kept) => kept,
+                None => {
+                    // A check rolled back may have left steps at this span: this diagnostic starts afresh.
+                    self.unsafe_fn_steps.insert(span, Vec::new());
+                    self.sink.emit(Diagnostic::error(codes::E3100, span, String::new()));
+                    if let Some(body) = &mut self.unsafe_fn {
+                        body.merged.insert(stmt, (end, span));
+                    }
+                    (end, span)
+                }
+            };
+            let steps = self.unsafe_fn_steps.entry(primary).or_default();
             if !steps.iter().any(|(already, _)| *already == span) {
                 steps.push((span, step));
             }
-            *self.sink.message_mut(at) = own_unsafe_steps(name, line, steps);
+            let message = own_unsafe_steps(name, lines, steps);
+            self.sink.amend(at, |diagnostic| {
+                diagnostic.message = message;
+                for help in refusal.helps {
+                    if !diagnostic.helps.contains(&help) {
+                        diagnostic.helps.push(help);
+                    }
+                }
+                for note in refusal.notes {
+                    if !diagnostic.notes.contains(&note) {
+                        diagnostic.notes.push(note);
+                    }
+                }
+            });
             return;
         }
-        let refusal = match (&step, self.written_line(span)) {
-            (UnsafeStep::Call { callee, declared: true }, Some(written)) => {
-                // A call the code does not spell (a `for` loop's `iter`) is named by its callee.
-                let calls = if written.ends_with(')') { "calls an `unsafe fn`, whose".to_string() } else { format!("calls `{callee}`, an `unsafe fn` whose") };
-                Diagnostic::error(
-                    codes::E3100,
-                    span,
-                    format!(
-                        "`{written}` (line {line}) {calls} callers must make true what its `@safety` says; {}",
-                        unsafe_block_to_write(line, "that holds here")
-                    ),
-                )
+        let call = match (&step, self.written_line(span)) {
+            (UnsafeStep::Call { callee, kind }, Some(written)) if *kind != CallKind::Other => {
+                // A call the code does not spell (a `for` loop's `iter`, an operator's method) is named by
+                // its callee.
+                let spelled = callee.is_empty() || written.contains(&format!("{callee}(")) || written.contains(&format!("{callee}["));
+                let what = match (kind, spelled) {
+                    (CallKind::Declared, true) => "calls an `unsafe fn`, whose callers must make true what its `@safety` says".to_string(),
+                    (CallKind::Declared, false) => format!("calls `{callee}`, an `unsafe fn` whose callers must make true what its `@safety` says"),
+                    (CallKind::Foreign, _) => format!("calls the C function `{callee}`, whose contract is not verified, so its callers must make true what C requires of the call"),
+                    _ => format!("calls the variadic C function `{callee}`, which reads each further argument as the type it expects, and nothing checks that"),
+                };
+                let why = if *kind == CallKind::Declared { "that holds here" } else { "the call is as C requires" };
+                let mut diagnostic = Diagnostic::error(codes::E3100, span, format!("`{written}` (line {line}) {what}; {}", unsafe_block_to_write(lines, why)));
+                diagnostic.helps = refusal.helps;
+                diagnostic.notes = refusal.notes;
+                diagnostic
             }
-            _ => refusal.help(unsafe_block_to_write(line, "it is sound")),
+            _ => refusal.help(unsafe_block_to_write(lines, "it is sound")),
         };
-        self.sink.emit(refusal);
+        self.sink.emit(call);
     }
 
     /// `[EFF-7]` — `@assume_noalloc(call)`: the call's type and value, which the effect analysis
@@ -22978,9 +23083,11 @@ impl<'a> Checker<'a> {
         }
         let calls = std::mem::take(&mut self.foreign_calls);
         for mut diagnostic in self.sink.take() {
-            let ffi = diagnostic.code.is_some_and(|code| code.subsystem == ember_diag::codes::Subsystem::Ffi);
+            let primary = diagnostic.primary.span;
+            let at_call = calls.iter().any(|(call, _)| span_within(primary, *call) || span_within(*call, primary));
+            // An FFI error, or a C call refused outside `unsafe` (`E3100`, area 5 Q1).
+            let ffi = diagnostic.code.is_some_and(|code| code.subsystem == ember_diag::codes::Subsystem::Ffi || (code == codes::E3100 && at_call));
             if diagnostic.severity == ember_diag::Severity::Error && ffi && !diagnostic.notes.iter().any(|note| note.ends_with("[DIA-5]")) {
-                let primary = diagnostic.primary.span;
                 let note = calls
                     .iter()
                     .filter(|(call, _)| span_within(primary, *call) || span_within(*call, primary))
@@ -23029,34 +23136,27 @@ impl<'a> Checker<'a> {
         if !self.signatures[def.0 as usize].is_unsafe {
             return;
         }
-        let callee = self.written_line(self.signatures[def.0 as usize].decl).unwrap_or_else(|| "unsafe fn".to_string());
-        let step = UnsafeStep::Call { callee, declared: !self.foreign_declarations.contains_key(&def) };
-        self.note_unsafe_step(&step);
-        if self.unsafe_context() {
-            return;
-        }
-        if self.foreign_variadic.contains(&def) {
-            self.sink.emit(
-                Diagnostic::error(codes::E5002, span, "a call of a variadic C function requires `unsafe`")
-                    .help("wrap the call in `unsafe:`, as its caller's own assertion that each further argument is what the C function reads")
-                    .note("C reads its further arguments by the types its format or count names, which nothing checks [FFI-8]"),
-            );
+        let callee = self.declared_name(def).unwrap_or_default();
+        // `[UNS-1]` (area 5 Q1) — a C function without a verified contract, variadic or not, is called
+        // only in `unsafe`, `E3100` outside it as for any `unsafe fn`; `E5002` is for contracts that cannot stand.
+        let (kind, refusal) = if self.foreign_variadic.contains(&def) {
+            let refusal = Diagnostic::error(codes::E3100, span, "a call of a variadic C function requires `unsafe`")
+                .note("C reads its further arguments by the types its format or count names, which nothing checks [FFI-8]");
+            (CallKind::Variadic, refusal)
         } else if self.foreign_declarations.contains_key(&def) {
             // `[DIA-18]` — each fact the call lacks, and the line that supplies it.
-            let mut diagnostic = Diagnostic::error(codes::E5002, span,
-                "a foreign call without a complete safe contract requires `unsafe`");
+            let mut refusal = Diagnostic::error(codes::E3100, span, "a foreign call without a complete safe contract requires `unsafe`");
             if let Some(unknown) = self.foreign_unknown_facts.get(&def) {
-                for fact in &unknown.facts {
-                    diagnostic = diagnostic.note(format!("unknown: {fact}"));
-                }
+                refusal = refusal.notes_from(unknown.facts.iter().map(|fact| format!("unknown: {fact}")));
                 if !unknown.line.is_empty() {
-                    diagnostic = diagnostic.help(format!("state the facts on its declaration: {}", unknown.line));
+                    refusal = refusal.help(format!("or state the facts on its declaration: {}", unknown.line));
                 }
             }
-            self.sink.emit(diagnostic.help("or wrap the call in `unsafe:`, as its caller's own assertion"));
+            (CallKind::Foreign, refusal)
         } else {
-            self.refuse_unsafe(span, step, Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"));
-        }
+            (CallKind::Declared, Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"))
+        };
+        self.unsafe_step(span, UnsafeStep::Call { callee, kind }, refusal);
     }
 
     /// `[FFI-21]`, `[CLO-3]` — an instance of a foreign function whose callbacks name their user
@@ -23205,7 +23305,7 @@ impl<'a> Checker<'a> {
             self.reject_unsafe_cell_in_static_safe(span);
         }
         self.reject_dynamic_check_params(&signature_params);
-        let outer_unsafe = self.enter_fn_body(decl, false);
+        let outer_unsafe = self.enter_fn_body(decl);
         let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
         self.leave_fn_body(outer_unsafe);
@@ -24228,7 +24328,7 @@ impl<'a> Checker<'a> {
             .unwrap_or_default();
         let signature_params = self.signatures[def.0 as usize].params.clone();
         self.check_declared_defaults(def, decl, &signature_params);
-        let outer_unsafe = self.enter_fn_body(decl, false);
+        let outer_unsafe = self.enter_fn_body(decl);
         let local_generator = self.enter_local_generator_body(owner, decl);
         let body = self.check_body(block);
         let body = self.complete_function_end(body, decl.name.span);
@@ -25862,15 +25962,19 @@ impl<'a> Checker<'a> {
     }
 
     fn check_stmt(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
+        // `[UNS-1]` — the statement an unsafe step's block is written around (`refuse_unsafe`).
+        let outer_stmt = self.current_stmt.replace(stmt.span);
         if !self.unsafe_statements.contains_key(&stmt.span) {
-            return self.check_stmt_unrecorded(stmt, out);
+            self.check_stmt_unrecorded(stmt, out);
+        } else {
+            // `[UNS-3]` — a statement of an `unsafe:` block: whether it needed `unsafe`, over every check of it.
+            let outer = std::mem::replace(&mut self.unsafe_used, false);
+            self.check_stmt_unrecorded(stmt, out);
+            let used = std::mem::replace(&mut self.unsafe_used, outer);
+            *self.unsafe_statements.entry(stmt.span).or_insert(false) |= used;
+            self.unsafe_used |= used;
         }
-        // `[UNS-3]` — a statement of an `unsafe:` block: whether it needed `unsafe`, over every check of it.
-        let outer = std::mem::replace(&mut self.unsafe_used, false);
-        self.check_stmt_unrecorded(stmt, out);
-        let used = std::mem::replace(&mut self.unsafe_used, outer);
-        *self.unsafe_statements.entry(stmt.span).or_insert(false) |= used;
-        self.unsafe_used |= used;
+        self.current_stmt = outer_stmt;
     }
 
     fn check_stmt_unrecorded(&mut self, stmt: &ast::Stmt, out: &mut Vec<Stmt>) {
@@ -26104,8 +26208,10 @@ impl<'a> Checker<'a> {
                         self.error(codes::E2140, target.span, "a foreign static without `mut` cannot be assigned");
                         return;
                     }
-                    if !self.unsafe_context() {
-                        self.error(codes::E5002, target.span, "writing a foreign static requires `unsafe`");
+                    // `[UNS-1]` (area 5 Q1) — `E3100`, as every unsafe step outside `unsafe`.
+                    let shown = self.written_line(target.span).unwrap_or_else(|| "it".to_string());
+                    let step = UnsafeStep::Other(format!("the write of the foreign static `{shown}`"), format!("the writes of the foreign static `{shown}`"));
+                    if self.unsafe_step(target.span, step, Diagnostic::error(codes::E3100, target.span, "writing a foreign static requires `unsafe`")) {
                         return;
                     }
                 }
@@ -37911,12 +38017,13 @@ impl<'a> Checker<'a> {
                 let constant_address = self.const_initializer && pointer_integer_cast && self.types.is_integral(inner.ty);
                 if pointer_integer_cast || pointer_pointer_cast {
                     if !constant_address {
-                        let (message, step) = if pointer_integer_cast {
-                            ("casting between a raw pointer and an integer requires `unsafe`", "the cast between a raw pointer and an integer")
+                        let (message, one, many) = if pointer_integer_cast {
+                            ("casting between a raw pointer and an integer requires `unsafe`", "the cast between a raw pointer and an integer", "the casts between raw pointers and integers")
                         } else {
-                            ("casting between raw pointer types requires `unsafe`", "the cast between raw pointer types")
+                            ("casting between raw pointer types requires `unsafe`", "the cast between raw pointer types", "the casts between raw pointer types")
                         };
-                        self.unsafe_step(span, UnsafeStep::Other(step.to_string()), Diagnostic::error(codes::E3100, span, message));
+                        let step = UnsafeStep::Other(one.to_string(), many.to_string());
+                        self.unsafe_step(span, step, Diagnostic::error(codes::E3100, span, message));
                     }
                     // A 128-bit integer goes through `usize`, which holds any address: a
                     // pointer zero-extends, and an integer keeps its low bits.
@@ -37930,6 +38037,9 @@ impl<'a> Checker<'a> {
                     self.sink.emit(diagnostic);
                     return Expr { ty: self.common.error, kind: ExprKind::Error, span };
                 } else if !char_cast && !reference_pointer_cast
+                    // An operand already refused says nothing more here.
+                    && inner.ty != self.common.error
+                    && to != self.common.error
                     && (!self.types.is_numeric(inner.ty) || !self.types.is_numeric(to)) {
                     let from = self.types.display(inner.ty);
                     let shown = self.types.display(to);
@@ -40307,8 +40417,8 @@ impl<'a> Checker<'a> {
                 .collect(),
             ret,
             abi: None,
-            // `[GRM-28]`, `[UNS-1]` — an `unsafe` local function: its body is an `unsafe` context,
-            // its value is an `unsafe` callable (`[FN-6]`), and each call needs `unsafe`.
+            // `[GRM-28]`, `[UNS-1]` — an `unsafe` local function: its value is an `unsafe` callable
+            // (`[FN-6]`), each call needs `unsafe`, and its body vouches block by block (`[UNS-12]`).
             is_unsafe: decl.is_unsafe,
             overflow: self.active_overflow,
             fp: self.active_fp,
@@ -40325,13 +40435,14 @@ impl<'a> Checker<'a> {
             body: ast::LambdaBody::Block(body.clone()),
         };
         self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None, probing: true });
-        let outer_unsafe = self.enter_fn_body(decl, self.in_unsafe);
+        let outer_unsafe = self.enter_fn_body(decl);
         let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
         self.leave_fn_body(outer_unsafe);
         self.local_fn_self.pop();
         // A call through the local reads it; MIR makes the call direct when
         // the value is a known function (ADR-169).
         let local = self.declare(Some(decl.name.name), value.ty, decl.name.span);
+        self.local_fn_values.insert(local);
         out.push(Stmt::Let { local, init: Some(value) });
     }
 
@@ -40410,7 +40521,7 @@ impl<'a> Checker<'a> {
         // The body, checked once with the type parameters opaque: the one check that reports.
         let errors = self.sink.error_count();
         self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None, probing: true });
-        let outer_unsafe = self.enter_fn_body(decl, self.in_unsafe);
+        let outer_unsafe = self.enter_fn_body(decl);
         let value = self.synth_lambda_fresh(&lambda, Some(expected), span, Some(def));
         self.leave_fn_body(outer_unsafe);
         self.local_fn_self.pop();
@@ -40479,7 +40590,6 @@ impl<'a> Checker<'a> {
             env_mode,
             generic,
             failed,
-            in_unsafe: self.in_unsafe,
             is_unsafe: decl.is_unsafe,
             built: HashSet::new(),
             span,
@@ -40599,9 +40709,9 @@ impl<'a> Checker<'a> {
             item_spans: self.reachable_item_spans(),
         };
         self.local_fn_self.push(LocalFnSelf { name: entry.name, def, depth: self.lambda_depth + 1, env: Some(entry.env_mode), probing: false });
-        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, entry.in_unsafe);
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, false);
         let earlier = self.sink.take();
-        let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, at: entry.span, mark: self.sink.mark(), first: None });
+        let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, at: entry.span, first: None, merged: HashMap::new() });
         let outer_unsafe_fn = std::mem::replace(&mut self.unsafe_fn, own_unsafe);
         let (body, _, locals, _) = self.check_lambda_body(
             &entry.lambda,
@@ -40722,7 +40832,7 @@ impl<'a> Checker<'a> {
             env_ty: opaque_env,
             entry: None,
         });
-        let outer_unsafe = self.enter_fn_body(decl, self.in_unsafe);
+        let outer_unsafe = self.enter_fn_body(decl);
         let value = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
         self.leave_fn_body(outer_unsafe);
         self.local_generator_self.pop();
@@ -41028,8 +41138,8 @@ impl<'a> Checker<'a> {
     /// is an `unsafe fn` value, whose calls are checked as any).
     fn check_unsafe_local_call(&mut self, def: DefId, span: Span) {
         if self.signatures[def.0 as usize].is_unsafe {
-            let callee = self.written_line(self.signatures[def.0 as usize].decl).unwrap_or_else(|| "unsafe fn".to_string());
-            self.unsafe_step(span, UnsafeStep::Call { callee, declared: true },
+            let callee = self.declared_name(def).unwrap_or_default();
+            self.unsafe_step(span, UnsafeStep::Call { callee, kind: CallKind::Declared },
                 Diagnostic::error(codes::E3100, span, "calling an `unsafe` local function requires an `unsafe` block"));
         }
     }
@@ -42521,11 +42631,15 @@ impl<'a> Checker<'a> {
     /// write changes C's storage. A `static mut` is reached through `ref mut`.
     fn foreign_static_use(&mut self, qualified: Symbol, span: Span) -> Expr {
         let binding = self.foreign_statics[&qualified];
-        if !binding.immutable && !self.unsafe_context() {
-            self.sink.emit(Diagnostic::error(codes::E5002, span,
-                "reading a foreign static requires `unsafe`")
-                .help("wrap the read in `unsafe:` or assert `@ffi(immutable)` for a const C object"));
-            return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+        // `[UNS-1]` (area 5 Q1) — `E3100`, as every unsafe step outside `unsafe`.
+        if !binding.immutable {
+            let shown = self.written_line(span).unwrap_or_else(|| qualified.to_string());
+            let step = UnsafeStep::Other(format!("the read of the foreign static `{shown}`"), format!("the reads of the foreign static `{shown}`"));
+            let refusal = Diagnostic::error(codes::E3100, span, "reading a foreign static requires `unsafe`")
+                .help("or assert `@ffi(immutable)` for a const C object");
+            if self.unsafe_step(span, step, refusal) {
+                return Expr { ty: self.common.error, kind: ExprKind::Error, span };
+            }
         }
         let reference = self.types.intern(TyKind::Ref { mutable: binding.is_mut, inner: binding.ty });
         let access = Expr {
@@ -46138,27 +46252,31 @@ impl<'a> Checker<'a> {
                 self.error(codes::E2020, span, format!("`{}` on a raw pointer takes {shown}", name.name));
                 return error;
             }
-            // Refused, the step is typed still, so that what is done with its result is checked (and,
-            // in an `unsafe fn`, named): `p.add(1).read()` reads through `p`.
+            // A write through a `*T` is refused for that alone: no `unsafe` makes it one.
+            if name.name.is("write") && !mutable {
+                let shown = self.types.display(receiver.ty);
+                self.error(codes::E2020, span, format!("`write` needs a `*mut` pointer, and this is `{shown}`"));
+                return error;
+            }
             let pointer = self.pointer_written(&receiver);
             let step = match name.name.as_str() {
                 "read" => UnsafeStep::Read(pointer),
                 "write" => UnsafeStep::Write(pointer),
                 _ => UnsafeStep::Offset(pointer),
             };
-            self.unsafe_step(span, step,
+            let refused = self.unsafe_step(span, step,
                 Diagnostic::error(codes::E3100, span, format!("`{}` through a raw pointer needs an `unsafe` block", name.name))
                     .note("`[UNS-1]` lists the operations that do"));
+            // In an `unsafe fn` a refused step is typed on, so that the statement's other steps are named
+            // with it (`p.add(1).read()` reads through `p`); elsewhere its own refusal says enough.
+            if refused && self.unsafe_fn.is_none() {
+                return error;
+            }
             let usize_ty = self.common.usize;
             let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
             return match name.name.as_str() {
                 "read" => Expr { ty: inner, kind: ExprKind::Builtin { which: Builtin::PtrRead, args: vec![receiver, zero] }, span },
                 "write" => {
-                    if !mutable {
-                        let shown = self.types.display(receiver.ty);
-                        self.error(codes::E2020, span, format!("`write` needs a `*mut` pointer, and this is `{shown}`"));
-                        return error;
-                    }
                     let value = self.check_expr(&args[0].value, inner);
                     let void = self.common.void;
                     Expr { ty: void, kind: ExprKind::Builtin { which: Builtin::PtrWrite, args: vec![receiver, zero, value] }, span }
@@ -47924,9 +48042,9 @@ impl<'a> Checker<'a> {
         let shown = self.types.display(owner);
         self.unsafe_step(
             span,
-            UnsafeStep::Other(format!("the read of `{}` of the union `{shown}`", name.name)),
+            UnsafeStep::Other(format!("the read of `{}` of the union `{shown}`", name.name), format!("the reads of `{}` of the union `{shown}`", name.name)),
             Diagnostic::error(codes::E3100, span, format!("reading `{}` of the union `{shown}` requires an `unsafe` block", name.name))
-                .help("wrap the read in `unsafe:` and state which field the union holds")
+                .help("say in the `# SAFETY:` note which field the union holds")
                 .note("a C union's fields share its storage; which one holds the value is the program's to know [FFI-8]"),
         );
     }
@@ -48063,11 +48181,22 @@ impl<'a> Checker<'a> {
         let consumes_callee = consumes_callee || once;
         // `[UNS-1]`, `[FN-6]` (ODR-115) — the callee is some `unsafe fn`, whose obligation the
         // `unsafe` block takes on.
-        if is_unsafe {
+        // A local function called by its name is a call of that function, not of some value of its type.
+        let local_fn = match &callee.kind {
+            ExprKind::Local(local) if self.local_fn_values.contains(local) => self.locals[local.0 as usize].name,
+            _ => None,
+        };
+        if is_unsafe && let Some(name) = local_fn {
+            self.unsafe_step(
+                span,
+                UnsafeStep::Call { callee: name.to_string(), kind: CallKind::Declared },
+                Diagnostic::error(codes::E3100, span, "calling an `unsafe` local function requires an `unsafe` block"),
+            );
+        } else if is_unsafe {
             let shown = self.types.display(signature);
             self.unsafe_step(
                 span,
-                UnsafeStep::Other(format!("the call of a value of type `{shown}`")),
+                UnsafeStep::Other(format!("the call of a value of type `{shown}`"), format!("the calls of values of type `{shown}`")),
                 Diagnostic::error(codes::E3100, span, format!("calling a value of type `{shown}` requires an `unsafe` block"))
                     .note("the value may be any `unsafe fn` of this signature [UNS-1]"),
             );
@@ -50387,7 +50516,7 @@ impl<'a> Checker<'a> {
                 span,
                 "`assume_init` needs an `unsafe` block",
             )
-            .help("initialize the slot with `write`, then wrap `assume_init` in `unsafe:`")
+            .help("initialize the slot with `write` first")
             .note("the caller must establish that the slot contains a valid initialized value [ARN-8]"),
         );
         Expr {
@@ -56114,7 +56243,7 @@ impl<'a> Checker<'a> {
                 span,
                 "`assume_init` needs an `unsafe` block",
             )
-            .help("initialize every slot with `write_at`, then wrap `assume_init` in `unsafe:`")
+            .help("initialize every slot with `write_at` first")
             .note("the caller must establish that every exposed element is initialized [ARN-9]"),
         );
         let result = self.types.intern(TyKind::Span { elem: inner, mutable: true });
@@ -60848,11 +60977,21 @@ fn is_compiler_known_struct(name: &str) -> bool {
         || matches!(name, "Arena" | "FixedArena" | "ScopedArena")
 }
 
-/// `[UNS-1]` — the block an `E3100` gives to write around line `line`, its note saying why `why`.
-fn unsafe_block_to_write(line: usize, why: &str) -> String {
+/// `[UNS-1]` — the block an `E3100` gives to write around the statement on `lines`, its note saying
+/// why `why`: "put line 9 in an `unsafe:` block with a `# SAFETY:` note saying why …: above line 9 write
+/// `# SAFETY:` and the reason, then `unsafe:`, and indent line 9 under it". A statement over several
+/// lines is put in whole; one that shares its line with what comes before it is moved onto its own.
+fn unsafe_block_to_write(lines: StmtLines, why: &str) -> String {
+    let StmtLines { first, last, alone } = lines;
+    if !alone {
+        return format!(
+            "put the statement on line {first} on a line of its own, in an `unsafe:` block with a `# SAFETY:` note saying why {why}"
+        );
+    }
+    let these = if first == last { format!("line {first}") } else { format!("lines {first} to {last}") };
     format!(
-        "put line {line} in an `unsafe:` block with a `# SAFETY:` note saying why {why}: above line {line} write \
-         `# SAFETY:` and the reason, then `unsafe:`, and indent line {line} under it"
+        "put {these} in an `unsafe:` block with a `# SAFETY:` note saying why {why}: above line {first} write \
+         `# SAFETY:` and the reason, then `unsafe:`, and indent {these} under it"
     )
 }
 
@@ -60867,18 +61006,20 @@ fn undocumented_unsafe(name: Symbol, first: Option<&UnsafeStep>) -> String {
         Some(UnsafeStep::Read(pointer)) => (format!(" that reads through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
         Some(UnsafeStep::Write(pointer)) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
         Some(UnsafeStep::Offset(pointer)) => (format!(" that offsets {}", through(pointer)), format!(", with what {} must point into", target(pointer))),
+        Some(UnsafeStep::Call { callee, .. }) if callee.is_empty() => (" that calls an `unsafe fn`".to_string(), ", with what that call needs".to_string()),
         Some(UnsafeStep::Call { callee, .. }) => (format!(" that calls `{callee}`"), format!(", with what calling `{callee}` needs")),
-        Some(UnsafeStep::Other(what)) => (format!(" with {what} in its body"), String::new()),
+        Some(UnsafeStep::Other(what, _)) => (format!(" with {what} in its body"), String::new()),
         None => (String::new(), String::new()),
     };
     let that = if first.is_some() { " for that" } else { "" };
     format!("`{name}` is an `unsafe fn`{does}, and nothing says what its callers must make true{that}; say it above the function: `@safety(\"...\")`{with}")
 }
 
-/// `[UNS-12]` — the `E3100` of line `line` of the `unsafe fn` `name`, whose unsafe steps there are
-/// `steps`: "the reads through `p` on line 4 are this function's own unsafe steps, …". A pointer's
-/// reads and writes say what its offsets are for, so those are named only when it has neither.
-fn own_unsafe_steps(name: Symbol, line: usize, steps: &[(Span, UnsafeStep)]) -> String {
+/// `[UNS-12]` — the `E3100` of the statement on `lines` of the `unsafe fn` `name`, whose unsafe steps
+/// there are `steps`: "the reads through `p` on line 4 are this function's own unsafe steps, …". A
+/// pointer's reads and writes say what its offsets are for, so those are named only when it has
+/// neither.
+fn own_unsafe_steps(name: Symbol, lines: StmtLines, steps: &[(Span, UnsafeStep)]) -> String {
     fn plural(count: usize, word: &str) -> String {
         if count == 1 { word.to_string() } else { format!("{word}s") }
     }
@@ -60887,6 +61028,7 @@ fn own_unsafe_steps(name: Symbol, line: usize, steps: &[(Span, UnsafeStep)]) -> 
     }
     // (what, how many steps, the noun one of them is): the other steps, the pointers', the calls.
     let mut groups: Vec<(String, usize, &str)> = Vec::new();
+    let mut others: Vec<(&str, &str, usize)> = Vec::new();
     let mut pointers: Vec<(&Option<String>, [usize; 3])> = Vec::new();
     let mut calls: Vec<(&str, usize)> = Vec::new();
     for (_, step) in steps {
@@ -60901,9 +61043,10 @@ fn own_unsafe_steps(name: Symbol, line: usize, steps: &[(Span, UnsafeStep)]) -> 
                 }
                 continue;
             }
-            UnsafeStep::Other(what) => {
-                if !groups.iter().any(|(named, _, _)| named == what) {
-                    groups.push((what.clone(), 1, "step"));
+            UnsafeStep::Other(one, many) => {
+                match others.iter_mut().find(|(named, _, _)| *named == one.as_str()) {
+                    Some((_, _, count)) => *count += 1,
+                    None => others.push((one.as_str(), many.as_str(), 1)),
                 }
                 continue;
             }
@@ -60917,6 +61060,9 @@ fn own_unsafe_steps(name: Symbol, line: usize, steps: &[(Span, UnsafeStep)]) -> 
             }
         }
     }
+    for (one, many, count) in others {
+        groups.push((if count == 1 { one } else { many }.to_string(), count, "step"));
+    }
     for (pointer, [reads, writes, offsets]) in pointers {
         let shown = through(pointer);
         groups.push(match (reads, writes) {
@@ -60927,7 +61073,8 @@ fn own_unsafe_steps(name: Symbol, line: usize, steps: &[(Span, UnsafeStep)]) -> 
         });
     }
     for (callee, count) in calls {
-        groups.push((format!("the {} of `{callee}`", plural(count, "call")), count, "call"));
+        let callee = if callee.is_empty() { "an `unsafe fn`".to_string() } else { format!("`{callee}`") };
+        groups.push((format!("the {} of {callee}", plural(count, "call")), count, "call"));
     }
     let count: usize = groups.iter().map(|(_, count, _)| count).sum();
     let what = match groups.as_slice() {
@@ -60940,10 +61087,11 @@ fn own_unsafe_steps(name: Symbol, line: usize, steps: &[(Span, UnsafeStep)]) -> 
         _ => "each step is safe".to_string(),
     };
     let (is, own, they) = if count == 1 { ("is", "step", "it is") } else { ("are", "steps", "they are") };
+    let place = if lines.first == lines.last { format!("line {}", lines.first) } else { format!("lines {} to {}", lines.first, lines.last) };
     format!(
-        "`{name}` is an `unsafe fn`, which says its callers must vouch; {what} on line {line} {is} this function's own \
+        "`{name}` is an `unsafe fn`, which says its callers must vouch; {what} on {place} {is} this function's own \
          unsafe {own}, and nothing says why {they} sound; {}",
-        unsafe_block_to_write(line, &why)
+        unsafe_block_to_write(lines, &why)
     )
 }
 

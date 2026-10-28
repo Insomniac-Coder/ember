@@ -20,4 +20,4 @@ fn main():
         table.values[0] = 99
         samples[1] += 2
     frozen.values[0] = 5    #$ error[E2140]: a foreign static without `mut` cannot be assigned
-    samples[2] = 1    #$ error[E5002]: writing a foreign static requires `unsafe`
+    samples[2] = 1    #$ error[E3100]: writing a foreign static requires `unsafe`

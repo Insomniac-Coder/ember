@@ -9,8 +9,8 @@
 import cpp "space.hpp"
 
 fn main():
-    count = cpp.engine.Grid.made  #$ error[E5002]: reading a foreign static requires `unsafe`
-    cpp.engine.frames += 1  #$ error[E5002]: writing a foreign static requires `unsafe`
+    count = cpp.engine.Grid.made  #$ error[E3100]: reading a foreign static requires `unsafe`
+    cpp.engine.frames += 1  #$ error[E3100]: writing a foreign static requires `unsafe`
     half = cpp.engine.Grid.scale
     unsafe:  # SAFETY(ffi): a write of a C++ variable
         cpp.engine.Grid.scale = 2.0  #$ error[E2140]: a foreign static without `mut` cannot be assigned

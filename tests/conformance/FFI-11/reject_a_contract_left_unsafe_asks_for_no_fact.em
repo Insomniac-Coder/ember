@@ -18,9 +18,9 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn safe_abs(x: i32) -> i32
 
 fn main():
-    println(raw_abs(-3))    #$ error[E5002]: contract leaves its calls `unsafe` on purpose
+    println(raw_abs(-3))    #$ error[E3100]: contract leaves its calls `unsafe` on purpose
     value: i32 = 4
-    println(peek(ref_to_ptr(ref value)))    #$ error[E5002]: contract leaves its calls `unsafe` on purpose
-    pointer = first()    #$ error[E5002]: contract leaves its calls `unsafe` on purpose
+    println(peek(ref_to_ptr(ref value)))    #$ error[E3100]: contract leaves its calls `unsafe` on purpose
+    pointer = first()    #$ error[E3100]: contract leaves its calls `unsafe` on purpose
     unsafe:  # SAFETY(ffi): `abs` reads its argument only
         println(raw_abs(-5))

@@ -9,7 +9,7 @@ import c "./labels.h" with (overlay = "overlays/stated.em") as labels
 
 fn main():
     items: [i32; 3] = [1, 2, 3]
-    println(labels.label_sum(ref_to_ptr(ref items[0]), 3))    #$ error[E5002]: declared in the header at labels.h:8: `int label_sum(const int *items, size_t n)`
+    println(labels.label_sum(ref_to_ptr(ref items[0]), 3))    #$ error[E3100]: declared in the header at labels.h:8: `int label_sum(const int *items, size_t n)`
     text: str = "hello"
     println(labels.label_length(text))    #$ error[E5020]: declared in the header at labels.h:6: `int label_length(const char *text)`
     println(labels.label_twice(4))

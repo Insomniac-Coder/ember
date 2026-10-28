@@ -57,19 +57,12 @@
 >
 > **Next work, in order.**
 > 1. M0's rest (each detailed in the gap files):
->    - **A5-1** an `unsafe fn` body is no unsafe context (`[UNS-12]`): in `ember_typeck/src/lib.rs`
->      seed `in_unsafe` with `false`, not `decl.is_unsafe`, where a top-level function or method body is
->      checked (today about lines 20555, 20627, 23047, 24070) and drop `|| decl.is_unsafe` for local
->      functions (about 40158, 40244, 40553); give `E3100` inside an `unsafe fn` the spec's help (one way:
->      `Sink::mark` before the body, then amend that body's `E3100`s; 23 sites emit `E3100`); give
->      `std/src/mem.em`'s volatile functions their own `unsafe:` blocks; respell the tests whose
->      `unsafe fn` bodies do raw work (the suite finds them).
->    - **A5-2** safety notes (`[UNS-7]`, `[UNS-8]`): `L3015` for every `unsafe fn` without `@safety`, not only
->      a `pub` one (`lib.rs` about 43222); `W3013` (registered already) for a `# SAFETY:` note on an
->      `unsafe fn` line; `W3012` for `unsafe:` blocks and `unsafe extend`/`extern`/`overlay`
->      (`check_safety_notes` in `ember_driver/src/lib.rs` about 7597; the parser's `unsafe_sites`).
+>    - **A5-1, A5-2: done** (`1f325ec2`, `fcad3ea4`, and the review's fixes after them). Before the
+>      push: one full check of the whole stack (`verify_windows.ps1` in session 5d9166d4's scratchpad, a
+>      stall watcher beside it), then the laptop bench.
 >    - **A5-3** `@no_runtime_checks` is `E0104` with `[UNS-11]`'s message (`RESERVED_ATTRIBUTES`, `lib.rs`
->      about 60656).
+>      about 60656): moved to just after M1, since the message tells the reader to write `@no_alias_checks`,
+>      which M1's spelling item builds (the gap's own "depends on: area ATT's rename").
 >    - **A6-16** an overlay names its header's hash (`[FFI-55]`, `E5010`), **A5-21** codes and pages.
 > 2. M1: the 0.9.15 grammar (with `needs (…)` and `...`), the spelling-only forms and `ember fmt
 >    --migrate`, in one commit.

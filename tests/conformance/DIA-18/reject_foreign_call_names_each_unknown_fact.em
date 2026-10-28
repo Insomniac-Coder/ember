@@ -16,6 +16,6 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     fn measure(text: *u8) -> usize
 
 fn main():
-    println(abs(-42))    #$ error[E5002]: unknown: `abs` is not asserted safe to call (`safe fn`)
-    found = find(null[*u8](), 3)    #$ error[E5002]: unknown: `data`: its ownership, count and nullability
-    println(measure(null[*u8]()))    #$ error[E5002]: unknown: `text`: its count
+    println(abs(-42))    #$ error[E3100]: unknown: `abs` is not asserted safe to call (`safe fn`)
+    found = find(null[*u8](), 3)    #$ error[E3100]: unknown: `data`: its ownership, count and nullability
+    println(measure(null[*u8]()))    #$ error[E3100]: unknown: `text`: its count

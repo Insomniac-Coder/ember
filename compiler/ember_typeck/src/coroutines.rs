@@ -276,6 +276,9 @@ impl Writer<'_> {
     }
 
     fn lift_stmt(&mut self, stmt: &mut ast::Stmt, enclosing: &mut Enclosing) {
+        // `[UNS-7]` — a local `unsafe gen fn`'s `@safety`, which its lifted forms carry.
+        let safety: Vec<ast::Attribute> =
+            stmt.attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety")).cloned().collect();
         match &mut stmt.kind {
             ast::StmtKind::Decl { init, .. } => {
                 if let Some(init) = init {
@@ -328,7 +331,7 @@ impl Writer<'_> {
                 enclosing.generics.truncate(generics);
                 enclosing.where_clause.truncate(bounds);
                 if decl.is_gen {
-                    self.lift_local(decl, enclosing);
+                    self.lift_local(decl, enclosing, &safety);
                 }
             }
         }
@@ -470,7 +473,7 @@ impl Writer<'_> {
     /// named closure it is ([CLO-12]) and so find what it captures; and it is written out at module
     /// level twice (`LocalLift`), generic over the environment its calls pass and over the
     /// enclosing declarations' type parameters, `Self` written out as what it names here.
-    fn lift_local(&mut self, decl: &mut ast::FnDecl, enclosing: &Enclosing) {
+    fn lift_local(&mut self, decl: &mut ast::FnDecl, enclosing: &Enclosing, safety: &[ast::Attribute]) {
         let span = decl.name.span;
         let refused = match generator_types(decl.ret.as_ref()) {
             None => Some(
@@ -562,11 +565,12 @@ impl Writer<'_> {
                 );
             }
             let item_span = lifted.name.span;
-            let frame = self.generator(&mut lifted, &mut Vec::new(), ast::Visibility::private(), None, enclosing.self_ty.as_ref(), false);
+            let mut attrs = safety.to_vec();
+            let frame = self.generator(&mut lifted, &mut attrs, ast::Visibility::private(), None, enclosing.self_ty.as_ref(), false);
             lifted_names.push((Symbol::intern(&name), frame.unwrap_or(Symbol::intern(&name))));
             self.items.push(ast::Item {
                 id: ast::NodeId::DUMMY,
-                attrs: Vec::new(),
+                attrs,
                 vis: ast::Visibility::private(),
                 doc: None,
                 kind: ast::ItemKind::Fn(lifted),

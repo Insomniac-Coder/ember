@@ -18,7 +18,7 @@ fn main():
     single: f32 = 1.5
     flag: bool = true
     letter: char = 'a'
-    total = v.sum_wide(1, 5i64)    #$ error[E5002]
+    total = v.sum_wide(1, 5i64)    #$ error[E3100]
     unsafe:  # SAFETY(ffi): the cases the checker refuses
         untyped = v.sum_wide(1, 5)    #$ error[E5015]
         promoted = v.sum_wide(1, narrow)    #$ error[E5013]: C passes `narrow` as an `int` through `...`; if `sum_wide` reads another type, convert it first: `sum_wide(1, narrow as i64)`

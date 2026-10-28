@@ -245,10 +245,12 @@ impl Sink {
         self.diagnostics.len()
     }
 
-    /// The message of the diagnostic at `at` (a `mark`), to say more once more is known; its
+    /// Amend the diagnostic at `at` (a `mark`) once more is known: its message, helps and notes. Its
     /// severity, and so the counts, stay.
-    pub fn message_mut(&mut self, at: usize) -> &mut String {
-        &mut self.diagnostics[at].message
+    pub fn amend(&mut self, at: usize, amend: impl FnOnce(&mut Diagnostic)) {
+        let severity = self.diagnostics[at].severity;
+        amend(&mut self.diagnostics[at]);
+        assert_eq!(self.diagnostics[at].severity, severity, "an amended diagnostic keeps its severity");
     }
 
     /// Forget what was emitted after `mark`, for a check whose diagnostics are

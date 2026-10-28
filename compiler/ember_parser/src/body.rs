@@ -215,7 +215,8 @@ impl Parser<'_> {
                 self.expect_punct(Punct::Colon);
                 StmtKind::Defer(self.parse_block())
             }
-            TokenKind::Keyword(Kw::Unsafe) if !self.at_kw_at(1, Kw::Fn) => {
+            // `unsafe fn` and `unsafe gen fn` begin a local function (below), not a block.
+            TokenKind::Keyword(Kw::Unsafe) if !self.at_kw_at(1, Kw::Fn) && !self.at_gen_fn_at(1) => {
                 self.unsafe_sites.push(ember_ast::UnsafeSite { span: self.span(), kind: ember_ast::UnsafeSiteKind::Block });
                 self.bump();
                 self.expect_punct(Punct::Colon);

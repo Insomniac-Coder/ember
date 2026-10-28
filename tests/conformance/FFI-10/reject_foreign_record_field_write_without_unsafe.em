@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-10, STA-1
-#$ error[E5002]: writing a foreign static requires `unsafe`
+#$ error[E3100]: writing a foreign static requires `unsafe`
 
 @derive(Copy)
 struct Pair:

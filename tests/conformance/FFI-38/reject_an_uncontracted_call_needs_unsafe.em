@@ -10,5 +10,5 @@ import c "uncontracted.h"
 
 fn main():
     xs: [i32; 3] = [1, 2, 3]
-    println(c.uncontracted_add(1, 2))  #$ error[E5002]: a foreign call without a complete safe contract requires `unsafe`
-    println(c.uncontracted_sum(ref_to_ptr(ref xs[0]), 3))  #$ error[E5002]: a foreign call without a complete safe contract requires `unsafe`
+    println(c.uncontracted_add(1, 2))  #$ error[E3100]: `c.uncontracted_add(1, 2)` (line 13) calls the C function `uncontracted_add`, whose contract is not verified
+    println(c.uncontracted_sum(ref_to_ptr(ref xs[0]), 3))  #$ error[E3100]: `c.uncontracted_sum(ref_to_ptr(ref xs[0]), 3)` (line 14) calls the C function `uncontracted_sum`, whose contract is not verified
