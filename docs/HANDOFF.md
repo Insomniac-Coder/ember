@@ -28,8 +28,9 @@
 > D-924 (the compiler's worker threads had 2 MB stacks) fixed and pushed (`76152df2`, CI all green). Then,
 > on the owner's word ("yes go ahead"), the rework branch `pause/redesign-run4-step2` is merged into `main`:
 > the owner's verdicts 107-117 (`tasks/96/redesign/JOB.md`), the gap-map questions all answered, and the
-> spec **`Ember_v0.9.15_Hardened_3`**, now `main`'s development target (README Overall 78%, as
-> `tools/phase_progress.py` computes against it). The compiler on `main` still implements 0.9.10; the
+> spec **`Ember_v0.9.15_Hardened_3`**, now `main`'s development target. README Overall: 22% (the owner, 2026-10-28: a rule H3 marks new or
+> changed in 0.9.15 counts only once `docs/phase-status.json`'s `built_for_0915` lists it, its 0.9.15
+> behaviour built and tested; counting the 0.9.10 tests that name it gave 78%). The compiler on `main` still implements 0.9.10; the
 > 0.9.15 work starts with milestone M1 (`tasks/96/redesign/compiler-0.9.15/MILESTONES.md`: the 0.9.15
 > grammar, `needs (…)` and `...` included, and `ember fmt --migrate`, in one commit). D-920 and D-922
 > stay open (D-920 in M2).

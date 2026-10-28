@@ -1,5 +1,5 @@
 {
-  "_what": "Input to tools/phase_progress.py, which computes the README's phase table. A rule counts as done only when a passing test exercises it and it is not listed under `unfinished`. There is deliberately no way to mark a rule done by hand: a percentage rises only when a rule gets a test and its `unfinished` entry, if any, is removed because the rule is fulfilled.",
+  "_what": "Input to tools/phase_progress.py, which computes the README's phase table. A rule counts as done only when a passing test exercises it and it is not listed under `unfinished`. There is deliberately no way to mark a rule done by hand: a percentage rises only when a rule gets a test and its `unfinished` entry, if any, is removed because the rule is fulfilled. A rule the development target marks new or changed in 0.9.15 also needs to be listed under `built_for_0915`, which a milestone's commit fills as it builds them; that list only holds a rule back, never counts one done without its test.",
   "meta_rules": {
     "_what": "Rules whose subject is refusing what is not built, so a test expecting E0900 is evidence that they hold.",
     "rules": ["ATT-6", "CLI-19", "PHIL-12", "EFF-23"]
@@ -40,5 +40,9 @@
     "HR-1": "built (ODR-261): the figure of an edit to one function body of bench/bigpkg's live package (10,000 class instances kept, `generate.py --live`), from the save through `ember build --reload` and the runtime's load, plan, prepare and commit to the program's first result from the new body, measured before and after a change on one machine, published and gated like every figure (`tools/compile_budgets.py`, milestones.rs the_compilers_speed_is_measured_before_and_after_a_change_and_published); measured on the laptop: 10.91 s before (`3922e110`), 3.14 s after; the one second goes, no number being kept as a goal (ODR-282): the next cut writes the rule so",
     "BUD-3": "built: a change measured before and after on one machine, a figure worse than before beyond its spread failing (`tools/compile_budgets.py`); run on the reference laptop, since CI's shared runners report and do not fail (ODR-154): the next cut reconciles the rule's \"fails CI\" with that",
     "BUD-3a": "built: the before and after runs interleaved; not built: the calibration workload that makes a run on a disturbed machine inconclusive (ODR-283: the rule stands as written)"
-  }
+  },
+  "built_for_0915": [
+    "_The rules the development target marks new or changed in 0.9.15 whose 0.9.15 behaviour is built and tested (tools/phase_progress.py's condition 3). A milestone's commit adds the rules it builds; until then such a rule counts as unfinished whatever old test names it (the owner, 2026-10-28).",
+    "CLI-2", "RT-12"
+  ]
 }
