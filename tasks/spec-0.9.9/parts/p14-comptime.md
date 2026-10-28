@@ -100,7 +100,7 @@ type. A class field's offset is counted from the end of the object header, which
 being `Int(i64)`, `Float(f64)`, `Str(String)`, `Bool(bool)` or `Char(char)`: a user attribute's
 argument is named by the field it sets, a built-in attribute's positional argument by its position,
 and a name written as an argument (`@derive(Eq)`) is its text. An `@attribute` struct's fields are
-of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: Reflect]()`
+of those types (`E0104` otherwise). `@reflect` implements `std.ser.Reflect`, which `type_info[T: needs Reflect]()`
 asks for (`E2040` without it), and a class derived from a `@reflect` class is `@reflect` too;
 `reflect[T]()` outside what compile time evaluates is `E6010`.
 
@@ -142,8 +142,8 @@ skips a field it does not know. A field missing from the data takes its type's `
 ## XIV.4 Serialisation (`std.ser`)
 
 * `[SER-1]` *(new in 0.9.9)* *(changed in 0.9.15)* `@derive(Serialize, Deserialize)` implements the method
-  `[W: ser.Writer]` above `fn serialize(ref mut w: W) -> Result[void, SerError]` and the function
-  `[R: ser.Reader]` above `static fn deserialize(ref mut r: R) -> Result[Self, SerError]`, over a
+  `[W: needs ser.Writer]` above `fn serialize(ref mut w: W) -> Result[void, SerError]` and the function
+  `[R: needs ser.Reader]` above `static fn deserialize(ref mut r: R) -> Result[Self, SerError]`, over a
   field-tagged, versioned format; both are monomorphised per format, and each call says `ref mut`
   before the writer or reader (`p.serialize(ref mut w)`, `Point.deserialize(ref mut r)`).
   `std.ser.binary` and `std.ser.json` provide a writer and reader each. Field attributes: `@ser(skip)`, `@ser(rename="…")`,

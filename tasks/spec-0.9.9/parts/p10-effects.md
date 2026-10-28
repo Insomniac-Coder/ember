@@ -29,7 +29,7 @@ The compiler infers, for every function, an **effect set** drawn from:
   to the next `yield`, and dropping a suspended one those of the drops it performs (ODR-057).
 * `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call through a function value contributes the
   effects of every function the program can put there. For a type parameter bounded by a function type
-  (`[F: fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the function given, per instance.
+  (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the function given, per instance.
   For a parameter, field, list element or local of a function type, it is every lambda and named
   function stored into that type anywhere in the program, a library's included. For an interface, `dyn`
   or `virtual` method, it is every implementation and override the program has. A foreign function
@@ -308,7 +308,7 @@ compute the same bits, on one machine and across machines running the same binar
 | Virtual method call | conditionally elided | a load of the slot and one indirect call (`[DSP-2]`); direct when one implementation is reachable (`[DSP-5]`) |
 | Generic call, monomorphised | not observable | a direct, inlinable call |
 | Generic call, shared (`[MONO-6]`) | guaranteed present | one indirect call per bound method; only above a declared instantiation budget |
-| A function given through a type parameter (`[F: fn(Item)]`) | not observable | a direct, inlinable call; one instance per function given |
+| A function given through a type parameter (`[F: needs fn(Item)]`) | not observable | a direct, inlinable call; one instance per function given |
 | A call through a function value (a parameter, field, list element or local of a function type) | guaranteed present | one indirect call; a call through a list element or a field first copies the value's two words, its code and its state, out of it |
 | A function value's state | guaranteed present | a variable kept with a capture word (`owns`, `copy of`, `shares`, `thread_shared`, `weakref`) lives in the function value's own state (`[CLO-10]`), and costs nothing beyond it; a captured real variable stays at its own address and costs nothing; a function that ends its own state while it runs and then uses it holds one count on that state across the call |
 | `some I` return | not observable | the concrete type is known |
@@ -323,7 +323,7 @@ compute the same bits, on one machine and across machines running the same binar
 | 64-bit `int` | guaranteed present | `int` is `i64`, so an `Array[int]` moves twice the bytes of C's 32-bit `int`; dense numeric data uses `i32`/`f32` elements (`L4003`) |
 | Sorting floats | not observable | `sort` on floats compares by IEEE totalOrder (`[TYP-37]`), a few integer instructions per compare |
 | Arena allocation | guaranteed present | a pointer bump |
-| A value made `using` a memory manager | guaranteed present | each allocation and free of the value is the manager's own work (an arena: a pointer bump, nothing freed one by one); a value whose manager may have several instances keeps one word, its instance's address, so that its growth and its end go back to that instance; none for `Global` or `System` |
+| A value made `using` a memory manager | guaranteed present | each allocation and free of the value is the manager's own work (an arena: a pointer bump, nothing freed one by one); a value whose manager may have several instances keeps one word, its instance's address, so that its growth and its end go back to that instance; none for `Global` or `System`, none for a value that does not grow in a manager that frees nothing one by one, and none in a manager that implements `FoundByAddress` (a mask and a load find its instance; verdict 107, measured in `tasks/96/redesign/measure-0.9.15/RESULTS.md` section 7: a million small values 191 ms and 28.2 MB with no word, 241 ms and 44.7 MB with it, C 191 ms and 28.2 MB) |
 | Allocation | guaranteed present | a call that allocates (a collection growing, a `String` built), reported per site; `@noalloc` refuses it (`[EFF-1]`) |
 | `contains` | guaranteed present | the `contains` an `x in c` selects: linear for an array or view, constant for a set or map (`[STD-8a]`) |
 | A lock | guaranteed present | where the program takes one (`with x.lock:`, `m.lock()`): the lock C takes; nothing per use of a `guarded by` field (`[THR-18]`) |

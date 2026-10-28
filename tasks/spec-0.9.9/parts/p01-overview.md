@@ -212,7 +212,8 @@ it is passed to.
 Ember deliberately has none of these: a tracing garbage collector or a cycle collector (a loop of
 owners is proved opened again or rejected, and a link back is a `weakref`, `[WK-6]`); exceptions or
 unwinding (failures are values or panics, Part XIII); implicit numeric narrowing; function overloading
-and variadic functions, apart from the output functions (`[TYP-26]`); macros (`macro` is reserved);
+and C's untyped variadic functions outside `unsafe` (Ember's own take any number of typed values,
+`[TYP-47]`); macros (`macro` is reserved);
 named lifetimes, ever (`[LEX-22]`); an aliasing or exclusivity check while the program runs
 (`[BRW-1]`); specialisation or higher-kinded types; dynamic or structural typing (`[TYP-40]`); a safety
 check that depends on the profile (`[PRF-1]`); a correctness property that depends on whole-program

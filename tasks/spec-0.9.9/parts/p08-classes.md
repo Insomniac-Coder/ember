@@ -86,7 +86,8 @@ offset  size  field
   `weakref` link may reach is at once.
 * `[OBJ-4]` *(changed in 0.9.10)* *(changed in 0.9.15)* Objects are allocated through the runtime
   allocator (`[RT-1]`), or from the memory manager the class names with `using` (`[ALC-1]`), except as
-  `[OPT-1]` permits.
+  `[OPT-1]` permits. An object made in a manager keeps its instance's address only as `[ALC-1]` says:
+  none in a manager that frees nothing one by one, or in one that implements `FoundByAddress`.
 * `[OBJ-5]` *(changed in 0.9.15)* **An ended object is never brought back.** Inside a `drop`, and in
   everything it calls (by their summaries, `[EFF-1]`), no owner is made of the object being ended: an
   owner made from `this` (`shares this`, `shares mut this`, `thread_shared this`) is `E3016`, as storing
@@ -199,7 +200,8 @@ offset  size  field
      of a local that owns one, and no call that may do so, worked out from its code (`[EFF-1]`):
      `remove_all(ref mut players)`, given the list that owns the players; a call through a function
      value that may run `fn() owns players: players.clear()`; the end of an object whose `drop` may end
-     one (`[DRP-8]`). After such a line or call the view is not used (`E3060`: "`remove_all(ref mut
+     one (`[DRP-8]`); a hand-over of one, or of an object that owns one, to another thread, which may
+     move it (`[THR-2]`). After such a line or call the view is not used (`E3060`: "`remove_all(ref mut
      players)` (line 12) may destroy the player `p` reads (`if cam.target exists as p:`, line 10), and
      `p` is used on line 13; use `p` before line 12, or open the link again after it: write
      `if cam.target exists as q:` above line 13, indent line 13 under it and use `q` there"; "`reset()`
@@ -344,7 +346,8 @@ no access words, and no change of a field begins or ends anything at run time.
 * `[WK-12]` *(changed in 0.9.9)* *(changed in 0.9.15)* **Opening a link.** A `weakref` link is read by
   opening it with `exists as` (`[GRM-44]`): `if cam.target exists as p:` tests the target's header
   (does the object still live?) and runs its block, with `p` a view of the object, when it does;
-  `else:` runs when the link holds nothing or its target is ended. Each opening is one test of the
+  `else:` runs when the link holds nothing or its target is ended (a target handed to another thread
+  is ended here, `[THR-2]`). Each opening is one test of the
   header, except a parent-link read proved by `[WK-17]`. For a `thread_shared` target the opening adds
   one owner only to a value that is not ended, so an object another thread is ending is never brought
   back, and the view holds that count for its life (`[RC-5]` point 2): on the making thread, until the

@@ -11,10 +11,11 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E0008': ('unterminated character literal', ['LEX-22']),
  'E0009': ('malformed literal', ['LEX-26']),
  'E0100': ("unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose "
-           "message gives the declaration to write: `static mut FRAME: int = 0`), and a clause after a function's "
+           "message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or "
+           "joined with `+` (whose message gives the line with `needs`), and a clause after a function's "
            'brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose '
            'message gives the first line to write',
-           ['GRM-2']),
+           ['GRM-2', 'TYP-17']),
  'E0101': ('unclosed delimiter or literal', ['LEX-6']),
  'E0102': ('membership test chained (`a in b in c`)', ['GRM-23']),
  'E0103': ('match arms mix statement and expression form', ['GRM-10']),
@@ -78,8 +79,9 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E2037': ('a kind test that can never pass: the type tested for does not implement the interface, or derive from the '
            'base class, of the value tested',
            ['TYP-44', 'DSP-4']),
- 'E2040': ('unsatisfied interface bound; for a `pub` generic whose bounds are not written, one message on the first '
-           'line of its body that needs a missing bound, giving every bound the body needs',
+ 'E2040': ('unsatisfied interface bound; for a `pub` generic whose bounds are not written, or a generic that writes '
+           'some of its bounds and not all the body needs, one message on the first line of its body that needs a '
+           'missing bound, giving the whole line of what it needs',
            ['IFC-6', 'TYP-17', 'BLD-14']),
  'E2041': ('overlapping `extend` implementations', ['TYP-19']),
  'E2042': ('`Float` is implemented only by `f32` and `f64`', ['STD-27']),
@@ -332,8 +334,7 @@ LIVE_0915 = {'E0001': ('invalid UTF-8 in source', ['LEX-1']),
  'E7014': ('a `thread_shared` value changed directly', ['THR-1']),
  'E7015': ('a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) or a lent value reaches another '
            "thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a "
-           'plain `fn()` field of a class whose object is made `thread_shared` (at that line), or a class object '
-           'handed to another thread while a `weakref` link on this thread points at it',
+           'plain `fn()` field of a class whose object is made `thread_shared` (at that line)',
            ['THR-1', 'THR-2', 'THR-10', 'CLO-16', 'FFI-22']),
  'E7016': ('a `@parallel` loop over something it cannot split into chunks: neither a range nor a list walked by '
            'element',

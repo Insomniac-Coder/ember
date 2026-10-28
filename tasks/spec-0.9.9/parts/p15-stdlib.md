@@ -31,7 +31,7 @@ anything this Part leaves open.
   * `range(stop)`, `range(start, stop)`, `range(start, stop, step)` count as Python's do, including a
     negative `step`; `step == 0` panics. `range(n)` is `0..n`, and every form compiles to a counted
     loop (`[CTL-3b]`).
-  * `enumerate(it, start=0)`, `zip(a, b)` (stops at the shorter) and `reversed(x)` (for what can run
+  * `enumerate(it, start=0)`, `zip(a, b, …)` (any number of iterables, `[TYP-47]`; stops at the shortest) and `reversed(x)` (for what can run
     backwards) return lazy iterators, as Python 3's do.
   * `sum(it, start=0)`, `any(it)` and `all(it)` consume an iterable (of numbers, of `bool`s);
     `any(x > 0 for x in xs)` uses a generator expression (`[GRM-38]`).
@@ -80,10 +80,15 @@ anything this Part leaves open.
 
 * `[STD-9]` *(new in 0.9.9)* *(changed in 0.9.15)* `print(a, b, …, sep=" ", end="")` and `println(a, b, …, sep=" ",
   end="\n")` write their arguments' text to standard output separated by `sep`;
-  `eprint`/`eprintln` write to standard error. They are compiler-known and are the only calls with a
-  variable number of positional arguments (`[TYP-26]`). An argument's text is its `Display` text when
-  its type has `Display`, and its `Debug` text otherwise, which is Python's `str` → `repr` fallback; a
-  type with neither is `E2040`, whose help is to implement `Display`. A class object always has
+  `eprint`/`eprintln` write to standard error. They are ordinary functions of the library, with a pack
+  (`[TYP-47]`, verdict 117): `[Ts...: needs Printable]` above
+  `pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "
+"):`. The compiler implements
+  `Printable` (§IV.8, in the prelude) for every type that has `Display` or `Debug`, which no program
+  can write by hand: an argument's text is its `Display` text when its type has `Display`, and its
+  `Debug` text otherwise, which is Python's `str` → `repr` fallback; a type with neither is `E2040`,
+  whose help is to implement `Display`. A program's own function takes any number of printable values
+  the same way (`[Ts...: needs Printable]` above `fn log(values: Ts...):`). A class object always has
   `Debug`, its class and address
   (`[TYP-36]`), so a class without a written `Display` prints by it (ODR-113). `println()` prints an
   empty line.
@@ -96,8 +101,8 @@ anything this Part leaves open.
 * `[STD-18]` *(new in 0.9.9)* *(changed in 0.9.15)* `format(value, spec="") -> String` formats one value with a format spec
   (`[LEX-19]`), like Python's `format`; the spec is a string literal, checked against the value's type
   where it is written, as an f-string's is (`E2250`, ODR-168).
-  `format_to(ref mut buf: MutSpan[u8], …) -> Result[StrView, FmtError] from buf` formats into a
-  caller's buffer, called `format_to(ref mut buf, …)`, and gives a view of the text it wrote there; its
+  `format_to(ref mut buf: MutSpan[u8], values: Ts...) -> Result[StrView, FmtError] from buf`, under
+  `[Ts...: needs Printable]`, formats into a caller's buffer, called `format_to(ref mut buf, …)`, and gives a view of the text it wrote there; its
   own machinery never allocates, so the call allocates only if a value's
   `Display` does (`[EFF-1]`). An f-string lowers to a `StringBuilder` sized from its
   literal parts.
@@ -179,7 +184,7 @@ anything this Part leaves open.
 * `[STD-15]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Array[T]`** is a growable contiguous list (Python's `list`).
   `len`, `is_empty`, `capacity`, `reserve`, `push`, `pop -> Option[T]`, `insert(i, v)`, `remove(i) -> T`,
   `swap_remove(i) -> T`, `extend(iterable)`, `truncate`, `clear`, `retain(keep)`,
-  `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: Ord`; an inconsistent order
+  `drain(r) -> Array[T]`, `dedup`, `reverse`, `sort` (stable; `T: needs Ord`; an inconsistent order
   permutes but never corrupts, `[HASH-3]`), `sort_by_key(f)`, `sort_by(cmp)`, `sorted() -> Array[T]`,
   `binary_search(x) -> Result[int, int]`, `index_of(x) -> Option[int]`, `first`, `last`,
   `get(i) -> Option[ref T]`, `get_mut`, `get_pair_mut(i, j) -> Option[(ref mut T, ref mut T)]`
@@ -187,8 +192,8 @@ anything this Part leaves open.
   (for elements that are `Display`), and `x in xs` (`[STD-8]`). `xs[i]` takes any integer and panics
   when `i < 0` or `i >= len` (`[TYP-31]`); `xs.get(i)` names an element as `xs[i]` does, as a
   position. The methods given a function call it right away and take it as a type parameter:
-  `[F: fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: Ord, F: fn(T) -> K]` above
-  `fn sort_by_key(owns f: F):`, and `[F: fn(T, T) -> Ordering]` above `fn sort_by(owns cmp: F):`; the
+  `[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`, `[K: needs Ord, F: needs fn(T) -> K]` above
+  `fn sort_by_key(owns f: F):`, and `[F: needs fn(T, T) -> Ordering]` above `fn sort_by(owns cmp: F):`; the
   call counts as making what the function given changes (`[STD-19]`), so `LOG.retain(keep)` with a
   `keep` that pushes to `LOG` is `E3022`. Each changes the list it is called on, and every method that
   adds, removes, reorders or replaces elements is a reshape: it ends every view into the list, and may
@@ -202,7 +207,7 @@ anything this Part leaves open.
   insertion order**, like Python's `dict`. Re-assigning an existing key keeps its position; removing
   a key keeps the order of the others. Lookup, insertion and removal take expected constant time,
   amortised: a map may grow, or close up removed entries, inside an insertion or a removal;
-  iteration is linear in the number of entries. `H: Hasher + Default`, and a map makes a fresh `H`
+  iteration is linear in the number of entries. `H: needs (Hasher, Default)`, and a map makes a fresh `H`
   for each hash. Its memory comes from the built-in memory manager, or from one of kind `A` written
   `Map[K, V] using A`, whose instance the line that makes the map names (`[ALC-1]`).
   `Set[T, H = DefaultHasher]` (and `Set[T] using A`) is the same with no values. Keys, values and
@@ -214,12 +219,12 @@ anything this Part leaves open.
 * `[STD-16]` *(new in 0.9.9)* *(changed in 0.9.15)* **`Map` operations.** `m[k]` reads the value and panics when the key is
   missing (`key not found: <Debug of k>; use .get(k) for an Option`); `m[k] = v` inserts or replaces
   (`[STD-17]`); `m[k] += 1` requires the key to exist and panics with the same message. The
-  lookups take any `q: Q` with `Q: AsKey[K]` (`[STD-12]`): `get(q) -> Option[ref V]`,
-  `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: Copy`),
+  lookups take any `q: Q` with `Q: needs AsKey[K]` (`[STD-12]`): `get(q) -> Option[ref V]`,
+  `get_mut(q) -> Option[ref mut V]`, `get_or(q, default) -> V` (for `V: needs Copy`),
   `contains_key(q) -> bool`, `remove(q) -> Option[V]`, `m[q]` and `q in m`. `insert(k, v) ->
   Option[V]` and `entry(k)` take the key itself; `entry(k)` is a `MapEntry` with `or_insert(v)`,
-  `or_insert_with(f)` (`[F: fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
-  and `or_default()` (for `V: Default`), each returning `ref mut V`, a place
+  `or_insert_with(f)` (`[F: needs fn() -> V]` above `fn or_insert_with(owns f: F) owns this -> ref mut V:`)
+  and `or_default()` (for `V: needs Default`), each returning `ref mut V`, a place
   (`counts.entry(k).or_default() += 1`).
   `keys()`, `values()`, `values_mut()` and `items()` are the view iterators
   `MapKeys`, `MapValues`, `MapValuesMut` and `MapItems`, yielding `ref K`, `ref V`, `ref mut V` and
@@ -229,7 +234,7 @@ anything this Part leaves open.
   own name or through a call (`counts[k] *= 2` and `counts.insert(...)` inside it are `E3020`); the
   loop's own name changes the value it is on (`for k, ref mut v in counts: v *= 2`).
   Also `Map[K, V]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`,
-  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep)` (`[F: fn(K, V) -> bool]` above
+  `reserve(n)`, `try_reserve(n)`, `clear`, `retain(keep)` (`[F: needs fn(K, V) -> bool]` above
   `fn retain(owns keep: F):`), `pop_item() -> Option[(K, V)]` (the newest entry, as `dict.popitem`),
   `update(other)` (inserts `other`'s entries in its order) and `into_items() -> Array[(K, V)]` (takes
   the map over, `owns this`, and gives its entries in order).
@@ -239,20 +244,20 @@ anything this Part leaves open.
   `Set`: `Set[T]()`, `with_capacity(n)`, `len`, `is_empty`, `capacity`, `reserve(n)`,
   `try_reserve(n)`, `clear`; `add(x) -> bool` (whether `x` was new; an element already there keeps
   its position); taking `q: AsKey[T]`, `remove(q) -> bool`, `contains(q) -> bool` and `q in s`;
-  `retain(keep)` (`[F: fn(T) -> bool]` above `fn retain(owns keep: F):`), `pop() -> Option[T]` (the
+  `retain(keep)` (`[F: needs fn(T) -> bool]` above `fn retain(owns keep: F):`), `pop() -> Option[T]` (the
   newest), `iter()` (a `SetIter` yielding `ref T`); `union`, `intersection`, `difference` and
   `symmetric_difference` of another `Set`, which they read, return a new `Set` of copies (for
-  `T: Clone`), this set's elements first in its order and then the
+  `T: needs Clone`), this set's elements first in its order and then the
   other's; `is_subset`, `is_superset`, `is_disjoint`; and the operators `|`, `&`, `-` and `^`.
   `s1 == s2` compares as sets.
 * `[STD-12]` *(new in 0.9.9)* *(changed in 0.9.15)* **Keys looked up by a view.** Lookup methods, `m[k]` and `k in m` accept
-  any key type `Q` with `Q: AsKey[K]`: `K` itself, and `StrView` for `K = String`.
-  `interface AsKey[K]: Hash` (in `std.collections`, not the prelude) has the method
-  `fn is_key(key: K) -> bool`; `interface ToKey[K]: AsKey[K]` adds `fn to_key() -> K`, which makes the
+  any key type `Q` with `Q: needs AsKey[K]`: `K` itself, and `StrView` for `K = String`.
+  `interface AsKey[K]: needs Hash` (in `std.collections`, not the prelude) has the method
+  `fn is_key(key: K) -> bool`; `interface ToKey[K]: needs AsKey[K]` adds `fn to_key() -> K`, which makes the
   key (ODR-067). A lookup hashes `q` and compares it with `is_key`, so it never converts or copies a
-  key. `m[q] = v` needs `Q: ToKey[K]` and calls `to_key()` only when the key is new, never to replace
+  key. `m[q] = v` takes a `Q: needs ToKey[K]` and calls `to_key()` only when the key is new, never to replace
   the value of an existing one, so a new key written through a `StrView` is stored as the map's own
-  `String`. Every `K: Eq + Hash` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also
+  `String`. Every `K: needs (Eq, Hash)` is `AsKey[K]` (`is_key` is `==`), and `ToKey[K]` when it is also
   `Clone` (`to_key` gives `copy of` the key): a key type that cannot be copied is looked up and removed
   by value and inserted with `insert`, which takes the key over. std implements `AsKey[String]` and
   `ToKey[String]` for `StrView`. An
@@ -263,14 +268,14 @@ anything this Part leaves open.
   value). `Map` implements `IndexSet`; `Array` does not need to. A compound assignment `a[i] op= v`
   always goes through `IndexMut`. `Array` and `MutSpan` implement `Index[int]` and `IndexMut[int]`,
   and `Span` `Index[int]`, through their built-in indexing; `Map[K, V]` implements `Index[Q]` and
-  `IndexMut[Q]` for every `Q: AsKey[K]`, and `IndexSet[Q, V]` for every `Q: ToKey[K]` (blanket
+  `IndexMut[Q]` for every `Q: needs AsKey[K]`, and `IndexSet[Q, V]` for every `Q: needs ToKey[K]` (blanket
   implementations, `[GRM-34]`, ODR-042, ODR-067).
 * `[STD-7]` Fixed-capacity containers with no heap allocation: `FixedArray[T, N]`, `FixedString[N]`
   and `RingBuffer[T, N]`; `push` returns `Result[void, CapacityError]` and `push_or_drop` discards when
   full. Also `Deque[T]`, `SmallArray[T, N]` (inline up to `N`, then heap), `BitSet`.
 * `[STD-8]` *(changed in 0.9.15)* **`Contains`.** `x in c` requires `c: Contains[typeof(x)]` (`E2226` otherwise, whose help
   is `c.iter().any(fn(e) => e == x)`). `std` implements it for `Set` and `Map` (by key); for `Array`,
-  `Span`, `MutSpan` and `[T; N]` with `T: Eq`, as a linear scan; for `StrView`/`String`, as a substring or
+  `Span`, `MutSpan` and `[T; N]` with `T: needs Eq`, as a linear scan; for `StrView`/`String`, as a substring or
   character test; for ranges, as two comparisons. The compiler never synthesises an implementation.
 * `[STD-8a]` `ember inspect --cost` reports which `contains` a use selects and its complexity, so
   `x in array` is visibly linear and `x in set` visibly constant.
@@ -288,7 +293,7 @@ anything this Part leaves open.
   `reduce`, `any`, `all`, `find`, `position`, `last`, `nth`, `min_by`, `max_by`, `for_each`,
   `collect[C]()`, `to_array()`,
   and `join(sep)` for `Display` items. `copy_each()` gives, for each item, what `copy of` the item
-  would make (for `Item: Clone`): `names = sorted(m.keys().copy_each())` is a list of strings of its
+  would make (for `Item: needs Clone`): `names = sorted(m.keys().copy_each())` is a list of strings of its
   own, kept past changes to `m`; `.copied()` and `.cloned()` are not Ember (`E1010`, "write
   `.copy_each()`"). Adapters are lazy and allocate nothing themselves; what the functions they apply
   do counts where they run (`[EFF-1]`). A chain of adapters in a
@@ -299,9 +304,9 @@ anything this Part leaves open.
   does a consumer; `zip` and `chain` take their other iterator over too, so a named iterator given to
   `zip` is handed over (`copy of it` keeps the caller's). **A function is taken as a type
   parameter**, by the adapters that apply one and the consumers alike (`any`, `all`, `find`,
-  `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: fn(Item)]` above
-  `fn for_each(owns f: F) owns this:`, `[F: fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
-  bool:`, `[F: fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
+  `position`, `fold`, `reduce`, `for_each`, the `…_by` and `…_by_key` forms): `[F: needs fn(Item)]` above
+  `fn for_each(owns f: F) owns this:`, `[F: needs fn(Item) -> bool]` above `fn any(owns f: F) owns this ->
+  bool:`, `[F: needs fn(Item)]` above `fn inspect(owns f: F) owns this -> Inspect[Self, F]:`. `F` names the
   exact function given, so the adapter or consumer is compiled once for each function given to it and
   the call through `f` is direct and may be inlined; the shared type, `owns f: fn(Item)`, is legal too,
   and is what keeps functions of different kinds in one list (`handlers: Array[fn()]`). The function
@@ -374,14 +379,14 @@ anything this Part leaves open.
   `enumerate` numbers its last item `start + len - 1` first, and the items `skip_back` leaves out
   need no numbers. `collect[C]()` builds any `C` that implements `FromIterator[Item]` (ODR-094), an interface of
   `std.core` that is not a prelude name: `interface FromIterator[T]:` declares
-  `[I: Iterator[Item = T]]` above `static fn from_iter(owns it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
+  `[I: needs Iterator[Item = T]]` above `static fn from_iter(owns it: I) -> Self`. `Array[T]`, `Set[T]`, `Map[K, V]` (from `(K, V)` pairs, a later pair's
   value replacing an earlier one's for the same key) and `String` (from `char`s and from `String`s)
   implement it, and so may a program's own types. `C` is written (`it.collect[Array[int]]()`) or is
   the type the call is expected to give (`a: Array[int] = it.collect()`). `flatten` is for items that
   are themselves iterable (`IntoIterator`). `peekable()` gives the same items with
   `fn peek() -> Option[ref Item]` and `fn peek_mut() -> Option[ref mut Item]`, which take the next item early
   and keep it where it is until `next` gives it; `next_if(pred)` gives the next item when `pred` holds
-  for it and leaves it otherwise, and `next_if_eq(v)` when it equals `v` (`Item: Eq`).
+  for it and leaves it otherwise, and `next_if_eq(v)` when it equals `v` (`Item: needs Eq`).
 * `[STD-5]` *(changed in 0.9.9)* `sum` and `product` combine elements left to right in the element
   type; an empty sum is zero. Integer sums panic on overflow (`[TYP-8]`). Float sums are never
   reassociated outside `@fastmath` (`[TYP-9]`), so they are deterministic; `sum_f64()` accumulates
@@ -430,7 +435,7 @@ anything this Part leaves open.
   and answer a `T`; an overflow still panics (`[TYP-8]`) (ODR-047).
 * `[STD-21]` *(new in 0.9.9)* *(changed in 0.9.15)* `std.math` provides `PI`, `TAU`, `E`; `sin`, `cos`, `tan`, `asin`, `acos`,
   `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `exp`, `exp2`, `ln`, `log2`, `log10`, `pow`, `sqrt`, `rsqrt`, `cbrt`,
-  `hypot`, `lerp`, `smoothstep`, each taking any number type (`[T: Number]` above
+  `hypot`, `lerp`, `smoothstep`, each taking any number type (`[T: needs Number]` above
   `fn f(x: T) -> T.Real`, `[STD-27]`): an integer's answer is an `f64` (`math.sqrt(9)` is `3.0`), an `f16`'s and an `f32`'s
   an `f32`, and an `f64`'s an `f64`; and the vector, matrix, rotation and shape types of `[STD-28]`,
   with `dot`, `cross`, `length`, `normalize` (panics on a zero vector; `normalize_or_zero` does not)
@@ -438,12 +443,12 @@ anything this Part leaves open.
   untyped constants (V.7): `x: f32 = math.PI` is `PI` rounded to `f32`, and with nothing to fix its
   type a use is `f64`.
 * `[STD-27]` *(new in 0.9.9)* `std.math.Number` is every number type. `std.math` adds each with an
-  `extend … implements Number` block stating its `type Real: Float`, the decimal type its answers
+  `extend … implements Number` block stating its `type Real: needs Float`, the decimal type its answers
   come back as (`f64` for every integer type, `f32` for `f16`, which it holds exactly (ODR-041), and
-  itself for `f32` and `f64`), and `to_real`, which turns it into one. `[STD-21]`'s functions take `T: Number` and answer in `T.Real` (`[IFC-4]`); a program
+  itself for `f32` and `f64`), and `to_real`, which turns it into one. `[STD-21]`'s functions take `T: needs Number` and answer in `T.Real` (`[IFC-4]`); a program
   may add its own number types the same way (ODR-038). `std.math.Float` is the decimal types:
   `std.math` makes `f32` and `f64` implement it (`extend f32 implements Float`), and implementing it
-  for any other type is `E2042`. A bound `T: Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
+  for any other type is `E2042`. A bound `T: needs Float` provides, inside a generic body, `Copy`, `Eq`, `Ord` (`[TYP-37]`) and `Default`;
   the arithmetic operators `+`, `-`, `*`, `/`, `//`, `%`, `**` and unary `-` on two `T`s, with a `T`
   result; an untyped numeric literal adopting `T` wherever a `T` is expected, as it would adopt `f32`
   or `f64`; and as methods the float methods of `[STD-20]` and `[STD-21]`'s `sin` through `hypot`

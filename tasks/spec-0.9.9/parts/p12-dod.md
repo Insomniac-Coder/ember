@@ -51,7 +51,7 @@ fn main():
   it (`E3060` at a later use). A proxy's field `ps[i].f` is a place in column `f` at index `i`; reading
   or writing it touches that column only, and no `T` is assembled. `ps.get(i) -> Option[SoARef[T]]`
   names element `i` as `ps[i]` does, with no copy, as `Array.get` does. `copy of ps[i]` gathers a `T`
-  of your own (for `T: Clone`) by the proxy's `load()`, the method `copy of` runs here as it runs
+  of your own (for `T: needs Clone`) by the proxy's `load()`, the method `copy of` runs here as it runs
   `clone` elsewhere; `load()` written at a use is `E1010` ("write `copy of ps[0]`"). `ps[i] = v`
   scatters a value. `for p in ps:` yields `SoARef[T]`, `for ref mut p in ps:` yields `SoAMut[T]`. While
   an `SoAMut[T]` is still used it is the only name of its element: a column named separately that
@@ -206,22 +206,22 @@ fn main():
   generation); `valid(e)`, `current(e)`; `clear()` and `clear_of[T]()`; `emplace(e, owns value: T) -> ref
   mut T`, `emplace_or_replace(e, owns value: T) -> ref mut T`, `replace(e, owns value: T) -> ref mut T`
   (a stop when `e` has no `T`), `patch[T](e, f: fn(ref mut T)) -> ref mut T`, `insert(entities:
-  Span[Entity], value: T)` for a `T: Clone`; `remove[T](e) -> int` (0 when absent) and `erase[T](e)` (a
+  Span[Entity], value: T)` for a `T: needs Clone`; `remove[T](e) -> int` (0 when absent) and `erase[T](e)` (a
   stop when absent); `get[T](e) -> ref T` and `get_mut[T](e) -> ref mut T`, `try_get[T](e) -> Option[ref
   T]` and `try_get_mut[T](e) -> Option[ref mut T]`, `get_or_emplace(e, owns value: T) -> ref mut T`;
-  `all_of[(A, B)](e)` and `any_of[(A, B)](e)`; `orphan(e)`; `storage[T]() -> ref mut Storage[T]`, which a
-  `for e, ref mut value in reg.storage[T]()` walks. Several types are one tuple type (`[(A, B)]`), since
-  Ember has neither variadic generics nor overloading (`[TYP-19]`). A view a method gives points into the
+  `all_of[A, B](e)` and `any_of[A, B](e)`; `orphan(e)`; `storage[T]() -> ref mut Storage[T]`, which a
+  `for e, ref mut value in reg.storage[T]()` walks. Several types are listed in the brackets, any number of
+  them (`[A, B]`, one alone `[A]`; variadic generics, `[TYP-47]`, verdict 115). A view a method gives points into the
   registry (`[LT-1]`), so the registry is not changed through another name while it is used (§VII).
-* `[ECS-4]` *(changed in 0.9.15)* **Views.** `reg.view[(A, B)]()` walks the entities that have every
-  listed component and gives each item read-only (`for e, a, b in reg.view[(A, B)]():`);
-  `reg.view_mut[(A, B)]()` gives every item `ref mut` (`for e, ref mut a, ref mut b in
-  reg.view_mut[(A, B)]():`), which changes the values in place. The items of one entity are values of
-  different types, so they never name one place. `.exclude[(C,)]()` leaves out the entities that have a
+* `[ECS-4]` *(changed in 0.9.15)* **Views.** `reg.view[A, B]()` walks the entities that have every
+  listed component and gives each item read-only (`for e, a, b in reg.view[A, B]():`);
+  `reg.view_mut[A, B]()` gives every item `ref mut` (`for e, ref mut a, ref mut b in
+  reg.view_mut[A, B]():`), which changes the values in place. The items of one entity are values of
+  different types, so they never name one place. `.exclude[C]()` leaves out the entities that have a
   `C`. A view has `each(f)`, `get[T](e)`, `contains(e)`, `size_hint()`, `front()` and `back()`. A view
-  walks its smallest pool and probes the others. The library implements its view interface for tuples
-  of 1 to 8 types with a blanket implementation over the element types (`[GRM-34]`), so any type is a
-  component.
+  walks its smallest pool and probes the others. A view takes any number of component types, with no
+  limit (`reg.view[Position]()`, `reg.view[Position, Velocity, Health, Armor]()`; variadic generics,
+  `[TYP-47]`), and any type is a component.
 * `[ECS-5]` *(changed in 0.9.15)* **Changing the registry while a view walks it.** A view walks the
   registry's pools, so while a `for` loop walks a view, adding, removing, creating or destroying through
   the registry is refused when compiling, as for any collection a loop walks (`[BRW-18]`, `E3020`: "`reg.destroy(e)`
@@ -238,7 +238,7 @@ fn main():
   `f: fn(ref mut Registry, Entity)`, which the registry calls after the change is made, when no view of
   a pool is in use, so a listener that changes the registry is safe (the call check, `[BRW-21]`, holds
   for the library's own code). `sort[T](less)` and `sort_as[To, From]()` reorder a pool. `ctx()` keeps
-  one value per type (`emplace`, `get`, `get_mut`, `find`, `contains`, `erase`). `group[(A, B)]()` packs
+  one value per type (`emplace`, `get`, `get_mut`, `find`, `contains`, `erase`). `group[A, B]()` packs
   the owned pools in one order. `Snapshot`, `SnapshotLoader` and `ContinuousLoader` save and load a
   registry through an archive given as a type parameter; `RuntimeView` walks pools chosen while the
   program runs; `Handle` pairs a registry and an entity.

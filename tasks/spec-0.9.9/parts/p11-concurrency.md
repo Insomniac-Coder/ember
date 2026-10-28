@@ -48,7 +48,7 @@ change one place unordered.
   fixed arrays, collections and class objects are `Send` when every component is; an `owns T` when `T`
   is; `ref T` and `Span[T]` when `T` is `ThreadShared`, `ref mut T` and `MutSpan[T]` when `T` is
   `Send`; a `thread_shared T`, and a `weakref` link to one, when `T` is `Send` and `ThreadShared`;
-  `dyn I` when `I` requires it (`interface I: Send:`). Of the function types, `thread_shared fn()` is
+  `dyn I` when `I` requires it (`interface I: needs Send:`). Of the function types, `thread_shared fn()` is
   `Send` (`[THR-1]`). A `Send` view still goes only where it cannot outlive what it views: to a scoped
   task or a job of a scope, never to an unscoped thread (`[THR-2]`). `Send` is inferred from the
   words and written only in bounds; the author of a type that holds a raw
@@ -58,9 +58,9 @@ change one place unordered.
   above it"). A thread-bound value sent to another thread is `E7008`.
 * `[THR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* A type is **`ThreadShared`** when several threads may
   hold and read one value of it at once. It is inferred like `Send` and written only in bounds
-  (`[T: ThreadShared]` above `fn keep(xs: Array[T]) -> int:`) and in messages; `Sync` in a bound is
+  (`[T: needs ThreadShared]` above `fn keep(xs: Array[T]) -> int:`) and in messages; `Sync` in a bound is
   `E1010` ("`Sync` is the effect `@nosync` forbids, not a property of a type; for 'threads may share
-  it' write `[T: ThreadShared]` above `fn keep(x: T)`"). Structural types are `ThreadShared` when every
+  it' write `[T: needs ThreadShared]` above `fn keep(x: T)`"). Structural types are `ThreadShared` when every
   component is. `ref mut T`, `Cell`, `UnsafeCell`, raw pointers, `shares T`, `shares mut T`, and a
   `weakref` link to a value that is not `thread_shared` are not. `Atomic[T]`, `Once`, `Lock`,
   `Mutex[T]` for a `Send` `T` (one thread at a time holds its `ref mut T`), `RwLock[T]` and
@@ -109,12 +109,23 @@ change one place unordered.
   than its target's owner, it is allowed only for a `thread_shared` target, whose counts are kept for
   several threads and whose opened view holds a count (`[RC-4]`, `[RC-5]` point 2; `E7015`: "`players[0]` counts its links without atomics, and
   the task on line 9 makes one too; make the links after the scope, or make the player
-  `thread_shared`"). An object handed whole to another thread while a `weakref` link on this thread
-  points at it is `E7015`, since this thread could open the link while the other thread ends the object
-  ("`names` goes to another thread, and `w` (line 15), a `weakref` link on this thread, still points at
-  it, so this thread could read it while the other thread ends it; give the thread a copy of its own:
-  write `h = thread.spawn(fn() copy of names: names.items.len())` in place of line 16"). So an object
-  that stays on one thread needs no atomic count.
+  `thread_shared`"). **An object handed whole to another thread leaves its `weakref` links behind**
+  (verdict 114; Rust's `Rc::try_unwrap`). At the hand-over the program reads the object's weak count,
+  one compare. With no link, the object goes as it is. With a link, its contents move to a new block
+  for the other thread, and the old block is marked ended (its `drop` does not run; the new block's
+  runs once, on the other thread) and stays on this thread until its last link ends, so every link here
+  finds it ended (`[WK-12]`): after `w = weakref names` and
+  `h = thread.spawn(fn() owns names: names.items.len())`, `if w exists as p:` is skipped and
+  `h.join()` gives 0. The same is done for every object the handed object owns whose class a `weakref`
+  is made to anywhere in the program (the compiler knows those classes; one compare each), so after
+  `cam.target = weakref level.enemies[0]`, handing `level` over leaves `cam.target` finding enemy 0
+  ended. An object whose address C keeps (`[FFI-35a]`) never moves: a link to it at the hand-over
+  stops the program ("`names` goes to another thread while `w`, a `weakref` link on this thread, points
+  at it, and C keeps its address (`register(names)`, line 4), so it cannot move; end the link first:
+  `w = None`"). A view opened from a link is not used after a hand-over that may move its object
+  (`[RC-5]` point 1). The other thread never touches this thread's counts: the old block stays here
+  with the links, and the new one starts with none. So an object that stays on one thread needs no
+  atomic count.
 * `[THR-7]` *(changed in 0.9.15)* `thread_shared` means exactly: the value may have owners on several
   threads, its counts are kept for several threads (`[RC-4]`), and no owner changes it directly (`[THR-1]`). It does not make a method
   atomic: two operations on `Atomic` fields, or a read and a store of one

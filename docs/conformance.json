@@ -18,7 +18,7 @@
         "XV.5",
         "XV.6"
       ],
-      "rules": 426,
+      "rules": 427,
       "done": 379,
       "missing": [
         "BRW-12",
@@ -67,7 +67,8 @@
         "STD-29",
         "TYP-44",
         "TYP-45",
-        "TYP-46"
+        "TYP-46",
+        "TYP-47"
       ]
     },
     {
@@ -81,7 +82,7 @@
         "XV.2",
         "XV.7"
       ],
-      "rules": 612,
+      "rules": 613,
       "done": 548,
       "missing": [
         "ALC-5",
@@ -143,6 +144,7 @@
         "TYP-44",
         "TYP-45",
         "TYP-46",
+        "TYP-47",
         "UNS-11",
         "UNS-12",
         "WK-16",
@@ -155,7 +157,7 @@
       "adds": [
         "XVI"
       ],
-      "rules": 675,
+      "rules": 676,
       "done": 605,
       "missing": [
         "ALC-5",
@@ -223,6 +225,7 @@
         "TYP-44",
         "TYP-45",
         "TYP-46",
+        "TYP-47",
         "UNS-11",
         "UNS-12",
         "WK-16",
@@ -235,7 +238,7 @@
       "adds": [
         "Annex B"
       ],
-      "rules": 738,
+      "rules": 739,
       "done": 661,
       "missing": [
         "ALC-5",
@@ -310,6 +313,7 @@
         "TYP-44",
         "TYP-45",
         "TYP-46",
+        "TYP-47",
         "UNS-11",
         "UNS-12",
         "WK-16",

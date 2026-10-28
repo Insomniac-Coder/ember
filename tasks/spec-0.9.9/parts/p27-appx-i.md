@@ -34,7 +34,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ARN-4]` | IX | *(changed in 0.9.15)* A growing `Arena` carries `Alloc` on its growth … |
 | `[ARN-5]` | IX | `ArenaArray[T]` and `ArenaMap[K, V]` are fixed-capacity containers … |
 | `[ARN-5c]` | IX | `ArenaArray[T]` provides `len`, `capacity`, `is_empty`, `get(i) -> … |
-| `[ARN-5d]` | IX | `ArenaMap[K, V]` (with `K: Eq + Hash`) provides `len`, `capacity`, … |
+| `[ARN-5d]` | IX | `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, … |
 | `[ARN-5g]` | IX | No operation of either container touches the arena after … |
 | `[ARN-6]` | IX | *(changed in 0.9.15)* `arena.scope() -> ScopedArena` is called … |
 | `[ARN-7]` | IX | *(changed in 0.9.15)* No operation lowers an arena's allocation … |
@@ -427,7 +427,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[ECS-1]` | XII | *(changed in 0.9.15)* `Entity` is a 32-bit generational handle: a … |
 | `[ECS-2]` | XII | *(changed in 0.9.15)* Each component type is stored in a pool of its … |
 | `[ECS-3]` | XII | *(changed in 0.9.15)* The registry. `Registry` (EnTT's … |
-| `[ECS-4]` | XII | *(changed in 0.9.15)* Views. `reg.view[(A, B)]()` walks the entities … |
+| `[ECS-4]` | XII | *(changed in 0.9.15)* Views. `reg.view[A, B]()` walks the entities … |
 | `[ECS-5]` | XII | *(changed in 0.9.15)* Changing the registry while a view walks it. A … |
 | `[ECS-6]` | XII | Iteration order is insertion order with swap-remove holes: … |
 | `[ECS-7]` | XII | *(changed in 0.9.15)* Any type is a component, with no registration … |
@@ -581,7 +581,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-33a]` | XVI | *(changed in 0.9.15)* Attaching a thread (`[FFI-22]`) gives it no … |
 | `[FFI-33b]` | XVI | *(changed in 0.9.15)* `returns_owned` results and callbacks may carry … |
 | `[FFI-33c]` | XVI | *(changed in 0.9.15)* Under `threads = main`, the exported wrapper … |
-| `[FFI-35a]` | XVI | A parameter with no `retained` word is recorded as "does not retain" … |
+| `[FFI-35a]` | XVI | *(changed in 0.9.15)* A parameter with no `retained` word is recorded … |
 | `[FFI-36]` | Annex C | *(changed in 0.9.15)* A C++ function returning a raw pointer with no … |
 | `[FFI-36a]` | XVI | *(changed in 0.9.15)* `std.ffi.adopt[T](h) -> owns T` is an `unsafe … |
 | `[FFI-36b]` | XVI | Adopting a type whose overlay says `adopt = false` is `E5052`. … |
@@ -694,7 +694,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[GRM-31]` | III | *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a … |
 | `[GRM-32]` | III | `comptime(e)` evaluates the expression `e` at compile time (`[CT-6]`). |
 | `[GRM-33]` | III | A bodiless `fn_decl` is legal only in an `interface`, an … |
-| `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares … |
+| `[GRM-34]` | III | *(changed in 0.9.10)* `extend [T: needs B] Array[T] implements I:` … |
 | `[GRM-35]` | XVI | *(changed in 0.9.15)* Overlay grammar. An overlay is a file whose … |
 | `[GRM-36]` | III | *(changed in 0.9.15)* `ref e`, `ref mut e` and `const ref mut e` name … |
 | `[GRM-37]` | III | *(changed in 0.9.15)* A directive is a line beginning `#!` before the … |
@@ -712,10 +712,10 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[HASH-1]` | IV | *(changed in 0.9.15)* `Hash.hash` is generic over `H: Hasher` and … |
+| `[HASH-1]` | IV | *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` … |
 | `[HASH-2]` | IV | `std.collections.DefaultHasher` is a fixed-seed hasher: the same keys … |
 | `[HASH-3]` | IV | *(changed in 0.9.15)* `Map` and `Set` MUST NOT weaken equality to … |
-| `[HASH-4]` | IV | `Map[K, V]` requires `K: Eq + Hash`. A map may call `hash` any number … |
+| `[HASH-4]` | IV | `Map[K, V]` requires `K: needs (Eq, Hash)`. A map may call `hash` any … |
 
 ## HEAP
 
@@ -819,7 +819,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[IFC-1]` | V | `extend T:` without `implements` adds inherent methods to `T`; it is … |
 | `[IFC-2]` | V | Adding inherent methods to a type from another package is `E2120`; … |
-| `[IFC-3]` | V | `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. … |
+| `[IFC-3]` | V | `interface Ord: needs Eq` requires implementers of `Ord` to implement … |
 | `[IFC-4]` | V | Interfaces may declare associated types and constants, not statics. … |
 | `[IFC-5]` | V | *(new in 0.9.15)* Interface values say who owns them. `owns dyn I` is … |
 | `[IFC-6]` | V | *(new in 0.9.15)* Bounds of a generic function. A function that is … |
@@ -1346,7 +1346,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-16]` | IV | Generic functions and types are monomorphised: each distinct … |
 | `[TYP-17]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are … |
 | `[TYP-18]` | IV | Generic arguments are inferred from the arguments of a call. Explicit … |
-| `[TYP-19]` | IV | *(changed in 0.9.15)* There is no specialisation, no higher-kinded … |
+| `[TYP-19]` | IV | *(changed in 0.9.15)* There is no specialisation and no higher-kinded … |
 | `[TYP-20]` | IV | Coherence is per package. An implementation of interface `I` for type … |
 | `[TYP-21]` | IV | *(changed in 0.9.15)* Operators desugar to these interfaces for … |
 | `[TYP-22]` | IV | *(changed in 0.9.10)* *(changed in 0.9.15)* An interface is usable as … |
@@ -1373,6 +1373,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[TYP-44]` | IV | *(new in 0.9.15)* Kind tests and casts. A value of an interface type … |
 | `[TYP-45]` | IV | *(new in 0.9.15)* Who owns a value, in its type. A type says how its … |
 | `[TYP-46]` | IV | *(new in 0.9.15)* Which memory manager. `using A` after a type whose … |
+| `[TYP-47]` | IV | *(new in 0.9.15)* Any number of types, and of values (verdicts 115 … |
 
 ## UNS
 

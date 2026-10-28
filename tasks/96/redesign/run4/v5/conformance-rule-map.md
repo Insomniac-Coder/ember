@@ -318,7 +318,7 @@
 | `R15/reject_a_view_of_the_frames_own_local_across_yield.em` | R15 | CORO-6 | precise |
 | `R15/reject_a_walk_under_the_lock_across_a_function_value_that_changes_log.em` | R15, R8, R12 | THR-19 | precise |
 | `R15/reject_an_any_thread_export_changes_a_static_mut.em` | R15 | THR-20 | precise |
-| `R15/reject_an_object_a_weakref_points_at_handed_to_another_thread.em` | R15, R12, R11 | THR-1, THR-2, THR-10, CLO-16, FFI-22 | precise |
+| `R15/accept_an_object_handed_to_another_thread_leaves_its_weakref_links_behind.em` | R15, R12, R11 | THR-1, THR-2, THR-10, CLO-16, FFI-22, WK-12 | precise |
 | `R15/reject_an_unmarked_c_function_inside_the_walk.em` | R15, R12, R8 | BRW-18, CTL-2 | precise |
 | `R15/reject_an_unscoped_thread_using_a_name_with_no_capture_word.em` | R15 | THR-17, THR-10 | precise |
 | `R15/reject_async_is_reserved.em` | R15 | LEX-14 | precise |

@@ -69,8 +69,8 @@ ember --help | --version [--matrix]
   `@borrows(p)` to `from p`, `@static_safe` to `@no_alias_checks`, `@fp(contract)` to
   `@fp(allow_fma)`, `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to
   `assert_disjoint`, a function's type parameters in brackets after its name to a line of their own
-  above it (`fn f[T: Add](x: T)` to `[T: Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
-  parameter to `x: T`, a `T: Sync` bound to `T: ThreadShared`, and `for x in xs.iter_mut():` to
+  above it (`fn f[T: Add](x: T)` to `[T: needs Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
+  parameter to `x: T`, a `T: Sync` bound to `T: needs ThreadShared`, and `for x in xs.iter_mut():` to
   `for ref mut x in xs:`. It does not rewrite what needs a choice the source does not say: `Shared[T]`
   (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
   `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
@@ -542,10 +542,10 @@ fn main():
   | P16 | `if x = 5:` | `E2036` | `if x == 5:` |
   | P17 | `case p:` inside `match` | `E0100` | `p:` (or `p =>`), without `case` |
   | P18 | `global x`, `nonlocal x` | `E0100` | remove the line: a function changes a module variable (`static mut`) by its name, and a lambda uses the real `x` unless its capture list names it (`[CLO-2]`) |
-  | P19 | `*args`, `**kwargs` in a signature | `E0100` | an `Array` or `Span` parameter, or keyword arguments with defaults; Ember has no variadic functions (§I.6) |
+  | P19 | `*args`, `**kwargs` in a signature | `E0100` | `[Ts...]` above the function and `args: Ts...` (`[TYP-47]`), an `Array` or `Span` parameter, or keyword arguments with defaults |
   | P20 | `"%d" % n`, `"{}".format(n)` | `E2020`, `E2072` | `f"{n}"` (`[LEX-19]`) |
   | P21 | `Err("…")` in a function whose error type is `AnyError` | `E2020` | `Err(AnyError.msg("…"))` (`[ERR-8]`) |
-  | P22 | an interface name as a type (`shapes: Array[Shape]`) | `E2173`; `E2020` at a use | `dyn Shape` as a parameter's type, `owns dyn Shape` (or `shares dyn Shape`) in a field or a list, or `[T: Shape]` above the function (`[OBJ-2]`) |
+  | P22 | an interface name as a type (`shapes: Array[Shape]`) | `E2173`; `E2020` at a use | `dyn Shape` as a parameter's type, `owns dyn Shape` (or `shares dyn Shape`) in a field or a list, or `[T: needs Shape]` above the function (`[OBJ-2]`) |
   | P23 | `s * n`, `[x] * n` | `E2020` | `s.repeat(n)`, `[x for _ in 0..n]` (`[PHIL-14]`) |
   | P24 | `'abc'`, `''` | `E0008` | `"abc"`, `""` |
   | P25 | `len(it)`, `it[i]` on an iterator (`s.split(",")`) | `E2072`, `E2020` | `.collect[Array[…]]()` where the iterator is made |

@@ -53,7 +53,7 @@ pays a count for nothing.
   `E2114`, since a class object always has a block of its own. It is not `Copy`, and it is `Clone` when
   `T` is: `copy of` it makes a new block holding a copy of the value, so a struct or enum with an `owns`
   field derives `Clone` (`[STR-5]`). `owns dyn I` is `Clone` when `I` requires it
-  (`interface I: Clone:`), copying through the entry `I`'s method table holds for it (`[TYP-22]`). A
+  (`interface I: needs Clone:`), copying through the entry `I`'s method table holds for it (`[TYP-22]`). A
   foreign type held `owns` is ended through its contract's destructor (Part XVI).
 * `[HEAP-3]` *(changed in 0.9.15)* A value with several owners (`shares`, `shares mut`,
   `thread_shared`) lives in one heap block that holds its owner count, and, where `weakref` links may
@@ -111,9 +111,9 @@ fn main():
   runs its `drop` and gives its block back to the arena, which frees nothing one by one. There is no
   `alloc_nodrop`.
 * `[ARN-3]` *(changed in 0.9.15)* `alloc(owns v: T) -> ref mut T` hands `v` over into the arena. `alloc_array[T](n) -> MutSpan[T]` requires `T` not to
-  need drop and `T: Default`, and initialises each element with `T.default()` in index order (`E2040`
+  need drop and `T: needs Default`, and initialises each element with `T.default()` in index order (`E2040`
   without `Default`). `alloc_zeroed[T](n) -> MutSpan[T]` requires `T` not to need drop and
-  `T: Zeroable`, and fills with zero bytes. Neither stands in for the other: a `Zeroable` type's
+  `T: needs Zeroable`, and fills with zero bytes. Neither stands in for the other: a `Zeroable` type's
   `alloc_array` still calls its `default`, and an implementation fills with zeros instead only where
   that is the same (a scalar's standard `Default`) (ODR-064). `alloc_uninit[T](n) ->
   MutSpan[MaybeUninit[T]]` initialises nothing.
@@ -131,7 +131,7 @@ fn main():
   `get_mut`, `push(v) -> Result[void, CapacityError]`, `insert(i, v) -> Result[void, CapacityError]`,
   `remove(i) -> Option[T]`, `clear`, `iter` and `iter_mut` (in index order); indices follow the `Array`
   rules.
-* `[ARN-5d]` `ArenaMap[K, V]` (with `K: Eq + Hash`) provides `len`, `capacity`, `is_empty`, `get`,
+* `[ARN-5d]` `ArenaMap[K, V]` (with `K: needs (Eq, Hash)`) provides `len`, `capacity`, `is_empty`, `get`,
   `get_mut`, `insert(k, v) -> Result[Option[V], CapacityError]` (replacing returns the old value),
   `remove`, `contains_key`, `clear` and `iter`, which follows insertion order like `Map` (`[STD-11]`).
 * `[ARN-5g]` No operation of either container touches the arena after construction: nothing grows,
@@ -161,7 +161,7 @@ fn main():
   pointers, a range including zero, and tuples and fixed arrays of `Zeroable` elements are; a struct
   is when it declares `@derive(Zeroable)`, which the compiler proves field by field (`E2080`), since
   only its author can vouch for its invariants (a `NonZero`'s field is an integer). A `ref`, a range
-  excluding zero, or an enum whose zero discriminant is invalid is never `Zeroable`. `T: Zeroable` is
+  excluding zero, or an enum whose zero discriminant is invalid is never `Zeroable`. `T: needs Zeroable` is
   a bound a generic function may state (`alloc_zeroed`, `mem.zeroed`). Being `Zeroable` never changes
   what `alloc_array` does (`[ARN-3]`).
 
@@ -202,7 +202,14 @@ fn main():
   `using` names where that value's own memory comes from; what the value holds comes from where its own
   fields' types say (the `points` list of that `Mesh` from the built-in manager). A value whose manager
   may have several instances keeps its instance's address, one word, so that its growth and its end go
-  back to the instance it came from (`[LT-4]`). An allocator type parameter is not Ember: `Box[T, A]` and
+  back to the instance it came from (`[LT-4]`), except in two kinds of manager, whose values keep no
+  word (verdict 107): (1) a manager that frees nothing one by one, whose `deallocate` does nothing (an
+  empty body, checked when compiling): nothing it hands out is given back value by value, and all of it
+  is freed together when the instance is cleared or ends; a value that grows (an `Array`, `Map`, `Set`
+  or `String`) made in it keeps the word, since its growth goes back to the instance; (2) a manager that
+  implements `FoundByAddress` (`[ALC-2]`), whose values' instance is found from their address, as C's
+  `free(p)` finds its heap. Neither changes what is checked: that no value outlives its instance or is
+  used after a reset is checked when compiling and never reads the word (`[LT-4]`). An allocator type parameter is not Ember: `Box[T, A]` and
   `Array[T, A]` are `E1010`, whose help gives `owns T using A` and `Array[T] using A`.
 * `[ALC-2]` *(changed in 0.9.10)* *(changed in 0.9.15)* `std.mem` declares `pub unsafe interface Allocator` with
   `fn allocate(layout: Layout) -> *mut u8` (null on failure),
@@ -220,7 +227,13 @@ fn main():
   `System()`). An allocator that delegates to `Global` from inside the global allocator recurses.
   Implementing `Allocator` is `unsafe` (`unsafe extend A implements Allocator:`, `[TYP-43]`): the
   implementer promises valid, aligned, unaliased memory, which stays valid until it is given back or the
-  instance ends.
+  instance ends. `std.mem` also declares `pub unsafe interface FoundByAddress`, with no methods, and
+  `const PIECE: usize = 65536` (verdict 107). Implementing it (`unsafe extend PoolArena implements
+  FoundByAddress:`) promises that every block the manager hands out lies in a piece of memory that
+  starts at a multiple of `PIECE` bytes and holds the instance's address in its first word, within 64
+  bytes the manager never hands out, a value bigger than a piece taking a piece of its own; a value's
+  instance is then read from the start of its piece, one mask and one load, and the value keeps no word
+  (`[ALC-1]`). A manager whose `deallocate` does nothing needs no such promise (`[ALC-1]`).
 * `[ALC-3]` *(changed in 0.9.9)* A binary package may replace the global allocator with
   `[build] global_allocator = "module.NAME"` naming a `static` whose type implements `Allocator`; an
   embedding host may pass allocation functions to `ember_rt_init` (`[FFI-27]`).
@@ -276,10 +289,11 @@ fn parse(data: Span[u8]) -> Option[u32]:
   makes or ends an owner or a link without its count (`[OBJ-1]`); every `StrView` is UTF-8; every value
   is valid for its type (`bool`, `char`, range types, enums); `Send` and `ThreadShared` are respected. A
   raw pointer made from a view is not used after the view's last use, nor after what it points into is
-  reshaped or ended.
+  reshaped or ended, nor after a hand-over of its object to another thread, which may move it
+  (`[THR-2]`).
 * `[UNS-5]` `std.mem` provides `Volatile[*T]` (volatile reads and writes), `transmute[A, B]`,
   `copy_nonoverlapping`, `zeroed[T]()` (requires
-  `T: Zeroable`) and `MaybeUninit`.
+  `T: needs Zeroable`) and `MaybeUninit`.
 * `[UNS-6]` Inline assembly is `unsafe asm("…", …)` on toolchains that support it and `E5090`
   otherwise.
 * `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers must
@@ -391,8 +405,8 @@ fn main():
 ```
 
 * `[CELL-1]` *(changed in 0.9.15)* `Cell[T]` holds a `T` that is replaced whole: `Cell(v)`, `set(v)`,
-  `replace(v) -> T`, `take() -> T` (for `T: Default`), `into_inner()`, `get() -> T` for `T: Copy`, and
-  `update(f)` for `T: Copy` or `T: Default`. Setting it is a change of the place that holds it, made
+  `replace(v) -> T`, `take() -> T` (for `T: needs Default`), `into_inner()`, `get() -> T` for `T: needs Copy`, and
+  `update(f)` for `T: needs Copy` or `T: needs Default`. Setting it is a change of the place that holds it, made
   through a name that may change that place: a `ref mut` name, `this` in a method called through such a
   name, or an owner of a `shares mut` value (through a plain name, `E3023`, `[BRW-15]`). `set` and
   `replace` store the new value before dropping the old one, since the old value's `drop` may read the

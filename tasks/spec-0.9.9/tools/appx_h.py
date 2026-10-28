@@ -793,7 +793,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.15', 2)
+CURRENT = ('0.9.15', 3)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -831,6 +831,7 @@ V010_H33_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h33')
 V010_H34_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h34')
 V010_H35_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h35')
 V0915_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h1')
+V0915_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h2')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1765,7 +1766,47 @@ Generated: every rule whose text differs from 0.9.15_Hardened_1.
 
 
 def v0915_h1_to_h2():
-    return H42_HEAD + rule_diff(V0915_H1_PARTS, os.path.join(HERE, '..', 'parts'))
+    return H42_HEAD + rule_diff(V0915_H1_PARTS, V0915_H2_PARTS)
+
+
+H43_HEAD = """
+## H.43 Changes in 0.9.15_Hardened_3 (from 0.9.15_Hardened_2)
+
+**0.9.15_Hardened_3** writes in the owner's verdicts 107 to 117 (`tasks/96/redesign/JOB.md`) and the
+lead's details for them (`tasks/96/redesign/compiler-0.9.15/decisions.md`, section 7):
+
+* Verdict 107: a value made in a memory manager keeps no word naming its instance when the manager frees
+  nothing one by one (and the value does not grow), or implements `FoundByAddress`, whose pieces start at
+  a multiple of 65,536 bytes with the instance's address in their first word (`[ALC-1]`, `[ALC-2]`,
+  `[OBJ-4]`, `[COST-3]`).
+* Verdicts 108 and 113: a `pub` generic writes everything its type parameters need; one that is not
+  `pub` writes all of it or none, and part of a list is `E2040` with the whole line in the message
+  (`[TYP-17]`, `[IFC-6]`).
+* Verdicts 109 to 112: what a type parameter needs is written after `needs`, one bare and several in
+  round brackets (`[T: needs (Add[T, Output = T], Copy)]`), in type-parameter lines, `extend`
+  brackets, an interface's parents, associated types and `where` clauses; `+` between needs is gone
+  (`E0100`), kept only after `dyn` and `some` (`[TYP-17]`, `[LEX-15]`, Part III).
+* Verdict 114: an object handed whole to another thread while a `weakref` link on this thread points
+  at it goes, and the links here find it ended: its contents move when a link exists (Rust's
+  `Rc::try_unwrap`), objects it owns of `weakref`-target classes too, a view opened from a link is not
+  used after it, and an object C keeps never moves (a link to it stops the program) (`[THR-2]`,
+  `[RC-5]`, `[WK-12]`, `[FFI-35a]`, `[UNS-4]`; `E7015` no longer covers it).
+* Verdicts 115 and 116: typed variadic generics and functions in C++'s spelling, `[Ts...: needs
+  Display]` above `fn log(values: Ts...):` (`[TYP-47]`, new); a view lists any number of components,
+  `reg.view[Position, Velocity]()` (`[ECS-3]`, `[ECS-4]`); `zip` takes any number (`[STD-26]`).
+* Verdict 117: `print`, `println`, `eprint`, `eprintln` and `format_to` are library functions with a
+  pack, `[Ts...: needs Printable]`; the compiler implements `Printable` for every type with `Display` or
+  `Debug` (`[STD-9]`, `[STD-18]`, `[TYP-26]`, §IV.8).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_2.
+
+| Rule | 0.9.15_Hardened_2 → 0.9.15_Hardened_3 |
+|---|---|
+"""
+
+
+def v0915_h2_to_h3():
+    return H43_HEAD + rule_diff(V0915_H2_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1837,7 +1878,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

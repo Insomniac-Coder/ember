@@ -2080,3 +2080,96 @@ Generated: every rule whose text differs from 0.9.15_Hardened_1.
 | `[WK-5]` | changed |
 | `[WK-7]` | changed |
 | `[WK-12]` | changed |
+
+## H.43 Changes in 0.9.15_Hardened_3 (from 0.9.15_Hardened_2)
+
+**0.9.15_Hardened_3** writes in the owner's verdicts 107 to 117 (`tasks/96/redesign/JOB.md`) and the
+lead's details for them (`tasks/96/redesign/compiler-0.9.15/decisions.md`, section 7):
+
+* Verdict 107: a value made in a memory manager keeps no word naming its instance when the manager frees
+  nothing one by one (and the value does not grow), or implements `FoundByAddress`, whose pieces start at
+  a multiple of 65,536 bytes with the instance's address in their first word (`[ALC-1]`, `[ALC-2]`,
+  `[OBJ-4]`, `[COST-3]`).
+* Verdicts 108 and 113: a `pub` generic writes everything its type parameters need; one that is not
+  `pub` writes all of it or none, and part of a list is `E2040` with the whole line in the message
+  (`[TYP-17]`, `[IFC-6]`).
+* Verdicts 109 to 112: what a type parameter needs is written after `needs`, one bare and several in
+  round brackets (`[T: needs (Add[T, Output = T], Copy)]`), in type-parameter lines, `extend`
+  brackets, an interface's parents, associated types and `where` clauses; `+` between needs is gone
+  (`E0100`), kept only after `dyn` and `some` (`[TYP-17]`, `[LEX-15]`, Part III).
+* Verdict 114: an object handed whole to another thread while a `weakref` link on this thread points
+  at it goes, and the links here find it ended: its contents move when a link exists (Rust's
+  `Rc::try_unwrap`), objects it owns of `weakref`-target classes too, a view opened from a link is not
+  used after it, and an object C keeps never moves (a link to it stops the program) (`[THR-2]`,
+  `[RC-5]`, `[WK-12]`, `[FFI-35a]`, `[UNS-4]`; `E7015` no longer covers it).
+* Verdicts 115 and 116: typed variadic generics and functions in C++'s spelling, `[Ts...: needs
+  Display]` above `fn log(values: Ts...):` (`[TYP-47]`, new); a view lists any number of components,
+  `reg.view[Position, Velocity]()` (`[ECS-3]`, `[ECS-4]`); `zip` takes any number (`[STD-26]`).
+* Verdict 117: `print`, `println`, `eprint`, `eprintln` and `format_to` are library functions with a
+  pack, `[Ts...: needs Printable]`; the compiler implements `Printable` for every type with `Display` or
+  `Debug` (`[STD-9]`, `[STD-18]`, `[TYP-26]`, §IV.8).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_2.
+
+| Rule | 0.9.15_Hardened_2 → 0.9.15_Hardened_3 |
+|---|---|
+| `[ALC-1]` | changed |
+| `[ALC-2]` | changed |
+| `[ARN-3]` | changed |
+| `[ARN-5d]` | changed |
+| `[ARN-11]` | changed |
+| `[CELL-1]` | changed |
+| `[CLI-20]` | changed |
+| `[CLO-14]` | changed |
+| `[ECS-3]` | changed |
+| `[ECS-4]` | changed |
+| `[ECS-8]` | changed |
+| `[EFF-2]` | changed |
+| `[ERR-1]` | changed |
+| `[ERR-4]` | changed |
+| `[ERR-8]` | changed |
+| `[ERR-12]` | changed |
+| `[FFI-35a]` | changed |
+| `[FN-8]` | changed |
+| `[GRM-31]` | changed |
+| `[GRM-34]` | changed |
+| `[GRM-40]` | changed |
+| `[HASH-1]` | changed |
+| `[HASH-4]` | changed |
+| `[IFC-3]` | changed |
+| `[IFC-4]` | changed |
+| `[IFC-5]` | changed |
+| `[IFC-6]` | changed |
+| `[LEX-15]` | changed |
+| `[LEX-21]` | changed |
+| `[OBJ-4]` | changed |
+| `[RC-5]` | changed |
+| `[RNG-5a1]` | changed |
+| `[SER-1]` | changed |
+| `[SOA-6]` | changed |
+| `[STD-8]` | changed |
+| `[STD-9]` | changed |
+| `[STD-11]` | changed |
+| `[STD-12]` | changed |
+| `[STD-15]` | changed |
+| `[STD-16]` | changed |
+| `[STD-17]` | changed |
+| `[STD-18]` | changed |
+| `[STD-19]` | changed |
+| `[STD-21]` | changed |
+| `[STD-26]` | changed |
+| `[STD-27]` | changed |
+| `[THR-2]` | changed |
+| `[THR-8]` | changed |
+| `[THR-9]` | changed |
+| `[TYP-17]` | changed |
+| `[TYP-19]` | changed |
+| `[TYP-22]` | changed |
+| `[TYP-26]` | changed |
+| `[TYP-36]` | changed |
+| `[TYP-37]` | changed |
+| `[TYP-43]` | changed |
+| `[TYP-47]` | added |
+| `[UNS-4]` | changed |
+| `[UNS-5]` | changed |
+| `[WK-12]` | changed |

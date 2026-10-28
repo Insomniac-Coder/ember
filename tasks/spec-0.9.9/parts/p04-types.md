@@ -228,7 +228,7 @@ fn demo():
   implementations, placed in the type's declaring module, of `Eq` and `Ord` and of each operator
   interface the representation implements over itself: `Add`, `Sub`, `Mul`, `Div`, `FloorDiv`, `Rem`,
   `Pow`, `Neg`, `Not`, `BitAnd`, `BitOr`, `BitXor`, `Shl` and `Shr`, each with the representation as
-  its `Output` (ODR-095: `l | m` and `l ** 2` are the representation's, and `T: BitOr[T]` accepts a
+  its `Output` (ODR-095: `l | m` and `l ** 2` are the representation's, and `T: needs BitOr[T]` accepts a
   range type as the operator does). Exact-type implementations are chosen before coercion
   (`[RNG-5a2]`).
   No compound-assignment operator is generated: `r += 0.1` is `E2214` with the fix-it
@@ -450,18 +450,28 @@ fn main():
 
 * `[TYP-16]` Generic functions and types are monomorphised: each distinct instantiation is a distinct
   function or type in the output. `ember build --report=instantiations` counts them (`[MONO-2]`).
-* `[TYP-17]` *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are bounded by interfaces: `[T: Add[Output = T] + Default]`
-  above `fn sum(xs: Span[T]) -> T` (`[GRM-40]`). Inside a generic body only the operations the bounds
-  provide are available, plus copy for `T: Copy`, hand-over, drop and `size_of`. A `pub` function
+* `[TYP-17]` *(changed in 0.9.10)* *(changed in 0.9.15)* Type parameters are bounded by interfaces: `[T: needs (Add[Output = T], Default)]`
+  above `fn sum(xs: Span[T]) -> T` (`[GRM-40]`). What a type parameter needs is written after `needs`:
+  one bare (`[T: needs Copy]`), several in round brackets, separated by commas
+  (`[T: needs (Add[T, Output = T], Copy)]`), since a comma also separates the type parameters
+  (`[K: needs (Eq, Hash), V]`); the same in an `extend` block's brackets
+  (`extend[T: needs Display] Array[T] implements Display:`), an interface's parents
+  (`interface Error: needs (Debug, Display):`), an associated type (`type Iter: needs Iterator[Item =
+  Item]`) and a `where` clause. A bound without `needs`, or needs joined with `+`, is `E0100`, whose
+  message gives the line with `needs` (`[T: Add + Copy]` gives `[T: needs (Add, Copy)]`). Inside a generic body only the operations the bounds
+  provide are available, plus copy for `T: needs Copy`, hand-over, drop and `size_of`. A `pub` function
   writes its bounds: a missing one is `E2040`, one message on the first line of the body that needs a
   bound the function does not write, giving every bound the body needs ("`total` is `pub`, so its
-  bound is written: write `[T: Add[T, Output = T]]` in place of `[T]` above `pub fn total(a: T, b: T)
-  -> T:`"). A function that is not `pub` may leave them out: its bounds are worked out from its body,
+  bound is written: write `[T: needs Add[T, Output = T]]` in place of `[T]` above `pub fn total(a: T, b: T)
+  -> T:`"). A function that is not `pub` writes all of them or none: with none, its bounds are worked out from its body,
   each method called on a parameter giving the interface in scope that declares it (two that declare
   it are `E2070`, `[TYP-24]`), and a method no interface in scope declares is `E2072` ("`T` has no
   `weight`: no interface in scope declares `fn weight`; declare one, `interface Weighed:` with `fn
   weight() -> int`, and write `struct Crate implements Weighed:` for the type the function is given;
-  the bound follows").
+  the bound follows"); a list that leaves out one the body needs is `E2040`, whose message gives the
+  whole line ("`direct_add` writes what `T` needs, so it writes all of it: `a + b` (line 2) needs `Add`,
+  which `Lookalike` does not give; write `[T: needs (Lookalike, Add[T, Output = T])]` in place of
+  `[T: needs Lookalike]`").
   The body is checked once with its parameters standing for any type, except where the type of
   `enumerate`'s numbers depends on a parameter (`[STD-19]`): that type, and every line using those
   numbers, is checked for each use, with the parameters filled in.
@@ -472,15 +482,32 @@ fn main():
 * `[TYP-18]` Generic arguments are inferred from the arguments of a call. Explicit arguments may be
   written: `f[int](x)`, `Array[f32]()`. A constructor's explicit type arguments always fix the
   instantiation, whatever else the context says.
-* `[TYP-19]` *(changed in 0.9.15)* There is no specialisation, no higher-kinded type and no variadic generic. Two
+* `[TYP-19]` *(changed in 0.9.15)* There is no specialisation and no higher-kinded type; a generic may take any number of types
+  (`[TYP-47]`, verdict 115). Two
   implementations whose applicable types overlap are `E2041`. Whether two overlap is decided where
   they are declared, whether or not any instance meets both: they overlap when one type could be
   both, each implementation's type parameters standing for any type (`extend[T] Pair[T, int]` and
   `extend[U] Pair[StrView, U]` overlap at `Pair[StrView, int]`), and when their interface's arguments could
   be the same too. A bound separates two only where the type it bounds is written out in full and
-  does not meet it (`extend[T: Copy] Pair[T, int]` and `extend Pair[String, int]` do not overlap); a
+  does not meet it (`extend[T: needs Copy] Pair[T, int]` and `extend Pair[String, int]` do not overlap); a
   bound on a type left open never does, as a type meeting both bounds can be declared later, in
   another package (ODR-092).
+* `[TYP-47]` *(new in 0.9.15)* **Any number of types, and of values** (verdicts 115 and 116, C++'s
+  spelling). `...` after a type parameter's name makes it a **pack**: any number of types, none
+  included (`[Cs...]` above `fn view() -> View[Cs...]:`). A pack's needs apply to each of its types
+  (`[Ts...: needs Display]`). A function's last parameter may take the pack's values, any number of
+  them, each of its own type: `[Ts...: needs Display]` above `fn log(values: Ts...):`, called
+  `log("hp", hp, pos)`. `Cs...` among type arguments spells the pack's types out (`View[Cs...]`),
+  `values...` among a call's arguments passes the values on (`log(values...)`), and `values.len()` is
+  their number, known when compiling. `for v in values:` is written out by the compiler once per value,
+  each `v` of its own type, and nothing runs for the loop itself. Each use is made for its exact types,
+  as any generic is (`[MONO-1]`): nothing is looked up while the program runs, and each value is
+  checked as an ordinary parameter's is, its word included (`owns values: Ts...` takes each one over).
+  A pack is the last of its type parameters, and its values' parameter is the function's last
+  positional one: a parameter after it has a default and is passed by name only, as after Python's
+  `*args` (`fn println(values: Ts..., sep: StrView = " ", end: StrView = "
+")`, called
+  `println(a, b, sep=", ")`); anywhere else either is `E0100`. C's untyped `...` stays as `[FFI-8]` says, in `unsafe` only.
 * `[TYP-35]` *(new in 0.9.9)* *(changed in 0.9.15)* A type parameter need not appear in any field (a **phantom** parameter): `[Tag]`
   above `struct Handle:` with the one field `index: u32` is legal. A phantom parameter affects type
   identity and counts for `Send` and `ThreadShared` as a field of that type would, so a marker type
@@ -552,7 +579,7 @@ implements Display:` block.
 | `Sized` | everything except `dyn I` and unsized foreign types |
 
 * `[TYP-43]` *(new in 0.9.10)* *(changed in 0.9.15)* The marker interfaces are interfaces of `std.core`, exported by the
-  prelude, so a bound names them as it names any (`T: Send + ThreadShared`, `where Self: Sized`), and
+  prelude, so a bound names them as it names any (`T: needs (Send, ThreadShared)`, `where Self: needs Sized`), and
   the table answers them. `Send` and `ThreadShared` are inferred from what a type holds, which its
   words say. The types the compiler declares itself (a `Cell`, the counted block of a `shares` value)
   are recognised by the module that declares them, never by their names, so a program's own struct
@@ -561,12 +588,12 @@ implements Display:` block.
   implements Send:` with no members and a `# SAFETY:` note, taking the responsibility the compiler
   cannot check (written without `unsafe` it is `E3100`: "say that you vouch for it: write `unsafe
   extend Counter implements Send:` with a `# SAFETY:` note above it"); a generic one (`unsafe
-  extend[T: Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
+  extend[T: needs Send] W[T] implements Send:`) holds for each instance whose arguments meet the markers its
   parameters are bounded by. `ThreadShared` is written only in bounds, `Copy` comes from
   `@derive(Copy)`, and `Sized` is never written: each of these written by hand is `E2040`, as is an
   `unsafe extend` of any interface but `Send` or an `unsafe interface` (ODR-111). `Sync` is the name
-  of an effect (Part X), not of a property: `T: Sync` in a bound is `E1010`, whose message gives
-  `T: ThreadShared`.
+  of an effect (Part X), not of a property: `T: needs Sync` in a bound is `E1010`, whose message gives
+  `T: needs ThreadShared`.
   An `unsafe interface` (`Allocator`, `[ALC-2]`) is implemented only by an `unsafe extend`, with its
   members as for any interface; without `unsafe` it is `E3100`.
 
@@ -587,7 +614,7 @@ interface Default:
 interface Eq:
     fn eq(other: Self) -> bool                          # ==, !=
 
-interface Ord: Eq:
+interface Ord: needs Eq:
     fn cmp(other: Self) -> Ordering                     # sort, min, max; a float's `<` stays IEEE
 
 enum Ordering:
@@ -596,7 +623,7 @@ enum Ordering:
     Greater
 
 interface Hash:
-    [H: Hasher]
+    [H: needs Hasher]
     fn hash(ref mut h: H)
 
 interface Display:
@@ -605,18 +632,21 @@ interface Display:
 interface Debug:
     fn fmt_debug(ref mut f: Formatter) -> Result[void, FmtError]    # f"{x!r}", f"{x:?}"
 
+interface Printable:                                                # print, println, format_to (verdict 117)
+    fn fmt_print(ref mut f: Formatter) -> Result[void, FmtError]    # Display's text, else Debug's
+
 interface Iterator:
     type Item
     fn next() -> Option[Item]
 
 interface Iterable:
     type Item
-    type Iter: Iterator[Item = Item]
+    type Iter: needs Iterator[Item = Item]
     fn iter() -> Iter                                               # for x in c
 
 interface IntoIterator:
     type Item
-    type Iter: Iterator[Item = Item]
+    type Iter: needs Iterator[Item = Item]
     fn into_iter() owns this -> Iter                                # for x in owns c
 
 interface Contains[T]:
@@ -637,13 +667,13 @@ interface Index[Idx]:
     type Output
     fn index(i: Idx) -> ref Output                                  # a[i] read
 
-interface IndexMut[Idx]: Index[Idx]:
+interface IndexMut[Idx]: needs Index[Idx]:
     fn index_mut(i: Idx) -> ref mut Output                          # a[i] write
 
 interface IndexSet[Idx, V]:
     fn index_set(i: Idx, owns v: V)                                 # a[i] = v (Map inserts)
 
-interface Error: Debug + Display:
+interface Error: needs (Debug, Display):
     fn source() -> Option[ref dyn Error]                            # default: None
 
 interface From[T]:
@@ -659,7 +689,7 @@ implementation the program has (Part X).
   implements `Eq`, `Ord`, `Hash`, `Display` and `Debug` as `T` does (so `sorted(m.keys())` works).
   An `owns T` is `Clone` when `T` is, and `owns dyn I` when `I` requires `Clone` (§IX.1, `[TYP-22]`).
   Two `owns` values compare with `==` when what they hold does; `owns dyn I` compares
-  when `I` requires `Eq` (`interface Shape: Eq:`, a method-table entry as for `Clone`): values of two
+  when `I` requires `Eq` (`interface Shape: needs Eq:`, a method-table entry as for `Clone`): values of two
   different kinds are never equal, and two of one kind compare their contents. `copy of x` makes a
   value with `Clone` (`[OWN-8]`), and every `Copy` type is `Clone`; before what it cannot copy as
   itself (a `weakref` link, a value of a view type, a type with no `Clone`) it is `E2116`. Before an `owns`, `shares` or
@@ -681,7 +711,7 @@ implementation the program has (Part X).
 | `String` | ✓ | — | ✓ | by bytes | ✓ | empty | ✓ | ✓ |
 | tuples, `[T; N]` | if all | if all | if all | lexicographic, if all | if all | if all | if all `Debug` | if all |
 | `Option[T]`, `Result[T, E]` | if `T`(,`E`) | if `T`(,`E`) | if `T`(,`E`) | `None < Some` | if `T`(,`E`) | `None` / — | if `Debug` | if `T`(,`E`) |
-| `Array[T]` | if `T` | — | if `T` | lexicographic | if `T` | empty | if `T: Debug` | if `T` |
+| `Array[T]` | if `T` | — | if `T` | lexicographic | if `T` | empty | if `T: needs Debug` | if `T` |
 | `Map[K, V]`, `Set[T]` | if all | — | as sets of entries | — | — | empty | if all `Debug` | if all |
 | class objects | `@derive(Clone)` or written: a new object | — | identity (`is`) | — | identity | — | — | ✓ (class and address) |
 | range types | as the representation | as the representation | as the representation | as the representation | as the representation | — | as the representation | as the representation |
@@ -702,7 +732,7 @@ implementation the program has (Part X).
 * `[TYP-37]` *(new in 0.9.9)* Floats implement `Eq` with IEEE `==` (so `NaN != NaN`) and `Ord` with the IEEE-754
   totalOrder predicate (`-NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN`). The comparison
   *operators* on float values keep IEEE meaning (`[TYP-9]`) in concrete and generic code alike: `a < b`
-  with `T: Ord` and `T = f64` is IEEE `<`, false when either side is NaN. `cmp`, `sort()`, `sorted()`,
+  with `T: needs Ord` and `T = f64` is IEEE `<`, false when either side is NaN. `cmp`, `sort()`, `sorted()`,
   `binary_search`, `min()` and `max()` use `cmp`, so sorting floats is total and needs no extra step.
   A float's `==` and `cmp(…) == Equal` can differ (`-0.0 == 0.0`, which `cmp` orders; a NaN is not `==`
   itself), so an algorithm keeps to one relation: the ordered ones to `cmp` throughout, the
@@ -721,7 +751,7 @@ implementation the program has (Part X).
   Such a method is the operator: `3.add(4)` is `3 + 4`. `bool`, `char` and `String` implement none
   of them (`String`'s `+` takes its left operand over, `[TXT-11]`). Likewise a type is indexed only
   through `Index`, `IndexMut` and `IndexSet` (ODR-042).
-* `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: Hasher` and monomorphised; hashing a value MUST feed a
+* `[HASH-1]` *(changed in 0.9.15)* `Hash.hash` is generic over `H: needs Hasher` and monomorphised; hashing a value MUST feed a
   deterministic representation of it into the hasher, and values equal under `Eq` MUST hash equally.
   `Hasher` (in `std.collections`, not the prelude) is a hashing state that is not `Copy`, with `write_bytes`,
   `write_u8`, `write_u16`, `write_u32`, `write_u64`, `write_i8`, `write_i16`, `write_i32`,
@@ -743,7 +773,7 @@ implementation the program has (Part X).
   `eq` does is worked out from its body like any function's (Part X), so one that may change or end
   the map it is called from, reached by another name (a link, a module variable), makes the map
   operation that calls it refused when compiling (`E3031`); nothing is checked while the program runs.
-* `[HASH-4]` `Map[K, V]` requires `K: Eq + Hash`. A map may call `hash` any number of times per
+* `[HASH-4]` `Map[K, V]` requires `K: needs (Eq, Hash)`. A map may call `hash` any number of times per
   operation. Safe map APIs never expose `ref mut K`.
 
 ## IV.9 Existential and opaque types
@@ -753,14 +783,14 @@ implementation the program has (Part X).
   (`[TYP-45]`). It is a data pointer and a table pointer (a class object reaches its table through the
   object header, `[OBJ-2]`).
 * `[TYP-22]` *(changed in 0.9.10)* *(changed in 0.9.15)* An interface is usable as `dyn` only if every method has an object
-  (none is a `static fn`), does not return `Self` by value (methods marked `where Self: Sized`
+  (none is a `static fn`), does not return `Self` by value (methods marked `where Self: needs Sized`
   excepted), and is not generic, except over a type parameter used only as the type of a parameter
-  that views its value (a plain or `ref mut` parameter), which gets one `dyn` entry (`[V: Visitor]`
+  that views its value (a plain or `ref mut` parameter), which gets one `dyn` entry (`[V: needs Visitor]`
   above `fn visit(ref mut v: V)`). Violations are `E2050`, naming the method and giving the line to
   write ("`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn` value has one
-  entry per method; take the visitor in instead of returning it, `[V: Visitor]` above `fn make(ref mut
+  entry per method; take the visitor in instead of returning it, `[V: needs Visitor]` above `fn make(ref mut
   v: V)`"). An interface that requires `Clone`
-  (`interface Shape: Clone:`) is usable as `dyn` all the same: every type implementing it must be
+  (`interface Shape: needs Clone:`) is usable as `dyn` all the same: every type implementing it must be
   `Clone`, as for any required interface, and its method table holds an entry that copies the value
   into a new block, so `owns dyn Shape` is `Clone` (§IX.1).
 * `[TYP-44]` *(new in 0.9.15)* **Kind tests and casts.** A value of an interface type (`dyn I`,
@@ -835,6 +865,7 @@ For `recv.m(args)`:
 * `[TYP-25]` Arguments may be positional or named; positional arguments come first; a parameter with a
   default may be omitted.
 * `[TYP-26]` *(changed in 0.9.9)* There is no overloading: two functions of one name in one scope are
-  `E1030`, except operator-interface implementations and `extend` blocks for different types. The
-  compiler-known output functions `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to`
-  (`[STD-18]`) are the only calls with a variable number of arguments (ODR-060).
+  `E1030`, except operator-interface implementations and `extend` blocks for different types. A
+  function whose last positional parameter takes a pack's values (`[TYP-47]`) takes any number of
+  arguments; the output functions `print`, `println`, `eprint`, `eprintln` (`[STD-9]`) and `format_to`
+  (`[STD-18]`) are such functions of the library, not known to the compiler by name (verdict 117).

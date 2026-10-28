@@ -44,7 +44,7 @@ fn main() -> Result[void]:
   parameter is bounded: `Result[int, int]` is a `Result`. An operation that needs more of `E` says so
   (ODR-050): `?` into another error type needs `From[E]` (`[ERR-2]`), printing one needs `Display`,
   walking its causes needs `Error` (or is `AnyError`'s own, `[ERR-8]`), and converting one into
-  `AnyError` needs `E: Error`.
+  `AnyError` takes any `E: needs Error`.
 * `[ERR-9]` *(new in 0.9.9)* *(changed in 0.9.15)* The error parameter defaults to `AnyError` (§XIII.2), so
   `fn load(path: StrView) -> Result[Texture]` is a function that can fail with any error. A library that
   wants callers to `match` on its failures names a concrete error type.
@@ -65,18 +65,18 @@ fn main() -> Result[void]:
   The methods that take a function are eager: each takes its object over (`owns this`), takes the
   function as a type parameter (`[CLO-14]`) and calls it at most once, before it returns, handing
   the payload over to it, except `filter`, whose function reads it (ODR-025):
-  * `Option[T]`: `[U, F: once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Option[U]`;
-    `[U, F: once fn(owns T) -> Option[U]]` above `fn and_then(owns f: F) owns this -> Option[U]`;
-    `[F: once fn(T) -> bool]` above `fn filter(owns f: F) owns this -> Option[T]`;
-    `[F: once fn() -> Option[T]]` above `fn or_else(owns f: F) owns this -> Option[T]`;
-    `[F: once fn() -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`; and
-    `[E, F: once fn() -> E]` above `fn ok_or_else(owns f: F) owns this -> Result[T, E]`;
-  * `Result[T, E]`: `[U, F: once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Result[U, E]`;
-    `[F, G: once fn(owns E) -> F]` above `fn map_err(owns f: G) owns this -> Result[T, F]`;
-    `[U, F: once fn(owns T) -> Result[U, E]]` above
+  * `Option[T]`: `[U, F: needs once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Option[U]`;
+    `[U, F: needs once fn(owns T) -> Option[U]]` above `fn and_then(owns f: F) owns this -> Option[U]`;
+    `[F: needs once fn(T) -> bool]` above `fn filter(owns f: F) owns this -> Option[T]`;
+    `[F: needs once fn() -> Option[T]]` above `fn or_else(owns f: F) owns this -> Option[T]`;
+    `[F: needs once fn() -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`; and
+    `[E, F: needs once fn() -> E]` above `fn ok_or_else(owns f: F) owns this -> Result[T, E]`;
+  * `Result[T, E]`: `[U, F: needs once fn(owns T) -> U]` above `fn map(owns f: F) owns this -> Result[U, E]`;
+    `[F, G: needs once fn(owns E) -> F]` above `fn map_err(owns f: G) owns this -> Result[T, F]`;
+    `[U, F: needs once fn(owns T) -> Result[U, E]]` above
     `fn and_then(owns f: F) owns this -> Result[U, E]`;
-    `[F, G: once fn(owns E) -> Result[T, F]]` above `fn or_else(owns f: G) owns this -> Result[T, F]`;
-    and `[F: once fn(owns E) -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`.
+    `[F, G: needs once fn(owns E) -> Result[T, F]]` above `fn or_else(owns f: G) owns this -> Result[T, F]`;
+    and `[F: needs once fn(owns E) -> T]` above `fn unwrap_or_else(owns f: F) owns this -> T`.
 * `[ERR-5]` `Result` is `@must_use`: discarding one is `W2190` (an error under `-D warnings`). A value
   is used when it is bound, returned, passed, matched, or has `?` or a method applied.
 * `[ERR-7]` **Identity conversion.** The prelude provides `From[T]` for every `T` (`from(v) = v`), so
@@ -92,7 +92,7 @@ fn main() -> Result[void]:
   from `source`.
 * `[ERR-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **`AnyError`** is the
   prelude's "any error" type: a `dyn Error` held alone (`owns dyn Error`) plus an optional chain of
-  context messages. It implements `From[E]` for every `E: Error`, so `?` converts any error into it,
+  context messages. It implements `From[E]` for every `E: needs Error`, so `?` converts any error into it,
   and `Display`, `Debug`, `source`, `[E]` above `fn downcast_ref() -> Option[ref E]`, and `[E]` above
   `fn is() -> bool`. **`AnyError` does not implement `Error`** — otherwise `[ERR-7]` and
   `[ERR-8]` would both supply `From[AnyError]` for `AnyError`. An `AnyError` passed through `?` into
@@ -108,7 +108,7 @@ fn main() -> Result[void]:
   moves through `?` without allocating, which is why `@noalloc` code names its error types.
 * `[ERR-12]` *(new in 0.9.9)* An `Err` returned from `main` (`[FN-8]`) prints `error: <Display>` to
   standard error, then one `caused by: <Display>` line for each cause in its chain — an `AnyError`'s
-  own chain (`[ERR-8]`), or each `source` of an `E: Error` — and exits with status 1. An `E` that is
+  own chain (`[ERR-8]`), or each `source` of an `E: needs Error` — and exits with status 1. An `E` that is
   `Display` but not `Error` has no chain and prints its message alone (ODR-050).
 
 ## XIII.3 Panics or errors

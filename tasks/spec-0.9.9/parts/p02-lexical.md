@@ -93,7 +93,8 @@ where          while          with           yield
   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
   (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future
-  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`); `copy` directly before `of`,
+  version (`E0005`), so `Set` can have its `union` method (`[STD-16]`); `needs` directly after the `:` of a type parameter, an interface's header, an associated type or a
+  `where` clause (`[TYP-17]`); `copy` directly before `of`,
   and `of` directly after `copy` (`copy of x`, so `mem.copy` and a count's `of` stay names,
   `[GRM-43]`); `exists` between the value and `as` in an `if`, `elif` or `while` header (`[GRM-44]`);
   `cast` at the start of an operand directly before a name or
@@ -175,13 +176,14 @@ Comparison:   ==  !=  <  >  <=  >=  is  is not  in  not in
 Logical:      and  or  not
 Assignment:   =  +=  -=  *=  /=  //=  %=  **=  &=  |=  ^=  <<=  >>=
 Range:        ..  ..=
+Pack:         ...
 Access:       .  ?.  [ ]  ( )
 Conversion:   as
 Other:        ,  :  ;  ->  =>  @  ?  { }
 ```
 
 * `[LEX-21]` *(changed in 0.9.9)* *(changed in 0.9.15)* Tokenisation is maximal munch: `//=` before `//` before `/`,
-  `**=` before `**`, `..=` before `..`, `?.` is one token. `as?` and `as!` are single tokens when `as`
+  `**=` before `**`, `...` and `..=` before `..`, `?.` is one token. `as?` and `as!` are single tokens when `as`
   is followed immediately (no space) by `?` or `!`, lexed only so that either is refused with
   `E1010`, whose message gives the kind test or the cast to write (`[GRM-30]`); `!` has no other use.
   There is no `::` token; a `::` in source is `E0100` with the help `use '.' for paths` (`[GRM-24]`).

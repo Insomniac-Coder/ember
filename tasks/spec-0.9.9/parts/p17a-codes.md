@@ -14,7 +14,7 @@ reused; retired codes are listed with the reason.
 | `E0006` | a `#!` language directive names a version other than the current one | `[VER-8]` |
 | `E0008` | unterminated character literal | `[LEX-22]` |
 | `E0009` | malformed literal | `[LEX-26]` |
-| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write | `[GRM-2]` |
+| `E0100` | unexpected token, among them Python's `global`, a statement at module level outside the entry file (whose message gives the declaration to write: `static mut FRAME: int = 0`), a bound written without `needs` or joined with `+` (whose message gives the line with `needs`), and a clause after a function's brackets that Ember does not have (`changes FRAME`, `reads renderer`, `with` before the captures), whose message gives the first line to write | `[GRM-2]`, `[TYP-17]` |
 | `E0101` | unclosed delimiter or literal | `[LEX-6]` |
 | `E0102` | membership test chained (`a in b in c`) | `[GRM-23]` |
 | `E0103` | match arms mix statement and expression form | `[GRM-10]` |
@@ -56,7 +56,7 @@ reused; retired codes are listed with the reason.
 | `E2035` | condition must be `bool` | `[CTL-0]` |
 | `E2036` | this pattern always matches: an `if` or `while` opening whose left side always holds a value, or a kind test that always passes | `[GRM-19]` |
 | `E2037` | a kind test that can never pass: the type tested for does not implement the interface, or derive from the base class, of the value tested | `[TYP-44]`, `[DSP-4]` |
-| `E2040` | unsatisfied interface bound; for a `pub` generic whose bounds are not written, one message on the first line of its body that needs a missing bound, giving every bound the body needs | `[IFC-6]`, `[TYP-17]`, `[BLD-14]` |
+| `E2040` | unsatisfied interface bound; for a `pub` generic whose bounds are not written, or a generic that writes some of its bounds and not all the body needs, one message on the first line of its body that needs a missing bound, giving the whole line of what it needs | `[IFC-6]`, `[TYP-17]`, `[BLD-14]` |
 | `E2041` | overlapping `extend` implementations | `[TYP-19]` |
 | `E2042` | `Float` is implemented only by `f32` and `f64` | `[STD-27]` |
 | `E2043` | an associated type's default leads back to itself | `[IFC-4]` |
@@ -214,7 +214,7 @@ reused; retired codes are listed with the reason.
 | `E7012` | a `static mut` not `guarded by` a lock reached from another thread | `[THR-20]`, `[STA-1]` |
 | `E7013` | a `guarded by` field used without holding its lock | `[THR-18]` |
 | `E7014` | a `thread_shared` value changed directly | `[THR-1]` |
-| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line), or a class object handed to another thread while a `weakref` link on this thread points at it | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]` |
+| `E7015` | a one-thread owner (`shares`, `shares mut`, a `weakref` link of one) or a lent value reaches another thread: held by a function any thread may run (`thread_shared fn()`, `thread.spawn`'s included), in a plain `fn()` field of a class whose object is made `thread_shared` (at that line) | `[THR-1]`, `[THR-2]`, `[THR-10]`, `[CLO-16]`, `[FFI-22]` |
 | `E7016` | a `@parallel` loop over something it cannot split into chunks: neither a range nor a list walked by element | `[PAR-1]` |
 | `E7017` | `thread_shared` on a name whose value was not created `thread_shared` | `[THR-1]` |
 | `E7018` | a wait for a lock this thread holds, inside that lock's `with` block: a call through a function value, or a `dyn` or virtual method, that may run a function taking that lock (inside a walk under that lock too), or a join of a thread (a scope's end included) whose function changes what the lock guards | `[THR-19]` |

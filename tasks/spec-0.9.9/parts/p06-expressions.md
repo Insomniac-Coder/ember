@@ -265,12 +265,12 @@ fn main():
   stored function value to one reads its C entry without handing it over; a value holding state has
   none, and the conversion panics (ODR-102).
 * `[CLO-14]` *(new in 0.9.9)* *(changed in 0.9.15)* A callable type may be written as a type parameter's
-  bound, on the line above the function: `[F: fn(int) -> int]` above `fn apply(f: F, x: int) -> int:`.
+  bound, on the line above the function: `[F: needs fn(int) -> int]` above `fn apply(f: F, x: int) -> int:`.
   `F` names the exact function given, so each function or lambda given gets its own instance of
   `apply`, and the call through `f` is direct and may be inlined, as C++'s `template <typename F>` and
   Rust's `F: FnMut`; a parameter so bounded is called like a function, and the call counts as making
   what the given function changes, worked out from it (`[EFF-2]`). A library function that calls a
-  function right away takes it this way (`[F: fn(Item)]` above `fn for_each(owns f: F) owns this:`;
+  function right away takes it this way (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`;
   `retain`, `inspect`, `sort_by`, `[STD-19]`). `Callable[…]` is not source syntax.
 * `[CLO-10]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* A function value is two words,
   `{code, state}`. Its state is what it needs besides its code: what it captured with a word, in one

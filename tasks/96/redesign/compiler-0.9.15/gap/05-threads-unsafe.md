@@ -223,13 +223,15 @@ numbers. Every item updates `compiler/ember_diag/src/codes.rs` and `docs/errors/
 **A5-12. `thread.spawn` and `jobs.submit` take a `thread_shared fn()`** (THR-10, THR-17 unscoped part, JOB-2, THR-2)
 - Files: `ember_typeck/src/lib.rs:52339-52376, 52513-52549, 52793-52832` (rewrite on A5-10: E7004 for
   a name with no word, E7015 for one-thread owners and lent views, E7015/E7008 when `R` is not Send,
-  E7015 for an object handed over while a `weakref` on this thread may point at it, Q4);
+  and, for an object handed over, verdict 114's hand-over: one compare of the weak count, the contents
+  moved and the old block marked ended when a link exists, owned objects of `weakref`-target classes
+  too, a stop for an object C keeps (Q4, answered);
   `std/src/thread.em:25`, `std/src/jobs.em:23` (verdict 94's signature, `[R]` line).
 - A spawn inside a walk is E3020 by the thread's effects, except under the walk's lock.
 - Size: M.
 - Tests: about 16 R15/R12/R9 tests (for example `reject_a_thread_captures_a_one_thread_owner`,
   `reject_an_unscoped_thread_using_a_name_with_no_capture_word`,
-  `reject_an_object_a_weakref_points_at_handed_to_another_thread`,
+  `accept_an_object_handed_to_another_thread_leaves_its_weakref_links_behind` (verdict 114),
   `accept_an_unscoped_thread_takes_its_object_over`, `accept_a_thread_started_in_a_walk_under_the_lock_it_needs`).
   Old: THR-10 respell 3 and rewrite 1; JOB-2 respell 3.
 - Depends on: A5-10, A5-11; area CLO's capture lists; area EFF's effect of a function value and of a

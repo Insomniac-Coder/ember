@@ -169,7 +169,7 @@ import c "vulkan/vulkan.h" with (
   | incomplete `struct` | `extern type S`, used only behind pointers |
   | `enum` | `@repr(<underlying>) enum`, `@non_exhaustive` (any value may arrive) |
   | `typedef` | a type alias; with `@ffi(newtype)` a nominal type with the typedef's representation, passed to C as the typedef is, converted with `as` only |
-  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: ThreadShared`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `ThreadShared` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
+  | `static const` global, `extern` global | `extern static`; reading it needs `unsafe` unless `@ffi(immutable)` asserts a `const` C object and an unchanged value (ODR-082). The generated C declaration is `extern const T` with that assertion, or `extern T` without it; a safe read also requires `T: needs ThreadShared`. `@ffi(immutable)` on `static mut` is `E5002`. A global read only in `unsafe` need not be `ThreadShared` (`[STA-1]`), so one holding a pointer imports as any other (ODR-163). |
   | `#define S "text"` | `const S: CStrView = c"text"` |
   | function pointer | `unsafe extern "C" fn(…) -> R` (`[FFI-56]`), `Option[…]` when nullable; another calling convention is `unsafe extern "<conv>" fn` (`[FFI-9]`), and an unsupported one is skipped with `W5002` |
   | bit-field | `get_<f>`/`set_<f>` methods; not addressable |
@@ -314,9 +314,11 @@ unsafe overlay c "vulkan/vulkan.h":
 * `[FFI-14]` The importer's result is a `.embind` file (versioned CBOR: header hash, Clang
   configuration, declarations with layouts, overlay hash, contracts), a content-addressed build input.
   `ember bind --explain header.h fn` prints a function's derived contract and why.
-* `[FFI-35a]` A parameter with no `retained` word is recorded as "does not retain" in the foreign-trust
+* `[FFI-35a]` *(changed in 0.9.15)* A parameter with no `retained` word is recorded as "does not retain" in the foreign-trust
   report (`ember bind --report`), which lists every such assumption per module, and every
-  result-position pointer with no lifetime word.
+  result-position pointer with no lifetime word. A class object given to a `retained` parameter is
+  marked in its header as kept by C and never moves: handed to another thread while a `weakref` link on
+  this thread points at it, it stops the program (`[THR-2]`, verdict 114).
 
 ## XVI.5 Strings, status codes and handles
 

@@ -969,6 +969,29 @@ acceptable it hurt readability too, if you want something to have a copy use the
       "any number of types" in a declaration and of the values a variadic function takes, and whether
       `print`, `println`, `eprint`, `eprintln` and `format_to` become ordinary library functions.
 
+116. **A pack is written with C++'s dots** (owner, 2026-10-28, asked to choose among Python's star
+    (`[*Ts: needs Display]`, `fn log(*values: Ts):`), Swift's words (`[each T: needs Display]`,
+    `fn log(values: repeat each T):`) and C++'s dots: "I prefer c++", then "that ... makes sense from
+    readability perspective because it gives the to be continued... vibe"). The lead had recommended the
+    star.
+    - `[Ts...: needs Display]` above `fn log(values: Ts...):`, called `log("hp", hp, pos)`;
+      `[Cs...]` above `fn view() -> View[Cs...]:`, used `reg.view[Position, Velocity]()`.
+    - Following C++: `Cs...` among type arguments spells the pack out, `values...` among a call's
+      arguments passes the values on, `values.len()` is their number; `for v in values:` is written out
+      once per value.
+    - Written as `[TYP-47]`; Python's `*args` (P19) is still `E0100`, whose message now gives
+      `[Ts...]` and `args: Ts...`.
+
+117. **`print`, `println`, `eprint`, `eprintln` and `format_to` are ordinary library functions with a pack**
+    (owner, 2026-10-28: "a", over keeping them known to the compiler). `[Ts...: needs Printable]` above
+    `pub fn println(values: Ts..., sep: StrView = " ", end: StrView = "
+"):`; calls are unchanged
+    (`println("hp:", hp, pos)`), each call is made for its exact types, and a program's own function
+    takes any number of printable values the same way. The lead's details (decisions.md section 7):
+    `Printable`, implemented by the compiler for every type with `Display` or `Debug` (Display's text,
+    else Debug's, since Ember has no specialisation), and parameters after a pack passed by name only.
+    Written into `[STD-9]`, `[STD-18]`, `[TYP-26]`, `[TYP-47]` and §IV.8.
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

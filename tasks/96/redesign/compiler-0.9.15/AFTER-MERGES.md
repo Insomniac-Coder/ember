@@ -100,5 +100,6 @@ line, an interface's parents (110), `extend[...]` (111) and an associated type (
 
 | Q-I | 115: typed variadic generics and typed variadic functions | `[TYP-19]`, `[TYP-26]`, I.6: any number of types in square brackets and any number of typed values in a call; `[ECS-3]`, `[ECS-4]`: `reg.view[Position, Velocity]()`, no tuple, no limit; `zip` over any number; tuple interfaces for every size | new compiler work in M11 (generics), used by M14 |
 
-No gap-map question is open. Still to put to the owner when the hardening writes them (verdict 115): the
-spelling of a variadic declaration, and whether `print` and the other output functions become library functions.
+No gap-map question is open. Verdict 115's two follow-ups are answered: C++'s `...` (verdict 116) and the
+output functions as library functions (verdict 117). Verdicts 107 to 117 are written into
+`docs/spec-source/Ember_v0.9.15_Hardened_3.md` (2026-10-28), the development target.

@@ -66,12 +66,13 @@ fn_header     := ["extern" STRING] ["unsafe"] ["static" | "virtual" | "override"
 fn_takes      := "owns" "this"                         -- a method that takes its object over
                | capture_list                          -- a local function ([GRM-42])
 generic_params:= "[" generic_param {"," generic_param} [","] "]"
-generic_param := IDENT [":" bound_list] ["=" type]
+generic_param := IDENT ["..."] [":" "needs" needs] ["=" type]   -- `...`: a pack ([TYP-47])
                | "const" IDENT ":" type ["=" expression]
-bound_list    := type {"+" type}
-where_clause  := "where" type ":" bound_list {"," type ":" bound_list}
+needs         := type | "(" type {"," type} [","] ")"     -- one bare, several in round brackets ([TYP-17])
+bound_list    := type {"+" type}                        -- after `dyn` and `some` only
+where_clause  := "where" type ":" "needs" needs {"," type ":" "needs" needs}
 param_list    := param {"," param} [","]
-param         := [param_word] IDENT ":" type ["=" expression]
+param         := [param_word] IDENT ":" type ["..."] ["=" expression]   -- `Ts...`: the pack's values
 param_word    := "ref" ["mut"] | "const" "ref" "mut" | "owns"
 
 struct_decl   := "struct" IDENT [implements] [where_clause] ":" type_body
@@ -90,10 +91,10 @@ enum_member   := {attribute} (variant | [type_params] fn_decl | const_decl)
 variant       := IDENT ["(" variant_field {"," variant_field} [","] ")"] ["=" expression] NEWLINE
 variant_field := {attribute} [IDENT ":"] type
 
-interface_decl:= ["unsafe"] "interface" IDENT [generic_params] [":" bound_list] [where_clause] ":"
+interface_decl:= ["unsafe"] "interface" IDENT [generic_params] [":" "needs" needs] [where_clause] ":"
                  NEWLINE INDENT {interface_member} DEDENT
 interface_member := {attribute} ([type_params] fn_decl | assoc_type | const_decl)
-assoc_type    := "type" IDENT [":" bound_list] ["=" type] NEWLINE
+assoc_type    := "type" IDENT [":" "needs" needs] ["=" type] NEWLINE
 
 extend_decl   := ["unsafe"] "extend" [generic_params] type [implements] [where_clause] ":" type_body
 const_decl    := "const" IDENT [":" type] "=" expression NEWLINE
@@ -109,10 +110,10 @@ comptime_block:= "comptime" ":" block
 * `[GRM-1]` A class has at most one base class, written in parentheses: `class Door(Script):`.
 * `[GRM-33]` *(new in 0.9.9)* A bodiless `fn_decl` is legal only in an `interface`, an `extern_block`, or as a
   `virtual` method of an `abstract class`. Elsewhere it is `E0110` with the help `add ':' and a body`.
-* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* `extend [T: B] Array[T] implements I:` declares a generic extension; the generic
+* `[GRM-34]` *(new in 0.9.9)* *(changed in 0.9.10)* `extend [T: needs B] Array[T] implements I:` declares a generic extension; the generic
   parameters after `extend` scope over the whole block. A parameter the target does not name and an
-  implemented interface does makes a **blanket implementation**: `extend[K: Eq + Hash, V, Q:
-  AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
+  implemented interface does makes a **blanket implementation**: `extend[K: needs (Eq, Hash), V,
+  Q: needs AsKey[K]] Map[K, V] implements Index[Q]` makes every `Map[K, V]` implement `Index[Q]` for each `Q`
   its bounds admit, each method of the block is generic over `Q`, and each use is checked as a
   written implementation is (ODR-042). The target may be a parameter standing alone (`extend[T, U]
   T implements Wrap[U]`, every type's); a parameter of the block that neither the target nor an
@@ -124,11 +125,11 @@ comptime_block:= "comptime" ":" block
   legal only on an item-level alias with no generic parameters (`E2213` otherwise).
 * `[GRM-40]` *(new in 0.9.15)* **Type parameters go on a line of their own**, directly above the
   function, method, struct or class they belong to, at its indentation and below its attributes:
-  `[T: Add[Output = T] + Default]` above `fn sum(xs: Span[T]) -> T:`, `[F: fn(Item)]` above
+  `[T: needs (Add[Output = T], Default)]` above `fn sum(xs: Span[T]) -> T:`, `[F: needs fn(Item)]` above
   `fn for_each(owns f: F) owns this:`, `[T]` above `struct Pool:`. The type or function is used as
   before (`Pool[int]`, `sum(xs)`, `f[int](x)`), and a lambda has none. An enum, an interface, a
   `type` alias and an `extend` block keep their brackets after the name or after `extend`
-  (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: B] Array[T]`). Brackets after the
+  (`interface Add[Rhs = Self]:`, `type Pair[T] = (T, T)`, `extend[T: needs B] Array[T]`). Brackets after the
   name of a function, method, struct or class are `E0100`, whose message gives the two lines to
   write (`[T]` above `fn first(xs: Array[T]) -> T:`); a bracket line not directly above one of them is
   `E0100`. A line that begins with `[` is a type-parameter line when the line after it begins a
@@ -168,6 +169,7 @@ path_type     := path_segment {"." path_segment}
 path_segment  := IDENT [generic_args]
 generic_args  := "[" generic_arg {"," generic_arg} [","] "]"
 generic_arg   := type | expression | IDENT "=" type          -- const argument; associated-type binding
+               | IDENT "..."                               -- a pack spelled out ([TYP-47])
 tuple_type    := "(" ")" | "(" type "," [type {"," type} [","]] ")"
 fn_type       := ["once"] ["unsafe"] ["extern" STRING] "fn" "(" [fn_type_param {"," fn_type_param} [","]] ")"
                  ["->" type]
@@ -186,7 +188,7 @@ fn_type_param := [param_word] type
 * `[GRM-31]` *(new in 0.9.9)* *(changed in 0.9.10)* A `some` type (`[TYP-32]`) is legal only as a function's or a
   method's return type, or nested inside one; elsewhere it is `E2260`. A method an interface declares
   is not one: each implementation would choose its own type, so an associated type states it
-  (`type Iter: Iterator[Item = T]`) (ODR-144).
+  (`type Iter: needs Iterator[Item = T]`) (ODR-144).
 
 ## III.4 Statements
 
@@ -343,7 +345,7 @@ postfix_expr  := atom {postfix}
 postfix       := "(" [arg {"," arg} [","]] ")" | "(" expression comp_clauses ")"
                | "[" expr_list "]" | "." IDENT | "." INT
                | "?." IDENT | "?"
-arg           := expression | IDENT "=" expression
+arg           := expression | IDENT "=" expression | IDENT "..."   -- a pack's values passed on
 atom          := literal | IDENT | "this" | "Self" | "(" expression ")" | tuple_lit | list_lit
                | map_lit | set_lit | comprehension | match_expr | "comptime" "(" expression ")"
                | "@assume_noalloc" "(" expression ")"

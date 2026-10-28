@@ -177,7 +177,7 @@ pub fn blend(dst: Array[f32], ref mut out: Array[f32], owns scratch: Array[f32],
   arguments (`[LT-7]`). What a callable type means in each position is `[CLO-3]`.
 * `[FN-7]` Recursion is permitted; tail calls are not guaranteed to be eliminated.
 * `[FN-8]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* `main` is `fn main()`, `fn main() -> Result[void, E]` for any
-  `E: Display`, or either form with a first parameter `args: Array[String]`. `args` holds the command
+  `E: needs Display`, or either form with a first parameter `args: Array[String]`. `args` holds the command
   line, decoded as UTF-8 with invalid bytes replaced by U+FFFD; `std.process.args_os()` returns the raw
   bytes. An `Err` returned from `main` is printed with `Display` to standard error and the process
   exits with status 1. The entry module's `main` in any other form (another parameter or more than one,
@@ -398,11 +398,11 @@ extend Square implements Shape2D:
   legal in any module of `T`'s package.
 * `[IFC-2]` Adding inherent methods to a type from another package is `E2120`; use an interface or a
   wrapper type.
-* `[IFC-3]` *(changed in 0.9.9)* `interface Ord: Eq` requires implementers of `Ord` to implement `Eq`. So a bound brings
-  its parents: `T: IndexMut[int]` provides `Index[int]`'s methods too, and a binding it writes
+* `[IFC-3]` *(changed in 0.9.9)* `interface Ord: needs Eq` requires implementers of `Ord` to implement `Eq`. So a bound brings
+  its parents: `T: needs IndexMut[int]` provides `Index[int]`'s methods too, and a binding it writes
   (`Output = f32`) names the parent's associated type (ODR-042).
 * `[IFC-4]` *(changed in 0.9.9)* Interfaces may declare associated types and constants, not statics.
-  An associated type may carry bounds (`type Real: Float`), and a type implementing the interface
+  An associated type may carry bounds (`type Real: needs Float`), and a type implementing the interface
   states it (`type Real = f64`) with a value that meets them (`E2040` if it is missing or does not).
   `T.Name` names the associated type `Name` of a type parameter `T` whose bound declares it: inside
   the generic body it has what its declared bounds provide, and each call takes it from what the
@@ -410,11 +410,11 @@ extend Square implements Shape2D:
   associated type once, for each of them that declares it (`extend i32 implements Add, Sub: type
   Output = i32`). `Name = T` inside an interface's brackets is written only in a bound (`T: Add[Output
   = T]`), and is `E2020` in an `implements` list. A bound that leaves an associated type unsaid
-  (`T: Add`) makes `a + b` a `T.Output`, which only a signature naming it (`-> T.Output`) can hold
+  (`T: needs Add`) makes `a + b` a `T.Output`, which only a signature naming it (`-> T.Output`) can hold
   (`E2040` otherwise) (ODR-040). An interface may give an associated type a **default** (`type Out =
   Self`): an implementation that does not state it takes the default, read with `Self` as the
   implementing type, and the default must meet the associated type's bounds (`E2040`). A default is
-  not an equality: a bound `T: I` leaves `T.Out` abstract whatever the default says, and a default
+  not an equality: a bound `T: needs I` leaves `T.Out` abstract whatever the default says, and a default
   method body sees `Out` as itself, never as its default, since an implementation may override it
   (ODR-049). A default that leads back to itself, directly or through other defaults, is `E2043`.
 * `[IFC-5]` *(new in 0.9.15)* **Interface values say who owns them.** `owns dyn I` is a value of some
@@ -427,20 +427,24 @@ extend Square implements Shape2D:
   parameter is only the type of a `ref` or `ref mut` parameter gets one entry for `dyn` use; an
   interface whose generic method returns or stores its type parameter is not usable as `dyn` (`E2050`,
   `[TYP-22]`: "`Inspect` cannot be used as `dyn Inspect`: `make` returns its `V`, and a `dyn` value has
-  one entry per method; take the visitor in instead of returning it, `[V: Visitor]` above
+  one entry per method; take the visitor in instead of returning it, `[V: needs Visitor]` above
   `fn make(ref mut v: V)`, or keep each list's own type with a type parameter instead of
-  `dyn Inspect`: `[I: Inspect]` above `fn walk(xs: Array[I]) -> int:`"). A value of an interface type
+  `dyn Inspect`: `[I: needs Inspect]` above `fn walk(xs: Array[I]) -> int:`"). A value of an interface type
   is tested for its kind with `is` and cast with `cast x as T` (`[DSP-4]`, `[DSP-6]`). What a `dyn`
   value's methods change is worked out from every value the program makes into that type (`[EFF-2]`).
-* `[IFC-6]` *(new in 0.9.15)* **Bounds of a generic function.** A function that is not `pub` may leave
-  its type parameters' bounds unwritten: they are worked out from its body, and a method that no
+* `[IFC-6]` *(new in 0.9.15)* **Bounds of a generic function.** A function that is not `pub` writes all
+  of its type parameters' bounds or none. With none, they are worked out from its body, and a method that no
   interface in scope declares is `E2072` ("`T` has no `weight`: no interface in scope declares
   `fn weight`; declare one, `interface Weighed:` with `fn weight() -> int`, and write
   `struct Crate implements Weighed:` for the type `heaviest` is given; the bound follows"). A `pub`
   function writes them (`[MOD-9]`): a missing one is `E2040`, one message, on the first line of the
   body that needs a bound the function does not write, giving every bound the body needs ("`total` is
-  `pub`, so its bound is written: write `[T: Add[T, Output = T]]` in place of `[T]` above
-  `pub fn total(a: T, b: T) -> T:`").
+  `pub`, so its bound is written: write `[T: needs Add[T, Output = T]]` in place of `[T]` above
+  `pub fn total(a: T, b: T) -> T:`"). A function that is not `pub` and writes some of them writes every one
+  its body needs: a list that leaves one out is `E2040`, whose message gives the whole line
+  (`[T: needs Lookalike]` above `fn direct_add(a: T, b: T) -> T:` with `return a + b`, where `Lookalike`
+  declares an ordinary `fn add` and is not `Add`, gets `[T: needs (Lookalike, Add[T, Output = T])]`);
+  nothing is added to a written list (verdict 113).
 
 ## V.7 Constants and statics
 

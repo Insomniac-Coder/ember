@@ -130,3 +130,19 @@ Each is the smallest sound reading of a verdict or ruling above; the owner may o
 | `[PAR-3]` (verdict 105) | a `@parallel` whole-number reduction's chunk totals stop on overflow too | the same rule as `[THR-21]`'s task totals; chunk boundaries do not depend on the machine (`[PAR-5]`), so neither does the stop |
 | `[FFI-11]` (verdict 102) | `returns_owned(destructor=f)` keeps its name | it is one word, not the removed `owned`; the owner may rename it |
 | `E2122` (verdict 103) | the new code is `E2122`, next to `E2119` | never used in any spec or in the compiler |
+
+## 7. Choices made while writing 0.9.15_Hardened_3 (lead, 2026-10-28)
+
+Each carries out an owner verdict where the verdict leaves a detail open; each is told to the owner.
+
+| Rule | Choice | Why |
+|---|---|---|
+| `[TYP-17]`, Part III (verdicts 109-112) | `needs` before every bound, a function-shaped one too: `[F: needs fn(Item)]`, `[U, F: needs once fn(owns T) -> U]` | verdict 109: what a type parameter needs is written after `needs`; one spelling for every bound |
+| Part III (verdicts 109-112) | `dyn` and `some` keep `+` (`dyn Display + Send`) | they are types, not a type parameter's needs; no verdict names them, and the spec writes none today |
+| `[TYP-17]` (verdict 109) | a bound without `needs`, or joined with `+`, is `E0100`, whose message gives the line with `needs` | the old spelling is refused with the new one in its message, as every removed spelling is |
+| `[ALC-2]` (verdict 107) | the promise is the interface `std.mem.FoundByAddress` (no methods, `unsafe` to implement) with `const PIECE: usize = 65536`; the instance's address is the piece's first word | the verdict gives the layout; a name was needed |
+| `[FFI-35a]` (verdict 114) | an object given to a `retained` parameter is marked in its header as kept by C | the hand-over must know it cannot move; the header has the room (`[OBJ-1]`) |
+| `[TYP-47]` (verdict 116) | following C++: `Cs...` among type arguments spells a pack out, `values...` among a call's arguments passes the values on, `values.len()` counts them | the verdict chose C++'s spelling; these are C++'s uses of it |
+| `[TYP-47]`, `[STD-9]` (verdict 117) | parameters after a pack's values have defaults and are passed by name only (`println(a, b, sep=", ")`), as after Python's `*args` | `print` keeps `sep` and `end` as a library function |
+| `[STD-9]` (verdict 117) | the compiler implements `Printable` (`std.core`, prelude) for every type with `Display` or `Debug`: `Display`'s text, else `Debug`'s; no program implements it by hand | Ember has no specialisation (`[TYP-19]`), so the library cannot write "Display, else Debug" itself; a program's own functions use the same `[Ts...: needs Printable]` |
+
