@@ -5,9 +5,9 @@ sooner if the owner wants. Answers become verdicts in `tasks/96/redesign/JOB.md`
 other question the areas raised is settled in `decisions.md`.
 
 **Answered 2026-10-27:** Q-A (verdict 102), Q-B (verdict 103), Q-C (verdict 104), Q-D (verdict 105, for
-now), Q-G (verdict 106), Q-F (verdict 107, 2026-10-28: (b) and (c) together). **Open:** Q-E (the owner could
-not answer yet), Q-H and Q-I (not understood: explain again, one at a time,
-with real code).
+now), Q-G (verdict 106), Q-F (verdict 107, 2026-10-28: (b) and (c) together), Q-H (verdict 113, 2026-10-28: a full list or none), Q-E (verdict 114, 2026-10-28: the object goes and the
+links here say "gone", with three fixes). Q-I (settled by verdict 115, 2026-10-28: variadic generics, so one type is `reg.view[Position]()` and
+there is no tuple). **None open.**
 
 ## Q-A (M1): `owned` inside `@ffi(...)` contracts
 
@@ -57,6 +57,9 @@ with real code).
 
 ## Q-E (M9): handing an object to another thread while a `weakref` on this thread points at it
 
+**Answered: verdict 114 (2026-10-28), neither (a) nor (b): Rust's run-time way, the object goes and the links
+here say "gone"; (b) only for an object whose address C keeps.**
+
 - **Rule:** `[THR-2]` makes it E7015 when compiling.
 - **The problem:** links can be stored anywhere, so an exact check is possible only inside one
   function.
@@ -87,6 +90,8 @@ with real code).
 
 ## Q-H (M11): a private generic that writes some of its bounds
 
+**Answered: verdict 113 (2026-10-28), (b): a full list or none; part of one is refused.**
+
 - **Rule:** `[IFC-6]` and `[TYP-17]` infer a private generic's bounds from its body.
 - **The question:** when it writes some bounds, are the others still inferred? For example,
   `[T: Lookalike]` above `fn direct_add(a: T, b: T) -> T: return a + b`, where `Lookalike` does not
@@ -96,6 +101,9 @@ with real code).
   - (b) it is refused (E2072: no written bound declares `+`).
 
 ## Q-I (M14): naming one type in an ECS view
+
+**Settled: verdict 115 (2026-10-28). Ember gets variadic generics; a view lists its types with no tuple and no
+limit, `reg.view[Position]()`, `reg.view[Position, Velocity, Health]()`.**
 
 - **Rule:** `[TYP-27]` says a tuple type has two or more elements (ODR-071). ECS-3 and ECS-4 write
   `registry.view[(A,)]()` and `.exclude[(C,)]()`.

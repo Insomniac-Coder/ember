@@ -874,6 +874,101 @@ acceptable it hurt readability too, if you want something to have a copy use the
       word, C 290 ms and 13.7 MB.
     - Goes into the next hardening (`[ALC-1]`, `[ALC-2]`, `[OBJ-4]`, `[COST-3]`) with milestone M10.
 
+108. **A `pub` generic function writes everything its type parameters need** (owner, 2026-10-28, after
+    `[IFC-6]` was explained, a rule the design writers proposed (AN-69) and the lead put into 0.9.15
+    without an owner verdict: "yes pub functions need to declare it"). The lead's reading, stated to the
+    owner: the rest of `[IFC-6]` stands, so a function that is not `pub` may leave the list out and the
+    compiler works it out from the body. Q-H (a function that is not `pub` writing part of its list)
+    stays open.
+
+109. **What a type parameter needs is written after `needs`; several go in round brackets, separated by
+    commas** (owner, 2026-10-28, option (b): "it can become a problem when multiple interfaces are
+    required so it will turn into needs A and B and C so instead I'll go with b"). The owner suggested
+    `[T: needs Add[T, Output = T], Copy]`; the comma already separates type parameters
+    (`extend[K: Eq + Hash, V, Q: AsKey[K]] Map[K, V] implements Index[Q]`), so the choices were (a)
+    `needs A and B`, (b) round brackets, (c) one bracket line per type parameter.
+    - `[T: needs (Add[T, Output = T], Copy)]` above `pub fn sum(xs: Span[T]) -> T:`; one need has no
+      brackets, `[T: needs Copy]`.
+    - Replaces `+` between bounds in a type-parameter line (0.9.10's spelling, Rust's, never put to
+      the owner).
+    - The same spelling goes everywhere a list of needs is written: verdicts 110 to 112.
+
+110. **An interface's parents are written with `needs` too** (owner, 2026-10-28: "yes", asked whether
+    `interface Error: Debug + Display:` becomes `interface Error: needs (Debug, Display):`). One parent
+    has no brackets, `interface Ord: needs Eq:` (verdict 109's rule).
+
+111. **`extend`'s type parameters are written with `needs` too** (owner, 2026-10-28: "yes", asked whether
+    `extend[T: Display] Array[T] implements Display:` becomes
+    `extend[T: needs Display] Array[T] implements Display:`). Several go in round brackets,
+    `extend[K: needs (Eq, Hash), V, Q: needs AsKey[K]] Map[K, V] implements Index[Q]`.
+
+112. **An interface's associated type writes its needs with `needs` too** (owner, 2026-10-28: "yes", asked
+    whether `type Iter: Iterator[Item = Item]` in `interface Iterable:` becomes
+    `type Iter: needs Iterator[Item = Item]`).
+
+113. **A function that is not `pub` writes its full list of needs or none** (owner, 2026-10-28, gap map
+    Q-H: "they either write full or no list"). None: the compiler works the list out from the body
+    (`[IFC-6]`, now the owner's; verdict 108's reading confirmed). Part of one is refused, with a message
+    giving the complete line: `[T: needs Lookalike]` above `fn direct_add(a: T, b: T) -> T:` with
+    `return a + b`, where `Lookalike` declares an ordinary `fn add` and not `Add`, gets
+    `[T: needs (Lookalike, Add[T, Output = T])]`.
+
+114. **An object handed to another thread while a `weakref` on this thread points at it goes, and the
+    links here then say "gone"** (owner, 2026-10-28, gap map Q-E, "aight approved with these fixes").
+    Rust's run-time way (`Rc::try_unwrap`), which the lead checked with `rustc` 1.98.1: Rust's
+    compile-time way refuses even `drop(w)` then `thread::spawn(move || names.items.len())` (E0277,
+    "`Rc<Names>` cannot be sent between threads safely"), so it refuses fine programs as (a) did; with
+    `Rc::try_unwrap(names)` the thread gets the object and `w.upgrade()` is `None` ("0 true").
+    - At the hand-over the program reads the object's weak count, one compare. No link: the object
+      goes as it is. A link: its contents move to a new place for the other thread, the old place is
+      marked ended (its `drop` does not run; the new one's runs once, on the other thread) and stays
+      here until its last link ends, so every `weakref` here says "gone". Nothing is refused and
+      nothing stops. `names = Names()`, `w = weakref names`,
+      `h = thread.spawn(fn() owns names: names.items.len())`, then `if w exists as p:` is skipped and
+      `println(h.join())` prints 0 (the design test that refused this becomes a run-pass test).
+    - Fix 1, objects inside it: the check also covers every object the handed object owns whose class
+      a `weakref` is made to anywhere in the program (the compiler knows those classes);
+      `cam.target = weakref level.enemies[0]` then `thread.spawn(fn() owns level: ...)` moves enemy 0
+      and `cam.target` says "gone". One compare per such object (10,000 enemies, 10,000 compares).
+      Today's text of the rule misses this case too.
+    - Fix 2, a link open at that moment: a hand-over to another thread joins the lines after which a
+      view opened from a link to an object of that type is not used (`if ROSTER[0] exists as p:`, the
+      hand-over of a `Names`, then `p.items.len()` is refused when compiling); nothing runs for it.
+    - Fix 3, an address C keeps: an object given to C under a `retained` contract never moves; for it
+      a link at the hand-over stops the program (gap map Q-E's (b)). `unsafe` code gets the written
+      obligation that an object handed to another thread may move.
+    - Checked and fine: the other thread never touches this thread's counts (the old place stays here
+      with the links; the new one starts with none); an object holding a `weakref` to a one-thread
+      object cannot go to another thread at all; a lock in the object is one futex word, movable, and
+      cannot be held across the hand-over.
+    - Goes into the next hardening (`[THR-2]`, `[RC-5]`, `[WK-12]`, `[FFI-35a]`, `[UNS-4]`) with M9.
+
+115. **Ember gets typed variadic generics and typed variadic functions** (owner, 2026-10-28: "go for
+    both generics and functions, note it down"). It began at gap map Q-I: the ECS writes several
+    component types as one tuple (`reg.view[(A, B)]()`) because Ember had no variadic generics, which
+    capped a view at 8 types and left one type as `(A,)`, a tuple `[TYP-27]` refuses. The owner: "this is
+    not a good limit to have what if I want to access and object with 10 components?"
+    - **Variadic generics:** a function or type takes any number of types in its square brackets,
+      `reg.view[Position, Velocity, Health, Armor, Speed]()`, one type `reg.view[Position]()`, with no
+      limit and no tuple; each use is made for its exact types, as generics are, so nothing runs for it.
+      This settles Q-I (shown to the owner: "there's no limit and no round brackets, so Q-I goes away
+      too").
+    - **Typed variadic functions,** built on them: a call passes any number of values, each of a type
+      known when compiling and checked as an ordinary parameter, ownership words included
+      (`log("hp", hp, pos)`). C's `...` stays as it is, only in `unsafe` and only to call C
+      (`printf("%s", 42)` is the unsafe kind this is not).
+    - Uses named to the owner: the ECS (`view`, `view_mut`, `exclude`, `all_of`, `any_of`), `zip` over any
+      number of iterators, a tuple's interfaces written once for every size (Rust stops at 12), events
+      and callbacks passing several values (`Event[int, String]` with handlers `fn(int, String)`).
+    - Costs named to the owner (none a safety issue): a copy of the function per set of argument types,
+      as generics; error messages to keep readable; the rules for ownership words over "all the
+      remaining arguments".
+    - Changes `[TYP-19]` (no variadic generic), `[TYP-26]` and section I.6 (no variadic functions but
+      the output functions), `[ECS-3]` and `[ECS-4]` (the tuple list and its 1-to-8 limit), `[STD-*]`'s
+      `zip`. Still to put to the owner, with real code, when the hardening writes them: the spelling of
+      "any number of types" in a declaration and of the values a variadic function takes, and whether
+      `print`, `println`, `eprint`, `eprintln` and `format_to` become ordinary library functions.
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

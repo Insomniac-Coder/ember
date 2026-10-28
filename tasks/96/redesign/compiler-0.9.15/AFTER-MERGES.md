@@ -88,8 +88,17 @@ The count stays 160 (40 L, 77 M, 43 S). M-A, M-B and M-C are done. What changes:
 | Q-B | 103: (a) no `shares` of a one-owner place | A3-2 types `shares` of a list element, field or plain parameter as an error with a code of its own (a sibling of E2119) and a help naming the rewrite; the count test at every one-owner end (the cost D5 named) is not built | M4, unblocked |
 | Q-C | 104: the parent may use what the task used after `h.join()` | `[THR-11]`, `[THR-13]`: a task's claims end at its join | M9 |
 | Q-D | 105 (for now): a task's own total stops on overflow | `[THR-21]` reductions: each task's private total has the variable's type and checked adds; the join's adds are checked; THR-21's "always what adding one by one gives" is narrowed for whole numbers | M9 (Q-E still open) |
-| Q-G | 106: a function type's contract above its `type` line | `[EFF-2]`'s sentence gets its grammar: `@noalloc` over `type Handler = fn()`; parse it in M1's grammar commit, check it in M11 | M1 (parse), M11 (check; Q-H still open) |
+| Q-G | 106: a function type's contract above its `type` line | `[EFF-2]`'s sentence gets its grammar: `@noalloc` over `type Handler = fn()`; parse it in M1's grammar commit, check it in M11 | M1 (parse), M11 (check) |
+| Q-F | 107: (b) and (c) together | a manager that frees nothing one by one, or one whose pieces start at a multiple of 65,536 bytes with its address in the first 64, gives values with no word; every other manager's keep it | M10 |
+| Q-E | 114: the object goes to the other thread and the `weakref`s here say "gone" | `[THR-2]`: one compare of the weak count at the hand-over; with a link, the contents move and the old place is marked ended; objects it owns whose class is a `weakref` target are checked too; `[RC-5]`: a hand-over ends a view opened from a link; `[FFI-35a]`: a `retained` object never moves (a link stops the program) | M9 |
+| Q-H | 113: a function that is not `pub` writes its full list of needs or none | `[IFC-6]`, `[TYP-17]`: part of a list is refused, with the complete line in the message | M11 |
 
-Still open: Q-E (M9), Q-F (M10: the owner wants (b) and (c) together "if it's safe and fast"; the numbers
-are in `../measure-0.9.15/RESULTS.md` section 7 and the safety argument in `../measure-0.9.15/M3.md`
-"Verdict 47's two ways"), Q-H (M11) and Q-I (M14), which the owner asked to have explained again.
+Verdicts 108 to 112 (2026-10-28, not from the gap map) change how needs are written: a `pub` function writes its full
+list (108); `needs`, with several in round brackets, `[T: needs (Add[T, Output = T], Copy)]` (109), in a type-parameter
+line, an interface's parents (110), `extend[...]` (111) and an associated type (112). They go into the next hardening
+(`[GRM-34]`, `[GRM-40]`, `[TYP-17]`, `[IFC-6]` and every example that writes `T: A + B`) with M1's grammar and M11.
+
+| Q-I | 115: typed variadic generics and typed variadic functions | `[TYP-19]`, `[TYP-26]`, I.6: any number of types in square brackets and any number of typed values in a call; `[ECS-3]`, `[ECS-4]`: `reg.view[Position, Velocity]()`, no tuple, no limit; `zip` over any number; tuple interfaces for every size | new compiler work in M11 (generics), used by M14 |
+
+No gap-map question is open. Still to put to the owner when the hardening writes them (verdict 115): the
+spelling of a variadic declaration, and whether `print` and the other output functions become library functions.

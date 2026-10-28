@@ -69,12 +69,12 @@ milestone by milestone. M-A to M0 need no agents.
 | M6c | Alias facts: disjointness, `noalias` on every `ref mut` | A2-12, A2-14 (with A7-19 folded in, C3), A9-10 | 4 M | — |
 | M7 | Loops of owners refused unless opened (E3032); parent links and the walk | A3-9, A3-10, A3-11 (with the measured salvages) | 2 L, 1 M | — |
 | M8 | Function values: capture words, two words `{code, state}` | A4-9, A4-10, A9-6, A9-7, A4-17, A5-10, A6-7 | 2 L, 4 M, 1 S | — |
-| M9 | Threads: `thread_shared` values, spawn, scoped tasks, reductions, locks, module variables | A5-11 to A5-20, A1-17's second half, A6-13, A6-14, A9-9 | 3 L, 7 M, 3 S | Q-E (Q-C, Q-D answered: verdicts 104, 105) |
-| M10 | Memory managers and arenas with `using` | A1-13 to A1-16, A7-11 (with the measured choice about the instance word) | 1 L, 3 M, 1 S | Q-F |
-| M11 | Interface values, kind tests and casts, generic bounds, `init`, `@cached`, class rules, contracts | A4-11 to A4-16 (with A1-20 and A7-12's checker, C4), A7-13 | 2 L, 6 M, 1 S | Q-H (Q-G answered: verdict 106) |
+| M9 | Threads: `thread_shared` values, spawn, scoped tasks, reductions, locks, module variables | A5-11 to A5-20, A1-17's second half, A6-13, A6-14, A9-9 | 3 L, 7 M, 3 S | Q-C, Q-D, Q-E answered: verdicts 104, 105, 114 |
+| M10 | Memory managers and arenas with `using` | A1-13 to A1-16, A7-11 (with the measured choice about the instance word) | 1 L, 3 M, 1 S | Q-F answered: verdict 107 |
+| M11 | Interface values, kind tests and casts, generic bounds, `init`, `@cached`, class rules, contracts | A4-11 to A4-16 (with A1-20 and A7-12's checker, C4), A7-13 | 2 L, 6 M, 1 S | Q-G, Q-H answered: verdicts 106, 113; spelling of needs: verdicts 109 to 112 |
 | M12 | The C interface: `unsafe import c`, `@unsafe(export)`, the checked trampoline, what a foreign call may run | A6-2, A6-3, A6-6, A6-8, A6-11, A6-15; A5-4, A5-5 | 2 L, 2 M, 4 S | — |
 | M13 | Hot reload on the new model | A6-18, A6-20, A6-21, A6-22 | 2 L, 2 M | — (both backends' image writers: AFTER-MERGES.md) |
-| M14 | std.ecs as EnTT's design, and the rest of std's semantics | A8-1 to A8-5, A8-7, A8-8, A8-11, A8-12 | 1 L, 5 M, 3 S | Q-I |
+| M14 | std.ecs as EnTT's design, and the rest of std's semantics | A8-1 to A8-5, A8-7, A8-8, A8-11, A8-12 | 1 L, 5 M, 3 S | Q-I settled: verdict 115 (variadic generics; a new piece of compiler work before M14) |
 | M15 | Close-out: stop texts, debugger, mangling, tools, Annex A compiles, the flat memory curve, std.gpu | A7-16, A7-20 to A7-22, A7-24, A7-25, A9-12, A5-22 | 2 L, 2 M, 4 S | — |
 
 **Why this order.**
@@ -134,11 +134,11 @@ the owner wants). The full text is in `questions.md`.
 | Q-B | M4 | May `shares` be made from a list element, a field or a plain parameter (`shares mut players[1]`), from class objects only, or never? |
 | Q-C | M9 | After `h.join()`, may the parent change what the task used, inside the same `with` block? |
 | Q-D | M9 | An integer reduction whose partial totals overflow while the true total fits, or the reverse: what happens? |
-| Q-E | M9 | Handing an object to another thread while a `weakref` on this thread points at it: refuse when compiling wherever it may happen, or one compare of the weak count at the hand-over? |
-| Q-F | M10 | The instance word: keep it as written, or drop it by laying memory out so a block finds its arena (measured)? |
+| Q-E | M9 | Handing an object to another thread while a `weakref` on this thread points at it: refuse when compiling wherever it may happen, or one compare of the weak count at the hand-over? Answered: verdict 114, the object goes and the links say "gone" |
+| Q-F | M10 | The instance word: keep it as written, or drop it by laying memory out so a block finds its arena (measured)? Answered: verdict 107, (b) and (c) |
 | Q-G | M11 | How is a contract such as `@noalloc` written on a function type, or is that sentence dropped? |
-| Q-H | M11 | A private generic that writes some bounds: are the rest inferred, and what if two interfaces in scope both supply a method? |
-| Q-I | M14 | One-element tuples `(A,)` for `registry.view[(A,)]()`, or another way to name one type? |
+| Q-H | M11 | A private generic that writes some bounds: are the rest inferred, and what if two interfaces in scope both supply a method? Answered: verdict 113, a full list or none |
+| Q-I | M14 | One-element tuples `(A,)` for `registry.view[(A,)]()`, or another way to name one type? Settled: verdict 115, variadic generics and functions |
 
 The other questions the areas raised are settled in `decisions.md`, from the spec's own text, a verdict
 or the measurements: `from` on any field, the closed list of index proofs, `for i, ref mut x in
