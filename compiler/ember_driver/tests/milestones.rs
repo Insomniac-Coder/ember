@@ -3335,9 +3335,10 @@ fn main():
 }
 
 /// `[CLI-13]` — `ember calls --foreign <item>` lists every foreign function the item can reach —
-/// through calls, a method, another module, a function value it takes — with the chain to it and
-/// the contract its declaration states; one it cannot reach is not listed, and a call through a
-/// `dyn` value, whose callee nothing names, is said to be beyond the list.
+/// through calls, a method, another module, a function value it takes, a `dyn` value (the
+/// implementations the program has, `[EFF-2]`) — with the chain to it and the contract its
+/// declaration states; one it cannot reach is not listed, and a call through a value whose callee
+/// nothing in the program names (a C function pointer) is said to be beyond the list.
 #[test]
 fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
     let root = workspace_root();
@@ -3370,8 +3371,9 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
     let report = ember(&["calls", "--foreign", "main", &source_arg], &root);
     assert_eq!(report.exit, 0, "calls failed:\n{}\n{}", report.stdout, report.stderr);
     let out = &report.stdout;
-    assert!(out.contains("Foreign functions `main` can reach (4):"), "{out}");
-    assert!(!out.contains("`labs`"), "`labs` is reached only through a `dyn` value: {out}");
+    assert!(out.contains("Foreign functions `main` can reach (5):"), "{out}");
+    assert!(out.contains("  main -> measure -> area -> labs
+"), "`labs` is reached through a `dyn` value's one implementation: {out}");
     assert!(out.contains("  main -> length\n"), "{out}");
     assert!(out.contains("its contract: `param(text, borrowed, nul_terminated)`  [asserted]"), "{out}");
     assert!(out.contains("  main -> Counter.bump -> clib.abs\n"), "{out}");
@@ -3379,7 +3381,8 @@ fn calls_foreign_lists_what_an_item_reaches_with_each_contract() {
     assert!(out.contains("  main -> noisy -> clib.rand\n"), "{out}");
     assert!(out.contains("fn `rand` unsafe to call") && out.contains("its effects: none stated, so every effect"), "{out}");
     assert!(out.contains("  main -> imaxabs\n"), "a function value taken is reachable: {out}");
-    assert!(out.contains("and what `measure` calls through a function or `dyn` value"), "{out}");
+    assert!(out.contains("and what `main` calls through a function or `dyn` value"), "`pick` holds a C function: {out}");
+    assert!(!out.contains("and what `measure` calls"), "`measure`'s `dyn` call has a target: {out}");
     let helper = ember(&["calls", "--foreign", "Counter.bump", &source_arg], &root);
     assert!(helper.stdout.contains("(1):") && helper.stdout.contains("Counter.bump -> clib.abs"), "{}", helper.stdout);
     let json = ember(&["calls", "--foreign", "noisy", "--json", &source_arg], &root);
