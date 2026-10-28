@@ -146,3 +146,15 @@ Each carries out an owner verdict where the verdict leaves a detail open; each i
 | `[TYP-47]`, `[STD-9]` (verdict 117) | parameters after a pack's values have defaults and are passed by name only (`println(a, b, sep=", ")`), as after Python's `*args` | `print` keeps `sep` and `end` as a library function |
 | `[STD-9]` (verdict 117) | the compiler implements `Printable` (`std.core`, prelude) for every type with `Display` or `Debug`: `Display`'s text, else `Debug`'s; no program implements it by hand | Ember has no specialisation (`[TYP-19]`), so the library cannot write "Display, else Debug" itself; a program's own functions use the same `[Ts...: needs Printable]` |
 
+## 8. Rulings made on autopilot, night of 2026-10-28 (lead, under the delegation)
+
+Each is reported to the owner in the morning with the real code it concerns and why. A question that is
+really the owner's is listed under "For the owner", not ruled.
+
+| Rule | Ruling | Why |
+|---|---|---|
+
+### For the owner
+
+(none yet)
+

@@ -1,5 +1,70 @@
 # Ember — handoff
 
+> **2026-10-28, night — START HERE (supersedes the notes below for what to do next).**
+>
+> **Mode: autopilot through the night, solo.** The owner: "continue working on autopilot and in the
+> morning when I wake up you tell me about the ODRs you decided", then "no agents or workflows you go
+> solo" (whatever a session setting such as ultracode says). Rule ODRs under the delegation (sound,
+> fast, general solutions only; never widen an owner answer) and record each in
+> `tasks/96/redesign/compiler-0.9.15/decisions.md` section 8 as it is made. A question that is really
+> the owner's is not ruled: list it for the morning. **Morning report**, in chat, plainly: each ODR with
+> the real code it concerns and why; then the open questions, one at a time; then what landed.
+>
+> **Where things are.**
+> - The development target is `docs/spec-source/Ember_v0.9.15_Hardened_3.md` (the owner's verdicts
+>   1-117, `tasks/96/redesign/JOB.md`); the compiler on `main` still implements 0.9.10. The build plan
+>   is `tasks/96/redesign/compiler-0.9.15/MILESTONES.md` (M0 to M15), each item's detail in
+>   `compiler-0.9.15/gap/0N-*.md` (search `**A7-18`, `**A5-1.` …).
+> - `main` on origin: `8464b305`. **Local and unpushed**, in order: `ec2e6b5a` (A3-1 count limits and
+>   texts, A7-17 `#$ count_bits: 8`), `95c333b5` (A7-18 probes, E9014, `cflags.txt`), `a038bd5b` (A6-12
+>   E5013 for a promoted variadic argument, E5054 for `char`), `ebd1a8c1` (the read-only reviewer's 9
+>   findings on M0, fixed), `502b32b2` (README progress strict: a rule H3 marks new or changed in 0.9.15
+>   counts only once `docs/phase-status.json`'s `built_for_0915` lists it; Overall 78% -> 22%).
+> - A Windows full check of `502b32b2` was started at about 22:15 (background, the session's
+>   `verify_windows.ps1` in `C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\ae3a2898-3f0f-4361-99e2-9bbbb0976123\scratchpad\`,
+>   which runs `full_check.ps1` beside it; summary in that folder's `check\verify.txt`). If the session
+>   that reads this cannot see it, run it again: `powershell -NoProfile -ExecutionPolicy Bypass -File
+>   C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\ae3a2898-3f0f-4361-99e2-9bbbb0976123\scratchpad\verify_windows.ps1`
+>   (it runs `full_check.ps1`, the LLVM matrix and driver tests, then the clang-cl suite; ~45 minutes;
+>   do not edit the tree while it runs — it builds from it).
+>
+> **To push** (`AUTOPILOT.md` §4, the owner's speed rule): the full check green apart from the four
+> marked known items (version test until M1, Annex A's fixture until the 0.9.15 compiler builds it,
+> `Dynamic exclusivity check` until M6b, `RefCell` borrow until M5 — each prints `[TST-29] baselined`
+> and fails once no longer true); then the laptop bench on mains, fast cores
+> (`cargo build -p ember_driver --bin ember --release`, `target/release/ember.exe bench --compare --core 1`);
+> then `git push origin main` and one look at CI (`gh run list --branch main`). Commits: author
+> `Gunslinger <ism1988@live.com>`, committer Claude, trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+> When a milestone builds a rule's 0.9.15 behaviour with its test, add the rule to `built_for_0915`
+> in that commit and run `python tools/phase_progress.py --write`.
+>
+> **Next work, in order.**
+> 1. M0's rest (each detailed in the gap files):
+>    - **A5-1** an `unsafe fn` body is no unsafe context (`[UNS-12]`): in `ember_typeck/src/lib.rs`
+>      seed `in_unsafe` with `false`, not `decl.is_unsafe`, where a top-level function or method body is
+>      checked (today about lines 20555, 20627, 23047, 24070) and drop `|| decl.is_unsafe` for local
+>      functions (about 40158, 40244, 40553); give `E3100` inside an `unsafe fn` the spec's help (one way:
+>      `Sink::mark` before the body, then amend that body's `E3100`s; 23 sites emit `E3100`); give
+>      `std/src/mem.em`'s volatile functions their own `unsafe:` blocks; respell the tests whose
+>      `unsafe fn` bodies do raw work (the suite finds them).
+>    - **A5-2** safety notes (`[UNS-7]`, `[UNS-8]`): `L3015` for every `unsafe fn` without `@safety`, not only
+>      a `pub` one (`lib.rs` about 43222); `W3013` (registered already) for a `# SAFETY:` note on an
+>      `unsafe fn` line; `W3012` for `unsafe:` blocks and `unsafe extend`/`extern`/`overlay`
+>      (`check_safety_notes` in `ember_driver/src/lib.rs` about 7597; the parser's `unsafe_sites`).
+>    - **A5-3** `@no_runtime_checks` is `E0104` with `[UNS-11]`'s message (`RESERVED_ATTRIBUTES`, `lib.rs`
+>      about 60656).
+>    - **A6-16** an overlay names its header's hash (`[FFI-55]`, `E5010`), **A5-21** codes and pages.
+> 2. M1: the 0.9.15 grammar (with `needs (…)` and `...`), the spelling-only forms and `ember fmt
+>    --migrate`, in one commit.
+>
+> **Traps met today.** In Git Bash a heredoc collapses `\\` to `\`: write Python edit scripts with the
+> Write tool. Git Bash's `/tmp` is not Python's; redirect Python output with `PYTHONIOENCODING=utf-8`.
+> A `link.exe` once hung for 70 minutes in `%TEMP%` (LEX-19; it builds fine alone; Defender suspected):
+> if a full check stalls, find the process and its command line before anything else. WSL still dies on
+> `ember run --hot` (D-922). Never run a compiled Ember program except through the test harness.
+> A cut `Hardened_N` may be edited in place only to add what is missing (the owner); any change of
+> meaning is a new hardening.
+>
 > **2026-10-24 — read first.** The owner ruled on 2026-10-23 that the memory model needs a rework
 > (C-like performance, memory safety without Rust's annoying parts, Python-like syntax) and stopped
 > all work until it is discussed. The research and the current state are in
