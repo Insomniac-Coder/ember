@@ -131,7 +131,7 @@ mod tests {
         let made: Vec<Vec<(String, Symbol)>> = std::thread::scope(|scope| {
             let threads: Vec<_> = (0..8)
                 .map(|thread| {
-                    scope.spawn(move || {
+                    crate::thread::spawn_scoped(scope, move || {
                         (0..PAGE + 100)
                             .map(|n| {
                                 let text = format!("shared_{n}_{}", n % (thread + 1));

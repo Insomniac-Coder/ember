@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 pub mod codec;
 pub mod symbol;
+pub mod thread;
 pub use symbol::Symbol;
 
 /// Index of a source file within a [`SourceMap`].

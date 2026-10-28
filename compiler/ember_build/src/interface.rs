@@ -338,7 +338,7 @@ impl PreparedInterfaceCache {
                 .writes
                 .chunks(per_thread)
                 .map(|writes| {
-                    scope.spawn(move || {
+                    ember_span::thread::spawn_scoped(scope, move || {
                         writes.iter().try_for_each(|(path, write)| match write {
                             Write::Artifact(index) => write_record(path, &artifacts[*index].to_bytes()?),
                             Write::Bytes(bytes) => write_record(path, bytes),

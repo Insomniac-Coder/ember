@@ -606,7 +606,7 @@ fn emit_with(
     let units = units.unwrap_or_default();
     let run = units.len().div_ceil(ember_mir::parallel::jobs().max(1)).max(1);
     let (runs, class_plans) = std::thread::scope(|scope| {
-        let writers: Vec<_> = units.chunks(run).map(|run| scope.spawn(|| write_run(run))).collect();
+        let writers: Vec<_> = units.chunks(run).map(|run| ember_span::thread::spawn_scoped(scope, || write_run(run))).collect();
         write(&mut emitter);
         // `[BLD-FFI-5a]` — what C and C++ call of the `@sync` classes the exports hand them.
         let class_plans = class_exports::plan(&emitter, bodies, package_name);

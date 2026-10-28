@@ -54,7 +54,7 @@ pub fn each_on<I: Sync, T: Send>(jobs: usize, items: &[I], sink: &mut Sink, f: i
     let done: Vec<Vec<(usize, T, Sink)>> = std::thread::scope(|scope| {
         let threads: Vec<_> = (0..jobs)
             .map(|_| {
-                scope.spawn(|| {
+                ember_span::thread::spawn_scoped(scope, || {
                     let mut out = Vec::new();
                     loop {
                         let start = next.fetch_add(run, Ordering::Relaxed);
@@ -99,7 +99,7 @@ pub fn each_mut_on<I: Send, T: Send>(jobs: usize, items: &mut [I], sink: &mut Si
     let done: Vec<Vec<(usize, T, Sink)>> = std::thread::scope(|scope| {
         let threads: Vec<_> = (0..jobs)
             .map(|_| {
-                scope.spawn(|| {
+                ember_span::thread::spawn_scoped(scope, || {
                     let mut out = Vec::new();
                     loop {
                         let taken = runs.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).next();
