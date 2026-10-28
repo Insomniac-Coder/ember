@@ -950,8 +950,16 @@ fn inspect_cost_reports_each_row_by_site() {
             (cells[1].to_string(), cells[2].to_string())
         })
         .collect();
+    // `[TST-29]` — two checks this compiler still makes and the target's table has no row for, known
+    // until the milestones that remove them (the owner, 2026-10-28): `RefCell` ends with M5, the
+    // run-time exclusivity check with M6b. `tools/rule_index.py` fails once either is gone.
+    const KNOWN_WITHOUT_A_ROW: &[(&str, &str)] = &[("Dynamic exclusivity check", "M6b"), ("`RefCell` borrow", "M5")];
     for row in rows {
         let (name, class) = (row["row"].as_str().unwrap_or(""), row["class"].as_str().unwrap_or(""));
+        if let Some((_, until)) = KNOWN_WITHOUT_A_ROW.iter().find(|(known, _)| *known == name) {
+            println!("[TST-29] baselined until {until}: `{name}`");
+            continue;
+        }
         let stated = table.iter().find(|(row, _)| row == name).map(|(_, class)| class.as_str());
         assert!(stated.is_some_and(|stated| stated.starts_with(class)), "[COST-5] `{name}` [{class}] is not the table's: {stated:?}");
     }
@@ -7684,12 +7692,20 @@ fn the_three_versions_are_separate() {
         .find_map(|line| line.strip_prefix("**Version:** "))
         .expect("the document states its version");
     let language = version.split("_Hardened").next().expect("a version");
-    assert_eq!(ember_parser::LANGUAGE_VERSION, language, "the compiler's language is not the document's");
+    // `[TST-29]` — known until M1 moves the compiler's language to the target's (the owner, 2026-10-28:
+    // `tasks/96/redesign/compiler-0.9.15/MILESTONES.md`); once it has, this fails until the mark is out.
+    const KNOWN_UNTIL_M1: (&str, &str) = ("0.9.10", "0.9.15");
+    if (ember_parser::LANGUAGE_VERSION, language) == KNOWN_UNTIL_M1 {
+        println!("[TST-29] baselined until M1: the compiler's language is {}, the document's {language}", ember_parser::LANGUAGE_VERSION);
+    } else {
+        assert_ne!(ember_parser::LANGUAGE_VERSION, KNOWN_UNTIL_M1.1, "M1 has moved the language: take the KNOWN_UNTIL_M1 mark out");
+        assert_eq!(ember_parser::LANGUAGE_VERSION, language, "the compiler's language is not the document's");
+    }
 
     let run = ember(&["--version"], &root);
     assert_eq!(run.exit, 0);
     assert_eq!(run.stdout.lines().next().unwrap_or(""), format!("{} {}", ember_branding::CLI_NAME, env!("CARGO_PKG_VERSION")));
-    assert!(run.stdout.contains(&format!("language: {language}")), "{}", run.stdout);
+    assert!(run.stdout.contains(&format!("language: {}", ember_parser::LANGUAGE_VERSION)), "{}", run.stdout);
 
     let header = std::fs::read_to_string(
         root.join("runtime").join(ember_branding::runtime("rt")).join("templates").join(format!("{}.in", ember_branding::runtime_header())),
@@ -7739,6 +7755,15 @@ fn annex_a_is_generated_from_a_fixture_that_compiles() {
     std::fs::write(dir.join("zlib.h"), "const char *zlibVersion(void);\n").expect("the header is writable");
     let checked = ember(&["check", &file.to_string_lossy()], &root);
     let _ = std::fs::remove_dir_all(&dir);
+    // `[TST-29]` — the fixture is written in 0.9.15, which this compiler does not build yet: known until
+    // the milestones that do (M1 to M14; the owner, 2026-10-28). Once it compiles, this fails until the
+    // mark is out.
+    const FIXTURE_KNOWN_TO_FAIL: bool = true;
+    if FIXTURE_KNOWN_TO_FAIL {
+        assert_ne!(checked.exit, 0, "Annex A's fixture compiles now: take the FIXTURE_KNOWN_TO_FAIL mark out");
+        println!("[TST-29] baselined until the 0.9.15 compiler builds it: Annex A's fixture");
+        return;
+    }
     assert_eq!(checked.exit, 0, "the fixture does not compile:\n{}", checked.stderr);
     let reported: Vec<&str> = checked.stderr.lines().filter(|line| line.starts_with("warning[") || line.starts_with("error[")).collect();
     let unread = ["squares", "total", "index", "label", "r", "double", "task"].map(|name| format!("warning[L1001]: `{name}` is never read"));

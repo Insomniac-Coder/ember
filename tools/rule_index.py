@@ -542,11 +542,21 @@ def main():
     failures.extend(registry_rule_failures(registry, rule_set, development_target))
 
     # `[COST-5]` — an implicit cost the compiler reports with no row in the development target's
-    # table. Never baselined: the row is the rule's whole point.
+    # table. Never baselined, the row being the rule's whole point, except the two checks the 0.9.10
+    # compiler still makes under the 0.9.15 target, each until the milestone that removes it (the
+    # owner, 2026-10-28; tasks/96/redesign/compiler-0.9.15/MILESTONES.md). A known row the compiler
+    # no longer reports fails, so the mark comes out with the check.
+    known_without_a_row = {"Dynamic exclusivity check": "M6b", "`RefCell` borrow": "M5"}
     if development_target:
         table = cost_table_rows(development_target["path"].read_text(encoding="utf-8"))
-        for row in sorted(cost_rows_reported() - table):
+        reported = cost_rows_reported()
+        for row in sorted(reported - table):
+            if row in known_without_a_row:
+                print(f"[COST-5] known until {known_without_a_row[row]}: `ember inspect --cost` reports `{row}`")
+                continue
             failures.append(f"[COST-5] `ember inspect --cost` reports `{row}`, which has no row in [COST-3]'s table")
+        for row in sorted(set(known_without_a_row) - reported):
+            failures.append(f"[COST-5] `{row}` is no longer reported: take it out of the known rows")
 
     if args.write_baseline:
         # `[TST-4c]` — "The baseline shrinks and never grows: rule_index.py
