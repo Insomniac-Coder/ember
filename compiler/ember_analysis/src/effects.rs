@@ -24,6 +24,7 @@ use ember_span::Span;
 use ember_types::{ClassId, OverflowPolicy, Ty, TyKind, TypeTable};
 
 use crate::regions::place_type;
+use crate::targets::Targets;
 
 /// Where an effect enters one body: an operation of its own, or a call into another body.
 #[derive(Clone, Copy)]
@@ -129,7 +130,7 @@ pub(crate) fn operation_effects(bodies: &[Body], types: &TypeTable) -> Operation
     let graph = Graph::new(bodies, types);
     let index: HashMap<&str, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
-    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), plain_targets: plain_function_values(bodies, &index) };
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), targets: Targets::new(bodies, types) };
     let known = |sites: &[Site]| {
         sites.iter().fold(Effects::NONE, |all, site| match site.origin {
             Origin::Operation(_) if site.effects == Effects::ALL => all,
@@ -280,7 +281,7 @@ pub fn allocation_sites(
 ) -> Vec<AllocationSite> {
     let index: HashMap<&str, usize> =
         bodies.iter().enumerate().map(|(i, body)| (body.symbol.as_str(), i)).collect();
-    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), plain_targets: plain_function_values(bodies, &index) };
+    let mut builder = SiteBuilder { bodies, types, index: &index, ancestors: class_ancestors(types), drops: HashMap::new(), targets: Targets::new(bodies, types) };
     // What each standard function allocates by itself: through its own operations and the
     // standard functions it calls, never through the program's functions it is given.
     let known: Vec<Vec<Site>> = bodies
@@ -752,7 +753,7 @@ impl<'a> Graph<'a> {
             index: &index,
             ancestors: class_ancestors(types),
             drops: HashMap::new(),
-            plain_targets: plain_function_values(bodies, &index),
+            targets: Targets::new(bodies, types),
         };
         let sites: Vec<Vec<Site>> = bodies.iter().map(|body| builder.sites(body)).collect();
         let effects = fixed_point(&sites);
@@ -891,47 +892,8 @@ struct SiteBuilder<'a> {
     ancestors: HashMap<ClassId, Vec<ClassId>>,
     /// What dropping a value of each type runs: its own effects and the `drop` bodies it calls.
     drops: HashMap<Ty, (Effects, Vec<usize>)>,
-    /// D-877 — every function the program uses as a value, by its parameter count and result type:
-    /// what a call through a `plain fn` value (a function, a lambda capturing nothing) may run.
-    plain_targets: HashMap<(usize, Ty), Vec<usize>>,
-}
-
-/// D-877 — the bodies the program uses as values (`Const::Fn`, a function or a lambda capturing
-/// nothing named as a value), by their parameter count and result type. A call through a `plain
-/// fn` value of that shape runs one of them, so its effects are theirs: an adapter holding a lambda
-/// that captures nothing (`Filter[I, plain fn(…)]`) runs what the program's lambdas of that shape
-/// do, not every effect.
-fn plain_function_values(bodies: &[Body], index: &HashMap<&str, usize>) -> HashMap<(usize, Ty), Vec<usize>> {
-    let mut found: HashMap<(usize, Ty), Vec<usize>> = HashMap::new();
-    let mut note = |operand: &Operand| {
-        if let Operand::Const(ember_mir::Const::Fn(symbol)) = operand
-            && let Some(&target) = index.get(symbol.as_str())
-        {
-            let body = &bodies[target];
-            let entry = found.entry((body.arg_count, body.return_ty())).or_default();
-            if !entry.contains(&target) {
-                entry.push(target);
-            }
-        }
-    };
-    for body in bodies {
-        for block in &body.blocks {
-            for stmt in &block.stmts {
-                if let StmtKind::Assign { rvalue, .. } = &stmt.kind {
-                    for operand in rvalue_operands(rvalue) {
-                        note(operand);
-                    }
-                }
-            }
-            if let Terminator::Call { func, args, .. } = &block.terminator {
-                args.iter().for_each(&mut note);
-                if let FuncRef::Indirect { operand, .. } = func {
-                    note(operand);
-                }
-            }
-        }
-    }
-    found
+    /// `[EFF-2]` (A4-1) — what a call through a function value or a `dyn` value may run.
+    targets: Targets,
 }
 
 impl SiteBuilder<'_> {
@@ -1120,18 +1082,24 @@ impl SiteBuilder<'_> {
                     }
                 }
             }
+            // `[EFF-2]` — every implementation the program's casts put in the table's slot, and the
+            // overrides below them.
+            FuncRef::Interface { interfaces, slot, .. } if !self.targets.of_dyn(interfaces, *slot).is_empty() => {
+                for &target in self.targets.of_dyn(interfaces, *slot) {
+                    sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(target) });
+                }
+            }
             FuncRef::Interface { .. } => sites.push(Site {
                 effects: Effects::ALL,
                 span,
                 origin: Origin::Operation("a call through a `dyn` value, whose effects nothing declares"),
             }),
-            // D-877 — a `plain fn` value is one of the functions the program uses as values of its
-            // shape: the call runs what they run.
+            // `[EFF-2]` — every function the program stores into the value's exact callable type.
             FuncRef::Indirect { ty, .. }
-                if let TyKind::Fn { abi: None, stateless: true, params, ret, .. } = self.types.kind(*ty)
-                    && let Some(targets) = self.plain_targets.get(&(params.len(), *ret)) =>
+                if matches!(self.types.kind(*ty), TyKind::Fn { abi: None, .. })
+                    && !self.targets.of_value(*ty, self.types).is_empty() =>
             {
-                for &target in targets {
+                for target in self.targets.of_value(*ty, self.types) {
                     sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(target) });
                 }
             }

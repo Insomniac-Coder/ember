@@ -16,6 +16,7 @@ pub mod exit_drops;
 pub mod kernels;
 pub mod list_locals;
 pub mod reserve_pushes;
+pub mod targets;
 pub mod cycles;
 pub mod coroutines;
 pub mod access;
