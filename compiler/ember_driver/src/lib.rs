@@ -5672,33 +5672,37 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     } else {
         Some(ember_analysis::KernelTarget::Clang)
     };
+    // D-920 — how many changes the passes from here made to bodies since the callable-region
+    // summaries were last made: made again before they are checked whenever there were any.
+    let mut since_summaries = 0usize;
     if rewrites {
         // `[EXC-8]` — a dynamic exclusivity check every turn of a loop makes on
         // an unchanged handle, where nothing in the loop can change an access,
         // runs once before it; after versioning, so each copy of a loop is done.
-        mir.pass("hoisting invariant checks", &mut types, |bodies, types| ember_analysis::hoist_invariant_checks_all(bodies, types));
+        since_summaries += mir.pass("hoisting invariant checks", &mut types, |bodies, types| ember_analysis::hoist_invariant_checks_all(bodies, types));
         // `[RC-3]` — on the final MIR: a handle copied from a list element that
         // the list keeps alive for the handle's whole life is not counted.
-        mir.pass("marking uncounted handles", &mut types, |bodies, types| ember_analysis::mark_uncounted_handles_all(bodies, types));
+        since_summaries += mir.pass("marking uncounted handles", &mut types, |bodies, types| ember_analysis::mark_uncounted_handles_all(bodies, types));
         // `[RC-3]`: a hidden owner transfers only to an owner that survives its
         // original drop. An owned callee is not such a survival guarantee.
-        mir.pass("transferring temporary owners", &mut types, |bodies, types| ember_analysis::transfer_temporary_owners_all(bodies, types));
+        since_summaries += mir.pass("transferring temporary owners", &mut types, |bodies, types| ember_analysis::transfer_temporary_owners_all(bodies, types));
         // A hidden local that only copies another is read from that one, so no
         // copy stands between the loops of a nest; then the pure work a loop's
         // turn begins with whose inputs the loop cannot change (the view an
         // inner loop iterates) runs once, before the loop.
-        mir.pass("copy propagation", &mut types, |bodies, types| ember_analysis::propagate_copies_all(bodies, types));
-        mir.pass("narrowing widened reads", &mut types, |bodies, types| ember_analysis::narrow_widened_reads_all(bodies, types));
-        mir.pass("hoisting invariant views", &mut types, |bodies, types| ember_analysis::hoist_invariant_views_all(bodies, types));
+        since_summaries += mir.pass("copy propagation", &mut types, |bodies, types| ember_analysis::propagate_copies_all(bodies, types));
+        since_summaries += mir.pass("narrowing widened reads", &mut types, |bodies, types| ember_analysis::narrow_widened_reads_all(bodies, types));
+        since_summaries += mir.pass("hoisting invariant views", &mut types, |bodies, types| ember_analysis::hoist_invariant_views_all(bodies, types));
         // A counted loop that pushes onto a list on every turn asks for the room
         // before it, as a hint that changes nothing but the capacity (never done
         // in a program that asks a list for its `capacity()`).
-        mir.pass("reserving pushed lists", &mut types, |bodies, types| ember_analysis::reserve_pushed_lists_all(bodies, types));
+        since_summaries += mir.pass("reserving pushed lists", &mut types, |bodies, types| ember_analysis::reserve_pushed_lists_all(bodies, types));
         if command != "check"
             && let Some(target) = kernel_target
             && mir.pass("outlining list kernels", &mut types, |bodies, types| ember_analysis::outline_list_kernels_all(bodies, types, &common, target)) > 0
         {
             mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+            since_summaries = 0;
         }
         // For clang and gcc: a list an innermost loop only pushes onto is kept in
         // a local for the loop and written back after it, so the C compiler keeps
@@ -5707,6 +5711,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         // local in memory: the views-alive benchmark ran 8 times slower with it.
         if command != "check" && !tuned_for_msvc(&options) && mir.pass("keeping pushed lists in locals", &mut types, |bodies, types| ember_analysis::keep_pushed_lists_in_locals_all(bodies, types)) > 0 {
             mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
+            since_summaries = 0;
         }
         // Last, for C: a value a counted loop computes from its counter each
         // turn (`k * step + skip`) gets a running value of its own, as
@@ -5715,17 +5720,17 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         // for MSVC keeps the value computed from the counter (the owner allows C
         // written for each compiler, 2026-09-28).
         if command != "check" && options.emit.as_deref() != Some("mir") && !tuned_for_msvc(&options) {
-            mir.pass("reducing induction values", &mut types, |bodies, types| ember_analysis::reduce_induction_values_all(bodies, types, &common));
+            since_summaries += mir.pass("reducing induction values", &mut types, |bodies, types| ember_analysis::reduce_induction_values_all(bodies, types, &common));
         }
         // ADR-141 — last, for C: a short list or string a function makes, fills
         // and drops itself starts in a buffer of the function's own frame.
         if command != "check" && options.emit.as_deref() != Some("mir") {
-            mir.pass("giving stack buffers", &mut types, |bodies, types| ember_analysis::give_stack_buffers_all(bodies, types));
+            since_summaries += mir.pass("giving stack buffers", &mut types, |bodies, types| ember_analysis::give_stack_buffers_all(bodies, types));
         }
         // `[OPT-1]` — last, for C: a class object no handle of which outlives its function is made in
         // the function's frame. Not in a reloadable build, whose objects a reload moves.
         if command != "check" && options.emit.as_deref() != Some("mir") && matches!(reload, ReloadMode::None) {
-            mir.pass("placing frame objects", &mut types, |bodies, types| ember_analysis::place_frame_objects_all(bodies, types));
+            since_summaries += mir.pass("placing frame objects", &mut types, |bodies, types| ember_analysis::place_frame_objects_all(bodies, types));
         }
     }
     mark("loop passes", "all modules");
@@ -5775,7 +5780,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // only frees memory changes nothing observable (`[PHIL-5]`). Debug
     // builds keep every drop, which their leak check counts.
     if has_main && !library && command != "test" && options.profile != Profile::Debug && !options.leak_check {
-        mir.pass("skipping exit drops", &mut types, |bodies, types| ember_analysis::skip_exit_drops_all(bodies, types, &ember_branding::entry_symbol()));
+        since_summaries += mir.pass("skipping exit drops", &mut types, |bodies, types| ember_analysis::skip_exit_drops_all(bodies, types, &ember_branding::entry_symbol()));
     }
     // `[PRF-3]` — speed rewrites too: without them nothing is versioned, and nothing to verify.
     if rewrites {
@@ -5783,7 +5788,8 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         // proof batch until the unconditional final verification below.
         let progress_certificates =
             mir.pass("versioning progress reductions", &mut types, |bodies, types| ember_analysis::version_progress_reductions_all(bodies, types, &common));
-        if !progress_certificates.is_empty() {
+        // D-920 — and whenever a loop pass above changed a body after they were last made.
+        if !progress_certificates.is_empty() || since_summaries > 0 {
             mir.pass("callable region summaries", &mut types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
         }
         verify_callable_regions_or_panic(mir.bodies(), &types);
