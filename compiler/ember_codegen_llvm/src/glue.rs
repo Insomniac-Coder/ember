@@ -1026,8 +1026,9 @@ pub(crate) fn count_helper(m: &mut Module<'_>, operation: &str, kind: &str) -> S
             }
             let strong = cx.load(Sc::I(32), object, 8);
             let room = if operation == "retain" {
+                // `[RT-7]` — room below the maximum: `strong - 1 < EMBER_COUNT_MAX - 1`.
                 let less = cx.value(format!("sub i32 {strong}, 1"));
-                cx.value(format!("icmp ult i32 {less}, -2"))
+                cx.value(format!("icmp ult i32 {less}, {}", count_max().wrapping_sub(1) as i32))
             } else {
                 cx.value(format!("icmp ugt i32 {strong}, 1"))
             };
@@ -1051,8 +1052,10 @@ pub(crate) fn count_helper(m: &mut Module<'_>, operation: &str, kind: &str) -> S
             if operation == "retain" {
                 // `EMBER_COUNT_UP`: relaxed (`[RT-8]`).
                 let previous = cx.value(format!("atomicrmw add ptr {object}, i32 1 monotonic, align 8"));
+                // `[RT-7]` — a count several threads add to stops when the value before the add is
+                // at or above half its range: `previous - 1 >= EMBER_COUNT_HALF - 1`.
                 let less = cx.value(format!("sub i32 {previous}, 1"));
-                let failed = cx.value(format!("icmp uge i32 {less}, -2"));
+                let failed = cx.value(format!("icmp uge i32 {less}, {}", ((count_max() >> 1) - 1) as i32));
                 cx.emit(format!("br i1 {failed}, label %{ended}, label %{done}"));
                 cx.start(&ended);
                 cx.call_rt("obj_retain_failed", vec![Val::Imm(Sc::Ptr, object.to_string()), Val::Imm(Sc::I(32), previous)], None);
@@ -1106,4 +1109,10 @@ pub(crate) fn count_helper(m: &mut Module<'_>, operation: &str, kind: &str) -> S
     let _ = writeln!(cx.m.fns, "{}", text.trim_end());
     cx.m.fns.push('\n');
     global_name(&symbol)
+}
+
+/// `[RT-7]`, `[TST-31]` — a count's maximum, as the C header's `EMBER_COUNT_MAX`: 4,294,967,295, or 255
+/// for a test built with 8-bit counts (`#$ count_bits: 8`).
+fn count_max() -> u32 {
+    if std::env::var(ember_branding::count_bits_var()).is_ok_and(|bits| bits == "8") { 255 } else { u32::MAX }
 }

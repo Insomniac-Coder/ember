@@ -57,8 +57,10 @@ def blocks():
     n = 0
     while n < len(lines):
         line = lines[n]
-        if line.startswith("```") and not line.startswith("```ember"):
-            fenced = not fenced  # a `#` line inside another language's block is not a heading
+        # A `#` line inside another language's block is not a heading. An `ember` block this loop
+        # does not read (outside the checked parts) is fenced like any other.
+        if line.startswith("```") and (fenced or not (inside_range and line.startswith("```ember"))):
+            fenced = not fenced
         if fenced:
             n += 1
             continue

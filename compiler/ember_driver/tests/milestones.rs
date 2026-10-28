@@ -1028,7 +1028,7 @@ fn the_engine_report_summarises_the_build_and_changes_nothing() {
     // C compiler does not probe by default.
     let flags = std::fs::read_to_string(directory.join("out").join("development").join("c").join("cflags.txt")).expect("cflags.txt was written");
     assert!(flags.lines().any(|flag| flag == "/std:c11" || flag == "-std=c11"), "{flags}");
-    assert_eq!(flags.lines().any(|flag| flag == "-fstack-clash-protection"), !cfg!(windows), "{flags}");
+    assert_eq!(flags.lines().any(|flag| flag == "-fstack-clash-protection"), !cfg!(any(windows, target_os = "macos")), "{flags}");
 }
 
 /// `[DIA-8]` — `ember explain --view <file>:<line>` prints, for each view in use at that line, where
@@ -8829,11 +8829,16 @@ fn every_example_of_the_specification_checks() {
     let lines: Vec<&str> = text.lines().collect();
     let directory = temporary_directory("spec-examples");
     let (mut heading, mut at, mut checked, mut failures, mut baselined) = (String::new(), 0, 0, Vec::new(), Vec::new());
+    let mut fenced = false;
     while at < lines.len() {
-        if lines[at].starts_with('#') {
+        // A `#` line inside another language's block (a TOML or shell comment) is not a heading.
+        if lines[at].starts_with("```") && !lines[at].starts_with("```ember") {
+            fenced = !fenced;
+        }
+        if !fenced && lines[at].starts_with('#') {
             heading = lines[at].trim_start_matches('#').trim().to_string();
         }
-        let Some(kind) = lines[at].strip_prefix("```ember") else {
+        let Some(kind) = lines[at].strip_prefix("```ember").filter(|_| !fenced) else {
             at += 1;
             continue;
         };
@@ -8898,7 +8903,9 @@ fn every_example_of_the_specification_checks() {
             failures.push(format!("{} more blocks under `{part}` fail than its count of {count}", now - count));
         }
     }
-    println!("[TST-7] {checked} blocks checked; baseline {} of them ([TST-29]):", baselined.len());
+    // `[TST-29]` — a gate whose baseline covers more than a tenth of its cases is `baselined`, not green.
+    let state = if baselined.len() * 10 > checked { "baselined" } else { "green" };
+    println!("[TST-7] {checked} blocks checked; baseline {} of them ({state}) [TST-29]:", baselined.len());
     for entry in &baselined {
         println!("  {entry}");
     }

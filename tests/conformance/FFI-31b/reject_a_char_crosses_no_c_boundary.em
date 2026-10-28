@@ -15,6 +15,15 @@ pub extern "C" fn letter(code: char) -> i32:    #$ error[E5054]: `char` has no C
 pub extern "C" fn glyph_width(glyph: *Glyph) -> i32:    #$ error[E5054]
     return 2
 
+# A struct that points at itself is looked into once.
+@layout(c)
+struct Link:
+    next: *Link
+    value: i32
+
+pub extern "C" fn link_value(link: *Link) -> i32:
+    return 3
+
 pub extern "C" fn code_of(value: u32) -> u32:
     return value
 

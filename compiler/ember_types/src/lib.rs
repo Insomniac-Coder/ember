@@ -2824,14 +2824,22 @@ impl TypeTable {
     /// scalar and every `@layout(c)` struct of FFI-safe fields qualifies.
     /// `[FFI-31b]` — whether a C boundary would carry a `char`: the type itself, or one in a
     /// `@layout(c)` aggregate passed by value or behind a pointer. C may pass any `uint32_t`, a
-    /// surrogate included, which no `char` holds.
+    /// surrogate included, which no `char` holds. Each struct is looked into once, so a struct that
+    /// points at itself (`next: *Node`) ends.
     pub fn carries_char(&self, ty: Ty) -> bool {
+        self.carries_char_in(ty, &mut Vec::new())
+    }
+
+    fn carries_char_in(&self, ty: Ty, seen: &mut Vec<StructId>) -> bool {
         match self.kind(ty) {
             TyKind::Char => true,
-            TyKind::Ptr { inner, .. } => self.carries_char(*inner),
-            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.carries_char(*elem),
-            TyKind::Struct(id) => self.struct_def(*id).fields.iter().any(|f| self.carries_char(f.ty)),
-            TyKind::Newtype(id) => self.carries_char(self.newtype_def(*id).repr),
+            TyKind::Ptr { inner, .. } => self.carries_char_in(*inner, seen),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.carries_char_in(*elem, seen),
+            TyKind::Struct(id) if !seen.contains(id) => {
+                seen.push(*id);
+                self.struct_def(*id).fields.iter().any(|f| self.carries_char_in(f.ty, seen))
+            }
+            TyKind::Newtype(id) => self.carries_char_in(self.newtype_def(*id).repr, seen),
             _ => false,
         }
     }

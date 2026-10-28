@@ -5969,7 +5969,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             // `[CLI-2]` — beside the sources, the flags they need for Ember's guarantees, one a line: the
             // chosen C compiler's, else Clang's and GCC's (no compiler is needed to write the C).
             let requested = options.cc.clone().or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()));
-            let flags = match Toolchain::detect(requested.as_deref()) {
+            let flags = match Toolchain::find(requested.as_deref()) {
                 Ok(toolchain) => ember_build::c_flags(&toolchain, options.profile),
                 Err(_) => ember_build::c_flags(&Toolchain::Gcc(PathBuf::from("gcc")), options.profile),
             };

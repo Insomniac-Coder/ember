@@ -310,7 +310,9 @@ impl Toolchain {
         Self::find(requested)?.with_stack_probes()
     }
 
-    fn find(requested: Option<&str>) -> Result<Toolchain, BuildError> {
+    /// The toolchain `detect` would choose, found without running it (`ember build --emit c`'s
+    /// `cflags.txt`, `[CLI-2]`: the C is written "without invoking a C compiler").
+    pub fn find(requested: Option<&str>) -> Result<Toolchain, BuildError> {
         match requested {
             Some("bundled") => Self::find_bundled().ok_or(BuildError::NoToolchain("bundled")),
             Some("msvc") => Self::find_msvc().ok_or(BuildError::NoToolchain("msvc")),
@@ -349,12 +351,13 @@ impl Toolchain {
     }
 
     /// `[RT-12]` — the toolchain, if it can probe the stack: MSVC and clang-cl probe by default, and so
-    /// does every C compiler for Windows (the platform's `__chkstk`); a Clang or GCC elsewhere must
-    /// take `-fstack-clash-protection` (`gnu_flags`), else `E9014`. Asked once per compiler a process
-    /// uses, by compiling one line with warnings as errors.
+    /// does every C compiler for Windows (the platform's `__chkstk`) and for macOS (Apple's
+    /// `___chkstk_darwin`); a Clang or GCC elsewhere must take `-fstack-clash-protection`
+    /// (`gnu_flags`), else `E9014`. Asked once per compiler a process uses, by compiling one line with
+    /// warnings as errors.
     fn with_stack_probes(self) -> Result<Toolchain, BuildError> {
         let (Toolchain::Clang(path) | Toolchain::Gcc(path)) = &self else { return Ok(self) };
-        if cfg!(windows) {
+        if cfg!(any(windows, target_os = "macos")) {
             return Ok(self);
         }
         static ASKED: std::sync::Mutex<Vec<(PathBuf, bool)>> = std::sync::Mutex::new(Vec::new());
@@ -2134,9 +2137,10 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     // libatomic, which a program does not link.
     let cx16: &[&str] = if cfg!(target_arch = "x86_64") { &["-mcx16"] } else { &[] };
     // `[RT-12]` — a frame larger than a page touches each page in order, so no write lands beyond
-    // the guard page: on every target but Windows, whose C compilers all probe (`__chkstk`), as
-    // MSVC and clang-cl do (`Toolchain::with_stack_probes` refuses a compiler without the flag).
-    let probes: &[&str] = if cfg!(windows) { &[] } else { &["-fstack-clash-protection"] };
+    // the guard page: on every target but Windows and macOS, whose C compilers all probe by default
+    // (`__chkstk`, `___chkstk_darwin`), as MSVC and clang-cl do (`Toolchain::with_stack_probes`
+    // refuses a compiler without the flag).
+    let probes: &[&str] = if cfg!(any(windows, target_os = "macos")) { &[] } else { &["-fstack-clash-protection"] };
     let counts: &[&str] = if eight_bit_counts() { &["-DEMBER_COUNT_BITS=8"] } else { &[] };
     ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).chain(cx16).chain(probes).chain(counts).copied().collect()
 }

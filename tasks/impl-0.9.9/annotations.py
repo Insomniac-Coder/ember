@@ -83,9 +83,15 @@ def program_args(text):
 
 def run(args, path, stdin=None, after=()):
     after = ['--', *after] if after else []
+    # `[TST-31]` — `#$ count_bits: 8` builds the program and the runtime with 8-bit counts, and the
+    # evaluator counts the same way, as the conformance suite does.
+    env = None
+    with open(path, encoding='utf-8') as source:
+        if re.search(r'^#\$ count_bits:\s*8\s*$', source.read(), re.M):
+            env = dict(os.environ, EMBER_COUNT_BITS='8')
     result = subprocess.run([EMBER, *args, path, *after], cwd=ROOT, capture_output=True, text=True,
                             input=stdin if stdin is not None else '',
-                            encoding='utf-8', errors='replace')
+                            encoding='utf-8', errors='replace', env=env)
     return result.returncode, result.stdout.replace('\r\n', '\n'), result.stderr
 
 

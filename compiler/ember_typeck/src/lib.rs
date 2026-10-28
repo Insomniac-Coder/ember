@@ -56417,7 +56417,7 @@ impl<'a> Checker<'a> {
     /// call's, positionally, then each further argument with the type the program gives it (a
     /// literal's written, `5 as c_int`) and that C passes unchanged: a C `int` or wider integer up to
     /// 64 bits, `f64`, `c_longdouble`, a raw pointer, `cstr` or an `extern fn`. A type C's default
-    /// argument promotions change (`bool`, the integers narrower than `int`, `char`, `f32`) is `E5013`,
+    /// argument promotions change (`bool`, the integers narrower than `int`, `f32`) is `E5013`,
     /// which names only C's promotion, since what the C function reads is in C; any other is `E5015`:
     /// `va_arg` would read what was never passed.
     fn synth_variadic_call(&mut self, def: DefId, callee: Symbol, args: &[ast::Arg], span: Span) -> Expr {
@@ -56439,7 +56439,7 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let value = self.synth_committed(&arg.value);
-            if let Some((promoted, problem, help)) = self.variadic_argument_problem(&arg.value, value.ty, callee) {
+            if let Some((promoted, problem, help)) = self.variadic_argument_problem(&arg.value, value.ty, callee, args, index) {
                 self.sink.emit(
                     Diagnostic::error(if promoted { codes::E5013 } else { codes::E5015 }, arg.value.span, problem)
                         .help(help)
@@ -56457,7 +56457,7 @@ impl<'a> Checker<'a> {
 
     /// `[FFI-8]` — why a further argument of a variadic call cannot be passed, and the repair: whether
     /// it is one C's default promotions change (`E5013`), the message and the help.
-    fn variadic_argument_problem(&self, written: &ast::Expr, ty: Ty, callee: Symbol) -> Option<(bool, String, String)> {
+    fn variadic_argument_problem(&self, written: &ast::Expr, ty: Ty, callee: Symbol, args: &[ast::Arg], index: usize) -> Option<(bool, String, String)> {
         use ember_types::{FloatTy, IntTy, UintTy};
         let mut literal = written;
         while let ast::ExprKind::Unary { operand: inner, .. } | ast::ExprKind::Paren(inner) = &literal.kind {
@@ -56477,19 +56477,34 @@ impl<'a> Checker<'a> {
             ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name.to_string(),
             _ => "x".to_string(),
         };
-        // The C function by its own name (`sum_wide`, not the module path it was imported under).
+        // The C function by its own name (`sum_wide`, not the module path it was imported under), and the
+        // call written out with this argument converted, as `[FFI-8]`'s message gives it.
         let callee = callee.to_string();
-        let callee = callee.rsplit('.').next().unwrap_or(&callee);
-        let promoted = |c_type: &str, wider: &str| Some((
+        let short = callee.rsplit('.').next().unwrap_or(&callee);
+        let call = |converted: &str| {
+            let shown: Vec<String> = args.iter().enumerate().map(|(at, arg)| {
+                if at == index { converted.to_string() } else { variadic_arg_text(&arg.value).unwrap_or_else(|| "…".to_string()) }
+            }).collect();
+            format!("{short}({})", shown.join(", "))
+        };
+        let promoted = |c_type: &str, converted: String| Some((
             true,
-            format!("C passes `{name}` as {c_type} through `...`; if `{callee}` reads another type, convert it first: `{name} as {wider}`"),
+            format!("C passes `{name}` as {c_type} through `...`; if `{short}` reads another type, convert it first: `{}`", call(&converted)),
             "what passes is decided by C's default argument promotions, and what is read by the C function's `va_arg`".to_string(),
         ));
         match self.types.kind(ty) {
             TyKind::Int(IntTy::I32 | IntTy::I64 | IntTy::Isize) | TyKind::Uint(UintTy::U32 | UintTy::U64 | UintTy::Usize)
             | TyKind::Float(FloatTy::F64) | TyKind::CLongDouble | TyKind::Ptr { .. } | TyKind::CStr | TyKind::Fn { abi: Some(_), .. } => None,
-            TyKind::Bool | TyKind::Int(IntTy::I8 | IntTy::I16) | TyKind::Uint(UintTy::U8 | UintTy::U16) | TyKind::Char => promoted("an `int`", "i64"),
-            TyKind::Float(FloatTy::F32) => promoted("a `double`", "f64"),
+            // A `bool` is no number to `as`: the help passes the C integer it stands for.
+            TyKind::Bool => promoted("an `int`", format!("(1 if {name} else 0) as c_int")),
+            TyKind::Int(IntTy::I8 | IntTy::I16) | TyKind::Uint(UintTy::U8 | UintTy::U16) => promoted("an `int`", format!("{name} as i64")),
+            TyKind::Float(FloatTy::F32) => promoted("a `double`", format!("{name} as f64")),
+            // `[FFI-31b]` — no `char` crosses to C; its scalar value does.
+            TyKind::Char => Some((
+                false,
+                format!("a `char` does not cross to C; pass its scalar value: `{name} as u32`"),
+                "C may read any `uint32_t`, which no `char` holds; `char.from_u32` makes one back [FFI-31b]".to_string(),
+            )),
             _ => Some((
                 false,
                 format!("a `{shown}` is not passed as a further argument of a variadic C function"),
@@ -62739,4 +62754,17 @@ fn target_c_alias(name: &str, pointer_size: u64) -> Option<TyKind> {
         "std.ffi.VaList" => TyKind::VaList,
         _ => return None,
     })
+}
+
+/// `[FFI-8]` — an argument as E5013's message writes it: a literal, a name, a dotted path, or one of
+/// them converted with `as`; `None` for anything longer.
+fn variadic_arg_text(expr: &ast::Expr) -> Option<String> {
+    match &expr.kind {
+        ast::ExprKind::Path { segments } => Some(segments.iter().map(|segment| segment.name.to_string()).collect::<Vec<_>>().join(".")),
+        ast::ExprKind::Lit(ast::Literal::Int { value, suffix }) => Some(format!("{value}{}", suffix.map(|s| format!("{s:?}").to_lowercase()).unwrap_or_default())),
+        ast::ExprKind::Paren(inner) => variadic_arg_text(inner).map(|text| format!("({text})")),
+        ast::ExprKind::Lit(ast::Literal::CStr(bytes)) => Some(format!("c{:?}", String::from_utf8_lossy(bytes))),
+        ast::ExprKind::Lit(ast::Literal::Str(text)) => Some(format!("{text:?}")),
+        _ => None,
+    }
 }

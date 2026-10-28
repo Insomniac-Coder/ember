@@ -162,15 +162,26 @@ impl Interp<'_, '_> {
         Ok(object)
     }
 
+    /// `[RT-7]` — where an object's counts stop: a count several threads add to (a `@sync` class's, a
+    /// `SyncShared`'s) at half its range, any other at its maximum, as the compiled runtime does.
+    fn count_limit(&self, object: u64) -> R<u32> {
+        let several_threads = match self.object_info(object)? {
+            Info::Class(id) => self.types.class_def(id).is_sync,
+            Info::Shared(id) => self.types.struct_def(id).origin.as_ref().is_some_and(|(name, _)| name.is("SyncShared")),
+        };
+        Ok(if several_threads { count_max() >> 1 } else { count_max() })
+    }
+
     pub(crate) fn retain_object(&mut self, object: u64) -> R<()> {
         if object == 0 {
             return Ok(());
         }
         let strong = self.mem.read_u32(object + STRONG)?;
         // `[RT-7]` — the compiled runtime's limit and text, its limit's digits grouped.
-        if strong >= count_max() {
+        let limit = self.count_limit(object)?;
+        if strong >= limit {
             let name = self.object_name(object)?;
-            return self.panic_in(OBJECT_RUNTIME, &format!("too many owners of a `{name}` ({})", grouped(count_max())));
+            return self.panic_in(OBJECT_RUNTIME, &format!("too many owners of a `{name}` ({})", grouped(limit)));
         }
         if strong == 0 || self.mem.read_u32(object + FLAGS)? & DEINITIALISING != 0 && strong == 0 {
             return self.panic_in(OBJECT_RUNTIME, "retain of deinitialising or invalid object");
@@ -302,9 +313,10 @@ impl Interp<'_, '_> {
             return self.panic_in(OBJECT_RUNTIME, "retain of invalid weak reference");
         }
         // `[RT-7]` — as the compiled runtime: the link past the weak count's maximum stops the program.
-        if weak >= count_max() {
+        let limit = self.count_limit(object)?;
+        if weak >= limit {
             let name = self.object_name(object)?;
-            return self.panic_in(OBJECT_RUNTIME, &format!("too many `weakref` links to a `{name}` ({})", grouped(count_max())));
+            return self.panic_in(OBJECT_RUNTIME, &format!("too many `weakref` links to a `{name}` ({})", grouped(limit)));
         }
         self.mem.write_u32(object + WEAK, weak + 1)?;
         Ok(())
@@ -333,8 +345,14 @@ impl Interp<'_, '_> {
         }
         let strong = self.mem.read_u32(object + STRONG)?;
         let flags = self.mem.read_u32(object + FLAGS)?;
-        if strong == 0 || strong == u32::MAX || flags & DEINITIALISING != 0 {
+        if strong == 0 || flags & DEINITIALISING != 0 {
             return Ok(0);
+        }
+        // `[RT-7]` — the owner an upgrade adds is limited as any other, as `object_try_strong_retain` is.
+        let limit = self.count_limit(object)?;
+        if strong >= limit {
+            let name = self.object_name(object)?;
+            return self.panic_in(OBJECT_RUNTIME, &format!("too many owners of a `{name}` ({})", grouped(limit)));
         }
         self.mem.write_u32(object + STRONG, strong + 1)?;
         Ok(object)
