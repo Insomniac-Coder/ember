@@ -1155,9 +1155,60 @@ fn compile_and_link_impl(
     let started = std::time::SystemTime::now();
     let compiled = run_output(command)?;
     if let Some(cached) = cached {
+        incomplete_program(&request.output)?;
         cached.store(request, &compiled, started);
     }
     Ok(())
+}
+
+/// D-928 — a linker ended part-way (killed, or out of disk) can leave the file it reserved, all
+/// zeros, and still exit 0: a program that is not whole fails the build rather than run, or be kept.
+pub(crate) fn incomplete_program(program: &Path) -> Result<(), BuildError> {
+    if whole_program(program) {
+        return Ok(());
+    }
+    Err(BuildError::CompilerFailed {
+        command: "link".to_string(),
+        output: format!("the linker exited 0 and left `{}` incomplete: it is not a whole program", program.display()),
+    })
+}
+
+/// Whether `path` holds a whole program, as its format's own headers say: a PE's sections and an
+/// ELF's section table lie within the file; a Mach-O file by its magic. Only the first 64 KiB are read.
+fn whole_program(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else { return false };
+    let Ok(length) = file.metadata().map(|meta| meta.len() as usize) else { return false };
+    let mut bytes = Vec::new();
+    if file.take(64 * 1024).read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    let word = |at: usize, size: usize| -> Option<usize> {
+        let field = bytes.get(at..at + size)?;
+        Some(field.iter().rev().fold(0usize, |value, &byte| value << 8 | byte as usize))
+    };
+    if bytes.starts_with(b"MZ") {
+        let Some(pe) = word(0x3c, 4) else { return false };
+        if bytes.get(pe..pe + 4) != Some(b"PE\0\0".as_slice()) {
+            return false;
+        }
+        let (Some(sections), Some(optional)) = (word(pe + 6, 2), word(pe + 20, 2)) else { return false };
+        let table = pe + 24 + optional;
+        return sections > 0
+            && (0..sections).all(|section| match (word(table + section * 40 + 16, 4), word(table + section * 40 + 20, 4)) {
+                (Some(size), Some(at)) => at + size <= length,
+                _ => false,
+            });
+    }
+    if bytes.starts_with(b"\x7fELF") {
+        // ELF64, little-endian (`[BLD-4]`'s targets): its section header table, at the end, is there.
+        if bytes.get(4) != Some(&2) || bytes.get(5) != Some(&1) {
+            return true;
+        }
+        let (Some(offset), Some(size), Some(count)) = (word(0x28, 8), word(0x3a, 2), word(0x3c, 2)) else { return false };
+        return offset + size * count <= length;
+    }
+    [[0xcf, 0xfa, 0xed, 0xfe], [0xce, 0xfa, 0xed, 0xfe], [0xca, 0xfe, 0xba, 0xbe]].iter().any(|magic| bytes.starts_with(magic))
 }
 
 /// `[CG-C-9]` — the visualiser file the build wrote beside the program (`<program>.natvis`), for a
@@ -1253,6 +1304,12 @@ impl CachedProgram {
         let Ok(text) = std::fs::read_to_string(self.manifest()) else { return false };
         let mut lines = text.lines();
         let Some(program) = lines.next().map(|name| self.dir.join(name)) else { return false };
+        // D-928 — an incomplete program kept by an earlier build is dropped, never served.
+        if !whole_program(&program) {
+            let _ = std::fs::remove_file(&program);
+            let _ = std::fs::remove_file(self.manifest());
+            return false;
+        }
         for line in lines {
             let Some((hash, file)) = line.split_once(' ') else { return false };
             if !std::fs::read(file).is_ok_and(|bytes| blake3::hash(&bytes).to_hex().as_str() == hash) {
@@ -1297,6 +1354,9 @@ impl CachedProgram {
 
     /// `store`, given the files the compile included (`[BLD-4]`: as Ninja recorded them).
     fn store_files(&self, request: &LinkRequest, mut files: Vec<PathBuf>, started: std::time::SystemTime) {
+        if !whole_program(&request.output) {
+            return;
+        }
         files.sort();
         files.dedup();
         let compiles_c = request.sources.iter().any(|source| source.extension().is_some_and(|ext| ext == "c"));
@@ -2559,6 +2619,26 @@ mod tests {
         write_source(5);
         assert_eq!(build("fourth"), "7", "a changed source builds again");
         assert_eq!(kept().len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// D-928 — the file a linker ended part-way reserved (all zeros), or a program cut short, is no
+    /// whole program; this test's own program is one.
+    #[test]
+    fn a_program_left_incomplete_is_not_whole() {
+        let dir = std::env::temp_dir().join(format!("program-whole-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zeros = dir.join("zeros.exe");
+        std::fs::write(&zeros, vec![0u8; 2 * 1024 * 1024]).unwrap();
+        assert!(!whole_program(&zeros));
+        assert!(incomplete_program(&zeros).is_err());
+        let me = std::env::current_exe().unwrap();
+        assert!(whole_program(&me));
+        let bytes = std::fs::read(&me).unwrap();
+        let cut = dir.join("cut.exe");
+        std::fs::write(&cut, &bytes[..bytes.len() / 2]).unwrap();
+        assert!(!whole_program(&cut));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

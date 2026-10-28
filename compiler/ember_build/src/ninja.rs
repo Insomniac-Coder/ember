@@ -187,6 +187,7 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
         return Err(BuildError::CompilerFailed { command: format!("{run:?}"), output: text });
     }
     if let Some(cached) = cached {
+        crate::incomplete_program(&request.output)?;
         cached.store_files(&request, included_files(&ninja, &program.dir), started);
     }
     Ok(())

@@ -14,36 +14,23 @@
 > the owner's is not ruled: list it for the morning. **Morning report**, in chat, plainly: each ODR with
 > the real code it concerns and why; then the open questions, one at a time; then what landed.
 >
-> **Where things are.**
+> **Where things are (2026-10-29 ~02:30, session 5d9166d4).**
 > - The development target is `docs/spec-source/Ember_v0.9.15_Hardened_3.md` (the owner's verdicts
->   1-117, `tasks/96/redesign/JOB.md`); the compiler on `main` still implements 0.9.10. The build plan
->   is `tasks/96/redesign/compiler-0.9.15/MILESTONES.md` (M0 to M15), each item's detail in
->   `compiler-0.9.15/gap/0N-*.md` (search `**A7-18`, `**A5-1.` …).
-> - `main` on origin: `8464b305`. **Local and unpushed**, in order: `ec2e6b5a` (A3-1 count limits and
->   texts, A7-17 `#$ count_bits: 8`), `95c333b5` (A7-18 probes, E9014, `cflags.txt`), `a038bd5b` (A6-12
->   E5013 for a promoted variadic argument, E5054 for `char`), `ebd1a8c1` (the read-only reviewer's 9
->   findings on M0, fixed), `502b32b2` (README progress strict: a rule H3 marks new or changed in 0.9.15
->   counts only once `docs/phase-status.json`'s `built_for_0915` lists it; Overall 78% -> 22%).
-> - **Later the same night (session 5d9166d4):** the 22:11 full check of `502b32b2` ran its MSVC suite
->   (one case failed only because its hung `link.exe` was killed: TYP-16
->   `accept_generic_class_virtual_owned_weak_class_field_argument` [development], 11 min, see the traps),
->   its gates (one real failure: E5013 had no error page, fixed in `762a2248`) and its three C warning
->   sweeps (MSVC, Clang, GCC: 0 programs with warnings); its LLVM matrix and clang-cl suite were stopped
->   to free the tree, so the next full check must run whole. Then `1f325ec2` (A5-1, UNS-12/UNS-1) and
->   A5-2 (UNS-7/UNS-8: `W3012` for blocks and `unsafe` implementations, `W3013`, `L3015` for every
->   `unsafe fn` naming its first step; ~300 test implementations given notes, std's notes moved into
->   `@safety`). The reviewer's 14 findings on A5-1 are being fixed next (list in the next commit's
->   message): local functions in `unsafe:` blocks inherit it (a soundness hole), Q1's ruling (an
->   unverified foreign call or foreign static outside `unsafe` is E3100, not E5002) not built, the
->   per-line merge quadratic (4.96 s on 300 lines), block advice impossible for headers and multi-line
->   statements, helps dropped in `unsafe fn` bodies, and smaller ones.
-> - A Windows full check of `502b32b2` was started at about 22:15 (background, the session's
->   `verify_windows.ps1` in `C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\ae3a2898-3f0f-4361-99e2-9bbbb0976123\scratchpad\`,
->   which runs `full_check.ps1` beside it; summary in that folder's `check\verify.txt`). If the session
->   that reads this cannot see it, run it again: `powershell -NoProfile -ExecutionPolicy Bypass -File
->   C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\ae3a2898-3f0f-4361-99e2-9bbbb0976123\scratchpad\verify_windows.ps1`
->   (it runs `full_check.ps1`, the LLVM matrix and driver tests, then the clang-cl suite; ~45 minutes;
->   do not edit the tree while it runs — it builds from it).
+>   1-117, `tasks/96/redesign/JOB.md`); the compiler on `main` still implements 0.9.10 with 0.9.15's
+>   pieces landing one by one. The build plan is `tasks/96/redesign/compiler-0.9.15/MILESTONES.md`, each
+>   item in `compiler-0.9.15/gap/0N-*.md`; tonight's rulings, and the question for the owner, are in
+>   `compiler-0.9.15/decisions.md` §8.
+> - **Pushed** (`origin/main` = `0bd9c65f`, CI green): M0's A3-1, A7-17, A7-18, A6-12 and its review
+>   fixes, the strict README %, E5013's page, A5-1 (`[UNS-12]`), A5-2 (`[UNS-7]`, `[UNS-8]`) and the
+>   reviewer's 14 findings on A5-1 (with area 5 Q1 built: E3100 for unverified C calls and foreign
+>   statics; D-926, D-927).
+> - **Committed, not pushed:** `c9314677` A6-16 (`[FFI-55]` overlay header hashes; M0 is done but A5-3),
+>   `6fd8c1c0` A4-1 (M2: one call graph with every target; a `dyn` call and a stored callable now have
+>   the effects of what the program puts there), `2b4375b1` (`calls --foreign` test follows A4-1),
+>   `b5939e0a` D-920 (summaries made again after the loop passes; 21_particles builds). A full check of
+>   `b5939e0a` was started at ~02:28: `verify_windows.ps1` in `C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\5d9166d4-3321-41d7-b8ca-558a365a0258\scratchpad`, summary in its
+>   `check\verify.txt`, a stall watcher (`stall_watch2.ps1 -while verify_windows`) beside it. If green:
+>   the bench, then push. If the session reading this cannot see it, run it again.
 >
 > **To push** (`AUTOPILOT.md` §4, the owner's speed rule): the full check green apart from the four
 > marked known items (version test until M1, Annex A's fixture until the 0.9.15 compiler builds it,
@@ -55,19 +42,18 @@
 > When a milestone builds a rule's 0.9.15 behaviour with its test, add the rule to `built_for_0915`
 > in that commit and run `python tools/phase_progress.py --write`.
 >
-> **Next work, in order.**
-> 1. M0's rest (each detailed in the gap files):
->    - **A5-1, A5-2: done** (`1f325ec2`, `fcad3ea4`, and the review's fixes after them). Before the
->      push: one full check of the whole stack (`verify_windows.ps1` in session 5d9166d4's scratchpad, a
->      stall watcher beside it), then the laptop bench.
->    - **A5-3** `@no_runtime_checks` is `E0104` with `[UNS-11]`'s message (`RESERVED_ATTRIBUTES`, `lib.rs`
->      about 60656): moved to just after M1, since the message tells the reader to write `@no_alias_checks`,
->      which M1's spelling item builds (the gap's own "depends on: area ATT's rename").
->    - **A6-16** an overlay names its header's hash (`[FFI-55]`, `E5010`): built after the stack's full check
->      (see its commit); **A5-21** codes and pages land with each item (W3013's and E3100's are in).
->      With A6-16, M0 is done but A5-3 (after M1's rename).
-> 2. M1: the 0.9.15 grammar (with `needs (…)` and `...`), the spelling-only forms and `ember fmt
->    --migrate`, in one commit.
+> **Next work, in order** (the order changed tonight: decisions.md §8, "Order").
+> 1. **A4-2, the summary engine** (M2; gap 04): what each function changes, reads and ends, per SD1/SD2
+>    and EFF-24, over A4-1's graph (`ember_analysis/src/targets.rs`), SCC by SCC. Its first consumer
+>    is M1's implicit `this` (whether a method changes its object, which 0.9.15 infers and no longer
+>    writes as `mut self`). Typeck checks a parameter's mutability from its declared mode today
+>    (`E3023`, `ember_typeck/src/lib.rs` ~44800), so under SD2 the object's change-mode is checked after
+>    the summary, on MIR. Spawn and job edges join the graph with it. Then A4-3 (summaries in interface
+>    files), A1-17's first half (`static mut` as a place), A9-11.
+> 2. **M1** (one commit on `main`): the 0.9.15 grammar, the spelling-only forms and `ember fmt
+>    --migrate`. Build it on a local branch: both spellings accepted first, then the migrator, then the
+>    repository migrated, then the old spellings refused; squash into the one commit `main` gets
+>    ("nothing accepted two ways"). Then **A5-3** (its message names M1's `@no_alias_checks`).
 >
 > **Traps met today.** In Git Bash a heredoc collapses `\\` to `\`: write Python edit scripts with the
 > Write tool. Git Bash's `/tmp` is not Python's; redirect Python output with `PYTHONIOENCODING=utf-8`.
