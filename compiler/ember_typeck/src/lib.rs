@@ -21417,6 +21417,19 @@ impl<'a> Checker<'a> {
                 );
                 return;
             }
+            // `[FFI-31b]` — no `char` crosses, as no range type does.
+            if this.types.carries_char(ty) {
+                this.sink.emit(
+                    Diagnostic::error(
+                        codes::E5054,
+                        span,
+                        "`char` has no C equivalent, and C may pass any `uint32_t`; take `c: u32` and make the character with `char.from_u32(c)`, which gives `None` for a value that is not one",
+                    )
+                    .primary_label(what.clone())
+                    .note("a surrogate or a value above U+10FFFF is no `char` [FFI-31b], [UNS-4]"),
+                );
+                return;
+            }
             if matches!(this.types.kind(ty), TyKind::Range(_)) {
                 let shown = this.types.display(ty);
                 this.sink.emit(
@@ -56404,8 +56417,9 @@ impl<'a> Checker<'a> {
     /// call's, positionally, then each further argument with the type the program gives it (a
     /// literal's written, `5 as c_int`) and that C passes unchanged: a C `int` or wider integer up to
     /// 64 bits, `f64`, `c_longdouble`, a raw pointer, `cstr` or an `extern fn`. A type C's default
-    /// argument promotions change (`bool`, the integers narrower than `int`, `f32`) is refused, as is
-    /// any other (`E5015`): `va_arg` would read what was never passed.
+    /// argument promotions change (`bool`, the integers narrower than `int`, `char`, `f32`) is `E5013`,
+    /// which names only C's promotion, since what the C function reads is in C; any other is `E5015`:
+    /// `va_arg` would read what was never passed.
     fn synth_variadic_call(&mut self, def: DefId, callee: Symbol, args: &[ast::Arg], span: Span) -> Expr {
         self.check_direct_call_safety(def, span);
         let params = self.signatures[def.0 as usize].params.clone();
@@ -56425,10 +56439,10 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let value = self.synth_committed(&arg.value);
-            if let Some(problem) = self.variadic_argument_problem(&arg.value, value.ty) {
+            if let Some((promoted, problem, help)) = self.variadic_argument_problem(&arg.value, value.ty, callee) {
                 self.sink.emit(
-                    Diagnostic::error(codes::E5015, arg.value.span, problem.0)
-                        .help(problem.1)
+                    Diagnostic::error(if promoted { codes::E5013 } else { codes::E5015 }, arg.value.span, problem)
+                        .help(help)
                         .note("C reads a further argument with `va_arg` as the type it expects, after its default argument promotions [FFI-8]"),
                 );
             }
@@ -56441,8 +56455,9 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[FFI-8]` — why a further argument of a variadic call cannot be passed, and the repair.
-    fn variadic_argument_problem(&self, written: &ast::Expr, ty: Ty) -> Option<(String, String)> {
+    /// `[FFI-8]` — why a further argument of a variadic call cannot be passed, and the repair: whether
+    /// it is one C's default promotions change (`E5013`), the message and the help.
+    fn variadic_argument_problem(&self, written: &ast::Expr, ty: Ty, callee: Symbol) -> Option<(bool, String, String)> {
         use ember_types::{FloatTy, IntTy, UintTy};
         let mut literal = written;
         while let ast::ExprKind::Unary { operand: inner, .. } | ast::ExprKind::Paren(inner) = &literal.kind {
@@ -56450,25 +56465,33 @@ impl<'a> Checker<'a> {
         }
         let untyped = matches!(&literal.kind, ast::ExprKind::Lit(ast::Literal::Int { suffix: None, .. } | ast::Literal::Float { suffix: None, .. }));
         if untyped {
-            return Some(("a literal passed as a further argument has the type it is written with".to_string(),
+            return Some((false, "a literal passed as a further argument has the type it is written with".to_string(),
                 "write its C type: `5 as c_int`, `5 as c_long`, `2.5 as f64`".to_string()));
         }
         if ty == self.common.error {
             return None;
         }
         let shown = self.types.display(ty);
+        // The argument as the help writes it: its name, or `x` for anything longer.
+        let name = match &written.kind {
+            ast::ExprKind::Path { segments } if segments.len() == 1 => segments[0].name.to_string(),
+            _ => "x".to_string(),
+        };
+        // The C function by its own name (`sum_wide`, not the module path it was imported under).
+        let callee = callee.to_string();
+        let callee = callee.rsplit('.').next().unwrap_or(&callee);
+        let promoted = |c_type: &str, wider: &str| Some((
+            true,
+            format!("C passes `{name}` as {c_type} through `...`; if `{callee}` reads another type, convert it first: `{name} as {wider}`"),
+            "what passes is decided by C's default argument promotions, and what is read by the C function's `va_arg`".to_string(),
+        ));
         match self.types.kind(ty) {
             TyKind::Int(IntTy::I32 | IntTy::I64 | IntTy::Isize) | TyKind::Uint(UintTy::U32 | UintTy::U64 | UintTy::Usize)
             | TyKind::Float(FloatTy::F64) | TyKind::CLongDouble | TyKind::Ptr { .. } | TyKind::CStr | TyKind::Fn { abi: Some(_), .. } => None,
-            TyKind::Bool | TyKind::Int(IntTy::I8 | IntTy::I16) | TyKind::Uint(UintTy::U8 | UintTy::U16) | TyKind::Char => Some((
-                format!("C promotes a `{shown}` passed as a further argument to `int`"),
-                "pass it as C reads it: `x as c_int` (or `c_uint`)".to_string(),
-            )),
-            TyKind::Float(FloatTy::F32) => Some((
-                "C promotes an `f32` passed as a further argument to `double`".to_string(),
-                "pass it as C reads it: `x as f64`".to_string(),
-            )),
+            TyKind::Bool | TyKind::Int(IntTy::I8 | IntTy::I16) | TyKind::Uint(UintTy::U8 | UintTy::U16) | TyKind::Char => promoted("an `int`", "i64"),
+            TyKind::Float(FloatTy::F32) => promoted("a `double`", "f64"),
             _ => Some((
+                false,
                 format!("a `{shown}` is not passed as a further argument of a variadic C function"),
                 "pass a C integer of `int`'s width or wider (up to 64 bits), `f64`, `c_longdouble`, a raw pointer, `cstr` or an `extern fn`".to_string(),
             )),

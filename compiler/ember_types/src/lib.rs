@@ -2822,6 +2822,20 @@ impl TypeTable {
 
     /// Whether a type may cross a C boundary unchanged (`[FFI-5]`). Every
     /// scalar and every `@layout(c)` struct of FFI-safe fields qualifies.
+    /// `[FFI-31b]` — whether a C boundary would carry a `char`: the type itself, or one in a
+    /// `@layout(c)` aggregate passed by value or behind a pointer. C may pass any `uint32_t`, a
+    /// surrogate included, which no `char` holds.
+    pub fn carries_char(&self, ty: Ty) -> bool {
+        match self.kind(ty) {
+            TyKind::Char => true,
+            TyKind::Ptr { inner, .. } => self.carries_char(*inner),
+            TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } => self.carries_char(*elem),
+            TyKind::Struct(id) => self.struct_def(*id).fields.iter().any(|f| self.carries_char(f.ty)),
+            TyKind::Newtype(id) => self.carries_char(self.newtype_def(*id).repr),
+            _ => false,
+        }
+    }
+
     pub fn is_ffi_safe(&self, ty: Ty) -> bool {
         match self.kind(ty) {
             TyKind::Bool
