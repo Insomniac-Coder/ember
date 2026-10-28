@@ -26,18 +26,24 @@ extend[T] Volatile[*mut T]:
     ## A volatile read of the `T` the pointer points to.
     @safety("the pointer is valid for a read of a `T`")
     pub unsafe fn read_volatile(self) -> T:  # SAFETY: the caller keeps the obligation
-        return volatile_read(self.pointer)
+        # SAFETY: the caller promised the pointer is valid for a read of a `T` (`@safety` above)
+        unsafe:
+            return volatile_read(self.pointer)
 
     ## A volatile write of `value` where the pointer points.
     @safety("the pointer is valid for a write of a `T`")
     pub unsafe fn write_volatile(self, value: T):  # SAFETY: the caller keeps the obligation
-        volatile_write(self.pointer, value)
+        # SAFETY: the caller promised the pointer is valid for a write of a `T` (`@safety` above)
+        unsafe:
+            volatile_write(self.pointer, value)
 
 extend[T] Volatile[*T]:
     ## A volatile read of the `T` the pointer points to.
     @safety("the pointer is valid for a read of a `T`")
     pub unsafe fn read_volatile(self) -> T:  # SAFETY: the caller keeps the obligation
-        return volatile_read(self.pointer)
+        # SAFETY: the caller promised the pointer is valid for a read of a `T` (`@safety` above)
+        unsafe:
+            return volatile_read(self.pointer)
 
 ## `[UNS-5]` — compiler-known: the volatile read and write a `Volatile` makes.
 fn volatile_read[T](pointer: *T) -> T:

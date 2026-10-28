@@ -245,6 +245,12 @@ impl Sink {
         self.diagnostics.len()
     }
 
+    /// The message of the diagnostic at `at` (a `mark`), to say more once more is known; its
+    /// severity, and so the counts, stay.
+    pub fn message_mut(&mut self, at: usize) -> &mut String {
+        &mut self.diagnostics[at].message
+    }
+
     /// Forget what was emitted after `mark`, for a check whose diagnostics are
     /// reported elsewhere. Returns whether an error was among them.
     pub fn rollback(&mut self, mark: usize) -> bool {

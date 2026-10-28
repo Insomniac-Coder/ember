@@ -15,4 +15,4 @@ fn main():
     b = cpp.Both.new()    #$ error[E5034]: `Both` was not imported from `rows.hpp`: multiple inheritance
     c = cpp.SQUARE(3)    #$ error[E1010]: an overlay's `@ffi(macro_fn)` entry declares its signature
     d = cpp.call_with_one    #$ error[E5030]: a `std::function` is never a parameter type
-    e = cpp.made()    #$ error[E3100]: calling an `unsafe fn` requires an `unsafe` block
+    e = cpp.made()    #$ error[E3100]: `cpp.made()` (line 18) calls an `unsafe fn`, whose callers must make true what its `@safety` says

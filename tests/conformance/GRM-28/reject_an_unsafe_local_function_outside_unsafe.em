@@ -15,6 +15,6 @@ fn main():
     unsafe fn capturing(x: int) -> int:
         return x + extra
     println(plain(1))    #$ error[E3100]: calling a value of type `unsafe fn(i64) -> i64` requires an `unsafe` block
-    println(capturing(1))    #$ error[E3100]: calling an `unsafe` local function requires an `unsafe` block
+    println(capturing(1))    #$ error[E3100]: `capturing(1)` (line 18) calls an `unsafe fn`, whose callers must make true what its `@safety` says
     println(apply(plain, 1))    #$ error[E2020]: `apply` cannot take `unsafe fn(i64) -> i64` where it expects `fn(i64) -> i64`
     println(apply(capturing, 1))    #$ error[E2020]: `apply` cannot take `unsafe fn(i64) -> i64` where it expects `fn(i64) -> i64`

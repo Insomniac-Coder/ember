@@ -2497,7 +2497,7 @@ impl Writer {
                 }
                 let _ = write!(
                     accessors,
-                    "    ## `[FFI-8]` — the first `n` elements of the flexible array member `{field}`, which follow the struct.\n    @safety(\"the allocation holding this struct holds at least `n` elements of `{field}` after it\")\n    {visibility}unsafe fn tail(self, n: usize) -> Span[{element}]:  # SAFETY: the caller keeps the obligation\n        address = ref_to_ptr(ref self) as usize + {offset}\n        return {}_cpp_span(ref self, address as *{element}, n)\n",
+                    "    ## `[FFI-8]` — the first `n` elements of the flexible array member `{field}`, which follow the struct.\n    @safety(\"the allocation holding this struct holds at least `n` elements of `{field}` after it\")\n    {visibility}unsafe fn tail(self, n: usize) -> Span[{element}]:  # SAFETY: the caller keeps the obligation\n        # SAFETY: the caller promised `n` elements of `{field}` after the struct (`@safety` above)\n        unsafe:\n            address = ref_to_ptr(ref self) as usize + {offset}\n            return {}_cpp_span(ref self, address as *{element}, n)\n",
                     ember_branding::SYMBOL_PREFIX
                 );
             }

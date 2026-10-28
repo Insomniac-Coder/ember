@@ -29,4 +29,4 @@ fn main():
         a = adopt(bare_new())    #$ error[E5002]: the declaration of `Bare` names no destructor
         b = adopt(null[*mut Plain]())    #$ error[E5002]: `Plain` is not a foreign type
         c = adopt(counted_new())
-    d = adopt(null[*mut Widget]())    #$ error[E3100]: calling an `unsafe fn` requires an `unsafe` block
+    d = adopt(null[*mut Widget]())    #$ error[E3100]: `adopt(null[*mut Widget]())` (line 32) calls an `unsafe fn`, whose callers must make true what its `@safety` says

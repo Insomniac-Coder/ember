@@ -3406,7 +3406,7 @@ fn why_prints_the_shortest_chain_to_an_effect() {
          fn shallow(mut xs: Array[int]):\n    xs.push(2)\n\n\
          fn pure(x: int) -> int:\n    return x * 2\n\n\
          @safety(\"`n` is at least 1\")\n\
-         unsafe fn first(p: *mut int, n: int) -> int:  # SAFETY: slot 0 exists, as `n` says\n    return read(p, 0)\n\n\
+         unsafe fn first(p: *mut int, n: int) -> int:  # SAFETY: slot 0 exists, as `n` says\n    unsafe:  # SAFETY: slot 0 exists, as `n` says\n        return read(p, 0)\n\n\
          fn through(p: *mut int) -> int:\n    unsafe:  # SAFETY: the caller's one slot\n        return first(p, 1)\n\n\
          fn peek() -> int:\n    value = 0\n    unsafe:  # SAFETY: one slot, written before it is read and freed once\n        p = alloc[int](1)\n        write(p, 0, 7)\n        value = first(p, 1)\n        free(p, 1)\n    return value\n\n\
          fn main():\n    xs: Array[int] = []\n    deep(xs)\n    shallow(xs)\n    println(pure(3), peek())\n",

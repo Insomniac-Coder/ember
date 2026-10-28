@@ -1,6 +1,6 @@
 #$ test: compile-fail
 #$ rules: UNS-1
-#$ error[E3100]: calling an `unsafe fn` requires an `unsafe` block
+#$ error[E3100]: `c.read_raw()` (line 16) calls an `unsafe fn`, whose callers must make true what its `@safety` says
 # D-710 — an `unsafe fn` method of a generic type is `unsafe` in every instance: calling it
 # outside `unsafe` is refused, as for any other type.
 

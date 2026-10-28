@@ -153,8 +153,23 @@ really the owner's is listed under "For the owner", not ruled.
 
 | Rule | Ruling | Why |
 |---|---|---|
+| UNS-1, UNS-12 (A5-1) | The type checker reads each module's source text (`ast::Module::source`, set by the parser) to quote code as written and name its lines. | The spec's messages do both (about 100 of H3's name a line: "`read_u32_le(buf.as_ptr())` (line 9) calls an `unsafe fn`, …"), and the checker had neither. Keeping the text costs one copy of each loaded file's text for the build: at most 458 KB for the standard library's 26 files, plus the program's own. One general facility rather than a placeholder the renderer fills in. |
+| UNS-12 (A5-1) | In an `unsafe fn` body, the unsafe steps of one line are one `E3100` (the line's first diagnostic is amended as more steps arrive: `Sink::message_mut`), naming them all: "the reads through `p` on line 4 are this function's own unsafe steps". | The spec's message is per line ("put line 4 in an `unsafe:` block"); seven diagnostics for one line, each saying to put it in a block, is noise. It is merged as it is emitted, never by a pass afterwards: an incremental build keeps diagnostics by their place in the sink (`[BLD-1]`), so removing one would shift the others. |
+| UNS-12 (A5-1) | A pointer's reads and writes name what its offsets are for: `p.add(1).read()` is a read through `p`; offsets are named only when the line has nothing else on that pointer ("the offset of `p`"). | The spec's own example line has four reads and three offsets and says "the reads through `p`". |
+| UNS-1 (A5-1) | A refused raw pointer step (`p.read()`, `p.write(v)`, `p.add(n)`) is typed on instead of becoming an error expression. | Before, `p.add(1).read()` reported only the `add`: the `read` on its error result was never seen. What is done with a refused step's result is checked as well now. |
+| UNS-12 (A5-1) | A closure written in an `unsafe fn` body is that function's: its steps are named as the function's own. A local function is its own: an `unsafe` one's steps are its own, a safe one's are safe code's. | A closure is the function's text, run as part of what the function does; a local function is a declaration with its own `unsafe` or not. |
+| UNS-1 (A5-1) | A call of a declared `unsafe fn` outside `unsafe` gives the spec's message with the call as written. A call the code does not spell (a `for` loop's `iter`) names its callee: "`row` (line 12) calls `iter`, an `unsafe fn` whose callers must make true …". Every other step outside `unsafe` keeps its message and gives the block to write as a help ("put line 9 in an `unsafe:` block with a `# SAFETY:` note …"), which replaces the bare "wrap the call in `unsafe:`". | `[UNS-1]`: each message "says what the code must vouch for and gives the block to write". Quoting `row` as if it were a call would have said something untrue. |
 
 ### For the owner
 
-(none yet)
+1. **`E5013`'s suggested conversion for a narrow integer** (`[FFI-8]`, built in A6-12). The spec's message is
+   "C passes `narrow` as an `int` through `...`; if `sum_wide` reads another type, convert it first:
+   `v.sum_wide(1, narrow as i64)`". `sum_wide` reads `int64_t`, so `as i64` is right there, and the compiler
+   always writes `as i64`, whatever the C function reads. For `printf(c"%d\n", small)` it says
+   `printf(c"%d\n", small as i64)`, which is wrong: `%d` reads an `int`. The compiler cannot see the `va_arg`.
+   Options: (a) keep `as i64` as written (the spec's wording); (b) show the type C's promotion gives, `as c_int`,
+   which is right whenever the function reads what C passes (the `f32` case already shows `as f64` this way);
+   (c) show no type: "convert it to the type `sum_wide` reads: `narrow as T`". Changing the text is a new
+   hardening. Nothing is changed until you choose. The error page `docs/errors/E5013.md` uses `sum_wide`, where
+   `as i64` is right.
 

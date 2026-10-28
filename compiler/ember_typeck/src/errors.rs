@@ -254,8 +254,8 @@ impl<'a> Checker<'a> {
             return Some(Expr { ty: self.common.u128, kind: ExprKind::Int(hash), span });
         }
         if !self.unsafe_context() {
-            self.sink.emit(Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block")
-                .help("wrap the call in `unsafe:` and state its safety reason"));
+            self.refuse_unsafe(span, crate::UnsafeStep::Call { callee: helper.to_string(), declared: true },
+                Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"));
         }
         let boxed = self.synth_committed(&args[0].value);
         if !self.box_inner(boxed.ty).is_some_and(|inner| matches!(self.types.kind(inner), TyKind::Dyn { .. })) {

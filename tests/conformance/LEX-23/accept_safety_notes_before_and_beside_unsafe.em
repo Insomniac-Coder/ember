@@ -11,10 +11,13 @@ unsafe extern "C":
 
 # SAFETY(ffi): abs takes any i32 and touches no memory
 unsafe fn magnitude(x: i32) -> i32:
-    return abs(x)
+    # SAFETY(ffi): abs takes any i32 and touches no memory
+    unsafe:
+        return abs(x)
 
 unsafe fn trailing(x: i32) -> i32:  # SAFETY: as magnitude
-    return abs(x)
+    unsafe:  # SAFETY(ffi): as magnitude's block
+        return abs(x)
 
 fn main():
     unsafe:  # SAFETY(ffi): magnitude's note covers its call

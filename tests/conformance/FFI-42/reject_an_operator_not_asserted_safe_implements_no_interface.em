@@ -14,4 +14,4 @@ fn main():
     b = cpp.Vec2(x = 10, y = 20)
     c = a - b    #$ error[E2020]: `-` cannot be applied
     d = a < b    #$ error[E2040]: does not implement `Ord`, which `<` needs
-    e = a.sub(b)    #$ error[E3100]: calling an `unsafe fn` requires an `unsafe` block
+    e = a.sub(b)    #$ error[E3100]: `a.sub(b)` (line 17) calls an `unsafe fn`, whose callers must make true what its `@safety` says

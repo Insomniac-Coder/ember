@@ -44,6 +44,8 @@ pub struct Module {
     /// lifts to the module (ODR-268).
     pub local_generators: bool,
     pub span: Span,
+    /// The file's text, for the messages that quote code as written or name its lines.
+    pub source: std::sync::Arc<str>,
 }
 
 /// Where a script's statements came from, so a tool can put them back.

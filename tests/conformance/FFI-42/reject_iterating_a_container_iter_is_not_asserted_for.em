@@ -9,5 +9,5 @@ import cpp "containers.hpp"
 
 fn main():
     row = cpp.Row(cells = [5, 6, 7])
-    for cell in row:    #$ error[E3100]: calling an `unsafe fn` requires an `unsafe` block
+    for cell in row:    #$ error[E3100]: `row` (line 12) calls `iter`, an `unsafe fn` whose callers must make true what its `@safety` says
         println(cell)

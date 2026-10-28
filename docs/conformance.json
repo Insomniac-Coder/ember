@@ -267,7 +267,7 @@
         "XV.7"
       ],
       "rules": 613,
-      "done": 252,
+      "done": 253,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -608,7 +608,6 @@
         "UNS-10",
         "UNS-10a",
         "UNS-11",
-        "UNS-12",
         "UNS-2",
         "UNS-4",
         "UNS-7",
@@ -638,7 +637,7 @@
         "XVI"
       ],
       "rules": 676,
-      "done": 284,
+      "done": 285,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -1010,7 +1009,6 @@
         "UNS-10",
         "UNS-10a",
         "UNS-11",
-        "UNS-12",
         "UNS-2",
         "UNS-4",
         "UNS-7",
@@ -1040,7 +1038,7 @@
         "Annex B"
       ],
       "rules": 739,
-      "done": 323,
+      "done": 324,
       "missing": [
         "ALC-1",
         "ALC-2",
@@ -1436,7 +1434,6 @@
         "UNS-10",
         "UNS-10a",
         "UNS-11",
-        "UNS-12",
         "UNS-2",
         "UNS-4",
         "UNS-7",

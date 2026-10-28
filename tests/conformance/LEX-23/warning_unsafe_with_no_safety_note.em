@@ -10,7 +10,9 @@ unsafe extern "C":
     fn abs(x: i32) -> i32
 
 unsafe fn bare(x: i32) -> i32:    #$ warning[W3012]: this `unsafe` has no safety note
-    return abs(x)
+    # SAFETY(ffi): abs takes any i32 and touches no memory
+    unsafe:
+        return abs(x)
 
 fn main():
     unsafe:    #$ warning[W3012]: this `unsafe` has no safety note
