@@ -1024,6 +1024,11 @@ fn the_engine_report_summarises_the_build_and_changes_nothing() {
         std::fs::read_to_string(directory.join("out").join("development").join("c").join("engine.c")).expect("the C was written")
     };
     assert_eq!(c(false), c(true), "`--report=engine` changed the program's C");
+    // `[CLI-2]`, `[RT-12]` — beside the C, the flags it needs, the stack-probe flag among them where the
+    // C compiler does not probe by default.
+    let flags = std::fs::read_to_string(directory.join("out").join("development").join("c").join("cflags.txt")).expect("cflags.txt was written");
+    assert!(flags.lines().any(|flag| flag == "/std:c11" || flag == "-std=c11"), "{flags}");
+    assert_eq!(flags.lines().any(|flag| flag == "-fstack-clash-protection"), !cfg!(windows), "{flags}");
 }
 
 /// `[DIA-8]` — `ember explain --view <file>:<line>` prints, for each view in use at that line, where

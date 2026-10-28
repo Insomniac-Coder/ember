@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub mod cdylib;
 pub mod interface;
@@ -307,6 +307,10 @@ impl Toolchain {
     /// carries); else the archive's Clang, found beside the compiler before anything on `PATH`;
     /// else MSVC, Clang or gcc as the host has them.
     pub fn detect(requested: Option<&str>) -> Result<Toolchain, BuildError> {
+        Self::find(requested)?.with_stack_probes()
+    }
+
+    fn find(requested: Option<&str>) -> Result<Toolchain, BuildError> {
         match requested {
             Some("bundled") => Self::find_bundled().ok_or(BuildError::NoToolchain("bundled")),
             Some("msvc") => Self::find_msvc().ok_or(BuildError::NoToolchain("msvc")),
@@ -342,6 +346,39 @@ impl Toolchain {
             let clang = bin.join("clang");
             clang.is_file().then_some(Toolchain::Clang(clang))
         }
+    }
+
+    /// `[RT-12]` — the toolchain, if it can probe the stack: MSVC and clang-cl probe by default, and so
+    /// does every C compiler for Windows (the platform's `__chkstk`); a Clang or GCC elsewhere must
+    /// take `-fstack-clash-protection` (`gnu_flags`), else `E9014`. Asked once per compiler a process
+    /// uses, by compiling one line with warnings as errors.
+    fn with_stack_probes(self) -> Result<Toolchain, BuildError> {
+        let (Toolchain::Clang(path) | Toolchain::Gcc(path)) = &self else { return Ok(self) };
+        if cfg!(windows) {
+            return Ok(self);
+        }
+        static ASKED: std::sync::Mutex<Vec<(PathBuf, bool)>> = std::sync::Mutex::new(Vec::new());
+        let known = ASKED.lock().ok().and_then(|asked| asked.iter().find(|(asked, _)| asked == path).map(|(_, takes)| *takes));
+        let takes = known.unwrap_or_else(|| {
+            use std::io::Write;
+            let takes = Command::new(path)
+                .args(["-x", "c", "-c", "-Werror", "-fstack-clash-protection", "-o", "/dev/null", "-"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()
+                .and_then(|mut child| {
+                    child.stdin.take()?.write_all(b"int probed(void) { return 0; }\n").ok()?;
+                    child.wait().ok()
+                })
+                .is_some_and(|status| status.success());
+            if let Ok(mut asked) = ASKED.lock() {
+                asked.push((path.clone(), takes));
+            }
+            takes
+        });
+        if takes { Ok(self) } else { Err(BuildError::NoStackProbes(self.name().to_string())) }
     }
 
     /// Whether this is the archive's own Clang (`find_bundled`).
@@ -603,6 +640,9 @@ pub enum BuildError {
         flag: String,
         fast: bool,
     },
+    /// `[RT-12]` — a Clang or GCC that does not take `-fstack-clash-protection` cannot probe a frame
+    /// larger than the guard page, so a stack write could land beyond it (`E9014`).
+    NoStackProbes(String),
 }
 
 impl std::fmt::Display for BuildError {
@@ -627,6 +667,10 @@ impl std::fmt::Display for BuildError {
             BuildError::ArchiverFailed { command, output } => {
                 write!(f, "the archive tool failed\n  command: {command}\n{output}")
             }
+            BuildError::NoStackProbes(toolchain) => write!(
+                f,
+                "error[E9014]: `{toolchain}` cannot emit stack probes for a frame larger than a guard page: it does not take `-fstack-clash-protection` [RT-12]\n  = help: use Clang 11 or GCC 8 or later"
+            ),
             BuildError::FloatModeRefused { toolchain, flag, fast } => {
                 let attribute = if *fast { "@fastmath" } else { "@fp(contract)" };
                 write!(f, "`{toolchain}` does not take `{flag}`, which `{attribute}` needs")
@@ -2090,10 +2134,20 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     // libatomic, which a program does not link.
     let cx16: &[&str] = if cfg!(target_arch = "x86_64") { &["-mcx16"] } else { &[] };
     // `[RT-12]` — a frame larger than a page touches each page in order, so no write lands beyond
-    // the guard page (MSVC and clang-cl probe by default).
-    let probes: &[&str] = if cfg!(target_os = "linux") { &["-fstack-clash-protection"] } else { &[] };
+    // the guard page: on every target but Windows, whose C compilers all probe (`__chkstk`), as
+    // MSVC and clang-cl do (`Toolchain::with_stack_probes` refuses a compiler without the flag).
+    let probes: &[&str] = if cfg!(windows) { &[] } else { &["-fstack-clash-protection"] };
     let counts: &[&str] = if eight_bit_counts() { &["-DEMBER_COUNT_BITS=8"] } else { &[] };
     ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).chain(cx16).chain(probes).chain(counts).copied().collect()
+}
+
+/// `[CLI-2]` — the C compiler flags Ember's C needs for its guarantees with this toolchain and profile,
+/// the stack-probe flag of `[RT-12]` among them: what `ember build --emit c` writes to `cflags.txt`.
+pub fn c_flags(toolchain: &Toolchain, profile: Profile) -> Vec<&'static str> {
+    match toolchain {
+        Toolchain::Msvc { .. } => msvc_flags(profile),
+        Toolchain::Clang(_) | Toolchain::Gcc(_) => gnu_flags(profile),
+    }
 }
 
 /// `[TST-31]` — a test program built with 8-bit counts (`#$ count_bits: 8`): the program's C and the
@@ -3023,6 +3077,15 @@ int main(int argc, char** argv) {
         assert!(undecorated.is_empty(), "[CG-C-5] a noreturn function that is not a cold panic function: {undecorated:?}");
         let panic = format!("{upper}_PANIC_FN void {}panic", ember_branding::RUNTIME_PREFIX);
         assert!(header.lines().filter(|line| line.trim_start().starts_with(&panic)).count() >= 9, "[CG-C-5] the panic family is not cold");
+    }
+
+    /// `[RT-12]` — a Clang or GCC that does not take `-fstack-clash-protection` is refused with `E9014`;
+    /// `/bin/false`, which compiles nothing, stands for one.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_c_compiler_that_cannot_probe_the_stack_is_refused() {
+        let refused = Toolchain::Gcc(PathBuf::from("/bin/false")).with_stack_probes().expect_err("it cannot probe");
+        assert!(refused.to_string().starts_with("error[E9014]"), "{refused}");
     }
 
     /// `[RT-7]` — a count never rolls over: the +1 at a plain count's maximum stops the program with
