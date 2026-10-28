@@ -10014,10 +10014,14 @@ ember_u128 ember_range_nth_u128(ember_u128 start, ember_u128 step, size_t k) {
 #define EMBER_OUT_WRITE(ptr, len, out) _fwrite_nolock((ptr), 1, (len), (out))
 #define EMBER_OUT_PUTC(c, out) _fputc_nolock((c), (out))
 #elif defined(__linux__)
-/* glibc's and musl's (`_GNU_SOURCE`, above). */
+/* glibc's and musl's (`_GNU_SOURCE`, above). D-923: the function itself, not glibc's
+ * `fwrite_unlocked` macro (bits/stdio.h), which chooses a loop for a short write by
+ * `__builtin_constant_p`: gcc's link-time optimisation, inlining a print into its caller, turned
+ * the macro's other branch, the call, into `__builtin_unreachable`, and a statement printing a `str`
+ * after another piece ran off the end of its function. */
 #define EMBER_OUT_LOCK(out) flockfile(out)
 #define EMBER_OUT_UNLOCK(out) funlockfile(out)
-#define EMBER_OUT_WRITE(ptr, len, out) fwrite_unlocked((ptr), 1, (len), (out))
+#define EMBER_OUT_WRITE(ptr, len, out) (fwrite_unlocked)((ptr), 1, (len), (out))
 #define EMBER_OUT_PUTC(c, out) fputc_unlocked((c), (out))
 #elif defined(_WIN32) || defined(__unix__) || defined(__APPLE__)
 #if defined(_WIN32)
