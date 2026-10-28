@@ -5,9 +5,8 @@ sooner if the owner wants. Answers become verdicts in `tasks/96/redesign/JOB.md`
 other question the areas raised is settled in `decisions.md`.
 
 **Answered 2026-10-27:** Q-A (verdict 102), Q-B (verdict 103), Q-C (verdict 104), Q-D (verdict 105, for
-now), Q-G (verdict 106). **Open:** Q-E (the owner could not answer yet), Q-F (the owner: "(b) and (c)
-together if it's safe and fast": show the measured numbers, RESULTS.md section 7, and the safety
-argument, M3.md "Verdict 47's two ways"), Q-H and Q-I (not understood: explain again, one at a time,
+now), Q-G (verdict 106), Q-F (verdict 107, 2026-10-28: (b) and (c) together). **Open:** Q-E (the owner could
+not answer yet), Q-H and Q-I (not understood: explain again, one at a time,
 with real code).
 
 ## Q-A (M1): `owned` inside `@ffi(...)` contracts

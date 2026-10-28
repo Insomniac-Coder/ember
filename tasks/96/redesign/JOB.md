@@ -853,6 +853,27 @@ acceptable it hurt readability too, if you want something to have a copy use the
     - `@noalloc` over `type Handler = fn()`: `[EFF-2]`'s "a contract written on a function type is
       checked against every function stored into it" has its place in the grammar.
 
+107. **A value made with `using` carries no word naming its manager when the manager can do without
+    it** (owner, 2026-10-28, gap map Q-F, (b) and (c) together, after the measured costs: "GOOD B AND C
+    IT IS").
+    - (b) A manager kind that frees nothing one by one (its `deallocate` does nothing, checked when
+      compiling) gives values that carry no word: nothing is ever given back value by value, and
+      everything is freed together when the manager is cleared or ends. A value that grows cannot be
+      made in it this way.
+    - (c) A manager that hands out its memory from pieces starting at a multiple of 65,536 bytes, with
+      its own address in each piece's first 64 bytes (one piece of its own for a value bigger than a
+      piece), promised by its writer in `unsafe`, gives values that carry no word: the manager is found
+      from the value's address, as C's `free(p)` finds its heap.
+    - Every other manager's values keep the word (verdict 47).
+    - Safety is unchanged: the checks that no value outlives its manager or is used after a reset run
+      when compiling and never read the word.
+    - Measured (`measure-0.9.15/RESULTS.md` section 7, `measure-0.9.15/M3.md`), against plain C: a
+      million small values 191 ms and 28.2 MB with (b), 241 ms and 44.7 MB with the word, C 191 ms and
+      28.2 MB; growing lists 243 ms and 17.1 MB with (c), 248 ms and 19.1 MB with the word, C 217 ms and
+      17.1 MB; a pool freeing values one by one 296 ms and 13.7 MB with (c), 384 ms and 15.8 MB with the
+      word, C 290 ms and 13.7 MB.
+    - Goes into the next hardening (`[ALC-1]`, `[ALC-2]`, `[OBJ-4]`, `[COST-3]`) with milestone M10.
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."
