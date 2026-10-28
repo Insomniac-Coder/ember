@@ -167,9 +167,10 @@ impl Interp<'_, '_> {
             return Ok(());
         }
         let strong = self.mem.read_u32(object + STRONG)?;
-        if strong == u32::MAX {
+        // `[RT-7]` — the compiled runtime's limit and text, its limit's digits grouped.
+        if strong >= count_max() {
             let name = self.object_name(object)?;
-            return self.panic_in(OBJECT_RUNTIME, &format!("reference count overflow on {name}"));
+            return self.panic_in(OBJECT_RUNTIME, &format!("too many owners of a `{name}` ({})", grouped(count_max())));
         }
         if strong == 0 || self.mem.read_u32(object + FLAGS)? & DEINITIALISING != 0 && strong == 0 {
             return self.panic_in(OBJECT_RUNTIME, "retain of deinitialising or invalid object");
@@ -297,8 +298,13 @@ impl Interp<'_, '_> {
             return Ok(());
         }
         let weak = self.mem.read_u32(object + WEAK)?;
-        if weak == 0 || weak == u32::MAX {
+        if weak == 0 {
             return self.panic_in(OBJECT_RUNTIME, "retain of invalid weak reference");
+        }
+        // `[RT-7]` — as the compiled runtime: the link past the weak count's maximum stops the program.
+        if weak >= count_max() {
+            let name = self.object_name(object)?;
+            return self.panic_in(OBJECT_RUNTIME, &format!("too many `weakref` links to a `{name}` ({})", grouped(count_max())));
         }
         self.mem.write_u32(object + WEAK, weak + 1)?;
         Ok(())
@@ -859,4 +865,24 @@ impl Interp<'_, '_> {
         }
         Ok(())
     }
+}
+
+/// `[RT-7]`, `[TST-31]` — a count's maximum: 4,294,967,295, or 255 for a test run with 8-bit counts
+/// (`#$ count_bits: 8`), as the compiled runtime's `EMBER_COUNT_MAX`.
+fn count_max() -> u32 {
+    static MAX: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MAX.get_or_init(|| if std::env::var(ember_branding::count_bits_var()).is_ok_and(|bits| bits == "8") { 255 } else { u32::MAX })
+}
+
+/// `4294967295` as `4,294,967,295`.
+fn grouped(value: u32) -> String {
+    let digits = value.to_string();
+    let mut out = String::new();
+    for (i, digit) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
 }

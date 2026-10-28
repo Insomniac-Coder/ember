@@ -1912,6 +1912,7 @@ fn msvc_flags(profile: Profile) -> Vec<&'static str> {
         Profile::Development => &["/O2", "/Zi", "/MD"],
         Profile::Release => &["/O2", "/MD", "/DEMBER_RELEASE"],
     };
+    let counts: &[&str] = if eight_bit_counts() { &["/DEMBER_COUNT_BITS=8"] } else { &[] };
     // `[BLD-FFI-1b]` — a C++ project's runtime switch and layout defines, where the build inherits them.
     let inherited = inherited_msvc_runtime();
     let switch = msvc_runtime_switch();
@@ -1920,6 +1921,7 @@ fn msvc_flags(profile: Profile) -> Vec<&'static str> {
         .chain(optimisation)
         .copied()
         .map(|flag| if flag == "/MD" { switch } else { flag })
+        .chain(counts.iter().copied())
         .chain(inherited.into_iter().filter(|flag| !flag.starts_with("/M")))
         .collect()
 }
@@ -2090,7 +2092,15 @@ fn gnu_flags(profile: Profile) -> Vec<&'static str> {
     // `[RT-12]` — a frame larger than a page touches each page in order, so no write lands beyond
     // the guard page (MSVC and clang-cl probe by default).
     let probes: &[&str] = if cfg!(target_os = "linux") { &["-fstack-clash-protection"] } else { &[] };
-    ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).chain(cx16).chain(probes).copied().collect()
+    let counts: &[&str] = if eight_bit_counts() { &["-DEMBER_COUNT_BITS=8"] } else { &[] };
+    ["-std=c11", "-Wall", "-Wextra", "-ffp-contract=off", "-fno-fast-math"].iter().chain(optimisation).chain(cx16).chain(probes).chain(counts).copied().collect()
+}
+
+/// `[TST-31]` — a test program built with 8-bit counts (`#$ count_bits: 8`): the program's C and the
+/// runtime object's both get the define, so the two agree, and the runtime object's cache key, the
+/// hashed command, keeps it apart from the 32-bit one.
+fn eight_bit_counts() -> bool {
+    std::env::var(ember_branding::count_bits_var()).is_ok_and(|bits| bits == "8")
 }
 
 /// ADR-098 — gcc's own flags for a profile, after `gnu_flags`. At `-O2` gcc's
@@ -3015,9 +3025,10 @@ int main(int argc, char** argv) {
         assert!(header.lines().filter(|line| line.trim_start().starts_with(&panic)).count() >= 9, "[CG-C-5] the panic family is not cold");
     }
 
-    /// `[RT-7]` — a reference count never wraps: a retain at the count's maximum panics with
-    /// `reference count overflow on <Class>`, for a plain and a Sync object; a retain of an
-    /// object at zero is still the invalid-object panic (`templates/tests/count_overflow.c.in`).
+    /// `[RT-7]` — a count never rolls over: the +1 at a plain count's maximum stops the program with
+    /// "too many owners of a `<Class>` (4,294,967,295)", a Sync count (several threads add to it) at
+    /// half the range, and a weak count the same way; a retain of an object at zero is still the
+    /// invalid-object panic (`templates/tests/count_overflow.c.in`).
     #[test]
     fn a_reference_count_never_wraps() {
         let requested = std::env::var(ember_branding::cc_var()).ok();
@@ -3033,8 +3044,10 @@ int main(int argc, char** argv) {
             profile: Profile::Development, obj_dir: dir.join("obj"),
         }).expect("the count-overflow oracle compiles");
         for (mode, message) in [
-            ("plain", "reference count overflow on Node"),
-            ("sync", "reference count overflow on Shared Node"),
+            ("plain", "too many owners of a `Node` (4,294,967,295)"),
+            ("sync", "too many owners of a `Shared Node` (2,147,483,647)"),
+            ("weak", "too many `weakref` links to a `Node` (4,294,967,295)"),
+            ("weak_sync", "too many `weakref` links to a `Shared Node` (2,147,483,647)"),
             ("zero", "retain of deinitialising or invalid object"),
         ] {
             let output = run_fresh(Command::new(&program).arg(mode)).expect("the count-overflow oracle runs");

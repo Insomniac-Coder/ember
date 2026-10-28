@@ -1525,11 +1525,23 @@ void ember_obj_check_thread(const ember_obj_header* object);
 #define EMBER_OBJ_CHECK_THREAD(object) ((void)0)
 #endif
 
+/* `[RT-7]`, `[TST-31]` — a count is 32 bits in the header, and the +1 that would pass its maximum
+ * stops the program. A one-thread count stops at `EMBER_COUNT_MAX`; one several threads add to at
+ * once stops when the value before the add is at or above `EMBER_COUNT_HALF`, so that no number of
+ * threads adding together carries it past its maximum. A test program compiled with
+ * `-DEMBER_COUNT_BITS=8` (`#$ count_bits: 8`) stores and compares its counts the same way, with an
+ * 8-bit maximum. */
+#ifndef EMBER_COUNT_BITS
+#define EMBER_COUNT_BITS 32
+#endif
+#define EMBER_COUNT_MAX ((uint32_t)(((uint64_t)1 << EMBER_COUNT_BITS) - 1u))
+#define EMBER_COUNT_HALF (EMBER_COUNT_MAX >> 1)
+
 EMBER_INLINED void ember_retain_plain(ember_obj_header* object) {
     if (object != NULL) {
         EMBER_OBJ_CHECK_THREAD(object);
     }
-    if (object != NULL && object->strong - 1u < UINT32_MAX - 1u) {
+    if (object != NULL && object->strong - 1u < EMBER_COUNT_MAX - 1u) {
         object->strong += 1;
         return;
     }
@@ -1905,8 +1917,8 @@ EMBER_INLINED void ember_lock_order_taken(const void* word, ember_loc at) {
 EMBER_INLINED void ember_lock_order_freed(const void* word) { (void)word; }
 #endif
 
-/* A Sync retain that found the count at zero or at its maximum: a panic.
- * `previous` is the count it found (`[RT-7]`: the maximum is an overflow). */
+/* A Sync retain that found the count at zero, or at or above `EMBER_COUNT_HALF`: a stop.
+ * `previous` is the count it found (`[RT-7]`). */
 EMBER_PANIC_FN void ember_obj_retain_failed(ember_obj_header* object, uint32_t previous);
 /* A Sync release that found the count at one (the object deinitialises) or
  * at zero (a panic). */
@@ -1915,7 +1927,7 @@ void ember_obj_release_ended(ember_obj_header* object, uint32_t previous);
 EMBER_INLINED void ember_retain_sync(ember_obj_header* object) {
     if (object != NULL) {
         uint32_t previous = EMBER_COUNT_UP(&object->strong);
-        if (previous - 1u >= UINT32_MAX - 1u) {
+        if (previous - 1u >= EMBER_COUNT_HALF - 1u) {
             ember_obj_retain_failed(object, previous);
         }
     }

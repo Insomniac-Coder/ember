@@ -3029,12 +3029,25 @@ static EMBER_NORETURN void object_panic_text(const char* text) {
     ember_panic(text, strlen(text), loc);
 }
 
-/* `[RT-7]` — a count never wraps: the retain past its maximum panics, naming
- * the class. */
-static EMBER_NORETURN void object_panic_count_overflow(const ember_obj_header* object) {
+/* `[RT-7]` — a count never rolls over: the +1 that would pass its limit stops the program, naming the
+ * class and the limit, its digits grouped: "too many owners of a `Player` (4,294,967,295)", "too many
+ * `weakref` links to a `Log` (2,147,483,647)". */
+static EMBER_NORETURN void object_panic_count_overflow(const ember_obj_header* object, bool weak, uint32_t limit) {
+    char plain[16], digits[24];
+    int length = snprintf(plain, sizeof plain, "%lu", (unsigned long)limit);
+    size_t at = 0;
+    for (int i = 0; i < length; ++i) {
+        if (i > 0 && (length - i) % 3 == 0) {
+            digits[at++] = ',';
+        }
+        digits[at++] = plain[i];
+    }
+    digits[at] = '\0';
     char buffer[256];
     const char* name = object->ti && object->ti->name ? object->ti->name : "<anonymous>";
-    int written = snprintf(buffer, sizeof buffer, "reference count overflow on %s", name);
+    int written = weak
+        ? snprintf(buffer, sizeof buffer, "too many `weakref` links to a `%s` (%s)", name, digits)
+        : snprintf(buffer, sizeof buffer, "too many owners of a `%s` (%s)", name, digits);
     ember_loc loc = { "<object-runtime>", 0, 0 };
     ember_panic(buffer, written > 0 ? (size_t)written : 0, loc);
 }
@@ -3055,8 +3068,12 @@ static bool object_try_strong_retain(ember_obj_header* object) {
             return false;
         }
         uint32_t current = object_load_strong(object);
-        if (current == 0 || current == UINT32_MAX) {
+        if (current == 0) {
             return false;
+        }
+        uint32_t limit = sync ? EMBER_COUNT_HALF : EMBER_COUNT_MAX;
+        if (current >= limit) {
+            object_panic_count_overflow(object, false, limit);
         }
         if (!sync) {
             object->strong = current + 1;
@@ -3276,9 +3293,6 @@ void ember_obj_retain(ember_obj_header* object) {
         return;
     }
     if (!object_try_strong_retain(object)) {
-        if (object_load_strong(object) == UINT32_MAX) {
-            object_panic_count_overflow(object);
-        }
         object_panic_text("retain of deinitialising or invalid object");
     }
 }
@@ -3306,8 +3320,8 @@ void ember_obj_release(ember_obj_header* object) {
 
 /* `[RT-10]` — the out-of-line ends of the inline Sync counts. */
 void ember_obj_retain_failed(ember_obj_header* object, uint32_t previous) {
-    if (previous == UINT32_MAX) {
-        object_panic_count_overflow(object);
+    if (previous != 0) {
+        object_panic_count_overflow(object, false, EMBER_COUNT_HALF);
     }
     object_panic_text("retain of deinitialising or invalid object");
 }
@@ -3328,12 +3342,17 @@ void ember_weak_retain(ember_obj_header* object) {
 #endif
     bool sync = object_is_sync(object);
     uint32_t current = object_load_weak(object);
-    if (current == 0 || current == UINT32_MAX) {
+    if (current == 0) {
         object_panic_text("retain of invalid weak reference");
     }
     if (sync) {
-        (void)object_fetch_add_u32(&object->weak, 1);
+        if (object_fetch_add_u32(&object->weak, 1) >= EMBER_COUNT_HALF) {
+            object_panic_count_overflow(object, true, EMBER_COUNT_HALF);
+        }
     } else {
+        if (current >= EMBER_COUNT_MAX) {
+            object_panic_count_overflow(object, true, EMBER_COUNT_MAX);
+        }
         object->weak = current + 1;
     }
 }

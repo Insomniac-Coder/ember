@@ -451,6 +451,13 @@ pub fn c_warnings_as_errors_var() -> String {
     format!("{}_C_WARNINGS_AS_ERRORS", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// `[TST-31]` — set to `8`, a build compiles the program and the runtime object with 8-bit counts,
+/// and the evaluator counts the same way (`#$ count_bits: 8`): the two count-limit tests reach a
+/// count's maximum in 255 steps.
+pub fn count_bits_var() -> String {
+    format!("{}_COUNT_BITS", SYMBOL_PREFIX.to_uppercase())
+}
+
 pub fn cc_var() -> String {
     format!("{}_CC", SYMBOL_PREFIX.to_uppercase())
 }

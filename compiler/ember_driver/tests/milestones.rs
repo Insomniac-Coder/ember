@@ -50,6 +50,9 @@ fn workspace_root() -> PathBuf {
 #[derive(Default, Debug)]
 struct Expectations {
     kind: Option<String>,
+    /// `#$ count_bits: 8` — the program and the runtime are built with 8-bit counts, and the evaluator
+    /// counts the same way (`[TST-31]`), for the two count-limit tests.
+    count_bits: Option<u32>,
     /// `#$ c-compilers: msvc, clang` — the C compilers this test's C is for; empty means every one.
     c_compilers: Vec<String>,
     stdout: Option<String>,
@@ -259,6 +262,11 @@ fn parse_expectations(source: &str) -> Expectations {
             }
         } else if collecting_stdout {
             stdout_lines.push(rest.to_string());
+        } else if let Some(value) = rest.strip_prefix("count_bits:") {
+            let bits: u32 = value.trim().parse().expect("`#$ count_bits:` takes a number");
+            assert_eq!(bits, 8, "`#$ count_bits:` is 8, the one test width ([TST-31])");
+            expectations.count_bits = Some(bits);
+            collecting_stdout = false;
         } else if let Some(value) = rest.strip_prefix("c-compilers:") {
             // The C compilers this test's C is for (`extern "vectorcall"`, `[FFI-9]`): with any
             // other, the suite and the C warning sweep skip the test.
@@ -271,7 +279,7 @@ fn parse_expectations(source: &str) -> Expectations {
             // passed. Every annotation is now either understood or refused.
             panic!(
                 "unrecognised `#$` annotation: {rest:?}
-  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stderr, stdin, args, rules, note, c-compilers"
+  known keys:                  test, profiles, exit, assert-c, error[…], warning[…], help, not-help, panics, stdout, stderr, stdin, args, rules, note, c-compilers, count_bits"
             );
         }
     }
@@ -282,6 +290,10 @@ fn parse_expectations(source: &str) -> Expectations {
     assert!(
         !names_c_compilers || matches!(expectations.kind.as_deref(), Some("compile-pass" | "compile-fail")),
         "`#$ c-compilers:` is for a `compile-pass` or `compile-fail` test"
+    );
+    assert!(
+        expectations.count_bits.is_none() || matches!(expectations.kind.as_deref(), Some("run-pass" | "run-fail")),
+        "`#$ count_bits:` is for a `run-pass` or `run-fail` test"
     );
     if !stdin_lines.is_empty() {
         expectations.stdin = Some(stdin_lines.iter().map(|line| format!("{line}\n")).collect());
@@ -424,10 +436,13 @@ fn assert_exact_diagnostics(
 /// `ember` with `input` piped to its standard input (`#$ stdin:`).
 /// `[TST-27]` — `ember` with the program's C compiled with warnings as errors, and `input` on its
 /// standard input when given.
-fn ember_gated(args: &[&str], root: &Path, input: Option<&[u8]>) -> Run {
+fn ember_gated(args: &[&str], root: &Path, input: Option<&[u8]>, count_bits: Option<u32>) -> Run {
     use std::io::Write;
     let (mut command, _output_directory) = test_command(args, root);
     command.env(ember_branding::c_warnings_as_errors_var(), "1");
+    if let Some(bits) = count_bits {
+        command.env(ember_branding::count_bits_var(), bits.to_string());
+    }
     let mut child = command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -5658,7 +5673,7 @@ fn check_file(path: &Path, root: &Path) {
         }
         // `[TST-27]` — the C gate: an accepted program's C compiles with warnings as errors, on each
         // C compiler CI runs the suite with; a C compiler error on one is a compiler defect.
-        let run = ember_gated(&arguments, root, expectations.stdin.as_ref().map(|input| input.as_bytes()));
+        let run = ember_gated(&arguments, root, expectations.stdin.as_ref().map(|input| input.as_bytes()), expectations.count_bits);
         assert_the_evaluator_agrees(&relative, profile, &out_dir_arg, root, &expectations, &run);
         for needle in &expectations.stderr {
             assert!(
@@ -5726,7 +5741,7 @@ fn assert_the_evaluator_agrees(relative: &str, profile: &str, out_dir: &str, roo
         arguments.push("--");
         arguments.extend(expectations.args.iter().map(String::as_str));
     }
-    let run = ember_gated(&arguments, root, expectations.stdin.as_ref().map(|input| input.as_bytes()));
+    let run = ember_gated(&arguments, root, expectations.stdin.as_ref().map(|input| input.as_bytes()), expectations.count_bits);
     if run.exit != 0 && run.stderr.contains("error[E6010]") && run.stderr.contains("cannot run on the evaluator") {
         return;
     }
@@ -6954,6 +6969,13 @@ struct S:
     assert_eq!(parsed.assert_c_count, vec![(arena_alloc, 1)]);
     assert_eq!(parsed.helps, ["keep one owner"]);
     assert_eq!(parsed.forbidden_helps, ["RefCell"]);
+    assert_eq!(parsed.count_bits, None);
+
+    // `[TST-31]` — `#$ count_bits: 8` on a run test builds it with 8-bit counts; on any other it is refused.
+    let narrow = parse_expectations("#$ test: run-fail\n#$ count_bits: 8\n#$ panics: too many owners\n");
+    assert_eq!(narrow.count_bits, Some(8));
+    let misplaced = std::panic::catch_unwind(|| parse_expectations("#$ test: compile-fail\n#$ count_bits: 8\n"));
+    assert!(misplaced.is_err(), "`#$ count_bits:` on a compile-fail test was accepted");
 
     // D-184 — the bare form names a code and requires it.
     let bare = parse_expectations("#$ test: compile-fail\n#$ error[E3062]\n#$ error[E2020]: expected\n");
