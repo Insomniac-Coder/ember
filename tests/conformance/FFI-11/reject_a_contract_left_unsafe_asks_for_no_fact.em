@@ -7,7 +7,7 @@
 # `E5002`, which then names the word rather than asking for facts. A `safe fn` with it is `E5002`
 # too.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(unsafe, link_name="abs")
     fn raw_abs(x: i32) -> i32
     @ffi(param(p, unsafe))

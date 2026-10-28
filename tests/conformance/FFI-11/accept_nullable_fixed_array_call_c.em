@@ -4,7 +4,7 @@
 #$ stdout: 5
 #$ 0
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, fixed(2), nullable), link_name="sum_optional_fixed")
     safe fn sum(data: Option[ref [i32; 2]]) -> i32
 

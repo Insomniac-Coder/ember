@@ -10,7 +10,7 @@ struct Inner:
 struct Outer:
     inner: Inner
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(immutable)
     static foreign_outer: Outer
 

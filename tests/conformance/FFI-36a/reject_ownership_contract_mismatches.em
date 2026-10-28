@@ -7,7 +7,7 @@
 
 from std.ffi import ForeignBox
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type Widget
     fn widget_free(widget: *mut Widget)
     fn widget_count(n: i32) -> i32

@@ -6,7 +6,7 @@
 struct Pair:
     left: i32
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut foreign_pair: Pair
 
 fn main():

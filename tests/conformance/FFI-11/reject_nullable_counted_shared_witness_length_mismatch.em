@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ panics: FFI span lengths differ
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(left, borrowed, count(n), nullable), param(right, borrowed, count(n)), link_name="count_optional_and_present")
     safe fn compare(left: Option[Span[u8]], right: Span[u8], n: usize) -> usize
 

@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5002]: `fixed(2)` without `exclusive` requires a shared array reference
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, fixed(2)))
     safe fn wrong_mutability(data: ref mut [i32; 2]) -> i32
 

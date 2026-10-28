@@ -6,7 +6,7 @@
 struct Pair:
     left: i32
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(immutable)
     static frozen_pair: Pair
 

@@ -1,7 +1,7 @@
 #$ test: compile-fail
 #$ rules: FFI-11
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, fixed(2), exclusive, from(static)))
     safe fn wrong() -> ref [i32; 2] #$ error[E5002]: `@ffi` fixed(2) exclusive result needs a mutable array reference of length 2
 

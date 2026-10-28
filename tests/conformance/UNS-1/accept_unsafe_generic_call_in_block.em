@@ -3,7 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-unsafe fn same[T](x: T) -> T:  # SAFETY: this test sets up what the operation requires
+@safety("this test sets up what the operation requires")
+unsafe fn same[T](x: T) -> T:
     return x
 
 fn main():

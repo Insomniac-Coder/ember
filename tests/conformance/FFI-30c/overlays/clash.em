@@ -1,7 +1,7 @@
 # An overlay listed after ./theirs.em by ../reject_overlays_that_clash.em: each entry but one is
 # refused.
 
-unsafe overlay c "layers.h":
+unsafe overlay c "layers.h":  # SAFETY(ffi): each entry matches its declaration in the header
     fn layers_add(a, b)
     override fn size_area(s)
     @ffi(macro_fn)

@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 10
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(left, borrowed, fixed(2)), param(right, borrowed, fixed(2)), link_name="sum_pairs")
     safe fn sum(left: ref [i32; 2], right: ref [i32; 2]) -> i32
 

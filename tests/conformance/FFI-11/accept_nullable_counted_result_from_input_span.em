@@ -5,7 +5,7 @@
 #$ 2
 #$ 10
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, count(n)), result(borrowed, count(n), nullable, from(input)), link_name="maybe_counted")
     safe fn maybe(input: Span[i32], n: usize, present: bool) -> Option[Span[i32]]
 

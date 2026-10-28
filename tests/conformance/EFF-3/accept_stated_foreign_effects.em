@@ -9,7 +9,7 @@
 # says the result is the same on every run, so a `@deterministic` caller may
 # too (`[DET-2]`); `FFI` is no contract's concern.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(effects=[])
     safe fn abs(x: i32) -> i32
     @ffi(effects=[], deterministic)

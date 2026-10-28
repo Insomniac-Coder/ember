@@ -4,7 +4,7 @@
 #$ stdout: 12
 #$ 9
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, fixed(2), exclusive, from(static)), link_name="fresh_mut_pair")
     safe fn pair() -> ref mut [i32; 2]
 

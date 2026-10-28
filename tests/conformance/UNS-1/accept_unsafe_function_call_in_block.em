@@ -3,7 +3,8 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-unsafe fn increase(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
+@safety("this test sets up what the operation requires")
+unsafe fn increase(x: i32) -> i32:
     return x + 1
 
 fn main():

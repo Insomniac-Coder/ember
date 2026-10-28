@@ -14,7 +14,7 @@ from std.ffi import c_int
 
 import c "./registry.c" as raw
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(visit, callback(borrowed, user_data=context@2)), link_name="each_pair")
     safe fn each_pair(count: c_int, visit: extern "C" fn(isize, isize, c_int) -> c_int, context: isize) -> c_int
     @ffi(param(pick, callback(borrowed, user_data=right@2)), link_name="both")

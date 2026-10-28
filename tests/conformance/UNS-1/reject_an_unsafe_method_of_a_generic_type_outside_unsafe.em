@@ -8,7 +8,7 @@ struct Cell2[T]:
     value: T
 
     @safety("the caller has checked the value")
-    unsafe fn read_raw(self) -> int:  # SAFETY: the caller's obligation
+    unsafe fn read_raw(self) -> int:
         return 1
 
 fn main():

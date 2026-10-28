@@ -9,7 +9,7 @@
 # fact a `TODO(…)` word to replace (`[FFI-11c]`): the line compiles on the
 # unsafe declaration as printed.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn abs(x: i32) -> i32
     fn find(data: *u8, key: u8) -> *u8
     @ffi(param(text, borrowed, TODO(count)))

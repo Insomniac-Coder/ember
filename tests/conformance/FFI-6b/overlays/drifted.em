@@ -1,6 +1,6 @@
 # The overlay of ../reject_a_macro_entry_that_does_not_match_its_header.em: each entry is refused.
 
-unsafe overlay c "macros.h":
+unsafe overlay c "macros.h":  # SAFETY(ffi): each entry matches its declaration in the header
     @ffi(macro_fn)
     fn CUBE(x: i32) -> i32
     @ffi(macro_fn)

@@ -4,7 +4,7 @@
 #$ error[E5002]: `@ffi` contract for `text` needs a pointer carrier
 #$ error[E5002]: `safe fn` needs an `@ffi` NUL-terminated contract for `text`
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated, nullable))
     safe fn wrong(text: cstr) -> usize
 

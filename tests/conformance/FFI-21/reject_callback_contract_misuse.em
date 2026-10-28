@@ -9,7 +9,7 @@
 
 from std.ffi import ForeignCallback
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn unregister(handler: extern "C" fn(*mut void, i32), data: *mut void)
     fn unregister_badly(handler: extern "C" fn(*mut void, i32), data: *mut void, what: *mut i32)
 

@@ -21,7 +21,7 @@ from std.ffi import c_int, ForeignCallback, Retained
 
 import c "./registry.c" as raw
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(hook, callback(borrowed, user_data=data), nullable), link_name="maybe_call")
     safe fn maybe_call(hook: Option[extern "C" fn(*mut void, c_int) -> c_int], data: *mut void, value: c_int) -> c_int
     @ffi(link_name="given")

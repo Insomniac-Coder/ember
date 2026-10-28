@@ -6,7 +6,7 @@
 #$ 2
 #$ 52
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, count(n), nullable), result(borrowed, count(n), from(static)), link_name="fresh_at_optional_count")
     safe fn fresh(input: Option[Span[i32]], n: usize) -> Span[i32]
 

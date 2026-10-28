@@ -5,7 +5,7 @@
 #$ 2
 #$ 37
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, count(n), exclusive), result(borrowed, count(n), nullable, exclusive, from(input)), link_name="maybe_mut_span")
     safe fn maybe(input: MutSpan[i32], n: usize, present: bool) -> Option[MutSpan[i32]]
 

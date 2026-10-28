@@ -1,7 +1,7 @@
 #$ test: parse-pass
 #$ rules: FFI-10, FFI-8, FFI-49
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static raw_counter: i32
     static mut changing_counter: i32
     @ffi(link_name="changing_counter")

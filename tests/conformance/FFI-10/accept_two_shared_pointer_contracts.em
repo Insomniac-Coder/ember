@@ -2,7 +2,7 @@
 #$ rules: FFI-10, FFI-11
 #$ profiles: debug
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(a, borrowed, one), param(b, borrowed, one))
     safe fn compare_one(a: ref i32, b: ref i32) -> i32
 

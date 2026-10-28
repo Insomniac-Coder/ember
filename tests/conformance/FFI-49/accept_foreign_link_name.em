@@ -4,7 +4,7 @@
 #$ stdout: 42
 #$ assert-c: contains("extern int32_t em_0x616273_9magnitude(")
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(link_name="abs")
     safe fn magnitude(x: i32) -> i32
 

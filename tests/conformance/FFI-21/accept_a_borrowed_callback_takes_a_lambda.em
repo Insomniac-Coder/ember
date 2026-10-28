@@ -18,7 +18,7 @@ from std.ffi import c_int
 
 import c "./visits.c" as raw
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(values, borrowed, count(count)), param(visit, callback(borrowed, user_data=data)), link_name="visit_each")
     safe fn visit_each(values: Span[c_int], count: usize, visit: extern "C" fn(*mut void, c_int), data: *mut void)
     @ffi(param(values, borrowed, count(count)), param(map, callback(borrowed, user_data=data)), link_name="sum_mapped")

@@ -4,14 +4,14 @@
 #$ stdout: none
 #$ stdout: 6
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated, nullable), result(borrowed, nul_terminated, nullable, from(text)), link_name="optional_cstr_identity")
     safe fn identity(text: Option[cstr]) -> Option[cstr]
 
 pub extern "C" fn optional_cstr_identity(text: Option[cstr]) -> Option[cstr]:
     return text
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
     safe fn strlen(text: cstr) -> usize
 

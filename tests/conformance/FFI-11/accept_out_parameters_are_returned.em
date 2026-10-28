@@ -10,7 +10,7 @@
 # order; where C has a result of its own, it comes first (`[FFI-11b]`,
 # ODR-137).
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(v, out, one), link_name="seven_c")
     safe fn seven(mut v: i32)
 

@@ -2,7 +2,7 @@
 #$ rules: FFI-11c
 #$ profiles: debug
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, TODO(ownership), TODO(count), TODO(nullable), TODO(lifetime)))
     fn inspect(data: *u8) -> i32
 

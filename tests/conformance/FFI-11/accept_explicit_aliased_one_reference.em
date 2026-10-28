@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ assert-c: contains("extern int32_t em_0x726561645f6f6e65_8read_one(int32_t*")
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(value, borrowed, one, aliased))
     safe fn read_one(value: ref i32) -> i32
 

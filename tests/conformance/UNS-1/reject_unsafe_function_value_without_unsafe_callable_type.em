@@ -5,7 +5,8 @@
 # `[FN-6]` (ODR-115) — an `unsafe fn` coerces only to an `unsafe` callable type; a safe one would let
 # a call reach it outside `unsafe`.
 
-unsafe fn increase(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
+@safety("this test sets up what the operation requires")
+unsafe fn increase(x: i32) -> i32:
     return x + 1
 
 fn main():

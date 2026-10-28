@@ -16,7 +16,7 @@ struct Table:
     values: [i32; 3]
     total: i32
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut account: Account
     static mut table: Table
     static mut samples: [i32; 4]

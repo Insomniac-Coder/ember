@@ -1,6 +1,6 @@
 # The overlay of ../accept_an_opaque_handle_is_borrowed_as_one.em.
 
-unsafe overlay c "handles.h":
+unsafe overlay c "handles.h":  # SAFETY(ffi): each entry matches its declaration in the header
     @ffi(destroys(counter_free))
     type Counter
 

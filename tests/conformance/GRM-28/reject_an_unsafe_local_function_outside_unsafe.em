@@ -8,10 +8,10 @@ fn apply(f: fn(int) -> int, x: int) -> int:
 
 fn main():
     extra = 2
-    # SAFETY: no obligation; the test is about the call
+    @safety("no obligation; the test is about the call")
     unsafe fn plain(x: int) -> int:
         return x + 1
-    # SAFETY: no obligation; the test is about the call
+    @safety("no obligation; the test is about the call")
     unsafe fn capturing(x: int) -> int:
         return x + extra
     println(plain(1))    #$ error[E3100]: calling a value of type `unsafe fn(i64) -> i64` requires an `unsafe` block

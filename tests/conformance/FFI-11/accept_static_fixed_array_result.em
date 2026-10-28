@@ -4,7 +4,7 @@
 #$ stdout: 4
 #$ 5
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, fixed(2), from(static)), link_name="process_pair")
     safe fn pair() -> ref [i32; 2]
 

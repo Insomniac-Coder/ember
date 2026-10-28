@@ -11,10 +11,10 @@
 # `"fastcall"` is the one convention there, so the C library's functions are
 # reached through both. A function value keeps the convention in its type.
 
-unsafe extern "system":
+unsafe extern "system":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn abs(x: i32) -> i32
 
-unsafe extern "fastcall":
+unsafe extern "fastcall":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn imaxabs(x: i64) -> i64
 
 fn main():

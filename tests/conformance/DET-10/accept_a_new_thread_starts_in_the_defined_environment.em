@@ -10,7 +10,7 @@
 
 import std.thread
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn fesetround(mode: i32) -> i32
     safe fn fegetround() -> i32
 

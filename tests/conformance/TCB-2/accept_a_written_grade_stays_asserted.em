@@ -7,7 +7,7 @@
 # (`[TCB-1]`); with none recorded the claim is `W5050` and the fact stays
 # asserted. `@grade(asserted)` claims nothing more.
 
-unsafe overlay c "zlib.h":
+unsafe overlay c "zlib.h":  # SAFETY(ffi): each entry matches its declaration in the header
     @grade(instrumented)
     @ffi(effects=[FFI])
     fn zlibVersion() -> borrowed nul_terminated from(static)

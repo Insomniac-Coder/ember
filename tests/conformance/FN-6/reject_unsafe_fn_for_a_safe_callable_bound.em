@@ -4,7 +4,8 @@
 # `[FN-6]` (ODR-115) — a `fn(…)` bound is not met by an `unsafe fn`: the callee calls it outside
 # `unsafe`. `unsafe fn(…)` is the bound that takes one.
 
-unsafe fn increase(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
+@safety("this test sets up what the operation requires")
+unsafe fn increase(x: i32) -> i32:
     return x + 1
 
 fn apply(f: fn(i32) -> i32, x: i32) -> i32:

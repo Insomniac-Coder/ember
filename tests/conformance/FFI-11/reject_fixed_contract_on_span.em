@@ -4,7 +4,7 @@
 #$ error[E5002]: `@ffi` contract for `data` needs a pointer carrier
 #$ error[E5002]: `safe fn` needs an `@ffi` count contract for span parameter `data`
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, fixed(2)))
     safe fn wrong_carrier(data: Span[i32]) -> i32
 

@@ -4,6 +4,7 @@
 # `[FFI-9]` names the calling conventions a declaration block may have; any
 # other string names none.
 
+# SAFETY(ffi): each declaration below matches its definition
 unsafe extern "pascal":    #$ error[E0104]: `extern "pascal"` is not a calling convention
     safe fn abs(x: i32) -> i32
 

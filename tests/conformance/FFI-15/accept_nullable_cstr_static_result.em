@@ -4,7 +4,7 @@
 #$ stdout: none
 #$ stdout: 5
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, nul_terminated, nullable, from(static)), link_name="choose_optional_cstr")
     safe fn choose(present: bool) -> Option[cstr]
 
@@ -13,7 +13,7 @@ pub extern "C" fn choose_optional_cstr(present: bool) -> Option[cstr]:
         return Some(c"hello")
     return None
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
     safe fn strlen(text: cstr) -> usize
 

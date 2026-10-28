@@ -4,7 +4,7 @@
 #$ stdout: 1
 #$ 41
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, count(n)), result(borrowed, count(n), from(static)), link_name="copy_counted")
     safe fn copy(input: Span[i32], n: usize) -> Span[i32]
 

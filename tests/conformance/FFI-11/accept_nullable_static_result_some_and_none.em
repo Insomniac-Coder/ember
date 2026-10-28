@@ -4,7 +4,7 @@
 #$ stdout: none
 #$ 42
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, one, nullable, from(static)), link_name="process_optional")
     safe fn optional_number(present: bool) -> Option[ref i32]
 

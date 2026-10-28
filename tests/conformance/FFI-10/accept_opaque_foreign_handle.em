@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: true
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type Handle
     @ffi(link_name="opaque_is_null")
     fn probe(p: *Handle) -> bool

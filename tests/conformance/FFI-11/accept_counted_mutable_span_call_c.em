@@ -4,7 +4,7 @@
 #$ stdout: 1
 #$ 7
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, count(n), exclusive), link_name="fill_bytes")
     safe fn fill(data: MutSpan[u8], n: usize) -> i32
 

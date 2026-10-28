@@ -12,7 +12,7 @@
 from std.ffi import c_char
 import c "own_stdio.h"
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("`text` is a NUL-terminated string")
     fn strlen(text: *c_char) -> usize
 

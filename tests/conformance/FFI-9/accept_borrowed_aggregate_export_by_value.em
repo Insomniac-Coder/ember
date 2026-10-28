@@ -15,7 +15,7 @@ pub extern "C" fn exported_pair_mix(left: ForeignPair, scale: i32, right: Foreig
 pub fn named_pair_score(pair: ForeignPair) -> i32:
     return pair.left + pair.right * 3
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn call_exported_pair_score() -> i32
     safe fn call_exported_pair_mix() -> i32
     safe fn call_named_pair_export() -> i32

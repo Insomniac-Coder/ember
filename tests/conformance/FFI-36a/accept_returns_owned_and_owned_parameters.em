@@ -11,7 +11,7 @@
 
 from std.ffi import ForeignBox
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(destroys(widget_free))
     type Widget
     @ffi(threads(creator))

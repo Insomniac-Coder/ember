@@ -244,7 +244,8 @@ fn type_identity[T]() -> u128:
 
 ## `[ERR-8]` — the boxed `dyn Error`, borrowed, as the `ref E` it was made
 ## from. Compiler-known; the box must hold an `E`.
-unsafe fn dyn_payload[E](boxed: Box[dyn Error]) -> ref E:  # SAFETY: the caller has checked the boxed value is an `E`
+@safety("the caller has checked the boxed value is an `E`")
+unsafe fn dyn_payload[E](boxed: Box[dyn Error]) -> ref E:
     pass
 
 ## `[ERR-7]` — every type converts from itself, unchanged, so `?` passes on

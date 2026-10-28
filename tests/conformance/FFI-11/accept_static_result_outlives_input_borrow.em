@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, one), result(borrowed, one, from(static)), link_name="static_despite_input_c")
     safe fn static_despite_input(input: ref i32) -> ref i32
 

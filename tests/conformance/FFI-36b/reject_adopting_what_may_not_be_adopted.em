@@ -5,7 +5,7 @@
 
 from std.ffi import adopt
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(adopt=false, destroys(pool_free))
     type Pool
     fn pool_default() -> *mut Pool

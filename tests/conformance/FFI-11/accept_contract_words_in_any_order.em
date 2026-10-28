@@ -7,7 +7,7 @@
 # and `result(from(static), nul_terminated, borrowed)` read as the same words written
 # ownership-first.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(values, count(n), borrowed), link_name="ordered_sum")
     safe fn sum(values: Span[i32], n: usize) -> i32
     @ffi(param(value, nullable, borrowed, one), link_name="ordered_or_zero")

@@ -6,7 +6,7 @@
 # declaration accepts as printed: each `TODO(…)` keeps the call `unsafe` until
 # the fact replaces it.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, TODO(ownership), TODO(count), TODO(nullable)), result(TODO(ownership), TODO(count), TODO(nullable), TODO(lifetime)))
     fn find(data: *u8, key: u8) -> *u8
 

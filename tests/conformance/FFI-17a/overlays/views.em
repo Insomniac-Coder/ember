@@ -1,7 +1,7 @@
 # The overlay of ../accept_views_and_optional_values_cross_safely.em: each call asserted safe, and
 # each view result's lifetime ([FFI-11]).
 
-unsafe overlay cpp "views.hpp":
+unsafe overlay cpp "views.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
     fn vowels(text)
     fn sum(values)
     fn negate(values)

@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 3
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, count(n)), link_name="probe_count_u8")
     safe fn counted(data: Span[u8], n: u8) -> i32
 

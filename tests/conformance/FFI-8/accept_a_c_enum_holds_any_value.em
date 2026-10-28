@@ -19,7 +19,7 @@ enum Color:
     Green = 2
     Blue = 4
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(link_name="color_of_c")
     safe fn color_of(n: i32) -> Color
     @ffi(link_name="echo_c")

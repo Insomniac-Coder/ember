@@ -7,7 +7,7 @@
 # `retained` parameter to the thread that made it) and is not a handle, so on a function each is a
 # contract error, `E5002`, whose help says where the word goes. On a type both are accepted.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(threads(creator))    #$ error[E5002]: `threads(creator)` is a word of a type's or a result's contract, not a function's
     fn made() -> i32
     @ffi(handle, link_name="made")    #$ error[E5002]: `handle` is a word of a type's contract, not a function's

@@ -4,7 +4,7 @@
 struct Packet:
     value: i32
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn inspect(packet: Packet) -> i32
 
 fn main():

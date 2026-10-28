@@ -6,7 +6,7 @@
 # `Option[MutSpan[T]]`. Its call returns the count, after C's own result when
 # there is one (`accept_inout_count_with_a_result_returns_both`).
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive))
     safe fn by_value(count: u32, items: Option[MutSpan[i32]])    #$ error[E5002]: `inout_count(items)` needs `mut count` of an integer type
 

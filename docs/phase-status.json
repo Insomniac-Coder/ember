@@ -43,6 +43,6 @@
   },
   "built_for_0915": [
     "_The rules the development target marks new or changed in 0.9.15 whose 0.9.15 behaviour is built and tested (tools/phase_progress.py's condition 3). A milestone's commit adds the rules it builds; until then such a rule counts as unfinished whatever old test names it (the owner, 2026-10-28).",
-    "CLI-2", "RT-12", "UNS-12"
+    "CLI-2", "RT-12", "UNS-12", "UNS-7", "UNS-8"
   ]
 }

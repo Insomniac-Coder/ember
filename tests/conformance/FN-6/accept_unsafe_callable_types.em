@@ -4,7 +4,8 @@
 # call through it is inside `unsafe:`; as a bound, `unsafe fn(…)` takes all three; it combines with
 # `once` and with `extern "C"` (`once unsafe extern "C" fn`).
 
-unsafe fn increase(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
+@safety("this test sets up what the operation requires")
+unsafe fn increase(x: i32) -> i32:
     return x + 1
 
 fn double(x: i32) -> i32:

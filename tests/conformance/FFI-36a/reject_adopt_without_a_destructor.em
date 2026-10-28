@@ -11,7 +11,7 @@ from std.ffi import adopt
 struct Plain:
     x: i32
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type Bare
     @ffi(destroys(bare_count))    #$ error[E5002]: `bare_count` frees a `Counted`, so it takes one `*mut Counted`
     type Counted

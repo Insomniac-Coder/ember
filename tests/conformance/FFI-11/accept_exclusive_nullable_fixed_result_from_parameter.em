@@ -4,7 +4,7 @@
 #$ stdout: none
 #$ 23
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, fixed(2), exclusive), result(borrowed, fixed(2), nullable, exclusive, from(input)), link_name="maybe_mut_pair")
     safe fn maybe(input: ref mut [i32; 2], present: bool) -> Option[ref mut [i32; 2]]
 

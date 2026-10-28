@@ -1444,7 +1444,7 @@ pub struct Pool[T, B: HandleSplit = Split32]:
     ## The value `h` refers to, without comparing generations: `h` must be live.
     @safety("`h` is live: given by this pool and not removed since")
     @borrows(self)
-    pub unsafe fn get_unchecked(self, h: Handle[T, B]) -> ref T:  # SAFETY: the caller keeps `h` live
+    pub unsafe fn get_unchecked(self, h: Handle[T, B]) -> ref T:
         match self.slots[h.index()]:
             Some(ref value):
                 return value

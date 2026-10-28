@@ -21,7 +21,7 @@ enum Shape:
     Round = 0
     Square = 1
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn shape_of(n: i32) -> Shape  #$ error[E5015]
 
 fn name(c: Color) -> str:

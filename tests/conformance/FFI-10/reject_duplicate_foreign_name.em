@@ -3,10 +3,10 @@
 #$ profiles: debug
 #$ error[E1030]: `abs` is already declared in this module
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn abs(x: i32) -> i32
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn abs(x: i32) -> i32
 
 fn main():

@@ -29,7 +29,7 @@ enum Real:
     Good = 0
     Bad = 1
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(status))  #$ error[E0104]
     safe fn plain_result(n: i32) -> i32
 

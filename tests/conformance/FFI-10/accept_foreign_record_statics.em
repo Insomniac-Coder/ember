@@ -15,7 +15,7 @@ struct ForeignOuter:
     inner: ForeignInner
     other: i32
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut shared_pair: ForeignPair
     @ffi(immutable)
     static frozen_pair: ForeignPair

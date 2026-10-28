@@ -6,7 +6,7 @@
 # `[CORO-9]` — `unsafe` code may build a frame that points into itself, and states why it is
 # sound in its safety note: here the frame stays where the loop put it while the pointer is used.
 
-# SAFETY: the pointer into the frame is read only while the frame has not moved since `next` made it.
+@safety("the pointer into the frame is read only while the frame has not moved since `next` made it.")
 unsafe gen fn pinned() -> Generator[int]:
     n = 5
     p = ref_to_ptr(ref n)

@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 29
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, fixed(0)), link_name="accept_empty")
     safe fn empty(data: ref [i32; 0]) -> i32
 

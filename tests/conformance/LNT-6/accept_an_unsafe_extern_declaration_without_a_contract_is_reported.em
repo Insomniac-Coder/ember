@@ -6,7 +6,7 @@
 ## states no contract: each call needs `unsafe`, and nothing is known of what C does with the
 ## pointer. A declaration with a contract, or with no pointer, is no lint.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn strlen(text: *u8) -> usize  #$ warning[L5001]: `strlen` is an `unsafe extern` declaration with no contract
     @ffi(param(text, borrowed, nul_terminated), link_name="strlen")
     safe fn c_length(text: cstr) -> usize

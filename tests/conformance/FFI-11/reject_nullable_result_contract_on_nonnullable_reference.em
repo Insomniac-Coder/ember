@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5002]: `@ffi` result contract needs a nullable shared reference result
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, one, nullable, from(static)))
     safe fn optional_number() -> ref i32
 

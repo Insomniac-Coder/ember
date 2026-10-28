@@ -4,7 +4,7 @@
 #$ stdout: 0
 #$ stdout: 5
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated, nullable), link_name="length_if_present")
     safe fn length(text: Option[cstr]) -> usize
 
@@ -15,7 +15,7 @@ pub extern "C" fn length_if_present(text: Option[cstr]) -> usize:
         Some(value):
             return strlen(value)
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
     safe fn strlen(text: cstr) -> usize
 

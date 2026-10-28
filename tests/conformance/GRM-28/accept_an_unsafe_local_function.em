@@ -10,12 +10,12 @@
 fn main():
     a: Array[u8] = [1, 2, 3]
     extra = 2
-    # SAFETY: the caller guarantees `p` points to two readable bytes
+    @safety("the caller guarantees `p` points to two readable bytes")
     unsafe fn read_u16_le(p: *u8) -> u16:
         # SAFETY: the caller promised two readable bytes at `p`
         unsafe:
             return (p.read() as u16) | ((p.add(1).read() as u16) << 8)
-    # SAFETY: the caller guarantees `p` points to two readable bytes
+    @safety("the caller guarantees `p` points to two readable bytes")
     unsafe fn read_plus_extra(p: *u8) -> int:
         # SAFETY: the caller promised two readable bytes at `p`
         unsafe:

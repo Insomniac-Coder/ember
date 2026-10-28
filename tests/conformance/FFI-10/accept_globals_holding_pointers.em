@@ -9,7 +9,7 @@
 
 import c "./cursor.c"
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut foreign_cursor: *mut i32
     static foreign_base: *i32
 

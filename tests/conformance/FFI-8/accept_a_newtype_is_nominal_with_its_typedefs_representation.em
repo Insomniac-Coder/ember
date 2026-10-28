@@ -22,7 +22,7 @@ import c "./newtypes.c" with (overlay = "overlays/newtypes.em") as nt
 @ffi(newtype)
 type ticket_t = c_int
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(link_name="twice")
     safe fn twice_ticket(n: ticket_t) -> ticket_t
 

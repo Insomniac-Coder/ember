@@ -8,7 +8,7 @@
 # calling with another one. The milestone
 # `vectorcall_declarations_compile_with_the_convention` compiles a call.
 
-unsafe extern "vectorcall":
+unsafe extern "vectorcall":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn scale_vector(x: f64, factor: f64) -> f64
 
 fn main():

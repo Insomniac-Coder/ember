@@ -9,7 +9,7 @@
 struct Table:
     values: [i32; 2]
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut table: Table
     static mut samples: [i32; 4]
     @ffi(immutable)

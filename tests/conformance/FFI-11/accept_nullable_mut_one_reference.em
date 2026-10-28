@@ -4,7 +4,7 @@
 #$ assert-c: contains("typedef int32_t* em_3std4core6OptionGaaa9268da143de2d;")
 #$ assert-c: contains("extern int32_t em_0x7570646174655f6f7074696f6e616c_15update_optional(")
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(value, borrowed, one, nullable, exclusive))
     safe fn update_optional(value: Option[ref mut i32]) -> i32
 

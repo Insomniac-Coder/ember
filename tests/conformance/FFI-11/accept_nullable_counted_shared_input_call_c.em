@@ -5,7 +5,7 @@
 #$ 2
 #$ 3
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, count(n), nullable), link_name="inspect_optional_span")
     safe fn inspect(data: Option[Span[i32]], n: usize) -> i32
 

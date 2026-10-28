@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ panics: FFI span lengths differ
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(left, borrowed, count(n)), param(right, borrowed, count(n)), result(borrowed, count(n), from(left)), link_name="echo_shared_count")
     safe fn echo(left: Span[u8], right: Span[u8], n: usize) -> Span[u8]
 

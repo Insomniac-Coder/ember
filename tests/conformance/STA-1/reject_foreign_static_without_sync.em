@@ -5,7 +5,7 @@
 # static marked `@ffi(immutable)` is read without `unsafe` (Part XVI's table), so it must be
 # `Sync`, and a raw pointer is not.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(immutable)
     static foreign_pointer: *i32
 

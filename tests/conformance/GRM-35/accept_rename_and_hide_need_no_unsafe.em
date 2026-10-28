@@ -8,7 +8,7 @@ overlay c "zlib.h":
     rename deflateInit_ as deflate_init
     hide zlibCompileFlags
 
-unsafe overlay c "zlib.h":
+unsafe overlay c "zlib.h":  # SAFETY(ffi): each entry matches its declaration in the header
     @ffi(handle)
     type z_stream
     @ffi(effects=[FFI])

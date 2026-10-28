@@ -8,7 +8,7 @@
 # entry writes Ember types (ODR-147); an entry may begin with `override`
 # (ODR-149). `overlay`, `rename` and `hide` are keywords only there (`[LEX-15]`).
 
-unsafe overlay c "vulkan/vulkan.h":
+unsafe overlay c "vulkan/vulkan.h":  # SAFETY(ffi): each entry matches its declaration in the header
     @ffi(handle)
     type VkBuffer
     @ffi(handle)

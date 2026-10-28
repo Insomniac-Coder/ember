@@ -1,7 +1,7 @@
 #$ test: parse-pass
 #$ rules: FN-6, FFI-9, FFI-21, FFI-22
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static ember_native_fn_value_0: i32
     static ember_native_fn_c_entry_1: i32
 

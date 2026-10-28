@@ -9,7 +9,7 @@
 
 import c "./ui.c" as raw
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(threads(main), effects=[], link_name="ui_frame")
     safe fn frame() -> i32
 

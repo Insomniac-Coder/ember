@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, one, from(static)), link_name="process_number")
     safe fn static_number() -> ref i32
 

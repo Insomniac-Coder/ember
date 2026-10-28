@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5015]: `Handle` is incomplete and has no size or alignment
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type Handle
 
 fn main():

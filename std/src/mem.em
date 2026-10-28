@@ -25,14 +25,14 @@ pub struct Volatile[P]:
 extend[T] Volatile[*mut T]:
     ## A volatile read of the `T` the pointer points to.
     @safety("the pointer is valid for a read of a `T`")
-    pub unsafe fn read_volatile(self) -> T:  # SAFETY: the caller keeps the obligation
+    pub unsafe fn read_volatile(self) -> T:
         # SAFETY: the caller promised the pointer is valid for a read of a `T` (`@safety` above)
         unsafe:
             return volatile_read(self.pointer)
 
     ## A volatile write of `value` where the pointer points.
     @safety("the pointer is valid for a write of a `T`")
-    pub unsafe fn write_volatile(self, value: T):  # SAFETY: the caller keeps the obligation
+    pub unsafe fn write_volatile(self, value: T):
         # SAFETY: the caller promised the pointer is valid for a write of a `T` (`@safety` above)
         unsafe:
             volatile_write(self.pointer, value)
@@ -40,7 +40,7 @@ extend[T] Volatile[*mut T]:
 extend[T] Volatile[*T]:
     ## A volatile read of the `T` the pointer points to.
     @safety("the pointer is valid for a read of a `T`")
-    pub unsafe fn read_volatile(self) -> T:  # SAFETY: the caller keeps the obligation
+    pub unsafe fn read_volatile(self) -> T:
         # SAFETY: the caller promised the pointer is valid for a read of a `T` (`@safety` above)
         unsafe:
             return volatile_read(self.pointer)
@@ -94,7 +94,7 @@ pub fn assert_disjoint_or_panic[A, B](owned a: A, owned b: B) -> (A, B):
 ## `[DSJ-7]` — the views do not overlap, unchecked: violating it is undefined
 ## behaviour.
 @safety("The two views' address ranges do not overlap.")
-pub unsafe fn assume_disjoint[A, B](owned a: A, owned b: B) -> (A, B):  # SAFETY: this test sets up what the operation requires
+pub unsafe fn assume_disjoint[A, B](owned a: A, owned b: B) -> (A, B):
     pass
 
 ## Consumes the value without running its destructor. `[THR-6]`'s rejection

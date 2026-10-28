@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 6
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(exponent, borrowed, one, exclusive), link_name="frexp")
     safe fn split(x: f64, mut exponent: i32) -> f64
 

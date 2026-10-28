@@ -10,7 +10,7 @@
 
 import std.ffi
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
     safe fn strlen(text: cstr) -> usize
 

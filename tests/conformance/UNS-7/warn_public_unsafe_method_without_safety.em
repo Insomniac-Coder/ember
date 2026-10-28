@@ -1,13 +1,13 @@
 #$ test: compile-pass
 #$ rules: UNS-7
 #$ profiles: debug
-#$ warning[L3015]: undocumented unsafe obligation
+#$ warning[L3015]: `next` is an `unsafe fn`, and nothing says what its callers must make true; say it above the function: `@safety("...")`
 
 struct Counter:
     value: i32
 
 extend Counter:
-    pub unsafe fn next(self) -> i32:  # SAFETY: this test sets up what the operation requires
+    pub unsafe fn next(self) -> i32:
         return self.value + 1
 
 fn main():

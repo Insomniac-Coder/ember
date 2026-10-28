@@ -89,10 +89,11 @@ const RECEIVER: &str = "__self";
 
 /// The attributes the body keeps from its `gen fn`: what is checked of a
 /// generator's body (`[CORO-8]`: its contracts and effects) and how its code is
-/// built. The rest describe the function a caller calls.
+/// built, and the `@safety` of an `unsafe gen fn`, whose body is `unsafe` with
+/// its obligation (`[UNS-7]`). The rest describe the function a caller calls.
 const BODY_ATTRIBUTES: &[&str] = &[
     "noalloc", "nosync", "noblock", "noio", "nolock", "nopanic", "realtime", "deterministic", "overflow", "fastmath", "fp",
-    "static_safe", "inline", "noinline", "cold", "hot",
+    "static_safe", "inline", "noinline", "cold", "hot", "safety",
 ];
 
 pub(crate) fn desugar_generators(modules: &[LoadedModule], sink: &mut Sink) -> Option<Desugared> {

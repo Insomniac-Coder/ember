@@ -6,7 +6,7 @@
 #$ 3
 #$ 41
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, count(n), nullable, exclusive), link_name="inspect_optional_mut_span")
     safe fn inspect(data: Option[MutSpan[i32]], n: usize) -> i32
 

@@ -1,7 +1,7 @@
 # The overlay of ../accept_contract_words_reach_a_wrapped_function.em: the facts `texts.hpp` cannot
 # state.
 
-unsafe overlay cpp "texts.hpp":
+unsafe overlay cpp "texts.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
     fn checksum(data: borrowed count(length), length)
     fn hex(data: borrowed count(length), length)
     fn ends(values: borrowed count(count), count)

@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5002]: `safe fn` has an unknown count for parameter `data`
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, TODO(count)))
     safe fn inspect(mut data: i32) -> i32
 

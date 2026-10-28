@@ -1619,11 +1619,15 @@ struct LocalFnSelf {
 
 /// `[UNS-12]` — an `unsafe fn` whose body is being checked: its unsafe steps are its own to vouch
 /// for, each in an `unsafe:` block.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct UnsafeFnBody {
     name: Symbol,
+    /// Its name as declared, where its `L3015` is reported (`[UNS-7]`).
+    at: Span,
     /// Where the body's diagnostics begin in the sink.
     mark: usize,
+    /// The first unsafe step the body takes, inside `unsafe:` or not, which its `L3015` names.
+    first: Option<UnsafeStep>,
 }
 
 /// `[UNS-1]` — an operation that needs `unsafe`, as an `E3100` names it. A raw pointer is as
@@ -3662,6 +3666,9 @@ struct Checker<'a> {
     in_unsafe: bool,
     /// `[UNS-12]` — the `unsafe fn` whose body is being checked (`enter_fn_body`).
     unsafe_fn: Option<UnsafeFnBody>,
+    /// `[UNS-7]` — the `unsafe fn`s with a body and no `@safety`, by their names' spans: each one's
+    /// `L3015` is reported once its body is checked, naming the first unsafe step it takes.
+    undocumented_unsafe: HashSet<Span>,
     /// `[UNS-12]` — the steps each `E3100` of an `unsafe fn` body names, by its primary span: a
     /// line's further steps join its first one's (`refuse_unsafe`).
     unsafe_fn_steps: HashMap<Span, Vec<(Span, UnsafeStep)>>,
@@ -4038,6 +4045,7 @@ impl<'a> Checker<'a> {
             in_defer: false,
             in_unsafe: false,
             unsafe_fn: None,
+            undocumented_unsafe: HashSet::new(),
             unsafe_fn_steps: HashMap::new(),
             sources: HashMap::new(),
             unsafe_used: false,
@@ -16346,8 +16354,8 @@ impl<'a> Checker<'a> {
             self.error(codes::E2020, span, format!("`{name}` takes {wanted} arguments, found {}", args.len()));
             return error;
         }
-        if mode == DisjointMode::Assumed && !self.unsafe_context() {
-            self.refuse_unsafe(
+        if mode == DisjointMode::Assumed {
+            self.unsafe_step(
                 span,
                 UnsafeStep::call("assume_disjoint"),
                 Diagnostic::error(codes::E3100, span, "`assume_disjoint` requires an `unsafe` block")
@@ -16566,10 +16574,8 @@ impl<'a> Checker<'a> {
     /// naming both places), and with `threads(creator)` it keeps the thread that made it.
     fn synth_foreign_adopt(&mut self, args: &[ast::Arg], explicit: &[Ty], span: Span) -> Expr {
         let error = Expr { ty: self.common.error, kind: ExprKind::Error, span };
-        if !self.unsafe_context() {
-            self.refuse_unsafe(span, UnsafeStep::Call { callee: "adopt".to_string(), declared: true },
-                Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"));
-        }
+        self.unsafe_step(span, UnsafeStep::Call { callee: "adopt".to_string(), declared: true },
+            Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"));
         if args.len() != 1 || explicit.len() > 1 {
             self.error(codes::E2020, span, "`adopt` takes one type argument and one pointer, `adopt[T](h)`");
             return error;
@@ -16629,10 +16635,8 @@ impl<'a> Checker<'a> {
         let ([pointee], [object, deleter]) = (explicit, args) else { return Some(error) };
         let ast::ExprKind::Path { segments } = &deleter.value.kind else { return Some(error) };
         let [destroys] = segments.as_slice() else { return Some(error) };
-        if !self.unsafe_context() {
-            self.refuse_unsafe(span, UnsafeStep::Other("the adoption of a foreign object".to_string()),
-                Diagnostic::error(codes::E3100, span, "adopting a foreign object requires an `unsafe` block"));
-        }
+        self.unsafe_step(span, UnsafeStep::Other("the adoption of a foreign object".to_string()),
+            Diagnostic::error(codes::E3100, span, "adopting a foreign object requires an `unsafe` block"));
         let expected = self.types.intern(TyKind::Ptr { mutable: true, inner: *pointee });
         let pointer = self.check_expr(&object.value, expected);
         // The class's own thread rule (`[FFI-33b]`), as `adopt` keeps it.
@@ -16743,12 +16747,10 @@ impl<'a> Checker<'a> {
             }
             let pointer = self.synth_committed(&args[0].value);
             let TyKind::Ptr { inner, mutable } = *self.types.kind(pointer.ty) else { return Some(error) };
-            if !self.unsafe_context() {
-                let pointer_written = self.pointer_written(&pointer);
-                let step = if write { UnsafeStep::Write(pointer_written) } else { UnsafeStep::Read(pointer_written) };
-                self.refuse_unsafe(span, step,
-                    Diagnostic::error(codes::E3100, span, "a volatile access through a raw pointer requires an `unsafe` block"));
-            }
+            let pointer_written = self.pointer_written(&pointer);
+            let step = if write { UnsafeStep::Write(pointer_written) } else { UnsafeStep::Read(pointer_written) };
+            self.unsafe_step(span, step,
+                Diagnostic::error(codes::E3100, span, "a volatile access through a raw pointer requires an `unsafe` block"));
             if !write {
                 return Some(Expr { ty: inner, kind: ExprKind::Builtin { which: Builtin::VolatileRead, args: vec![pointer] }, span });
             }
@@ -16906,8 +16908,8 @@ impl<'a> Checker<'a> {
             return None;
         };
 
-        if needs_unsafe && !self.unsafe_context() {
-            self.refuse_unsafe(
+        if needs_unsafe {
+            self.unsafe_step(
                 span,
                 UnsafeStep::call(name.to_string()),
                 Diagnostic::error(codes::E3100, span, format!("`{name}` needs an `unsafe` block"))
@@ -17446,10 +17448,8 @@ impl<'a> Checker<'a> {
         if !matches!(self.types.kind(*class), TyKind::Class(_)) || !matches!(self.types.kind(value.ty), TyKind::Ptr { .. }) {
             return Some(error);
         }
-        if !self.unsafe_context() {
-            self.refuse_unsafe(span, UnsafeStep::Other("the handle made from an address".to_string()),
-                Diagnostic::error(codes::E3100, span, "a handle made from an address requires an `unsafe` block"));
-        }
+        self.unsafe_step(span, UnsafeStep::Other("the handle made from an address".to_string()),
+            Diagnostic::error(codes::E3100, span, "a handle made from an address requires an `unsafe` block"));
         Some(Expr { ty: *class, kind: ExprKind::Builtin { which: Builtin::CppObjectHandle { adopt: which == 2 }, args: vec![value] }, span })
     }
 
@@ -17506,10 +17506,8 @@ impl<'a> Checker<'a> {
         let pointer = self.synth_committed(&args[args.len() - 2].value);
         let count = self.check_expr(&args[args.len() - 1].value, self.common.usize);
         let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else { return Some(error) };
-        if !self.unsafe_context() {
-            self.refuse_unsafe(span, UnsafeStep::Read(self.pointer_written(&pointer)),
-                Diagnostic::error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block"));
-        }
+        self.unsafe_step(span, UnsafeStep::Read(self.pointer_written(&pointer)),
+            Diagnostic::error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block"));
         let ty = self.types.intern(TyKind::Span { elem: inner, mutable });
         Some(Expr { ty, kind: ExprKind::Builtin { which: Builtin::CppSpan { mutable }, args: vec![owner, pointer, count] }, span })
     }
@@ -17527,10 +17525,8 @@ impl<'a> Checker<'a> {
         let TyKind::Ptr { inner, .. } = *self.types.kind(pointer.ty) else {
             return Some(Expr { ty: self.common.error, kind: ExprKind::Error, span });
         };
-        if !self.unsafe_context() {
-            self.refuse_unsafe(span, UnsafeStep::Read(self.pointer_written(&pointer)),
-                Diagnostic::error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block"));
-        }
+        self.unsafe_step(span, UnsafeStep::Read(self.pointer_written(&pointer)),
+            Diagnostic::error(codes::E3100, span, "reading through a raw pointer requires an `unsafe` block"));
         // C's `ref` is a plain pointer: a `const T*` is cast to it first.
         let plain = self.types.intern(TyKind::Ptr { mutable: true, inner });
         let pointer = Expr { ty: plain, kind: ExprKind::Cast { expr: Box::new(pointer), to: plain }, span };
@@ -22751,13 +22747,43 @@ impl<'a> Checker<'a> {
     /// block (a local function's written in one does, a declaration's never); an `unsafe fn`'s body
     /// is no `unsafe` context of its own, and its unsafe steps are its own (`refuse_unsafe`).
     fn enter_fn_body(&mut self, decl: &ast::FnDecl, in_unsafe: bool) -> (bool, Option<UnsafeFnBody>) {
-        let body = decl.is_unsafe.then(|| UnsafeFnBody { name: decl.name.name, mark: self.sink.mark() });
+        let body = decl.is_unsafe.then(|| UnsafeFnBody { name: decl.name.name, at: decl.name.span, mark: self.sink.mark(), first: None });
         (std::mem::replace(&mut self.in_unsafe, in_unsafe), std::mem::replace(&mut self.unsafe_fn, body))
     }
 
+    /// Out of a function's body. `[UNS-7]` — an `unsafe fn` without `@safety` is `L3015`, naming the
+    /// first unsafe step its body took: reported once (a generic's instances check the body again; a
+    /// check rolled back takes its report with it), and not for a kept body, whose kept diagnostics
+    /// hold it.
     fn leave_fn_body(&mut self, (in_unsafe, unsafe_fn): (bool, Option<UnsafeFnBody>)) {
         self.in_unsafe = in_unsafe;
-        self.unsafe_fn = unsafe_fn;
+        let left = std::mem::replace(&mut self.unsafe_fn, unsafe_fn);
+        if let Some(body) = left
+            && !self.skip_bodies
+            && self.undocumented_unsafe.contains(&body.at)
+            && !self.sink.diagnostics().iter().any(|d| d.code == Some(codes::L3015) && d.primary.span == body.at)
+        {
+            self.sink.emit(Diagnostic::lint(codes::L3015, body.at, undocumented_unsafe(body.name, body.first.as_ref())));
+        }
+    }
+
+    /// `[UNS-7]` — `step` is one of the body's unsafe steps, inside `unsafe:` or not: the first names
+    /// an `unsafe fn` without `@safety` in its `L3015`.
+    fn note_unsafe_step(&mut self, step: &UnsafeStep) {
+        if let Some(body) = &mut self.unsafe_fn
+            && body.first.is_none()
+        {
+            body.first = Some(step.clone());
+        }
+    }
+
+    /// `[UNS-1]` — the unsafe step `step`, at `span`: noted (`note_unsafe_step`), and outside `unsafe`
+    /// refused with `refusal` (`refuse_unsafe`).
+    fn unsafe_step(&mut self, span: Span, step: UnsafeStep, refusal: Diagnostic) {
+        self.note_unsafe_step(&step);
+        if !self.unsafe_context() {
+            self.refuse_unsafe(span, step, refusal);
+        }
     }
 
     /// The 1-based line `span` starts on, when its file's text is known.
@@ -22789,9 +22815,9 @@ impl<'a> Checker<'a> {
             self.sink.emit(refusal);
             return;
         };
-        if let Some(body) = self.unsafe_fn {
+        if let Some((name, mark)) = self.unsafe_fn.as_ref().map(|body| (body.name, body.mark)) {
             let end = self.sink.mark();
-            let earlier = (body.mark.min(end)..end).find(|&at| {
+            let earlier = (mark.min(end)..end).find(|&at| {
                 let earlier = &self.sink.diagnostics()[at];
                 earlier.code == Some(codes::E3100)
                     && earlier.primary.span.file == span.file
@@ -22809,7 +22835,7 @@ impl<'a> Checker<'a> {
             if !steps.iter().any(|(already, _)| *already == span) {
                 steps.push((span, step));
             }
-            *self.sink.message_mut(at) = own_unsafe_steps(body.name, line, steps);
+            *self.sink.message_mut(at) = own_unsafe_steps(name, line, steps);
             return;
         }
         let refusal = match (&step, self.written_line(span)) {
@@ -23000,7 +23026,13 @@ impl<'a> Checker<'a> {
         if let Some(note) = self.changed_declarations.get(&self.signatures[def.0 as usize].decl) {
             self.changed_calls.push((span, note.clone()));
         }
-        if !self.signatures[def.0 as usize].is_unsafe || self.unsafe_context() {
+        if !self.signatures[def.0 as usize].is_unsafe {
+            return;
+        }
+        let callee = self.written_line(self.signatures[def.0 as usize].decl).unwrap_or_else(|| "unsafe fn".to_string());
+        let step = UnsafeStep::Call { callee, declared: !self.foreign_declarations.contains_key(&def) };
+        self.note_unsafe_step(&step);
+        if self.unsafe_context() {
             return;
         }
         if self.foreign_variadic.contains(&def) {
@@ -23023,9 +23055,7 @@ impl<'a> Checker<'a> {
             }
             self.sink.emit(diagnostic.help("or wrap the call in `unsafe:`, as its caller's own assertion"));
         } else {
-            let callee = self.written_line(self.signatures[def.0 as usize].decl).unwrap_or_else(|| "unsafe fn".to_string());
-            self.refuse_unsafe(span, UnsafeStep::Call { callee, declared: true },
-                Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"));
+            self.refuse_unsafe(span, step, Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"));
         }
     }
 
@@ -25864,8 +25894,13 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        let rest: Vec<&ast::Attribute> =
-            stmt.attrs.iter().filter(|attr| !named(attr, "simd") && !named(attr, "$reduce")).collect();
+        // `[UNS-7]` — a local `unsafe fn`'s `@safety` is checked with it (`check_safety_attribute`).
+        let local_fn = matches!(stmt.kind, ast::StmtKind::LocalFn(_));
+        let rest: Vec<&ast::Attribute> = stmt
+            .attrs
+            .iter()
+            .filter(|attr| !named(attr, "simd") && !named(attr, "$reduce") && !(local_fn && named(attr, "safety")))
+            .collect();
         if let [attr] = rest.as_slice()
             && named(attr, "parallel")
         {
@@ -26607,7 +26642,10 @@ impl<'a> Checker<'a> {
                 }
                 out.push(Stmt::Expr(matched));
             }
-            ast::StmtKind::LocalFn(decl) => self.check_local_fn(decl, stmt.span, out),
+            ast::StmtKind::LocalFn(decl) => {
+                self.check_safety_attribute(&stmt.attrs, decl);
+                self.check_local_fn(decl, stmt.span, out);
+            }
             // `[CT-7]` — run once while compiling, for its checks.
             ast::StmtKind::Comptime(block) => self.comptime_block(block, stmt.span),
         }
@@ -37872,13 +37910,13 @@ impl<'a> Checker<'a> {
                 // by nothing: it asks no `unsafe`, as a cast at run time does (`[UNS-1]`).
                 let constant_address = self.const_initializer && pointer_integer_cast && self.types.is_integral(inner.ty);
                 if pointer_integer_cast || pointer_pointer_cast {
-                    if !constant_address && !self.unsafe_context() {
+                    if !constant_address {
                         let (message, step) = if pointer_integer_cast {
                             ("casting between a raw pointer and an integer requires `unsafe`", "the cast between a raw pointer and an integer")
                         } else {
                             ("casting between raw pointer types requires `unsafe`", "the cast between raw pointer types")
                         };
-                        self.refuse_unsafe(span, UnsafeStep::Other(step.to_string()), Diagnostic::error(codes::E3100, span, message));
+                        self.unsafe_step(span, UnsafeStep::Other(step.to_string()), Diagnostic::error(codes::E3100, span, message));
                     }
                     // A 128-bit integer goes through `usize`, which holds any address: a
                     // pointer zero-extends, and an integer keeps its low bits.
@@ -40563,7 +40601,7 @@ impl<'a> Checker<'a> {
         self.local_fn_self.push(LocalFnSelf { name: entry.name, def, depth: self.lambda_depth + 1, env: Some(entry.env_mode), probing: false });
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, entry.in_unsafe);
         let earlier = self.sink.take();
-        let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, mark: self.sink.mark() });
+        let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, at: entry.span, mark: self.sink.mark(), first: None });
         let outer_unsafe_fn = std::mem::replace(&mut self.unsafe_fn, own_unsafe);
         let (body, _, locals, _) = self.check_lambda_body(
             &entry.lambda,
@@ -40989,9 +41027,9 @@ impl<'a> Checker<'a> {
     /// `[GRM-28]`, `[UNS-1]` — a call to an `unsafe` local function that captures (one that does not
     /// is an `unsafe fn` value, whose calls are checked as any).
     fn check_unsafe_local_call(&mut self, def: DefId, span: Span) {
-        if self.signatures[def.0 as usize].is_unsafe && !self.unsafe_context() {
+        if self.signatures[def.0 as usize].is_unsafe {
             let callee = self.written_line(self.signatures[def.0 as usize].decl).unwrap_or_else(|| "unsafe fn".to_string());
-            self.refuse_unsafe(span, UnsafeStep::Call { callee, declared: true },
+            self.unsafe_step(span, UnsafeStep::Call { callee, declared: true },
                 Diagnostic::error(codes::E3100, span, "calling an `unsafe` local function requires an `unsafe` block"));
         }
     }
@@ -42911,8 +42949,7 @@ impl<'a> Checker<'a> {
             return;
         }
         if let ast::ItemKind::Fn(decl) = &item.kind {
-            self.check_safety_attribute(&item.attrs, decl.is_unsafe,
-                item.vis.kind != ast::VisKind::Private, item.span);
+            self.check_safety_attribute(&item.attrs, decl);
             if !decl.is_foreign_decl {
                 let mut saw_export = false;
                 for attr in item.attrs.iter().filter(|attr|
@@ -43287,8 +43324,7 @@ impl<'a> Checker<'a> {
         for member in members {
             if let ast::MemberKind::Fn(decl) = &member.kind {
                 self.check_reload_terminate(&member.attrs, Some(decl.name.name));
-                self.check_safety_attribute(&member.attrs, decl.is_unsafe,
-                    member.vis.kind != ast::VisKind::Private, member.span);
+                self.check_safety_attribute(&member.attrs, decl);
                 // `[TYP-9]` — a float mode governs the body it is written on.
                 // A method with none (an interface's, an abstract one, a
                 // foreign class's) would ignore it, which `[ATT-6]` never
@@ -43327,11 +43363,15 @@ impl<'a> Checker<'a> {
     }
 
     /// `[UNS-7]` — the attribute documents an unsafe caller obligation; its
-    /// presence neither creates one nor makes a safe function unsafe.
-    fn check_safety_attribute(&mut self, attrs: &[ast::Attribute], is_unsafe: bool,
-        is_public: bool, span: Span) {
-        let mut documented = false;
+    /// presence neither creates one nor makes a safe function unsafe. Every
+    /// `unsafe fn` carries it: without it, `L3015`, which names the first unsafe
+    /// step of a body once that is checked (`leave_fn_body`).
+    fn check_safety_attribute(&mut self, attrs: &[ast::Attribute], decl: &ast::FnDecl) {
+        let is_unsafe = decl.is_unsafe;
+        // A malformed `@safety` is its own error, not an `L3015` as well.
+        let mut written = false;
         for attr in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety")) {
+            written = true;
             if !is_unsafe {
                 self.error(codes::E0104, attr.span, "`@safety` applies only to an `unsafe fn`");
                 continue;
@@ -43345,16 +43385,18 @@ impl<'a> Checker<'a> {
                 self.error(codes::E0104, attr.span, "`@safety` requires a nonempty obligation");
                 continue;
             }
-            documented = true;
             if text.trim().to_ascii_uppercase().starts_with("TODO") {
                 self.sink.emit(Diagnostic::lint(codes::L3016, attr.span,
                     "`@safety` text still reads `TODO`"));
             }
         }
-        if is_public && is_unsafe && !documented {
-            self.sink.emit(Diagnostic::lint(codes::L3015, span,
-                "undocumented unsafe obligation")
-                .help("add `@safety(\"state the caller's obligation\")` above this function"));
+        // A foreign declaration is no `unsafe fn` written: its `unsafe extern` block vouches for it.
+        if is_unsafe && !written && !decl.is_foreign_decl {
+            if decl.body.is_some() {
+                self.undocumented_unsafe.insert(decl.name.span);
+            } else {
+                self.sink.emit(Diagnostic::lint(codes::L3015, decl.name.span, undocumented_unsafe(decl.name.name, None)));
+            }
         }
     }
 
@@ -44860,8 +44902,8 @@ impl<'a> Checker<'a> {
 
         // `[RNG-10]` — "Any other route is `unsafe`", so `new_unchecked`
         // needs the boundary `[TIER-1]` names.
-        if which == 2 && !self.unsafe_context() {
-            self.refuse_unsafe(
+        if which == 2 {
+            self.unsafe_step(
                 span,
                 UnsafeStep::call(format!("{type_name}.new_unchecked")),
                 Diagnostic::error(
@@ -46098,17 +46140,15 @@ impl<'a> Checker<'a> {
             }
             // Refused, the step is typed still, so that what is done with its result is checked (and,
             // in an `unsafe fn`, named): `p.add(1).read()` reads through `p`.
-            if !self.unsafe_context() {
-                let pointer = self.pointer_written(&receiver);
-                let step = match name.name.as_str() {
-                    "read" => UnsafeStep::Read(pointer),
-                    "write" => UnsafeStep::Write(pointer),
-                    _ => UnsafeStep::Offset(pointer),
-                };
-                self.refuse_unsafe(span, step,
-                    Diagnostic::error(codes::E3100, span, format!("`{}` through a raw pointer needs an `unsafe` block", name.name))
-                        .note("`[UNS-1]` lists the operations that do"));
-            }
+            let pointer = self.pointer_written(&receiver);
+            let step = match name.name.as_str() {
+                "read" => UnsafeStep::Read(pointer),
+                "write" => UnsafeStep::Write(pointer),
+                _ => UnsafeStep::Offset(pointer),
+            };
+            self.unsafe_step(span, step,
+                Diagnostic::error(codes::E3100, span, format!("`{}` through a raw pointer needs an `unsafe` block", name.name))
+                    .note("`[UNS-1]` lists the operations that do"));
             let usize_ty = self.common.usize;
             let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
             return match name.name.as_str() {
@@ -47878,11 +47918,11 @@ impl<'a> Checker<'a> {
     /// `[FFI-8]` — a C union's field is read only in `unsafe`: which field holds the value is the
     /// program's to know. Storing into one (`u.f = v`, the whole assignment target) is not a read.
     fn check_union_read(&mut self, owner: Ty, name: ast::Ident, span: Span) {
-        if !self.types.is_union(owner) || self.union_store == Some(span) || self.unsafe_context() {
+        if !self.types.is_union(owner) || self.union_store == Some(span) {
             return;
         }
         let shown = self.types.display(owner);
-        self.refuse_unsafe(
+        self.unsafe_step(
             span,
             UnsafeStep::Other(format!("the read of `{}` of the union `{shown}`", name.name)),
             Diagnostic::error(codes::E3100, span, format!("reading `{}` of the union `{shown}` requires an `unsafe` block", name.name))
@@ -48023,9 +48063,9 @@ impl<'a> Checker<'a> {
         let consumes_callee = consumes_callee || once;
         // `[UNS-1]`, `[FN-6]` (ODR-115) — the callee is some `unsafe fn`, whose obligation the
         // `unsafe` block takes on.
-        if is_unsafe && !self.unsafe_context() {
+        if is_unsafe {
             let shown = self.types.display(signature);
-            self.refuse_unsafe(
+            self.unsafe_step(
                 span,
                 UnsafeStep::Other(format!("the call of a value of type `{shown}`")),
                 Diagnostic::error(codes::E3100, span, format!("calling a value of type `{shown}` requires an `unsafe` block"))
@@ -50339,19 +50379,17 @@ impl<'a> Checker<'a> {
             };
         }
 
-        if !self.unsafe_context() {
-            self.refuse_unsafe(
+        self.unsafe_step(
+            span,
+            UnsafeStep::call("assume_init"),
+            Diagnostic::error(
+                codes::E3100,
                 span,
-                UnsafeStep::call("assume_init"),
-                Diagnostic::error(
-                    codes::E3100,
-                    span,
-                    "`assume_init` needs an `unsafe` block",
-                )
-                .help("initialize the slot with `write`, then wrap `assume_init` in `unsafe:`")
-                .note("the caller must establish that the slot contains a valid initialized value [ARN-8]"),
-            );
-        }
+                "`assume_init` needs an `unsafe` block",
+            )
+            .help("initialize the slot with `write`, then wrap `assume_init` in `unsafe:`")
+            .note("the caller must establish that the slot contains a valid initialized value [ARN-8]"),
+        );
         Expr {
             ty: inner,
             kind: ExprKind::Builtin {
@@ -50411,14 +50449,12 @@ impl<'a> Checker<'a> {
             };
         }
 
-        if !self.unsafe_context() {
-            self.refuse_unsafe(
-                span,
-                UnsafeStep::call("UnsafeCell.get"),
-                Diagnostic::error(codes::E3100, span, "`UnsafeCell.get` needs an `unsafe` block")
-                    .note("`get` is the explicit unsafe boundary for shared interior mutation [UNS-10]"),
-            );
-        }
+        self.unsafe_step(
+            span,
+            UnsafeStep::call("UnsafeCell.get"),
+            Diagnostic::error(codes::E3100, span, "`UnsafeCell.get` needs an `unsafe` block")
+                .note("`get` is the explicit unsafe boundary for shared interior mutation [UNS-10]"),
+        );
         let cell_ref = self.types.intern(TyKind::Ref {
             mutable: false,
             inner: receiver.ty,
@@ -52070,15 +52106,13 @@ impl<'a> Checker<'a> {
 
     /// `[SIMD-9]` — the unchecked forms are `unsafe fn`.
     fn simd_require_unsafe(&mut self, name: &str, checked_form: &str, span: Span) {
-        if !self.unsafe_context() {
-            self.refuse_unsafe(
-                span,
-                UnsafeStep::call(name),
-                Diagnostic::error(codes::E3100, span, format!("`{name}` needs an `unsafe` block"))
-                    .help(format!("`{checked_form}` checks every lane's index"))
-                    .note("the unchecked vector operations are `unsafe fn` [SIMD-9]"),
-            );
-        }
+        self.unsafe_step(
+            span,
+            UnsafeStep::call(name),
+            Diagnostic::error(codes::E3100, span, format!("`{name}` needs an `unsafe` block"))
+                .help(format!("`{checked_form}` checks every lane's index"))
+                .note("the unchecked vector operations are `unsafe fn` [SIMD-9]"),
+        );
     }
 
     fn simd_arity(&mut self, owner: Ty, name: &str, args: &[ast::Arg], want: usize, span: Span) -> bool {
@@ -55920,19 +55954,17 @@ impl<'a> Checker<'a> {
             let inner = self.types.intern(TyKind::Ref { mutable, inner: elem });
             (Builtin::SpanGet, 1, self.option_of(inner))
         } else if name.name.is("get_unchecked") {
-            if !self.unsafe_context() {
-                self.refuse_unsafe(
+            self.unsafe_step(
+                span,
+                UnsafeStep::call("get_unchecked"),
+                Diagnostic::error(
+                    codes::E3100,
                     span,
-                    UnsafeStep::call("get_unchecked"),
-                    Diagnostic::error(
-                        codes::E3100,
-                        span,
-                        "`get_unchecked` needs an `unsafe` block",
-                    )
-                    .help("`get(i)` returns an `Option`, and `s[i]` is bounds-checked")
-                    .note("`[UNS-1]` lists the operations that need one"),
-                );
-            }
+                    "`get_unchecked` needs an `unsafe` block",
+                )
+                .help("`get(i)` returns an `Option`, and `s[i]` is bounds-checked")
+                .note("`[UNS-1]` lists the operations that need one"),
+            );
             let inner = self.types.intern(TyKind::Ref { mutable, inner: elem });
             (Builtin::SpanGetUnchecked, 1, inner)
         } else if name.name.is("is_empty") {
@@ -56074,19 +56106,17 @@ impl<'a> Checker<'a> {
             };
         }
 
-        if !self.unsafe_context() {
-            self.refuse_unsafe(
+        self.unsafe_step(
+            span,
+            UnsafeStep::call("assume_init"),
+            Diagnostic::error(
+                codes::E3100,
                 span,
-                UnsafeStep::call("assume_init"),
-                Diagnostic::error(
-                    codes::E3100,
-                    span,
-                    "`assume_init` needs an `unsafe` block",
-                )
-                .help("initialize every slot with `write_at`, then wrap `assume_init` in `unsafe:`")
-                .note("the caller must establish that every exposed element is initialized [ARN-9]"),
-            );
-        }
+                "`assume_init` needs an `unsafe` block",
+            )
+            .help("initialize every slot with `write_at`, then wrap `assume_init` in `unsafe:`")
+            .note("the caller must establish that every exposed element is initialized [ARN-9]"),
+        );
         let result = self.types.intern(TyKind::Span { elem: inner, mutable: true });
         Expr {
             ty: result,
@@ -60824,6 +60854,25 @@ fn unsafe_block_to_write(line: usize, why: &str) -> String {
         "put line {line} in an `unsafe:` block with a `# SAFETY:` note saying why {why}: above line {line} write \
          `# SAFETY:` and the reason, then `unsafe:`, and indent line {line} under it"
     )
+}
+
+/// `[UNS-7]` — the `L3015` of the `unsafe fn` `name`, written without `@safety`, which names the first
+/// unsafe step its body takes: "`read_u32_le` is an `unsafe fn` that reads through the raw pointer `p`,
+/// and nothing says what its callers must make true for that; say it above the function:
+/// `@safety("...")`, with what `p` must point to".
+fn undocumented_unsafe(name: Symbol, first: Option<&UnsafeStep>) -> String {
+    let through = |pointer: &Option<String>| pointer.as_ref().map_or_else(|| "a raw pointer".to_string(), |pointer| format!("the raw pointer `{pointer}`"));
+    let target = |pointer: &Option<String>| pointer.as_ref().map_or_else(|| "the pointer".to_string(), |pointer| format!("`{pointer}`"));
+    let (does, with) = match first {
+        Some(UnsafeStep::Read(pointer)) => (format!(" that reads through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
+        Some(UnsafeStep::Write(pointer)) => (format!(" that writes through {}", through(pointer)), format!(", with what {} must point to", target(pointer))),
+        Some(UnsafeStep::Offset(pointer)) => (format!(" that offsets {}", through(pointer)), format!(", with what {} must point into", target(pointer))),
+        Some(UnsafeStep::Call { callee, .. }) => (format!(" that calls `{callee}`"), format!(", with what calling `{callee}` needs")),
+        Some(UnsafeStep::Other(what)) => (format!(" with {what} in its body"), String::new()),
+        None => (String::new(), String::new()),
+    };
+    let that = if first.is_some() { " for that" } else { "" };
+    format!("`{name}` is an `unsafe fn`{does}, and nothing says what its callers must make true{that}; say it above the function: `@safety(\"...\")`{with}")
 }
 
 /// `[UNS-12]` — the `E3100` of line `line` of the `unsafe fn` `name`, whose unsafe steps there are

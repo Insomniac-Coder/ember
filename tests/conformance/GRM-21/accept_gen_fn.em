@@ -7,7 +7,8 @@ gen fn ticks() -> Generator[int]:
     yield 1
     yield 2
 
-unsafe gen fn raw() -> Generator[int]:  # SAFETY: parse only
+@safety("parse only")
+unsafe gen fn raw() -> Generator[int]:
     yield 3
 
 extern "C" gen fn foreign() -> Generator[int]:

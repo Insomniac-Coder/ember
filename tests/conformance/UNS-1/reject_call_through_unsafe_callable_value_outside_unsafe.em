@@ -4,7 +4,8 @@
 # `[UNS-1]`, `[FN-6]` (ODR-115) — a call through a value of an `unsafe` callable type is an `unsafe`
 # operation: the value may be any `unsafe fn` of its type.
 
-unsafe fn increase(x: i32) -> i32:  # SAFETY: this test sets up what the operation requires
+@safety("this test sets up what the operation requires")
+unsafe fn increase(x: i32) -> i32:
     return x + 1
 
 fn main():

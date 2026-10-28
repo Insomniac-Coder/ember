@@ -23,7 +23,7 @@ enum Status:
     Done = 0
     Busy = 1
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     # C: `void squares_with_max(uint32_t* count, int32_t* items, int32_t* max)`.
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive), param(max, out, one), link_name="squares_with_max_c")
     safe fn squares_with_max(mut count: u32, items: Option[MutSpan[i32]], mut max: i32)

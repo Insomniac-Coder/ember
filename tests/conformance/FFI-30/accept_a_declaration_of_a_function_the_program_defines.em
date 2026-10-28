@@ -8,7 +8,7 @@
 
 import helpers.exported
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @safety("`ffi30_add` adds two `i32`s")
     fn ffi30_add(a: i32, b: i32) -> i32
 

@@ -1,13 +1,14 @@
 #$ test: compile-fail
 #$ rules: UNS-1, TIER-1
 #$ profiles: debug
-#$ error[E3100]: `counter.next()` (line 15) calls an `unsafe fn`, whose callers must make true what its `@safety` says
+#$ error[E3100]: `counter.next()` (line 16) calls an `unsafe fn`, whose callers must make true what its `@safety` says
 
 struct Counter:
     value: i32
 
 extend Counter:
-    unsafe fn next(self) -> i32:  # SAFETY: this test sets up what the operation requires
+    @safety("this test sets up what the operation requires")
+    unsafe fn next(self) -> i32:
         return self.value + 1
 
 fn main():

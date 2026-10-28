@@ -3,14 +3,14 @@
 #$ profiles: debug, development, release
 #$ stdout: 6
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated), result(borrowed, nul_terminated, from(text)), link_name="echo_cstr")
     safe fn echo(text: cstr) -> cstr
 
 pub extern "C" fn echo_cstr(text: cstr) -> cstr:
     return text
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(text, borrowed, nul_terminated))
     safe fn strlen(text: cstr) -> usize
 

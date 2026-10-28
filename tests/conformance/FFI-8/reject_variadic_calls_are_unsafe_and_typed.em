@@ -8,7 +8,7 @@
 from std.ffi import c_int
 import c "./variadic.c" with (overlay = "overlays/variadic.em") as v
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(variadic, param(format, borrowed, nul_terminated))
     @safety("the format reads what each call passes")
     fn printf(format: cstr) -> c_int

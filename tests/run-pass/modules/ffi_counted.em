@@ -1,4 +1,4 @@
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, count(n)), link_name="ffi_counted_probe")
     pub safe fn counted(data: Span[u8], n: usize) -> i32
 

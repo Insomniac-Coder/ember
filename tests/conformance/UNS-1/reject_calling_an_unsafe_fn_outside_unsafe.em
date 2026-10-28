@@ -4,7 +4,7 @@
 # `E3100`, whose message names the call and its line and gives the block to write.
 
 @safety("p points to four readable bytes")
-unsafe fn read_u32_le(p: *u8) -> u32:  # SAFETY: the callers keep the obligation `@safety` states
+unsafe fn read_u32_le(p: *u8) -> u32:
     # SAFETY: the caller promised four readable bytes at `p` (@safety above); these are bytes 0 to 3
     unsafe:
         return (p.read() as u32) | ((p.add(1).read() as u32) << 8) | ((p.add(2).read() as u32) << 16) | ((p.add(3).read() as u32) << 24)

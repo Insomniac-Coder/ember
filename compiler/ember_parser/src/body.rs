@@ -216,7 +216,7 @@ impl Parser<'_> {
                 StmtKind::Defer(self.parse_block())
             }
             TokenKind::Keyword(Kw::Unsafe) if !self.at_kw_at(1, Kw::Fn) => {
-                self.unsafe_sites.push(self.span());
+                self.unsafe_sites.push(ember_ast::UnsafeSite { span: self.span(), kind: ember_ast::UnsafeSiteKind::Block });
                 self.bump();
                 self.expect_punct(Punct::Colon);
                 StmtKind::Unsafe(self.parse_block())
@@ -273,7 +273,9 @@ impl Parser<'_> {
         let mut kept = Vec::new();
         for attr in attrs {
             let name = attr.path.last().map(|s| s.name).unwrap();
-            let permitted = LOOP_ONLY.iter().any(|p| name.is(p)) || name.is("allow");
+            // `[UNS-7]` — a local `unsafe fn` says what its callers make true as any `unsafe fn` does.
+            let local_fn = matches!(kind, Some(StmtKind::LocalFn(_))) && name.is("safety");
+            let permitted = LOOP_ONLY.iter().any(|p| name.is(p)) || name.is("allow") || local_fn;
             if !permitted {
                 self.report(
                     Diagnostic::error(
@@ -281,7 +283,7 @@ impl Parser<'_> {
                         attr.span,
                         format!("`@{name}` is not permitted on a statement"),
                     )
-                    .help("only `@simd`, `@parallel`, `@unroll` and `@allow` are"),
+                    .help("only `@simd`, `@parallel`, `@unroll` and `@allow` are, and `@safety` on a local `unsafe fn`"),
                 );
                 continue;
             }

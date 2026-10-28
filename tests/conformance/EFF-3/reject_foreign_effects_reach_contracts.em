@@ -8,7 +8,7 @@
 # every effect when it states none, so a contract over its caller is checked
 # against them (`[EFF-6]`); without `@ffi(deterministic)` it is `Nondet`.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(effects=[Alloc, Panic])
     fn strdup(text: *u8) -> *u8
     safe fn rand() -> i32

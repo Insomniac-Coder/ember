@@ -2,7 +2,7 @@
 # (ODR-245), callbacks C may be given none of (ODR-253), and a registration undone by the id it
 # returned (ODR-246).
 
-unsafe overlay c "registry.h":
+unsafe overlay c "registry.h":  # SAFETY(ffi): each entry matches its declaration in the header
     fn each_pair(count, visit: callback(borrowed, user_data=context@2), context)
     fn maybe_call(hook: callback(borrowed, user_data=data) nullable, data, value)
     fn given()

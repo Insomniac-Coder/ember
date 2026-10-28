@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 9
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(first, borrowed, one), param(second, borrowed, one),
          result(borrowed, one, nullable, from(first)), link_name="optional_first_c")
     safe fn optional_first(first: ref i32, second: ref i32) -> Option[ref i32]

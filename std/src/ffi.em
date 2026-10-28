@@ -192,7 +192,7 @@ unsafe extend[T] ForeignBox[T] implements Send:  # SAFETY: a box's thread rule i
 ## destructor the declaration of `T` names (`@ffi(destroys(f))`). Compiler-known: the destructor
 ## is read from that declaration, and one that says `@ffi(adopt=false)` is `E5052`.
 @safety("`h` is a live foreign object of type `T` that nothing else owns, and `T`'s destructor frees it.")
-pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:  # SAFETY: the declaration states the obligation; the compiler supplies the body
+pub unsafe fn adopt[T](h: *mut T) -> ForeignBox[T]:
     pass
 
 ## `[FFI-23]` — `Retained[T]` is the only way to let foreign code keep Ember memory.
@@ -286,7 +286,7 @@ pub struct CppVector[T]:
     ## `[FFI-17a]` — the vector at `object`, with its element type's thunks: what `import cpp`
     ## makes of a `std::vector<T>`.
     @safety("`object` is a live `std::vector<T>` nothing else owns, and the functions are the thunks of its element type")
-    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *mut T, size: unsafe extern "C" fn(*mut u8) -> usize, push: unsafe extern "C" fn(*mut u8, *T), destroy: unsafe extern "C" fn(*mut u8)) -> CppVector[T]:  # SAFETY: the caller keeps the obligation
+    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *mut T, size: unsafe extern "C" fn(*mut u8) -> usize, push: unsafe extern "C" fn(*mut u8, *T), destroy: unsafe extern "C" fn(*mut u8)) -> CppVector[T]:
         return CppVector(object, data, size, push, destroy)
 
     ## The `std::vector` itself, for a call into C++.
@@ -337,7 +337,7 @@ pub struct CppFunction:
 
     ## `[FFI-17a]` — the `std::function` at `object`, with its thunk: what `import cpp` makes of one.
     @safety("`object` is a live `std::function` nothing else owns, and `destroy` deletes it")
-    pub unsafe fn from_thunks(object: *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppFunction:  # SAFETY: the caller keeps the obligation
+    pub unsafe fn from_thunks(object: *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppFunction:
         return CppFunction(object, destroy)
 
     ## The `std::function` itself, for a call into C++.
@@ -364,7 +364,7 @@ pub struct CppString:
     ## `[FFI-17a]` — the string at `object`, with its thunks: what `import cpp` makes of a
     ## `std::string`.
     @safety("`object` is a live `std::string` nothing else owns, and the functions are its thunks")
-    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *u8, size: unsafe extern "C" fn(*mut u8) -> usize, destroy: unsafe extern "C" fn(*mut u8)) -> CppString:  # SAFETY: the caller keeps the obligation
+    pub unsafe fn from_thunks(object: *mut u8, data: unsafe extern "C" fn(*mut u8) -> *u8, size: unsafe extern "C" fn(*mut u8) -> usize, destroy: unsafe extern "C" fn(*mut u8)) -> CppString:
         return CppString(object, data, size, destroy)
 
     ## The `std::string` itself, for a call into C++.
@@ -441,7 +441,7 @@ pub struct CppShared[T]:
     ## `[FFI-17a]` — the `std::shared_ptr` at `object`, with its thunks: what `import cpp` makes
     ## of one.
     @safety("`object` is a live `std::shared_ptr<T>` nothing else owns, and the functions are its thunks")
-    pub unsafe fn from_thunks(object: *mut u8, pointee: unsafe extern "C" fn(*mut u8) -> *mut T, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppShared[T]:  # SAFETY: the caller keeps the obligation
+    pub unsafe fn from_thunks(object: *mut u8, pointee: unsafe extern "C" fn(*mut u8) -> *mut T, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8)) -> CppShared[T]:
         return CppShared(object, pointee, copy, destroy)
 
     ## The `std::shared_ptr` itself, for a call into C++.
@@ -498,7 +498,7 @@ pub struct CppWeak[T]:
     ## `[FFI-17a]` — the `std::weak_ptr` at `object`, with its thunks and those of the
     ## `std::shared_ptr` its `lock()` gives: what `import cpp` makes of one.
     @safety("`object` is a live `std::weak_ptr<T>` nothing else owns, and the functions are its thunks and those of `std::shared_ptr<T>`")
-    pub unsafe fn from_thunks(object: *mut u8, locker: unsafe extern "C" fn(*mut u8) -> *mut u8, expiry: unsafe extern "C" fn(*mut u8) -> bool, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8), pointee: unsafe extern "C" fn(*mut u8) -> *mut T, shared_copy: unsafe extern "C" fn(*mut u8) -> *mut u8, shared_destroy: unsafe extern "C" fn(*mut u8)) -> CppWeak[T]:  # SAFETY: the caller keeps the obligation
+    pub unsafe fn from_thunks(object: *mut u8, locker: unsafe extern "C" fn(*mut u8) -> *mut u8, expiry: unsafe extern "C" fn(*mut u8) -> bool, copy: unsafe extern "C" fn(*mut u8) -> *mut u8, destroy: unsafe extern "C" fn(*mut u8), pointee: unsafe extern "C" fn(*mut u8) -> *mut T, shared_copy: unsafe extern "C" fn(*mut u8) -> *mut u8, shared_destroy: unsafe extern "C" fn(*mut u8)) -> CppWeak[T]:
         return CppWeak(object, locker, expiry, copy, destroy, pointee, shared_copy, shared_destroy)
 
     ## The `std::weak_ptr` itself, for a call into C++.

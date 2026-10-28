@@ -4,7 +4,7 @@
 #$ stdout: 31
 #$ assert-c: contains("extern const int32_t* em_0x706169725f63_4pair(")
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, fixed(2), aliased, from(static)), link_name="pair_c")
     safe fn pair() -> ref [i32; 2]
 

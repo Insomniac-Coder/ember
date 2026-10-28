@@ -1,6 +1,6 @@
 # The overlay of the FFI-2 tests: the facts `widgets.h` cannot state ([FFI-2], [FFI-11]).
 
-unsafe overlay c "widgets.h":
+unsafe overlay c "widgets.h":  # SAFETY(ffi): each entry matches its declaration in the header
     @ffi(destroys(widget_free))
     type Widget
 

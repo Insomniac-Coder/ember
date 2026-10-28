@@ -5,7 +5,7 @@
 #$ 0
 #$ 2
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(left, borrowed, count(n), nullable), param(right, borrowed, count(n), nullable), link_name="shared_optional_count")
     safe fn compare(left: Option[Span[i32]], right: Option[Span[i32]], n: usize) -> usize
 

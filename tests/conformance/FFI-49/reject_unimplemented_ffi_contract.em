@@ -6,7 +6,7 @@
 # of a type's contract, not a function's (`[FFI-1]`, ODR-247, ODR-269): on a function it is a
 # contract error (`E5002`), whose help names the type form (`@ffi(handle) type T`).
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(ownership="transfer")    #$ error[E0104]: `ownership` is not a contract word of `@ffi`
     fn acquire() -> i32
     @ffi(handle)    #$ error[E5002]: `handle` is a word of a type's contract, not a function's

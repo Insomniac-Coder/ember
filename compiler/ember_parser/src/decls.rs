@@ -123,6 +123,12 @@ impl Parser<'_> {
 
     // -- attributes and visibility -------------------------------------------
 
+    /// `[UNS-8]` — the `unsafe` here begins an implementation (`unsafe extern`, `unsafe overlay`).
+    fn push_unsafe_implementation(&mut self) {
+        let span = self.span();
+        self.unsafe_sites.push(ember_ast::UnsafeSite { span, kind: ember_ast::UnsafeSiteKind::Implementation });
+    }
+
     pub(crate) fn parse_attributes(&mut self) -> Vec<Attribute> {
         let mut attrs = Vec::new();
         while self.at_punct(Punct::At) {
@@ -149,6 +155,7 @@ impl Parser<'_> {
             attrs.push(Attribute { id, path, args, span: start.to(self.prev_span()) });
             self.eat_newlines();
         }
+        self.safety_attribute = attrs.iter().any(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety"));
         attrs
     }
 
@@ -363,6 +370,7 @@ impl Parser<'_> {
             return Some(ItemKind::Overlay(self.parse_overlay(false)));
         }
         if self.at_kw(Kw::Unsafe) && self.at_overlay_decl(1) {
+            self.push_unsafe_implementation();
             self.bump();
             return Some(ItemKind::Overlay(self.parse_overlay(true)));
         }
@@ -375,8 +383,10 @@ impl Parser<'_> {
         }
         // ODR-111 — `unsafe extend T implements Send:`, a marker interface written by hand.
         if self.at_kw(Kw::Unsafe) && matches!(self.peek_at(1), TokenKind::Ident(s) if s.is("extend")) {
+            let site = self.span();
             self.bump();
             if self.at_extend_decl() {
+                self.unsafe_sites.push(ember_ast::UnsafeSite { span: site, kind: ember_ast::UnsafeSiteKind::Implementation });
                 let mut decl = self.parse_extend();
                 decl.is_unsafe = true;
                 return Some(ItemKind::Extend(decl));
@@ -387,6 +397,7 @@ impl Parser<'_> {
             if self.at_fn_at(3) {
                 return Some(ItemKind::Fn(self.parse_fn()));
             }
+            self.push_unsafe_implementation();
             self.bump();
             return Some(ItemKind::ExternBlock(self.parse_extern_block(true)));
         }
@@ -939,6 +950,8 @@ impl Parser<'_> {
     }
 
     fn parse_fn_decl(&mut self, method: bool) -> FnDecl {
+        // Taken now: its parameters' attributes are parsed before its site is recorded.
+        let safety_attribute = std::mem::take(&mut self.safety_attribute);
         let is_safe = matches!(self.peek(), TokenKind::Ident(s) if s.is("safe"));
         if is_safe {
             self.bump();
@@ -987,9 +1000,10 @@ impl Parser<'_> {
         let where_clause = self.parse_where_clause();
 
         // A body is present unless this is an interface or extern signature.
-        // `[UNS-8]` — an `unsafe fn` with one needs a safety note.
+        // `[UNS-7]`, `[UNS-8]` — an `unsafe fn` with one says what its callers vouch for with `@safety`.
         if is_unsafe && self.at_punct(Punct::Colon) && !self.in_extern_block {
-            self.unsafe_sites.push(unsafe_site);
+            let kind = ember_ast::UnsafeSiteKind::Fn { name: name.name, safety: safety_attribute };
+            self.unsafe_sites.push(ember_ast::UnsafeSite { span: unsafe_site, kind });
         }
         let body_start = self.pos;
         let body = if self.eat_punct(Punct::Colon) { Some(self.parse_block()) } else { None };

@@ -13,7 +13,7 @@ from std.ffi import c_char, c_double, c_int, c_long, c_short, c_wchar
 from std.mem import size_of
 import c "c_types.h"
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(effects=[])
     safe fn abs(x: c_int) -> c_int
 

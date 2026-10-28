@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5002]: a foreign call without a complete safe contract requires `unsafe`
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn abs(x: i32) -> i32
 
 fn main():

@@ -11,7 +11,7 @@
 
 import c "./weird.c"
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(link_name="weird$twice")
     safe fn twice(x: i32) -> i32
 

@@ -1,4 +1,4 @@
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, one), result(borrowed, one, from(static)), link_name="ffi_static_result_c")
     pub safe fn static_result(input: ref i32) -> ref i32
 

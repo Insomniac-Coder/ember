@@ -5,7 +5,7 @@
 # `[UNS-1]` — reading and writing through a raw pointer, and offsetting one, as IX.4's example
 # spells them (`p.read()`, `p.write(v)`, `p.add(n)`), each inside `unsafe` (D-748).
 
-# SAFETY: the caller guarantees `p` points to two readable bytes
+@safety("the caller guarantees `p` points to two readable bytes")
 unsafe fn read_u16_le(p: *u8) -> u16:
     # SAFETY: the caller promised two readable bytes at `p`; these are bytes 0 and 1
     unsafe:

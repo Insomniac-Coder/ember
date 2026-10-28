@@ -12,7 +12,7 @@
 from std.ffi import adopt, ForeignBox
 from std.mem import drop
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(destroys(widget_free), handle)
     type Widget
     @ffi(destroys(gadget_close), threads(creator))

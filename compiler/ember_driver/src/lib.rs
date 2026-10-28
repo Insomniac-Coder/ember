@@ -2355,7 +2355,9 @@ fn print_tcb_report(
                 unsafe_blocks(body, &mut blocks);
             }
         }
-        for &site in &loaded.module.unsafe_sites {
+        // Blocks and `unsafe fn`s; `unsafe` implementations are not listed yet (`[TCB-4]`'s sections, A5-5).
+        let sites = loaded.module.unsafe_sites.iter().filter(|site| site.kind != ember_ast::UnsafeSiteKind::Implementation);
+        for site in sites.map(|site| site.span) {
             let at = line(site);
             let note = comments
                 .iter()
@@ -7602,18 +7604,33 @@ fn check_safety_notes(module: &ember_ast::Module, comments: &[ember_lexer::Comme
         return;
     }
     let line = |span: Span| map.file(span.file).line_col(span.start).line;
-    let noted: std::collections::HashSet<_> =
-        comments.iter().filter(|comment| comment.safety.is_some()).map(|comment| (line(comment.span), comment.own_line)).collect();
-    for &site in &module.unsafe_sites {
-        let at = line(site);
-        if noted.contains(&(at, false)) || (at > 1 && noted.contains(&(at - 1, true))) {
-            continue;
+    // A site's note: at the end of its line, or alone on the line before it (`[LEX-23]`).
+    let note = |at: u32| {
+        comments.iter().filter(|comment| comment.safety.is_some()).find(|comment| {
+            let written = line(comment.span);
+            (written == at && !comment.own_line) || (at > 1 && written == at - 1 && comment.own_line)
+        })
+    };
+    for site in &module.unsafe_sites {
+        let found = note(line(site.span));
+        match (site.kind, found) {
+            (ember_ast::UnsafeSiteKind::Block | ember_ast::UnsafeSiteKind::Implementation, None) => sink.emit(
+                Diagnostic::warning(codes::W3012, site.span, "this `unsafe` has no safety note")
+                    .primary_label("nothing here says why it is sound")
+                    .help("write `# SAFETY: <why it is sound>` on the line before it or at the end of this line; `SAFETY(ffi)`, `(layout)`, `(aliasing)`, `(intrinsic)`, `(performance)` or `(uninit)` names its category"),
+            ),
+            // `[UNS-7]` — an `unsafe fn`'s only note is `@safety`, saying what its callers make true.
+            (ember_ast::UnsafeSiteKind::Fn { name, safety }, Some(comment)) => {
+                let remove = if comment.own_line { "remove this line" } else { "remove this note" };
+                let message = if safety {
+                    format!("`{name}` says what its callers must make true with `@safety`; a `# SAFETY:` note says why one block is sound and goes above each `unsafe:` block inside it: {remove}")
+                } else {
+                    format!("`{name}` says what its callers must make true with `@safety(\"...\")` above it, not with a `# SAFETY:` note, which says why one block is sound and goes above each `unsafe:` block inside it: say this in `@safety` and {remove}")
+                };
+                sink.emit(Diagnostic::warning(codes::W3013, comment.span, message));
+            }
+            _ => {}
         }
-        sink.emit(
-            Diagnostic::warning(codes::W3012, site, "this `unsafe` has no safety note")
-                .primary_label("nothing here says why it is sound")
-                .help("write `# SAFETY: <why it is sound>` on the line before it or at the end of this line; `SAFETY(ffi)`, `(layout)`, `(aliasing)`, `(intrinsic)`, `(performance)` or `(uninit)` names its category"),
-        );
     }
 }
 

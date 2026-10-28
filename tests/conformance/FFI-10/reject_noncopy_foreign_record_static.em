@@ -11,7 +11,7 @@ struct Handle:
     fn drop(mut self):
         println(self.fd)
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     static mut current: Handle
 
 fn main():

@@ -56,7 +56,9 @@ pub(crate) struct Parser<'a> {
     /// the lexer already reported: a missing body there is that error's.
     damaged_signatures: Vec<Span>,
     /// `[UNS-8]` — see `Module::unsafe_sites`.
-    unsafe_sites: Vec<Span>,
+    unsafe_sites: Vec<ember_ast::UnsafeSite>,
+    /// `[UNS-7]` — whether the attributes parsed last hold `@safety`, for the `unsafe fn` they precede.
+    safety_attribute: bool,
     /// `[GRM-28]` — see `Module::local_generators`.
     local_generators: bool,
     /// `[DIA-21]` P11 — whether the module imports `std.fs`, and where an import line goes: after
@@ -88,6 +90,7 @@ impl<'a> Parser<'a> {
             in_extern_block: false,
             damaged_signatures: Vec::new(),
             unsafe_sites: Vec::new(),
+            safety_attribute: false,
             local_generators: false,
             fs_imported: false,
             import_at: None,

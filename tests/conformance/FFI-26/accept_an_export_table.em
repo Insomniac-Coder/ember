@@ -27,7 +27,7 @@ pub struct ScriptApi:
     on_update: extern "C" fn(u64, f32) -> i32
     on_destroy: extern "C" fn(u64) -> i32 = door_destroyed
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(immutable)
     static RvScriptApi_v3: ScriptApi
 

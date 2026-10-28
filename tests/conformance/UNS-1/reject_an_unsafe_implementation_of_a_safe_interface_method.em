@@ -9,7 +9,8 @@ struct P:
 
 extend P implements Add:  #$ error[E2040]: `P.add` is `unsafe`
     type Output = P
-    unsafe fn add(self, rhs: P) -> P:  #$ warning[W3012]
+    @safety("nothing: an addition of two points")
+    unsafe fn add(self, rhs: P) -> P:
         return P(self.x + rhs.x)
 
 fn main():

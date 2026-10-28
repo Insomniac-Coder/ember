@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5002]: `safe fn` cannot expose raw pointer parameter `p`
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(p, borrowed, one, exclusive))
     safe fn inspect(p: *u8) -> i32
 

@@ -8,7 +8,7 @@ pub fn blow_up() -> i32:
 fn deep_failure() -> i32:
     panic("panic inside an exported function")
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn call_exported_panic() -> i32
 
 fn main():

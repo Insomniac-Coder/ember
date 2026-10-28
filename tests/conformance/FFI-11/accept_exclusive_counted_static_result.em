@@ -4,7 +4,7 @@
 #$ stdout: 2
 #$ 31
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, count(n)), result(borrowed, count(n), exclusive, from(static)), link_name="fresh_mut_span")
     safe fn fresh(input: Span[i32], n: usize) -> MutSpan[i32]
 

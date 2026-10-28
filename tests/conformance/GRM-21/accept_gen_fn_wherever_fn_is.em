@@ -55,7 +55,7 @@ extend Pair:
     gen fn sum_only(self) -> Generator[int]:
         yield self.a + self.b
 
-# SAFETY: nothing the caller must uphold; this shows `unsafe gen fn` parses.
+@safety("nothing the caller must uphold; this shows `unsafe gen fn` parses.")
 unsafe gen fn raw_count() -> Generator[int]:
     yield 9
 

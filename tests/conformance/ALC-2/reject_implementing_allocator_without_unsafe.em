@@ -34,6 +34,7 @@ struct Header implements Allocator:    #$ error[E3100]: implementing `std.mem.Al
 interface Named:
     fn name(self) -> str
 
+# SAFETY: it keeps the promises the interface states
 unsafe extend Plain implements Named:    #$ error[E2040]: `unsafe extend` writes `Send` or `Sync` by hand, or an `unsafe interface`
     fn name(self) -> str:
         return "plain"

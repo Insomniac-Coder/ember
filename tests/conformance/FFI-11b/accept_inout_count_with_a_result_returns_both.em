@@ -9,7 +9,7 @@
 # result first, then the count C wrote back. Here C returns 1 when every item fit and 0 when the
 # span was too short, having filled what fit. The C side is the exported Ember function below.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive), link_name="list_cubes")
     safe fn cubes(mut count: u32, items: Option[MutSpan[i32]]) -> i32
 

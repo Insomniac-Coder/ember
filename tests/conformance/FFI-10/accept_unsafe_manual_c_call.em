@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn abs(x: i32) -> i32
 
 fn main():

@@ -16,12 +16,15 @@ struct Plain:
 extend Raw implements Send:    #$ error[E3100]: implementing `Send` by hand requires `unsafe extend`: the compiler cannot check it
     pass
 
+# SAFETY: every change to it is synchronised
 unsafe extend Node implements Sync:    #$ error[E2040]: a class is `Sync` only as `@sync`: its reference counts must be atomic
     pass
 
+# SAFETY: it keeps the promises the interface states
 unsafe extend Plain implements Copy:    #$ error[E2040]: `Copy` is not written in an `extend`: declare the type `@derive(Copy)`
     pass
 
+# SAFETY: it keeps the promises the interface states
 unsafe extend Plain implements Sized:    #$ error[E2040]: `Sized` is never written: every type but `dyn I` and an unsized foreign type is `Sized`
     pass
 

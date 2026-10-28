@@ -16,7 +16,7 @@ from std.ffi import c_int
 class Counter:
     count: i32 = 0
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn forget(id: c_int)
     fn forget_wrongly(id: i64)
 

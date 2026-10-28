@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 42
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, one, exclusive, from(static)), link_name="fresh_mut_number")
     safe fn fresh() -> ref mut i32
 

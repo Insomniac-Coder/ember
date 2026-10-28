@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 18
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, count(n)), result(borrowed, one, from(input)), link_name="first_counted")
     safe fn first(input: Span[i32], n: usize) -> ref i32
 

@@ -20,7 +20,7 @@ fn address_of_another(token: Retained[Noisy]) -> ObjectPtr[Quiet]:
 fn bytes_of_a_box(token: Retained[Box[i64]]) -> *mut u8:
     return token.ptr()    #$ error[E2020]: expected `*mut u8`, found `*mut i64`
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(object, retained, one))
     safe fn keep(object: Retained[Noisy])    #$ error[E7004]: `object` hands foreign code a `Noisy` to keep, and a `Noisy` is not `Send`
     @ffi(param(object, retained, one))

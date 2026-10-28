@@ -5,7 +5,7 @@
 #$ 23
 #$ 0
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, borrowed, fixed(2), nullable, exclusive), link_name="fill_optional_fixed")
     safe fn fill(data: Option[ref mut [i32; 2]]) -> i32
 

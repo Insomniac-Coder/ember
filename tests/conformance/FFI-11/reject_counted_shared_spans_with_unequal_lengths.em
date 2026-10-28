@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ panics: FFI span lengths differ
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(left, borrowed, count(n)), param(right, borrowed, count(n)), link_name="probe_bytes")
     safe fn counted_pair(left: Span[u8], right: Span[u8], n: usize) -> i32
 

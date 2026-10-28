@@ -2,9 +2,13 @@
 
 > **2026-10-28, night — START HERE (supersedes the notes below for what to do next).**
 >
-> **Mode: autopilot through the night, solo.** The owner: "continue working on autopilot and in the
+> **Mode: autopilot through the night.** The owner: "continue working on autopilot and in the
 > morning when I wake up you tell me about the ODRs you decided", then "no agents or workflows you go
-> solo" (whatever a session setting such as ultracode says). Rule ODRs under the delegation (sound,
+> solo" (whatever a session setting such as ultracode says); later (~23:05): "if you need you can spawn
+> a helper agent to help you out, just one at max". One read-only reviewer ran on A5-1 (findings below).
+> The owner also said, of the full check's hung `link.exe`: "if happens again you can end it, you have my
+> permission" — how: the session memory `reference_ember_link_hang_recipe.md` (WMI `Terminate`; plain
+> `Stop-Process` leaves it running). Rule ODRs under the delegation (sound,
 > fast, general solutions only; never widen an owner answer) and record each in
 > `tasks/96/redesign/compiler-0.9.15/decisions.md` section 8 as it is made. A question that is really
 > the owner's is not ruled: list it for the morning. **Morning report**, in chat, plainly: each ODR with
@@ -20,6 +24,19 @@
 >   E5013 for a promoted variadic argument, E5054 for `char`), `ebd1a8c1` (the read-only reviewer's 9
 >   findings on M0, fixed), `502b32b2` (README progress strict: a rule H3 marks new or changed in 0.9.15
 >   counts only once `docs/phase-status.json`'s `built_for_0915` lists it; Overall 78% -> 22%).
+> - **Later the same night (session 5d9166d4):** the 22:11 full check of `502b32b2` ran its MSVC suite
+>   (one case failed only because its hung `link.exe` was killed: TYP-16
+>   `accept_generic_class_virtual_owned_weak_class_field_argument` [development], 11 min, see the traps),
+>   its gates (one real failure: E5013 had no error page, fixed in `762a2248`) and its three C warning
+>   sweeps (MSVC, Clang, GCC: 0 programs with warnings); its LLVM matrix and clang-cl suite were stopped
+>   to free the tree, so the next full check must run whole. Then `1f325ec2` (A5-1, UNS-12/UNS-1) and
+>   A5-2 (UNS-7/UNS-8: `W3012` for blocks and `unsafe` implementations, `W3013`, `L3015` for every
+>   `unsafe fn` naming its first step; ~300 test implementations given notes, std's notes moved into
+>   `@safety`). The reviewer's 14 findings on A5-1 are being fixed next (list in the next commit's
+>   message): local functions in `unsafe:` blocks inherit it (a soundness hole), Q1's ruling (an
+>   unverified foreign call or foreign static outside `unsafe` is E3100, not E5002) not built, the
+>   per-line merge quadratic (4.96 s on 300 lines), block advice impossible for headers and multi-line
+>   statements, helps dropped in `unsafe fn` bodies, and smaller ones.
 > - A Windows full check of `502b32b2` was started at about 22:15 (background, the session's
 >   `verify_windows.ps1` in `C:\Users\ism19\AppData\Local\Temp\claude\C--Users-ism19-Code\ae3a2898-3f0f-4361-99e2-9bbbb0976123\scratchpad\`,
 >   which runs `full_check.ps1` beside it; summary in that folder's `check\verify.txt`). If the session

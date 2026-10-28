@@ -5,7 +5,7 @@
 # (`returns_owned(destructor=f)`, `borrowed one from(p)`): a handle with no lifetime would let safe
 # code pass C one C has freed, so `result(handle)` is `E5002`, and the result has no contract.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(handle)
     type Device
 

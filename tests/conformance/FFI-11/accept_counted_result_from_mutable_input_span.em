@@ -4,7 +4,7 @@
 #$ stdout: 1
 #$ 27
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, count(n), exclusive), result(borrowed, count(n), from(input)), link_name="echo_mut_counted")
     safe fn echo(input: MutSpan[i32], n: usize) -> Span[i32]
 

@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5002]: `safe fn` needs an `@ffi` nullable NUL-terminated contract for `text`
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     safe fn undocumented(text: Option[cstr]) -> usize
 
 fn main():

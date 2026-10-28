@@ -14,7 +14,7 @@
 # (C's `uint32_t*`), hidden from the callable signature as a `count(n)`
 # witness is. The C side is the exported Ember function below.
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(count, inout_count(items)), param(items, borrowed, count(count), nullable, exclusive), link_name="list_squares")
     safe fn squares(mut count: u32, items: Option[MutSpan[i32]])
 

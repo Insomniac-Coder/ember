@@ -18,7 +18,7 @@ pub extern "C" fn header_score(envelope: HeaderEnvelope, callback: Option[extern
         None:
             return 0
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type HeaderHandle
 
 pub extern "C" fn header_handle_roundtrip(handle: *HeaderHandle) -> *HeaderHandle:

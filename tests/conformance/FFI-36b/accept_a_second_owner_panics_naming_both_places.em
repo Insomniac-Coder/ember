@@ -9,7 +9,7 @@
 
 from std.ffi import adopt
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(destroys(widget_free))
     type Widget
     fn widget_new(id: i32) -> *mut Widget

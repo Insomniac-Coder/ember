@@ -37,15 +37,34 @@ pub struct Module {
     /// parser gathers them, in order, into a synthesised `fn main()` in
     /// `items`; only the entry file may have them.
     pub script: Option<Script>,
-    /// `[UNS-8]` — the `unsafe` keyword of each `unsafe:` block and each
-    /// `unsafe fn` with a body, in source order: each needs a safety note.
-    pub unsafe_sites: Vec<Span>,
+    /// `[UNS-8]` — each `unsafe:` block, `unsafe` implementation and `unsafe fn` with a body, at its
+    /// `unsafe` keyword, in source order: whose safety notes are checked.
+    pub unsafe_sites: Vec<UnsafeSite>,
     /// `[GRM-28]`, `[GRM-21]` — whether a block holds a `gen fn`, which the coroutine desugaring
     /// lifts to the module (ODR-268).
     pub local_generators: bool,
     pub span: Span,
     /// The file's text, for the messages that quote code as written or name its lines.
     pub source: std::sync::Arc<str>,
+}
+
+/// `[UNS-8]` — an `unsafe` whose safety notes are checked, at its keyword.
+#[derive(Clone, Copy, Debug)]
+pub struct UnsafeSite {
+    pub span: Span,
+    pub kind: UnsafeSiteKind,
+}
+
+/// `[UNS-11]` — what an `unsafe` says by its position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnsafeSiteKind {
+    /// `unsafe:` — this code vouches, with a `# SAFETY:` note saying why.
+    Block,
+    /// `unsafe extend`, `unsafe extern`, `unsafe overlay` — likewise.
+    Implementation,
+    /// An `unsafe fn` with a body, which says its callers vouch, with `@safety` saying for what:
+    /// its name, and whether it is written with `@safety`.
+    Fn { name: Symbol, safety: bool },
 }
 
 /// Where a script's statements came from, so a tool can put them back.

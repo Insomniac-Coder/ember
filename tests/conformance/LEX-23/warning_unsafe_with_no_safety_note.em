@@ -2,14 +2,16 @@
 #$ rules: LEX-23, UNS-8
 #$ stdout: 6
 #$ stdout: 7
-## `[UNS-8]` — an `unsafe:` block or `unsafe fn` with no safety note is
-## `W3012`; a `SAFETY(...)` whose category is not one of `ffi`, `layout`,
-## `aliasing`, `intrinsic`, `performance` or `uninit` is no note (D-584).
+## `[UNS-8]` — an `unsafe:` block or an `unsafe` implementation (here `unsafe extern`) with no safety
+## note is `W3012`; a `SAFETY(...)` whose category is not one of `ffi`, `layout`, `aliasing`,
+## `intrinsic`, `performance` or `uninit` is no note (D-584). An `unsafe fn` says what its callers make
+## true with `@safety` instead.
 
-unsafe extern "C":
+unsafe extern "C":    #$ warning[W3012]: this `unsafe` has no safety note
     fn abs(x: i32) -> i32
 
-unsafe fn bare(x: i32) -> i32:    #$ warning[W3012]: this `unsafe` has no safety note
+@safety("nothing: abs takes any i32")
+unsafe fn bare(x: i32) -> i32:
     # SAFETY(ffi): abs takes any i32 and touches no memory
     unsafe:
         return abs(x)

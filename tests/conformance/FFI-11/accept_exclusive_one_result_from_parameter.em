@@ -3,7 +3,7 @@
 #$ profiles: debug, development, release
 #$ stdout: 13
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(input, borrowed, fixed(1), exclusive), result(borrowed, one, exclusive, from(input)), link_name="echo_mut_number")
     safe fn echo(input: ref mut [i32; 1]) -> ref mut i32
 

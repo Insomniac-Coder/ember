@@ -11,7 +11,7 @@ from std.ffi import ForeignCallback
 class Counter:
     count: i32 = 0
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     fn forget(handler: extern "C" fn(*mut void), data: *mut void)
     @ffi(param(handler, callback(borrowed, user_data=data)))
     safe fn now(handler: extern "C" fn(*mut void), data: *mut void)

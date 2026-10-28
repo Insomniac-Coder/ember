@@ -25,7 +25,7 @@ struct Point:
     x: i64
     y: i64
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(object, retained, one, threads(main)))
     safe fn keep(object: Retained[Noisy])
     @ffi(param(point, retained, one), link_name="keep")

@@ -26,7 +26,7 @@ enum Status:
     NoMemory = -1
     Busy = 2
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(out, out, one), result(status), link_name="make_c")
     safe fn make(n: i32, mut out: i32) -> Status
 

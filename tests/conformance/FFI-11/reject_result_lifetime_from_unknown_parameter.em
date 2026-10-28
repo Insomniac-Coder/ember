@@ -3,7 +3,7 @@
 #$ profiles: debug
 #$ error[E5002]: result lifetime `from(missing)` names no borrowed parameter
 
-unsafe extern "C":
+unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(value, borrowed, one), result(borrowed, one, from(missing)))
     safe fn inspect(value: ref i32) -> ref i32
 
