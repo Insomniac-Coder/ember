@@ -317,7 +317,7 @@ Precedence, lowest first. Operators on one row associate left unless noted.
 ```text
 expression    := jump_expr | lambda | ternary
 jump_expr     := "return" [expr_list] | "break" [IDENT] | "continue" [IDENT] | "yield" [expression]
-lambda        := ["once"] "fn" "(" [lambda_param {"," lambda_param} [","]] ")" [capture_list]
+lambda        := ["@safety" "(" STRING ")"] ["once"] "fn" "(" [lambda_param {"," lambda_param} [","]] ")" [capture_list]
                  ["->" type] ("=>" expression | ":" block)
 lambda_param  := [param_word] IDENT [":" type]
 capture_list  := capture {"," capture}

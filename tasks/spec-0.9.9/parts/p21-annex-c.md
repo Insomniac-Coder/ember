@@ -168,11 +168,11 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   address, binds no non-`const` reference or pointer to one, calls no non-`const` method of one, hands
   neither the object nor a field to a function by non-`const` reference or pointer, and calls no method
   of the object that may change it, nor anything it cannot follow — and as changing it otherwise, or
-  when the header does not have the body (ODR-160). An overlay's `class C:` section restates a method
-  as an Ember method line (`fn lookups() -> c_int`); `@ffi(const)` above the line asserts that the
-  method only reads its object, an asserted fact, which `ember tcb` lists, and a line without it
-  imports the method as changing its object. A line whose name, parameters or result differ from the
-  import's method is `E5010`.
+  when the header does not have the body (ODR-160). An overlay's `class C:` section holds the entry of
+  each member it states (`[GRM-35]`, verdict 131): `@ffi(const)` above a method's entry
+  (`fn lookups()`) asserts that the method only reads its object, an asserted fact, which `ember tcb`
+  lists, and an entry without it imports the method as changing its object. An entry whose name or
+  parameters differ from the import's member is `E5010` (`[FFI-12]`).
 * `[FFI-41]` *(changed in 0.9.15)* Static member functions import as functions of the type with no
   object, as a `static fn` is (`[FN-4]`). A static data member, and a
   variable of a namespace, imports as a foreign static (`[FFI-10]`), read and written as a global

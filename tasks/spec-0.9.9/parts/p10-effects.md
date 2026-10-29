@@ -36,7 +36,9 @@ The compiler infers, for every function, an **effect set** drawn from:
   parameter with every argument given to it, and a place a value is copied into with the functions of
   the place it came from. A value the compiler cannot follow, read through a raw pointer or given by C,
   has those of every function stored into its type. A place no function ever reaches is called by no
-  code that runs, and contributes nothing. For an interface, `dyn`
+  code that runs, and contributes nothing. Dropping a function value has the effects of dropping each
+  function that reaches its place: none for a named function, its captured values' drops for a
+  lambda. For an interface, `dyn`
   or `virtual` method, it is every implementation and override the program has. A foreign function
   pointer (`extern "C" fn`) contributes the effects its type declares, and all effects if none are
   declared. A contract is written on a function type above a `type` line that names one (verdict 106):

@@ -160,6 +160,30 @@ change it. If no word says it, the design hides meaning and fails.
 - 2026-10-29: advice must be followable: "put lines 9 to 12" (the whole `if`) over "put line 11"; "remove
   this note" over "remove this line" when the line is the function.
 
+## Where my rulings and the owner's differed (ODR review of 2026-10-29, evening)
+
+The owner reviewed my 15 rulings of the day (ODR 9 to 20) one at a time. Eleven stood as I ruled them.
+The four below did not, and each time the owner's answer was the more consistent one. Owner: "remember
+the consistency part ... I am glad about the fact that for the most part we were on the same page".
+
+| ODR | What I ruled | What the owner chose | Why his was right | The lesson |
+|---|---|---|---|---|
+| 18 | In an overlay, `@safety("…")` above a plain `fn lib_step(x)` line leaves the C function unsafe; I offered `-> unsafe` (the overlay's old contract word) as the other choice. | `@safety("…")` above `unsafe fn lib_step(x)`; `-> unsafe` replaced everywhere (verdict 130). | Ember already spells this: `@safety` goes with `unsafe fn`, and `@safety` on a plain `fn` is an error (`E0104`). My ruling broke that rule inside overlays, and kept a second spelling of "unsafe" alive. | Before ruling a spelling, find how the language already spells the same idea, and use exactly that. Never take a corner of the language's local habit (an overlay word) as the baseline over the language's main spelling. |
+| 13 | A lambda written in unsafe code gets no "missing `@safety`" warning, because there is nowhere to write `@safety` for it. | Give lambdas a place to write it, `set = @safety("…") fn(v: int) => p.write(v)`, and warn when it is missing (verdict 126). | The rule "everything unsafe states what its callers must make true" then has no exception. My exemption existed only because syntax was missing. | When a rule cannot be followed because the syntax is missing, add the syntax; do not exempt the case. An exemption is for where the rule would say something untrue (principle 6), never for where it is merely hard to write. |
+| 14.5 | A program with no `ember.toml` keeps its `ember.overlays` record in Ember's hidden cache. | Every project has an `ember.toml`: Ember writes a default one when there is none, then the record beside it, for every program (verdict 127). | One model for every program (each is a package) instead of a second, hidden path; and a deleted cache could let a header change slip through. | Do not invent a special path for "the case that does not fit". Make the normal path hold for everything, even when it means writing a file the user did not write. |
+| 15.1 | My notes said a callable parameter holds what every caller passes, but the compiler mapped a parameter to its type, so passing `s.by` to a helper brought back the by-type answer the owner had rejected that morning. | Follow what callers pass (verdict 128). | His by-field verdict has to hold through every path a value takes (parameters, lists), or it holds nowhere. | Carry an owner's precision choice through every path, and check that the code does what the notes say before presenting a ruling. Probing ODR 15.2 the same way found a real hole (D-930). |
+
+Also from the review:
+
+- **Verdict 125 for C++.** I applied it to C only, since the owner said "C", and asked about C++. He said
+  "yes C++ too, same rule". Asking was right (never widen an answer). But his reason ("C code can't be
+  trusted as safe") covered C++ just as well, so the consistent answer was predictable.
+- **Explaining.** What failed: too many ideas in one message; rule codes; abstractions ("another
+  package", "the record") without the concrete story; options listed before the problem was clear. What
+  worked: one idea per message, real code and real compiler output, the owner's own earlier words quoted
+  back ("you said 'if you want it to be treated as safe you have to write it in safe block'"), folder
+  listings, and a two-line "what happens" list.
+
 ## What is never mine to decide
 
 - **Any change to what the language does.** It goes to the owner, with real code, one question at a
@@ -187,3 +211,11 @@ change it. If no word says it, the design hides meaning and fails.
 8. If a mark is forgotten, is the result a refusal and not a crash?
 9. Does every message give a line that compiles?
 10. Does it change what the language does? Then it is the owner's question, not my ruling.
+11. Is the same idea already spelled somewhere in the language? Then this is spelled exactly that way,
+    and any older second spelling goes (ODR 18).
+12. Does the ruling exempt a case only because the syntax to follow the rule is missing? Then add the
+    syntax instead (ODR 13).
+13. Does it add a special or hidden path for programs that do not fit the normal model? Then make the
+    normal model hold for them instead (ODR 14.5).
+14. Did I run it on the real compiler, and does the code do what my notes say, on every path a value can
+    take (ODR 15.1, D-930)?

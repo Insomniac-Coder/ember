@@ -30,13 +30,15 @@ fn main():
   from the C declaration are derived (`[FFI-2a]`); the rest are `unknown` until a contract supplies
   them. `threads(creator)` and `handle` are words of a type's or a result's contract, not a function's:
   on a function each is a contract error (`E5002`).
-* `[FFI-2]` *(changed in 0.9.9)* A call to a foreign function whose contract contains an `unknown` fact
+* `[FFI-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call to a foreign function whose contract contains an `unknown` fact
   requires `unsafe`. Supplying the facts, in an `@ffi(…)` attribute or an overlay (§XVI.4), makes the
   call safe. The safe-to-call fact is never derived, because a scalar can be an address
   (`void free_addr(uintptr_t)`): it is asserted by `safe fn` in an extern block (`[FFI-10]`), or by an
   overlay entry for the function, which asserts that a call within its contract cannot break memory
-  safety; such an overlay is an `unsafe overlay` (`[GRM-35]`). A header function with no overlay entry
-  therefore stays unsafe to call. The diagnostic,
+  safety; such an overlay is an `unsafe overlay` (`[GRM-35]`). An entry written `unsafe fn` asserts
+  nothing of the kind: the function stays unsafe to call, and the entry's `@safety` says what its
+  callers must make true (`[UNS-7]`, verdict 130). A header function with no overlay entry therefore
+  stays unsafe to call. The diagnostic,
   `E5002`, names each missing fact and the overlay line that supplies it (`[DIA-18]`).
 * `[FFI-2a]` *(changed in 0.9.15)* Derived facts need no `unsafe`: `const T*` is a read-only view, `T*`
   one through which C may write; the layouts of structs and unions, enum underlying types, packing and
@@ -242,8 +244,8 @@ unsafe overlay c "vulkan/vulkan.h":
   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
                    | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl
                    | overlay_class)
-  overlay_class := "class" IDENT ":" NEWLINE INDENT {{attribute} fn_header NEWLINE} DEDENT
-  overlay_fn    := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
+  overlay_class := "class" IDENT ":" NEWLINE INDENT {{attribute} overlay_fn} DEDENT
+  overlay_fn    := ["unsafe"] "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
                    ["->" contract {contract}] NEWLINE
   overlay_param := IDENT [":" contract {contract}]
   contract      := IDENT ["(" [attr_arg {"," attr_arg} [","]] ")"]
@@ -252,15 +254,17 @@ unsafe overlay c "vulkan/vulkan.h":
   In an entry marked `@ffi(macro_fn)` (`[FFI-6b]`) a parameter's and the result's words are one Ember
   type each (`IDENT ":" type`, `"->" type`), since a macro has no C declaration to read (ODR-147). An
   item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
-  ODR-149). An `overlay_class` section restates methods of a C++ class, each as an Ember method line
-  with no body, whose `@ffi(const)`, when written, asserts that the method only reads its object
-  (`[FFI-40a]`, ODR-160). Ember records the header each overlay was written for in `ember.overlays`,
+  ODR-149). An `overlay_class` section holds the entries of a C++ class's members (verdict 131): its
+  methods, which list no receiver, its constructors (`new`) and its static functions, each written as
+  any other entry; `@ffi(const)` above a method's entry asserts that the method only reads its object
+  (`[FFI-40a]`, ODR-160). An entry outside a class section is a function outside any class
+  (`[FFI-12]`). Ember records the header each overlay was written for in `ember.overlays`,
   never in the overlay (`[FFI-55]`).
 
   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
-  `@ffi(…)` attribute, a function entry, which asserts the function safe to call (`[FFI-2]`), or a
-  method line — is an
+  `@ffi(…)` attribute, or a function entry, which asserts the function safe to call or, written
+  `unsafe fn`, states what its callers must make true (`[FFI-2]`) — is an
   assertion about foreign code and MUST be declared `unsafe overlay` (`E5067`), a boundary of
   `[TIER-1]`; an overlay of only `rename` and `hide` items needs no `unsafe`.
 * `[FFI-11]` *(changed in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Contract vocabulary.** A pointer contract has five axes;
@@ -284,10 +288,10 @@ unsafe overlay c "vulkan/vulkan.h":
   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
   (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the registering
-  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe`
-  (leave the call unsafe); and, on a function, `no_callbacks` (it never calls back into Ember,
+  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); and, on a function, `no_callbacks` (it never calls back into Ember,
   `[FFI-52]`), and on a function-pointer typedef, `safe` (`[FFI-56]`).
-  `@ffi(effects=[…])` states effects.
+  `@ffi(effects=[…])` states effects. An entry leaves its calls unsafe by being written `unsafe fn`
+  (`[GRM-35]`, verdict 130); `unsafe` is no contract word.
 * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
   `Len`, `Size` or `N`).
@@ -300,8 +304,10 @@ unsafe overlay c "vulkan/vulkan.h":
   that mark a fact as still unknown: the declaration stays uncontracted and its calls stay `unsafe`.
   A header can be adopted on the first day with everything behind `unsafe:`, and made safe one
   function at a time.
-* `[FFI-12]` An overlay entry whose name, parameter count or parameter names do not match the header is
-  `E5010`, so overlays cannot drift.
+* `[FFI-12]` *(changed in 0.9.15)* An overlay entry whose name, parameter count or parameter names do not
+  match the header is `E5010`, so overlays cannot drift. So is an entry outside a class section that
+  names only members of classes (verdict 131): "`new` is a member of `Handle` and of `MutHandle`:
+  write it under `class Handle:` or `class MutHandle:`".
 * `[FFI-55]` *(new in 0.9.15)* **Every overlay is checked against the header it was written for, by a
   record Ember keeps** (verdict 121). A package with an overlay of a C or C++ header has a file
   `ember.overlays` beside its `ember.toml`, written by Ember and never by hand. For each overlay it
@@ -310,7 +316,7 @@ unsafe overlay c "vulkan/vulkan.h":
 
   ```text
   # ember.overlays: the headers this package's overlays were checked against.
-  # Written by ember; `ember bind --merge` rewrites it.
+  # Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
 
   [[overlay]]
   file = "overlays/sdl.em"
@@ -319,16 +325,17 @@ unsafe overlay c "vulkan/vulkan.h":
   ```
 
   Ember writes the record the first time the package's own build applies the overlay, and only
-  `ember bind --merge` rewrites it (`[CLI-5]`); a declaration the overlay describes that the record
+  `ember bind <header> --check <overlay> --merge`, run once a person has checked the overlay against
+  the header, rewrites a line of it (`[CLI-7]`); a declaration the overlay describes that the record
   lacks, an entry just written, is added by the package's own build. Every build that applies an
   overlay, its own package's and any other's, compares each declaration the overlay describes with
   the header it imports. One that differs is `E5010`, naming the overlay, the declaration as the
   header imported declares it, and the way out ("`SDL_FreeSurface` changed since `overlays/sdl.em` was
   checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check the
-  overlay against this header, then run `ember bind --merge`"); in another package's build, an overlay
+  overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in another package's build, an overlay
   or a declaration its package's record lacks is `E5010` too. A change to a declaration the overlay
-  does not describe changes nothing. A program with no `ember.toml` is no package and nobody's
-  dependency, so Ember keeps its overlays' record in its own cache instead, checked the same way.
+  does not describe changes nothing. Every program has an `ember.toml` (`[MAN-9]`), so the record is
+  always beside one.
   Nothing of this is written in the overlay or in the program.
 * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
   idiomatic API is layered over a raw one.

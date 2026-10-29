@@ -162,7 +162,7 @@ reused; retired codes are listed with the reason.
 | `E4072` | `@fastmath` or `@fp(allow_fma)` inside `@deterministic` | `[DET-5]` |
 | `E5001` | imported type layout does not match | `[FFI-5]` |
 | `E5002` | a foreign declaration whose contract cannot stand: `safe fn` on a function whose contract is incomplete, or two destructors for one foreign type (a call of a function without a verified contract outside `unsafe` is `E3100`) | `[FFI-2]`, `[FFI-10]`, `[FFI-36a]` |
-| `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay | `[FFI-12]`, `[FFI-55]` |
+| `E5010` | overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay; an entry outside a class section that names only members of classes | `[FFI-12]`, `[FFI-55]` |
 | `E5011` | one C identity imported with two different layouts | `[FFI-30]` |
 | `E5012` | pointer contract has no count | `[FFI-11]` |
 | `E5013` | a further argument of a variadic C function that C would promote to another type | `[FFI-8]` |
@@ -246,7 +246,7 @@ reused; retired codes are listed with the reason.
 | `L2005` | `@noreload` function calls a reloadable one in a loop | `[LNT-5]` |
 | `L3002` | a view kept in use longer than necessary | `[LNT-6]` |
 | `L3010` | `unsafe` block larger than necessary, or inside unsafe code already | `[UNS-3]` |
-| `L3015` | an `unsafe fn` with no `@safety` | `[UNS-7]` |
+| `L3015` | an `unsafe fn` with no `@safety`: one declared, a lambda written in unsafe code, or a function `import c` or `import cpp` writes that its overlay entry leaves unsafe to call | `[UNS-7]` |
 | `L3016` | `@safety` text still reads `TODO` | `[UNS-7]` |
 | `L3017` | a loop of owners found leaked at exit (made through `unsafe` or foreign code) | `[WK-4]` |
 | `L3020` | a `safe:` block outside unsafe code, which changes nothing | `[UNS-12]` |

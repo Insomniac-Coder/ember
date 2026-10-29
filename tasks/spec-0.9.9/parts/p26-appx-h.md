@@ -2216,3 +2216,39 @@ Generated: every rule whose text differs from 0.9.15_Hardened_3.
 | `[UNS-7]` | changed |
 | `[UNS-11]` | changed |
 | `[UNS-12]` | changed |
+
+## H.45 Changes in 0.9.15_Hardened_5 (from 0.9.15_Hardened_4)
+
+**0.9.15_Hardened_5** writes in the owner's verdicts 125 to 131 from the ODR review of 2026-10-29, evening
+(`tasks/96/redesign/JOB.md`); the lead's other rulings of Hardened_4 were approved as written
+(`tasks/96/redesign/compiler-0.9.15/decisions.md`, "Owner verdicts on §9's rulings"):
+
+* Verdict 125: a function `import c` or `import cpp` writes that its overlay entry leaves unsafe to
+  call carries `@safety` in that entry; a call of one without it is `L3015`, once for each function, at
+  its first call in unsafe code (`[UNS-7]`).
+* Verdict 126: a lambda written in unsafe code carries `@safety`, written just before it, and one
+  without it is `L3015` (`[UNS-7]`, the grammar's `lambda`).
+* Verdict 127: every program is a package; a build of a file with no `ember.toml` writes a default one
+  (`[MAN-9]`, new); the overlay record is always beside it (`[FFI-55]`).
+* Verdicts 128 and 129: a callable parameter holds what its callers pass, and a function put into a
+  list is followed into the list's place, as `[EFF-2]` says; dropping a function value has the effects
+  of dropping the functions that reach its place (`[EFF-2]`).
+* Verdict 130: an overlay entry for a function unsafe to call is written `unsafe fn`, with its
+  `@safety`; the `unsafe` contract word is gone (`[GRM-35]`, `[FFI-2]`, `[FFI-11]`, `[CLI-5]`).
+* Verdict 131: a C++ class member's entry is written under its class; an entry outside a class section
+  that names only members is `E5010` (`[GRM-35]`, `[FFI-12]`, `[FFI-40a]`).
+* `ember bind <header> --check <overlay> --merge` re-records an overlay once it is checked, and
+  `E5010`'s message names that command (`[CLI-7]`, `[FFI-55]`).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_4.
+
+| Rule | 0.9.15_Hardened_4 → 0.9.15_Hardened_5 |
+|---|---|
+| `[CLI-5]` | changed |
+| `[CLI-7]` | changed |
+| `[EFF-2]` | changed |
+| `[FFI-2]` | changed |
+| `[FFI-12]` | changed |
+| `[FFI-40a]` | changed |
+| `[MAN-9]` | added |
+| `[UNS-7]` | changed |

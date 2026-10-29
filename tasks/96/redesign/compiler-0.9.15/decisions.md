@@ -319,3 +319,105 @@ changed.
     advice names) are superseded: no fixed type is right for every function. A `...` that mixes types
     (`printf`): asked next.
 
+## 10. Rulings writing 0.9.15_Hardened_5 (lead, 2026-10-29 evening)
+
+Verdicts 125 to 131 (JOB.md). Each ruling was run through `docs/OWNER-DIRECTION.md`'s checklist, its
+items 11 to 14 included.
+
+| Rule | Ruling | Why |
+|---|---|---|
+| GRM-35, FFI-40a (verdict 131) | A class section holds entries in the form of every other entry (names and contract words; `@ffi(const)` above a method that only reads its object); the Ember method line with types (`fn lookups() -> c_int`) goes. | One way to write an overlay line (checklist 11); the types are the header's, which the entry is checked against. |
+| MAN-9 (verdict 127) | The default `ember.toml` is `[package]` with the folder's name and `version = "0.1.0"`; Ember says that it wrote it. | Nothing is written behind the user's back; the least a package needs. |
+| GRM `lambda` (verdict 126) | `@safety("…")` is the only attribute written before a lambda. | No other attribute was asked for. |
+| CLI-5 (verdict 130) | `ember bind --init` writes `unsafe fn` lines with no `@safety` text; the first call's `L3015` says what is missing. | A placeholder text would silence the warning without anyone saying anything. |
+| EFF-2 (ODR 15.3's knock-on fix) | Dropping a function value has the effects of dropping the functions that reach its place. | The owner was told with ODR 15.3; without it no `@noalloc` function may own a stored function. |
+
+### Owner verdicts on §9's rulings, 2026-10-29 (afternoon; asked as ODR 9 onward)
+
+The rulings of §9 and of verdict 125, put to the owner one at a time, numbered on from the morning's
+ODRs 1 to 8.
+
+19. **C++ follows verdict 125** (owner: "yes C++ too, same rule"): a function `import cpp` writes,
+    members included, says what its callers must make true in its overlay entry. How a member's entry
+    is written is still to settle (two classes' `new` are one entry by name today).
+20. **ODR 9 approved: a `safe:` block takes no `# SAFETY:` note** (owner: "no comments for safe, safe is
+    safe so nothing to worry about").
+21. **ODR 10, first half, approved: an `unsafe:` block inside a `safe:` block is unsafe code again**
+    (owner: "I accept your decision").
+22. **ODR 10, second half, approved: a function written inside a `safe:` block is a safe function**
+    (owner, after the plain re-explanation: "yes I see your point and I agree").
+23. **ODR 11 approved: `L3020` and `L3010` warn of a `safe:` or `unsafe:` block that changes nothing**
+    (owner: "warning is fine").
+24. **ODR 12 approved: `E3100`'s text in a `safe:` block** (owner: "yes that message is fine"). The note
+    under it, "`[UNS-1]` lists the operations that do", is cut short: to read "… that need `unsafe`".
+25. **ODR 13 replaced: a lambda carries `@safety`** (owner, after the probe showed today's compiler refuses it:
+    "yes build it"). `set = @safety("…") fn(v: int) => p.write(v)`: `@safety` written just before a
+    lambda; a lambda written in unsafe code without it is `L3015` as a named function is; the text is kept
+    with the lambda (its line, `ember tcb`). A value's type `unsafe fn(…)` carries no text, as for a named
+    function. To do: a new hardening, the parser, typeck.
+26. **ODR 14.1 approved: `ember.overlays` fingerprints each declaration an overlay describes, not the
+    header file** (owner: "I agree with your decision", after the probe: a function added to the header
+    changes no record and stays unsafe, with verdict 125's `L3015`, until an entry states it).
+27. **ODR 14.2 approved: the package's own build adds a missing record line; a changed declaration
+    stops the build until a person checks the overlay and re-records** (owner: "yes I agree"). Defect found
+    in the probe and to fix: the help's `ember bind --merge` is refused alone, and `--init --merge` records
+    only the starter overlay (`<header>.overlay.em`); `ember bind lib.h --check overlays/lib.em --merge`
+    is to check that overlay and, when it passes, rewrite its record line, and `E5010`'s help is to print
+    that command with the real file names.
+28. **ODR 14.3 approved: another package's overlay with no line in that package's `ember.overlays` is
+    `E5010`** (owner, after `ember.overlays` was explained again from his own request: "error is fine").
+29. **ODR 14.4 approved: `ember.overlays` is TOML, as `ember.toml` and `ember.lock` are** (owner: "keep
+    this format"). Its second comment line is to name the re-record command once ODR 14.2's fix lands.
+30. **ODR 14.5 replaced: every project has an `ember.toml`** (owner: "ember.tomp is a must for all
+    projects, so if it doesn't exist ember should build a default one for you and then create the overlays
+    file"). A build of a program with an overlay and no `ember.toml` writes a default `ember.toml`, then
+    `ember.overlays` beside it; no record in the cache. Every build: asked whether a loose file with no
+    overlay gets one too, the owner: "always, every project needs an ember.toml". So a build or run of a
+    file with no `ember.toml` in its folder or above writes a default one (`[package]`, `name` the file's
+    folder, `version = "0.1.0"`). To do: a new hardening (MAN, BLD), the driver, the test harness.
+31. **ODR 15.1 replaced: a callable parameter holds what its callers pass** (owner: "yes follow what
+    callers pass"). §9's table said so, but `targets.rs` maps a parameter to its type: `apply(s.by, x)`
+    with `fn apply(mut f: fn(int) -> int, x: int)` reached `Logger.format`'s allocating lambda. To build:
+    each argument flows into the callee's parameter (direct calls, and calls through values to each
+    target), to the fixed point. Also: `E4001`'s chain named `em_closure_4main_c1`; it is to name the
+    lambda by its line.
+32. **ODR 15.2: the exact way for lists** (owner: "the exact way"), after the probe found D-930 (a
+    `@noalloc` function called `widen` through `Bus.handlers`, accepted and run). Putting a function into a
+    list (a list literal, `push`, `insert` and std's other list functions, marked for the analysis) puts it
+    in the list's place; anything else writing a list's memory (a raw pointer) falls back to the type.
+33. **ODR 15.3 approved: a local a function is copied or lent into holds what its place holds** (owner:
+    "yes treat it like s.by"). Found with it, told the owner, to fix (lead, a knock-on fix): dropping a
+    stored function counts as a drop not known (`owned s: Scaler` then `f = s.by` refuses `@noalloc` even
+    for `double`); the functions reaching the place give the drop: none for a named function, the
+    captured state's for a lambda.
+34. **ODR 15.4 approved: a function read through a raw pointer may be any function of its type** (owner,
+    after the plain re-explanation: "yes any function of that type").
+35. **ODR 16 approved: a link's time limit is 30 minutes, `[link] timeout` (seconds) sets another,
+    `E9042`, the command file kept, nothing retried** (owner, after asking whether the hang was the
+    compiler's: the limit is only the safety net; finding the cause stays to do: "yes 30 minutes is fine").
+36. **ODR 17 approved: an `f32` through `...` names the one fix, `as f64`, not both sizes** (owner, after
+    the background was explained again: "keep the exception for floats"; verdict 123 names both sizes
+    for integers, which C may read at either).
+37. **ODR 18 replaced: an overlay line for a C function unsafe to call is `@safety("…")` above
+    `unsafe fn name(…)`, as in Ember code** (owner: "why is it not unsafe fn lib_step(x)", then "yes unsafe
+    fn, replace -> unsafe"). `unsafe fn` without `@safety` is verdict 125's `L3015`; `@safety` on a plain
+    `fn` line is `E0104` as in Ember; the `-> unsafe` contract word is replaced by `unsafe fn` (the
+    grammar, `ember bind --init`'s starter, the tests). To check: the `unsafe` word in a parameter's
+    place. Found in the probe, to fix: today `@safety` on an overlay line is `E0104` ("does not apply to
+    a overlay item"), and `E3100`'s note blames "its `unsafe` word".
+38. **ODR 19 approved: verdict 125's `L3015` comes once per C function, at its first call in unsafe code**
+    (owner: "once per function is fine"). Its help is to name `unsafe fn name(…)` (ODR 18).
+39. **ODR 20 approved: an overlay line for a C++ class member goes under its class** (owner: "yes member
+    lines under their class"). Found in the probe: today a top-level `fn new(x, y)` in an overlay of
+    `handles.hpp` made both `Handle.new` and `MutHandle.new` safe to call (entries are found by name).
+    A top-level line names only a function outside any class; one naming only members is an error that
+    names the classes to write it under.
+
+**The work these verdicts leave (2026-10-29, in order of the push):** verdict 125 for C and C++
+(items 19, 37, 38, 39: `@safety` above `unsafe fn` in an overlay, under the class for a member; `-> unsafe`
+replaced; the help and note texts); a lambda's `@safety` (25); every project has an `ember.toml` (30);
+`ember bind <header> --check <overlay> --merge` re-records, with `E5010`'s help naming it (27, 29); EFF-2:
+a parameter holds what callers pass (31), lists the exact way (32, D-930), a stored function's drop, the
+chain's lambda by its line (31, 33); `E3100`'s cut-short note (24); then a new hardening for all of it,
+the link time limit (35) and the hang's cause, the full check, the bench, the push.
+

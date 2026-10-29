@@ -306,12 +306,19 @@ fn parse(data: Span[u8]) -> Option[u32]:
   otherwise.
 * `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers must
   make true: a function declared inside unsafe code, which is an `unsafe fn` (`[UNS-12]`, verdict
-  119), and one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120) included. Without it,
+  119), one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120), and a function `import c` or
+  `import cpp` writes (`[FFI-6]`, `[FFI-17]`) that its overlay entry leaves unsafe to call (verdict 125),
+  which carries it in that entry, above `unsafe fn name(…)` (`[GRM-35]`), included. Without it,
   `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer `p`, and nothing says
   what its callers must make true for that; say it above the function: `@safety("...")`, with what
-  `p` must point to"; a declaration with no body is named without a step). A lambda written inside
-  unsafe code has no line for `@safety` and gets no `L3015`: whoever calls it vouches in the note of
-  the block the call is in. `@safety` is the declaration's only note: a `# SAFETY:` note on an
+  `p` must point to"; a declaration with no body is named without a step). For an imported function,
+  `L3015` is given once for each function, at its first call in unsafe code: "`lib_step` is a C
+  function the program calls in unsafe code, and nothing says what its callers must make true; say it
+  in the overlay entry for `lib_step`: `@safety("...")` above `unsafe fn lib_step(…)`". A lambda
+  written inside unsafe code, an `unsafe fn(…)` value, carries `@safety` too, written just before it
+  (`set = @safety("`p` points to a writable `int`") fn(v: int) => p.write(v)`, verdict 126), and
+  without it is `L3015`; the text stays with the lambda, which `ember tcb` lists, while a value's type
+  `unsafe fn(…)` carries none, as for a named function. `@safety` is the declaration's only note: a `# SAFETY:` note on an
   `unsafe fn`, alone on the line before it or at the end of its line (`[LEX-23]`), is `W3013`
   ("`read_u32_le` says what its callers must make true with `@safety`; a `# SAFETY:` note says why an
   `unsafe:` block is sound: remove this line"; "… remove this note" for one at the end of the

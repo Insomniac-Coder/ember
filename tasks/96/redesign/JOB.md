@@ -1025,6 +1025,31 @@ verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
 124. **The hung MSVC linker: find the cause and fix it, and give a link a time limit.** Owner: "duh
     ofcourse it's an issue so you have to find the cause and fix it, can't leave it like that and a time
     limit".
+125. **A function imported from C says what its callers must make true.** Owner (2026-10-29): "Yeah for
+    functions imported from C should require @safety as C code can't be trusted as safe". A function
+    `import c` writes that its overlay entry leaves unsafe to call carries `@safety` in that entry; a
+    call of one without it is `L3015`, as for any `unsafe fn` without `@safety` ([UNS-7]). C++ too
+    (owner, asked: "yes C++ too, same rule"): a function `import cpp` writes, members included.
+126. **A lambda carries `@safety` like a named function.** The lead had exempted lambdas written in
+    unsafe code (no line to write it on); owner, shown that today's compiler refuses
+    `set = @safety("…") fn(v: int) => p.write(v)`: "yes build it". `@safety` is written just before the
+    lambda, and one without it is `L3015` ([UNS-7], [GRM] `lambda`).
+127. **Every project has an `ember.toml`.** Owner: "ember.tomp is a must for all projects, so if it
+    doesn't exist ember should build a default one for you and then create the overlays file", then,
+    asked whether a program with no C import gets one too: "always, every project needs an ember.toml"
+    ([MAN-9], new; [FFI-55] keeps no record in the cache).
+128. **A callable parameter holds what its callers pass.** Owner: "yes follow what callers pass"
+    (passing `s.by` to a helper brought back the by-type answer) ([EFF-2]; the spec already said so).
+129. **Functions put into a list are followed the exact way.** Owner: "the exact way": putting a
+    function into a list (a list written out, `push`, `insert`, std's list functions) puts it in the
+    list's place; anything else writing a list's memory falls back to the type (D-930) ([EFF-2]).
+130. **An overlay line for a C function unsafe to call is `@safety("…")` above `unsafe fn name(…)`.**
+    Owner: "why is it not unsafe fn lib_step(x)", then "yes unsafe fn, replace -> unsafe": Ember's own
+    spelling; the `unsafe` contract word is gone ([GRM-35], [FFI-2], [FFI-11], [CLI-5]).
+131. **An overlay line for a C++ class member goes under its class.** Owner: "yes member lines under
+    their class" (a top-level `fn new(x, y)` made both `Handle.new` and `MutHandle.new` safe). A
+    top-level line names a function outside any class; one naming only members is `E5010` ([GRM-35],
+    [FFI-12], [FFI-40a]).
 
 ## Error messages are part of readability (owner, 2026-10-24)
 

@@ -191,7 +191,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[CLI-4]` | XVII | `ember run file.em` and `ember build file.em` accept a single file … |
 | `[CLI-5]` | XVII | *(changed in 0.9.10)* `ember bind --init <header>` writes a starter … |
 | `[CLI-6]` | XVII | `ember bind --report` lists every skipped declaration and every … |
-| `[CLI-7]` | XVII | `ember bind --check <overlay>` checks `[FFI-12]` and prints how many … |
+| `[CLI-7]` | XVII | *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks … |
 | `[CLI-9]` | XVII | `ember check --syntax-only` lexes and parses only, reporting `E00xx` … |
 | `[CLI-10]` | XVII | `ember build --report=engine` is a report, not a profile: it changes … |
 | `[CLI-11]` | XVII | `ember audit` prints a one-page summary of a package's safety … |
@@ -522,7 +522,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[FFI-1]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* Every foreign declaration … |
-| `[FFI-2]` | XVI | A call to a foreign function whose contract contains an `unknown` … |
+| `[FFI-2]` | XVI | *(changed in 0.9.15)* A call to a foreign function whose contract … |
 | `[FFI-2a]` | XVI | *(changed in 0.9.15)* Derived facts need no `unsafe`: `const T*` is a … |
 | `[FFI-3]` | Annex C | Ember never links against C++ mangled symbols. The importer generates … |
 | `[FFI-4]` | XVI | No Ember panic crosses into foreign code (`[FFI-25]`). |
@@ -540,7 +540,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-11b]` | XVI | *(changed in 0.9.10)* *(changed in 0.9.15)* The two-call enumeration … |
 | `[FFI-11c]` | XVI | `TODO(count)`, `TODO(nullable)`, `TODO(ownership)` and … |
 | `[FFI-11f]` | Annex C | A result lifetime derived from `[[clang::lifetimebound]]` imports as … |
-| `[FFI-12]` | XVI | An overlay entry whose name, parameter count or parameter names do … |
+| `[FFI-12]` | XVI | *(changed in 0.9.15)* An overlay entry whose name, parameter count or … |
 | `[FFI-13]` | XVI | An overlay may contain `extend` blocks with ordinary Ember wrapper … |
 | `[FFI-14]` | XVI | The importer's result is a `.embind` file (versioned CBOR: header … |
 | `[FFI-15]` | XVI | *(changed in 0.9.15)* `CStrView` is a read-only view of a … |
@@ -936,6 +936,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
 | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
 | `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
+| `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A build, … |
 
 ## MNG
 

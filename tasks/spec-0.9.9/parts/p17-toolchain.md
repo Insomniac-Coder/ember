@@ -108,11 +108,15 @@ ember --help | --version [--matrix]
   fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It
   compiles unchanged and never overwrites a file; with `--merge` it adds only the declarations missing
   from an existing overlay, keeping hand-written contracts and comments, and records the header as it
-  now is in the package's `ember.overlays` (`[FFI-55]`), the only way that record changes once written.
+  now is in that overlay's line of the package's `ember.overlays` (`[FFI-55]`). A declaration it leaves
+  unsafe to call is written `unsafe fn` (verdict 130).
 * `[CLI-6]` `ember bind --report` lists every skipped declaration and every declaration still
   `unsafe` with its unknown facts, and exits non-zero on a skip (`--baseline` limits that to new ones).
-* `[CLI-7]` `ember bind --check <overlay>` checks `[FFI-12]` and prints how many declarations are
-  safe, still `unsafe`, and skipped.
+* `[CLI-7]` *(changed in 0.9.15)* `ember bind <header> --check <overlay>` checks `[FFI-12]` and prints
+  how many declarations are safe, still `unsafe`, and skipped. With `--merge`, once the overlay passes,
+  it writes the header's declarations as they are now into the overlay's line of `ember.overlays`
+  (`[FFI-55]`): with `--init --merge` (`[CLI-5]`), the only ways a line of the record changes once
+  written.
 * `[CLI-10]` `ember build --report=engine` is a report, not a profile: it changes nothing about the
   program, and summarises allocations, surviving count operations and runtime checks with their
   reasons, vectorised loops and why others were not, FFI wrapper costs, inlining decisions, and classes
@@ -172,6 +176,10 @@ large_copy = { level = "warn", threshold = 256 }
 * `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content hashes;
   `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the package's
   overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by hand.
+* `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A build, check or run of a
+  file with no `ember.toml` in its folder or any folder above it first writes a default one in the
+  file's folder, `[package]` with the folder's name as `name` and `version = "0.1.0"`, and says so; the
+  program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
