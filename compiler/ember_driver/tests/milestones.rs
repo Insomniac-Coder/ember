@@ -7345,6 +7345,101 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     assert!(c_definition(&clang.stdout, &ember_branding::entry_symbol()).contains(&next("Split")), "clang's loop lost its call");
 }
 
+/// `[EFF-24]` (A4-2) — each function's summary, as `--emit mir` prints it: what it changes and reads
+/// of what its parameters reach, `this` included, and the first call of the chain that makes it: a
+/// method's own line, a callee two calls down, a recursive function, an object reached through a
+/// link (a field of a class object, reached through its handle), and a `virtual` call, whose
+/// override's change counts.
+#[test]
+fn the_summary_says_what_each_function_changes_and_reads() {
+    let dir = temporary_directory("summaries");
+    let source = dir.join(ember_branding::source_file("main"));
+    std::fs::write(&source, "\
+struct Counter:
+    count: int
+    seen: Array[int]
+
+extend Counter:
+    fn bump(mut self):
+        self.count += 1
+
+    fn total(self) -> int:
+        return self.count
+
+    fn note(mut self, x: int):
+        self.seen.push(x)
+        self.bump()
+
+fn twice(mut c: Counter):
+    c.note(1)
+    c.note(2)
+
+fn reads_only(c: Counter) -> int:
+    return c.total() + c.seen.len()
+
+fn depth(n: int, mut c: Counter) -> int:
+    if n == 0:
+        c.bump()
+        return 0
+    return depth(n - 1, c)
+
+open class Node:
+    value: int = 0
+    next: Option[Node] = None
+
+    fn set(mut self, v: int):
+        self.value = v
+
+    virtual fn poke(mut self):
+        pass
+
+class Loud(Node):
+    override fn poke(mut self):
+        self.value = 9
+
+fn second(n: Node):
+    match n.next:
+        Some(m):
+            m.set(5)
+        None:
+            pass
+
+fn poke_it(mut n: Node):
+    n.poke()
+
+fn main():
+    c = Counter(count = 0, seen = [])
+    twice(c)
+    println(reads_only(c), depth(3, c))
+    a = Node()
+    a.next = Some(Node())
+    second(a)
+    l: Node = Loud()
+    poke_it(l)
+").unwrap();
+    let mir = ember(&["build", &source.to_string_lossy(), "--emit", "mir"], &dir);
+    assert_eq!(mir.exit, 0, "MIR failed:\n{}", mir.stderr);
+    let summary = |path: &str| -> String {
+        let header = format!("summary {}:\n", ember_branding::item_symbol(path));
+        let Some(at) = mir.stdout.find(&header) else { return String::new() };
+        let rest = &mir.stdout[at + header.len()..];
+        rest.lines().take_while(|line| line.starts_with("  ")).map(|line| format!("{}\n", line.trim())).collect()
+    };
+    for (path, expected) in [
+        ("Counter.bump", "changes self.count\nreads self.count\n"),
+        ("Counter.total", "reads self.count\n"),
+        ("Counter.note", "changes self.count (through bump), self.seen\nreads self.count (through bump)\n"),
+        ("twice", "changes c.count (through note), c.seen (through note)\nreads c.count (through note)\n"),
+        ("reads_only", "reads c.count (through total), c.seen\n"),
+        ("depth", "changes c.count (through bump)\nreads c.count (through bump)\n"),
+        ("second", "changes n.next as Some._0.value (through set)\nreads n.next, n.next as Some._0\n"),
+        ("poke_it", "changes n.value (through poke)\n"),
+    ] {
+        assert_eq!(summary(path), expected, "`{path}`'s summary");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// D-474 — a body instantiated from `std` (a generic function's instance, a
 /// generic type's method, an interface's provided method) is kept only if
 /// something reaches it: a program that names no text iterator checks none

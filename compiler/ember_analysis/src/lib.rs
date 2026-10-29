@@ -39,6 +39,7 @@ pub mod frame_objects;
 pub mod static_safe;
 pub mod effects;
 pub mod stores;
+pub mod summaries;
 pub mod strength_reduce;
 pub mod text_boundaries;
 pub mod perf_lints;

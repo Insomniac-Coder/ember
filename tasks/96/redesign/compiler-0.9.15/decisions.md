@@ -374,6 +374,10 @@ Ember name, not the overlay's; `@grade(instrumented)` on a member's entry is nev
 | N12 | TST-4 | `E9042` has no conformance test: no test can make a linker hang. The build crate's unit test ends a process tree past its limit, and the guard was run by hand on a 30-second command (E9042 after 2 s, the output removed, the command file and stacks kept); E9042 is in `tools/rule_index_baseline.json`'s codes without tests. | A test that waits for a real hang would hang the suite. |
 | N13 | MAN-9, FFI-55 (in place in Hardened_5) | The spec text says what N2 and N10 decided: every command that compiles writes the default manifest; an overlay in no package is the importing program's. | The compiler follows the spec; neither was pushed. |
 
+| # | Rule | Ruling | Why |
+|---|---|---|---|
+| N14 | EFF-24 (A4-2, first slice) | A summary's fact is a place a parameter reaches (`this` the first of a method): the parameter and its steps (fields, an enum variant, a list's elements as one step, and each step through a reference, pointer or object handle, at least one), covering everything inside it; changes, reads and ends, each with the first call chain that makes it. A value the analysis cannot follow (a pointer read through a raw pointer, a C function's result, a function with no body here) may be anything any parameter reaches. Paths are cut at 8 steps, a shorter path covering longer ones, so recursion through links ends. The summary is computed by `ember_analysis::summaries` and printed by `--emit mir`; it is put on `Body` (and in interface files, A4-3) with its first consumer, M1's `this`. | Sound before precise: a fact too many refuses a correct program later, a fact missing would accept a wrong one (checklist 7, 14); nothing is built before something uses it. |
+
 **For the owner (open, not ruled):** verdict 130 retired `-> unsafe` in overlays. A hand declaration in an
 `unsafe extern` block can still write `@ffi(unsafe)` (and `param(p, unsafe)`, `result(unsafe)`): its call is
 unsafe on purpose, and `E3100` then names that instead of asking for facts. A plain `fn` there is unsafe to call

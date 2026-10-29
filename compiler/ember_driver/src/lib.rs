@@ -5796,6 +5796,15 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             .commit(ember_analysis::parallel::jobs())
             .map_err(|error| error.to_string())?;
         print!("{}", ember_mir::dump(mir.bodies(), &types));
+        // `[EFF-24]` (A4-2) — each body's summary, for inspection.
+        let summaries = ember_analysis::summaries::summarize(mir.bodies(), &types);
+        for (body, summary) in mir.bodies().iter().zip(&summaries) {
+            let text = ember_analysis::summaries::render(summary, body, mir.bodies(), &types);
+            if !text.is_empty() {
+                print!("summary {}:
+{text}", body.symbol);
+            }
+        }
         return Ok(finish(&sink, &map, options));
     }
 
