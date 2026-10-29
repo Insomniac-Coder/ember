@@ -89,7 +89,7 @@ where          while          with           yield
   keywords** are keywords only in the stated position and identifiers everywhere else: `abstract`
   and `open` before `class` (so `File` can have its `open`, `[STD-22]`, ODR-134); `from` at the start
   of an import, after a function's result type and after a field's type (`[GRM-46]`); `extend` at the start of an item when the type
-  it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block; `some`
+  it extends follows, directly or after generic parameters (`[GRM-34]`); `gen` and `once` immediately before `fn`; `safe` before `fn` in an extern block and at the start of a statement before `:` (`[UNS-12]`); `some`
   at the start of a type; `c` and `cpp` between `import` or `overlay` and a string; `language` and
   `threads` after `#!`; `overlay` at the start of an item, and `rename` and `hide` inside an overlay
   (`[GRM-35]`); `union` at the start of an item followed by a name, where it is reserved for a future

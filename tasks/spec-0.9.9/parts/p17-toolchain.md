@@ -107,7 +107,8 @@ ember --help | --version [--matrix]
   (ODR-148): every derived contract, every unknown
   fact as a `TODO(…)` word (`[FFI-11c]`), every skipped declaration as a comment with its reason. It
   compiles unchanged and never overwrites a file; with `--merge` it adds only the declarations missing
-  from an existing overlay, keeping hand-written contracts and comments.
+  from an existing overlay, keeping hand-written contracts and comments, and records the header as it
+  now is in the package's `ember.overlays` (`[FFI-55]`), the only way that record changes once written.
 * `[CLI-6]` `ember bind --report` lists every skipped declaration and every declaration still
   `unsafe` with its unknown facts, and exits non-zero on a skip (`--baseline` limits that to new ones).
 * `[CLI-7]` `ember bind --check <overlay>` checks `[FFI-12]` and prints how many declarations are
@@ -168,8 +169,9 @@ large_copy = { level = "warn", threshold = 256 }
 
 * `[MAN-1]` *(changed in 0.9.9)* An invalid manifest, including one with an unknown key, is `E9001`,
   naming the key and the keys that section accepts.
-* `[MAN-2]` `ember.lock` records the resolved dependencies with content hashes; `--locked` fails if it
-  would change.
+* `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content hashes;
+  `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the package's
+  overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by hand.
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
@@ -177,7 +179,7 @@ large_copy = { level = "warn", threshold = 256 }
   `layers`, `edition_lints`); `[dependencies]` (`{ path }`, `{ git, rev }`, or `{ git, version }`, `[VER-5]`);
   `[build]` (`entry`, `target`, `backend`, `c_compiler`, `runtime`, `max_instantiations` `[MONO-3]`,
   `reload` `[MAN-7]`); `[profiles.<name>]` (`[PRF-3]`); `[c]` (`compiler`, `flags`, `[BLD-FFI-1]`);
-  `[link]` (`libs`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
+  `[link]` (`libs`, `timeout` `[BLD-15]`); `[jobs]` (`workers`, `[JOB-1]`); `[realtime]` (`contracts`, `[EFF-19]`);
   `[comptime]` (`max_steps`, `max_heap_mb`, `[CT-3]`); `[lints]` (`[MAN-3]`); and `[cpp.<project>]`
   and `[ffi]` (`evidence`, Annex C). A key a section does not take, or a section not listed, is
   `E9001`, naming what is accepted (ODR-110). **No manifest key turns off a
@@ -225,7 +227,8 @@ large_copy = { level = "warn", threshold = 256 }
      that reordering two lines inside a library function (a use of `s` moved below `LOG.clear()`) is
      a change to its interface;
   6. the locks a function may take; and
-  7. the function values the package stores into each function type and the callbacks it hands to C,
+  7. the function values the package stores into each place a function value is called through (each
+     field of each type apart, `[EFF-2]`) and the callbacks it hands to C,
      which a program using the package counts wherever such a value is called and at every foreign
      call not marked `@ffi(no_callbacks)`.
 
@@ -238,6 +241,11 @@ large_copy = { level = "warn", threshold = 256 }
   compilation is incremental too. Ember's download carries Ninja beside Clang and LLD (`[TOOL-2]`); a
   build from a source checkout finds `ninja` on `PATH`, and without it is an error naming the command
   that installs it.
+* `[BLD-15]` *(new in 0.9.15)* **A link that hangs is an error** (verdict 124). Each link the build runs
+  has a time limit, 30 minutes unless `[link] timeout` sets another number of seconds. A link still
+  running at its limit is ended, and the build fails with `E9042`, naming the linker, its command and
+  how long it ran, and keeping the link's command file for whoever looks into it. A link that was
+  ended leaves no program behind and none in the program cache, and nothing is tried again by itself.
 * `[BLD-5]` Output goes to `target/<profile>/{bin,lib,c,obj,bind,inspect}`.
 * `[BLD-7]` Front-end stages run in parallel across modules by default (`-j`, default the number of
   physical cores).

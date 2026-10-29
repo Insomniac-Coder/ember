@@ -206,7 +206,7 @@ augassign     := "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "&=" | "|=" 
                | "<<=" | ">>="
 
 compound_stmt := if_stmt | while_stmt | for_stmt | match_stmt | with_stmt | defer_stmt
-               | unsafe_stmt | comptime_stmt | labeled_stmt | [type_params] fn_decl
+               | unsafe_stmt | safe_stmt | comptime_stmt | labeled_stmt | [type_params] fn_decl
 if_stmt       := "if" condition ":" block {"elif" condition ":" block} ["else" ":" block]
 condition     := expression | pattern "=" expression
                | expression "exists" "as" opened_name              -- [GRM-44]
@@ -223,6 +223,7 @@ with_stmt     := "with" with_item {"," with_item} ":" block
 with_item     := [IDENT "="] expression
 defer_stmt    := "defer" ":" block
 unsafe_stmt   := "unsafe" ":" block
+safe_stmt     := "safe" ":" block                                -- [UNS-12]
 comptime_stmt := "comptime" ":" block
 ```
 

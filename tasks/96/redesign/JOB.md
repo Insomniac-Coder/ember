@@ -992,6 +992,40 @@ acceptable it hurt readability too, if you want something to have a copy use the
     else Debug's, since Ember has no specialisation), and parameters after a pack passed by name only.
     Written into `[STD-9]`, `[STD-18]`, `[TYP-26]`, `[TYP-47]` and §IV.8.
 
+The verdicts of the ODR review of 2026-10-29 (`tasks/96/redesign/compiler-0.9.15/decisions.md`, "Owner
+verdicts, 2026-10-29", items 1 to 18, with the review's other answers):
+
+118. **An `unsafe fn` is unsafe as a whole; `safe:` marks code inside it that is checked as safe code**
+    (reverses `[UNS-12]`, which came from the redesign's AN-79 and was never put to the owner). Owner:
+    "WHO FUCK SAID THAT AN UNSAFE FUNCTION NEEDS TO MARK ITS UNSAFE CODE? THE FUNCTION LITERALLY SAYS THAT
+    IT IS UNSAFE", "the whole unsafe function has to be considered unsafe unless someone marks a piece of
+    code safe", "if you want it to be treated as safe you have to write it in safe block"; `safe:` as the
+    spelling: "yes".
+119. **Anything inside unsafe code is unsafe, functions and lambdas included.** A function written inside
+    an `unsafe:` block (or an `unsafe fn` body) is an `unsafe fn`: its body is unsafe, calling it needs
+    `unsafe`, its value is an `unsafe fn(…)`, and it carries `@safety`. Owner: "apply my ruling anything
+    inside unsafe block is considered unsafe by default even functions"; lambdas, "closure is also a type
+    of function right?" then "yes cover this too"; `@safety` on such a function, "yes".
+120. **A C function declared in an `unsafe extern` block carries `@safety`, and gets `L3015` without
+    it.** Owner: "yes that is my decision for consistency sake and it makes sense".
+121. **The header an overlay was written for is recorded by Ember in a package file of its own,
+    `ember.overlays`, never in the overlay, and every overlay is checked against it.** Owner: "FIND A
+    BETTER WAY TO DEAL WITH IT DON'T MAKE THE AUTHOR OR USER WORK WITH IT IN CODE FILES", "instead of
+    using a lock file create another package config file for this and make it mandatory", the name
+    `ember.overlays`: "yes"; the package's own overlays checked too: "b". The overlay line's
+    `with (header_hash = ...)` (critic C26, never put to the owner) goes.
+122. **A call through a stored function has the effects of the functions that reach that place, field
+    by field, not of every function of its type; a place no function reaches contributes nothing.**
+    Owner, on the by-type rule: "that is just dumb"; then "yes"; on the empty case, "no find a better
+    way to deal with C problem", then "yes" once a function C slips in was shown to need `unsafe` code.
+123. **`E5013` keeps stopping a value C would promote, for every variadic C function, and its message
+    names C's promotion and both sizes instead of guessing `as i64`.** Owner: "okay cool no overlay bs
+    right?", then "yes" (an overlay line stating what a `...` function reads was approved and then
+    withdrawn: "I TAKE MY APPROVAL BACK").
+124. **The hung MSVC linker: find the cause and fix it, and give a link a time limit.** Owner: "duh
+    ofcourse it's an issue so you have to find the cause and fix it, can't leave it like that and a time
+    limit".
+
 ## Error messages are part of readability (owner, 2026-10-24)
 
 "Treat error message fixes as a part of readability and programmer friendliness."

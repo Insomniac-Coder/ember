@@ -51,7 +51,7 @@
 | **reduction** | a combining change (`total += e`, `max`, `push`) made by scoped tasks to one place: each task keeps a private accumulator, combined at the join in spawn order |
 | **reload manifest, reload transaction, safe point** | the image section listing what can be reloaded (`[HR-8]`); the plan and prepare phases that may fail without effect (`[HR-2]`); the poll at which no thread runs Ember code (`[HR-3]`) |
 | **reshape** | a change that can free or move memory: replacing a value that owns memory, adding to or removing from a collection, changing an enum's variant, ending an object's last owner; writing a number is not one |
-| **Safe Ember** | code outside `unsafe:` blocks, an `unsafe fn` body's included (each of its unsafe operations sits in an `unsafe:` block of its own); the memory-safety guarantee covers it (`[PHIL-10]`) |
+| **Safe Ember** | code outside unsafe code (`unsafe:` blocks and `unsafe fn` bodies), and the code of their `safe:` blocks (`[UNS-12]`); the memory-safety guarantee covers it (`[PHIL-10]`) |
 | **`Send`, `ThreadShared`** | may be handed to another thread; several threads may hold and read one value at once; both inferred from the words a value is written with (§XI.1) |
 | **shape** | a category of error with a required help text (§XVII.6) |
 | **shareable generic** | one whose type parameter is used only to call its bounds' methods, so one shared body can serve every instance (`[MONO-5]`) |

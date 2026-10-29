@@ -194,3 +194,126 @@ really the owner's is listed under "For the owner", not ruled.
    hardening. Nothing is changed until you choose. The error page `docs/errors/E5013.md` uses `sum_wide`, where
    `as i64` is right.
 
+## 9. Rulings made on autopilot, 2026-10-29 (lead, under the delegation), writing 0.9.15_Hardened_4
+
+The owner's verdicts below are JOB.md's 118 to 124. Each ruling here was checked against
+`docs/OWNER-DIRECTION.md`'s checklist.
+
+| Rule | Ruling | Why |
+|---|---|---|
+| UNS-12 (verdict 118) | `safe` is a contextual keyword at the start of a statement before `:`; a `safe:` block needs no note; inside it an `unsafe:` block is unsafe again, and a function or lambda written in it is safe. | `safe:` asks for checking and vouches for nothing, so a note would say nothing (principle 3); nesting both ways keeps one rule: the innermost mark says what the code is. |
+| UNS-12, UNS-3 | A `safe:` block outside unsafe code is `L3020` (new, a lint: "this `safe:` block is not inside unsafe code, so it changes nothing: remove `safe:`"); an `unsafe:` block directly inside unsafe code is `L3010`, whose description widens to say so. | A mark said where it changes nothing is said twice (principle 3); a lint, not an error, as `L3010` already was. |
+| UNS-12 | `E3100` inside a `safe:` block: "`p.write(1)` (line 7) is in a `safe:` block, which is checked as safe code; move it out of the `safe:` block, or put it in an `unsafe:` block with a `# SAFETY:` note". | Both ways out compile (principle 12). |
+| UNS-7 (verdict 119) | A lambda written inside unsafe code gets no `L3015`: it has no line for `@safety`; whoever calls it vouches in the note of the block the call is in. | Warning for a missing attribute that cannot be written leaves no way to be clean (the reason ODR 5 part 4, approved, allows `@safety` on a local `unsafe fn`). |
+| UNS-1 (ODR 1, 2) | The statement rules (one `E3100` per statement; the block named is the whole statement) are written into `[UNS-1]` for all safe code. | They were the lead's in decisions.md §8; the owner approved ODR 2; ODR 1 is to hold in all safe code. |
+| FFI-55 (verdict 121) | `ember.overlays`'s fingerprint is of each declaration the overlay describes, as the importer binds it (the `.embind` declaration with its layout); the record is written the first time the package's own build applies the overlay; a dependency's overlay with no record is `E5010`; its text form is TOML (`[[overlay]]`, `file`, `header`, one key per declaration). | What the overlay relies on is the binding, so a header edit that changes nothing Ember binds changes nothing; TOML as `ember.toml` and `ember.lock` are. |
+| EFF-2 (verdict 122) | The places: each field of each struct and class apart; a list's elements with the place holding the list; a parameter with every argument given to it; a place a value is copied into gets the functions of the place it came from; a value read through a raw pointer or given by C has every function stored into its type. | The field-based flow the owner approved, with copies followed so nothing slips through, and the by-type fallback only where nothing can be followed. |
+| BLD-15 (verdict 124) | The limit is 30 minutes by default, `[link] timeout` (seconds) sets another; the error is `E9042` (new); the link's command file is kept; nothing is retried. | The hangs ran 10 to 43 minutes before they were ended; a whole `bigpkg` build takes 16.6 s, so 30 minutes ends no real link of today's programs, and a project with a longer one sets the key. A retry would hide the problem (the owner's choice). |
+| FFI-8 (verdict 123) | For an `f32`, `E5013`'s message names the one right type: "C passes `single` as an 8-byte `double` through `...`; write `single as f64`". | C never passes a `float` through `...`, so `va_arg` can only read a `double`. |
+
+**For the owner (open, not ruled):** a function imported from a header (`import c`) is declared by the
+header; verdict 120 covers declarations written in an `unsafe extern` block. Should an imported C function
+that is unsafe to call need `@safety` too (in its overlay entry), or not? Today it does not; nothing was
+changed.
+
+### Owner verdicts, 2026-10-29
+
+1. **`[UNS-12]` is reversed** (owner: "the whole unsafe function has to be considered unsafe unless someone
+   marks a piece of code safe"; "if you want it to be treated as safe you have to write it in safe block").
+   The body of an `unsafe fn` is an `unsafe` context as a whole, as in 0.9.9. Code in it that should be
+   checked as safe code is written in a `safe:` block (spelling chosen by the owner: "yes"), where an unsafe
+   operation is `E3100` as in any safe code. `[UNS-12]` came from the redesign's AN-79 and was never put to
+   the owner. To do: a new hardening; in the compiler, A5-1's body rule reverted and `safe:` added; the
+   `unsafe:` blocks added inside `unsafe fn`s in std and the tests removed. ODR 1 (one `E3100` per
+   statement) then concerns safe code: normal functions and `safe:` blocks; as built it merges only in an
+   `unsafe fn` body, so it is to be made to hold in all safe code.
+2. **ODR 2 approved** (the block an `E3100` gives to write goes around the whole statement: "lines 9 to 12"
+   for a step in an `elif`; owner: "yes fair enough").
+3. **ODR 3 replaced** (owner: "apply my ruling anything inside unsafe block is considered unsafe by default
+   even functions"; earlier: "so poke is considered unsafe"). A function written inside an `unsafe:` block
+   (or inside an `unsafe fn` body) is unsafe: it counts as an `unsafe fn`, its body is unsafe as a whole,
+   and calling it needs `unsafe:`; a value of it has type `unsafe fn(…)` (so `make` in
+   `UNS-12/reject_a_local_function_in_an_unsafe_block_vouches_for_nothing.em` must return
+   `unsafe fn(*mut u8)`). Code in it to be checked as safe goes in `safe:`. D-926's fix (the local
+   function's body starting outside `unsafe`) is replaced by this. A closure written inside an `unsafe:`
+   block is covered the same way (owner: "yes cover this too"): it is unsafe, its value has type
+   `unsafe fn(…)`, and calling it needs `unsafe:`.
+4. **ODR 4 approved** (area 5 Q1, which I had wrongly called the owner's ruling: a C call without `unsafe:`
+   is `E3100`, not `E5002`, since the declaration is fine and the call is the mistake; owner: "yup that
+   makes sense").
+5. **ODR 5 part 1 approved** (`W3013` for a `# SAFETY:` note at the end of an `unsafe fn`'s own line says
+   "remove this note", not the spec's "remove this line"; owner: "okay fine", then "yes").
+6. **ODR 5 part 2 approved** (`W3013` on an `unsafe fn` with no `@safety` says "… should say what its
+   callers must make true with `@safety("...")` above it, not with a `# SAFETY:` note …: say this in
+   `@safety` and remove this line"; owner: "yes").
+7. **ODR 5 part 3 rejected** (that a C function declared in an `unsafe extern "C":` block needs no
+   `@safety` and gets no `L3015`; owner: "no"). Replaced (owner: "yes that is my decision for consistency
+   sake and it makes sense"): a C function declared in an `unsafe extern` block, which callers may call
+   only inside `unsafe`, carries `@safety` like any `unsafe fn`, saying what its callers must make true
+   (`@safety("x is not the smallest i32")` on `abs`), and gets `L3015` without it; the block's
+   `# SAFETY(ffi):` note keeps saying that the declarations match C. To settle in the hardening: what
+   `ember bind --init` writes for each declaration.
+8. **ODR 5 part 4 approved** (a local `unsafe fn` may carry `@safety`; an `unsafe gen fn` keeps it when
+   lifted; owner: "yes").
+9. **A function written inside an `unsafe:` block needs `@safety`** like any `unsafe fn` (it counts as
+   one by verdict 3) and gets `L3015` without it (owner: "yes").
+10. **ODR 5 last part approved** (`ember tcb` keeps listing `unsafe:` blocks and `unsafe fn`s; the
+    `unsafe extern`/`extend`/`overlay` places are added by A5-5, not before; owner: "yes", after "leave
+    them just for now right? you will add them later?").
+11. **`[FFI-55]`'s `with (header_hash = "...")` is to go** (owner: "find a better way to deal with it
+    don't make the author or user work with it in code files"; the rule came from the critic's C26 and
+    was never put to the owner). Directed (owner: "instead of using a lock file create another package
+    config file for this and make it mandatory"): a package file of its own, written by Ember and never
+    by hand, records for each of the package's overlays the header and a fingerprint of each C
+    declaration the overlay describes (my proposal: per declaration, not the whole header, so an
+    unrelated edit breaks nothing); a third-party overlay whose described declaration differs, or whose
+    package has no such file, is `E5010`. Confirmed as written (owner: "yes"): the file is
+    **`ember.overlays`**, beside `ember.toml` in every package with an overlay of a C header; Ember writes
+    it on the package's first build and `ember bind --merge` rewrites it; it is mandatory (importing an
+    overlay of a package without it is an error); it holds per overlay `file`, `header` and one
+    `blake3:` fingerprint per C declaration the overlay describes; the overlay line carries no hash;
+    `ember.lock` is unchanged. **Every overlay is checked** against its record, the package's own included
+    (owner: "b"): a described declaration that changed stops the build, naming it, until `ember bind
+    --merge` rewrites the record; so ODR 6 part 1 ("another package's" = the nearest `ember.toml` is
+    neither the importer's nor the header's) is no longer needed.
+12. **ODR 7, `dyn` calls, approved** (a call through `dyn` has the effects of the implementations the
+    program passes as that `dyn`, with overrides below class methods; owner: "yes").
+13. **ODR 7, stored functions: by field, not by type** (owner on the by-type rule: "that is just dumb";
+    then "yes" to following each field). A call through a field has the effects of the functions the
+    program stores into that field (`Scaler.by` apart from `Logger.format`); a store from another field
+    carries that field's functions; where a function cannot be followed (from C), the call falls back to
+    every function stored into its type. Changes `[EFF-2]`'s "stored into that type anywhere in the
+    program": a new hardening first; A4-1's by-type `Targets::values` to be refined; not built or measured.
+14. **ODR 7 part 3 replaced** (owner: "no find a better way to deal with C problem", then "yes"): when the
+    compiler finds no function the program puts into a field (`Scaler.by`), a call through it counts as
+    doing nothing, so `@noalloc fn scaled` is allowed. Without code marked `unsafe`, every function in a
+    field gets there through Ember code the compiler sees; one C slips in (C's `lib_make_scaler` filling a
+    `Scaler` with its own `triple`, read with `p.read()`) arrives only through an `unsafe:` block or an
+    unsafe C declaration, whose note vouches for it. My first answer (refuse) and my overlay design (C
+    functions stored in a field with overlay-stated effects) are not taken.
+15. **ODR 8 approved** (A4-2, the summaries, before M1, whose `fn reset():` needs them to tell whether a
+    method changes `this`, by the owner's verdict 86; owner: "oh yes of course").
+18. **The MSVC `link.exe` hang ("For the owner" 2): find the cause and fix it, and a time limit** (owner:
+    "duh ofcourse it's an issue so you have to find the cause and fix it, can't leave it like that and a
+    time limit"). Next hang: save a dump of the spinning `link.exe` and fix the cause if it is ours (how
+    the linker is called, where the files are); meanwhile `ember build` gives a link a generous limit,
+    ends a link past it and stops with an error saying the linker hung, with the details; no automatic
+    retry (it would hide the problem).
+17. **E5013 answered: stop and ask, with a message that does not guess** (owner: "okay cool no overlay bs
+    right?", then "yes"). A value C's default promotions would change (`i16`, `bool`, `f32`) passed
+    through `...` stays `E5013`, for every variadic C function, one type or mixed; nothing is added to
+    overlays. The message no longer names `as i64` for every function: "C passes `narrow` as a 4-byte
+    `int`; write the size `sum_wide` expects: `narrow as c_int` for 4 bytes, or `narrow as i64` for 8"
+    (for an `f32`, the `double` C passes). Spec text change: the next hardening (`[FFI-8]`'s message,
+    `docs/errors/E5013.md`, whose "See also" also still names `E5002` for a variadic call outside
+    `unsafe`, now `E3100` by verdict 4 above).
+16. **WITHDRAWN by the owner** ("I take my approval back for the previous question, nothing makes sense
+    here"); E5013 is open again, nothing of 16 stands. Was: **E5013 ("For the owner" 1): an overlay states what a `...` function reads** (owner: "okay so
+    basically declaring it in the overlay itself what the function expects?", then "yes"). `sum.h`'s
+    overlay says `sum_wide`'s further values are `i64`; each call converts a value that becomes one
+    without loss (`narrow: i16`), and refuses one that does not (`u64` above `i64.MAX`, `f64`). Without
+    the line `E5013` stays and its message gives the line to add. Spelling suggested, `fn sum_wide(count,
+    values: i64...)` (verdict 116's pack dots), to confirm in the hardening. Options (a)-(c) (which type the
+    advice names) are superseded: no fixed type is right for every function. A `...` that mixes types
+    (`printf`): asked next.
+

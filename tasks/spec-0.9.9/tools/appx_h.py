@@ -793,7 +793,7 @@ def h2_to_now():
 
 # 0.9.10_Hardened_1: the owner's design G8-4, a new language version over 0.9.9_Hardened_52;
 # 0.9.10_Hardened_2: the owner's rulings of 2026-10-06 on three of the audit's decisions.
-CURRENT = ('0.9.15', 3)
+CURRENT = ('0.9.15', 4)
 H52_PARTS = os.path.join(HERE, '..', 'parts-h52')
 V010_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h1')
 V010_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h2')
@@ -832,6 +832,7 @@ V010_H34_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h34')
 V010_H35_PARTS = os.path.join(HERE, '..', 'parts-0.9.10-h35')
 V0915_H1_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h1')
 V0915_H2_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h2')
+V0915_H3_PARTS = os.path.join(HERE, '..', 'parts-0.9.15-h3')
 
 H6_HEAD = """
 ## H.6 Changes in 0.9.10 (from 0.9.9_Hardened_52)
@@ -1806,7 +1807,43 @@ Generated: every rule whose text differs from 0.9.15_Hardened_2.
 
 
 def v0915_h2_to_h3():
-    return H43_HEAD + rule_diff(V0915_H2_PARTS, os.path.join(HERE, '..', 'parts'))
+    return H43_HEAD + rule_diff(V0915_H2_PARTS, V0915_H3_PARTS)
+
+
+H44_HEAD = """
+## H.44 Changes in 0.9.15_Hardened_4 (from 0.9.15_Hardened_3)
+
+**0.9.15_Hardened_4** writes in the owner's verdicts 118 to 124 from the ODR review of 2026-10-29
+(`tasks/96/redesign/JOB.md`) and the lead's details for them (`tasks/96/redesign/compiler-0.9.15/decisions.md`,
+section 9):
+
+* Verdict 118: an `unsafe fn` is unsafe as a whole, its body unsafe code; code in it to be checked as
+  safe code is written in a `safe:` block (`[UNS-12]`, rewritten; `[UNS-1]`, `[TIER-1]`, Part III, the
+  glossary). `L3020` (new): a `safe:` block outside unsafe code; `L3010` also covers an `unsafe:` block
+  inside unsafe code (`[UNS-3]`).
+* Verdict 119: everything written in unsafe code is unsafe: a function declared there is an
+  `unsafe fn` and carries `@safety`, a lambda there is an `unsafe fn(…)` value (`[UNS-12]`, `[UNS-7]`).
+* Verdict 120: a C function declared in an `unsafe extern` block carries `@safety` (`[UNS-7]`).
+* Verdict 121: the header an overlay was written for is recorded by Ember in `ember.overlays`, a
+  fingerprint per declaration the overlay describes, and every overlay is checked against it; the
+  overlay line's `header_hash` is gone (`[FFI-55]`, `[GRM-35]`, `[CLI-5]`, `[MAN-2]`, `E5010`).
+* Verdict 122: a call through a stored function has the effects of the functions that reach that
+  place, field by field; a place none reaches contributes nothing (`[EFF-2]`, `[BLD-14]`).
+* Verdict 123: `E5013` names C's promotion and both sizes instead of `as i64` (`[FFI-8]`).
+* Verdict 124: a link past its time limit is ended and is `E9042` (`[BLD-15]`, new; `[MAN-8]`'s
+  `[link] timeout`).
+* The lead's details: the statement rules of `E3100` (one per statement, the block around the whole
+  statement) in `[UNS-1]`; a lambda in unsafe code needs no `@safety`; `W3013`'s three wordings.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_3.
+
+| Rule | 0.9.15_Hardened_3 → 0.9.15_Hardened_4 |
+|---|---|
+"""
+
+
+def v0915_h3_to_h4():
+    return H44_HEAD + rule_diff(V0915_H3_PARTS, os.path.join(HERE, '..', 'parts'))
 
 
 def h1_to_h2():
@@ -1878,7 +1915,7 @@ def main():
     open(os.path.join(HERE, '..', 'parts', 'p26-appx-h.md'), 'w', encoding='utf-8', newline='\n').write(
         HEAD + '\n'.join(rows) + '\n' + H4_HEAD + h4 + '\n' + h2_to_now() + '\n' + h52_to_now() + '\n'
         + v010_h1_to_h2() + '\n' + v010_h2_to_h3() + '\n' + v010_h3_to_h4() + '\n' + v010_h4_to_h5() + '\n'
-        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n')
+        + v010_h5_to_h6() + '\n' + v010_h6_to_h7() + '\n' + v010_h7_to_h8() + '\n' + v010_h8_to_h9() + '\n' + v010_h9_to_h10() + '\n' + v010_h10_to_h11() + '\n' + v010_h11_to_h12() + '\n' + v010_h12_to_h13() + '\n' + v010_h13_to_h14() + '\n' + v010_h14_to_h15() + '\n' + v010_h15_to_h16() + '\n' + v010_h16_to_h17() + '\n' + v010_h17_to_h18() + '\n' + v010_h18_to_h19() + '\n' + v010_h19_to_h20() + '\n' + v010_h20_to_h21() + '\n' + v010_h21_to_h22() + '\n' + v010_h22_to_h23() + '\n' + v010_h23_to_h24() + '\n' + v010_h24_to_h25() + '\n' + v010_h25_to_h26() + '\n' + v010_h26_to_h27() + '\n' + v010_h27_to_h28() + '\n' + v010_h28_to_h29() + '\n' + v010_h29_to_h30() + '\n' + v010_h30_to_h31() + '\n' + v010_h31_to_h32() + '\n' + v010_h32_to_h33() + '\n' + v010_h33_to_h34() + '\n' + v010_h34_to_h35() + '\n' + v0915_h1() + '\n' + v0915_h1_to_h2() + '\n' + v0915_h2_to_h3() + '\n' + v0915_h3_to_h4() + '\n')
     latest = write_header()
     print('retired ids', len(gone), 'families', len(fam), 'families without a reason', missing,
           'H1->H2 rows', h4.count('\n') + 1, 'header %s_Hardened_%d over 0.9.9_Hardened_%d' % (CURRENT + (latest,)))

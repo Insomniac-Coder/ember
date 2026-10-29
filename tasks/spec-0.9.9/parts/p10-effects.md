@@ -30,8 +30,13 @@ The compiler infers, for every function, an **effect set** drawn from:
 * `[EFF-2]` *(changed in 0.9.9)* *(changed in 0.9.15)* A call through a function value contributes the
   effects of every function the program can put there. For a type parameter bounded by a function type
   (`[F: needs fn(Item)]` above `fn for_each(owns f: F) owns this:`) that is the function given, per instance.
-  For a parameter, field, list element or local of a function type, it is every lambda and named
-  function stored into that type anywhere in the program, a library's included. For an interface, `dyn`
+  For a field, a list element, a parameter or a local of a function type, it is every lambda and named
+  function the program puts in that place, a library's included (verdict 122): each field of each
+  struct and class apart from every other, a list's elements with the place that holds the list, a
+  parameter with every argument given to it, and a place a value is copied into with the functions of
+  the place it came from. A value the compiler cannot follow, read through a raw pointer or given by C,
+  has those of every function stored into its type. A place no function ever reaches is called by no
+  code that runs, and contributes nothing. For an interface, `dyn`
   or `virtual` method, it is every implementation and override the program has. A foreign function
   pointer (`extern "C" fn`) contributes the effects its type declares, and all effects if none are
   declared. A contract is written on a function type above a `type` line that names one (verdict 106):

@@ -2173,3 +2173,46 @@ Generated: every rule whose text differs from 0.9.15_Hardened_2.
 | `[UNS-4]` | changed |
 | `[UNS-5]` | changed |
 | `[WK-12]` | changed |
+
+## H.44 Changes in 0.9.15_Hardened_4 (from 0.9.15_Hardened_3)
+
+**0.9.15_Hardened_4** writes in the owner's verdicts 118 to 124 from the ODR review of 2026-10-29
+(`tasks/96/redesign/JOB.md`) and the lead's details for them (`tasks/96/redesign/compiler-0.9.15/decisions.md`,
+section 9):
+
+* Verdict 118: an `unsafe fn` is unsafe as a whole, its body unsafe code; code in it to be checked as
+  safe code is written in a `safe:` block (`[UNS-12]`, rewritten; `[UNS-1]`, `[TIER-1]`, Part III, the
+  glossary). `L3020` (new): a `safe:` block outside unsafe code; `L3010` also covers an `unsafe:` block
+  inside unsafe code (`[UNS-3]`).
+* Verdict 119: everything written in unsafe code is unsafe: a function declared there is an
+  `unsafe fn` and carries `@safety`, a lambda there is an `unsafe fn(…)` value (`[UNS-12]`, `[UNS-7]`).
+* Verdict 120: a C function declared in an `unsafe extern` block carries `@safety` (`[UNS-7]`).
+* Verdict 121: the header an overlay was written for is recorded by Ember in `ember.overlays`, a
+  fingerprint per declaration the overlay describes, and every overlay is checked against it; the
+  overlay line's `header_hash` is gone (`[FFI-55]`, `[GRM-35]`, `[CLI-5]`, `[MAN-2]`, `E5010`).
+* Verdict 122: a call through a stored function has the effects of the functions that reach that
+  place, field by field; a place none reaches contributes nothing (`[EFF-2]`, `[BLD-14]`).
+* Verdict 123: `E5013` names C's promotion and both sizes instead of `as i64` (`[FFI-8]`).
+* Verdict 124: a link past its time limit is ended and is `E9042` (`[BLD-15]`, new; `[MAN-8]`'s
+  `[link] timeout`).
+* The lead's details: the statement rules of `E3100` (one per statement, the block around the whole
+  statement) in `[UNS-1]`; a lambda in unsafe code needs no `@safety`; `W3013`'s three wordings.
+
+Generated: every rule whose text differs from 0.9.15_Hardened_3.
+
+| Rule | 0.9.15_Hardened_3 → 0.9.15_Hardened_4 |
+|---|---|
+| `[BLD-14]` | changed |
+| `[BLD-15]` | added |
+| `[CLI-5]` | changed |
+| `[EFF-2]` | changed |
+| `[FFI-55]` | changed |
+| `[LEX-15]` | changed |
+| `[MAN-2]` | changed |
+| `[MAN-8]` | changed |
+| `[TIER-1]` | changed |
+| `[UNS-1]` | changed |
+| `[UNS-3]` | changed |
+| `[UNS-7]` | changed |
+| `[UNS-11]` | changed |
+| `[UNS-12]` | changed |

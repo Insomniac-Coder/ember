@@ -176,7 +176,7 @@ import c "vulkan/vulkan.h" with (
   | anonymous member | a generated type `<Parent>_anon<N>` with transparent field access |
   | flexible array member | an unsized struct, `@layout(c, flexible)` (never by value, `E5017`), with `unsafe fn tail(n: usize) -> Span[T]` |
   | `_Atomic T` | `Atomic[T]` when layouts match, else `E5016` |
-  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5013`, which names only C's promotion, since what the C function reads is in C: "C passes `narrow` as an `int` through `...`; if `sum_wide` reads another type, convert it first: `v.sum_wide(1, narrow as i64)`" |
+  | `va_list`, variadic `...` | `VaList`, forwardable only and never constructed (`E5018`); variadic calls only in `unsafe`, each further argument of a written type (a literal's suffix or `as`); one C's default argument promotions would change (`bool`, an integer narrower than `int`, `f32`) is `E5013`, which names only C's promotion, since what the C function reads is in C (verdict 123): "C passes `narrow` as a 4-byte `int` through `...`; write the size `sum_wide` expects: `narrow as c_int` for 4 bytes, or `narrow as i64` for 8"; for an `f32`, "C passes `single` as an 8-byte `double` through `...`; write `single as f64`" |
   | an identifier that is an Ember keyword | a raw identifier `r#type` (`[LEX-14]`) |
 
 * `[FFI-29]` For every `import c` the importer emits a **shim** C file, compiled with that import's
@@ -237,7 +237,7 @@ unsafe overlay c "vulkan/vulkan.h":
 * `[GRM-35]` *(new in 0.9.9)* *(changed in 0.9.15)* **Overlay grammar.** An overlay is a file whose items are:
 
   ```text
-  overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING ["with" "(" "header_hash" "=" STRING ")"]
+  overlay_decl  := ["unsafe"] "overlay" ("c" | "cpp") STRING
                    ":" NEWLINE INDENT {overlay_item} DEDENT
   overlay_item  := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE
                    | "rename" IDENT "as" IDENT NEWLINE | "hide" IDENT NEWLINE | extend_decl
@@ -254,7 +254,8 @@ unsafe overlay c "vulkan/vulkan.h":
   item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
   ODR-149). An `overlay_class` section restates methods of a C++ class, each as an Ember method line
   with no body, whose `@ffi(const)`, when written, asserts that the method only reads its object
-  (`[FFI-40a]`, ODR-160). `header_hash` records the header the overlay was written for (`[FFI-55]`).
+  (`[FFI-40a]`, ODR-160). Ember records the header each overlay was written for in `ember.overlays`,
+  never in the overlay (`[FFI-55]`).
 
   Contract words take the place of types and are separated by spaces. `overlay`, `rename` and `hide`
   are contextual keywords (`[LEX-15]`). An overlay whose items state any fact — a contract word, an
@@ -301,14 +302,31 @@ unsafe overlay c "vulkan/vulkan.h":
   function at a time.
 * `[FFI-12]` An overlay entry whose name, parameter count or parameter names do not match the header is
   `E5010`, so overlays cannot drift.
-* `[FFI-55]` *(new in 0.9.15)* **An overlay names the header it was written for.** An overlay that
-  another package applies (`[FFI-30c]`) records the hash of the header it was written for, the one its
-  own package's `.embind` holds for that header (`[FFI-14]`), on its first line:
-  `unsafe overlay c "lib.h" with (header_hash = "blake3:9f2c…"):`. Applying another package's overlay
-  to a header whose hash differs, or applying one that records none, is `E5010`, naming the overlay,
-  the header and both hashes, with the two ways out: import the header the overlay was written for, or
-  write the package's own overlay for the header it imports. An overlay applied to a header of its
-  own package needs no hash: its package vouches for it (`[TIER-1]`).
+* `[FFI-55]` *(new in 0.9.15)* **Every overlay is checked against the header it was written for, by a
+  record Ember keeps** (verdict 121). A package with an overlay of a C or C++ header has a file
+  `ember.overlays` beside its `ember.toml`, written by Ember and never by hand. For each overlay it
+  holds the overlay's file, its header and one `blake3:` fingerprint of each declaration the overlay
+  describes, as the importer binds it (`[FFI-14]`):
+
+  ```text
+  # ember.overlays: the headers this package's overlays were checked against.
+  # Written by ember; `ember bind --merge` rewrites it.
+
+  [[overlay]]
+  file = "overlays/sdl.em"
+  header = "SDL.h"
+  SDL_FreeSurface = "blake3:…"
+  ```
+
+  Ember writes the record the first time the package's own build applies the overlay, and only
+  `ember bind --merge` rewrites it (`[CLI-5]`). Every build that applies an overlay, its own package's
+  and any other's, compares each declaration the overlay describes with the header it imports. One
+  that differs is `E5010`, naming the overlay, the declaration as recorded and as imported, and the
+  way out ("`SDL_FreeSurface` was `void SDL_FreeSurface(SDL_Surface*)` when `overlays/sdl.em` was
+  checked, and the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check the
+  overlay against this header, then run `ember bind --merge`"); an overlay its package has no record
+  of is `E5010` too. A change to a declaration the overlay does not describe changes nothing. Nothing
+  of this is written in the overlay or in the program.
 * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
   idiomatic API is layered over a raw one.
 * `[FFI-14]` The importer's result is a `.embind` file (versioned CBOR: header hash, Clang

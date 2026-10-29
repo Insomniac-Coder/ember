@@ -30,8 +30,8 @@ second backend (`[CG-LL-1]`).
 * `[TIER-1]` *(changed in 0.9.9)* *(changed in 0.9.15)* Anything that can break a safety promise is
   possible only inside an `unsafe` boundary. Safe code MUST NOT invoke an operation with an unverifiable
   precondition unless an `unsafe` boundary in the same package discharges it. The boundaries are each
-  written with the word `unsafe`: an `unsafe:` block lexically enclosing the operation (inside an
-  `unsafe fn` body too, where every unsafe operation sits in its own `unsafe:` block, `E3100`); an
+  written with the word `unsafe`: an `unsafe:` block lexically enclosing the operation, or the
+  `unsafe fn` whose body encloses it, outside the body's `safe:` blocks (`[UNS-12]`); an
   `unsafe extern` declaration (`[FFI-10]`); an `unsafe overlay` (`[GRM-35]`, `[FFI-2]`); an
   `unsafe import c` of C source compiled into the program (`[FFI-51]`); an export that names its own
   symbol, `@unsafe(export("name"))` (`[FFI-26]`); and an `unsafe extend` (a `Send` declared by hand, an

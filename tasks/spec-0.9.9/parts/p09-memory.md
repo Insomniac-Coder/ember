@@ -253,9 +253,7 @@ fn main():
 ```ember
 @safety("`p` points to four readable bytes")
 unsafe fn read_u32_le(p: *u8) -> u32:
-    # SAFETY: the caller makes `p` point to four readable bytes, as this function's @safety says
-    unsafe:
-        return (p.read() as u32) | ((p.add(1).read() as u32) << 8) | ((p.add(2).read() as u32) << 16) | ((p.add(3).read() as u32) << 24)
+    return (p.read() as u32) | ((p.add(1).read() as u32) << 8) | ((p.add(2).read() as u32) << 16) | ((p.add(3).read() as u32) << 24)
 
 fn parse(data: Span[u8]) -> Option[u32]:
     if data.len() < 4:
@@ -272,14 +270,24 @@ fn parse(data: Span[u8]) -> Option[u32]:
   access a foreign `static mut` (`[STA-1]`); `transmute`; call `get_unchecked`, `assume_init` or
   `assume_disjoint`; give an object to C with `into_raw()` (`[OWN-12]`); make or write a `MaybeUninit`
   of a type that needs drop (`[ARN-8]`); implement an `unsafe` interface, or declare `Send` by hand
-  (`unsafe extend T implements Send:`, `[TYP-43]`). Each of these outside an `unsafe` block is `E3100`,
+  (`unsafe extend T implements Send:`, `[TYP-43]`). Each of these outside unsafe code (an `unsafe:`
+  block, or an `unsafe fn` body outside its `safe:` blocks, `[UNS-12]`) is `E3100`,
   whose message says what the code must vouch for and gives the block to write ("`read_u32_le(buf.as_ptr())`
   (line 9) calls an `unsafe fn`, whose callers must make true what its `@safety` says; put line 9 in an
   `unsafe:` block with a `# SAFETY:` note saying why that holds here: above line 9 write `# SAFETY:` and
-  the reason, then `unsafe:`, and indent line 9 under it").
+  the reason, then `unsafe:`, and indent line 9 under it"). The block to write goes around the whole
+  statement the operation is in: the compound statement for one in its header (`elif p.read() > 0:`
+  is its `if`'s, "put lines 9 to 12 in an `unsafe:` block"), every line of a statement written over
+  several, and "put the statement on line 7 on a line of its own, in an `unsafe:` block" for one on
+  the line of a header; outside a function's body (a constant's value), where no block can be
+  written, the message gives none. The unsafe operations of one statement are one `E3100`, naming
+  them together ("the reads through `p` on line 9"); a pointer's offset is named with the read or
+  write it leads to.
 * `[UNS-2]` *(changed in 0.9.15)* `unsafe` permits exactly those operations. It does not turn off the checks of Parts VII
   and VIII, bounds checks on safe types, overflow checks or type checking.
-* `[UNS-3]` `L3010` reports an `unsafe` block containing statements that need no `unsafe`.
+* `[UNS-3]` *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing statements that need no
+  `unsafe`, and one written directly inside unsafe code (an `unsafe fn` body, another `unsafe:`
+  block), which adds nothing (`[UNS-12]`).
 * `[UNS-4]` *(changed in 0.9.15)* Unsafe code MUST uphold what safe code assumes: every view is
   non-null, aligned, points to a live initialised value of its type, and is used as its word allows (a
   `ref mut` name is the only name of its place while it is used, a `ref mut` parameter's place is
@@ -297,12 +305,20 @@ fn parse(data: Span[u8]) -> Option[u32]:
 * `[UNS-6]` Inline assembly is `unsafe asm("…", …)` on toolchains that support it and `E5090`
   otherwise.
 * `[UNS-7]` *(changed in 0.9.15)* Every `unsafe fn` carries `@safety("…")` stating what its callers must
-  make true; without it, `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer
-  `p`, and nothing says what its callers must make true for that; say it above the function:
-  `@safety("...")`, with what `p` must point to"). It is the declaration's only note: a `# SAFETY:` note
-  on an `unsafe fn` line is `W3013` ("`read_u32_le` says what its callers must make true with
-  `@safety`; a `# SAFETY:` note says why one block is sound and goes above each `unsafe:` block inside
-  it: remove this line"). The standard library carries `@safety` on every unsafe function it exports.
+  make true: a function declared inside unsafe code, which is an `unsafe fn` (`[UNS-12]`, verdict
+  119), and one declared in an `unsafe extern` block (`[FFI-10]`, verdict 120) included. Without it,
+  `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer `p`, and nothing says
+  what its callers must make true for that; say it above the function: `@safety("...")`, with what
+  `p` must point to"; a declaration with no body is named without a step). A lambda written inside
+  unsafe code has no line for `@safety` and gets no `L3015`: whoever calls it vouches in the note of
+  the block the call is in. `@safety` is the declaration's only note: a `# SAFETY:` note on an
+  `unsafe fn`, alone on the line before it or at the end of its line (`[LEX-23]`), is `W3013`
+  ("`read_u32_le` says what its callers must make true with `@safety`; a `# SAFETY:` note says why an
+  `unsafe:` block is sound: remove this line"; "… remove this note" for one at the end of the
+  function's own line; and on a function with no `@safety`, "`read_u32_le` should say what its
+  callers must make true with `@safety("...")` above it, not with a `# SAFETY:` note: say this in
+  `@safety` and remove this line"). The standard library carries `@safety` on every unsafe function it
+  exports.
 * `[UNS-8]` *(changed in 0.9.9)* *(changed in 0.9.15)* Every `unsafe:` block, and every `unsafe`
   implementation (`unsafe extend`, `unsafe extern`, `unsafe overlay`), carries a safety note
   (`[LEX-23]`) saying why the code is sound: `# SAFETY: …` or `# SAFETY(category): …` on the line
@@ -325,13 +341,21 @@ fn parse(data: Span[u8]) -> Option[u32]:
   word with one meaning by position: before a declaration (`unsafe fn`, `unsafe interface`, an
   `unsafe fn(…)` type) it says that whoever uses it must vouch, with `@safety` saying what they must make
   true (`[UNS-7]`); before a block or an implementation (`unsafe:`, `unsafe extend`, `unsafe extern`,
-  `unsafe overlay`) it says that this code vouches, with `# SAFETY:` saying why (`[UNS-8]`).
-* `[UNS-12]` *(new in 0.9.15)* An `unsafe fn` body is not itself an `unsafe` context: each unsafe
-  operation in it sits in an `unsafe:` block of its own, with its note, and one outside such a block is
-  `E3100` ("`read_u32_le` is an `unsafe fn`, which says its callers must vouch; the reads through `p` on
-  line 4 are this function's own unsafe steps, and nothing says why they are sound; put line 4 in an
-  `unsafe:` block with a `# SAFETY:` note saying why the read is safe: above line 4 write `# SAFETY:` and
-  the reason, then `unsafe:`, and indent line 4 under it").
+  `unsafe overlay`) it says that this code vouches, with `# SAFETY:` saying why (`[UNS-8]`); `safe:`
+  inside unsafe code says the opposite, that its code is checked as safe code (`[UNS-12]`).
+* `[UNS-12]` *(new in 0.9.15)* **An `unsafe fn` is unsafe as a whole** (verdict 118: "the function
+  literally says that it is unsafe"). Its body is unsafe code, as the inside of an `unsafe:` block is.
+  Everything written in unsafe code is unsafe (verdict 119): a function declared there is an
+  `unsafe fn`, whose body is unsafe, whose calls need unsafe code, and which carries `@safety`
+  (`[UNS-7]`); a lambda written there is a value of an `unsafe` callable type, `unsafe fn(…)`
+  (`[FN-6]`), which only unsafe code calls (`fn make() -> unsafe fn(*mut u8):` may return one made in
+  an `unsafe:` block; `-> fn(*mut u8)` may not). Code inside unsafe code that is to be checked as safe
+  code is written in a `safe:` block, which needs no note: in it each operation of `[UNS-1]` is `E3100`
+  again ("`p.write(1)` (line 7) is in a `safe:` block, which is checked as safe code; move it out of
+  the `safe:` block, or put it in an `unsafe:` block with a `# SAFETY:` note"), a function or lambda
+  written in it is safe, and an `unsafe:` block in it is unsafe again. A `safe:` block outside unsafe
+  code changes nothing and is `L3020` ("this `safe:` block is not inside unsafe code, so it changes
+  nothing: remove `safe:`"); an `unsafe:` block directly inside unsafe code is `L3010` (`[UNS-3]`).
 
 ## IX.5 Layout
 

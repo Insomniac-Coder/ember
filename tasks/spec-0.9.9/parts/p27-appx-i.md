@@ -93,6 +93,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[BLD-11]` | XVII | A package that omits a `[STD-6]` layer cannot use it or depend on a … |
 | `[BLD-13]` | XVII | Builds are reproducible: the same inputs give a byte-identical … |
 | `[BLD-14]` | XVII | *(new in 0.9.15)* Facts worked out at a package's edge. A fact the … |
+| `[BLD-15]` | XVII | *(new in 0.9.15)* A link that hangs is an error (verdict 124). Each … |
 
 ## BLD-FFI
 
@@ -611,7 +612,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[FFI-52]` | XVI | *(new in 0.9.15)* What a foreign call may run. The compiler cannot … |
 | `[FFI-53]` | XVI | *(new in 0.9.15)* The checked trampoline. C never holds the address … |
 | `[FFI-54]` | XVI | *(new in 0.9.15)* Giving an object to C. A C function declared as … |
-| `[FFI-55]` | XVI | *(new in 0.9.15)* An overlay names the header it was written for. An … |
+| `[FFI-55]` | XVI | *(new in 0.9.15)* Every overlay is checked against the header it was … |
 | `[FFI-56]` | XVI | *(new in 0.9.15)* A C function pointer is unsafe to call. A function … |
 
 ## FMT
@@ -931,7 +932,7 @@ Every rule of this document, by family, with the Part that defines it.
 | Rule | Part | Begins |
 |---|---|---|
 | `[MAN-1]` | XVII | An invalid manifest, including one with an unknown key, is `E9001`, … |
-| `[MAN-2]` | XVII | `ember.lock` records the resolved dependencies with content hashes; … |
+| `[MAN-2]` | XVII | *(changed in 0.9.15)* `ember.lock` records the resolved dependencies … |
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
 | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
 | `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
@@ -1381,7 +1382,7 @@ Every rule of this document, by family, with the Part that defines it.
 |---|---|---|
 | `[UNS-1]` | IX | *(changed in 0.9.15)* An `unsafe` context is required to: … |
 | `[UNS-2]` | IX | *(changed in 0.9.15)* `unsafe` permits exactly those operations. It … |
-| `[UNS-3]` | IX | `L3010` reports an `unsafe` block containing statements that need no … |
+| `[UNS-3]` | IX | *(changed in 0.9.15)* `L3010` reports an `unsafe` block containing … |
 | `[UNS-4]` | IX | *(changed in 0.9.15)* Unsafe code MUST uphold what safe code assumes: … |
 | `[UNS-5]` | IX | `std.mem` provides `Volatile[*T]` (volatile reads and writes), … |
 | `[UNS-6]` | IX | Inline assembly is `unsafe asm("…", …)` on toolchains that support it … |
@@ -1390,7 +1391,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[UNS-10]` | IX | *(changed in 0.9.15)* `UnsafeCell[T]` (in `std.mem`) is the primitive … |
 | `[UNS-10a]` | IX | *(changed in 0.9.15)* `UnsafeCell` suspends no rule globally: the … |
 | `[UNS-11]` | IX | *(new in 0.9.15)* Only inside `unsafe`. Anything that can break a … |
-| `[UNS-12]` | IX | *(new in 0.9.15)* An `unsafe fn` body is not itself an `unsafe` … |
+| `[UNS-12]` | IX | *(new in 0.9.15)* An `unsafe fn` is unsafe as a whole (verdict 118: … |
 
 ## VER
 
