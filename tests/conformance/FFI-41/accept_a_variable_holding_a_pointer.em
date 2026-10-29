@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-41, STA-1
+#$ warning[L3015]: `has_last_grid` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5034]: `hidden` is not imported from `space.hpp`: it is in an anonymous namespace
 #$ stdout: false false

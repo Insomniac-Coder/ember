@@ -1,5 +1,11 @@
 #$ test: run-pass
 #$ rules: FFI-30, FFI-30a
+#$ warning[L3015]: `left_make` is a C function the program calls in unsafe code
+#$ warning[L3015]: `right_length2` is a C function the program calls in unsafe code
+#$ warning[L3015]: `right_mode_value` is a C function the program calls in unsafe code
+#$ warning[L3015]: `left_mode` is a C function the program calls in unsafe code
+#$ warning[L3015]: `right_is_null` is a C function the program calls in unsafe code
+#$ warning[L3015]: `left_handle` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 25.0 5.0 2 true
 #$ stdout: 2.0

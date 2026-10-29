@@ -2,5 +2,8 @@
 # (`from(self)`), so that the test does not share a module text with another.
 
 unsafe overlay cpp "views.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
-    fn new()
-    fn first() -> from(self)
+    class Box:
+        fn new(value)
+    class Words:
+        fn new()
+        fn first() -> from(self)

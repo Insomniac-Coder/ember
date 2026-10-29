@@ -1,5 +1,44 @@
 # Ember — handoff
 
+> **2026-10-30, night — AUTONOMOUS (owner asleep). START HERE.** Owner: "now you work autonomously, keep an eyes on
+> power source and wifi connection if any of those change you wait for 5 minutes and hibernate the laptop and in the
+> morning I want you to report all ODRs to me, you can use one helper agent and make sure you ruling pattern is
+> followed". Watcher: session scratchpad `power_wifi_hibernate.ps1` (log beside it). The night's rulings: decisions.md
+> §11 (N1-N10) and the open question there (`@ffi(unsafe)` on hand declarations); report them all in the morning.
+> Done: spec Hardened_5 (679618ea, corrected in place twice since, unpushed). In the tree, conformance green: items
+> 1-6 of the list under decisions.md item 39 (C/C++ `@safety`, `unsafe fn` entries, members under their class, lambda
+> `@safety`, every program a package with 600+ default manifests written for the repo's test folders, `bind --check
+> --merge`, EFF-2 parameters/lists/drops with D-930 closed, the note text) plus the review fixes. Item 7 (`[BLD-15]`
+> link time limit, E9042, stacks captured with `cdb` on a stop) is written in scratchpad `bld15.py`, not yet
+> applied. Then: E9042 page (scratchpad `E9042.md`), commit, full Windows check, bench, push, CI look; then the
+> link-hang hunt (release links of `tests/perf/b16_checked.em` under a 5-minute limit, stacks kept).
+>
+> **2026-10-29, afternoon — PARKED by the owner ("pause and park the current work"). START HERE.**
+>
+> **Evening: the owner reviewed every ODR (ODR 9 to 20) and the C++ question** — verdicts in
+> `tasks/96/redesign/compiler-0.9.15/decisions.md`, "Owner verdicts on §9's rulings", items 19-39, with the
+> work they leave listed under them (C++ follows verdict 125; overlay `@safety` above `unsafe fn`, members
+> under their class; lambda `@safety`; every project gets an `ember.toml`; EFF-2 parameters/lists fixes,
+> D-930 open; `bind --check --merge`). Still parked: resume only on the owner's word.
+>
+> Local `main` is 4 commits ahead of origin (H4 spec 10d90bc6, H4 compiler 4dd313b2, ember.overlays
+> ba96d222, EFF-2 places 30b4e91a), not pushed: no full check or bench on them yet.
+> **Uncommitted: verdict 125** (JOB.md has it: a function `import c` writes that its overlay entry leaves
+> unsafe carries `@safety` in that entry; a call without it is `L3015`). In the tree, building:
+> `ember_diag` (`UNSTATED_CONTRACT`/`UNSTATED_VARIADIC`, shared with cimport), `cimport.rs` (`Entry.safety`
+> read from the entry; an entry with `@safety` stays unsafe, like the `unsafe` word), `ember_typeck`
+> (`L3015` once per C function by name, at its first call that is not refused, not in import-written
+> files, not for `import cpp`). 26 conformance tests got `#$ warning[L3015]: …` lines. Conformance
+> check: 0 failing. NOT yet run: the driver's Rust tests (milestones, guide, package, firstweek,
+> staticlib, cdylib), the crate tests, `tools/error_pages.py` (the run was stopped when parked).
+> Still to do for 125: decisions.md §9 rulings (entry `@safety` keeps it unsafe; first call only, by
+> name for [FFI-30]; not in import-written modules; C only) and an owner question: should `import cpp`
+> follow, and how a C++ member states it (`fn new` entries are matched by name, so two classes'
+> constructors share one entry); the spec text (UNS-7, FFI-2, GRM-35 in H4 parts, rebuild, refreeze,
+> re-pin: H4 is not pushed, so in place, flagged); the L3015 page; commit.
+> Then: BLD-15 link time limit (E9042, `[link] timeout`), the link-hang cause, full Windows check,
+> bench, push, one CI look; then A4-2, M1. Power watcher (hibernate on power cut) is running.
+
 > **2026-10-28, night — START HERE (supersedes the notes below for what to do next).**
 >
 > **Mode: autopilot through the night.** The owner: "continue working on autopilot and in the

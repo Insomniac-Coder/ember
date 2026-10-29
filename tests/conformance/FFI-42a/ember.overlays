@@ -1,0 +1,14 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/containers.em"
+header = "containers.hpp"
+[overlay.declarations]
+"Bag.iter" = "blake3:fded23bca154b364bf9663ec81586b9346e1ffc8da67b45b2c803f7f24202a9e"
+"Bag.new" = "blake3:6487fb302578a16130b049c154aa31efb8895d16ccb6d5ad7f66d3c202773a60"
+"Bag.put" = "blake3:e65421f009db17fc3465f551c75cb2cbca13713a609420cc48f44e50f4c8c4d2"
+"Bag.size" = "blake3:0f7a5343b952f31e42a181d6b422f6f8f1501b5bab2d231f349a8c453366d868"
+"Row" = "blake3:e778fc29ae3feb79675e5a2c818b5b6ca8fd6248dbb6a5785280e7edc7dcce0c"
+"Row.iter" = "blake3:fded23bca154b364bf9663ec81586b9346e1ffc8da67b45b2c803f7f24202a9e"

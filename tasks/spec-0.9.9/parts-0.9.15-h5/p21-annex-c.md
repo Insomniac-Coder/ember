@@ -171,8 +171,9 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   when the header does not have the body (ODR-160). An overlay's `class C:` section holds the entry of
   each member it states (`[GRM-35]`, verdict 131): `@ffi(const)` above a method's entry
   (`fn lookups()`) asserts that the method only reads its object, an asserted fact, which `ember tcb`
-  lists, and an entry without it imports the method as changing its object. An entry whose name or
-  parameters differ from the import's member is `E5010` (`[FFI-12]`).
+  lists; an entry without it leaves the importer's reading of the body, as an Ember method's is worked
+  out from its body (`[FN-4]`). An entry whose name or parameters differ from the import's member is
+  `E5010` (`[FFI-12]`).
 * `[FFI-41]` *(changed in 0.9.15)* Static member functions import as functions of the type with no
   object, as a `static fn` is (`[FN-4]`). A static data member, and a
   variable of a namespace, imports as a foreign static (`[FFI-10]`), read and written as a global

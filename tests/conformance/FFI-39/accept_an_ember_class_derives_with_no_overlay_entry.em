@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-39, FFI-44, FFI-39b
+#$ warning[L3015]: `run` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Stage.total` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `measure` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 4201 5 0
 #$ stdout: 159 5

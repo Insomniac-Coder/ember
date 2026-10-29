@@ -187,10 +187,11 @@ impl Printer {
                             contract.iter().map(|c| c.word.name.to_string()).collect::<Vec<_>>().join(" ")
                         };
                         match &overlay_item.kind {
-                            OverlayItemKind::Fn { name, params, result } => {
+                            OverlayItemKind::Fn { name, params, result, is_unsafe } => {
                                 let params: Vec<String> =
                                     params.iter().map(|param| format!("{}: {}", param.name.name, words(&param.contract))).collect();
-                                p.line(&format!("Fn {}({}) -> {}", name.name, params.join(", "), words(result)));
+                                let kind = if *is_unsafe { "UnsafeFn" } else { "Fn" };
+                                p.line(&format!("{kind} {}({}) -> {}", name.name, params.join(", "), words(result)));
                             }
                             OverlayItemKind::MacroFn { name, params, .. } => {
                                 p.line(&format!("MacroFn {}({} parameters)", name.name, params.len()))
@@ -200,9 +201,15 @@ impl Printer {
                             OverlayItemKind::Rename { from, to } => p.line(&format!("Rename {} as {}", from.name, to.name)),
                             OverlayItemKind::Hide(name) => p.line(&format!("Hide {}", name.name)),
                             OverlayItemKind::Extend(_) => p.line("Extend"),
-                            OverlayItemKind::Class { name, methods } => {
-                                let methods: Vec<String> = methods.iter().map(|method| method.name.name.to_string()).collect();
-                                p.line(&format!("Class {} ({})", name.name, methods.join(", ")))
+                            OverlayItemKind::Class { name, members } => {
+                                let members: Vec<String> = members
+                                    .iter()
+                                    .filter_map(|member| match &member.kind {
+                                        OverlayItemKind::Fn { name, .. } => Some(name.name.to_string()),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                p.line(&format!("Class {} ({})", name.name, members.join(", ")))
                             }
                         }
                     }

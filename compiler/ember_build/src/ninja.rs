@@ -143,7 +143,19 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     }
     // The link's inputs and flags in a response file: four hundred objects are more than a command
     // line holds.
-    let mut link_words: Vec<String> = vec![quote(&program_name.to_string_lossy())];
+    // `[BLD-15]` — each link under the guard that keeps its time limit (`ember __link`).
+    let mut link_words: Vec<String> = match crate::link_limit() {
+        Some((guard, limit)) => vec![
+            quote(&guard.to_string_lossy()),
+            "__link".to_string(),
+            limit.as_secs().to_string(),
+            "$out".to_string(),
+            "$out.rsp".to_string(),
+            "--".to_string(),
+            quote(&program_name.to_string_lossy()),
+        ],
+        None => vec![quote(&program_name.to_string_lossy())],
+    };
     link_words.extend(prefix.iter().map(|arg| quote(&arg.to_string_lossy())));
     link_words.push("@$out.rsp".to_string());
     text.push_str("rule link\n");
@@ -184,6 +196,10 @@ pub fn build(toolchain: &Toolchain, program: &Program<'_>, retained: &[String], 
     if !output.status.success() {
         let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&output.stderr));
+        // `[BLD-15]` — a link the guard ended is `E9042`, its own message.
+        if let Some(at) = text.find("error[E9042]") {
+            return Err(BuildError::LinkTimedOut(text[at..].trim_end().to_string()));
+        }
         return Err(BuildError::CompilerFailed { command: format!("{run:?}"), output: text });
     }
     if let Some(cached) = cached {

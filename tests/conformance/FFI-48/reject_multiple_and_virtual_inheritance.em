@@ -1,5 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-48
+#$ warning[L3015]: `answer` is a C++ function the program calls in unsafe code
 #$ warning[W5002]: `Both` is not imported from `shapes.hpp`: multiple inheritance
 #$ warning[W5002]: `Shared` is not imported from `shapes.hpp`: multiple inheritance, or a virtual base
 # `[FFI-48]` — multiple inheritance and virtual bases are unsupported: the pointer adjustment is

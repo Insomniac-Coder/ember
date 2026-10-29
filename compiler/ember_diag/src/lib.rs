@@ -14,6 +14,15 @@ use std::fmt::Write as _;
 use ember_span::{FileId, SourceMap, Span};
 
 pub mod shapes;
+
+/// `[UNS-7]` (verdict 125) — the `@safety` the C importer writes on a function callers call in unsafe
+/// code whose overlay entry gives none: what C requires of a call is not stated, and the type checker
+/// reports `L3015` at the function's first call.
+pub const UNSTATED_CONTRACT: &str =
+    "the header states no contract: each pointer's ownership, count, nullability and lifetime are the caller's to keep ([FFI-38])";
+/// `[UNS-7]`, `[FFI-8]` — the same, for a variadic C function.
+pub const UNSTATED_VARIADIC: &str =
+    "C reads each further argument as the type its format or count names: the caller matches them ([FFI-8])";
 pub mod habits;
 pub mod codes;
 pub use codes::Code;

@@ -1,0 +1,38 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/classes.em"
+header = "classes.hpp"
+[overlay.declarations]
+"Counter.add" = "blake3:bb19583bf5cbf31c7a7c92ffeec6aca3fa3d22149073bba74cad386a62630cb6"
+"Counter.count" = "blake3:44aa8ea650d467e0253883affaf0d5d079e858697252ea3bd84016c3f3b6a6bd"
+"Counter.new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"
+"doubled" = "blake3:7dd6e9115f8180b0dfe0f36cdb15e0385bb94f4baaf35049dba94e355fd2ce3d"
+
+[[overlay]]
+file = "overlays/classes_counted.em"
+header = "classes.hpp"
+[overlay.declarations]
+"Counter.count" = "blake3:44aa8ea650d467e0253883affaf0d5d079e858697252ea3bd84016c3f3b6a6bd"
+"doubled" = "blake3:7dd6e9115f8180b0dfe0f36cdb15e0385bb94f4baaf35049dba94e355fd2ce3d"
+
+[[overlay]]
+file = "overlays/classes_doubled.em"
+header = "classes.hpp"
+[overlay.declarations]
+"doubled" = "blake3:7dd6e9115f8180b0dfe0f36cdb15e0385bb94f4baaf35049dba94e355fd2ce3d"
+
+[[overlay]]
+file = "overlays/left.em"
+header = "left.h"
+[overlay.declarations]
+"left_make" = "blake3:28b485d72b2f69dca1c96a8a15bd762cb638d5eedd8a6152e5657e2ad2f2dcb9"
+
+[[overlay]]
+file = "overlays/pointers.em"
+header = "pointers.h"
+[overlay.declarations]
+"pointers_bump" = "blake3:704a3998d6a1e0454b8d41dbd7efeb2bcb00b3c87b95bb3b5bcd4dd516caf51a"
+"pointers_read" = "blake3:47d3c6d5d9765a42b7d1edafa56e9747a45e29d1cf5715623fc3e9189c48b319"

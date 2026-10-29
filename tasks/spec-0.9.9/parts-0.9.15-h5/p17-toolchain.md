@@ -176,10 +176,11 @@ large_copy = { level = "warn", threshold = 256 }
 * `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content hashes;
   `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the package's
   overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by hand.
-* `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A build, check or run of a
-  file with no `ember.toml` in its folder or any folder above it first writes a default one in the
-  file's folder, `[package]` with the folder's name as `name` and `version = "0.1.0"`, and says so; the
-  program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
+* `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A command that compiles a
+  file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml` in its folder or any folder
+  above it first writes a default one in the file's folder, `[package]` with the folder's name as `name`
+  and `version = "0.1.0"`, and says so on standard error; `ember bind` does so in a header's folder no
+  package holds. The program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.

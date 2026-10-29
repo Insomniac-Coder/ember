@@ -1,5 +1,17 @@
 #$ test: run-pass
 #$ rules: FFI-40a, FFI-40
+#$ warning[L3015]: `Cache.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.lookup` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.note` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.lookups` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.hits` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.add` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.reset` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.hand_on` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.peeked` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.scaled` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.twice` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Cache.total` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 14 2 1
 #$ stdout: 7 3 7 20 6

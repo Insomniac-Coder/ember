@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-2, FFI-2a, FFI-13, FFI-30a
+#$ warning[L3015]: `widget_id` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 7 10 3 3 3
 #$ stdout: positive 5 9 12

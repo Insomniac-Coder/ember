@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-38
+#$ warning[L3015]: `uncontracted_add` is a C function the program calls in unsafe code
+#$ warning[L3015]: `uncontracted_sum` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 3 6
 # `[FFI-38]` — an uncontracted import is not refused: its calls are the caller's assertion, inside

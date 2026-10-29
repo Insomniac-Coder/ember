@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-29b
+#$ warning[L3015]: `single_answer` is a C function the program calls in unsafe code
+#$ warning[L3015]: `single_calls` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 42 42 2
 # `[FFI-29b]` — `implementation = ["SINGLE_IMPLEMENTATION"]` compiles a single-header library's

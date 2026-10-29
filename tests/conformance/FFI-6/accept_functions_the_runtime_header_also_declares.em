@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-6
+#$ warning[L3015]: `puts` is a C function the program calls in unsafe code
+#$ warning[L3015]: `strlen` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: hi
 #$ 2 2 true

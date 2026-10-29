@@ -1181,13 +1181,18 @@ impl Parser<'_> {
                 self.bump();
                 ExprKind::Path { segments: vec![Ident { name: "static".into(), span }] }
             }
-            // `[FFI-11]` — `owned` and `unsafe` are contract words inside `@ffi(…)`.
-            TokenKind::Keyword(keyword @ (Kw::Owned | Kw::Unsafe))
+            // `[FFI-11]` — `owned` and `unsafe` are contract words inside `@ffi(…)`; `const`, of a
+            // method's entry, asserts that it only reads its object (`[FFI-40a]`).
+            TokenKind::Keyword(keyword @ (Kw::Owned | Kw::Unsafe | Kw::Const))
                 if self.in_ffi_attribute && !self.at_kw_at(1, Kw::Fn) =>
             {
                 let span = self.span();
                 self.bump();
-                let word = if keyword == Kw::Owned { "owned" } else { "unsafe" };
+                let word = match keyword {
+                    Kw::Owned => "owned",
+                    Kw::Unsafe => "unsafe",
+                    _ => "const",
+                };
                 ExprKind::Path { segments: vec![Ident { name: word.into(), span }] }
             }
             TokenKind::Keyword(Kw::Match) => {
@@ -1198,6 +1203,31 @@ impl Parser<'_> {
                 if self.at_kw(Kw::Fn) || self.at_kw_at(1, Kw::Fn) =>
             {
                 ExprKind::Lambda(self.parse_lambda(allow_block_lambda))
+            }
+            // `[UNS-7]` (verdict 126) — `@safety("…")` written just before a lambda is the lambda's.
+            TokenKind::Punct(Punct::At) if matches!(self.peek_at(1), TokenKind::Ident(name) if name.is("safety")) => {
+                let start = self.span();
+                self.bump();
+                self.bump();
+                let mut text = String::new();
+                if self.eat_punct(Punct::LParen) {
+                    if let Some(AttrArg::Expr(Expr { kind: ExprKind::Lit(Literal::Str(written)), .. })) = self.parse_attr_arg() {
+                        text = written;
+                    }
+                    self.expect_punct(Punct::RParen);
+                }
+                let at = start.to(self.prev_span());
+                if self.at_kw(Kw::Fn) || (self.at_kw(Kw::Owned) && self.at_kw_at(1, Kw::Fn)) {
+                    let mut lambda = self.parse_lambda(allow_block_lambda);
+                    lambda.safety = Some((text, at));
+                    ExprKind::Lambda(lambda)
+                } else {
+                    self.report(
+                        Diagnostic::error(codes::E0104, at, "`@safety` written in an expression is a lambda's, and no lambda follows it")
+                            .help("write it just before the lambda: `set = @safety(\"…\") fn(v: int) => p.write(v)` [UNS-7]"),
+                    );
+                    ExprKind::Error
+                }
             }
             // `[GRM-15]` — `owned` reaching expression position here means it
             // is not a `for` iterable, a `match` scrutinee or an `owned fn`,
@@ -1730,7 +1760,7 @@ impl Parser<'_> {
                 Block { id: this.next_id(), stmts: vec![stmt], span: start.to(this.prev_span()) }
             };
             if self.eat_kw(Kw::Pass) {
-                return Lambda { is_owned, params, ret, body: LambdaBody::Block(statement(self, StmtKind::Pass)) };
+                return Lambda { is_owned, params, ret, body: LambdaBody::Block(statement(self, StmtKind::Pass)), safety: None };
             }
             let body = self.parse_expr_no_block();
             let kind = if let Some(op) = self.augmented_assign_op() {
@@ -1756,7 +1786,7 @@ impl Parser<'_> {
             if let Some(kind) = kind
                 && in_place(self)
             {
-                return Lambda { is_owned, params, ret, body: LambdaBody::Block(statement(self, kind)) };
+                return Lambda { is_owned, params, ret, body: LambdaBody::Block(statement(self, kind)), safety: None };
             }
             if !in_place(self) {
                 self.report(
@@ -1788,7 +1818,7 @@ impl Parser<'_> {
                 }
                 // `[IDE-3]` — its body is a placeholder: the statements skipped are not checked
                 // without the ones before them.
-                return Lambda { is_owned, params, ret, body: LambdaBody::Expr(Box::new(Expr { id: self.next_id(), kind: ExprKind::Error, span: colon })) };
+                return Lambda { is_owned, params, ret, body: LambdaBody::Expr(Box::new(Expr { id: self.next_id(), kind: ExprKind::Error, span: colon })), safety: None };
             }
             LambdaBody::Expr(Box::new(body))
         } else {
@@ -1803,7 +1833,7 @@ impl Parser<'_> {
                 span,
             }))
         };
-        Lambda { is_owned, params, ret, body }
+        Lambda { is_owned, params, ret, body, safety: None }
     }
 
     /// Re-parse each interpolation of an f-string. The spans the lexer

@@ -1,0 +1,14 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/ember.em"
+header = "nodes.hpp"
+[overlay.declarations]
+
+[[overlay]]
+file = "overlays/foreign.em"
+header = "nodes.hpp"
+[overlay.declarations]
+"keep" = "blake3:9db07f46c8e3fbe9b0bebc3fca80d3c9efa7b9b251468190227e423c59a0db46"

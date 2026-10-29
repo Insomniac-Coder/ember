@@ -1,0 +1,43 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/containers.em"
+header = "containers.hpp"
+[overlay.declarations]
+"Bag.iter" = "blake3:fded23bca154b364bf9663ec81586b9346e1ffc8da67b45b2c803f7f24202a9e"
+"Bag.new" = "blake3:6487fb302578a16130b049c154aa31efb8895d16ccb6d5ad7f66d3c202773a60"
+"Bag.put" = "blake3:e65421f009db17fc3465f551c75cb2cbca13713a609420cc48f44e50f4c8c4d2"
+"Bag.size" = "blake3:0f7a5343b952f31e42a181d6b422f6f8f1501b5bab2d231f349a8c453366d868"
+"Row" = "blake3:e778fc29ae3feb79675e5a2c818b5b6ca8fd6248dbb6a5785280e7edc7dcce0c"
+"Row.iter" = "blake3:fded23bca154b364bf9663ec81586b9346e1ffc8da67b45b2c803f7f24202a9e"
+
+[[overlay]]
+file = "overlays/operators.em"
+header = "operators.hpp"
+[overlay.declarations]
+"Grid.index" = "blake3:3dbb485b2dde8688d3665d176afcdf96ae810f9dc48d336b3e74b84abf30fe55"
+"Grid.index_mut" = "blake3:260c2e1ea84a0d51572e23a1069a9653c230ec8242ae893ea87928f8c6d7fac2"
+"Grid.total" = "blake3:87d308af02da570e8ffb20d223f95fa11453cf0713a4858b92ae8f6d2e196ae2"
+"Money" = "blake3:61aa38fb9a10c2d3dda40b2e00f482f93711b04f7afe16f24a430b605f0cbaf4"
+"Money.add" = "blake3:a85d1aa24cfa39f24f8fc55499745ef24c28f56ea8ab6c05124d3e97a6273cea"
+"Money.add_assign" = "blake3:8313987b5839f2248c56bfbbcbda789e8fc762e6d33a6ce0c648f8849dc6bb62"
+"Money.eq" = "blake3:2605168bd85bcdbb2743f06985a3cb31d911fc605762e40ef1fcabb64bd9b790"
+"Points" = "blake3:0d549c60a18190ab546b6f32b547439ac26abeddab46b4f0f0cffb1b297087d7"
+"Points.mul" = "blake3:3752b95e39ccba69546313db7ab8170db267c9704b34d9d4abc26e4fc50c0fef"
+"Vec2" = "blake3:22d61ae512c42b70757ffee297e70094024744c1c13024f4cfceb05a0d38bc92"
+"Vec2.add" = "blake3:3d79ee0de674ace0b0840d44b8e9369b22f1483bae9fae97fe0e5b73f2b6e3fe"
+"Vec2.add_assign" = "blake3:c65c050caf620207ca659c9ac661105e689eace3b2820bedf8d44a7b73ae1cf9"
+"Vec2.eq" = "blake3:b95d8a0976ae5668fd1b423deb277e1242c6396b4d8fa562c1368e57fa1349f0"
+"Vec2.mul" = "blake3:617085795ede38ac03972938556767992a4ed5863419c46130289539c5493170"
+"Vec2.neg" = "blake3:5a15d9ba1a27af015bfb5448ac16a47341104ab23fb352e77735e80c96baeb5f"
+
+[[overlay]]
+file = "overlays/pairs.em"
+header = "pairs.hpp"
+[overlay.declarations]
+"Pair_int" = "blake3:ffe03e30e0479e998e0ff0ab8fcb172287b323721091fb1f01974c1d87cd3c27"
+"Pair_int.add" = "blake3:b1cb66313e4e81bed51be72acae170fd11eb28939535b016e3784f5530d250be"
+"Pair_int.eq" = "blake3:5bf01c935f2762e048557b562a94ccb15881c501a437bd097109feee8ab4f0c8"
+"Pair_int.sum" = "blake3:28f6682c90739b1a8ef7fc0762870ef38abd8d98b475d1e5df0e8a64c1a9a670"

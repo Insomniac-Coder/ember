@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-8, FFI-12
+#$ warning[L3015]: `make_widget` is a C function the program calls in unsafe code
+#$ warning[L3015]: `widget_size` is a C function the program calls in unsafe code
+#$ warning[L3015]: `free_widget` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 3 103
 #$ stdout: 4

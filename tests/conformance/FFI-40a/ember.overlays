@@ -1,0 +1,17 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/asserted.em"
+header = "ledger.hpp"
+[overlay.declarations]
+"Ledger" = "blake3:4a21972041d2d645cfdf3411d686d80859922c7f27ec4a7e7659f0cc22bbac40"
+"Ledger.balance" = "blake3:5f2f9b9af8f101548bcbc04a0cccc7b3b52a3a53824c130b2a11c00f4062e7ab"
+
+[[overlay]]
+file = "overlays/drifted.em"
+header = "cache.hpp"
+[overlay.declarations]
+"Cache.add" = "blake3:bb19583bf5cbf31c7a7c92ffeec6aca3fa3d22149073bba74cad386a62630cb6"
+"Cache.lookups" = "blake3:1bf1ba250668c9a3d6b7fb14cf40f5b0c1c5ba27ca75f22def6b9d3218db25be"

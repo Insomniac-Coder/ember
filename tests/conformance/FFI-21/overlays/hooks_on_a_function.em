@@ -9,5 +9,6 @@ unsafe overlay cpp "hooks.hpp":  # SAFETY(ffi): each entry matches its declarati
     fn given_both()
     @ffi(handle)
     fn watching()
-    fn new()
-    fn on_resize(hook: callback(borrowed, user_data=data) nullable, data, size)
+    class Panel:
+        fn new()
+        fn on_resize(hook: callback(borrowed, user_data=data) nullable, data, size)

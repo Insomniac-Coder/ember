@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-50, FFI-17
+#$ warning[L3015]: `scaled` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 107 112
 # `[FFI-50]` — the manifest's `[cpp.<project>]` names the C++ project an `import cpp` is parsed and

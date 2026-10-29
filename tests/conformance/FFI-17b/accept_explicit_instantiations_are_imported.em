@@ -1,5 +1,15 @@
 #$ test: run-pass
 #$ rules: FFI-17b, FFI-17
+#$ warning[L3015]: `biggest_double` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `smallest_int` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Pair_int.scale` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Pair_int.larger` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Pair_int.sum` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Pair_int.twin` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Stack_int.make` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Stack_int.push` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Stack_int.top` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Stack_int.size` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5002]: `Stack_int.new` is not imported from `templates.hpp`: a constructor of a class template's instantiation
 #$ stdout: 7 3.5 2

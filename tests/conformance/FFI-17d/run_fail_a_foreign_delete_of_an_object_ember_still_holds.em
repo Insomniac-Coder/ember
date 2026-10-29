@@ -1,5 +1,6 @@
 #$ test: run-fail
 #$ rules: FFI-17d
+#$ warning[L3015]: `release` is a C++ function the program calls in unsafe code
 #$ panics: a foreign `delete` of a
 # `[FFI-17d]` — a foreign `delete` destroys an `owner="foreign"` object only when the count C++ was
 # given is its last: Ember code still holding a handle would be left with a deleted C++ object, so

@@ -1,5 +1,15 @@
 #$ test: run-pass
 #$ rules: FFI-6, BLD-FFI-1, FFI-8
+#$ warning[L3015]: `geometry_mid` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_area` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_grow` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_shape` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_count_tagged` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_scale` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_polygon` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_sides` is a C function the program calls in unsafe code
+#$ warning[L3015]: `type` is a C function the program calls in unsafe code
+#$ warning[L3015]: `geometry_polygon_free` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 16 mm 2 4
 #$ stdout: 64 3 3 1 3

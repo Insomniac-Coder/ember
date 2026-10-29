@@ -2,7 +2,10 @@
 # safe to call ([FFI-2]); `iter` is the one a `for` loop calls.
 
 unsafe overlay cpp "containers.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
-    fn new()
-    fn put(value)
-    fn size()
-    fn iter()
+    class Bag:
+        fn new()
+        fn put(value)
+        fn size()
+        fn iter()
+    class Row:
+        fn iter()

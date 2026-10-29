@@ -1,5 +1,14 @@
 #$ test: run-pass
 #$ rules: FFI-32, FFI-40, FFI-41, FFI-17
+#$ warning[L3015]: `Point.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Point.shift` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Point.sum` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Point.origin` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.add` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.total` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.count` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.destroyed` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5033]: `Counter.consume` is not imported from `classes.hpp`: an `&&`-qualified member function
 #$ stdout: 27 0 13 3

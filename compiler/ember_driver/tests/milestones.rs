@@ -1366,6 +1366,8 @@ fn a_build_is_reproducible_and_named_by_its_inputs() {
     for folder in &folders {
         std::fs::create_dir_all(folder).expect("a build folder is writable");
         std::fs::write(folder.join(&input), source).expect("the program is writable");
+        // `[MAN-9]` — its package, the same in both: a default one would be named after its folder.
+        std::fs::write(folder.join(ember_branding::MANIFEST), "[package]\nname = \"reproducible\"\nversion = \"0.1.0\"\n").expect("the manifest is writable");
     }
     // `compiler/ember_driver`'s grandparent, as the build spells it (not `canonicalize`'s `\\?\` form).
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).expect("the repository").to_path_buf();
@@ -3142,29 +3144,31 @@ fn tcb_lists_every_unsafe_with_its_note_and_obligations() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `[FFI-40a]` (ODR-160), `[TCB-1]` — an overlay's method line asserts its method's receiver, and
-/// `ember tcb` lists it with the overlay's module, graded asserted.
+/// `[FFI-40a]` (ODR-160, verdict 131), `[TCB-1]` — `@ffi(const)` on a member's entry asserts that
+/// the method only reads its object, and `ember tcb` lists it with the overlay's module, graded
+/// asserted.
 #[test]
-fn tcb_lists_an_overlay_method_line_as_an_asserted_fact() {
+fn tcb_lists_an_overlay_ffi_const_as_an_asserted_fact() {
     let root = workspace_root();
     let dir = temporary_directory("tcb-method-line");
     std::fs::create_dir_all(dir.join("overlays")).expect("make the overlay folder");
     let fixture = root.join("tests/conformance/FFI-40a");
-    std::fs::copy(fixture.join("cache.hpp"), dir.join("cache.hpp")).expect("copy the header");
-    let overlay = format!("overlays/stricter.{SOURCE_EXT}");
+    std::fs::copy(fixture.join("ledger.hpp"), dir.join("ledger.hpp")).expect("copy the header");
+    let overlay = format!("overlays/asserted.{SOURCE_EXT}");
     std::fs::copy(fixture.join(&overlay), dir.join(&overlay)).expect("copy the overlay");
     let source = dir.join(format!("main.{SOURCE_EXT}"));
     std::fs::write(
         &source,
-        "import cpp \"cache.hpp\" with (overlay = \"overlays/stricter.em\")\n\n\
-         fn main():\n    unsafe:  # SAFETY(ffi): the box owns the cache for every call\n\
-         \x20       cache = cpp.Cache.new()\n        println(cache.get_mut().lookups())\n",
+        "import cpp \"ledger.hpp\" with (overlay = \"overlays/asserted.em\")\n\n\
+         fn show(ledger: cpp.Ledger):\n    println(ledger.balance())\n\n\
+         fn main():\n    # SAFETY(ffi): `Ledger`'s constructor takes nothing\n    unsafe:\n\
+         \x20       show(cpp.Ledger.new())\n",
     )
     .expect("write the program");
     let report = ember(&["tcb", &source.to_string_lossy()], &dir);
     assert_eq!(report.exit, 0, "tcb failed:\n{}\n{}", report.stdout, report.stderr);
-    assert!(report.stdout.contains("method `Cache.lookups`"), "{}", report.stdout);
-    assert!(report.stdout.contains("it may change its object: `mut self`, as the overlay's method line says  [asserted]"), "{}", report.stdout);
+    assert!(report.stdout.contains("method `Ledger.balance`"), "{}", report.stdout);
+    assert!(report.stdout.contains("it changes no field of its object, as the overlay's `@ffi(const)` says  [asserted]"), "{}", report.stdout);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -8170,7 +8174,7 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     let written = std::fs::read_to_string(&overlay).expect("the starter overlay is written");
     for line in [
         "unsafe overlay c \"calc.h\":  # SAFETY(ffi): TODO(",
-        "    fn bind_add(a, b) -> unsafe",
+        "    unsafe fn bind_add(a, b)",
         "    # derived: `items` is a read-only borrow (`const`)",
         "    fn bind_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)",
         "    # derived: `items` is a mutable borrow (no `const`)",
@@ -8189,7 +8193,7 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     let record = std::fs::read_to_string(dir.join("ember.overlays")).expect("the first build writes `ember.overlays`");
     assert!(record.contains(&format!("file = \"calc.overlay.{SOURCE_EXT}\"")) && record.contains("\"bind_add\" = \"blake3:"), "{record}");
     // Never written over.
-    std::fs::write(&overlay, written.replace("    fn bind_add(a, b) -> unsafe\n", "    fn bind_add(a, b)\n    # mine\n")).unwrap();
+    std::fs::write(&overlay, written.replace("    unsafe fn bind_add(a, b)\n", "    fn bind_add(a, b)\n    # mine\n")).unwrap();
     let again = ember(&["bind", "calc.h", "--init"], &dir);
     assert_ne!(again.exit, 0, "an existing overlay was written over");
     // `--merge` adds the new function only.
@@ -8198,7 +8202,7 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     assert_eq!(merged.exit, 0, "{}", merged.stderr);
     let after = std::fs::read_to_string(&overlay).unwrap();
     assert!(after.contains("    fn bind_add(a, b)\n    # mine\n"), "a hand-written entry was lost:\n{after}");
-    assert!(after.contains("    fn bind_neg(a) -> unsafe\n"), "the new function is missing:\n{after}");
+    assert!(after.contains("    unsafe fn bind_neg(a)\n"), "the new function is missing:\n{after}");
     assert_eq!(after.matches("fn bind_sum(").count(), 1, "an entry was added twice:\n{after}");
     assert_eq!(after.matches("# skipped: `bind_log`").count(), 1, "a skip was noted twice:\n{after}");
     // `[FFI-55]` — a declaration the overlay describes that changed stops the build, until `--merge`.
@@ -8212,6 +8216,22 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     assert_eq!(remerged.exit, 0, "{}", remerged.stderr);
     let rechecked = ember(&["check", &ember_branding::source_file("main")], &dir);
     assert_eq!(rechecked.exit, 0, "`--merge` did not record the header as it is now:\n{}", rechecked.stderr);
+    // `[CLI-7]` (ODR 14.2) — an overlay in a folder of its own is checked and recorded again by name,
+    // the command the error's help gives.
+    std::fs::create_dir_all(dir.join("overlays")).unwrap();
+    std::fs::copy(&overlay, dir.join(format!("overlays/calc.{SOURCE_EXT}"))).unwrap();
+    std::fs::write(dir.join(ember_branding::source_file("main")), format!(
+        "import c \"calc.h\" with (overlay = \"overlays/calc.{SOURCE_EXT}\")\n\nfn main():\n    \
+         unsafe:  # SAFETY(ffi): scalars\n        println(c.bind_add(1, 2))\n")).unwrap();
+    assert_eq!(ember(&["check", &ember_branding::source_file("main")], &dir).exit, 0);
+    let header = std::fs::read_to_string(dir.join("calc.h")).unwrap();
+    std::fs::write(dir.join("calc.h"), header.replace("static inline long bind_add(long a, long b)", "static inline int bind_add(int a, int b)")).unwrap();
+    let moved = ember(&["check", &ember_branding::source_file("main")], &dir);
+    assert!(moved.stderr.contains(&format!("then run `ember bind calc.h --check overlays/calc.{SOURCE_EXT} --merge`")), "{}", moved.stderr);
+    let recorded = ember(&["bind", "calc.h", "--check", &format!("overlays/calc.{SOURCE_EXT}"), "--merge"], &dir);
+    assert_eq!(recorded.exit, 0, "{}", recorded.stderr);
+    let after = ember(&["check", &ember_branding::source_file("main")], &dir);
+    assert_eq!(after.exit, 0, "`--check … --merge` did not record the header as it is now:\n{}", after.stderr);
 }
 
 /// `[FFI-50]` — `ember bind <header> --emit-cpp` writes the thunk translation unit an `import cpp`
@@ -8320,7 +8340,7 @@ inline int stated_safe(int x) { if (x < 0) throw std::runtime_error(\"negative\"
 inline int may_throw(int x) { if (x < 0) throw std::runtime_error(\"negative\"); return x; }
 struct Meter { int level; int read() const noexcept { return level; } };
 ").unwrap();
-    std::fs::write(dir.join(format!("overlay.{SOURCE_EXT}")), "unsafe overlay cpp \"modes.hpp\":\n    @ffi(noexcept)\n    fn stated_safe(x)\n    fn plain_sum(a, b)\n    fn read()\n").unwrap();
+    std::fs::write(dir.join(format!("overlay.{SOURCE_EXT}")), "unsafe overlay cpp \"modes.hpp\":\n    @ffi(noexcept)\n    fn stated_safe(x)\n    fn plain_sum(a, b)\n    class Meter:\n        fn read()\n").unwrap();
     let source = dir.join(format!("calls.{SOURCE_EXT}"));
     std::fs::write(&source, format!("import cpp \"modes.hpp\" with (overlay = \"overlay.{SOURCE_EXT}\")\n\nfn main():\n    \
         meter = cpp.Meter(level = 4)\n    println(cpp.plain_sum(1, 2), cpp.stated_safe(3), meter.read())\n    \

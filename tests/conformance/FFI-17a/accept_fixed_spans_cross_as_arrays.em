@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-17a
+#$ warning[L3015]: `first_of` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Grid.raw_cells` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 6 0 0
 #$ stdout: 1 4 10

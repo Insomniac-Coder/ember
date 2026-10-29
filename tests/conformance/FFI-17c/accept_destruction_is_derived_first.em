@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-17c, CLS-6
+#$ warning[L3015]: `record` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `recorded` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 123
 # `[FFI-17c]` — an Ember class deriving from a C++ class is destroyed derived-first, as `[CLS-6]`

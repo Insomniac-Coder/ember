@@ -752,22 +752,13 @@ impl Parser<'_> {
             }
             TokenKind::Keyword(Kw::Fn) => {
                 self.bump();
-                let name = self.expect_ident();
-                self.expect_punct(Punct::LParen);
-                let mut params = Vec::new();
-                while !self.at_punct(Punct::RParen) && !self.at_eof() && !self.at_newline() {
-                    let name = self.expect_ident();
-                    let contract = if self.eat_punct(Punct::Colon) { self.parse_contract_words() } else { Vec::new() };
-                    params.push(OverlayParam { name, contract });
-                    if !self.eat_punct(Punct::Comma) {
-                        break;
-                    }
-                    self.eat_newlines();
-                }
-                self.expect_punct(Punct::RParen);
-                let result = if self.eat_punct(Punct::Arrow) { self.parse_contract_words() } else { Vec::new() };
-                self.expect_newline();
-                OverlayItemKind::Fn { name, params, result }
+                self.parse_overlay_fn(false)
+            }
+            // `[GRM-35]` (verdict 130) — an entry of a function unsafe to call.
+            TokenKind::Keyword(Kw::Unsafe) if matches!(self.peek_at(1), TokenKind::Keyword(Kw::Fn)) => {
+                self.bump();
+                self.bump();
+                self.parse_overlay_fn(true)
             }
             TokenKind::Keyword(Kw::Type) => {
                 self.bump();
@@ -796,12 +787,12 @@ impl Parser<'_> {
                 OverlayItemKind::Hide(name)
             }
             TokenKind::Ident(_) if self.at_extend_decl() => OverlayItemKind::Extend(self.parse_extend()),
-            // `[FFI-40a]` (ODR-160) — `class C:` and a method line for each method it restates.
+            // `[GRM-35]` (verdict 131) — `class C:` and the entries of its members.
             TokenKind::Keyword(Kw::Class) => {
                 self.bump();
                 let name = self.expect_ident();
                 self.expect_punct(Punct::Colon);
-                let mut methods = Vec::new();
+                let mut members = Vec::new();
                 if self.at_newline() {
                     self.bump();
                     if self.eat_indent() {
@@ -810,31 +801,30 @@ impl Parser<'_> {
                             if self.at_dedent() || self.at_eof() {
                                 break;
                             }
-                            if !self.at_kw(Kw::Fn) {
-                                let span = self.span();
-                                self.report(
-                                    Diagnostic::error(codes::E0100, span, "expected a method line")
-                                        .help("an overlay's `class` section restates methods, as `fn name(self, …) -> T` [GRM-35]"),
-                                );
-                                self.bump();
+                            let before = self.pos;
+                            let Some(member) = self.parse_overlay_item() else {
+                                // A line that begins no item: past it, as the overlay's own loop does.
+                                if self.pos == before {
+                                    self.bump();
+                                }
                                 self.recover_to_line_end();
                                 continue;
-                            }
-                            let method = self.parse_method();
-                            if let Some(body) = &method.body {
+                            };
+                            if matches!(member.kind, OverlayItemKind::Fn { .. }) {
+                                members.push(member);
+                            } else {
                                 self.report(
-                                    Diagnostic::error(codes::E0100, body.span, "a method line of an overlay has no body")
-                                        .help("the C++ class's own method runs; the line states its signature [FFI-40a]"),
+                                    Diagnostic::error(codes::E0100, member.span, format!("a `class` section holds the entries of `{}`'s members", name.name))
+                                        .help("write each member as an entry, `fn name(…)` or `unsafe fn name(…)`; other items go outside the section [GRM-35]"),
                                 );
                             }
-                            methods.push(method);
                         }
                         self.eat_dedent();
                     }
                 } else {
                     self.expect_newline();
                 }
-                OverlayItemKind::Class { name, methods }
+                OverlayItemKind::Class { name, members }
             }
             other => {
                 let found = other.to_string();
@@ -853,6 +843,27 @@ impl Parser<'_> {
     /// `contract {contract}`, `contract := IDENT ["(" [attr_arg {"," attr_arg}] ")"]`: words
     /// separated by spaces, until a `,`, a `)` or the end of the line. `unsafe` is a word here
     /// (`[FFI-11]`: leave the call unsafe).
+    /// `overlay_fn`, after its `fn` (and its `unsafe`): the name, each parameter with its contract
+    /// words, and the result's.
+    fn parse_overlay_fn(&mut self, is_unsafe: bool) -> OverlayItemKind {
+        let name = self.expect_ident();
+        self.expect_punct(Punct::LParen);
+        let mut params = Vec::new();
+        while !self.at_punct(Punct::RParen) && !self.at_eof() && !self.at_newline() {
+            let name = self.expect_ident();
+            let contract = if self.eat_punct(Punct::Colon) { self.parse_contract_words() } else { Vec::new() };
+            params.push(OverlayParam { name, contract });
+            if !self.eat_punct(Punct::Comma) {
+                break;
+            }
+            self.eat_newlines();
+        }
+        self.expect_punct(Punct::RParen);
+        let result = if self.eat_punct(Punct::Arrow) { self.parse_contract_words() } else { Vec::new() };
+        self.expect_newline();
+        OverlayItemKind::Fn { name, params, result, is_unsafe }
+    }
+
     fn parse_contract_words(&mut self) -> Vec<Contract> {
         let mut words = Vec::new();
         loop {

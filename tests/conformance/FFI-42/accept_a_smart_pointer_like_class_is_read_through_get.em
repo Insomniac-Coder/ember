@@ -1,5 +1,9 @@
 #$ test: run-pass
 #$ rules: FFI-42
+#$ warning[L3015]: `Handle.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Handle.get` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `MutHandle.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `MutHandle.get_mut` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 3 4
 #$ stdout: 9

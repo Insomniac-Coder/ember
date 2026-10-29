@@ -8,5 +8,6 @@ unsafe overlay cpp "cpp_newtypes.hpp":  # SAFETY(ffi): each entry matches its de
     type ratio_t
     fn next_port(port)
     fn halve(ratio)
-    fn new(port)
-    fn port()
+    class Socket:
+        fn new(port)
+        fn port()

@@ -732,9 +732,10 @@ fn committed_python_habit_snapshots_match_and_fixes_compile() {
             let text = path.to_string_lossy().into_owned();
             if let Some(stem) = text.strip_suffix(&fixed_suffix).or_else(|| text.strip_suffix(".stderr")) {
                 assert!(Path::new(&format!("{stem}{source_suffix}")).is_file(), "{text} has no source case");
-            } else {
+            } else if text.ends_with(&source_suffix) {
                 cases.push((habit, path));
             }
+            // `[MAN-9]` — the folder's own `ember.toml` (and records) are its package's, no case.
         }
     }
     cases.sort_by(|a, b| a.1.cmp(&b.1));

@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-30b
+#$ warning[L3015]: `geom_sum` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 0 7 7
 # `[FFI-30b]` — `pub import c "…" as geom` re-exports the header's module under the ordinary

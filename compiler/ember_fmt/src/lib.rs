@@ -1270,9 +1270,11 @@ impl Printer<'_> {
         // The header from the tree as well: one the source breaks over lines (a long line the
         // formatter broke) is written on one line again, to be broken where `wrap` chooses.
         let owned = if lambda.is_owned { "owned " } else { "" };
+        // `[UNS-7]` (verdict 126) — its `@safety`, as written.
+        let safety = lambda.safety.as_ref().map(|(_, at)| format!("{} ", self.text(*at))).unwrap_or_default();
         let params: Vec<String> = lambda.params.iter().map(|param| self.lambda_param(param)).collect();
         let ret = lambda.ret.as_ref().map(|ret| format!(" -> {}", self.type_expr(ret))).unwrap_or_default();
-        (!commented && !value.contains('\n')).then(|| format!("{owned}fn({}){ret} => {value}", params.join(", ")))
+        (!commented && !value.contains('\n')).then(|| format!("{safety}{owned}fn({}){ret} => {value}", params.join(", ")))
     }
 
     /// A call's arguments. A generator expression that is the only one is written without

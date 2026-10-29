@@ -1,5 +1,18 @@
 #$ test: run-pass
 #$ rules: FFI-40, FFI-17
+#$ warning[L3015]: `Bag.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.add` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.put` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.merge` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.drain` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `both` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.absorb` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.total` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.slot` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `reset` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.peek` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.look` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Bag.checked` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5033]: `Bag.take` is not imported from `bag.hpp`
 #$ stdout: 14

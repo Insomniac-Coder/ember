@@ -1,5 +1,15 @@
 #$ test: run-pass
 #$ rules: FFI-44
+#$ warning[L3015]: `pair_sum` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Point.manhattan` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.bump` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Tagged.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Tagged.id` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Tagged.tag` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `evens` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `largest_int` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `checked` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5001]: macro `SQUARE` is not imported from `rows.hpp`: a function-like macro
 #$ warning[W5002]: `call_with_one` is not imported from `rows.hpp`: parameter `f`

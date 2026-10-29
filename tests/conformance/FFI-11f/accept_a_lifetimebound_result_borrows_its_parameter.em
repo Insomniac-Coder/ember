@@ -1,5 +1,10 @@
 #$ test: run-pass
 #$ rules: FFI-11f
+#$ warning[L3015]: `numbers` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `pick` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `larger` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Shelf.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Shelf.last_of` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5001]: macro `LIFETIMEBOUND` is not imported from `lifetimes.hpp`
 #$ stdout: 5

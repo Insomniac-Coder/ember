@@ -1,5 +1,10 @@
 #$ test: run-pass
 #$ rules: FFI-17a, FFI-17e, WK-14
+#$ warning[L3015]: `shared_counter` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `watch` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.value` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `owners` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `destroyed` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 9 false 2
 #$ stdout: true true true 1

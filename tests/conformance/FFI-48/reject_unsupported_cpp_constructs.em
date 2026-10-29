@@ -1,5 +1,9 @@
 #$ test: compile-fail
 #$ rules: FFI-48
+#$ warning[L3015]: `Holder.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `ready` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `plain_sum` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Holder.plain` is a C++ function the program calls in unsafe code
 #$ warning[W5002]: `fetch` is not imported from `unsupported.hpp`: a C++ coroutine (`Task` declares `promise_type`)
 #$ warning[W5002]: `Holder.value` is not imported from `unsupported.hpp`: overloads differing only in their return type
 #$ warning[W5002]: `origin_fixed` is not imported from `nttp.hpp`: its result: `Fixed` by value, which is opaque

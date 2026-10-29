@@ -1,5 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-8
+#$ warning[L3015]: `sum_wide` is a C function the program calls in unsafe code
 # `[FFI-8]` — a variadic C function is called only in `unsafe` (`E5002`); each further argument has
 # the type the program gives it, one C passes unchanged (`E5015`: an untyped literal; `E5013`: a type
 # C's default argument promotions change, naming only the promotion); the function is called, never a

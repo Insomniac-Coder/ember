@@ -1,5 +1,14 @@
 #$ test: run-pass
 #$ rules: FFI-17a, FFI-17e
+#$ warning[L3015]: `squares` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `total` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `double_all` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `label` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `broken` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `shared_counter` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Counter.value` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `owners` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `unique_counter` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 5 30
 #$ stdout: 32 6 160

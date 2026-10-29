@@ -1,5 +1,10 @@
 #$ test: run-pass
 #$ rules: FFI-8, FFI-5
+#$ warning[L3015]: `flags_make` is a C function the program calls in unsafe code
+#$ warning[L3015]: `flags_level` is a C function the program calls in unsafe code
+#$ warning[L3015]: `flags_delta` is a C function the program calls in unsafe code
+#$ warning[L3015]: `flags_wide` is a C function the program calls in unsafe code
+#$ warning[L3015]: `flags_size` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 7 1 9 -6 true 300 78187493530
 #$ stdout: 5 -16 1099511627775

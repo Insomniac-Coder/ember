@@ -1,5 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-17e
+#$ warning[L3015]: `squares` is a C++ function the program calls in unsafe code
 # `[FFI-17e]` — a span obtained from a `CppVector` borrows it, so it cannot outlive it.
 
 from std.ffi import c_int, CppVector

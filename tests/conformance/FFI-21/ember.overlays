@@ -1,0 +1,60 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/events.em"
+header = "events.h"
+[overlay.declarations]
+"emit" = "blake3:96efa80365118bfeab6da4a1f184a93684135ad7621103c3f3c0c0d267aced13"
+"listen" = "blake3:d067f43a2e0d26e755e92c1a29ef07b8e772bb15167b23813e5f1b4baee05883"
+"listening" = "blake3:c2423da9d4f1c6cb87f9fbdafa374074f662ce200a5b44148d1b4aea76afa351"
+"run_later" = "blake3:869dd54d5ecc42aba491ae22d33c1ea7d6e78367f1e07441269c8af0bc4b580e"
+"run_pending" = "blake3:8b5e931d606332bafbf3b4ce68aa58f6a798d751eaac222703d905f0c54b8cad"
+
+[[overlay]]
+file = "overlays/hooks.em"
+header = "hooks.hpp"
+[overlay.declarations]
+"Panel.new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"
+"Panel.on_resize" = "blake3:0ceaeb5737abc97f2e93158c1bcd980cf9992fb7450252299f9451705d4b386a"
+"given_both" = "blake3:e36d8643b876d4180fac4fd248fec20b8b5cb9b6302e1ab165e2cf5952f477d0"
+"maybe_hook" = "blake3:a5d379a2c20a858076105931c70702a095ef0135c4feca27bcf6bc7756fb6894"
+"pick_with" = "blake3:312ebe7d26a9e0ee9f66923047f86fe9379652072b4f328440a8c79baeb4456f"
+"poke" = "blake3:13720abee901d97d5f20bfcf065983690bcdec23ce5a99d42ae1960598f63e11"
+"watch" = "blake3:f010c90a0ca10fc1921da1778deecaaa9b3b0c838ef8b281ae232c2cb30019f8"
+"watching" = "blake3:acfec9feba864421e1afd5c28b1671c663bc910c1a0d405076075ca3ed837059"
+
+[[overlay]]
+file = "overlays/hooks_on_a_function.em"
+header = "hooks.hpp"
+[overlay.declarations]
+"Panel.new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"
+"Panel.on_resize" = "blake3:0ceaeb5737abc97f2e93158c1bcd980cf9992fb7450252299f9451705d4b386a"
+"given_both" = "blake3:e36d8643b876d4180fac4fd248fec20b8b5cb9b6302e1ab165e2cf5952f477d0"
+"maybe_hook" = "blake3:a5d379a2c20a858076105931c70702a095ef0135c4feca27bcf6bc7756fb6894"
+"pick_with" = "blake3:312ebe7d26a9e0ee9f66923047f86fe9379652072b4f328440a8c79baeb4456f"
+"watching" = "blake3:acfec9feba864421e1afd5c28b1671c663bc910c1a0d405076075ca3ed837059"
+
+[[overlay]]
+file = "overlays/listeners.em"
+header = "listeners.hpp"
+[overlay.declarations]
+"Bus.add" = "blake3:bb19583bf5cbf31c7a7c92ffeec6aca3fa3d22149073bba74cad386a62630cb6"
+"Bus.each" = "blake3:84c77fd892794480c5fd731426a6e97685877639ad109890288e49d5d605ff3a"
+"Bus.new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"
+"emit" = "blake3:dcd1abc4a81444bfcf2c2734f07fab6c660035740b3498f83c5ca9882252b40f"
+"listen" = "blake3:faccb3b26c9ae414c39ee79b7695bdfe29a1c142676253d47582c803001dbc8e"
+"listening" = "blake3:c2423da9d4f1c6cb87f9fbdafa374074f662ce200a5b44148d1b4aea76afa351"
+"sum_with" = "blake3:a881db6134494052f2cbea6630c2c6360ea033ca5aeaae783c888e21d27c1ef4"
+
+[[overlay]]
+file = "overlays/registry.em"
+header = "registry.h"
+[overlay.declarations]
+"each_pair" = "blake3:4bb55d4c5d727c93da5ae5e969f39145a5a4be289b5e1716188a859cd382b320"
+"fire" = "blake3:9b86be12dd037fdfa94526027b33cc2be5d82d4757554c759d80633e8232071b"
+"given" = "blake3:b58faf001b7635ff96de1704b675e8bea1494b2da50b739d85b3ad32fa07ed21"
+"maybe_call" = "blake3:7e039a67080f57b597d79617b7239479a68eaf000dd9d13fb2377509bf2e1143"
+"subscribe" = "blake3:446739167cd2e9b565e9927313f0abd63c9c5f73c3e0170b5937baea6afd750d"
+"subscribers" = "blake3:56e6b56ba61cff52133c6460d8b7ebcabb3dd433fb12dda6e977da4a87f89f7f"

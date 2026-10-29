@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-41, FFI-3
+#$ warning[L3015]: `Grid.corner` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5034]: `hidden` is not imported from `space.hpp`: it is in an anonymous namespace
 #$ stdout: 3 7 32 1

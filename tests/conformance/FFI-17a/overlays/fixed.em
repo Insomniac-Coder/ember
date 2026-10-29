@@ -4,6 +4,7 @@
 unsafe overlay cpp "fixed.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
     fn sum3(values)
     fn zero2(values)
-    fn new()
-    fn cells() -> from(self)
-    fn cells_mut() -> from(self)
+    class Grid:
+        fn new()
+        fn cells() -> from(self)
+        fn cells_mut() -> from(self)

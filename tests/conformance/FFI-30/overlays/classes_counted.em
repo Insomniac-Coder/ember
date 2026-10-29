@@ -2,5 +2,6 @@
 # another import of the header wrote.
 
 unsafe overlay cpp "classes.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
-    fn count()
     fn doubled(n)
+    class Counter:
+        fn count()

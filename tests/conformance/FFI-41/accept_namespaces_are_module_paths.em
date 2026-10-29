@@ -1,5 +1,10 @@
 #$ test: run-pass
 #$ rules: FFI-41, FFI-17
+#$ warning[L3015]: `top` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `length2` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `square` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `scale` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Clock.ticks` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5034]: `hidden` is not imported from `space.hpp`: it is in an anonymous namespace
 #$ stdout: 7 25.0 25 6.0 42

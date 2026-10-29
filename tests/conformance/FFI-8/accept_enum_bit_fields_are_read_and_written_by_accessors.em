@@ -1,5 +1,9 @@
 #$ test: run-pass
 #$ rules: FFI-8, ENM-3
+#$ warning[L3015]: `setting_make` is a C function the program calls in unsafe code
+#$ warning[L3015]: `setting_mode` is a C function the program calls in unsafe code
+#$ warning[L3015]: `setting_count` is a C function the program calls in unsafe code
+#$ warning[L3015]: `setting_bias` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: MODE_AUTO 33 BIAS_LOW
 #$ stdout: 1 33 1

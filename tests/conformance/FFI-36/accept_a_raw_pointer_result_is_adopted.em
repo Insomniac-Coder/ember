@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-36, FFI-32
+#$ warning[L3015]: `make_widget` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Widget.size` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Widget.freed` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 4 0
 #$ stdout: 1

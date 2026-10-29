@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-5, FFI-8
+#$ warning[L3015]: `layouts_wire_size` is a C function the program calls in unsafe code
+#$ warning[L3015]: `layouts_lane_align` is a C function the program calls in unsafe code
+#$ warning[L3015]: `layouts_mixed_c` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 7 7 | 16 16 | 24 16
 # `[FFI-5]` — the importer records each struct's size, alignment and field offsets from Clang for

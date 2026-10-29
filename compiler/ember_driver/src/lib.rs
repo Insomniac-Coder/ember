@@ -677,6 +677,8 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             compile(Path::new(file.as_str()), "check", &Options { demangle: true, ..Options::default() })
         }
         "bind" => cimport::bind(&args[1..]),
+        // `[BLD-15]` — the guard a Ninja build runs each link under.
+        "__link" => Ok(ExitCode::from(ember_build::link_guard_main(&args[1..]).clamp(0, 255) as u8)),
         "why" => why(&args[1..]),
         "test" => test_runner::command(&args[1..]),
         "bench" => bench::command(&args[1..]),
@@ -4690,7 +4692,44 @@ fn export_package_name(input: &Path) -> Result<String, String> {
     Ok(name)
 }
 
+/// `[MAN-9]` (verdict 127) — every program is a package: a file with no manifest in its folder or
+/// above gets a default one in its folder, `[package]` with the folder's name and `0.1.0`, and
+/// Ember says so. A manifest another build wrote meanwhile is that build's.
+fn write_default_manifest(source: &Path) -> Result<(), String> {
+    if nearest_manifest_path(source).is_some() {
+        return Ok(());
+    }
+    let whole = std::path::absolute(source).map_err(|error| format!("cannot find the folder of `{}`: {error}", source.display()))?;
+    let Some(folder) = whole.parent() else { return Ok(()) };
+    write_default_manifest_in(folder)
+}
+
+/// `[MAN-9]` — the default `ember.toml` in `folder`, written whole or not at all: beside it, then
+/// linked in under its name, which a manifest another build wrote meanwhile keeps.
+pub(crate) fn write_default_manifest_in(folder: &Path) -> Result<(), String> {
+    let name = folder.file_name().and_then(|name| name.to_str()).unwrap_or("program").replace(['"', '\\'], "");
+    let path = folder.join(ember_branding::MANIFEST);
+    let text = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n");
+    let aside = folder.join(format!(".{}.{}", ember_branding::MANIFEST, std::process::id()));
+    let linked = std::fs::write(&aside, &text).and_then(|()| std::fs::hard_link(&aside, &path));
+    let _ = std::fs::remove_file(&aside);
+    match linked {
+        Ok(()) => {
+            eprintln!("note: wrote `{}`, the package this program is: every program is a package [MAN-9]", path.display());
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(format!(
+            "cannot write `{}`: {error}; every program is a package, with an `{}` in its folder or above [MAN-9]",
+            path.display(),
+            ember_branding::MANIFEST
+        )),
+    }
+}
+
 fn nearest_manifest_path(input: &Path) -> Option<PathBuf> {
+    // From the file's absolute folder, so a bare `main.em` sees a manifest above the working one.
+    let input = std::path::absolute(input).unwrap_or_else(|_| input.to_path_buf());
     let mut directory = input.parent();
     while let Some(candidate) = directory {
         let path = candidate.join(ember_branding::MANIFEST);
@@ -5000,6 +5039,16 @@ fn package_source_root(input: &Path) -> PathBuf {
 }
 
 fn compile(input: &Path, command: &str, options: &Options) -> Result<ExitCode, String> {
+    // `[MAN-9]` (verdict 127) — every program is a package.
+    write_default_manifest(input)?;
+    // `[BLD-15]` — each link's time limit: `[link] timeout` seconds, else 30 minutes.
+    let timeout = nearest_manifest_text(input)?.as_deref().and_then(|manifest| manifest_number(manifest, "link", "timeout"));
+    if timeout == Some(0) {
+        return Err("error[E9001]: `[link] timeout` is a number of seconds a link may run, at least 1 [BLD-15]".to_string());
+    }
+    if let Ok(guard) = std::env::current_exe() {
+        ember_build::set_link_limit(guard, timeout.map_or(ember_build::LINK_LIMIT_DEFAULT, std::time::Duration::from_secs));
+    }
     // `[BLD-1]` — an attempt that finds a kept checked form no longer holds says so, and the next
     // checks that module (or, for the compile-time evaluator, every module) again; nothing an
     // attempt that is tried again did is reported.
@@ -7400,7 +7449,7 @@ fn manifest_section_keys(section: &str) -> Option<Option<&'static [&'static str]
         "build" => &["entry", "target", "backend", "c_compiler", "runtime", "max_instantiations", "reload", "global_allocator"],
         // `[BLD-FFI-1]`: the C compiler and its flags.
         "c" => &["compiler", "flags"],
-        "link" => &["libs"],
+        "link" => &["libs", "timeout"],
         "jobs" => &["workers"],
         "realtime" => &["contracts"],
         "comptime" => &["max_steps", "max_heap_mb"],

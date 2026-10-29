@@ -2,4 +2,5 @@
 # states no lifetime.
 
 unsafe overlay cpp "views.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
-    fn first()
+    class Words:
+        fn first()

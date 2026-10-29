@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-17a, STD-14, ERR-13
+#$ warning[L3015]: `Gauge.reading` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `gauge` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `no_gauge` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 7 7
 #$ stdout: true

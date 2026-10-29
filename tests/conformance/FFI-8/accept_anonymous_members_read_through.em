@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-8, FFI-5
+#$ warning[L3015]: `packet_make` is a C function the program calls in unsafe code
+#$ warning[L3015]: `packet_sum` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 1 2 3 4 5.0
 #$ stdout: 69 20 40

@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-39, FFI-39b
+#$ warning[L3015]: `drive` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Layer.id` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Layer.total` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 4200 5 2
 #$ stdout: 105 1 5

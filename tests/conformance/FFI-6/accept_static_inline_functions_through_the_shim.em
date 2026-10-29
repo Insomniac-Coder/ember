@@ -1,5 +1,9 @@
 #$ test: run-pass
 #$ rules: FFI-6, FFI-29, FFI-29a, BLD-FFI-1a
+#$ warning[L3015]: `inline_swap` is a C function the program calls in unsafe code
+#$ warning[L3015]: `inline_store` is a C function the program calls in unsafe code
+#$ warning[L3015]: `inline_scale` is a C function the program calls in unsafe code
+#$ warning[L3015]: `inline_twice` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ assert-c: contains("_cshim_c_h_inline_math_inline_scale")
 #$ assert-c: not contains(" inline_scale(")

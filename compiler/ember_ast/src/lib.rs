@@ -241,10 +241,11 @@ pub struct OverlayItem {
 /// extend_decl | overlay_class)`.
 #[derive(Clone, Debug)]
 pub enum OverlayItemKind {
-    /// `overlay_fn := "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
-    /// ["->" contract {contract}] NEWLINE`; a function entry asserts the
-    /// function safe to call (`[FFI-2]`).
-    Fn { name: Ident, params: Vec<OverlayParam>, result: Vec<Contract> },
+    /// `overlay_fn := ["unsafe"] "fn" IDENT "(" [overlay_param {"," overlay_param} [","]] ")"
+    /// ["->" contract {contract}] NEWLINE`; a function entry asserts the function safe to call
+    /// (`[FFI-2]`), and one written `unsafe fn` leaves it unsafe, its `@safety` saying what its
+    /// callers must make true (`[UNS-7]`, verdict 130).
+    Fn { name: Ident, params: Vec<OverlayParam>, result: Vec<Contract>, is_unsafe: bool },
     /// `[FFI-6b]` (ODR-147) — `@ffi(macro_fn) fn SQUARE(x: i32) -> i32`: a function-like macro's
     /// signature, one Ember type for each parameter and for the result.
     MacroFn { name: Ident, params: Vec<(Ident, TypeExpr)>, result: Option<TypeExpr> },
@@ -253,10 +254,10 @@ pub enum OverlayItemKind {
     Rename { from: Ident, to: Ident },
     Hide(Ident),
     Extend(ExtendDecl),
-    /// `[FFI-40a]` (ODR-160) — `overlay_class := "class" IDENT ":" NEWLINE INDENT {fn_signature
-    /// NEWLINE} DEDENT`: methods of a C++ class restated as Ember method lines, whose receiver
-    /// (`self` or `mut self`) is asserted over what the importer reads in their bodies.
-    Class { name: Ident, methods: Vec<FnDecl> },
+    /// `[GRM-35]` (verdict 131) — `overlay_class := "class" IDENT ":" NEWLINE INDENT
+    /// {{attribute} overlay_fn} DEDENT`: the entries of a C++ class's members, each a `Fn` item;
+    /// `@ffi(const)` on a method's asserts that it only reads its object (`[FFI-40a]`).
+    Class { name: Ident, members: Vec<OverlayItem> },
 }
 
 /// `overlay_param := IDENT [":" contract {contract}]`.
@@ -894,6 +895,9 @@ pub struct Lambda {
     pub params: Vec<Param>,
     pub ret: Option<TypeExpr>,
     pub body: LambdaBody,
+    /// `[UNS-7]` (verdict 126) — `@safety("…")` written just before the lambda, with its span:
+    /// what callers of one written in unsafe code must make true.
+    pub safety: Option<(String, Span)>,
 }
 
 #[derive(Clone, Debug)]

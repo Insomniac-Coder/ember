@@ -326,11 +326,58 @@ items 11 to 14 included.
 
 | Rule | Ruling | Why |
 |---|---|---|
-| GRM-35, FFI-40a (verdict 131) | A class section holds entries in the form of every other entry (names and contract words; `@ffi(const)` above a method that only reads its object); the Ember method line with types (`fn lookups() -> c_int`) goes. | One way to write an overlay line (checklist 11); the types are the header's, which the entry is checked against. |
+| GRM-35, FFI-40a (verdict 131) | A class section holds entries in the form of every other entry (names and contract words; `@ffi(const)` above a method that only reads its object); the Ember method line with types (`fn lookups() -> c_int`) goes, and with it the line asserting `mut self`. An entry without `@ffi(const)` leaves the importer's reading of the body (corrected in place the same evening: Hardened_5 first said such an entry imports the method as changing its object). | One way to write an overlay line (checklist 11); the types are the header's, which the entry is checked against. 0.9.15 has no word for "changes its object" (`[FN-4]`: worked out from the body), and writing an entry to add `@safety` must not change what a method may do. |
 | MAN-9 (verdict 127) | The default `ember.toml` is `[package]` with the folder's name and `version = "0.1.0"`; Ember says that it wrote it. | Nothing is written behind the user's back; the least a package needs. |
 | GRM `lambda` (verdict 126) | `@safety("…")` is the only attribute written before a lambda. | No other attribute was asked for. |
 | CLI-5 (verdict 130) | `ember bind --init` writes `unsafe fn` lines with no `@safety` text; the first call's `L3015` says what is missing. | A placeholder text would silence the warning without anyone saying anything. |
 | EFF-2 (ODR 15.3's knock-on fix) | Dropping a function value has the effects of dropping the functions that reach its place. | The owner was told with ODR 15.3; without it no `@noalloc` function may own a stored function. |
+
+## 11. Rulings made on autopilot, night of 2026-10-29 (lead, the owner asleep)
+
+The owner: "now you work autonomously ... in the morning I want you to report all ODRs to me, you can use one
+helper agent and make sure you ruling pattern is followed". Each ruling below was run through
+`docs/OWNER-DIRECTION.md`'s checklist, items 11 to 14 included, and is put to the owner in the morning.
+
+| # | Rule | Ruling | Why |
+|---|---|---|---|
+| N1 | UNS-7 (verdict 126) | A lambda written in unsafe code without `@safety` is `L3015` at the lambda; `@safety` on a lambda outside unsafe code is `E0104` ("applies only to an `unsafe fn`", as on a named function); `@safety` written before an expression that is no lambda is `E0104`. | The same three answers Ember gives a named function (checklist 11). |
+| N2 | MAN-9 (verdict 127) | Every command that compiles a file (build, check, run, test, lint) writes the default `ember.toml` first, in the file's folder, and says so on standard error; `ember bind` of a header no package holds writes one too. Finding a manifest starts from the file's absolute folder, so a bare `main.em` sees one above the working folder (it did not). | One path for every program (checklist 13); a manifest above the folder must never be missed and then duplicated. |
+| N3 | MAN-9, the test corpus | Each test folder is its own package: the 574 default manifests the suite's first run wrote are committed, with the records (`ember.overlays`) their overlays need, as `FFI-17`'s and `FFI-17a`'s already were. One `tests/ember.toml` was rejected: it would make the whole corpus one package, whose `[DIA-12]` import suggestions read every file of it. | The model the owner chose, unchanged for tests; a test's package is the files beside it, as before. |
+| N4 | CLI-7, FFI-55 (ODR 14.2) | `E5010` for a changed declaration names `ember bind <header> --check <overlay> --merge` with the import's own spellings when the overlay is the package's own; for another package's overlay it says that package checks and records it again. | The help's line must work where it is given (principle 12). |
+| N5 | EFF-2 (verdicts 128, 129, ODR 15.3) | A parameter holds what each direct call passes it; a function whose address is taken (a value, a table's slot, a virtual method) has parameters that may hold any function of their types. The list operations (`Array(…)` of a literal, `push`, `insert`, `extend`, `clone`, `sorted`, `pop`, `remove`, `swap_remove`, `drain`) move what they hold between the list, the values given and the result, `Some`'s payload included; `[f; 3]` holds `f`. Any other value the analysis cannot follow holds any function of each callable type within its type (a list's, an `Option`'s, a tuple's). Dropping a function value has the effects of dropping the functions stored into its type: none for a named function, the captured values' for a lambda. | Sound everywhere the program runs a function it did not see stored (checklist 14); exact where it can be followed. The whole program is one compilation, so every direct call is seen. |
+| N6 | EFF-2 messages | In an effect chain a lambda is "a lambda", and the message points at where it is written ("the lambda the call runs"), instead of its symbol (`em_closure_4main_c1`). | A message names what the program wrote (principle 12). |
+| N7 | Hardened_5, in place | Two sentences I wrote that evening were corrected before any push: an entry without `@ffi(const)` leaves the importer's reading (not "changing"), and `unsafe` stops being a contract word in overlays only (`[FFI-11]`'s vocabulary is shared with `@ffi(…)` on hand declarations, which verdict 130 did not mention). | Never widen an owner answer; my own text of an hour before, nothing pushed. |
+| N8 | The watcher | "if any of those change you wait for 5 minutes and hibernate": a change that is still there after 5 minutes hibernates; one that comes back within them does not. | A power blip should not stop the night's work; a real cut or a lost network does. |
+
+**The read-only review of the night's compiler changes** (the one helper agent; findings fixed by the lead):
+a `class` section's line that begins no entry looped the parser for ever (now skipped past, as the overlay's
+own loop does); `L3015` and a lambda's `E0104` were lost when a quiet check rolled back, since the once-only
+sets outlived the rollback (now recorded while checking and reported once at the end); `ember bind
+--check calc.overlay.em --merge` with a bare name recorded into Ember's cache (now from the absolute folder);
+an overlay in no package (`../vendor/x.overlay.em`) got a manifest of its own and became another package's
+(N10 below); `@safety` text with `"` or `\` broke the declarations the importer writes (now escaped);
+`ember fmt` dropped a lambda's `@safety` (now kept as written); `ember bind --init --merge` of a C++ header
+wrote members at the top and again on every merge (now under `class X:`, by `Class.member`; and a C++
+header's starter is an `overlay cpp`, which it was not); an `override` entry kept an earlier `@ffi(const)`;
+`bind --check` counted an `unsafe fn` entry as safe; a manifest being written could be read empty by a
+build beside it (now written aside and linked in). Left, recorded: a renamed function's `L3015` names its
+Ember name, not the overlay's; `@grade(instrumented)` on a member's entry is never backed.
+
+| # | Rule | Ruling | Why |
+|---|---|---|---|
+| N9 | GRM-35 | A line under a `class` section that begins no entry is `E0100`, and parsing goes on at the next line. | As at the top of an overlay. |
+| N10 | FFI-55, MAN-9 | An overlay that no package's folder holds is the importing program's own: its record is in that program's `ember.overlays`, named by a path from the package (`../vendor/x.overlay.em`). Only `ember bind`, with no program, makes the header's folder a package. | An overlay nobody packaged is the program's to vouch for; a manifest written beside it would have made it another package's and refused it. |
+
+| # | Rule | Ruling | Why |
+|---|---|---|---|
+| N11 | BLD-15 (verdict 124, ODR 16) | Each Ninja link runs under a guard, `ember __link <seconds> <program> <command file> -- <linker> …` (an internal command of the compiler); a link outside Ninja is guarded in the compiler itself. At the limit the guard takes the stacks of every thread of the linker's processes with the Windows debugger `cdb` when it is installed (attached without stopping them, no symbols fetched, a minute at most each), into `<command file>.stacks.txt`, then ends the whole process tree through WMI's `Terminate` with exit code 1, then `taskkill`; the half-written program is deleted and the message names the command file and the stacks. Every helper of the guard runs under a limit of its own. | The stop must hold where `TerminateProcess` did not (the recorded hangs), never read as a success (exit code 0 did, D-928), and leave the evidence the cause needs: verdict 124's first half. |
+| N12 | TST-4 | `E9042` has no conformance test: no test can make a linker hang. The build crate's unit test ends a process tree past its limit, and the guard was run by hand on a 30-second command (E9042 after 2 s, the output removed, the command file and stacks kept); E9042 is in `tools/rule_index_baseline.json`'s codes without tests. | A test that waits for a real hang would hang the suite. |
+| N13 | MAN-9, FFI-55 (in place in Hardened_5) | The spec text says what N2 and N10 decided: every command that compiles writes the default manifest; an overlay in no package is the importing program's. | The compiler follows the spec; neither was pushed. |
+
+**For the owner (open, not ruled):** verdict 130 retired `-> unsafe` in overlays. A hand declaration in an
+`unsafe extern` block can still write `@ffi(unsafe)` (and `param(p, unsafe)`, `result(unsafe)`): its call is
+unsafe on purpose, and `E3100` then names that instead of asking for facts. A plain `fn` there is unsafe to call
+already. Should `@ffi(unsafe)` go too, as a second spelling, or stay?
 
 ### Owner verdicts on §9's rulings, 2026-10-29 (afternoon; asked as ODR 9 onward)
 

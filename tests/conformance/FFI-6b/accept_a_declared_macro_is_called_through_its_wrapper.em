@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-6b, FFI-29
+#$ warning[L3015]: `PAIR_FIRST` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5001]: macro `HIDDEN_ID` is not imported from `macros.h`: a function-like macro
 #$ warning[W5001]: macro `LOG_ALL` is not imported from `macros.h`: a function-like macro

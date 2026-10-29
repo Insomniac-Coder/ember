@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-17e
+#$ warning[L3015]: `shared_counter` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `destroyed` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `owners` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 0 1
 #$ stdout: 1

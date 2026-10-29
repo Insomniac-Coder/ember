@@ -5335,7 +5335,14 @@ struct RecordedOverlay {
 /// layout. A name the header does not declare is `[FFI-12]`'s, and has none.
 fn described_declarations(overlay: &ast::OverlayDecl, imported: &Imported) -> Vec<(String, String)> {
     let mut described: Vec<(String, String)> = Vec::new();
+    let mut items: Vec<(Option<&str>, &ast::OverlayItem)> = Vec::new();
     for item in &overlay.items {
+        items.push((None, item));
+        if let ast::OverlayItemKind::Class { name, members } = &item.kind {
+            items.extend(members.iter().map(|member| (Some(name.name.as_str()), member)));
+        }
+    }
+    for (owner, item) in items {
         let name = match &item.kind {
             ast::OverlayItemKind::Fn { name, .. }
             | ast::OverlayItemKind::Type(name)
@@ -5343,10 +5350,12 @@ fn described_declarations(overlay: &ast::OverlayDecl, imported: &Imported) -> Ve
             | ast::OverlayItemKind::Class { name, .. } => name.name.to_string(),
             _ => continue,
         };
-        if described.iter().any(|(known, _)| *known == name) {
+        let key = owner.map_or_else(|| name.clone(), |owner| format!("{owner}.{name}"));
+        if described.iter().any(|(known, _)| *known == key) {
             continue;
         }
-        let bound = if let Some(function) = imported.functions.iter().find(|function| function.name == name) {
+        let entry_of = |function: &&Function| function.name == name && function.owner.as_ref().map(|(class, _)| class.as_str()) == owner;
+        let bound = if matches!(item.kind, ast::OverlayItemKind::Fn { .. }) && let Some(function) = imported.functions.iter().find(entry_of) {
             declared_as(function)
         } else if let Some(layout) = imported.layouts.iter().find(|layout| layout.name == name) {
             let fields: Vec<String> = layout.fields.iter().map(|(field, offset)| format!("{field} at {offset}")).collect();
@@ -5354,7 +5363,7 @@ fn described_declarations(overlay: &ast::OverlayDecl, imported: &Imported) -> Ve
         } else {
             continue;
         };
-        described.push((name, bound));
+        described.push((key, bound));
     }
     described
 }
@@ -5386,13 +5395,22 @@ fn fingerprint(bound: &str) -> String {
 }
 
 /// `[FFI-55]` — where `overlay_file`'s record is: beside its package's `ember.toml`, the file named as
-/// that package names it; with no package, in Ember's own cache, by its whole path. With the package's
-/// folder.
-fn record_place(overlay_file: &Path) -> (Option<PathBuf>, PathBuf, String) {
+/// that package names it, with the package's folder. Only where no `ember.toml` can be written there
+/// (`[MAN-9]`) is it in Ember's own cache, by its whole path.
+fn record_place(overlay_file: &Path, importer: &Path) -> (Option<PathBuf>, PathBuf, String) {
     let whole = std::path::absolute(overlay_file).unwrap_or_else(|_| overlay_file.to_path_buf());
-    match overlay_file.parent().and_then(package_of) {
+    // The overlay's package: the one its folder is in, else the importing program's, whose own it is
+    // (`[MAN-9]`: every program is one). `ember bind` of a header no package holds makes its folder
+    // one, as a build would.
+    let mut root = whole.parent().and_then(package_of).or_else(|| package_of(importer));
+    if root.is_none() {
+        let folder = std::path::absolute(importer).unwrap_or_else(|_| importer.to_path_buf());
+        let _ = crate::write_default_manifest_in(&folder);
+        root = package_of(importer);
+    }
+    match root {
         Some(root) => {
-            let named = whole.strip_prefix(&root).unwrap_or(&whole).to_string_lossy().replace('\\', "/");
+            let named = relative_to(&root, &whole).unwrap_or_else(|| whole.to_string_lossy().replace('\\', "/"));
             (Some(root.clone()), root.join(OVERLAY_RECORD), named)
         }
         None => {
@@ -5401,6 +5419,26 @@ fn record_place(overlay_file: &Path) -> (Option<PathBuf>, PathBuf, String) {
             (None, place, named)
         }
     }
+}
+
+/// `text` as an Ember string literal holds it: its `\` and `"` escaped, as an entry's `@safety` text is
+/// written into the declarations the importer writes.
+fn escaped(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// `to` as a path from the folder `from`, with `..` for each of `from`'s folders it leaves, spelled with
+/// `/`; `None` across drives.
+fn relative_to(from: &Path, to: &Path) -> Option<String> {
+    let from: Vec<_> = from.components().collect();
+    let to: Vec<_> = to.components().collect();
+    if from.first() != to.first() {
+        return None;
+    }
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut parts: Vec<String> = std::iter::repeat_n("..".to_string(), from.len() - common).collect();
+    parts.extend(to[common..].iter().map(|part| part.as_os_str().to_string_lossy().into_owned()));
+    Some(parts.join("/"))
 }
 
 /// `[FFI-55]` — `ember.overlays` read: each `[[overlay]]` with its `file`, `header` and, under
@@ -5443,7 +5481,7 @@ fn write_record(place: &Path, overlays: &mut [RecordedOverlay]) {
     overlays.sort_by(|a, b| a.file.cmp(&b.file));
     let mut text = format!(
         "# {OVERLAY_RECORD}: the headers this package's overlays were checked against.\n\
-         # Written by ember; `ember bind --merge` rewrites it.\n\
+         # Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.\n\
          version = \"{OVERLAY_RECORD_VERSION}\"\n"
     );
     for overlay in overlays.iter_mut() {
@@ -5470,7 +5508,7 @@ fn write_record(place: &Path, overlays: &mut [RecordedOverlay]) {
 /// overlay is applied only with no refusal.
 fn check_overlay_record(overlay: &ast::OverlayDecl, file: &Path, written: &str, at: Span, from_dir: &Path, imported: &Imported, shown: &str) -> Vec<Diagnostic> {
     let described = described_declarations(overlay, imported);
-    let (root, place, named) = record_place(file);
+    let (root, place, named) = record_place(file, from_dir);
     let own = root.is_none() || root == package_of(from_dir);
     let mut overlays = std::fs::read_to_string(&place).map(|text| read_record(&text)).unwrap_or_default();
     let mut refusals = Vec::new();
@@ -5495,7 +5533,11 @@ fn check_overlay_record(overlay: &ast::OverlayDecl, file: &Path, written: &str, 
                     Some((_, was)) if *was == now => {}
                     Some(_) => refusals.push(
                         Diagnostic::error(codes::E5010, at, format!("`{name}` changed since `{written}` was checked: the `{shown}` imported here declares `{bound}`"))
-                            .help("check the overlay against this header, then run `ember bind --merge` [FFI-55]"),
+                            .help(if own {
+                                format!("check the overlay against this header, then run `ember bind {shown} --check {written} --merge` [FFI-55]")
+                            } else {
+                                format!("`{written}` is another package's overlay: that package checks it against this header and records it again, with `ember bind --check … --merge` [FFI-55]")
+                            }),
                     ),
                     None if own => {
                         recorded.declarations.push((name.clone(), now));
@@ -5515,9 +5557,28 @@ fn check_overlay_record(overlay: &ast::OverlayDecl, file: &Path, written: &str, 
     refusals
 }
 
-/// `[FFI-55]`, `[CLI-5]` — `ember bind --merge`: the record of `overlay`, written as the header is now.
-fn rewrite_overlay_record(overlay: &ast::OverlayDecl, file: &Path, imported: &Imported) {
-    let (_, place, named) = record_place(file);
+/// `[FFI-55]`, `[CLI-5]`, `[CLI-7]` — the overlay in `path`, read, and its record written as the header
+/// `imported` holds is now.
+fn record_overlay_file(path: &Path, importer: &Path, imported: &Imported) {
+    let mut written = SourceMap::new();
+    let mut quiet = Sink::new();
+    let Ok(id) = written.load(path) else { return };
+    let text = written.file(id).text.clone();
+    let lexed = ember_lexer::lex(id, &text, &mut quiet);
+    let parsed = ember_parser::parse(id, &text, lexed.tokens, &mut quiet);
+    if let Some(overlay) = parsed.items.iter().find_map(|item| match &item.kind {
+        ast::ItemKind::Overlay(overlay) => Some(overlay),
+        _ => None,
+    }) {
+        rewrite_overlay_record(overlay, path, importer, imported);
+        println!("recorded {} in {OVERLAY_RECORD}", path.display());
+    }
+}
+
+/// `[FFI-55]`, `[CLI-5]`, `[CLI-7]` — `ember bind --init --merge` and `--check <overlay> --merge`: the
+/// record of `overlay`, written as the header is now.
+fn rewrite_overlay_record(overlay: &ast::OverlayDecl, file: &Path, importer: &Path, imported: &Imported) {
+    let (_, place, named) = record_place(file, importer);
     let mut overlays = std::fs::read_to_string(&place).map(|text| read_record(&text)).unwrap_or_default();
     overlays.retain(|recorded| recorded.file != named);
     overlays.push(RecordedOverlay {
@@ -5960,10 +6021,11 @@ pub fn load(
     }
     // `[FFI-30]` (D-879) — an entry for a member of a record an earlier import wrote: that
     // import's entity, whose members it wrote, so the entry states nothing here.
-    for (name, _) in applied.functions.iter() {
-        let named: Vec<&Function> = imported.functions.iter().filter(|function| function.name == *name).collect();
+    for (key, _) in applied.functions.iter() {
+        let named: Vec<&Function> = imported.functions.iter().filter(|function| entry_key(function) == *key).collect();
         if let Some(member) = named.first().filter(|_| named.iter().all(|function| adopted_member(&imported, function)))
             && let Some((owner, _)) = &member.owner
+            && let name = &member.name
             && let Some(shared) = known.shared.values().find(|shared| ident(&shared.name) == *owner || ident(shared.name.rsplit("::").next().unwrap_or(&shared.name)) == *owner)
         {
             sink.emit(
@@ -6048,7 +6110,7 @@ pub fn load(
     let undecided: Vec<Skipped> = imported
         .functions
         .iter()
-        .filter(|function| function.policy == Policy::Unknown && applied.functions.get(&function.name).and_then(|entry| entry.policy).is_none())
+        .filter(|function| function.policy == Policy::Unknown && applied.functions.get(&entry_key(function)).and_then(|entry| entry.policy).is_none())
         .map(|function| Skipped {
             name: function.name.clone(),
             reason: "[E5061] its exception policy cannot be derived from the header (Clang could not evaluate its `noexcept(…)`), and no overlay declares one".to_string(),
@@ -6504,6 +6566,25 @@ struct Entry {
     /// `[FFI-24b]`, `[FFI-43]` — a C++ function's exception policy, as the entry declares it:
     /// `@ffi(noexcept)` asserts it non-throwing, `@ffi(noexcept=false)` declares it throwing.
     policy: Option<Policy>,
+    /// `[UNS-7]` (verdict 125) — `@safety("…")`: what callers of a function the entry leaves unsafe
+    /// must make true.
+    safety: Option<String>,
+}
+
+/// `[GRM-35]` (verdict 131) — the key of a function's overlay entry: its name, or a member's
+/// `Class.name`, so two classes' `new` are two entries.
+fn entry_key(function: &Function) -> String {
+    match &function.owner {
+        Some((owner, _)) => format!("{owner}.{}", function.name),
+        None => function.name.clone(),
+    }
+}
+
+/// The entry for `name` as a diagnostic spells it (`ns.Class.method`): a member's, else a function's.
+fn entry_named<'a>(applied: &'a Applied, name: &str) -> Option<&'a Entry> {
+    let mut parts = name.rsplit('.');
+    let last = parts.next().unwrap_or(name);
+    parts.next().and_then(|owner| applied.functions.get(&format!("{owner}.{last}"))).or_else(|| applied.functions.get(last))
 }
 
 /// The word of a contract word as written: `count` of `count(n)`.
@@ -6615,11 +6696,22 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
     let mismatch = |sink: &mut Sink, span: Span, message: String| {
         sink.emit(Diagnostic::error(codes::E5010, span, message).note("an overlay entry matches the header's declaration, so overlays cannot drift [FFI-12]"));
     };
-    // A `class` section's method lines come last: a line restates the method as the import gives
-    // it, which an entry for the method changes (`[FFI-11]`).
-    let class = |entry: &&ast::OverlayItem| matches!(entry.kind, ast::OverlayItemKind::Class { .. });
-    for entry in overlay.items.iter().filter(|entry| !class(entry)).chain(overlay.items.iter().filter(class)) {
+    // `[GRM-35]` (verdict 131) — a class section's members are entries like any other, each for the
+    // member of its class.
+    let mut entries: Vec<(Option<&ast::Ident>, &ast::OverlayItem)> = Vec::new();
+    for entry in &overlay.items {
+        entries.push((None, entry));
+        if let ast::OverlayItemKind::Class { name, members } = &entry.kind {
+            entries.extend(members.iter().map(|member| (Some(name), member)));
+        }
+    }
+    for (owner, entry) in entries {
         let attributes = || entry.attrs.iter().map(|attr| snippet(attr.span)).collect::<Vec<_>>();
+        // `[UNS-7]` (verdict 125) — the entry's `@safety("…")`, what its callers must make true.
+        let safety = entry.attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety")).find_map(|attr| match attr.args.as_slice() {
+            [AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Lit(ast::Literal::Str(text)), .. })] => Some(text.clone()),
+            _ => None,
+        });
         // The entry's own `@ffi(…)` arguments, as written; `macro_fn` is what the entry is.
         let arguments = || -> Vec<String> {
             entry
@@ -6635,11 +6727,25 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 .collect()
         };
         match &entry.kind {
-            ast::OverlayItemKind::Fn { name, params, result } => {
-                let Some(function) = imported.functions.iter().find(|function| function.name == name.name.as_str()) else {
-                    mismatch(sink, name.span, format!("`{header}` declares no function `{}`", name.name));
+            ast::OverlayItemKind::Fn { name, params, result, is_unsafe } => {
+                let member_of = |function: &Function| function.owner.as_ref().map(|(class, _)| class.clone());
+                let class = owner.map(|owner| owner.name.to_string());
+                let Some(function) = imported.functions.iter().find(|function| function.name == name.name.as_str() && member_of(function) == class) else {
+                    // `[FFI-12]` (verdict 131) — a member's entry is written under its class.
+                    let classes: std::collections::BTreeSet<String> =
+                        imported.functions.iter().filter(|function| function.name == name.name.as_str()).filter_map(member_of).collect();
+                    match &class {
+                        None if !classes.is_empty() => {
+                            let of: Vec<String> = classes.iter().map(|class| format!("`{class}`")).collect();
+                            let under: Vec<String> = classes.iter().map(|class| format!("`class {class}:`")).collect();
+                            mismatch(sink, name.span, format!("`{}` is a member of {}: write it under {}", name.name, of.join(" and of "), under.join(" or ")));
+                        }
+                        None => mismatch(sink, name.span, format!("`{header}` declares no function `{}`", name.name)),
+                        Some(class) => mismatch(sink, name.span, format!("`{header}`'s `{class}` has no member `{}`", name.name)),
+                    }
                     continue;
                 };
+                let key = entry_key(function);
                 if params.len() != function.params.len() {
                     mismatch(sink, name.span, format!("`{}` takes {} parameters in `{header}`, and the entry names {}", name.name, function.params.len(), params.len()));
                     continue;
@@ -6663,6 +6769,13 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 // ODR-199 — `@ffi(std_function)`, on a function whose result is a `std::function`.
                 let (std_function, arguments): (Vec<String>, Vec<String>) = arguments.into_iter().partition(|written| written.trim() == "std_function");
                 let std_function = !std_function.is_empty();
+                // `[FFI-40a]` (verdict 131) — `@ffi(const)`: the method only reads its object.
+                let (constant, arguments): (Vec<String>, Vec<String>) = arguments.into_iter().partition(|written| written.trim() == "const");
+                let method = matches!(function.owner, Some((_, Member::Method | Member::MutMethod)));
+                if !constant.is_empty() && !method {
+                    mismatch(sink, name.span, format!("`{}` is no method, so `@ffi(const)` says nothing of it", name.name));
+                    continue;
+                }
                 if std_function && !function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("function ")) {
                     mismatch(sink, name.span, format!("`{}` returns no `std::function` (`@ffi(std_function)` makes one an Ember callable)", name.name));
                     continue;
@@ -6678,7 +6791,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 }
                 let policy = if asserts { Some(Policy::Asserted) } else if throws { Some(Policy::Catching) } else { None };
                 if !entry.is_override
-                    && let Some(earlier) = applied.functions.get(&function.name).and_then(|earlier| earlier.policy)
+                    && let Some(earlier) = applied.functions.get(&key).and_then(|earlier| earlier.policy)
                     && policy.is_some_and(|policy| policy != earlier)
                 {
                     let said = |policy: Policy| if policy == Policy::Asserted { "`noexcept`" } else { "throwing" };
@@ -6691,8 +6804,9 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                 }
                 // `[FFI-17a]`, `[FFI-11]` — a view's lifetime is never derived: the entry names what it
                 // borrows.
-                // An entry that leaves a fact unknown (`TODO(…)`, `unsafe`) asserts nothing yet.
-                let unknown = params.iter().flat_map(|param| &param.contract).chain(result).any(|written| matches!(word(&snippet(written.span)), "TODO" | "unsafe"));
+                // An entry that leaves a fact unknown (`TODO(…)`), or one written `unsafe fn`, asserts
+                // nothing yet.
+                let unknown = *is_unsafe || params.iter().flat_map(|param| &param.contract).chain(result).any(|written| matches!(word(&snippet(written.span)), "TODO" | "unsafe"));
                 let lifetime = unknown || result.iter().any(|written| word(&snippet(written.span)) == "from");
                 if function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view") || ty.mode.starts_with("fixed ")) && !lifetime {
                     sink.emit(
@@ -6702,17 +6816,35 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     );
                     continue;
                 }
-                if !take(applied, sink, layer, entry.is_override, "fn", name) {
+                if !take(applied, sink, layer, entry.is_override, "fn", &ast::Ident { name: key.as_str().into(), span: name.span }) {
                     continue;
                 }
+                // `[FFI-40a]` — `@ffi(const)` asserts it; an entry without it leaves the importer's
+                // reading of the body, as an Ember method's is worked out from its body (`[FN-4]`).
+                if let Some((class, _)) = &function.owner {
+                    let key = (class.clone(), function.name.clone());
+                    if !constant.is_empty() {
+                        applied.receivers.insert(key, false);
+                    } else if entry.is_override {
+                        // An entry replacing an earlier one replaces its `@ffi(const)` too.
+                        applied.receivers.remove(&key);
+                    }
+                }
+                // `[GRM-35]` (verdict 130) — an `unsafe fn` entry leaves its calls unsafe: the word the
+                // declaration writer reads for that.
+                let mut result: Vec<String> = result.iter().map(|word| snippet(word.span)).collect();
+                if *is_unsafe {
+                    result.push("unsafe".to_string());
+                }
                 applied.functions.insert(
-                    function.name.clone(),
+                    key,
                     Entry {
                         params: params.iter().map(|param| param.contract.iter().map(|word| snippet(word.span)).collect()).collect(),
-                        result: result.iter().map(|word| snippet(word.span)).collect(),
+                        result,
                         arguments,
                         std_function,
                         policy,
+                        safety: safety.clone(),
                     },
                 );
             }
@@ -6781,6 +6913,7 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
                     arguments: arguments(),
                     std_function: false,
                     policy: None,
+                    safety: safety.clone(),
                 };
                 match applied.macros.iter_mut().find(|(earlier, ..)| earlier.name == found.name) {
                     Some(earlier) => *earlier = (function, made, c_text),
@@ -6874,56 +7007,8 @@ fn apply(applied: &mut Applied, layer: usize, overlay: &ast::OverlayDecl, text: 
             // `[FFI-40a]` (ODR-160) — a method line: the method's signature as the import gives it,
             // with the receiver, `self` or `mut self`, asserted over the importer's reading of its
             // body.
-            ast::OverlayItemKind::Class { name, methods } => {
-                for method in methods {
-                    let shown = format!("{}.{}", name.name, method.name.name);
-                    let found = imported.functions.iter().find(|function| {
-                        function.name == method.name.name.as_str()
-                            && function.owner.as_ref().is_some_and(|(owner, member)| owner == name.name.as_str() && matches!(member, Member::Method | Member::MutMethod))
-                    });
-                    let Some(function) = found else {
-                        mismatch(sink, method.name.span, format!("`{header}` declares no method `{shown}`"));
-                        continue;
-                    };
-                    let (mutable, params) = match method.params.split_first() {
-                        Some((first, rest)) if matches!(first.kind, ast::ParamKind::Receiver { ty: None }) && matches!(first.mode, ast::Mode::Borrow | ast::Mode::Mut) => {
-                            (first.mode == ast::Mode::Mut, rest)
-                        }
-                        _ => {
-                            mismatch(sink, method.name.span, format!("the line for `{shown}` takes `self` or `mut self` first"));
-                            continue;
-                        }
-                    };
-                    let tight = |written: &str| written.split_whitespace().collect::<String>();
-                    // The method as its wrapper gives it: contracted when an entry states every fact.
-                    let stated = applied.functions.get(&function.name);
-                    let policy = match (function.policy, stated.and_then(|stated| stated.policy)) {
-                        (Policy::Direct, _) => Policy::Direct,
-                        (_, Some(declared)) => declared,
-                        (derived, None) => derived,
-                    };
-                    let (declared, value) = signature_of(&render_wrapper(function, stated, None, false, policy, None, &|_| None).1).unwrap_or_default();
-                    let declared: Vec<String> = declared.into_iter().skip(1).collect();
-                    let written: Vec<String> = params.iter().map(|param| tight(&snippet(param.span))).collect();
-                    let result = method.ret.as_ref().map(|ty| tight(&snippet(ty.span)));
-                    let result_matches = match (&value, &result) {
-                        (None, None) => true,
-                        (Some(value), Some(result)) => tight(value) == *result,
-                        _ => false,
-                    };
-                    if written != declared.iter().map(|param| tight(param)).collect::<Vec<_>>() || !result_matches || method.is_unsafe || !method.generics.is_empty() {
-                        let arrow = value.map_or(String::new(), |value| format!(" -> {value}"));
-                        let receiver = if mutable { "mut self" } else { "self" };
-                        let line = std::iter::once(receiver.to_string()).chain(declared).collect::<Vec<_>>().join(", ");
-                        mismatch(sink, method.name.span, format!("`{shown}` is `fn {}({line}){arrow}` in `{header}`", method.name.name));
-                        continue;
-                    }
-                    let key = ast::Ident { name: shown.as_str().into(), span: method.name.span };
-                    if take(applied, sink, layer, entry.is_override, "method", &key) {
-                        applied.receivers.insert((name.name.to_string(), method.name.name.to_string()), mutable);
-                    }
-                }
-            }
+            // `[GRM-35]` (verdict 131) — its members are entries, applied above.
+            ast::OverlayItemKind::Class { .. } => {}
             // `[FFI-13]` — wrappers written in Ember, over the module's own declarations.
             ast::OverlayItemKind::Extend(_) => {
                 let start = entry.attrs.first().map_or(entry.span, |attr| attr.span).start as usize;
@@ -7090,11 +7175,11 @@ fn safe_result(ty: &CType, words: &[String]) -> String {
     optional(base)
 }
 
-const VARIADIC: &str = "C reads each further argument as the type its format or count names: the caller matches them ([FFI-8])";
+const VARIADIC: &str = ember_diag::UNSTATED_VARIADIC;
 
 /// `[UNS-7]` (verdict 120) — what every caller of a thunk the importer declares makes true.
 const THUNK_SAFETY: &str = "the arguments are the objects and storage this thunk's own wrapper passes, as its C++ code reads them ([FFI-17a])";
-const UNCONTRACTED: &str = "the header states no contract: each pointer's ownership, count, nullability and lifetime are the caller's to keep ([FFI-38])";
+const UNCONTRACTED: &str = ember_diag::UNSTATED_CONTRACT;
 
 /// A function of the `unsafe extern` block: as the header declares it, uncontracted (`[FFI-38]`),
 /// or as its overlay entry contracts it (`[FFI-2]`).
@@ -7109,8 +7194,10 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
         let words = entry.params.iter().flatten().chain(&entry.result);
         // `[FFI-11c]` — a `TODO(…)` or `unsafe` word leaves the call unsafe; `unsafe` says so on
         // purpose (`[FFI-11]`), which the declaration keeps.
-        let left_unsafe = entry.params.iter().flatten().chain(&entry.result).any(|written| word(written) == "unsafe");
-        safe = !words.into_iter().any(|written| matches!(word(written), "TODO" | "unsafe"));
+        // `[UNS-7]` (verdict 125) — so does `@safety("…")`, which states what callers of an unsafe function
+        // must make true.
+        let left_unsafe = entry.safety.is_some() || entry.params.iter().flatten().chain(&entry.result).any(|written| word(written) == "unsafe");
+        safe = !left_unsafe && !words.into_iter().any(|written| word(written) == "TODO");
         if left_unsafe {
             arguments.push("unsafe".to_string());
         }
@@ -7150,6 +7237,9 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
     } else {
         UNCONTRACTED
     };
+    // `[UNS-7]` (verdict 125) — what the entry says its callers must make true, else what the importer
+    // writes for nothing written, whose calls the type checker reports.
+    let safety = entry.and_then(|entry| entry.safety.as_deref()).unwrap_or(safety);
     let mut text = String::new();
     match function.derived {
         Derived::Const => text.push_str("    # derived: `__attribute__((const))`, so no effects and the same result for the same arguments [FFI-1]
@@ -7162,7 +7252,7 @@ fn render_function(function: &Function, entry: Option<&Entry>, renamed: Option<&
         let _ = writeln!(text, "    @ffi({})", arguments.join(", "));
     }
     if !safe {
-        let _ = writeln!(text, "    @safety(\"{safety}\")");
+        let _ = writeln!(text, "    @safety(\"{}\")", escaped(safety));
     }
     let arrow = result.map_or(String::new(), |result| format!(" -> {result}"));
     let public = if hidden { "" } else { "pub " };
@@ -7250,7 +7340,7 @@ fn render(imported: &Imported, applied: &Applied, stem: &str, root: &[String], n
     };
     for function in imported.functions.iter().filter(|function| function.namespace == namespace && !adopted_member(imported, function)) {
         let hidden = applied.hidden.contains(&function.name);
-        let (entry, renamed) = (applied.functions.get(&function.name), applied.renamed.get(&function.name));
+        let (entry, renamed) = (applied.functions.get(&entry_key(function)), applied.renamed.get(&function.name));
         // `[FFI-24b]` — an asserted `noexcept` keeps the catching thunk, and a throw panics; a
         // declared throwing function is caught; a non-throwing header declaration stays direct.
         let policy = match (function.policy, entry.and_then(|entry| entry.policy)) {
@@ -7909,7 +7999,8 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     let failed = format!("{prefix}_failed");
     let mut text = String::new();
     if !safe {
-        let _ = writeln!(text, "@safety(\"{UNCONTRACTED}\")");
+        let safety = entry.and_then(|entry| entry.safety.as_deref()).unwrap_or(UNCONTRACTED);
+        let _ = writeln!(text, "@safety(\"{}\")", escaped(safety));
     }
     if let Some(from) = &borrows {
         let _ = writeln!(text, "@borrows({from})");
@@ -7979,40 +8070,12 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
 
 /// `[FFI-2]`, `[FFI-11c]` — whether an entry states every fact: no `TODO(…)` word, and no `unsafe`.
 fn contracts_everything(entry: &Entry) -> bool {
-    !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe"))
-}
-
-/// A wrapper's parameters, its receiver first, and its result, as `render_wrapper` writes its
-/// line.
-fn signature_of(wrapper: &str) -> Option<(Vec<String>, Option<String>)> {
-    let line = wrapper.lines().find(|line| !line.starts_with('@') && !line.starts_with('#'))?;
-    let (_, rest) = line.split_once('(')?;
-    let (params, after) = rest.rsplit_once(')')?;
-    let mut split = Vec::new();
-    let (mut depth, mut start) = (0, 0);
-    for (at, c) in params.char_indices() {
-        match c {
-            '[' | '(' => depth += 1,
-            ']' | ')' => depth -= 1,
-            ',' if depth == 0 => {
-                split.push(params[start..at].trim().to_string());
-                start = at + 1;
-            }
-            _ => {}
-        }
-    }
-    if !params.trim().is_empty() {
-        split.push(params[start..].trim().to_string());
-    }
-    // What follows the parameters, up to the line's `:` and its comment.
-    let after = after.split('#').next().unwrap_or("").trim().trim_end_matches(':');
-    let returned = after.trim().strip_prefix("->").map(|returned| returned.trim().to_string());
-    Some((split, returned))
+    entry.safety.is_none() && !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe"))
 }
 
 /// The overlay entry that states nothing yet for a function: each unknown fact a `TODO(…)` word
-/// (`[FFI-11c]`), and `-> unsafe` where every parameter and the result are scalars, since being safe
-/// to call is the one fact no header states (`[FFI-2]`).
+/// (`[FFI-11c]`), and `unsafe fn` where every parameter and the result are scalars, since being safe
+/// to call is the one fact no header states (`[FFI-2]`, verdict 130).
 fn starter_entry(function: &Function) -> String {
     // A pointer the header declares; what the importer passes in its own way (a C++ reference, a
     // bridge value, a view, an optional value) states its facts.
@@ -8033,10 +8096,11 @@ fn starter_entry(function: &Function) -> String {
         // `[FFI-17a]` — a view's lifetime, which no header states.
         Some(ty) if ty.mode.starts_with("view") => " -> TODO(lifetime)",
         Some(ty) if todo(ty) => " -> TODO(ownership) TODO(count) TODO(nullable) TODO(lifetime)",
-        _ if function.params.iter().any(|(_, ty)| todo(ty)) => "",
-        _ => " -> unsafe",
+        _ => "",
     };
-    let _ = writeln!(text, "    fn {}({}){result}", function.name, params.join(", "));
+    let scalar = !function.params.iter().any(|(_, ty)| todo(ty)) && !function.result.as_ref().is_some_and(|ty| ty.mode.starts_with("view") || todo(ty));
+    let unsafe_word = if scalar { "unsafe " } else { "" };
+    let _ = writeln!(text, "    {unsafe_word}fn {}({}){result}", function.name, params.join(", "));
     text
 }
 
@@ -8162,8 +8226,26 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             None => Applied::default(),
         };
         let mut entries = String::new();
-        for function in imported.functions.iter().filter(|function| !have.functions.contains_key(&function.name)) {
+        let lacked = |function: &&Function| !have.functions.contains_key(&entry_key(function)) && !matches!(function.owner, Some((_, Member::Destructor)));
+        for function in imported.functions.iter().filter(lacked).filter(|function| function.owner.is_none()) {
             entries.push_str(&starter_entry(function));
+        }
+        // `[GRM-35]` (verdict 131) — a class's members under its class.
+        let mut classes: Vec<&str> = Vec::new();
+        for function in imported.functions.iter().filter(lacked) {
+            if let Some((class, _)) = &function.owner
+                && !classes.contains(&class.as_str())
+            {
+                classes.push(class);
+            }
+        }
+        for class in classes {
+            let _ = writeln!(entries, "    class {class}:");
+            for function in imported.functions.iter().filter(lacked).filter(|function| function.owner.as_ref().is_some_and(|(owner, _)| owner == class)) {
+                for line in starter_entry(function).lines() {
+                    let _ = writeln!(entries, "    {line}");
+                }
+            }
         }
         let mentioned = existing.as_deref().unwrap_or("");
         for skip in skipped.iter().filter(|skip| !mentioned.contains(&format!("# skipped: `{}`", skip.name))) {
@@ -8179,8 +8261,10 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             }
             None => format!(
                 "# A starter overlay for `{file}`, written by `ember bind --init` ([CLI-5]): replace each `TODO(…)` with\n\
-                 # its fact, and remove `-> unsafe` from a function you assert safe to call ([FFI-2]).\n\n\
-                 unsafe overlay c \"{file}\":  # SAFETY(ffi): TODO(why each entry matches its declaration in the header)\n{entries}"
+                 # its fact; above each `unsafe fn` write what its callers must make true, `@safety(\"…\")` ([UNS-7]),\n\
+                 # or remove its `unsafe` if you assert it safe to call ([FFI-2]).\n\n\
+                 unsafe overlay {} \"{file}\":  # SAFETY(ffi): TODO(why each entry matches its declaration in the header)\n{entries}",
+                if cpp { "cpp" } else { "c" }
             ),
         };
         std::fs::write(&path, text).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
@@ -8188,20 +8272,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         // `[FFI-55]`, `[CLI-5]` — `--merge` brings the overlay to the header as it is now, so its record
         // says so; a new overlay's is written by its package's first build.
         if merged {
-            let mut written = SourceMap::new();
-            let mut quiet = Sink::new();
-            if let Ok(id) = written.load(&path) {
-                let text = written.file(id).text.clone();
-                let lexed = ember_lexer::lex(id, &text, &mut quiet);
-                let parsed = ember_parser::parse(id, &text, lexed.tokens, &mut quiet);
-                if let Some(overlay) = parsed.items.iter().find_map(|item| match &item.kind {
-                    ast::ItemKind::Overlay(overlay) => Some(overlay),
-                    _ => None,
-                }) {
-                    rewrite_overlay_record(overlay, &path, &imported);
-                    println!("recorded {} in {OVERLAY_RECORD}", path.display());
-                }
-            }
+            record_overlay_file(&path, &dir, &imported);
         }
         return Ok(ExitCode::SUCCESS);
     }
@@ -8227,7 +8298,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             let why = skipped.iter().find(|skip| skip.name == name).map_or("it declares no such function".to_string(), |skip| format!("it was skipped: {}", skip.reason));
             return Err(format!("`{name}` is not imported from `{file}`: {why}"));
         };
-        let entry = applied.functions.get(&function.name);
+        let entry = applied.functions.get(&entry_key(function));
         print!("{}", render_function(function, entry, applied.renamed.get(&function.name), false));
         let words = |index: Option<usize>| -> Vec<String> {
             entry.map_or(Vec::new(), |entry| match index {
@@ -8259,6 +8330,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             explain_slot("result", ty, words(None), true);
         }
         match entry {
+            Some(entry) if entry.result.iter().any(|written| word(written) == "unsafe") => println!("  unsafe to call: its overlay entry is written `unsafe fn`, and its `@safety` says what callers must make true ([FFI-2], [UNS-7])"),
             Some(_) => println!("  safe to call: asserted by the overlay's entry for it ([FFI-2])"),
             None => println!("  safe to call: unknown — never derived, since a scalar can be an address; an overlay entry asserts it ([FFI-2])"),
         }
@@ -8274,12 +8346,17 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         let safe = imported
             .functions
             .iter()
-            .filter(|function| applied.functions.get(&function.name).is_some_and(|entry| {
-                !entry.params.iter().flatten().chain(&entry.result).any(|written| matches!(word(written), "TODO" | "unsafe"))
-            }))
+            .filter(|function| applied.functions.get(&entry_key(function)).is_some_and(contracts_everything))
             .count();
         println!("{safe} safe, {} still unsafe, {} skipped", imported.functions.len() - safe, skipped.len());
-        return Ok(if sink.has_errors() { ExitCode::FAILURE } else { ExitCode::SUCCESS });
+        if sink.has_errors() {
+            return Ok(ExitCode::FAILURE);
+        }
+        // `[CLI-7]`, `[FFI-55]` — the overlay matches the header as it is now: `--merge` records so.
+        if merge {
+            record_overlay_file(Path::new(&path), &dir, &imported);
+        }
+        return Ok(ExitCode::SUCCESS);
     }
     if report {
         // `[CLI-6]` — every skipped declaration, every one still unsafe with its unknown facts.
@@ -8295,7 +8372,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             println!("opaque: `{}` ({}): usable only behind a pointer: {}", opaque.name, opaque.at, opaque.reason);
         }
         for function in &imported.functions {
-            let entry = applied.functions.get(&function.name);
+            let entry = applied.functions.get(&entry_key(function));
             let mut unknown = Vec::new();
             match entry {
                 None => unknown.push("safe to call".to_string()),
@@ -8328,7 +8405,7 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         // `[FFI-35a]` — what a contract leaves unsaid is assumed: a pointer parameter with no
         // `retained` word does not retain it, and a pointer result with no lifetime word is listed.
         for function in &imported.functions {
-            let Some(entry) = applied.functions.get(&function.name) else { continue };
+            let Some(entry) = applied.functions.get(&entry_key(function)) else { continue };
             for ((name, ty), words) in function.params.iter().zip(&entry.params) {
                 if ty.pointee.is_some() && !words.iter().any(|written| word(written) == "retained") {
                     println!("assumes: `{}`: `{name}` does not retain the pointer", function.name);
@@ -8413,7 +8490,7 @@ fn outcome_lines(imported: &Imported, applied: &Applied) -> String {
             .map(|(param, _)| param.as_str())
             .chain(function.result.iter().filter(|ty| ty.pointee.is_some() && !matches!(ty.mode.as_str(), "boxed" | "optional")).map(|_| "the result"))
             .collect();
-        let line = if applied.functions.contains_key(&function.name) {
+        let line = if applied.functions.contains_key(&entry_key(function)) {
             format!("overlay  fn     {} ({policy}; stated)", path(&function.namespace, &name))
         } else if pointers.is_empty() {
             format!("value    fn     {} ({policy})", path(&function.namespace, &name))
@@ -8970,7 +9047,7 @@ fn changed_signatures(imported: &Imported, applied: &Applied, namespace: &str, h
     imported
         .policy_changes
         .iter()
-        .filter(|(at, name, _)| at == namespace && applied.functions.get(name.rsplit('.').next().unwrap_or(name)).is_none_or(|entry| entry.policy.is_none()))
+        .filter(|(at, name, _)| at == namespace && entry_named(applied, name).is_none_or(|entry| entry.policy.is_none()))
         .map(|(_, name, now)| {
             let change = if *now {
                 format!("`{header}` now declares `{name}` `noexcept` (it did not when this import was last bound), so it returns its value, no longer a `Result[…, CppError]`")

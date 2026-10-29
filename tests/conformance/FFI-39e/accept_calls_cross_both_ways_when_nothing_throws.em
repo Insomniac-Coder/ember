@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-39e
+#$ warning[L3015]: `run` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 1 5
 # `[FFI-39e]` — the boundary aborts only when an exception or a panic would cross it: C++ calling

@@ -1,0 +1,26 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/clash.em"
+header = "layers.h"
+[overlay.declarations]
+"Size" = "blake3:89d5b8d963fa345604c9da031f14106570d8e7da196b7ffbbe42c380f6ee794d"
+"layers_add" = "blake3:ade29378cdf72387447d660a52e3abfb0e950537ece4b6e217852acc005b13ce"
+"layers_scale" = "blake3:f3901863739606ca6ebfba63206d2b1d9c5960ccba004a60702fb08ff4b9628c"
+"size_area" = "blake3:908bf32291131f88caf1348632a750e1dd718fb581b7188ce33b87fbf1d6b7e5"
+
+[[overlay]]
+file = "overlays/ours.em"
+header = "layers.h"
+[overlay.declarations]
+"layers_scale" = "blake3:f3901863739606ca6ebfba63206d2b1d9c5960ccba004a60702fb08ff4b9628c"
+"size_area" = "blake3:908bf32291131f88caf1348632a750e1dd718fb581b7188ce33b87fbf1d6b7e5"
+
+[[overlay]]
+file = "overlays/theirs.em"
+header = "layers.h"
+[overlay.declarations]
+"layers_add" = "blake3:ade29378cdf72387447d660a52e3abfb0e950537ece4b6e217852acc005b13ce"
+"layers_scale" = "blake3:f3901863739606ca6ebfba63206d2b1d9c5960ccba004a60702fb08ff4b9628c"

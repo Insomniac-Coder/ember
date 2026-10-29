@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-48, FFI-32
+#$ warning[L3015]: `answer` is a C++ function the program calls in unsafe code
 #$ profiles: debug
 #$ warning[W5002]: `Both` is not imported from `shapes.hpp`
 #$ warning[W5002]: `Shared` is not imported from `shapes.hpp`

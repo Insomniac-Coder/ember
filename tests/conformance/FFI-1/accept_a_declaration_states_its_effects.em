@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-1, EFF-3, DET-2
+#$ warning[L3015]: `square` is a C function the program calls in unsafe code
+#$ warning[L3015]: `offset` is a C function the program calls in unsafe code
+#$ warning[L3015]: `counter` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 49 5
 #$ stdout: 1

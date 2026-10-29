@@ -1,0 +1,25 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/partial.em"
+header = "widgets.h"
+[overlay.declarations]
+"widget_add" = "blake3:d046c72644f65e0e501f347d31a3676fa9e29f72a2335102254b7eae0cf899a4"
+"widget_fill" = "blake3:57dbf20b193642df6dac7c9bfd5adf9b9935dce9566e72803c3cf7c6800edfdb"
+"widget_sum" = "blake3:27d0a04d1fb53278b4d4313233d06aa524df20cf5f4627c33189047e26e5be9b"
+
+[[overlay]]
+file = "overlays/widgets.em"
+header = "widgets.h"
+[overlay.declarations]
+"widget_add" = "blake3:d046c72644f65e0e501f347d31a3676fa9e29f72a2335102254b7eae0cf899a4"
+"widget_double" = "blake3:5784158a18df36f9373d6024580397c66f756507a85e1a9f92c7237a0437ecfa"
+"widget_fill" = "blake3:57dbf20b193642df6dac7c9bfd5adf9b9935dce9566e72803c3cf7c6800edfdb"
+"widget_freed" = "blake3:a3fce4120ccf595fdffe8655a18928d7baa3289b62488621c19507ed07a541ac"
+"widget_label" = "blake3:0687a6eac0ca7589ff90ba673cbdd8a822ce83be4c4961f5fdffd30896411ee9"
+"widget_length" = "blake3:9e0881f97ccb60ca3d7adb1b0879e4bda4599848cf9a77ca03911073047b3cdc"
+"widget_new" = "blake3:c88758e4aabfdfe874a46d0ac4941a0d33cc6bb8626d9a2819b61b79d4e470b2"
+"widget_sum" = "blake3:27d0a04d1fb53278b4d4313233d06aa524df20cf5f4627c33189047e26e5be9b"
+"widget_take" = "blake3:844b14f1ec73b50134e4bcfd9050b1fb6a958d4afcba11be28edff9a4c71cf27"

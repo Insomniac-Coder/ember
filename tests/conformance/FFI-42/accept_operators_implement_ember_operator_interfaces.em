@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-42
+#$ warning[L3015]: `Vec2.sub` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Grid.new` is a C++ function the program calls in unsafe code
 #$ warning[W5002]: `Vec2.operator!=` is not imported from `operators.hpp`: `operator!=`: Ember's `!=` is `Eq`'s
 #$ warning[W5002]: `Vec2.operator<` is not imported from `operators.hpp`: `operator<`: Ember orders through `Ord.cmp`
 #$ profiles: debug, development, release

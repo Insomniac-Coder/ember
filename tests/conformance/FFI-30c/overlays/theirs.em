@@ -3,7 +3,7 @@
 # records no header hash (`[FFI-55]`).
 
 unsafe overlay c "layers.h":  # SAFETY(ffi): each entry matches its declaration in the header
-    fn layers_scale(value, by) -> unsafe
+    unsafe fn layers_scale(value, by)
     fn layers_add(a, b)
     rename Size as Extent
     @ffi(macro_fn)

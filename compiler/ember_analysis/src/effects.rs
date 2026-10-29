@@ -7,8 +7,7 @@
 //! `@static_safe`'s is (`[EFF-15]`), so it is the same in every profile. By then a known function
 //! passed to a callable parameter has its own copy of the callee that calls it directly, so such a
 //! call contributes the effects of the function actually passed (`[EFF-2]`). A call through a
-//! function value or a `dyn` interface contributes every effect: no function type declares its
-//! effects yet.
+//! function value or a `dyn` value contributes the effects of what may reach it (`targets.rs`).
 //!
 //! An operation's effects are its own and those of everything it runs where it runs (`[EFF-1]`):
 //! the functions it calls, and the drops it performs (a type's `drop`, a class's when the last
@@ -93,7 +92,7 @@ pub fn comptime_forbidden(bodies: &[Body], types: &TypeTable, root: usize) -> Op
     let graph = Graph::new(bodies, types);
     let found = graph.effects[root] & COMPTIME_FORBIDDEN;
     let (effect, _) = found.each().next()?;
-    let (_, _, chain) = graph.chain(root, effect, types)?;
+    let (_, _, chain, _) = graph.chain(root, effect, types)?;
     Some((effect, chain))
 }
 
@@ -598,7 +597,7 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) ->
         let (from_base, base_name) = inherited[index].clone().unwrap_or((Effects::NONE, String::new()));
         let broken = (body.contracts.forbidden | from_base) & graph.effects[index];
         for (effect, _) in broken.each() {
-            let Some((first, last, chain)) = graph.chain(index, effect, types) else { continue };
+            let Some((first, last, chain, lambdas)) = graph.chain(index, effect, types) else { continue };
             // An allocation's failure is a panic too: under both contracts it is reported once,
             // as the allocation.
             if effect == Effects::PANIC && broken.contains(Effects::ALLOC) && last.effects.contains(Effects::ALLOC) {
@@ -609,6 +608,9 @@ pub fn check_effects_all(bodies: &[Body], types: &TypeTable, sink: &mut Sink) ->
             let span = if first.span.file == body.span.file { first.span } else { body.span };
             let relaxed = matches!(last.origin, Origin::Operation(operation) if operation == RELAXED);
             let mut diagnostic = contract_diagnostic(body, effect, span, &chain, types, relaxed);
+            for lambda in lambdas {
+                diagnostic = diagnostic.secondary(lambda, "the lambda the call runs");
+            }
             if from_base.contains(effect) && !body.contracts.forbidden.contains(effect) {
                 diagnostic = diagnostic.note(format!("the contract is `{base_name}`'s: an override inherits its base method's contracts (EFF-8)"));
             }
@@ -686,7 +688,7 @@ pub fn check_layers_all(bodies: &[Body], types: &TypeTable, omitted: &dyn Fn(&Bo
         let broken = *left_out & graph.effects[index];
         for (layer, effects) in LAYERS {
             let Some((effect, _)) = (broken & effects).each().next() else { continue };
-            let Some((first, _, chain)) = graph.chain(index, effect, types) else { continue };
+            let Some((first, _, chain, _)) = graph.chain(index, effect, types) else { continue };
             let span = if first.span.file == body.span.file { first.span } else { body.span };
             sink.emit(
                 Diagnostic::error(codes::E1021, span, format!(
@@ -731,6 +733,10 @@ fn inherited_contracts(bodies: &[Body], types: &TypeTable) -> Vec<Option<(Effect
 
 /// A function as the program names it: a class method with its class.
 fn display_name(body: &Body, types: &TypeTable) -> String {
+    // A lambda has no name a program wrote: the message points at it instead.
+    if body.is_lambda {
+        return "a lambda".to_string();
+    }
     match body.class_owner {
         Some(class) if !body.name.contains('.') => format!("{}.{}", types.class_def(class).name, body.name),
         _ => body.name.clone(),
@@ -802,7 +808,9 @@ impl<'a> Graph<'a> {
 
     /// `[EFF-6]` — the nearest operation that gives `from` the effect: the site in `from` it is
     /// reached through, and the chain of names down to the operation.
-    fn chain(&self, from: usize, effect: Effects, types: &TypeTable) -> Option<(Site, Site, Vec<String>)> {
+    /// The call chain from `from` to an operation with `effect`: its first call and the operation,
+    /// each body's name, and where each lambda on the way is written.
+    fn chain(&self, from: usize, effect: Effects, types: &TypeTable) -> Option<(Site, Site, Vec<String>, Vec<Span>)> {
         let mut parent: HashMap<usize, (usize, Site)> = HashMap::new();
         let mut seen = HashSet::from([from]);
         let mut queue = VecDeque::from([from]);
@@ -814,16 +822,21 @@ impl<'a> Graph<'a> {
                 match site.origin {
                     Origin::Operation(operation) => {
                         let mut names = vec![operation.to_string()];
+                        let mut lambdas = Vec::new();
                         let mut current = at;
                         let mut first = *site;
                         while let Some(&(caller, call)) = parent.get(&current) {
                             names.push(display_name(&self.bodies[current], types));
+                            if self.bodies[current].is_lambda {
+                                lambdas.push(self.bodies[current].span);
+                            }
                             first = call;
                             current = caller;
                         }
                         names.push(display_name(&self.bodies[from], types));
                         names.reverse();
-                        return Some((first, *site, names));
+                        lambdas.reverse();
+                        return Some((first, *site, names, lambdas));
                     }
                     Origin::Call(callee) => {
                         if self.effects[callee].contains(effect) && seen.insert(callee) {
@@ -1250,6 +1263,18 @@ impl SiteBuilder<'_> {
             }
             // A value that may own anything: its drop's effects are not known here.
             TyKind::Dyn { .. } | TyKind::ClassInterface(_) => effects |= Effects::ALL,
+            // `[EFF-2]` (ODR 15.3) — a function value's drop is that of one of the functions stored into
+            // its type: none for a named function, its captured values' for a lambda.
+            TyKind::Fn { stateless: false, abi: None, .. } => {
+                for target in self.targets.of_value(ty, self.types) {
+                    if let Some(environment) = self.bodies[target].closure_environment {
+                        match self.types.find(&TyKind::Struct(environment)) {
+                            Some(captured) => parts.push(captured),
+                            None => effects |= Effects::ALL,
+                        }
+                    }
+                }
+            }
             TyKind::Fn { stateless: false, .. } => effects |= Effects::ALL,
             _ => {}
         }

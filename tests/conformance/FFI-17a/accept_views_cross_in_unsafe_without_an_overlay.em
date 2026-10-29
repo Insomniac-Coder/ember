@@ -1,5 +1,15 @@
 #$ test: run-pass
 #$ rules: FFI-17a, FFI-38
+#$ warning[L3015]: `sum` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `negate` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `vowels` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Words.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Words.first` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `digit` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `or_zero` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `make_box` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `consume` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `boxes_destroyed` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 6 -1 3
 #$ stdout: 5 7 0

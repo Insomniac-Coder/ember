@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-17, FFI-24, FFI-32
+#$ warning[L3015]: `bounds` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 3 4 out of order
 # `[FFI-17]` — a C++ parameter may be named as the import names what it passes a thunk itself

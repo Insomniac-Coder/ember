@@ -1,5 +1,6 @@
 #$ test: compile-pass
 #$ rules: FFI-20a, FFI-38
+#$ warning[L3015]: `unrepresentable_fine` is a C function the program calls in unsafe code
 #$ stdout: 5
 #$ warning[W5002]: `Packed` is imported from `unrepresentable.h` only as an opaque type, usable behind a pointer: a union with bit-fields
 #$ warning[W5002]: `unrepresentable_hidden` is not imported from `unrepresentable.h`: a global with internal linkage

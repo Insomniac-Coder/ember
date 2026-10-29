@@ -3,7 +3,8 @@
 unsafe overlay cpp "statuses.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
     @ffi(status=Status, ok=ok, error=SplitError)
     enum Status
+    class Splitter:
+        fn new()
+        fn split(value, half: out one) -> status
+        fn decade(value, low: out one, high: out one)
 
-    fn new()
-    fn split(value, half: out one) -> status
-    fn decade(value, low: out one, high: out one)

@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-30
+#$ warning[L3015]: `answer_value` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 42 42
 # `[FFI-30]` — two imports of one header, with different defines, each declare its function: one C

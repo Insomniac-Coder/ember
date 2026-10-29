@@ -1,5 +1,9 @@
 #$ test: compile-fail
 #$ rules: FFI-11f
+#$ warning[L3015]: `Shelf.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `numbers` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `pick` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Shelf.last_of` is a C++ function the program calls in unsafe code
 #$ warning[W5001]: macro `LIFETIMEBOUND` is not imported from `lifetimes.hpp`
 # `[FFI-11f]` — the lifetime `[[clang::lifetimebound]]` states is enforced on the Ember side: `pick`'s
 # result borrows `values` and `last_of`'s the other shelf (not only the receiver, as a method's

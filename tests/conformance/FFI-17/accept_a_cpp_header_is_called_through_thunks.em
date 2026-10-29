@@ -1,5 +1,12 @@
 #$ test: run-pass
 #$ rules: FFI-17, FFI-3, FFI-50, FFI-24
+#$ warning[L3015]: `dot` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `scale` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `plain_c` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `bump` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `twice` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `sum` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `checked_div` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 11.0 12 103
 #$ stdout: 5 10 3.0

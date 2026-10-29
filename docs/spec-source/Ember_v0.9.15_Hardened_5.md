@@ -7108,10 +7108,11 @@ unsafe overlay c "vulkan/vulkan.h":
   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
   (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the registering
-  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); and, on a function, `no_callbacks` (it never calls back into Ember,
+  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe` in `@ffi(…)` on a hand
+  declaration (leave the call unsafe); and, on a function, `no_callbacks` (it never calls back into Ember,
   `[FFI-52]`), and on a function-pointer typedef, `safe` (`[FFI-56]`).
-  `@ffi(effects=[…])` states effects. An entry leaves its calls unsafe by being written `unsafe fn`
-  (`[GRM-35]`, verdict 130); `unsafe` is no contract word.
+  `@ffi(effects=[…])` states effects. An overlay entry leaves its calls unsafe by being written
+  `unsafe fn` (`[GRM-35]`, verdict 130); in an overlay, `unsafe` is no contract word.
 * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
   `Len`, `Size` or `N`).
@@ -7155,7 +7156,8 @@ unsafe overlay c "vulkan/vulkan.h":
   overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in another package's build, an overlay
   or a declaration its package's record lacks is `E5010` too. A change to a declaration the overlay
   does not describe changes nothing. Every program has an `ember.toml` (`[MAN-9]`), so the record is
-  always beside one.
+  always beside one. An overlay in no package's folder is the importing program's own: its record is
+  that package's, naming the overlay by its path from the package (`../vendor/sdl.em`).
   Nothing of this is written in the overlay or in the program.
 * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
   idiomatic API is layered over a raw one.
@@ -7691,10 +7693,11 @@ large_copy = { level = "warn", threshold = 256 }
 * `[MAN-2]` *(changed in 0.9.15)* `ember.lock` records the resolved dependencies with content hashes;
   `--locked` fails if it would change. Beside it, `ember.overlays` records the headers the package's
   overlays were checked against (`[FFI-55]`); Ember writes both, and neither is edited by hand.
-* `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A build, check or run of a
-  file with no `ember.toml` in its folder or any folder above it first writes a default one in the
-  file's folder, `[package]` with the folder's name as `name` and `version = "0.1.0"`, and says so; the
-  program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
+* `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A command that compiles a
+  file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml` in its folder or any folder
+  above it first writes a default one in the file's folder, `[package]` with the folder's name as `name`
+  and `version = "0.1.0"`, and says so on standard error; `ember bind` does so in a header's folder no
+  package holds. The program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
@@ -9517,8 +9520,9 @@ XVI (C) first; nothing in Parts I–XVIII depends on this annex.
   when the header does not have the body (ODR-160). An overlay's `class C:` section holds the entry of
   each member it states (`[GRM-35]`, verdict 131): `@ffi(const)` above a method's entry
   (`fn lookups()`) asserts that the method only reads its object, an asserted fact, which `ember tcb`
-  lists, and an entry without it imports the method as changing its object. An entry whose name or
-  parameters differ from the import's member is `E5010` (`[FFI-12]`).
+  lists; an entry without it leaves the importer's reading of the body, as an Ember method's is worked
+  out from its body (`[FN-4]`). An entry whose name or parameters differ from the import's member is
+  `E5010` (`[FFI-12]`).
 * `[FFI-41]` *(changed in 0.9.15)* Static member functions import as functions of the type with no
   object, as a `static fn` is (`[FN-4]`). A static data member, and a
   variable of a namespace, imports as a foreign static (`[FFI-10]`), read and written as a global
@@ -13319,7 +13323,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
 | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
 | `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
-| `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A build, … |
+| `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A command … |
 
 ## MNG
 

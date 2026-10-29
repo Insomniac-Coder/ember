@@ -1,5 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-48
+#$ warning[L3015]: `plain` is a C++ function the program calls in unsafe code
 #$ warning[W5002]: `pooled` is not imported from `pooled.hpp`: its result: `std::vector<int, Pool<int>>`: an allocator-parameterised container
 #$ warning[W5002]: `pooled_total` is not imported from `pooled.hpp`: parameter `values`: `std::vector<int, Pool<int>>`: an allocator-parameterised container
 # `[FFI-48]` — an allocator-parameterised container is unsupported: the allocator is part of the

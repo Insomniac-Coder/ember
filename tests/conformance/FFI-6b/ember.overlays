@@ -1,0 +1,13 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/drifted.em"
+header = "macros.h"
+[overlay.declarations]
+
+[[overlay]]
+file = "overlays/macros.em"
+header = "macros.h"
+[overlay.declarations]

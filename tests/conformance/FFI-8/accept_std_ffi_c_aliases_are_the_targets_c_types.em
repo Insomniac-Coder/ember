@@ -1,5 +1,12 @@
 #$ test: run-pass
 #$ rules: FFI-8
+#$ warning[L3015]: `add_ints` is a C function the program calls in unsafe code
+#$ warning[L3015]: `long_size` is a C function the program calls in unsafe code
+#$ warning[L3015]: `char_min` is a C function the program calls in unsafe code
+#$ warning[L3015]: `char_min_int` is a C function the program calls in unsafe code
+#$ warning[L3015]: `wchar_size` is a C function the program calls in unsafe code
+#$ warning[L3015]: `wchar_minus_one` is a C function the program calls in unsafe code
+#$ warning[L3015]: `wchar_is_signed` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 7 4 2 8 1.5
 #$ stdout: true true true true

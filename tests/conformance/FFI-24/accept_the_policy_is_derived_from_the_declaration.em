@@ -1,5 +1,14 @@
 #$ test: run-pass
 #$ rules: FFI-24
+#$ warning[L3015]: `quiet` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `stated` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `loud` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `halve` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `fail` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Gauge.new` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Gauge.read` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Gauge.strain` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `twice_int` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 5 3 3
 #$ stdout: Odd: an odd number

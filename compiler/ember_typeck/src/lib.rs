@@ -443,6 +443,9 @@ pub fn check(
         .map(|m| m.foreign.iter().flat_map(|foreign| foreign.backed.iter().map(|name| Symbol::intern(name))).collect())
         .collect();
     checker.foreign_cpp = modules.iter().map(|m| m.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some())).collect();
+    // `[UNS-7]` (verdict 125) — the files an import wrote, whose calls no one can annotate.
+    checker.imported_files = modules.iter().filter(|m| m.foreign.is_some()).map(|m| m.module.span.file).collect();
+    checker.imported_cpp_files = modules.iter().filter(|m| m.foreign.as_ref().is_some_and(|foreign| foreign.cpp.is_some())).map(|m| m.module.span.file).collect();
     checker.foreign_trampolines = modules.iter().map(|m| m.foreign.as_ref().map(|foreign| foreign.trampolines.clone()).unwrap_or_default()).collect();
     checker.foreign_variables = modules
         .iter()
@@ -868,6 +871,7 @@ pub fn check(
     }
     checker.note_changed_declarations();
     checker.note_c_declarations();
+    checker.report_unstated_safety();
     let unsafe_mark = checker.sink.mark();
     checker.report_unneeded_unsafe();
     let unneeded_unsafe = unsafe_mark..checker.sink.mark();
@@ -2153,6 +2157,7 @@ fn clause_lambda(pattern: &ast::Pattern, body: ast::Expr, span: Span) -> ast::Ex
             params: vec![param(name)],
             ret: None,
             body: ast::LambdaBody::Expr(Box::new(body)),
+            safety: None,
         }),
         span,
     }
@@ -3712,12 +3717,29 @@ struct Checker<'a> {
     /// an `unsafe fn` value: set where a written lambda is met, taken by `synth_lambda_fresh` and handed
     /// to its `push_closure` in `closure_made_unsafe`.
     user_lambda_in_unsafe: bool,
+    /// `[UNS-7]` (verdict 126) — each lambda the program writes, by span: whether it is written in
+    /// unsafe code, and its `@safety`. Reported at the end, as `unstated_calls` is.
+    lambda_safety: HashMap<Span, (bool, Option<(String, Span)>)>,
     closure_made_unsafe: bool,
     /// `[UNS-1]` — the locals a local function's name declares, whose calls are calls of it.
     local_fn_values: HashSet<LocalId>,
     /// `[UNS-7]` — the `unsafe fn`s with a body and no `@safety`, by their names' spans: each one's
     /// `L3015` is reported once its body is checked, naming the first unsafe step it takes.
     undocumented_unsafe: HashSet<Span>,
+    /// `[UNS-7]` (verdict 125) — the imported functions whose overlay entries say nothing of what their
+    /// callers must make true, by their names' spans, each with its name as an overlay writes it
+    /// (`lib_step`, a member's `Handle.new`); and those whose first call has said so (`L3015`), by that
+    /// name, since two imports of one header declare one function (`[FFI-30]`).
+    unstated_foreign: HashMap<Span, String>,
+    /// Each such function's first call in unsafe code, by its name: the call, its language, and the
+    /// line to write. Recorded while checking and reported at the end, so a quiet check's rollback
+    /// (`Sink::rollback`) loses none.
+    unstated_calls: HashMap<String, (Span, &'static str, String)>,
+    /// The type whose members `check_item_attributes_of` is checking, as written.
+    members_of: Option<String>,
+    /// The files the importer wrote, and those of them `import cpp` wrote.
+    imported_files: HashSet<ember_span::FileId>,
+    imported_cpp_files: HashSet<ember_span::FileId>,
     /// `[UNS-12]` — the steps each `E3100` of an `unsafe fn` body names, by its primary span: a
     /// line's further steps join its first one's (`refuse_unsafe`).
     unsafe_fn_steps: HashMap<Span, Vec<(Span, UnsafeStep)>>,
@@ -3733,6 +3755,11 @@ struct Checker<'a> {
     /// `[UNS-3]` — each statement of an `unsafe:` block, by span, and whether any check of it (its
     /// generic's or an instance's) needed `unsafe`; reported once checking is done.
     unsafe_statements: HashMap<Span, bool>,
+    /// D-929, `[UNS-3]` — the scope of the `unsafe:` block whose statements are being checked, and
+    /// whether the statement being checked read a name an earlier statement of that block declared:
+    /// it cannot move out of the block, whose scope the name ends with.
+    unsafe_scope: Option<usize>,
+    reads_block_name: std::cell::Cell<bool>,
     /// `[EFF-7]` — the calls written `@assume_noalloc(call)` (`Program::assume_noalloc`).
     assume_noalloc: Vec<Span>,
     /// `[UNS-10b]` — `UnsafeCell` delegates an invariant to unsafe code and
@@ -4099,15 +4126,23 @@ impl<'a> Checker<'a> {
             in_safe_block: false,
             unsafe_merged: HashMap::new(),
             user_lambda_in_unsafe: false,
+            lambda_safety: HashMap::new(),
             closure_made_unsafe: false,
             local_fn_values: HashSet::new(),
             undocumented_unsafe: HashSet::new(),
+            unstated_foreign: HashMap::new(),
+            members_of: None,
+            unstated_calls: HashMap::new(),
+            imported_files: HashSet::new(),
+            imported_cpp_files: HashSet::new(),
             unsafe_fn_steps: HashMap::new(),
             sources: HashMap::new(),
             current_stmt: None,
             unsafe_used: false,
             unsafe_blocks: HashMap::new(),
             unsafe_statements: HashMap::new(),
+            unsafe_scope: None,
+            reads_block_name: std::cell::Cell::new(false),
             assume_noalloc: Vec::new(),
             in_static_safe: false,
             in_generic_template: false,
@@ -8073,6 +8108,7 @@ impl<'a> Checker<'a> {
                 params: Vec::new(),
                 ret: item.decl.ty.clone(),
                 body: ast::LambdaBody::Expr(Box::new(item.decl.value.clone())),
+                safety: None,
             };
             let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, send: false, params: Vec::new(), ret: item.ty });
             let value = self.synth_lambda_fresh(&lambda, Some(expected), item.span, None);
@@ -16977,7 +17013,7 @@ impl<'a> Checker<'a> {
                 span,
                 UnsafeStep::call(name.to_string()),
                 Diagnostic::error(codes::E3100, span, format!("`{name}` needs an `unsafe` block"))
-                    .note("`[UNS-1]` lists the operations that do"),
+                    .note("`[UNS-1]` lists the operations that need `unsafe`"),
             );
         }
         if args.len() != arity {
@@ -22881,7 +22917,8 @@ impl<'a> Checker<'a> {
         let span = self.signatures[def.0 as usize].decl;
         let text = self.sources.get(&span.file)?.text.get(span.start as usize..span.end as usize)?;
         let text = text.find("fn ").map_or(text, |at| text[at + 3..].trim_start());
-        let name: String = text.chars().take_while(|c| *c == '_' || c.is_alphanumeric()).collect();
+        // A raw name (`r#type`, a C function named as a keyword) as written.
+        let name: String = text.chars().take_while(|c| *c == '_' || *c == '#' || c.is_alphanumeric()).collect();
         (!name.is_empty()).then_some(name)
     }
 
@@ -23010,6 +23047,41 @@ impl<'a> Checker<'a> {
             );
         }
         self.synth_with_expectation(inner, expected)
+    }
+
+    /// `[UNS-7]` (verdicts 125, 126) — once checking is done: `L3015` at the first call in unsafe code
+    /// of each imported function whose overlay entry says nothing of what its callers must make true,
+    /// and at each lambda written in unsafe code without `@safety`; `E0104` for `@safety` on a lambda
+    /// written outside it.
+    fn report_unstated_safety(&mut self) {
+        let mut calls: Vec<(String, (Span, &'static str, String))> = std::mem::take(&mut self.unstated_calls).into_iter().collect();
+        calls.sort_by_key(|(_, (span, ..))| (span.file, span.start));
+        for (shown, (span, language, line)) in calls {
+            self.sink.emit(
+                Diagnostic::lint(
+                    codes::L3015,
+                    span,
+                    format!("`{shown}` is a {language} function the program calls in unsafe code, and nothing says what its callers must make true; say it in the overlay entry for `{shown}`: {line}"),
+                )
+                .note(format!("{language} code is not trusted as safe: each {language} function a program calls says what its callers must make true [UNS-7]")),
+            );
+        }
+        let mut lambdas: Vec<(Span, (bool, Option<(String, Span)>))> = std::mem::take(&mut self.lambda_safety).into_iter().collect();
+        lambdas.sort_by_key(|(span, _)| (span.file, span.start));
+        for (span, (made_unsafe, safety)) in lambdas {
+            match safety {
+                None if made_unsafe => self.sink.emit(
+                    Diagnostic::lint(codes::L3015, span, "this lambda is written in unsafe code, so it is an `unsafe fn(…)` value, and nothing says what its callers must make true; say it just before it: `@safety(\"...\") fn(…)`")
+                        .note("whoever calls an unsafe function needs what it requires written where it is made [UNS-7]"),
+                ),
+                Some((_, at)) if !made_unsafe => self.sink.emit(
+                    Diagnostic::error(codes::E0104, at, "`@safety` applies only to an `unsafe fn`")
+                        .help("a lambda written outside unsafe code is safe to call: remove `@safety` [UNS-7]"),
+                ),
+                Some((text, at)) if text.trim().is_empty() => self.error(codes::E0104, at, "`@safety` requires a nonempty obligation"),
+                _ => {}
+            }
+        }
     }
 
     /// `[UNS-3]` — `L3010` for each `unsafe:` block holding a statement no check of which needed
@@ -23182,7 +23254,26 @@ impl<'a> Checker<'a> {
         } else {
             (CallKind::Declared, Diagnostic::error(codes::E3100, span, "calling an `unsafe fn` requires an `unsafe` block"))
         };
-        self.unsafe_step(span, UnsafeStep::Call { callee, kind }, refusal);
+        let declared = self.signatures[def.0 as usize].decl;
+        let refused = self.unsafe_step(span, UnsafeStep::Call { callee: callee.clone(), kind }, refusal);
+        // `[UNS-7]` (verdicts 125, 130) — C and C++ code is not trusted as safe: a function the importer
+        // wrote whose overlay entry says nothing of it is reported at its first call in unsafe code, where
+        // the program depends on it.
+        if !refused
+            && !self.imported_files.contains(&span.file)
+            && let Some(shown) = self.unstated_foreign.get(&declared).cloned()
+        {
+            let language = if self.imported_cpp_files.contains(&declared.file) { "C++" } else { "C" };
+            // A member's entry is written under its class (verdict 131).
+            let line = match shown.rsplit_once('.') {
+                Some((owner, _)) => format!("under `class {owner}:`, `@safety(\"...\")` above `unsafe fn {callee}(…)`"),
+                None => format!("`@safety(\"...\")` above `unsafe fn {callee}(…)`"),
+            };
+            let first = self.unstated_calls.entry(shown).or_insert((span, language, line.clone()));
+            if (span.file, span.start) < (first.0.file, first.0.start) {
+                *first = (span, language, line);
+            }
+        }
     }
 
     /// `[FFI-21]`, `[CLO-3]` — an instance of a foreign function whose callbacks name their user
@@ -25048,7 +25139,11 @@ impl<'a> Checker<'a> {
     }
 
     fn lookup(&self, name: Symbol) -> Option<LocalId> {
-        self.scopes.iter().rev().find_map(|scope| scope.get(&name).copied())
+        let (at, local) = self.scopes.iter().enumerate().rev().find_map(|(at, scope)| scope.get(&name).map(|local| (at, *local)))?;
+        if self.unsafe_scope == Some(at) {
+            self.reads_block_name.set(true);
+        }
+        Some(local)
     }
 
     /// `[DIA-12]` N1 — rank nearby lexical bindings and visible module items.
@@ -25995,9 +26090,12 @@ impl<'a> Checker<'a> {
         } else {
             // `[UNS-3]` — a statement of an `unsafe:` block: whether it needed `unsafe`, over every check of it.
             let outer = std::mem::replace(&mut self.unsafe_used, false);
+            let outer_read = self.reads_block_name.replace(false);
             self.check_stmt_unrecorded(stmt, out);
             let used = std::mem::replace(&mut self.unsafe_used, outer);
-            *self.unsafe_statements.entry(stmt.span).or_insert(false) |= used;
+            // D-929 — one that reads a name the block declared stays in it, needing `unsafe` or not.
+            let anchored = self.reads_block_name.replace(outer_read);
+            *self.unsafe_statements.entry(stmt.span).or_insert(false) |= used || anchored;
             self.unsafe_used |= used;
         }
         self.current_stmt = outer_stmt;
@@ -26728,7 +26826,10 @@ impl<'a> Checker<'a> {
                 }
                 let was = std::mem::replace(&mut self.in_unsafe, true);
                 let was_safe = std::mem::replace(&mut self.in_safe_block, false);
+                // D-929 — the block's own scope is the next one `check_block` opens.
+                let was_scope = std::mem::replace(&mut self.unsafe_scope, Some(self.scopes.len()));
                 let checked = self.check_block(block);
+                self.unsafe_scope = was_scope;
                 self.in_unsafe = was;
                 self.in_safe_block = was_safe;
                 out.push(Stmt::Block(checked));
@@ -34524,6 +34625,7 @@ impl<'a> Checker<'a> {
                                     .collect(),
                                 ret: None,
                                 body: ast::LambdaBody::Expr(Box::new(body)),
+                                safety: None,
                             }),
                             span,
                         };
@@ -40495,6 +40597,7 @@ impl<'a> Checker<'a> {
             params: decl.params.clone(),
             ret: decl.ret.clone(),
             body: ast::LambdaBody::Block(body.clone()),
+            safety: None,
         };
         self.local_fn_self.push(LocalFnSelf { name: decl.name.name, def, depth: self.lambda_depth + 1, env: None, probing: true });
         let outer_unsafe = self.enter_fn_body(decl);
@@ -40563,6 +40666,7 @@ impl<'a> Checker<'a> {
             params: decl.params.clone(),
             ret: decl.ret.clone(),
             body: ast::LambdaBody::Block(body.clone()),
+            safety: None,
         };
         // What a closure here reaches, as `synth_lambda_fresh` finds it.
         let mut outer: HashMap<Symbol, Ty> = self
@@ -40873,7 +40977,7 @@ impl<'a> Checker<'a> {
         }
         let ret = result.as_ref().map_or(self.common.void, |ty| self.resolve_type(ty));
         let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, send: false, params: param_tys, ret });
-        let lambda = ast::Lambda { is_owned: false, params: decl.params.clone(), ret: result, body: ast::LambdaBody::Block(body.clone()) };
+        let lambda = ast::Lambda { is_owned: false, params: decl.params.clone(), ret: result, body: ast::LambdaBody::Block(body.clone()), safety: None };
         // What a closure here reaches, as `synth_lambda_fresh` finds it.
         let mut outer: HashMap<Symbol, Ty> =
             self.scopes.iter().flat_map(|scope| scope.iter()).map(|(name, local)| (*name, self.locals[local.0 as usize].ty)).collect();
@@ -41145,7 +41249,7 @@ impl<'a> Checker<'a> {
             })
             .collect();
         let call = ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Call { callee: Box::new(path(name)), args }, span };
-        let lambda = ast::Lambda { is_owned: false, params: entry.params.clone(), ret: None, body: ast::LambdaBody::Expr(Box::new(call)) };
+        let lambda = ast::Lambda { is_owned: false, params: entry.params.clone(), ret: None, body: ast::LambdaBody::Expr(Box::new(call)), safety: None };
         self.synth(&ast::Expr { id: ast::NodeId::DUMMY, kind: ast::ExprKind::Lambda(lambda), span })
     }
 
@@ -42834,7 +42938,20 @@ impl<'a> Checker<'a> {
         let mut fact = |at: Span, what: String| {
             first_fact.get_or_insert((at, what));
         };
+        // `[GRM-35]` (verdict 131) — a class section's members are entries like any other, each named
+        // with its class.
+        let mut items: Vec<(Option<&ast::Ident>, &ast::OverlayItem)> = Vec::new();
         for item in &overlay.items {
+            items.push((None, item));
+            if let ast::OverlayItemKind::Class { name, members } = &item.kind {
+                items.extend(members.iter().map(|member| (Some(name), member)));
+            }
+        }
+        for (owner, item) in items {
+            let entry = match &item.kind {
+                ast::OverlayItemKind::Fn { name, is_unsafe, .. } => Some((name, *is_unsafe)),
+                _ => None,
+            };
             for attr in &item.attrs {
                 let name = (attr.path.len() == 1).then(|| attr.path[0].name.as_str()).unwrap_or("");
                 match name {
@@ -42846,6 +42963,21 @@ impl<'a> Checker<'a> {
                         }
                     }
                     "grade" => self.check_grade(attr, &item.kind),
+                    // `[UNS-7]` (verdict 130) — what the callers of a function an entry leaves unsafe
+                    // must make true; it is said of an `unsafe fn` only, as in Ember code.
+                    "safety" => match (entry, attr.args.as_slice()) {
+                        (Some((_, true)), [ast::AttrArg::Expr(ast::Expr { kind: ast::ExprKind::Lit(ast::Literal::Str(text)), .. })]) => {
+                            if text.trim().is_empty() {
+                                self.error(codes::E0104, attr.span, "`@safety` requires a nonempty obligation");
+                            }
+                        }
+                        (Some((_, true)), _) => self.error(codes::E0104, attr.span, "`@safety` requires one string obligation"),
+                        (Some((name, false)), _) => self.sink.emit(
+                            Diagnostic::error(codes::E0104, attr.span, "`@safety` applies only to an `unsafe fn`")
+                                .help(format!("write the entry `unsafe fn {}(…)`: it leaves the function unsafe to call, and `@safety` says what its callers must make true [GRM-35]", name.name)),
+                        ),
+                        (None, _) => self.check_attribute_list(std::slice::from_ref(attr), "overlay item"),
+                    },
                     _ => self.check_attribute_list(std::slice::from_ref(attr), "overlay item"),
                 }
             }
@@ -42853,17 +42985,22 @@ impl<'a> Checker<'a> {
                 fact(name.span, format!("the entry for macro `{}`, which states its signature", name.name));
                 continue;
             }
-            // `[FFI-40a]` (ODR-160) — a method line asserts whether the method changes its object.
-            if let ast::OverlayItemKind::Class { name, methods } = &item.kind {
-                for method in methods {
-                    fact(method.name.span, format!("the method line for `{}.{}`, which states its receiver", name.name, method.name.name));
-                }
-                continue;
+            let ast::OverlayItemKind::Fn { name, params, result, is_unsafe } = &item.kind else { continue };
+            let shown = owner.map_or_else(|| name.name.to_string(), |owner| format!("{}.{}", owner.name, name.name));
+            if *is_unsafe {
+                fact(name.span, format!("the entry for `{shown}`, which states what its callers must make true"));
+            } else {
+                fact(name.span, format!("the entry for `{shown}`, which asserts it safe to call"));
             }
-            let ast::OverlayItemKind::Fn { name, params, result } = &item.kind else { continue };
-            fact(name.span, format!("the entry for `{}`, which asserts it safe to call", name.name));
             for contract in params.iter().flat_map(|param| &param.contract).chain(result) {
-                if !FFI_CONTRACT_WORDS.contains(&contract.word.name.as_str()) {
+                // `[GRM-35]` (verdict 130) — an entry is left unsafe by being written `unsafe fn`.
+                if contract.word.name.is("unsafe") {
+                    self.sink.emit(
+                        Diagnostic::error(codes::E0104, contract.span, "`unsafe` is no contract word")
+                            .help(format!("write the entry `unsafe fn {}(…)`, with `@safety(\"…\")` above it saying what its callers must make true [GRM-35]", name.name))
+                            .note("an overlay entry leaves its calls unsafe by being written `unsafe fn`, as Ember code is [FFI-11]"),
+                    );
+                } else if !FFI_CONTRACT_WORDS.contains(&contract.word.name.as_str()) {
                     self.sink.emit(
                         Diagnostic::error(codes::E0104, contract.span,
                             format!("`{}` is not a contract word", contract.word.name))
@@ -43504,10 +43641,19 @@ impl<'a> Checker<'a> {
             }
             _ => &[],
         };
+        let members_of = match &item.kind {
+            ast::ItemKind::Struct(decl) => Some(decl.name.name.to_string()),
+            ast::ItemKind::Class(decl) => Some(decl.name.name.to_string()),
+            ast::ItemKind::Extend(decl) => self.written_line(decl.target.span),
+            ast::ItemKind::ExternClass(decl) => Some(decl.name.name.to_string()),
+            _ => None,
+        };
         for member in members {
             if let ast::MemberKind::Fn(decl) = &member.kind {
                 self.check_reload_terminate(&member.attrs, Some(decl.name.name));
+                self.members_of = members_of.clone();
                 self.check_safety_attribute(&member.attrs, decl);
+                self.members_of = None;
                 // `[TYP-9]` — a float mode governs the body it is written on.
                 // A method with none (an interface's, an abstract one, a
                 // foreign class's) would ignore it, which `[ATT-6]` never
@@ -43568,6 +43714,11 @@ impl<'a> Checker<'a> {
             if text.trim().is_empty() {
                 self.error(codes::E0104, attr.span, "`@safety` requires a nonempty obligation");
                 continue;
+            }
+            // `[UNS-7]` (verdict 125) — what the importer writes where an overlay entry says nothing.
+            if text == ember_diag::UNSTATED_CONTRACT || text == ember_diag::UNSTATED_VARIADIC {
+                let shown = self.members_of.as_ref().map_or_else(|| decl.name.name.to_string(), |owner| format!("{owner}.{}", decl.name.name));
+                self.unstated_foreign.insert(decl.name.span, shown);
             }
             if text.trim().to_ascii_uppercase().starts_with("TODO") {
                 self.sink.emit(Diagnostic::lint(codes::L3016, attr.span,
@@ -46337,7 +46488,7 @@ impl<'a> Checker<'a> {
             };
             let refused = self.unsafe_step(span, step,
                 Diagnostic::error(codes::E3100, span, format!("`{}` through a raw pointer needs an `unsafe` block", name.name))
-                    .note("`[UNS-1]` lists the operations that do"));
+                    .note("`[UNS-1]` lists the operations that need `unsafe`"));
             // A refused step is typed on, so that the statement's other steps are named with it
             // (`p.add(1).read()` reads through `p`) in its one `E3100` (`[UNS-1]`).
             let _ = refused;
@@ -48724,6 +48875,11 @@ impl<'a> Checker<'a> {
 
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
         let made_unsafe = std::mem::take(&mut self.user_lambda_in_unsafe) && reserved.is_none();
+        // `[UNS-7]` (verdict 126) — a lambda written in unsafe code says what its callers must make
+        // true, just before it; one outside it is safe to call, and says nothing. Reported at the end.
+        if reserved.is_none() {
+            self.lambda_safety.insert(span, (made_unsafe, lambda.safety.clone()));
+        }
         let number = self.closure_tag();
         let skipped_before = self.skipped_instances;
         // ODR-278 — a function item expected (a generic's argument checked again) is its shape.
@@ -52715,6 +52871,7 @@ impl<'a> Checker<'a> {
             params: vec![param("$lo", self), param("$hi", self)],
             ret: None,
             body: ast::LambdaBody::Block(ast::Block { id: dummy, stmts, span: body.span }),
+            safety: None,
         };
         let lo_value = self.check_expr(lo, int);
         let hi_value = self.check_expr(hi, int);
@@ -52845,7 +53002,7 @@ impl<'a> Checker<'a> {
             default: None,
             span,
         };
-        let lambda = ast::Lambda { is_owned: false, params: vec![param("$a", self), param("$b", self)], ret: None, body: ast::LambdaBody::Expr(Box::new(value)) };
+        let lambda = ast::Lambda { is_owned: false, params: vec![param("$a", self), param("$b", self)], ret: None, body: ast::LambdaBody::Expr(Box::new(value)), safety: None };
         let param_ty = |ty: Ty| ember_types::FnParam { ty, mode: ember_types::FnParamMode::Borrow };
         let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, send: false, params: vec![param_ty(result_ty), param_ty(result_ty)], ret: result_ty });
         let combiner = self.synth_lambda_fresh(&lambda, Some(expected), span, None);
@@ -57870,6 +58027,7 @@ impl<'a> Checker<'a> {
             } else {
                 default.clone()
             })),
+            safety: None,
         };
         let caller_fp = std::mem::replace(&mut self.active_fp, fp);
         let closure = self.synth_lambda(&lambda, Some(fn_ty), span);
@@ -61399,7 +61557,7 @@ fn ffi_unknown_facts(decl: &ast::FnDecl, attrs: &[ast::Attribute]) -> ForeignUnk
     // `[FFI-11]` — a contract that leaves the call `unsafe` on purpose asks for no fact.
     if ffi_left_unsafe(attrs) {
         return ForeignUnknownFacts {
-            facts: vec![format!("`{name}`'s contract leaves its calls `unsafe` on purpose (its `unsafe` word)")],
+            facts: vec![format!("`{name}`'s contract leaves its calls `unsafe` on purpose")],
             line: String::new(),
         };
     }

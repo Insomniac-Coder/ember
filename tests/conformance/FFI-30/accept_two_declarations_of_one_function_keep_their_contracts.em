@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-30, FFI-30a
+#$ warning[L3015]: `pointers_read` is a C function the program calls in unsafe code
+#$ warning[L3015]: `pointers_bump` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 4 4 5 6
 # `[FFI-30a]` — an overlay changes a function's signature and safety: `pointers.h` imported with an

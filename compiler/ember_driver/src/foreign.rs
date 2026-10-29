@@ -6,7 +6,7 @@
 //! its `@ffi(…)` contract. Each is graded **asserted** (`[TCB-1]`): nothing written raises a grade
 //! (`[TCB-2]`); a grade above asserted needs evidence, which a hand declaration has no way to claim.
 
-use ember_ast::{AttrArg, Item, ItemKind, Mode, OverlayItemKind};
+use ember_ast::{AttrArg, Item, ItemKind, OverlayItemKind};
 use ember_span::{SourceMap, Span};
 use ember_typeck::LoadedModule;
 
@@ -50,17 +50,22 @@ pub fn declarations(modules: &[LoadedModule], map: &SourceMap, module_name: &dyn
                         }
                     }
                 }
-                // `[FFI-40a]` (ODR-160) — a method line of an overlay asserts its method's receiver.
+                // `[FFI-40a]` (ODR-160, verdict 131) — `@ffi(const)` on a member's entry asserts that the
+                // method only reads its object.
                 ItemKind::Overlay(overlay) => {
                     for entry in &overlay.items {
-                        let OverlayItemKind::Class { name: class, methods } = &entry.kind else { continue };
-                        for method in methods {
-                            let name = format!("{}.{}", class.name, method.name.name);
-                            let fact = if method.params.first().is_some_and(|receiver| receiver.mode == Mode::Mut) {
-                                "it may change its object: `mut self`, as the overlay's method line says"
-                            } else {
-                                "it changes no field of its object: `self`, as the overlay's method line says"
-                            };
+                        let OverlayItemKind::Class { name: class, members } = &entry.kind else { continue };
+                        for member in members {
+                            let OverlayItemKind::Fn { name: method, .. } = &member.kind else { continue };
+                            let asserted_const = member.attrs.iter().any(|attr| {
+                                attr.path.len() == 1 && attr.path[0].name.is("ffi")
+                                    && attr.args.iter().any(|arg| matches!(arg, AttrArg::Expr(ember_ast::Expr { kind: ember_ast::ExprKind::Path { segments }, .. })
+                                        if segments.len() == 1 && segments[0].name.is("const")))
+                            });
+                            if !asserted_const {
+                                continue;
+                            }
+                            let name = format!("{}.{}", class.name, method.name);
                             out.push(ForeignDecl {
                                 module: module.clone(),
                                 qualified: format!("{prefix}{name}"),
@@ -68,8 +73,8 @@ pub fn declarations(modules: &[LoadedModule], map: &SourceMap, module_name: &dyn
                                 kind: "method",
                                 abi: "C++".to_string(),
                                 safe: false,
-                                source: method.name.span,
-                                facts: vec![ForeignFact { text: fact.to_string(), source: method.name.span, grade: "asserted" }],
+                                source: method.span,
+                                facts: vec![ForeignFact { text: "it changes no field of its object, as the overlay's `@ffi(const)` says".to_string(), source: method.span, grade: "asserted" }],
                             });
                         }
                     }

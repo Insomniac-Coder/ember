@@ -2,6 +2,7 @@
 # safe to call, which lets it implement its interface ([FFI-2]).
 
 unsafe overlay cpp "pairs.hpp":  # SAFETY(ffi): each entry matches its declaration in the header
-    fn add(other)
-    fn eq(other)
-    fn sum()
+    class Pair_int:
+        fn add(other)
+        fn eq(other)
+        fn sum()

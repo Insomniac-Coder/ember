@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-39
+#$ warning[L3015]: `run` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 4205 5
 # `[FFI-39]` (ODR-221) — an overlay's `@ffi(trampoline, virtuals=[…])` entry is still accepted, and

@@ -936,7 +936,7 @@ Every rule of this document, by family, with the Part that defines it.
 | `[MAN-3]` | XVII | Every key in `[lints]` names a lint the compiler defines (`E9010` … |
 | `[MAN-7]` | XVII | *(changed in 0.9.10)* `[build] reload` is `"opt-in"`, `"all"`, … |
 | `[MAN-8]` | XVII | *(changed in 0.9.10)* The sections are: `[package]` (`name`, … |
-| `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A build, … |
+| `[MAN-9]` | XVII | *(new in 0.9.15)* Every program is a package (verdict 127). A command … |
 
 ## MNG
 

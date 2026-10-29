@@ -8,7 +8,8 @@
 # `[UNS-12]` (verdict 118) — an `unsafe fn` is unsafe as a whole: its body reads, writes and offsets
 # raw pointers with no `unsafe:` block, and its callers vouch, each in a block of its own. A `safe:`
 # block in it is checked as safe code. (Verdict 119) A function written in unsafe code is an
-# `unsafe fn`, with `@safety`, and a lambda written there an `unsafe fn(…)` value.
+# `unsafe fn`, with `@safety`, and a lambda written there an `unsafe fn(…)` value, with its own
+# `@safety` written just before it (verdict 126).
 
 @safety("`p` points to two readable bytes")
 unsafe fn read_u16_le(p: *u8) -> u16:
@@ -41,6 +42,6 @@ fn main():
     println(b[0])
     # SAFETY: the lambda writes through `p`, which still points to `b[0]`
     unsafe:
-        set = fn(v: int) => p.write(v)
+        set = @safety("`p` points to a writable `int`") fn(v: int) => p.write(v)
         set(8)
     println(b[0])

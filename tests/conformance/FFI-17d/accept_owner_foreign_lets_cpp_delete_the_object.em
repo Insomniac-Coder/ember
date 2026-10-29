@@ -1,5 +1,9 @@
 #$ test: run-pass
 #$ rules: FFI-17d, FFI-17c
+#$ warning[L3015]: `record` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `recorded` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `kept_value` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `release` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 0 9
 #$ stdout: 123 -1

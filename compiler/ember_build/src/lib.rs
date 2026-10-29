@@ -646,6 +646,8 @@ pub enum BuildError {
     /// `[RT-12]` — a Clang or GCC that does not take `-fstack-clash-protection` cannot probe a frame
     /// larger than the guard page, so a stack write could land beyond it (`E9014`).
     NoStackProbes(String),
+    /// `[BLD-15]` — a link ran past its time limit and was ended (`E9042`): the message.
+    LinkTimedOut(String),
 }
 
 impl std::fmt::Display for BuildError {
@@ -674,6 +676,7 @@ impl std::fmt::Display for BuildError {
                 f,
                 "error[E9014]: `{toolchain}` cannot emit stack probes for a frame larger than a guard page: it does not take `-fstack-clash-protection` [RT-12]\n  = help: use Clang 11 or GCC 8 or later"
             ),
+            BuildError::LinkTimedOut(message) => f.write_str(message),
             BuildError::FloatModeRefused { toolchain, flag, fast } => {
                 let attribute = if *fast { "@fastmath" } else { "@fp(contract)" };
                 write!(f, "`{toolchain}` does not take `{flag}`, which `{attribute}` needs")
@@ -1153,12 +1156,216 @@ fn compile_and_link_impl(
         }
     }
     let started = std::time::SystemTime::now();
-    let compiled = run_output(command)?;
+    // `[BLD-15]` — the link, at most for its limit.
+    let compiled = match link_limit() {
+        Some((_, limit)) => {
+            let rendered = format!("{command:?}");
+            let mut command = command;
+            let stacks = request.output.with_extension("stacks.txt");
+            match run_limited(&mut command, limit, Some(&stacks))? {
+                Some(done) if done.status.success() => done,
+                Some(done) => {
+                    let mut text = String::from_utf8_lossy(&done.stdout).into_owned();
+                    text.push_str(&String::from_utf8_lossy(&done.stderr));
+                    return Err(BuildError::CompilerFailed { command: rendered, output: text });
+                }
+                None => {
+                    let _ = std::fs::remove_file(&request.output);
+                    return Err(BuildError::LinkTimedOut(link_timed_out(&request.output, limit, &rendered, None, &stacks)));
+                }
+            }
+        }
+        None => run_output(command)?,
+    };
     if let Some(cached) = cached {
         incomplete_program(&request.output)?;
         cached.store(request, &compiled, started);
     }
     Ok(())
+}
+
+/// `[BLD-15]` (verdict 124) — how long one link may run: 30 minutes unless `[link] timeout` sets
+/// another number of seconds.
+pub const LINK_LIMIT_DEFAULT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// `[BLD-15]` — the limit of each link this process runs, and the program a Ninja build runs each
+/// link under to keep it (the Ember compiler's own `__link`). Unset, as in a build this library runs
+/// alone, a link has no limit.
+static LINK_LIMIT: std::sync::Mutex<Option<(PathBuf, std::time::Duration)>> = std::sync::Mutex::new(None);
+
+/// `[BLD-15]` — set the limit of the links this process runs, and the guard program (`ember`) a
+/// Ninja build runs each under.
+pub fn set_link_limit(guard: PathBuf, limit: std::time::Duration) {
+    if let Ok(mut set) = LINK_LIMIT.lock() {
+        *set = Some((guard, limit));
+    }
+}
+
+fn link_limit() -> Option<(PathBuf, std::time::Duration)> {
+    LINK_LIMIT.lock().ok().and_then(|set| set.clone())
+}
+
+/// `[BLD-15]` — `command`, a link, run for at most `limit`, its output kept as `output()` keeps it.
+/// One still running at its limit is ended with every process it started (`cl` runs `link.exe`):
+/// `Ok(None)`.
+pub fn run_limited(command: &mut Command, limit: std::time::Duration, stacks: Option<&Path>) -> std::io::Result<Option<std::process::Output>> {
+    use std::io::Read;
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let read = |stream: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut stream) = stream {
+                let _ = stream.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let stdout = read(child.stdout.take().map(|stream| Box::new(stream) as Box<dyn Read + Send>));
+    let stderr = read(child.stderr.take().map(|stream| Box::new(stream) as Box<dyn Read + Send>));
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(std::process::Output { status, stdout: stdout.join().unwrap_or_default(), stderr: stderr.join().unwrap_or_default() }));
+        }
+        let ran = started.elapsed();
+        if ran >= limit {
+            end_process_tree(child.id(), stacks);
+            let _ = child.kill();
+            let _ = child.wait();
+            // A process the ending missed may hold the pipes: their readers are left to it.
+            return Ok(None);
+        }
+        std::thread::sleep((limit - ran).min(std::time::Duration::from_millis(100)));
+    }
+}
+
+/// `[BLD-15]` — end the process `id` and every process it started. On Windows, each one's threads'
+/// stacks first, into `stacks`, when the Windows debugger `cdb` is installed: attached without
+/// stopping them (`-pv`), with no symbols to fetch, at most a minute each. They are the evidence of
+/// where a hung linker spins. Then WMI's `Terminate`, which ended the hung `link.exe` that
+/// `TerminateProcess` (`Stop-Process`, `taskkill /F`) did not, with exit code 1 (its default, 0,
+/// made `cl` and Ninja take the stopped link for a finished one, D-928), then `taskkill` for any
+/// left. Elsewhere, its process group. Every helper runs under a limit of its own.
+fn end_process_tree(id: u32, stacks: Option<&Path>) {
+    let helper_limit = std::time::Duration::from_secs(60);
+    if !cfg!(windows) {
+        let _ = Command::new("kill").args(["-KILL", &format!("-{id}")]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        return;
+    }
+    let powershell = |script: String| -> String {
+        let mut command = Command::new("powershell");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+        run_bounded(&mut command, helper_limit).unwrap_or_default()
+    };
+    // The tree, parents first, as WMI lists it while every one still runs.
+    let listed = powershell(format!(
+        "$all = Get-CimInstance Win32_Process; $ids = @({id}); \
+         do {{ $more = @($all | Where-Object {{ $ids -contains $_.ParentProcessId -and $ids -notcontains $_.ProcessId }} | ForEach-Object {{ $_.ProcessId }}); $ids += $more }} while ($more.Count -gt 0); \
+         $all | Where-Object {{ $ids -contains $_.ProcessId }} | ForEach-Object {{ \"$($_.ProcessId)`t$($_.CommandLine)\" }}"
+    ));
+    let tree: Vec<(u32, String)> = listed
+        .lines()
+        .filter_map(|line| {
+            let (pid, command) = line.split_once('\t').unwrap_or((line, ""));
+            pid.trim().parse().ok().map(|pid| (pid, command.trim().to_string()))
+        })
+        .collect();
+    let cdb = Path::new(r"C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe");
+    if let Some(stacks) = stacks
+        && cdb.is_file()
+    {
+        let mut text = String::new();
+        for (pid, command) in &tree {
+            let mut attach = Command::new(cdb);
+            attach.args(["-pv", "-p", &pid.to_string(), "-snul", "-c", "~*kb 40; q"]).env("_NT_SYMBOL_PATH", "").env("_NT_ALT_SYMBOL_PATH", "");
+            let taken = run_bounded(&mut attach, helper_limit).unwrap_or_else(|| "(the debugger gave no stacks within a minute)\n".to_string());
+            text.push_str(&format!("== process {pid}: {command}\n{taken}\n"));
+        }
+        let _ = std::fs::write(stacks, text);
+    }
+    let ids: Vec<String> = tree.iter().map(|(pid, _)| pid.to_string()).collect();
+    if !ids.is_empty() {
+        powershell(format!(
+            "foreach ($p in @({})) {{ Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" | Invoke-CimMethod -MethodName Terminate -Arguments @{{ Reason = [uint32]1 }} | Out-Null }}",
+            ids.join(", ")
+        ));
+    }
+    let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &id.to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+
+/// A helper of `end_process_tree`, at most for `limit`, its standard output: one still running then is
+/// killed, alone, so a hung helper never starts another ending.
+fn run_bounded(command: &mut Command, limit: std::time::Duration) -> Option<String> {
+    let mut child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut out, &mut bytes);
+        bytes
+    });
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return reader.join().ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+            Ok(None) if started.elapsed() < limit => std::thread::sleep(std::time::Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+/// `[BLD-15]` — `E9042`'s message: the program, how long the link ran, its command, the command file
+/// it keeps, and the stacks taken when it was stopped.
+fn link_timed_out(output: &Path, limit: std::time::Duration, command: &str, rsp: Option<&Path>, stacks: &Path) -> String {
+    let seconds = limit.as_secs();
+    let ran = if seconds >= 60 && seconds % 60 == 0 { format!("{} minutes", seconds / 60) } else { format!("{seconds} seconds") };
+    let mut kept = rsp.map_or(String::new(), |rsp| format!("its command file is kept at `{}`; ", rsp.display()));
+    if stacks.is_file() {
+        kept.push_str(&format!("its threads' stacks when it was stopped are in `{}`; ", stacks.display()));
+    }
+    format!(
+        "error[E9042]: the link of `{}` ran for {ran}, its time limit, and was stopped: `{command}`\n  = help: {kept}a longer limit is `[link] timeout = <seconds>` in `ember.toml` [BLD-15]",
+        output.display()
+    )
+}
+
+/// `[BLD-15]` — `ember __link <seconds> <output> <rsp> -- <linker> <args…>`, which a Ninja build
+/// runs each link under: the link, at most for its limit; one ended there leaves no program, and is
+/// `E9042`. The exit code is the linker's, or 2.
+pub fn link_guard_main(args: &[String]) -> i32 {
+    let (Some(seconds), Some(output), Some(rsp)) = (args.first(), args.get(1), args.get(2)) else { return 2 };
+    let Some(at) = args.iter().position(|arg| arg == "--") else { return 2 };
+    let Some((program, rest)) = args[at + 1..].split_first() else { return 2 };
+    let limit = std::time::Duration::from_secs(seconds.parse().unwrap_or(LINK_LIMIT_DEFAULT.as_secs()));
+    let mut command = Command::new(program);
+    command.args(rest);
+    let stacks = PathBuf::from(format!("{rsp}.stacks.txt"));
+    match run_limited(&mut command, limit, Some(&stacks)) {
+        Ok(Some(done)) => {
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(&done.stdout);
+            let _ = std::io::stderr().write_all(&done.stderr);
+            done.status.code().unwrap_or(2)
+        }
+        Ok(None) => {
+            let _ = std::fs::remove_file(output);
+            let shown = std::iter::once(program.as_str()).chain(rest.iter().map(String::as_str)).collect::<Vec<_>>().join(" ");
+            eprintln!("{}", link_timed_out(Path::new(output), limit, &shown, Some(Path::new(rsp)), &stacks));
+            2
+        }
+        Err(error) => {
+            eprintln!("cannot run the linker `{program}`: {error}");
+            2
+        }
+    }
 }
 
 /// D-928 — a linker ended part-way (killed, or out of disk) can leave the file it reserved, all
@@ -2460,6 +2667,37 @@ fn program_file(program: &Path, search: Option<std::ffi::OsString>) -> Option<Pa
 
 #[cfg(test)]
 mod tests {
+    /// `[BLD-15]` — a command still running at its limit is ended with what it started (here a shell
+    /// and the waiting program it runs), well before it would have ended itself; one that finishes
+    /// gives its output.
+    #[test]
+    fn a_command_past_its_limit_is_ended_with_its_children() {
+        let mut waits = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "ping -n 30 127.0.0.1"]);
+            command
+        } else {
+            let mut command = std::process::Command::new("sh");
+            command.args(["-c", "sleep 30"]);
+            command
+        };
+        let started = std::time::Instant::now();
+        let ended = super::run_limited(&mut waits, std::time::Duration::from_secs(1), None).expect("the command starts");
+        assert!(ended.is_none(), "a command past its limit was waited for");
+        assert!(started.elapsed() < std::time::Duration::from_secs(20), "the command was not ended at its limit: {:?}", started.elapsed());
+        let mut quick = if cfg!(windows) {
+            let mut command = std::process::Command::new("cmd");
+            command.args(["/c", "echo done"]);
+            command
+        } else {
+            let mut command = std::process::Command::new("sh");
+            command.args(["-c", "echo done"]);
+            command
+        };
+        let done = super::run_limited(&mut quick, std::time::Duration::from_secs(60), None).expect("the command starts").expect("it finished");
+        assert!(done.status.success() && String::from_utf8_lossy(&done.stdout).contains("done"));
+    }
+
     /// `[TOOL-3]` — with no C compiler, the message is `E9002` saying so, and the help names this
     /// host's remedy; the path the search tried is never the primary message.
     #[test]

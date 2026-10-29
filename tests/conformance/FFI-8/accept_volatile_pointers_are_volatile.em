@@ -1,5 +1,8 @@
 #$ test: run-pass
 #$ rules: FFI-8, UNS-5
+#$ warning[L3015]: `register_write` is a C function the program calls in unsafe code
+#$ warning[L3015]: `register_read` is a C function the program calls in unsafe code
+#$ warning[L3015]: `device_masked` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 7 7
 #$ stdout: 12 12 4

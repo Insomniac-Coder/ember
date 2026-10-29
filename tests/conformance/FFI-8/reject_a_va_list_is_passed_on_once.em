@@ -1,5 +1,6 @@
 #$ test: compile-fail
 #$ rules: FFI-8
+#$ warning[L3015]: `format_list` is a C function the program calls in unsafe code
 # `[FFI-8]` — a `VaList` is not `Copy`: whoever it is passed to reads it, so it is passed on once.
 
 from std.ffi import VaList, c_char, c_int

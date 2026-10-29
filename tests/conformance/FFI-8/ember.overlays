@@ -1,0 +1,71 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/cpp_newtypes.em"
+header = "cpp_newtypes.hpp"
+[overlay.declarations]
+"Socket.new" = "blake3:1e09dce28e104b28c8f2846bceb0c69b75d931e75af5f424b261c1db07482af4"
+"Socket.port" = "blake3:a60357db1ecede5c38c2a9efe68472a613d1c6b28c004bd37ffccd8e722e6e09"
+"halve" = "blake3:ce133d7567093d92ed579a3c83e6b19e7600255ea6a8cf5335d6e01880b535f6"
+"next_port" = "blake3:73715a4400fb463cd237f4c39462c89aa739ea5f2fdad1bc39abb59ab0cbf13d"
+
+[[overlay]]
+file = "overlays/newtypes.em"
+header = "newtypes.h"
+[overlay.declarations]
+"later" = "blake3:1c5f05de2ccf7a7635b6054eb6fcf01b970b0558ee1f2c1bc2987ab758af3806"
+"open_slot" = "blake3:252c78e310999a62f311428214a976c707f8610c18f321bdba6d0f21039677a2"
+"slot_number" = "blake3:c6b3eebd9588873f6d8d54b8e20f83e5ffe3fc7449d1a76e862caffff591e59f"
+"twice" = "blake3:52834f056de629b2b4eec867e8ba0641276571957b87c3233eb3bcbf3173e0e0"
+
+[[overlay]]
+file = "overlays/newtypes_misused.em"
+header = "newtypes.h"
+[overlay.declarations]
+"twice" = "blake3:52834f056de629b2b4eec867e8ba0641276571957b87c3233eb3bcbf3173e0e0"
+
+[[overlay]]
+file = "overlays/packets.em"
+header = "packets.h"
+[overlay.declarations]
+"packet_new" = "blake3:583c1e9baac27de3c5db94df25ea9de0766cb2b51564dd043f35c26b921a4dec"
+"packet_sum" = "blake3:e7a0dd9232a85c691a8cd85f3817b3f98b1a23ac682bd509999af8f5b519d8b2"
+
+[[overlay]]
+file = "overlays/precise.em"
+header = "precise.h"
+[overlay.declarations]
+"precise_measure" = "blake3:494073aaa0f3dc59e237977f71fd9596e041841ee6c8761ffc5ed908e1d93715"
+"precise_third" = "blake3:5e1049ee9f9030bb7b1bc9ffc1e340c819ef05f875bbca9a6116306cf8503512"
+"precise_to_double" = "blake3:4b3e9087378bc0b86cb6dc99d8d7ec5f8f9e6635e0920f0dd9eea3230dd9d9fb"
+"precise_twice" = "blake3:ea69d2b0597d2df82df06995a1307a6d83aa8cc0e03f9db5cdc4fb1f5a0fcd68"
+
+[[overlay]]
+file = "overlays/stamps.em"
+header = "stamps.h"
+[overlay.declarations]
+"lone_twice" = "blake3:0b76f5a0a97be91d6995debbed0aa6d1761f10a6d78ec114187d03ac36acd276"
+"lone_value" = "blake3:4d40c71ecbabc999a5c446f37f7dc5c60a97662ba6ff21a493c8741ed9d4c33c"
+"span_length" = "blake3:ef670b5fef9f99be1f035cdb0b2cbeadfa01e32522e0e5f208cb7a200ad4fe48"
+"span_shift" = "blake3:30a82e0674c7ae66dce270d8efa3df225a23754ffc7e13bb4848b220467d238b"
+"stamp_make" = "blake3:fdba257d017d45aac88f8befb4b34dc30e815508310b4fc8336c3a32145a20fa"
+"stamp_tag" = "blake3:bcb509f337984a1d62a68eb4df79996590117dd7f925bbddb1128f9f4222b4b4"
+
+[[overlay]]
+file = "overlays/unions.em"
+header = "unions.h"
+[overlay.declarations]
+"number_bits" = "blake3:03e032ae9ffe7c948c9eeae2683bc9cd9057995dbf84cb23b8b4e63c35e8a375"
+"number_of_float" = "blake3:c427407d32ad2033ccba9f2e5a2ee4174f61043c19caf10cf8921ee2d2d6918d"
+"number_twice" = "blake3:18d5c247d33170c8a17f1d6ea6c7a194b7548553f8a7c78eed58e52d095c4229"
+"value_half" = "blake3:6e976632bb36733dee59c17b36cc5c266aac0575831e4478a1cd3d78e68a2fb5"
+"value_real" = "blake3:8b8a9df1cccfb2b4078b81170ef5d666a0b90ff17e7456dc962adc51f2cbc24c"
+
+[[overlay]]
+file = "overlays/variadic.em"
+header = "variadic.h"
+[overlay.declarations]
+"format_into" = "blake3:807757190a09663a90027262edad700e87f8c48d292a2d69fea7d6e431d52fb3"
+"log_through" = "blake3:a471c77baa93233e85702e8225249881e07c80abadb14edd122f1b081db430ae"

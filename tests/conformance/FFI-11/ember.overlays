@@ -1,0 +1,24 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind <header> --check <overlay> --merge` rewrites a line.
+version = "1"
+
+[[overlay]]
+file = "overlays/handles.em"
+header = "handles.h"
+[overlay.declarations]
+"counter_add" = "blake3:9e848e9f899b6937216fb0180ab97cc9164b23dfccbf8e7890a8a359d13da134"
+"counter_add_if" = "blake3:eaaf24f470f40293b5cb77d312cb2b7dca76cd589a449d3436a225ac2706e5e1"
+"counter_freed" = "blake3:b72eb55390e5c48ee10f0ef7cbadf138a96a40d5984d93364b1b52467b4dc48b"
+"counter_get" = "blake3:757e6961d04ef67dd0d9bc4de443b6f1ee560131f6f89aca3445d0329a9e3eba"
+"counter_get_or" = "blake3:9478c906ca721ccda58a818bdeca9f278fd04ec58b18e31784c21e4fa13ee572"
+"counter_new" = "blake3:0ab704b11504c0c8184372f3d69ed73a9f1dd97ceaca1bf9a21378d207b6132a"
+"counter_same" = "blake3:2ec12efaabfcf6fd4a971eab099aa3714056ed235ce4ecddcc15fceea15bc907"
+"counter_same_mut" = "blake3:0a2652cc7a34638d93efc24400e83cec2d55a5dfa381278b04ada6a94039dc3b"
+
+[[overlay]]
+file = "overlays/tokens.em"
+header = "tokens.h"
+[overlay.declarations]
+"token_live" = "blake3:808781a5b2a6eb5b83288bee137307ecaae06ed0ca740aa67bab48e0bd2c59aa"
+"token_make" = "blake3:df896e3721ba5777b95e62b2c9404f2ca310376d613ede815ba03adef0ae24db"
+"token_maybe" = "blake3:8a0dadf7da6a2cac95eac69195e83061f3d985c883da27a5d218875a8930485b"

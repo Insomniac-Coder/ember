@@ -4,9 +4,12 @@
 //! A call through a value of a callable type runs one of the functions that reach the place the value
 //! is read from (verdict 122): each field of each struct, class and enum variant apart from every other,
 //! a list's elements with the place that holds the list, a local with what is put in it, and a place a
-//! value is copied or lent into with the functions of the place it came from. Where the value cannot be
-//! followed (a parameter, which every caller fills; a call's result through a value; a read through a
-//! raw pointer) it is any function the program stores into that exact callable type: a named function or
+//! value is copied or lent into with the functions of the place it came from, a parameter with what
+//! each call passes it (verdict 128), and a list with what its operations put in it (verdict 129).
+//! Where the value cannot be followed (a parameter of a function whose address is taken, which any
+//! call through a value fills; a call's result through a value or of a function this program has no
+//! body of; a read through a raw pointer) it is any function the program stores into each callable
+//! type within its type: a named function or
 //! a lambda that becomes a value of it (a `Const::Fn` stored, passed or built into a value of that type,
 //! or the closure of a `Callable` made at it), and whatever a callable type converted to it holds. A
 //! place no function reaches is called by no code that runs. A call through a `dyn` value runs what one
@@ -15,6 +18,8 @@
 //! shape (its parameter count and result): that can only add targets, never lose one.
 
 use std::collections::{HashMap, HashSet};
+
+use ember_hir::Builtin;
 
 use ember_mir::{AggregateKind, Body, CastKind, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue, StmtKind, Terminator};
 use ember_span::Symbol;
@@ -272,14 +277,13 @@ impl Found<'_> {
     }
 }
 
-/// `[EFF-2]` (verdict 122) — the place `place` of body `at` is: a field of a struct, class or enum
+/// `[EFF-2]` (verdicts 122, 128) — the place `place` of body `at` is: a field of a struct, class or enum
 /// variant wherever its value is (`s.by` is `Scaler`'s `by`, whichever `Scaler`); a list's element, a
-/// tuple's item, a reference's or a box's contents with the place holding them; a local by itself; and,
-/// where nothing can be followed (a parameter, which every caller fills, or a read through a raw
-/// pointer), its type.
+/// tuple's item, a reference's or a box's contents with the place holding them; a local or a parameter
+/// by itself; and, where nothing can be followed (a read through a raw pointer), its type.
 fn key(at: usize, body: &Body, place: &Place, types: &TypeTable) -> Key {
-    let parameter = (1..=body.arg_count).contains(&(place.local.0 as usize));
-    let mut key = (!parameter).then_some(Key::Local(at, place.local));
+    let _ = body;
+    let mut key = Some(Key::Local(at, place.local));
     let mut ty = body.local(place.local).ty;
     let mut variant = None;
     for projection in &place.projection {
@@ -313,6 +317,17 @@ impl<'a> Places<'a> {
         for (at, body) in bodies.iter().enumerate() {
             places.body(at, body);
         }
+        // `[EFF-2]` (verdict 128) — a function whose address is taken (a value, a table's slot, a
+        // virtual method) is called by calls this analysis does not follow to it: its parameters may
+        // hold any function of their types.
+        let escaped: HashSet<usize> = targets.values.values().chain(targets.loose.values()).chain(targets.tables.values()).flatten().copied()
+            .chain(bodies.iter().enumerate().filter(|(_, body)| body.class_virtual_slot.is_some()).map(|(at, _)| at))
+            .collect();
+        for &at in &escaped {
+            for (param, local) in bodies[at].args() {
+                places.edge(Key::Type(local.ty), Key::Local(at, param));
+            }
+        }
         // Where nothing is followed, any function stored into the type.
         let typed: Vec<Ty> = places
             .edges
@@ -324,10 +339,13 @@ impl<'a> Places<'a> {
             })
             .collect();
         for ty in typed {
-            let held = targets.of_value(ty, types);
+            let mut callables = Vec::new();
+            callables_in(types, ty, &mut HashSet::new(), &mut callables);
             let set = places.sets.entry(Key::Type(ty)).or_default();
-            for target in held {
-                push(set, target);
+            for callable in callables {
+                for target in targets.of_value(callable, types) {
+                    push(set, target);
+                }
             }
         }
         places
@@ -372,19 +390,53 @@ impl<'a> Places<'a> {
                         self.edge(lent, dest);
                         self.edge(dest, lent);
                     }
-                    Rvalue::UnaryOp { .. } | Rvalue::BinaryOp { .. } | Rvalue::Repeat { .. } | Rvalue::Discriminant(_) => {}
+                    // `[f; 3]` holds `f`.
+                    Rvalue::Repeat { value, .. } => self.flow(at, body, value, dest),
+                    Rvalue::UnaryOp { .. } | Rvalue::BinaryOp { .. } | Rvalue::Discriminant(_) => {}
                 }
             }
-            let Terminator::Call { func, dest, .. } = &block.terminator else { continue };
+            let Terminator::Call { func, args, dest, .. } = &block.terminator else { continue };
             let into = key(at, body, dest, self.types);
+            let result = place_type(body, self.types, dest);
             match func {
-                // What a function returns is what was put in its result.
-                FuncRef::Direct { symbol, .. } => {
-                    if let Some(&callee) = self.index.get(symbol.as_str()) {
+                // What a function returns is what was put in its result; each parameter holds what
+                // the call passes it (verdict 128).
+                FuncRef::Direct { symbol, .. } => match self.index.get(symbol.as_str()) {
+                    Some(&callee) => {
                         self.edge(Key::Local(callee, LocalId(0)), into);
+                        for (param, operand) in args.iter().enumerate() {
+                            self.flow(at, body, operand, Key::Local(callee, LocalId(param as u32 + 1)));
+                        }
+                    }
+                    None => self.edge(Key::Type(result), into),
+                },
+                // `[EFF-2]` (verdict 129, D-930) — a list operation moves what a list holds between
+                // the list, the values it is given and its result (`push`, `pop`, a list written out).
+                FuncRef::Builtin { which, .. } if moves_elements(which) => {
+                    let mut ends: Vec<Key> = args
+                        .iter()
+                        .filter_map(|operand| match operand {
+                            Operand::Copy(place) | Operand::Move(place) => Some(key(at, body, place, self.types)),
+                            Operand::Const(_) => None,
+                        })
+                        .collect();
+                    ends.push(into);
+                    // A value it returns wrapped (`Option[T]`'s `Some`) is read through its field.
+                    ends.extend(field_keys(self.types, result));
+                    for &from in &ends {
+                        for &to in &ends {
+                            self.edge(from, to);
+                        }
+                    }
+                    for operand in args {
+                        if let Operand::Const(Const::Fn(symbol)) = operand {
+                            for &end in &ends {
+                                self.seed(end, symbol);
+                            }
+                        }
                     }
                 }
-                _ => self.edge(Key::Type(place_type(body, self.types, dest)), into),
+                _ => self.edge(Key::Type(result), into),
             }
         }
     }
@@ -434,6 +486,83 @@ impl<'a> Places<'a> {
             }
         }
         self.sets
+    }
+}
+
+/// `[EFF-2]` (verdict 129) — the operations of the program's lists that put a value into a list or take
+/// one out: what they move is followed, list to list.
+fn moves_elements(which: &Builtin) -> bool {
+    matches!(
+        which,
+        Builtin::ArrayFromLiteral
+            | Builtin::ArrayPush
+            | Builtin::ArrayInsert
+            | Builtin::ArrayExtend
+            | Builtin::ArrayClone { .. }
+            | Builtin::ArraySorted { .. }
+            | Builtin::ArrayPop { .. }
+            | Builtin::ArrayRemove
+            | Builtin::ArraySwapRemove
+            | Builtin::ArrayDrain
+    )
+}
+
+/// Each callable type within `ty`: itself, a list's or a span's element, a tuple's item, what a
+/// reference or pointer reaches, and each field's, of a struct, class or enum.
+fn callables_in(types: &TypeTable, ty: Ty, seen: &mut HashSet<Ty>, out: &mut Vec<Ty>) {
+    if !seen.insert(ty) {
+        return;
+    }
+    match types.kind(ty) {
+        TyKind::Fn { abi: None, .. } => out.push(ty),
+        TyKind::Array { elem, .. } | TyKind::ArrayN { elem, .. } | TyKind::Vec { elem, .. } | TyKind::Span { elem, .. } => {
+            callables_in(types, *elem, seen, out);
+        }
+        TyKind::Ref { inner, .. } | TyKind::Ptr { inner, .. } => callables_in(types, *inner, seen, out),
+        TyKind::Tuple(items) => {
+            for &item in items {
+                callables_in(types, item, seen, out);
+            }
+        }
+        TyKind::Struct(id) => {
+            for field in &types.struct_def(*id).fields {
+                callables_in(types, field.ty, seen, out);
+            }
+        }
+        TyKind::Class(id) => {
+            for field in &types.class_def(*id).fields {
+                callables_in(types, field.ty, seen, out);
+            }
+        }
+        TyKind::Enum(id) => {
+            for variant in &types.enum_def(*id).variants {
+                for field in &variant.fields {
+                    callables_in(types, field.ty, seen, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The places of `ty`'s own fields that hold a callable: a struct's, a class's, each enum variant's.
+fn field_keys(types: &TypeTable, ty: Ty) -> Vec<Key> {
+    let holds = |field: Ty| {
+        let mut found = Vec::new();
+        callables_in(types, field, &mut HashSet::new(), &mut found);
+        !found.is_empty()
+    };
+    match types.kind(ty) {
+        TyKind::Struct(id) => types.struct_def(*id).fields.iter().enumerate().filter(|(_, field)| holds(field.ty)).map(|(at, _)| Key::StructField(*id, at)).collect(),
+        TyKind::Class(id) => types.class_def(*id).fields.iter().enumerate().filter(|(_, field)| holds(field.ty)).map(|(at, _)| Key::ClassField(*id, at)).collect(),
+        TyKind::Enum(id) => types
+            .enum_def(*id)
+            .variants
+            .iter()
+            .enumerate()
+            .flat_map(|(variant, def)| def.fields.iter().enumerate().filter(|(_, field)| holds(field.ty)).map(move |(at, _)| Key::VariantField(*id, variant, at)))
+            .collect(),
+        _ => Vec::new(),
     }
 }
 

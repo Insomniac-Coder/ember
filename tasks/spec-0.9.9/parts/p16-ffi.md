@@ -288,10 +288,11 @@ unsafe overlay c "vulkan/vulkan.h":
   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
   (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the registering
-  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); and, on a function, `no_callbacks` (it never calls back into Ember,
+  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe` in `@ffi(…)` on a hand
+  declaration (leave the call unsafe); and, on a function, `no_callbacks` (it never calls back into Ember,
   `[FFI-52]`), and on a function-pointer typedef, `safe` (`[FFI-56]`).
-  `@ffi(effects=[…])` states effects. An entry leaves its calls unsafe by being written `unsafe fn`
-  (`[GRM-35]`, verdict 130); `unsafe` is no contract word.
+  `@ffi(effects=[…])` states effects. An overlay entry leaves its calls unsafe by being written
+  `unsafe fn` (`[GRM-35]`, verdict 130); in an overlay, `unsafe` is no contract word.
 * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
   `Len`, `Size` or `N`).
@@ -335,7 +336,8 @@ unsafe overlay c "vulkan/vulkan.h":
   overlay against this header, then run `ember bind SDL.h --check overlays/sdl.em --merge`"); in another package's build, an overlay
   or a declaration its package's record lacks is `E5010` too. A change to a declaration the overlay
   does not describe changes nothing. Every program has an `ember.toml` (`[MAN-9]`), so the record is
-  always beside one.
+  always beside one. An overlay in no package's folder is the importing program's own: its record is
+  that package's, naming the overlay by its path from the package (`../vendor/sdl.em`).
   Nothing of this is written in the overlay or in the program.
 * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
   idiomatic API is layered over a raw one.

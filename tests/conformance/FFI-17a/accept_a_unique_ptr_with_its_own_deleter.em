@@ -1,5 +1,9 @@
 #$ test: run-pass
 #$ rules: FFI-17a
+#$ warning[L3015]: `make_widget` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `Widget.value` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `recycled_count` is a C++ function the program calls in unsafe code
+#$ warning[L3015]: `take_widget` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ warning[W5002]: `Recycler.operator()` is not imported from `deleters.hpp`
 #$ warning[W5002]: `make_tracked` is not imported from `deleters.hpp`: its result: `std::unique_ptr<Widget, void (*)(Widget *)>`: a deleter that holds state

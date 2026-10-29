@@ -4,7 +4,7 @@
 
 unsafe overlay c "string.h":  # SAFETY(ffi): each entry matches its declaration in the header
     fn strlen(s: borrowed nul_terminated forever)    #$ error[E0104]: `forever` is not a contract word
-    @safety("not an overlay attribute")    #$ error[E0104]: `@safety` does not apply to a overlay item
+    @safety("not an overlay attribute")    #$ error[E0104]: `@safety` applies only to an `unsafe fn`
     fn strcmp(a: borrowed nul_terminated, b: borrowed nul_terminated)
 
 fn main():

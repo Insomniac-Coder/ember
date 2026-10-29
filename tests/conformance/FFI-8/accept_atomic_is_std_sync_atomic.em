@@ -1,5 +1,7 @@
 #$ test: run-pass
 #$ rules: FFI-8, THR-14
+#$ warning[L3015]: `counter_bump` is a C function the program calls in unsafe code
+#$ warning[L3015]: `word_peek` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 1 2 2
 #$ stdout: 12 12

@@ -1,5 +1,9 @@
 #$ test: run-pass
 #$ rules: FFI-8
+#$ warning[L3015]: `format_list` is a C function the program calls in unsafe code
+#$ warning[L3015]: `sum_wide` is a C function the program calls in unsafe code
+#$ warning[L3015]: `format_into` is a C function the program calls in unsafe code
+#$ warning[L3015]: `log_through` is a C function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 60
 #$ stdout: 7-abc-2.50

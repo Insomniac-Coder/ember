@@ -1,5 +1,6 @@
 #$ test: run-pass
 #$ rules: FFI-39, FFI-44
+#$ warning[L3015]: `run` is a C++ function the program calls in unsafe code
 #$ profiles: debug, development, release
 #$ stdout: 553 8
 #$ stdout: 701 5
