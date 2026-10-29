@@ -1,0 +1,15 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind --merge` rewrites it.
+version = "1"
+
+[[overlay]]
+file = "overlays/matching.em"
+header = "lib.h"
+[overlay.declarations]
+"lib_twice" = "blake3:4407be67615164632bf992be81b87aee9c31eb825f15af4339555b368dd12fd0"
+
+[[overlay]]
+file = "overlays/stale.em"
+header = "lib.h"
+[overlay.declarations]
+"lib_twice" = "blake3:0000000000000000000000000000000000000000000000000000000000000000"

@@ -1,0 +1,34 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind --merge` rewrites it.
+version = "1"
+
+[[overlay]]
+file = "overlays/asserting.em"
+header = "policies.hpp"
+[overlay.declarations]
+"risky" = "blake3:4d0641d5820c6fa868b0bfec8cbc51695c2a1158c5b82300e42e82b87de54df9"
+
+[[overlay]]
+file = "overlays/contradictory.em"
+header = "policies.hpp"
+[overlay.declarations]
+"risky" = "blake3:4d0641d5820c6fa868b0bfec8cbc51695c2a1158c5b82300e42e82b87de54df9"
+"stated" = "blake3:96168ac4fccc3e3307be4180f46a8f1c12989269969ec9f31a6ce1f7b5052a34"
+
+[[overlay]]
+file = "overlays/declaring.em"
+header = "policies.hpp"
+[overlay.declarations]
+"risky" = "blake3:4d0641d5820c6fa868b0bfec8cbc51695c2a1158c5b82300e42e82b87de54df9"
+
+[[overlay]]
+file = "overlays/freestanding.em"
+header = "freestanding.hpp"
+[overlay.declarations]
+"sub" = "blake3:9a3bd5a987b380a30698794cd77352ccaa7108109dada2628b70b994c8287929"
+
+[[overlay]]
+file = "overlays/throwing.em"
+header = "policies.hpp"
+[overlay.declarations]
+"stated" = "blake3:96168ac4fccc3e3307be4180f46a8f1c12989269969ec9f31a6ce1f7b5052a34"

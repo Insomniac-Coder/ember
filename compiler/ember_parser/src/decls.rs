@@ -656,8 +656,8 @@ impl Parser<'_> {
             && matches!(self.peek_at(n + 2), TokenKind::Lit(Lit::Str(_)))
     }
 
-    /// `[GRM-35]` — `overlay ("c" | "cpp") STRING ["with" "(" "header_hash" "=" STRING ")"] ":" NEWLINE
-    /// INDENT {overlay_item} DEDENT`, after any `unsafe` (`[FFI-55]` for the hash).
+    /// `[GRM-35]` — `overlay ("c" | "cpp") STRING ":" NEWLINE INDENT {overlay_item} DEDENT`, after any
+    /// `unsafe`. The header an overlay was written for is recorded by Ember, never in it (`[FFI-55]`).
     fn parse_overlay(&mut self, is_unsafe: bool) -> OverlayDecl {
         let start = self.span();
         self.bump(); // `overlay`
@@ -668,25 +668,21 @@ impl Parser<'_> {
         self.bump();
         let TokenKind::Lit(Lit::Str(header)) = self.peek().clone() else { unreachable!("checked by at_overlay_decl") };
         self.bump();
-        // `[FFI-55]` — the hash of the header the overlay was written for, its only option.
-        let mut header_hash = None;
-        if self.eat_kw(Kw::With) {
-            self.expect_punct(Punct::LParen);
-            while !self.at_punct(Punct::RParen) && !self.at_eof() {
-                let Some(arg) = self.parse_attr_arg() else { break };
-                match arg {
-                    AttrArg::Named { name, value } if name.name.is("header_hash") => match &value.kind {
-                        ExprKind::Lit(Literal::Str(hash)) => header_hash = Some((hash.clone(), value.span)),
-                        _ => self.report_code(codes::E0104, value.span, "`header_hash` is the hash of the header, a string: `header_hash = \"blake3:…\"`"),
-                    },
-                    AttrArg::Named { name, .. } => self.report_code(codes::E0104, name.span, "an overlay's one option is `header_hash = \"blake3:…\"` [FFI-55]"),
-                    AttrArg::Expr(expr) => self.report_code(codes::E0104, expr.span, "an overlay's one option is `header_hash = \"blake3:…\"` [FFI-55]"),
+        // `[FFI-55]` (verdict 121) — 0.9.15_Hardened_3's `with (header_hash = …)` is gone.
+        if self.at_kw(Kw::With) {
+            let at = self.span();
+            self.report_code(
+                codes::E0104,
+                at,
+                "an overlay takes no options: Ember records the header it was written for in `ember.overlays`, beside `ember.toml` [FFI-55]",
+            );
+            self.bump();
+            if self.eat_punct(Punct::LParen) {
+                while !self.at_punct(Punct::RParen) && !self.at_eof() && !self.at_newline() {
+                    self.bump();
                 }
-                if !self.eat_punct(Punct::Comma) {
-                    break;
-                }
+                self.eat_punct(Punct::RParen);
             }
-            self.expect_punct(Punct::RParen);
         }
         self.expect_punct(Punct::Colon);
         let span = start.to(self.prev_span());
@@ -715,7 +711,7 @@ impl Parser<'_> {
         } else {
             self.expect_newline();
         }
-        OverlayDecl { span, is_unsafe, language, header, header_hash, items }
+        OverlayDecl { span, is_unsafe, language, header, items }
     }
 
     /// `overlay_item := {attribute} (overlay_fn | "type" IDENT NEWLINE | "enum" IDENT NEWLINE

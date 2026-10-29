@@ -1,0 +1,42 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind --merge` rewrites it.
+version = "1"
+
+[[overlay]]
+file = "overlays/statuses.em"
+header = "statuses.hpp"
+[overlay.declarations]
+"decade" = "blake3:05bf081d36cf21069bacf992ed1cb80a82ea0903ceb72500f210a7a72bf44b46"
+"new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"
+"split" = "blake3:eddffce61eb7d00bf2ffcb3ef1e70396e693720117b2b83a0983a6da887f329e"
+
+[[overlay]]
+file = "overlays/texts.em"
+header = "texts.hpp"
+[overlay.declarations]
+"add" = "blake3:62e91662794643be942b50c23ff581b5b97b763c79861a51fbfc994ad94201bc"
+"append" = "blake3:def5ed3cfe91ed1b7d9555b991fef506fd6df4d9ff0a6e2bd51c0fe97ea439d9"
+"checksum" = "blake3:a9e2e269627e1ac345cab6f3169b2dc0eebf3b1a0f51063d495418a818c54a02"
+"dot" = "blake3:c80562fc5dfaff78d408c0fcbc7dfc1584b0139fa86ced78352d77cddfc70406"
+"ends" = "blake3:abec13821d3a9c563b3442125a2d92af4c4d2244df105888cc4d3c4066afe57c"
+"fill" = "blake3:42d14a0aa37f51ff6fce0d99bc4accb0d1ceadc61c6b83aab468e52777a532b2"
+"hex" = "blake3:a7e50259739c380c0277ebdb9c1a21c4b992cef156f6535bb6659a889ad984a6"
+"new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"
+"parse" = "blake3:1bb916ae689a28b39ffaa30b0c13839d496f7584a87baf4772a31d60cdced57f"
+"scale" = "blake3:c5946d070e9b7cdf67ea3379f8221232dc3cb7ed77b3e7a17df7355b979810fb"
+"spot" = "blake3:407e3e2ea426ae5a9cde1c194dea683180bac61e830d26889a783bd08a1b315a"
+"tally_of" = "blake3:c365a7a9d2e37d0e9aa179bf47ca8d5bc80ddf05228f34c3aec284f22fc3fde0"
+"total" = "blake3:87d308af02da570e8ffb20d223f95fa11453cf0713a4858b92ae8f6d2e196ae2"
+
+[[overlay]]
+file = "overlays/texts_dot.em"
+header = "texts.hpp"
+[overlay.declarations]
+"dot" = "blake3:c80562fc5dfaff78d408c0fcbc7dfc1584b0139fa86ced78352d77cddfc70406"
+
+[[overlay]]
+file = "overlays/texts_unmatched.em"
+header = "texts.hpp"
+[overlay.declarations]
+"add" = "blake3:62e91662794643be942b50c23ff581b5b97b763c79861a51fbfc994ad94201bc"
+"new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"

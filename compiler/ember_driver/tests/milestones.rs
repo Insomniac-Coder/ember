@@ -8156,17 +8156,20 @@ static inline int bind_log(const char* format, ...) { return format[0]; }
 /// header (`calc.overlay.em` for `calc.h`, ODR-148): each fact the header cannot
 /// state a `TODO(…)` word, each derived one a comment, each skipped declaration a comment with its
 /// reason. It compiles unchanged (every call still `unsafe`), is never written over, and `--merge`
-/// adds only what it lacks, keeping what was written by hand.
+/// adds only what it lacks, keeping what was written by hand. `[FFI-55]` — the package's first build
+/// records the header in `ember.overlays`, a declaration changed since stops the build, and `--merge`
+/// writes the record again.
 #[test]
 fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     let dir = temporary_directory("bind-init");
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"calc\"\nversion = \"0.1.0\"\n").unwrap();
     std::fs::write(dir.join("calc.h"), BIND_HEADER).unwrap();
     let init = ember(&["bind", "calc.h", "--init"], &dir);
     assert_eq!(init.exit, 0, "{}", init.stderr);
     let overlay = dir.join(format!("calc.overlay.{SOURCE_EXT}"));
     let written = std::fs::read_to_string(&overlay).expect("the starter overlay is written");
     for line in [
-        "unsafe overlay c \"calc.h\" with (header_hash = \"blake3:",
+        "unsafe overlay c \"calc.h\":  # SAFETY(ffi): TODO(",
         "    fn bind_add(a, b) -> unsafe",
         "    # derived: `items` is a read-only borrow (`const`)",
         "    fn bind_sum(items: TODO(ownership) TODO(count) TODO(nullable), n)",
@@ -8182,6 +8185,9 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
          println(c.bind_add(1, 2), c.bind_sum(ref_to_ptr(ref items[0]), 2))\n")).unwrap();
     let checked = ember(&["check", &ember_branding::source_file("main")], &dir);
     assert_eq!(checked.exit, 0, "the starter overlay does not compile:\n{}", checked.stderr);
+    // `[FFI-55]` — the package's own build recorded the header it checked the overlay against.
+    let record = std::fs::read_to_string(dir.join("ember.overlays")).expect("the first build writes `ember.overlays`");
+    assert!(record.contains(&format!("file = \"calc.overlay.{SOURCE_EXT}\"")) && record.contains("\"bind_add\" = \"blake3:"), "{record}");
     // Never written over.
     std::fs::write(&overlay, written.replace("    fn bind_add(a, b) -> unsafe\n", "    fn bind_add(a, b)\n    # mine\n")).unwrap();
     let again = ember(&["bind", "calc.h", "--init"], &dir);
@@ -8195,9 +8201,17 @@ fn bind_init_writes_a_starter_overlay_that_compiles_unchanged() {
     assert!(after.contains("    fn bind_neg(a) -> unsafe\n"), "the new function is missing:\n{after}");
     assert_eq!(after.matches("fn bind_sum(").count(), 1, "an entry was added twice:\n{after}");
     assert_eq!(after.matches("# skipped: `bind_log`").count(), 1, "a skip was noted twice:\n{after}");
-    // `[FFI-55]` — the overlay records the hash of the header it was brought to.
-    let recorded = |text: &str| text.split("header_hash = \"").nth(1).and_then(|rest| rest.split('"').next()).map(str::to_string);
-    assert!(recorded(&after).is_some_and(|hash| Some(hash) != recorded(&written)), "`--merge` kept the old header's hash:\n{after}");
+    // `[FFI-55]` — a declaration the overlay describes that changed stops the build, until `--merge`.
+    let changed = format!("{BIND_HEADER}static inline int bind_neg(int a) {{ return -a; }}\n")
+        .replace("static inline int bind_add(int a, int b)", "static inline long bind_add(long a, long b)");
+    std::fs::write(dir.join("calc.h"), changed).unwrap();
+    let stale = ember(&["check", &ember_branding::source_file("main")], &dir);
+    assert_ne!(stale.exit, 0, "a changed declaration was accepted");
+    assert!(stale.stderr.contains(&format!("`bind_add` changed since `calc.overlay.{SOURCE_EXT}` was checked")), "{}", stale.stderr);
+    let remerged = ember(&["bind", "calc.h", "--init", "--merge"], &dir);
+    assert_eq!(remerged.exit, 0, "{}", remerged.stderr);
+    let rechecked = ember(&["check", &ember_branding::source_file("main")], &dir);
+    assert_eq!(rechecked.exit, 0, "`--merge` did not record the header as it is now:\n{}", rechecked.stderr);
 }
 
 /// `[FFI-50]` — `ember bind <header> --emit-cpp` writes the thunk translation unit an `import cpp`

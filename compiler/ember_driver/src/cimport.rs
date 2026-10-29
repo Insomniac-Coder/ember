@@ -5314,28 +5314,218 @@ fn package_of(dir: &Path) -> Option<PathBuf> {
     dir.ancestors().find(|folder| folder.join(ember_branding::MANIFEST).is_file()).map(Path::to_path_buf)
 }
 
-/// `[FFI-55]` — an overlay of another package (neither the importing module's nor the header's, which
-/// vouch for their own) is applied only to the header it was written for: it records that header's
-/// hash, and the header imported here must have it. The refusal when it does not, `E5010`.
-fn foreign_overlay(overlay: &ast::OverlayDecl, file: &Path, written: &str, at: Span, from_dir: &Path, header: &Path, shown: &str) -> Option<Diagnostic> {
-    let theirs = package_of(file.parent()?);
-    if theirs.is_none() || theirs == package_of(from_dir) || theirs == header.parent().and_then(package_of) {
-        return None;
+/// `[FFI-55]` (verdict 121) — the file beside a package's `ember.toml` in which Ember records, for each of
+/// its overlays, the header it was checked against: one fingerprint per declaration it describes.
+const OVERLAY_RECORD: &str = "ember.overlays";
+
+/// The record's own version: one written by another is read as none.
+const OVERLAY_RECORD_VERSION: &str = "1";
+
+/// `[FFI-55]` — one overlay's entry in `ember.overlays`: its file as its package names it, its header,
+/// and each declaration it describes with its fingerprint.
+#[derive(Clone, Default)]
+struct RecordedOverlay {
+    file: String,
+    header: String,
+    declarations: Vec<(String, String)>,
+}
+
+/// `[FFI-55]` — the declarations `overlay` describes, each as the importer binds it: a function's C
+/// declaration with what the header says of its exceptions and effects, a struct's or class's
+/// layout. A name the header does not declare is `[FFI-12]`'s, and has none.
+fn described_declarations(overlay: &ast::OverlayDecl, imported: &Imported) -> Vec<(String, String)> {
+    let mut described: Vec<(String, String)> = Vec::new();
+    for item in &overlay.items {
+        let name = match &item.kind {
+            ast::OverlayItemKind::Fn { name, .. }
+            | ast::OverlayItemKind::Type(name)
+            | ast::OverlayItemKind::Enum(name)
+            | ast::OverlayItemKind::Class { name, .. } => name.name.to_string(),
+            _ => continue,
+        };
+        if described.iter().any(|(known, _)| *known == name) {
+            continue;
+        }
+        let bound = if let Some(function) = imported.functions.iter().find(|function| function.name == name) {
+            declared_as(function)
+        } else if let Some(layout) = imported.layouts.iter().find(|layout| layout.name == name) {
+            let fields: Vec<String> = layout.fields.iter().map(|(field, offset)| format!("{field} at {offset}")).collect();
+            format!("struct {name}: {} bytes, aligned to {}, {}", layout.size, layout.align, fields.join(", "))
+        } else {
+            continue;
+        };
+        described.push((name, bound));
     }
-    let actual = format!("blake3:{}", ember_build::content_hash(&std::fs::read(header).ok()?));
-    let ways = "import the header the overlay was written for, or write this package's own overlay for the header it imports";
-    match &overlay.header_hash {
-        Some((recorded, _)) if *recorded == actual => None,
-        Some((recorded, span)) => Some(
-            Diagnostic::error(codes::E5010, at, format!("`{written}` is another package's overlay, written for a `{shown}` whose hash is `{recorded}`; the `{shown}` imported here has hash `{actual}`"))
-                .secondary(*span, "the hash of the header it was written for")
-                .help(format!("{ways} [FFI-55]")),
-        ),
-        None => Some(
-            Diagnostic::error(codes::E5010, at, format!("`{written}` is another package's overlay and records no `header_hash`, so nothing says it was written for the `{shown}` imported here (hash `{actual}`)"))
-                .help(format!("{ways}; the overlay's own package records the header it was written for on its first line: `unsafe overlay c \"{}\" with (header_hash = \"{actual}\"):` [FFI-55]", overlay.header)),
-        ),
+    described
+}
+
+/// `[FFI-55]` — a function as its C declaration reads, with what the header says of its exceptions
+/// (`[FFI-24]`) and of its effects (`[FFI-1]`).
+fn declared_as(function: &Function) -> String {
+    let mut params: Vec<&str> = function.params.iter().map(|(_, ty)| ty.c.as_str()).collect();
+    if function.variadic {
+        params.push("...");
     }
+    let result = function.result.as_ref().map_or("void", |ty| ty.c.as_str());
+    let mut text = format!("{result} {}({})", function.name, params.join(", "));
+    match function.policy {
+        Policy::Catching => text.push_str(", which may throw"),
+        Policy::Unknown => text.push_str(", whose exceptions it does not state"),
+        Policy::Direct | Policy::Asserted => {}
+    }
+    match function.derived {
+        Derived::Pure => text.push_str(" __attribute__((pure))"),
+        Derived::Const => text.push_str(" __attribute__((const))"),
+        Derived::Nothing => {}
+    }
+    text
+}
+
+fn fingerprint(bound: &str) -> String {
+    format!("blake3:{}", ember_build::content_hash(bound.as_bytes()))
+}
+
+/// `[FFI-55]` — where `overlay_file`'s record is: beside its package's `ember.toml`, the file named as
+/// that package names it; with no package, in Ember's own cache, by its whole path. With the package's
+/// folder.
+fn record_place(overlay_file: &Path) -> (Option<PathBuf>, PathBuf, String) {
+    let whole = std::path::absolute(overlay_file).unwrap_or_else(|_| overlay_file.to_path_buf());
+    match overlay_file.parent().and_then(package_of) {
+        Some(root) => {
+            let named = whole.strip_prefix(&root).unwrap_or(&whole).to_string_lossy().replace('\\', "/");
+            (Some(root.clone()), root.join(OVERLAY_RECORD), named)
+        }
+        None => {
+            let named = whole.to_string_lossy().replace('\\', "/");
+            let place = ember_build::cache_root().join("overlays").join(format!("{}.{OVERLAY_RECORD}", ember_build::content_hash(named.as_bytes())));
+            (None, place, named)
+        }
+    }
+}
+
+/// `[FFI-55]` — `ember.overlays` read: each `[[overlay]]` with its `file`, `header` and, under
+/// `[overlay.declarations]`, one key per declaration. One of another version is none.
+fn read_record(text: &str) -> Vec<RecordedOverlay> {
+    let mut overlays: Vec<RecordedOverlay> = Vec::new();
+    let mut version = None;
+    let mut in_declarations = false;
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line == "[[overlay]]" {
+            overlays.push(RecordedOverlay::default());
+            in_declarations = false;
+            continue;
+        }
+        if line == "[overlay.declarations]" {
+            in_declarations = true;
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { continue };
+        let key = key.trim().trim_matches('"').to_string();
+        let value = value.trim().trim_matches('"').to_string();
+        match overlays.last_mut() {
+            None if key == "version" => version = Some(value),
+            None => {}
+            Some(overlay) if in_declarations => overlay.declarations.push((key, value)),
+            Some(overlay) if key == "file" => overlay.file = value,
+            Some(overlay) if key == "header" => overlay.header = value,
+            Some(_) => {}
+        }
+    }
+    if version.as_deref() == Some(OVERLAY_RECORD_VERSION) { overlays } else { Vec::new() }
+}
+
+/// `[FFI-55]` — `ember.overlays` written, its overlays and their declarations in name order, so that
+/// it reads the same from every build.
+fn write_record(place: &Path, overlays: &mut [RecordedOverlay]) {
+    overlays.sort_by(|a, b| a.file.cmp(&b.file));
+    let mut text = format!(
+        "# {OVERLAY_RECORD}: the headers this package's overlays were checked against.\n\
+         # Written by ember; `ember bind --merge` rewrites it.\n\
+         version = \"{OVERLAY_RECORD_VERSION}\"\n"
+    );
+    for overlay in overlays.iter_mut() {
+        overlay.declarations.sort();
+        let _ = write!(text, "\n[[overlay]]\nfile = \"{}\"\nheader = \"{}\"\n[overlay.declarations]\n", overlay.file, overlay.header);
+        for (name, recorded) in &overlay.declarations {
+            let _ = writeln!(text, "\"{name}\" = \"{recorded}\"");
+        }
+    }
+    // Written aside then renamed: builds side by side read whole records only.
+    if let Some(dir) = place.parent() {
+        let _ = std::fs::create_dir_all(dir);
+        let partial = place.with_extension(format!("{}.partial", std::process::id()));
+        if std::fs::write(&partial, text).is_ok() && std::fs::rename(&partial, place).is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+    }
+}
+
+/// `[FFI-55]` (verdict 121) — `overlay`, applied from `file` to the header `imported` holds, checked
+/// against its package's record: every overlay, its own package's too. In the package's own build (or a
+/// program's with no package) the record of an overlay or declaration it lacks is written; in any
+/// other's that is `E5010`, as is a declaration that changed since the record was written. The
+/// overlay is applied only with no refusal.
+fn check_overlay_record(overlay: &ast::OverlayDecl, file: &Path, written: &str, at: Span, from_dir: &Path, imported: &Imported, shown: &str) -> Vec<Diagnostic> {
+    let described = described_declarations(overlay, imported);
+    let (root, place, named) = record_place(file);
+    let own = root.is_none() || root == package_of(from_dir);
+    let mut overlays = std::fs::read_to_string(&place).map(|text| read_record(&text)).unwrap_or_default();
+    let mut refusals = Vec::new();
+    let mut added = false;
+    match overlays.iter_mut().find(|recorded| recorded.file == named) {
+        None if own => {
+            overlays.push(RecordedOverlay {
+                file: named,
+                header: overlay.header.clone(),
+                declarations: described.iter().map(|(name, bound)| (name.clone(), fingerprint(bound))).collect(),
+            });
+            added = true;
+        }
+        None => refusals.push(
+            Diagnostic::error(codes::E5010, at, format!("`{written}` is another package's overlay, and that package's `{OVERLAY_RECORD}` has no record of the header it was checked against"))
+                .help(format!("the package writes `{OVERLAY_RECORD}` beside its `ember.toml` when it builds itself; it ships with the package, as `ember.lock` does [FFI-55]")),
+        ),
+        Some(recorded) => {
+            for (name, bound) in &described {
+                let now = fingerprint(bound);
+                match recorded.declarations.iter().find(|(known, _)| known == name) {
+                    Some((_, was)) if *was == now => {}
+                    Some(_) => refusals.push(
+                        Diagnostic::error(codes::E5010, at, format!("`{name}` changed since `{written}` was checked: the `{shown}` imported here declares `{bound}`"))
+                            .help("check the overlay against this header, then run `ember bind --merge` [FFI-55]"),
+                    ),
+                    None if own => {
+                        recorded.declarations.push((name.clone(), now));
+                        added = true;
+                    }
+                    None => refusals.push(
+                        Diagnostic::error(codes::E5010, at, format!("`{written}` describes `{name}`, and its package's `{OVERLAY_RECORD}` has no record of it"))
+                            .help(format!("the package records each declaration its overlay describes when it builds itself; it ships `{OVERLAY_RECORD}` with it [FFI-55]")),
+                    ),
+                }
+            }
+        }
+    }
+    if added {
+        write_record(&place, &mut overlays);
+    }
+    refusals
+}
+
+/// `[FFI-55]`, `[CLI-5]` — `ember bind --merge`: the record of `overlay`, written as the header is now.
+fn rewrite_overlay_record(overlay: &ast::OverlayDecl, file: &Path, imported: &Imported) {
+    let (_, place, named) = record_place(file);
+    let mut overlays = std::fs::read_to_string(&place).map(|text| read_record(&text)).unwrap_or_default();
+    overlays.retain(|recorded| recorded.file != named);
+    overlays.push(RecordedOverlay {
+        file: named,
+        header: overlay.header.clone(),
+        declarations: described_declarations(overlay, imported).iter().map(|(name, bound)| (name.clone(), fingerprint(bound))).collect(),
+    });
+    write_record(&place, &mut overlays);
 }
 
 /// The options an `import c` takes (`[FFI-6]`).
@@ -5745,10 +5935,15 @@ pub fn load(
                     })
                     .collect();
                 match overlays.as_slice() {
-                    [overlay] => match foreign_overlay(overlay, &overlay_file, written, *at, &from_dir, &imported.header, &shown) {
-                        Some(refusal) => sink.emit(refusal),
-                        None => apply(&mut applied, layer, overlay, &text, &shown, &imported, &symbol_stem, sink),
-                    },
+                    [overlay] => {
+                        let refusals = check_overlay_record(overlay, &overlay_file, written, *at, &from_dir, &imported, &shown);
+                        if refusals.is_empty() {
+                            apply(&mut applied, layer, overlay, &text, &shown, &imported, &symbol_stem, sink);
+                        }
+                        for refusal in refusals {
+                            sink.emit(refusal);
+                        }
+                    }
                     _ => sink.emit(
                         Diagnostic::error(codes::E5010, *at, format!("`{written}` holds {} `overlay c` declarations: an import's overlay file holds one", overlays.len()))
                             .note("an overlay states the contracts of one header's declarations [FFI-12]"),
@@ -7974,21 +8169,9 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
         for skip in skipped.iter().filter(|skip| !mentioned.contains(&format!("# skipped: `{}`", skip.name))) {
             let _ = writeln!(entries, "    # skipped: `{}` ({}): {}", skip.name, skip.at, skip.reason);
         }
-        // `[FFI-55]` — the hash of the header it is written for, which another package applying it checks;
-        // `--merge` brings the overlay to the header as it is now, so it records that header's hash.
-        let bytes = std::fs::read(&header).map_err(|error| format!("cannot read `{}`: {error}", header.display()))?;
-        let hash = format!("blake3:{}", ember_build::content_hash(&bytes));
+        let merged = existing.is_some();
         let text = match existing {
-            Some(text) => {
-                const RECORDED: &str = "header_hash = \"";
-                let mut text = match text.find(RECORDED) {
-                    Some(at) => {
-                        let value = at + RECORDED.len();
-                        let end = text[value..].find('"').map_or(value, |close| value + close);
-                        format!("{}{hash}{}", &text[..value], &text[end..])
-                    }
-                    None => text,
-                };
+            Some(mut text) => {
                 if !text.ends_with('\n') {
                     text.push('\n');
                 }
@@ -7997,11 +8180,29 @@ pub fn bind(args: &[String]) -> Result<std::process::ExitCode, String> {
             None => format!(
                 "# A starter overlay for `{file}`, written by `ember bind --init` ([CLI-5]): replace each `TODO(…)` with\n\
                  # its fact, and remove `-> unsafe` from a function you assert safe to call ([FFI-2]).\n\n\
-                 unsafe overlay c \"{file}\" with (header_hash = \"{hash}\"):  # SAFETY(ffi): TODO(why each entry matches its declaration in the header)\n{entries}"
+                 unsafe overlay c \"{file}\":  # SAFETY(ffi): TODO(why each entry matches its declaration in the header)\n{entries}"
             ),
         };
         std::fs::write(&path, text).map_err(|error| format!("cannot write `{}`: {error}", path.display()))?;
         println!("wrote {}", path.display());
+        // `[FFI-55]`, `[CLI-5]` — `--merge` brings the overlay to the header as it is now, so its record
+        // says so; a new overlay's is written by its package's first build.
+        if merged {
+            let mut written = SourceMap::new();
+            let mut quiet = Sink::new();
+            if let Ok(id) = written.load(&path) {
+                let text = written.file(id).text.clone();
+                let lexed = ember_lexer::lex(id, &text, &mut quiet);
+                let parsed = ember_parser::parse(id, &text, lexed.tokens, &mut quiet);
+                if let Some(overlay) = parsed.items.iter().find_map(|item| match &item.kind {
+                    ast::ItemKind::Overlay(overlay) => Some(overlay),
+                    _ => None,
+                }) {
+                    rewrite_overlay_record(overlay, &path, &imported);
+                    println!("recorded {} in {OVERLAY_RECORD}", path.display());
+                }
+            }
+        }
         return Ok(ExitCode::SUCCESS);
     }
     if outcomes {

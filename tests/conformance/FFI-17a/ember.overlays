@@ -1,0 +1,72 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind --merge` rewrites it.
+version = "1"
+
+[[overlay]]
+file = "overlays/fixed.em"
+header = "fixed.hpp"
+[overlay.declarations]
+"cells" = "blake3:a9336d350b9caf3767647b5601a7b962f4013d2b65442f4308f2a3ac85717ade"
+"cells_mut" = "blake3:5dc005a00f1688c3e07ce2ef82e56f7376e94c93b4d08d5ef1e0c0434b4690a8"
+"new" = "blake3:967797ef3a331db52a4bf6da969e483beced08e5b30a506e8b1c7489f0351e73"
+"sum3" = "blake3:eb409d13eb0f083d0a5e6988b672f20512914fd38610de827e95a9f7a2a5e89b"
+"zero2" = "blake3:7d409c0f86ac627e1fae51cf53172d4aba54ae577661cd5f136d4b63cc902e5b"
+
+[[overlay]]
+file = "overlays/functions.em"
+header = "functions.hpp"
+[overlay.declarations]
+"live_guards" = "blake3:19615d82b613fc2955a126befe3244c7adec583f7bcc65ffef85ba54309ad9f2"
+"make_adder" = "blake3:92ce8958b168c6a6102d144f27ba49670671755edc4a87f8053869f337f54d50"
+"make_kept" = "blake3:885775eee9602e918f8dbe89df3bd2bdaa38a91b65b30e8c41c253f54d890940"
+"make_mixer" = "blake3:a3468aec6f4324a061037e96b7bfde5ba7ba8ff2953c7e50df788254bdb79a03"
+
+[[overlay]]
+file = "overlays/unnamed_variants.em"
+header = "unnamed_variants.hpp"
+[overlay.declarations]
+
+[[overlay]]
+file = "overlays/variants.em"
+header = "variants.hpp"
+[overlay.declarations]
+"area" = "blake3:3ccbc53c88a67dc16e87fa4ac47330d0f752c5814c81014861bd5ba7a9e58974"
+"bigger" = "blake3:5962039fd3213debb05689c323dabad9277f701960691c6a53f8c5d87002fe65"
+"half" = "blake3:b344192ab07fe2755f8dc020179189e056412e59b5715ef69a8f79a68f0efdc9"
+"kind_of" = "blake3:3f6c0aac3f59ee75180f4c36d10afef718bea115ace6772f5ddca029463cd055"
+
+[[overlay]]
+file = "overlays/views.em"
+header = "views.hpp"
+[overlay.declarations]
+"boxes_destroyed" = "blake3:edde29f38b1f0148a7bad075c768284240f66dcc253d531e21d1da2da32dce80"
+"consume" = "blake3:5d75a5d48c12241193c9737f21d778d3fff6093fd1622798d27625f5ab7d1c02"
+"digit" = "blake3:f887501445421bd9629c3d39bf682a9b6198cf9fc8192e5b2612cd675c59d103"
+"first" = "blake3:16342fa9d3fd2ac68d259bae81cf717531a08936b033e60ceee91f47f996156a"
+"greeting" = "blake3:5b146a081333809cb7bfd3dcc2cb329126a8d62caf075a6f9167e44fa1b782d1"
+"make_box" = "blake3:3d6e56367345216ab8541a6862736664caf703ee861764c4357e4f0fcab2629d"
+"negate" = "blake3:1ab1a14189425f06749f87dae36caba2371d0179d20d73cfc744e4c3ed599dcb"
+"new" = "blake3:6487fb302578a16130b049c154aa31efb8895d16ccb6d5ad7f66d3c202773a60"
+"or_zero" = "blake3:6cac520f79dbd908d9b50a9cfe50184676b6f7b8dc1d03d3efaa4c8f5b93f508"
+"scaled" = "blake3:4610f38747456aff07c2e32a38e2abafc1590205c2858823db0a010c393767b5"
+"scores" = "blake3:967ce648447af42b065ab609e62747446573bc9e59b8d54c101d08b56a90758a"
+"scores_mut" = "blake3:554c6d04c2f754597b3f075f45957ae512ef01e98639c818b39b1c2339357f35"
+"shout_length" = "blake3:ba7ddc46046dfd4405b6fe7e8893294a20500990790b0ae9868ec5d71fe3f510"
+"sum" = "blake3:01681e0014006dc527175f48d9850793e696cdc59ca946606690176484dff9a2"
+"total" = "blake3:87d308af02da570e8ffb20d223f95fa11453cf0713a4858b92ae8f6d2e196ae2"
+"trim" = "blake3:2360d62b845e30ac48ba24c450e913dff63998693f68f19923e60805a4f1607c"
+"value" = "blake3:d119bb70c8886ec324a8202e217830f017498571eddf6228dbee6b34f664e028"
+"vowels" = "blake3:4766addcb762d9c7f1ebdd414c2831d932e23d8dc89ca7f4b106c2ae492bc223"
+
+[[overlay]]
+file = "overlays/views_first.em"
+header = "views.hpp"
+[overlay.declarations]
+"first" = "blake3:16342fa9d3fd2ac68d259bae81cf717531a08936b033e60ceee91f47f996156a"
+"new" = "blake3:6487fb302578a16130b049c154aa31efb8895d16ccb6d5ad7f66d3c202773a60"
+
+[[overlay]]
+file = "overlays/views_unbounded.em"
+header = "views.hpp"
+[overlay.declarations]
+"first" = "blake3:16342fa9d3fd2ac68d259bae81cf717531a08936b033e60ceee91f47f996156a"

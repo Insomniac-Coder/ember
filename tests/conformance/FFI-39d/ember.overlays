@@ -1,0 +1,9 @@
+# ember.overlays: the headers this package's overlays were checked against.
+# Written by ember; `ember bind --merge` rewrites it.
+version = "1"
+
+[[overlay]]
+file = "overlays/widgets.em"
+header = "widgets.hpp"
+[overlay.declarations]
+"fire" = "blake3:4244f906c525d1a14573557e4da38c02460595526d9ca616218e7e97c1e808e4"

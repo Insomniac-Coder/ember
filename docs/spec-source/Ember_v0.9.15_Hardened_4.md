@@ -7130,14 +7130,17 @@ unsafe overlay c "vulkan/vulkan.h":
   ```
 
   Ember writes the record the first time the package's own build applies the overlay, and only
-  `ember bind --merge` rewrites it (`[CLI-5]`). Every build that applies an overlay, its own package's
-  and any other's, compares each declaration the overlay describes with the header it imports. One
-  that differs is `E5010`, naming the overlay, the declaration as recorded and as imported, and the
-  way out ("`SDL_FreeSurface` was `void SDL_FreeSurface(SDL_Surface*)` when `overlays/sdl.em` was
-  checked, and the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check the
-  overlay against this header, then run `ember bind --merge`"); an overlay its package has no record
-  of is `E5010` too. A change to a declaration the overlay does not describe changes nothing. Nothing
-  of this is written in the overlay or in the program.
+  `ember bind --merge` rewrites it (`[CLI-5]`); a declaration the overlay describes that the record
+  lacks, an entry just written, is added by the package's own build. Every build that applies an
+  overlay, its own package's and any other's, compares each declaration the overlay describes with
+  the header it imports. One that differs is `E5010`, naming the overlay, the declaration as the
+  header imported declares it, and the way out ("`SDL_FreeSurface` changed since `overlays/sdl.em` was
+  checked: the `SDL.h` imported here declares `void SDL_FreeSurface(SDL_Surface*, int)`; check the
+  overlay against this header, then run `ember bind --merge`"); in another package's build, an overlay
+  or a declaration its package's record lacks is `E5010` too. A change to a declaration the overlay
+  does not describe changes nothing. A program with no `ember.toml` is no package and nobody's
+  dependency, so Ember keeps its overlays' record in its own cache instead, checked the same way.
+  Nothing of this is written in the overlay or in the program.
 * `[FFI-13]` An overlay may contain `extend` blocks with ordinary Ember wrapper methods; this is how an
   idiomatic API is layered over a raw one.
 * `[FFI-14]` The importer's result is a `.embind` file (versioned CBOR: header hash, Clang
