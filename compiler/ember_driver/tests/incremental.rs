@@ -459,3 +459,58 @@ fn function_items_are_kept_across_builds_as_a_clean_build_makes_them() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+const UNSTATED_HEADER: &str = "#include <stddef.h>\nsize_t strlen(const char* s);\n";
+
+const UNSTATED_HELPER: &str = r#"
+from std.ffi import c_char
+import c "unstated.h"
+
+pub fn measure(pointer: *c_char) -> int:
+    unsafe:  # SAFETY(ffi): the caller's text is NUL-terminated
+        return c.strlen(pointer) as int
+"#;
+
+const UNSTATED_MAIN: &str = r#"
+from std.ffi import c_char
+import c "unstated.h"
+import helper
+
+fn main():
+    text: Array[c_char] = [104, 105, 0]
+    pointer = text.as_span().as_ptr()
+    n: usize = 0
+    unsafe:  # SAFETY(ffi): `text` is alive and NUL-terminated
+        n = c.strlen(pointer)
+    println(n, helper.measure(pointer))
+"#;
+
+/// `[UNS-7]` (verdict 125), `[BLD-1]`, D-931 — `L3015` for a C function nothing says the callers of
+/// is reported once in a program, at the first call: with the module of that call kept, it is
+/// reported again, and not reported again beside the one a module checked anew reports at its own
+/// call. Each check reports what a clean one does.
+#[test]
+fn a_c_function_called_with_nothing_stated_is_warned_of_once_whatever_is_kept() {
+    let dir = scratch();
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"unstated\"\nversion = \"0.1.0\"\n").expect("manifest");
+    std::fs::write(dir.join("src").join("unstated.h"), UNSTATED_HEADER).expect("header");
+    write(&dir, &source("helper"), UNSTATED_HELPER);
+    write(&dir, &source("main"), UNSTATED_MAIN);
+    let steps = [
+        ("the first check", None),
+        ("nothing edited", None),
+        ("the module of the first call", Some((source("main"), UNSTATED_MAIN.replace("println(n, ", "println(n + 0, ")))),
+        ("the other module", Some((source("helper"), UNSTATED_HELPER.replace("as int\n", "as int + 0\n")))),
+    ];
+    for (step, edit) in steps {
+        if let Some((file, text)) = edit {
+            write(&dir, &file, &text);
+        }
+        let incremental = check(&dir, "target-incremental", false);
+        let clean = check(&dir, "target-clean", true);
+        assert!(incremental.ok && clean.ok, "{step}:\n{}\n{}", incremental.report, clean.report);
+        assert_eq!(incremental.report, clean.report, "{step}: what the checks report");
+        assert_eq!(clean.report.matches("warning[L3015]").count(), 1, "{step}: one `L3015` for `strlen`\n{}", clean.report);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

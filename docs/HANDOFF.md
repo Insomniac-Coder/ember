@@ -3,16 +3,26 @@
 > **2026-10-30, night — AUTONOMOUS (owner asleep). START HERE.** Owner: "now you work autonomously, keep an eyes on
 > power source and wifi connection if any of those change you wait for 5 minutes and hibernate the laptop and in the
 > morning I want you to report all ODRs to me, you can use one helper agent and make sure you ruling pattern is
-> followed". Watcher: session scratchpad `power_wifi_hibernate.ps1` (log beside it). The night's rulings: decisions.md
-> §11 (N1-N10) and the open question there (`@ffi(unsafe)` on hand declarations); report them all in the morning.
-> Done: spec Hardened_5 (679618ea, corrected in place twice since, unpushed). In the tree, conformance green: items
-> 1-6 of the list under decisions.md item 39 (C/C++ `@safety`, `unsafe fn` entries, members under their class, lambda
-> `@safety`, every program a package with 600+ default manifests written for the repo's test folders, `bind --check
-> --merge`, EFF-2 parameters/lists/drops with D-930 closed, the note text) plus the review fixes. Item 7 (`[BLD-15]`
-> link time limit, E9042, stacks captured with `cdb` on a stop) is written in scratchpad `bld15.py`, not yet
-> applied. Then: E9042 page (scratchpad `E9042.md`), commit, full Windows check, bench, push, CI look; then the
-> link-hang hunt (release links of `tests/perf/b16_checked.em` under a 5-minute limit, stacks kept).
->
+> followed". Watcher: session scratchpad `power_wifi_hibernate.ps1` (log beside it). The night's rulings:
+> `tasks/96/redesign/compiler-0.9.15/decisions.md` §11 (N1-N15 on `main`; M1's on branch `m1`) and the open
+> question there (`@ffi(unsafe)` on hand declarations); report them all in the morning, one at a time.
+> - **Pushed:** the list of decisions.md item 39 (verdicts 125-131, BLD-15's link guard, EFF-2, MAN-9), `2e7636ec`.
+> - **On `main`, not pushed:** A4-2's first slice (summaries, `06fb0bbc`), M1's plan (`82c9a9cb`), and, uncommitted
+>   while its fast check runs: **D-931** (an incremental check lost `L3015`, or reported it at another call:
+>   `CheckOutput::after_bodies`, `incremental.rs` `report_again`; test `incremental.rs`
+>   `a_c_function_called_with_nothing_stated_is_warned_of_once_whatever_is_kept`; ruling N15) and the link guard
+>   waiting on the linker instead of polling it every 100 ms (`ember_build::run_limited`). Push after a full check
+>   and the bench.
+> - **Branch `m1` (local):** M1 in pieces, `tasks/96/redesign/compiler-0.9.15/M1-plan.md` "Pieces". Done: reserved
+>   words, `needs`, type-parameter lines, parameter words; methods (`this`, `owns this`, `static fn`, the object
+>   worked out from the body: `ember_typeck/src/objects.rs`), with std and every `.em` of the repository given
+>   `static fn` by the internal `ember __migrate`. Fast check on `m1`: only FFI tests failed, all from two causes:
+>   D-931 (fixed on `main`, merge it in) and the C++ importer writing object-less members without `static`
+>   (patch at `target/m1/cimport_static.patch`). Next: those, the Rust tests' Ember strings (scratchpad
+>   `migrate_rust_strings.py`), then taking `self` out of every method (the inference's real test), then piece 4.
+> - **The link-hang hunt** (`target/hang-hunt/hunt.sh`, own copy of the compiler) has found no hang in 1,400+
+>   rounds; `target/hang-hunt/found/` stays empty.
+
 > **2026-10-29, afternoon — PARKED by the owner ("pause and park the current work"). START HERE.**
 >
 > **Evening: the owner reviewed every ODR (ODR 9 to 20) and the C++ question** — verdicts in

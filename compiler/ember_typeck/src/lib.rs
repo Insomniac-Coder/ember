@@ -324,9 +324,11 @@ pub struct CheckOutput {
     /// `[BLD-1]` — each module's check, by its place in the loaded list; `None` for one whose
     /// checked form an earlier build kept.
     pub modules: Vec<Option<ModuleCheck>>,
-    /// `[BLD-1]` — where in the sink the needless `unsafe` blocks of every checked body were
-    /// reported (`L3010`, after all bodies).
-    pub unneeded_unsafe: std::ops::Range<usize>,
+    /// `[BLD-1]` — where in the sink the warnings about checked bodies reported after all bodies
+    /// were checked are: each C or C++ function called in unsafe code with nothing said of what
+    /// its callers must make true (`L3015`), and each needless `unsafe` block (`L3010`). Each is
+    /// its body's, by the place it names.
+    pub after_bodies: std::ops::Range<usize>,
     /// `[MONO-2]`, `[MONO-3]` — each generic instantiated, in the order first instantiated.
     pub instantiations: Vec<Instantiation>,
     /// `[STD-8a]` — each `x in c`, with the `contains` it selects.
@@ -871,10 +873,10 @@ pub fn check(
     }
     checker.note_changed_declarations();
     checker.note_c_declarations();
+    let after_bodies_mark = checker.sink.mark();
     checker.report_unstated_safety();
-    let unsafe_mark = checker.sink.mark();
     checker.report_unneeded_unsafe();
-    let unneeded_unsafe = unsafe_mark..checker.sink.mark();
+    let after_bodies = after_bodies_mark..checker.sink.mark();
     let callable_declarations = checker.callable_declarations(modules);
     // `[CT-1]` — the functions computing what is still to be evaluated go to
     // the evaluator with the rest; a pass with nothing outstanding has none.
@@ -889,7 +891,7 @@ pub fn check(
         closure_names_unstable: checker.closure_names_unstable,
         body_mark,
         modules: module_checks,
-        unneeded_unsafe,
+        after_bodies,
         instantiations: std::mem::take(&mut checker.instantiations),
         contains_uses: std::mem::take(&mut checker.contains_uses),
         program: Program { functions, main, tests, assume_noalloc: std::mem::take(&mut checker.assume_noalloc), reused },

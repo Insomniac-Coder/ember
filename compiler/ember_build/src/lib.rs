@@ -1227,21 +1227,27 @@ pub fn run_limited(command: &mut Command, limit: std::time::Duration, stacks: Op
     };
     let stdout = read(child.stdout.take().map(|stream| Box::new(stream) as Box<dyn Read + Send>));
     let stderr = read(child.stderr.take().map(|stream| Box::new(stream) as Box<dyn Read + Send>));
-    let started = std::time::Instant::now();
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(std::process::Output { status, stdout: stdout.join().unwrap_or_default(), stderr: stderr.join().unwrap_or_default() }));
+    // The command is waited for, so its end is seen at once; a watcher ends it at the limit. The
+    // child's handle is held until the watcher is done, so its id names no other process meanwhile.
+    let id = child.id();
+    let stacks = stacks.map(Path::to_path_buf);
+    let (finished, done) = std::sync::mpsc::channel::<()>();
+    let watcher = std::thread::spawn(move || {
+        let timed_out = done.recv_timeout(limit) == Err(std::sync::mpsc::RecvTimeoutError::Timeout);
+        if timed_out {
+            end_process_tree(id, stacks.as_deref());
         }
-        let ran = started.elapsed();
-        if ran >= limit {
-            end_process_tree(child.id(), stacks);
-            let _ = child.kill();
-            let _ = child.wait();
-            // A process the ending missed may hold the pipes: their readers are left to it.
-            return Ok(None);
-        }
-        std::thread::sleep((limit - ran).min(std::time::Duration::from_millis(100)));
+        timed_out
+    });
+    let status = child.wait();
+    let _ = finished.send(());
+    let timed_out = watcher.join().unwrap_or(false);
+    let status = status?;
+    if timed_out {
+        // A process the ending missed may hold the pipes: their readers are left to it.
+        return Ok(None);
     }
+    Ok(Some(std::process::Output { status, stdout: stdout.join().unwrap_or_default(), stderr: stderr.join().unwrap_or_default() }))
 }
 
 /// `[BLD-15]` — end the process `id` and every process it started. On Windows, each one's threads'

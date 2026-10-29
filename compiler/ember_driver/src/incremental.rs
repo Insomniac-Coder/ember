@@ -919,9 +919,10 @@ impl Checks {
         let body_diagnostics = |symbols: &[String]| -> Vec<usize> {
             symbols.iter().filter_map(|symbol| body_ranges.get(symbol.as_str())).flatten().copied().collect()
         };
-        // `L3010` comes after every body, for the block it names: its body's part's.
+        // `L3015` and `L3010` come after every body, for the call or the block each names: its
+        // body's part's (D-931: `L3015` came before the range and was lost when its part was kept).
         let mut unneeded: HashMap<usize, Vec<(Span, usize)>> = HashMap::new();
-        for at in checked.unneeded_unsafe.clone().filter(warning) {
+        for at in checked.after_bodies.clone().filter(warning) {
             let span = sink.diagnostics()[at].primary.span;
             if let Some(&module) = module_of_file.get(&span.file) {
                 unneeded.entry(module).or_default().push((span, at));
@@ -1043,11 +1044,32 @@ impl Checks {
 /// records reports once, as its one check in a clean build does).
 fn report_again(diagnostics: Vec<Diagnostic>, sink: &mut Sink, map: &SourceMap) {
     let mut reported: HashSet<String> = sink.diagnostics().iter().map(|diagnostic| ember_diag::to_json(diagnostic, map).to_string()).collect();
+    let mut functions: HashMap<String, usize> =
+        sink.diagnostics().iter().enumerate().filter_map(|(at, diagnostic)| Some((once_per_function(diagnostic)?, at))).collect();
+    let place = |diagnostic: &Diagnostic| (diagnostic.primary.span.file, diagnostic.primary.span.start);
     for diagnostic in diagnostics {
+        let message = once_per_function(&diagnostic);
+        if let Some(&at) = message.as_ref().and_then(|message| functions.get(message)) {
+            if place(&diagnostic) < place(&sink.diagnostics()[at]) {
+                sink.amend(at, |reported| *reported = diagnostic);
+            }
+            continue;
+        }
         if reported.insert(ember_diag::to_json(&diagnostic, map).to_string()) {
+            if let Some(message) = message {
+                functions.insert(message, sink.mark());
+            }
             sink.emit(diagnostic);
         }
     }
+}
+
+/// `[UNS-7]` (verdict 125) — an `L3015` for a C or C++ function is reported once in a program, at
+/// its first call by place, and its message names the function: a kept part's, reported again,
+/// takes the place of one this build's checks made at a later call, and is not reported beside
+/// one made at an earlier (D-931). A lambda's names none.
+fn once_per_function(diagnostic: &Diagnostic) -> Option<String> {
+    (diagnostic.code == Some(ember_diag::codes::L3015) && !diagnostic.message.starts_with("this lambda")).then(|| diagnostic.message.clone())
 }
 
 /// `[BLD-2]` — the declarations every module sees without importing anything: each `extend` (an

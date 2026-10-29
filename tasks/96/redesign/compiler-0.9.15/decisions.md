@@ -378,6 +378,10 @@ Ember name, not the overlay's; `@grade(instrumented)` on a member's entry is nev
 |---|---|---|---|
 | N14 | EFF-24 (A4-2, first slice) | A summary's fact is a place a parameter reaches (`this` the first of a method): the parameter and its steps (fields, an enum variant, a list's elements as one step, and each step through a reference, pointer or object handle, at least one), covering everything inside it; changes, reads and ends, each with the first call chain that makes it. A value the analysis cannot follow (a pointer read through a raw pointer, a C function's result, a function with no body here) may be anything any parameter reaches. Paths are cut at 8 steps, a shorter path covering longer ones, so recursion through links ends. The summary is computed by `ember_analysis::summaries` and printed by `--emit mir`; it is put on `Body` (and in interface files, A4-3) with its first consumer, M1's `this`. | Sound before precise: a fact too many refuses a correct program later, a fact missing would accept a wrong one (checklist 7, 14); nothing is built before something uses it. |
 
+| # | Rule | Ruling | Why |
+|---|---|---|---|
+| N15 | UNS-7, BLD-1 (verdict 125, ODR 19; D-931) | `L3015` for a C or C++ function comes once in a program, at its first call by place: in the module loaded first, then the earliest in it. An incremental check reports it from a kept part as a clean check does: the after-body warnings' range holds it (it was before the range, so a kept part's was lost), and a kept part's takes the place of one this check made at a later call, or is left out beside one at an earlier. | "Once per function, at its first call" must not depend on which modules a build checks again; "first" by place is the one order both kinds of check share. |
+
 **For the owner (open, not ruled):** verdict 130 retired `-> unsafe` in overlays. A hand declaration in an
 `unsafe extern` block can still write `@ffi(unsafe)` (and `param(p, unsafe)`, `result(unsafe)`): its call is
 unsafe on purpose, and `E3100` then names that instead of asking for facts. A plain `fn` there is unsafe to call
