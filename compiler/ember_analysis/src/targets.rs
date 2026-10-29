@@ -1,21 +1,39 @@
 //! `[EFF-2]`, `[CLO-17]`, `[EFF-26]` (A4-1) — what a call through a function value or a `dyn` value
 //! can run, read from the whole program: one answer for the effect analysis and the summaries.
 //!
-//! A call through a value of a callable type runs one of the functions the program stores into that
-//! exact type: a named function or a lambda that becomes a value of it (a `Const::Fn` stored, passed or
-//! built into a value of that type, or the closure of a `Callable` made at it), and whatever a callable
-//! type converted to it holds. A call through a `dyn` value runs what one of the program's casts put in
-//! that table's slot, or an override of it below its class. A function whose callable type is not known
-//! where it becomes a value counts for every callable type of its shape (its parameter count and
-//! result): that can only add targets, never lose one.
+//! A call through a value of a callable type runs one of the functions that reach the place the value
+//! is read from (verdict 122): each field of each struct, class and enum variant apart from every other,
+//! a list's elements with the place that holds the list, a local with what is put in it, and a place a
+//! value is copied or lent into with the functions of the place it came from. Where the value cannot be
+//! followed (a parameter, which every caller fills; a call's result through a value; a read through a
+//! raw pointer) it is any function the program stores into that exact callable type: a named function or
+//! a lambda that becomes a value of it (a `Const::Fn` stored, passed or built into a value of that type,
+//! or the closure of a `Callable` made at it), and whatever a callable type converted to it holds. A
+//! place no function reaches is called by no code that runs. A call through a `dyn` value runs what one
+//! of the program's casts put in that table's slot, or an override of it below its class. A function
+//! whose callable type is not known where it becomes a value counts for every callable type of its
+//! shape (its parameter count and result): that can only add targets, never lose one.
 
 use std::collections::{HashMap, HashSet};
 
-use ember_mir::{AggregateKind, Body, CastKind, Const, FuncRef, Operand, Rvalue, StmtKind, Terminator};
+use ember_mir::{AggregateKind, Body, CastKind, Const, FuncRef, LocalId, Operand, Place, Projection, Rvalue, StmtKind, Terminator};
 use ember_span::Symbol;
-use ember_types::{ClassId, Ty, TyKind, TypeTable};
+use ember_types::{ClassId, EnumId, StructId, Ty, TyKind, TypeTable};
 
-use crate::regions::place_type;
+use crate::regions::{place_type, project_type};
+
+/// `[EFF-2]` (verdict 122) — a place a function value may be read from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Key {
+    /// A local of a body, by the body's index.
+    Local(usize, LocalId),
+    /// A field of a struct, of a class, or of an enum's variant: of every value of it.
+    StructField(StructId, usize),
+    ClassField(ClassId, usize),
+    VariantField(EnumId, usize, usize),
+    /// Where nothing can be followed: any function stored into the callable type.
+    Type(Ty),
+}
 
 /// The targets of the program's calls through values, by body index.
 pub struct Targets {
@@ -27,6 +45,8 @@ pub struct Targets {
     /// Each erased table (its interfaces, in order) at each slot, with what the casts put there and
     /// the overrides of it below its class.
     tables: HashMap<(Vec<Symbol>, usize), Vec<usize>>,
+    /// `[EFF-2]` (verdict 122) — each place, with the bodies that reach it.
+    places: HashMap<Key, Vec<usize>>,
 }
 
 impl Targets {
@@ -36,15 +56,30 @@ impl Targets {
         for body in bodies {
             found.body(body);
         }
-        found.finish()
+        let mut targets = found.finish();
+        targets.places = Places::new(bodies, types, &index, &targets).finish();
+        targets
     }
 
     fn empty() -> Targets {
-        Targets { values: HashMap::new(), loose: HashMap::new(), tables: HashMap::new() }
+        Targets { values: HashMap::new(), loose: HashMap::new(), tables: HashMap::new(), places: HashMap::new() }
     }
 
-    /// The bodies a call through a value of the callable type `ty` may run. Empty when the program
-    /// stores no function into it, which the caller treats as "anything" (a value from elsewhere).
+    /// `[EFF-2]` (verdict 122) — the bodies a call through `operand`, a value of the callable type `ty`
+    /// read in body `at`, may run: those that reach the place it is read from. Empty when none does,
+    /// and then the call runs nothing.
+    pub fn of_call(&self, at: usize, body: &Body, operand: &Operand, ty: Ty, types: &TypeTable) -> Vec<usize> {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => match key(at, body, place, types) {
+                Key::Type(ty) => self.of_value(ty, types),
+                key => self.places.get(&key).cloned().unwrap_or_default(),
+            },
+            Operand::Const(_) => self.of_value(ty, types),
+        }
+    }
+
+    /// The bodies a value of the callable type `ty` may be, where nothing can be followed: every
+    /// function the program stores into the type.
     pub fn of_value(&self, ty: Ty, types: &TypeTable) -> Vec<usize> {
         let mut targets = self.values.get(&ty).cloned().unwrap_or_default();
         if let TyKind::Fn { params, ret, .. } = types.kind(ty) {
@@ -234,6 +269,171 @@ impl Found<'_> {
         }
         self.targets.tables = tables;
         self.targets
+    }
+}
+
+/// `[EFF-2]` (verdict 122) — the place `place` of body `at` is: a field of a struct, class or enum
+/// variant wherever its value is (`s.by` is `Scaler`'s `by`, whichever `Scaler`); a list's element, a
+/// tuple's item, a reference's or a box's contents with the place holding them; a local by itself; and,
+/// where nothing can be followed (a parameter, which every caller fills, or a read through a raw
+/// pointer), its type.
+fn key(at: usize, body: &Body, place: &Place, types: &TypeTable) -> Key {
+    let parameter = (1..=body.arg_count).contains(&(place.local.0 as usize));
+    let mut key = (!parameter).then_some(Key::Local(at, place.local));
+    let mut ty = body.local(place.local).ty;
+    let mut variant = None;
+    for projection in &place.projection {
+        let downcast = variant;
+        key = match (projection, types.kind(ty)) {
+            (Projection::Field(field), TyKind::Struct(id)) => Some(Key::StructField(*id, *field)),
+            (Projection::Field(field), TyKind::Class(id)) => Some(Key::ClassField(*id, *field)),
+            (Projection::Field(field), TyKind::Enum(id)) => downcast.map(|v| Key::VariantField(*id, v, *field)),
+            (Projection::Deref, TyKind::Ptr { .. }) => None,
+            _ => key,
+        };
+        ty = project_type(types, ty, projection, &mut variant);
+    }
+    key.unwrap_or(Key::Type(ty))
+}
+
+/// `[EFF-2]` (verdict 122) — what reaches each place: the functions put in it, and what flows into it
+/// from other places, carried to a fixed point.
+struct Places<'a> {
+    bodies: &'a [Body],
+    types: &'a TypeTable,
+    index: &'a HashMap<&'a str, usize>,
+    sets: HashMap<Key, Vec<usize>>,
+    /// From each place, the places what it holds flows into.
+    edges: HashMap<Key, Vec<Key>>,
+}
+
+impl<'a> Places<'a> {
+    fn new(bodies: &'a [Body], types: &'a TypeTable, index: &'a HashMap<&'a str, usize>, targets: &Targets) -> Places<'a> {
+        let mut places = Places { bodies, types, index, sets: HashMap::new(), edges: HashMap::new() };
+        for (at, body) in bodies.iter().enumerate() {
+            places.body(at, body);
+        }
+        // Where nothing is followed, any function stored into the type.
+        let typed: Vec<Ty> = places
+            .edges
+            .keys()
+            .chain(places.edges.values().flatten())
+            .filter_map(|key| match key {
+                Key::Type(ty) => Some(*ty),
+                _ => None,
+            })
+            .collect();
+        for ty in typed {
+            let held = targets.of_value(ty, types);
+            let set = places.sets.entry(Key::Type(ty)).or_default();
+            for target in held {
+                push(set, target);
+            }
+        }
+        places
+    }
+
+    fn body(&mut self, at: usize, body: &Body) {
+        for block in &body.blocks {
+            for stmt in &block.stmts {
+                let StmtKind::Assign { place, rvalue } = &stmt.kind else { continue };
+                let dest = key(at, body, place, self.types);
+                match rvalue {
+                    Rvalue::Use(operand) => self.flow(at, body, operand, dest),
+                    Rvalue::Cast { kind, operand, .. } => match kind {
+                        CastKind::FnToC | CastKind::InterfaceUpcast { .. } | CastKind::ClassInterfaceUpcast { .. } => {}
+                        _ => self.flow(at, body, operand, dest),
+                    },
+                    Rvalue::Aggregate { kind, operands } => match kind {
+                        AggregateKind::Callable => {
+                            if let Some(Operand::Const(Const::Fn(symbol))) = operands.first() {
+                                self.seed(dest, symbol);
+                            }
+                        }
+                        AggregateKind::Struct(id) => {
+                            for (field, operand) in operands.iter().enumerate() {
+                                self.flow(at, body, operand, Key::StructField(*id, field));
+                            }
+                        }
+                        AggregateKind::Enum(id, variant) => {
+                            for (field, operand) in operands.iter().enumerate() {
+                                self.flow(at, body, operand, Key::VariantField(*id, *variant, field));
+                            }
+                        }
+                        AggregateKind::Tuple | AggregateKind::Array => {
+                            for operand in operands {
+                                self.flow(at, body, operand, dest);
+                            }
+                        }
+                    },
+                    // A view of a place reads and writes it: what either holds, the other does.
+                    Rvalue::Ref { place: lent, .. } => {
+                        let lent = key(at, body, lent, self.types);
+                        self.edge(lent, dest);
+                        self.edge(dest, lent);
+                    }
+                    Rvalue::UnaryOp { .. } | Rvalue::BinaryOp { .. } | Rvalue::Repeat { .. } | Rvalue::Discriminant(_) => {}
+                }
+            }
+            let Terminator::Call { func, dest, .. } = &block.terminator else { continue };
+            let into = key(at, body, dest, self.types);
+            match func {
+                // What a function returns is what was put in its result.
+                FuncRef::Direct { symbol, .. } => {
+                    if let Some(&callee) = self.index.get(symbol.as_str()) {
+                        self.edge(Key::Local(callee, LocalId(0)), into);
+                    }
+                }
+                _ => self.edge(Key::Type(place_type(body, self.types, dest)), into),
+            }
+        }
+    }
+
+    fn flow(&mut self, at: usize, body: &Body, operand: &Operand, into: Key) {
+        match operand {
+            Operand::Copy(place) | Operand::Move(place) => {
+                let from = key(at, body, place, self.types);
+                self.edge(from, into);
+            }
+            Operand::Const(Const::Fn(symbol)) => self.seed(into, symbol),
+            Operand::Const(_) => {}
+        }
+    }
+
+    fn seed(&mut self, into: Key, symbol: &str) {
+        if let Some(&target) = self.index.get(symbol) {
+            push(self.sets.entry(into).or_default(), target);
+        }
+    }
+
+    fn edge(&mut self, from: Key, into: Key) {
+        // What any function stored into a type may be is fixed by `Found`: no place adds to it.
+        if from != into && !matches!(into, Key::Type(_)) {
+            let edges = self.edges.entry(from).or_default();
+            if !edges.contains(&into) {
+                edges.push(into);
+            }
+        }
+    }
+
+    /// Each place's set, carried along the edges to a fixed point.
+    fn finish(mut self) -> HashMap<Key, Vec<usize>> {
+        let _ = self.bodies;
+        let mut pending: Vec<Key> = self.sets.keys().copied().collect();
+        while let Some(from) = pending.pop() {
+            let held = self.sets.get(&from).cloned().unwrap_or_default();
+            for &into in self.edges.get(&from).map_or(&[][..], Vec::as_slice) {
+                let set = self.sets.entry(into).or_default();
+                let mut grew = false;
+                for &target in &held {
+                    grew |= push(set, target);
+                }
+                if grew {
+                    pending.push(into);
+                }
+            }
+        }
+        self.sets
     }
 }
 

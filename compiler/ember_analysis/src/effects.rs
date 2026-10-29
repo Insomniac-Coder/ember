@@ -992,7 +992,7 @@ impl SiteBuilder<'_> {
                     self.sync_copy(body, operand, span, sites);
                 }
                 let first = sites.len();
-                self.call_sites(func, span, sites);
+                self.call_sites(body, func, span, sites);
                 // `[STD-18]` — an append to `format_to`'s text, which never grows: no allocation, and
                 // no failure (a write that does not fit is refused, and `format_to` says so). A
                 // written `Debug` it runs keeps its own effects.
@@ -1059,7 +1059,7 @@ impl SiteBuilder<'_> {
         }
     }
 
-    fn call_sites(&mut self, func: &FuncRef, span: Span, sites: &mut Vec<Site>) {
+    fn call_sites(&mut self, body: &Body, func: &FuncRef, span: Span, sites: &mut Vec<Site>) {
         match func {
             FuncRef::Direct { symbol, .. } => {
                 if let Some(&callee) = self.index.get(symbol.as_str()) {
@@ -1094,12 +1094,14 @@ impl SiteBuilder<'_> {
                 span,
                 origin: Origin::Operation("a call through a `dyn` value, whose effects nothing declares"),
             }),
-            // `[EFF-2]` — every function the program stores into the value's exact callable type.
-            FuncRef::Indirect { ty, .. }
-                if matches!(self.types.kind(*ty), TyKind::Fn { abi: None, .. })
-                    && !self.targets.of_value(*ty, self.types).is_empty() =>
-            {
-                for target in self.targets.of_value(*ty, self.types) {
+            // `[EFF-2]` (verdict 122) — the functions that reach the place the value is read from, field
+            // by field; where none does, the call runs nothing.
+            FuncRef::Indirect { operand, ty, .. } if matches!(self.types.kind(*ty), TyKind::Fn { abi: None, .. }) => {
+                let targets = match self.index.get(body.symbol.as_str()) {
+                    Some(&at) => self.targets.of_call(at, body, operand, *ty, self.types),
+                    None => self.targets.of_value(*ty, self.types),
+                };
+                for target in targets {
                     sites.push(Site { effects: Effects::ALL, span, origin: Origin::Call(target) });
                 }
             }
