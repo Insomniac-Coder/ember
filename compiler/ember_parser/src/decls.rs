@@ -674,7 +674,7 @@ impl Parser<'_> {
             self.report_code(
                 codes::E0104,
                 at,
-                "an overlay takes no options: Ember records the header it was written for in `ember.overlays`, beside `ember.toml` [FFI-55]",
+                "an overlay takes no options: Ember records the header it was written for in `ember.overlays`, beside the package's manifest [FFI-55]",
             );
             self.bump();
             if self.eat_punct(Punct::LParen) {

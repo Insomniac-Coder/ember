@@ -5524,7 +5524,7 @@ fn check_overlay_record(overlay: &ast::OverlayDecl, file: &Path, written: &str, 
         }
         None => refusals.push(
             Diagnostic::error(codes::E5010, at, format!("`{written}` is another package's overlay, and that package's `{OVERLAY_RECORD}` has no record of the header it was checked against"))
-                .help(format!("the package writes `{OVERLAY_RECORD}` beside its `ember.toml` when it builds itself; it ships with the package, as `ember.lock` does [FFI-55]")),
+                .help(format!("the package writes `{OVERLAY_RECORD}` beside its `{}` when it builds itself; it ships with the package, as `ember.lock` does [FFI-55]", ember_branding::MANIFEST)),
         ),
         Some(recorded) => {
             for (name, bound) in &described {

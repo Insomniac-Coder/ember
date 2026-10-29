@@ -1332,8 +1332,9 @@ fn link_timed_out(output: &Path, limit: std::time::Duration, command: &str, rsp:
         kept.push_str(&format!("its threads' stacks when it was stopped are in `{}`; ", stacks.display()));
     }
     format!(
-        "error[E9042]: the link of `{}` ran for {ran}, its time limit, and was stopped: `{command}`\n  = help: {kept}a longer limit is `[link] timeout = <seconds>` in `ember.toml` [BLD-15]",
-        output.display()
+        "error[E9042]: the link of `{}` ran for {ran}, its time limit, and was stopped: `{command}`\n  = help: {kept}a longer limit is `[link] timeout = <seconds>` in `{}` [BLD-15]",
+        output.display(),
+        ember_branding::MANIFEST
     )
 }
 
