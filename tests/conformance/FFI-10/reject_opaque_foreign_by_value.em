@@ -5,6 +5,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     type Handle
+    @safety("callers pass what the C function `consume` requires")
     fn consume(value: Handle)
 
 fn main():

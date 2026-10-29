@@ -12,10 +12,8 @@ fn main():
     unsafe gen fn walk(q: *u8) -> Generator[u8]:
         first: u8 = 0
         second: u8 = 0
-        # SAFETY: the caller promised two readable bytes at `q`
-        unsafe:
-            first = q.read()
-            second = q.add(1).read()
+        first = q.read()
+        second = q.add(1).read()
         yield first
         yield second
     # SAFETY: `a` holds two bytes

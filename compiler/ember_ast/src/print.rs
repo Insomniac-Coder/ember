@@ -343,6 +343,7 @@ impl Printer {
             }
             StmtKind::Defer(b) => self.nest("Defer", |p| p.block(b)),
             StmtKind::Unsafe(b) => self.nest("Unsafe", |p| p.block(b)),
+            StmtKind::Safe(b) => self.nest("Safe", |p| p.block(b)),
             StmtKind::Comptime(b) => self.nest("Comptime", |p| p.block(b)),
             StmtKind::LocalFn(decl) => self.nest(&format!("LocalFn {}", decl.name.name), |p| {
                 if let Some(body) = &decl.body {

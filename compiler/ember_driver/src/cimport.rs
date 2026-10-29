@@ -2189,7 +2189,7 @@ impl Writer {
                 "static_assert(std::is_trivially_copyable_v<{spelled}> && sizeof({spelled}) == {size} && alignof({spelled}) == {align}, \"{name}: a variant Ember holds as bytes\");\n\
                  extern \"C\" std::size_t {ops}_index(const void* v) noexcept {{ return static_cast<const {spelled}*>(v)->index(); }}\n"
             );
-            let mut decls = format!("    @ffi(link_name=\"{ops}_index\")\n    fn {ops}_index(object: *u8) -> usize\n");
+            let mut decls = format!("    @ffi(link_name=\"{ops}_index\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_index(object: *u8) -> usize\n");
             let (mut take, mut store, mut slots) = (String::new(), String::new(), String::new());
             for (index, (variant_name, mapped, alternative)) in alternatives.iter().enumerate() {
                 let _ = writeln!(
@@ -2199,7 +2199,7 @@ impl Writer {
                 );
                 let _ = write!(
                     decls,
-                    "    @ffi(link_name=\"{ops}_get_{index}\")\n    fn {ops}_get_{index}(object: *u8, value: *mut {mapped})\n    @ffi(link_name=\"{ops}_make_{index}\")\n    fn {ops}_make_{index}(object: *mut u8, value: *{mapped})\n"
+                    "    @ffi(link_name=\"{ops}_get_{index}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_get_{index}(object: *u8, value: *mut {mapped})\n    @ffi(link_name=\"{ops}_make_{index}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_make_{index}(object: *mut u8, value: *{mapped})\n"
                 );
                 // Each alternative's slot, before the block that reads one (`[UNS-3]`).
                 let _ = writeln!(slots, "    slot{index}: MaybeUninit[{mapped}] = MaybeUninit[{mapped}].uninit()");
@@ -2497,7 +2497,7 @@ impl Writer {
                 }
                 let _ = write!(
                     accessors,
-                    "    ## `[FFI-8]` — the first `n` elements of the flexible array member `{field}`, which follow the struct.\n    @safety(\"the allocation holding this struct holds at least `n` elements of `{field}` after it\")\n    {visibility}unsafe fn tail(self, n: usize) -> Span[{element}]:\n        # SAFETY: the caller promised `n` elements of `{field}` after the struct (`@safety` above)\n        unsafe:\n            address = ref_to_ptr(ref self) as usize + {offset}\n            return {}_cpp_span(ref self, address as *{element}, n)\n",
+                    "    ## `[FFI-8]` — the first `n` elements of the flexible array member `{field}`, which follow the struct.\n    @safety(\"the allocation holding this struct holds at least `n` elements of `{field}` after it\")\n    {visibility}unsafe fn tail(self, n: usize) -> Span[{element}]:\n        address = ref_to_ptr(ref self) as usize + {offset}\n        return {}_cpp_span(ref self, address as *{element}, n)\n",
                     ember_branding::SYMBOL_PREFIX
                 );
             }
@@ -3129,8 +3129,8 @@ impl Writer {
                      \x20       unsafe:  # SAFETY(ffi): the range's end, once\n\
                      \x20           {ops}_end(self.range)\n\n\
                      unsafe extern \"C\":\n\
-                     \x20   @ffi(link_name=\"{ops}_next\")\n    fn {ops}_next(range: *mut u8) -> *mut {mapped}\n\
-                     \x20   @ffi(link_name=\"{ops}_end\")\n    fn {ops}_end(range: *mut u8)\n"
+                     \x20   @ffi(link_name=\"{ops}_next\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_next(range: *mut u8) -> *mut {mapped}\n\
+                     \x20   @ffi(link_name=\"{ops}_end\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_end(range: *mut u8)\n"
                 ),
             );
             let result = CType {
@@ -3219,7 +3219,7 @@ impl Writer {
             let element = cpp_spelling(argument);
             let mut decls = String::new();
             let declare = |decls: &mut String, suffix: &str, signature: &str| {
-                let _ = writeln!(decls, "    @ffi(link_name=\"{ops}_{suffix}\")\n    fn {ops}_{suffix}{signature}");
+                let _ = writeln!(decls, "    @ffi(link_name=\"{ops}_{suffix}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {ops}_{suffix}{signature}");
             };
             let bridge = match name.as_str() {
                 // `[FFI-17a]` (ODR-199) — `std::function<R(A…)>`: an owned `CppFunction`, or, with
@@ -3630,7 +3630,7 @@ impl Writer {
                 let mut raw_params = vec!["object: *mut u8".to_string(), "deleted: extern \"C\" fn(*mut u8)".to_string()];
                 raw_params.extend(fn_types.iter().enumerate().map(|(k, ty)| format!("v{k}: Option[{ty}]")));
                 raw_params.extend(params.iter().map(|(param, ty, _, _)| if wrapped(ty) { format!("{param}: {}", ty.ember) } else { format!("{}{param}: {}", ty.mode, ty.ember) }));
-                let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
+                let _ = writeln!(raw, "    @ffi(link_name=\"{thunk}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {construct}({}) -> *mut {opaque}", raw_params.join(", "));
                 let init = if j == init_at { "init".to_string() } else { format!("{prefix}_cpp_init_{j}") };
                 let wrapper_params: Vec<String> = params.iter().map(|(param, ty, _, _)| wrapper_param(param, ty)).collect();
                 let arguments: String = params.iter().map(|(param, ty, _, _)| format!(", {}", wrapper_argument(param, ty))).collect();
@@ -3738,7 +3738,7 @@ impl Writer {
                 "extern \"C\" void {destroy_thunk}({spelled}* object) noexcept {{ auto* made = static_cast<{tramp}*>(object); if (made->{prefix}_cpp_deleting) return; made->{prefix}_self = nullptr; delete made; }}"
             );
             let destroy = format!("{prefix}_raw_{class}_destroy");
-            let _ = writeln!(raw, "    @ffi(link_name=\"{destroy_thunk}\")\n    fn {destroy}(object: *mut {opaque})");
+            let _ = writeln!(raw, "    @ffi(link_name=\"{destroy_thunk}\")\n    @safety(\"{THUNK_SAFETY}\")\n    fn {destroy}(object: *mut {opaque})");
             let mut item = String::new();
             let _ = write!(
                 item,
@@ -6897,6 +6897,8 @@ fn safe_result(ty: &CType, words: &[String]) -> String {
 
 const VARIADIC: &str = "C reads each further argument as the type its format or count names: the caller matches them ([FFI-8])";
 
+/// `[UNS-7]` (verdict 120) — what every caller of a thunk the importer declares makes true.
+const THUNK_SAFETY: &str = "the arguments are the objects and storage this thunk's own wrapper passes, as its C++ code reads them ([FFI-17a])";
 const UNCONTRACTED: &str = "the header states no contract: each pointer's ownership, count, nullability and lifetime are the caller's to keep ([FFI-38])";
 
 /// A function of the `unsafe extern` block: as the header declares it, uncontracted (`[FFI-38]`),
@@ -7718,7 +7720,16 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
         let _ = writeln!(text, "@borrows({from})");
     }
     let public = if hidden { "" } else { "pub " };
-    let note = if safe { String::new() } else { "  # SAFETY: the caller keeps what the header does not state".to_string() };
+    // `[FFI-11f]` — a lifetime the header's `[[clang::lifetimebound]]` states is asserted where the
+    // wrapper is unsafe, on its own line (an `unsafe fn`'s body is unsafe code, `[UNS-12]`).
+    let bound = function.result.as_ref().and_then(|ty| ty.mode.split_once(" from ")).map(|(_, from)| from.to_string()).filter(|_| !contracted);
+    let note = match (safe, &bound) {
+        (true, _) => String::new(),
+        (false, Some(from)) => format!(
+            "  # SAFETY: the caller keeps what the header does not state; its result lives as long as `{from}`, as the header's `[[clang::lifetimebound]]` states: asserted, never checked, since C++ does not enforce it [FFI-11f]"
+        ),
+        (false, None) => "  # SAFETY: the caller keeps what the header does not state".to_string(),
+    };
     let _ = writeln!(text, "{public}{}fn {name}({}){returned}:{note}", if safe { "" } else { "unsafe " }, params.join(", "));
     for local in locals.iter().chain(&given).chain(&prelude) {
         let _ = writeln!(text, "    {local}");
@@ -7759,6 +7770,8 @@ fn render_wrapper(function: &Function, entry: Option<&Entry>, renamed: Option<&S
     };
     let mut open = false;
     for (line, needs) in lines {
+        // `[UNS-12]` — an `unsafe fn`'s body is unsafe code, so only a safe wrapper's lines take a block.
+        let needs = needs && safe;
         if needs && !open {
             let _ = writeln!(text, "    unsafe:  {safety}");
         }

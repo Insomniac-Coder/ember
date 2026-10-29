@@ -211,6 +211,8 @@ The owner's verdicts below are JOB.md's 118 to 124. Each ruling here was checked
 | BLD-15 (verdict 124) | The limit is 30 minutes by default, `[link] timeout` (seconds) sets another; the error is `E9042` (new); the link's command file is kept; nothing is retried. | The hangs ran 10 to 43 minutes before they were ended; a whole `bigpkg` build takes 16.6 s, so 30 minutes ends no real link of today's programs, and a project with a longer one sets the key. A retry would hide the problem (the owner's choice). |
 | FFI-8 (verdict 123) | For an `f32`, `E5013`'s message names the one right type: "C passes `single` as an 8-byte `double` through `...`; write `single as f64`". | C never passes a `float` through `...`, so `va_arg` can only read a `double`. |
 
+**For A5-5 (recorded, not done):** the C++ importer's generated `unsafe fn` wrappers say what their callers keep in a `# SAFETY:` note at the end of their `fn` line, `W3013`'s position, and `ember tcb` reads an `unsafe fn`'s note from there; since 0.9.15_Hardened_4 their bodies hold no `unsafe:` block, so the asserted `[[clang::lifetimebound]]` lifetime moved onto that line. A5-5, which reshapes `ember tcb` (`[TCB-4]`), moves those notes into the wrappers' `@safety` and lists an `unsafe fn` by its `@safety`.
+
 **For the owner (open, not ruled):** a function imported from a header (`import c`) is declared by the
 header; verdict 120 covers declarations written in an `unsafe extern` block. Should an imported C function
 that is unsafe to call need `@safety` too (in its overlay entry), or not? Today it does not; nothing was

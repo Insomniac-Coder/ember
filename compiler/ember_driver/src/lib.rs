@@ -2285,7 +2285,7 @@ fn unsafe_blocks(block: &ember_ast::Block, out: &mut Vec<(Span, Span)>) {
                     }
                 }
             }
-            StmtKind::With { body, .. } | StmtKind::Defer(body) | StmtKind::Comptime(body) => unsafe_blocks(body, out),
+            StmtKind::With { body, .. } | StmtKind::Defer(body) | StmtKind::Safe(body) | StmtKind::Comptime(body) => unsafe_blocks(body, out),
             StmtKind::LocalFn(decl) => {
                 if let Some(body) = &decl.body {
                     unsafe_blocks(body, out);
@@ -7629,9 +7629,9 @@ fn check_safety_notes(module: &ember_ast::Module, comments: &[ember_lexer::Comme
             (ember_ast::UnsafeSiteKind::Fn { name, safety }, Some(comment)) => {
                 let remove = if comment.own_line { "remove this line" } else { "remove this note" };
                 let message = if safety {
-                    format!("`{name}` says what its callers must make true with `@safety`; a `# SAFETY:` note says why one block is sound and goes above each `unsafe:` block inside it: {remove}")
+                    format!("`{name}` says what its callers must make true with `@safety`; a `# SAFETY:` note says why an `unsafe:` block is sound: {remove}")
                 } else {
-                    format!("`{name}` says what its callers must make true with `@safety(\"...\")` above it, not with a `# SAFETY:` note, which says why one block is sound and goes above each `unsafe:` block inside it: say this in `@safety` and {remove}")
+                    format!("`{name}` should say what its callers must make true with `@safety(\"...\")` above it, not with a `# SAFETY:` note: say this in `@safety` and {remove}")
                 };
                 sink.emit(Diagnostic::warning(codes::W3013, comment.span, message));
             }

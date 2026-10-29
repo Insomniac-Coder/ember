@@ -12,8 +12,7 @@ unsafe gen fn pinned() -> Generator[int]:
     p = ref_to_ptr(ref n)
     yield 1
     n = 7
-    unsafe:  # SAFETY: `p` points at `n`, in the frame, which has not moved since `p` was made
-        yield read(p, 0)
+    yield read(p, 0)
 
 fn main():
     unsafe:  # SAFETY: the loop keeps the frame in one place from its first `next` to its last

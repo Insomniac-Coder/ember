@@ -17,7 +17,9 @@ class Counter:
     count: i32 = 0
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
+    @safety("callers pass what the C function `forget` requires")
     fn forget(id: c_int)
+    @safety("callers pass what the C function `forget_wrongly` requires")
     fn forget_wrongly(id: i64)
 
     @ffi(param(visit, callback(borrowed, user_data=data@3)))

@@ -8,6 +8,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(param(data, TODO(ownership), TODO(count), TODO(nullable)), result(TODO(ownership), TODO(count), TODO(nullable), TODO(lifetime)))
+    @safety("callers pass what the C function `find` requires")
     fn find(data: *u8, key: u8) -> *u8
 
 fn main():

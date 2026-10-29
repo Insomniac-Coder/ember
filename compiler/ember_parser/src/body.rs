@@ -222,6 +222,12 @@ impl Parser<'_> {
                 self.expect_punct(Punct::Colon);
                 StmtKind::Unsafe(self.parse_block())
             }
+            // `[UNS-12]` — `safe:` then a block; `safe: int = 0` declares a name `safe`.
+            TokenKind::Ident(name) if name.is("safe") && self.at_punct_at(1, Punct::Colon) && self.at_newline_at(2) => {
+                self.bump();
+                self.expect_punct(Punct::Colon);
+                StmtKind::Safe(self.parse_block())
+            }
             TokenKind::Keyword(Kw::Comptime) => {
                 self.bump();
                 self.expect_punct(Punct::Colon);

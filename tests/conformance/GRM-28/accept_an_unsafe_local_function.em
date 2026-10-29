@@ -12,14 +12,10 @@ fn main():
     extra = 2
     @safety("the caller guarantees `p` points to two readable bytes")
     unsafe fn read_u16_le(p: *u8) -> u16:
-        # SAFETY: the caller promised two readable bytes at `p`
-        unsafe:
-            return (p.read() as u16) | ((p.add(1).read() as u16) << 8)
+        return (p.read() as u16) | ((p.add(1).read() as u16) << 8)
     @safety("the caller guarantees `p` points to two readable bytes")
     unsafe fn read_plus_extra(p: *u8) -> int:
-        # SAFETY: the caller promised two readable bytes at `p`
-        unsafe:
-            return ((p.read() as int) | ((p.add(1).read() as int) << 8)) + extra
+        return ((p.read() as int) | ((p.add(1).read() as int) << 8)) + extra
     # SAFETY: `a` holds three bytes
     unsafe:
         println(read_u16_le(a.as_span().as_ptr()))

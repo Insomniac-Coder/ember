@@ -10,9 +10,12 @@
 # unsafe declaration as printed.
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
+    @safety("callers pass what the C function `abs` requires")
     fn abs(x: i32) -> i32
+    @safety("callers pass what the C function `find` requires")
     fn find(data: *u8, key: u8) -> *u8
     @ffi(param(text, borrowed, TODO(count)))
+    @safety("callers pass what the C function `measure` requires")
     fn measure(text: *u8) -> usize
 
 fn main():

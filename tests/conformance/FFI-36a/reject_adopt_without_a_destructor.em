@@ -19,9 +19,13 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     type Widget
     @ffi(destroys(gone), shared)    #$ error[E0104]: this is not a foreign type's contract word
     type Odd
+    @safety("callers pass what the C function `bare_new` requires")
     fn bare_new() -> *mut Bare
+    @safety("callers pass what the C function `counted_new` requires")
     fn counted_new() -> *mut Counted
+    @safety("callers pass what the C function `bare_count` requires")
     fn bare_count(n: i32) -> i32
+    @safety("callers pass what the C function `widget_free` requires")
     fn widget_free(widget: *mut Widget)
 
 fn main():
@@ -29,4 +33,4 @@ fn main():
         a = adopt(bare_new())    #$ error[E5002]: the declaration of `Bare` names no destructor
         b = adopt(null[*mut Plain]())    #$ error[E5002]: `Plain` is not a foreign type
         c = adopt(counted_new())
-    d = adopt(null[*mut Widget]())    #$ error[E3100]: `adopt(null[*mut Widget]())` (line 32) calls an `unsafe fn`, whose callers must make true what its `@safety` says
+    d = adopt(null[*mut Widget]())    #$ error[E3100]: `adopt(null[*mut Widget]())` (line 36) calls an `unsafe fn`, whose callers must make true what its `@safety` says

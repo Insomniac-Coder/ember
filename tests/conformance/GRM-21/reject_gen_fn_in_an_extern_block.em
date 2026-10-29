@@ -5,6 +5,7 @@
 ## function cannot be a generator.
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
+    @safety("callers pass what the C function `ticks` requires")
     gen fn ticks() -> i32    #$ error[E0104]: cannot be generic or a generator
 
 fn main():

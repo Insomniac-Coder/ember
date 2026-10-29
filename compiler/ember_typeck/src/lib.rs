@@ -1643,18 +1643,15 @@ struct StmtLines {
     alone: bool,
 }
 
-/// `[UNS-12]` — an `unsafe fn` whose body is being checked: its unsafe steps are its own to vouch
-/// for, each in an `unsafe:` block.
+/// `[UNS-7]`, `[UNS-12]` — an `unsafe fn` whose body is being checked, for its `L3015`: its body is
+/// unsafe code (verdict 118), and the first unsafe step it takes names what `@safety` must say.
 #[derive(Clone)]
 struct UnsafeFnBody {
     name: Symbol,
     /// Its name as declared, where its `L3015` is reported (`[UNS-7]`).
     at: Span,
-    /// The first unsafe step the body takes, inside `unsafe:` or not, which its `L3015` names.
+    /// The first unsafe step the body takes, which its `L3015` names.
     first: Option<UnsafeStep>,
-    /// `[UNS-12]` — each statement's `E3100`, by the statement's span: its place in the sink and its
-    /// primary span, checked against the sink before it is amended (`refuse_unsafe`).
-    merged: HashMap<Span, (usize, Span)>,
 }
 
 /// `[UNS-1]` — an operation that needs `unsafe`, as an `E3100` names it. A raw pointer is as
@@ -3704,8 +3701,18 @@ struct Checker<'a> {
     /// `[UNS-1]`, `[UNS-2]` — inside an `unsafe:` block, where the raw memory
     /// operations are permitted.
     in_unsafe: bool,
-    /// `[UNS-12]` — the `unsafe fn` whose body is being checked (`enter_fn_body`).
+    /// `[UNS-12]` — the `unsafe fn` whose body is being checked (`enter_fn_body`), for its `L3015`.
     unsafe_fn: Option<UnsafeFnBody>,
+    /// `[UNS-12]` — inside a `safe:` block of unsafe code, where an unsafe operation is refused again.
+    in_safe_block: bool,
+    /// `[UNS-1]` — each statement's `E3100`, by the statement's span: its place in the sink and its
+    /// primary span, checked against the sink before it is amended (`refuse_unsafe`).
+    unsafe_merged: HashMap<Span, (usize, Span)>,
+    /// `[UNS-12]` (verdict 119) — the lambda about to be made is written inside unsafe code, so it is
+    /// an `unsafe fn` value: set where a written lambda is met, taken by `synth_lambda_fresh` and handed
+    /// to its `push_closure` in `closure_made_unsafe`.
+    user_lambda_in_unsafe: bool,
+    closure_made_unsafe: bool,
     /// `[UNS-1]` — the locals a local function's name declares, whose calls are calls of it.
     local_fn_values: HashSet<LocalId>,
     /// `[UNS-7]` — the `unsafe fn`s with a body and no `@safety`, by their names' spans: each one's
@@ -4089,6 +4096,10 @@ impl<'a> Checker<'a> {
             in_defer: false,
             in_unsafe: false,
             unsafe_fn: None,
+            in_safe_block: false,
+            unsafe_merged: HashMap::new(),
+            user_lambda_in_unsafe: false,
+            closure_made_unsafe: false,
             local_fn_values: HashSet::new(),
             undocumented_unsafe: HashSet::new(),
             unsafe_fn_steps: HashMap::new(),
@@ -8530,6 +8541,7 @@ impl<'a> Checker<'a> {
         let outer_captures = self.captures.take();
         let outer_class_init = self.class_init.take();
         let outer_unsafe = std::mem::replace(&mut self.in_unsafe, false);
+        let outer_safe_block = std::mem::replace(&mut self.in_safe_block, false);
         // What runs while compiling is no step of the function it is written in.
         let outer_unsafe_fn = self.unsafe_fn.take();
         let outer_stmt = self.current_stmt.take();
@@ -8549,6 +8561,7 @@ impl<'a> Checker<'a> {
         self.captures = outer_captures;
         self.class_init = outer_class_init;
         self.in_unsafe = outer_unsafe;
+        self.in_safe_block = outer_safe_block;
         self.comptime_outer_names = outer_names;
         (value, locals)
     }
@@ -22794,26 +22807,31 @@ impl<'a> Checker<'a> {
         self.in_unsafe
     }
 
-    /// `[UNS-12]` — into a function's body, which starts outside `unsafe`: a local function's too,
-    /// though it is written inside an `unsafe:` block, since it runs wherever it is called from (as
-    /// Rust's nested `fn` does; a closure is the code around it, and keeps its `unsafe`). An `unsafe
-    /// fn`'s body is no `unsafe` context of its own, and its unsafe steps are its own (`refuse_unsafe`).
-    fn enter_fn_body(&mut self, decl: &ast::FnDecl) -> (bool, Option<UnsafeFnBody>) {
+    /// `[UNS-12]` — into a function's body. An `unsafe fn`'s body is unsafe code as a whole (verdict
+    /// 118), and a function written inside unsafe code is an `unsafe fn` (verdict 119); any other
+    /// body is safe code, a local function's in a `safe:` block too.
+    fn enter_fn_body(&mut self, decl: &ast::FnDecl) -> (bool, bool, Option<UnsafeFnBody>) {
         // The name as written: a generator's lifted body (`body`) is the `gen fn` the code names.
         let name = self
             .written_line(decl.name.span)
             .filter(|written| written.chars().all(|c| c == '_' || c.is_alphanumeric()))
             .map_or(decl.name.name, |written| Symbol::intern(&written));
-        let body = decl.is_unsafe.then(|| UnsafeFnBody { name, at: decl.name.span, first: None, merged: HashMap::new() });
-        (std::mem::replace(&mut self.in_unsafe, false), std::mem::replace(&mut self.unsafe_fn, body))
+        let is_unsafe = decl.is_unsafe || self.in_unsafe;
+        let body = is_unsafe.then(|| UnsafeFnBody { name, at: decl.name.span, first: None });
+        (
+            std::mem::replace(&mut self.in_unsafe, is_unsafe),
+            std::mem::replace(&mut self.in_safe_block, false),
+            std::mem::replace(&mut self.unsafe_fn, body),
+        )
     }
 
     /// Out of a function's body. `[UNS-7]` — an `unsafe fn` without `@safety` is `L3015`, naming the
     /// first unsafe step its body took: reported once (a generic's instances check the body again; a
     /// check rolled back takes its report with it), and not for a kept body, whose kept diagnostics
     /// hold it.
-    fn leave_fn_body(&mut self, (in_unsafe, unsafe_fn): (bool, Option<UnsafeFnBody>)) {
+    fn leave_fn_body(&mut self, (in_unsafe, in_safe_block, unsafe_fn): (bool, bool, Option<UnsafeFnBody>)) {
         self.in_unsafe = in_unsafe;
+        self.in_safe_block = in_safe_block;
         let left = std::mem::replace(&mut self.unsafe_fn, unsafe_fn);
         if let Some(body) = left
             && !self.skip_bodies
@@ -22824,7 +22842,7 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// `[UNS-7]` — `step` is one of the body's unsafe steps, inside `unsafe:` or not: the first names
+    /// `[UNS-7]` — `step` is one of the body's unsafe steps: the first names
     /// an `unsafe fn` without `@safety` in its `L3015`.
     fn note_unsafe_step(&mut self, step: &UnsafeStep) {
         if let Some(body) = &mut self.unsafe_fn
@@ -22891,41 +22909,31 @@ impl<'a> Checker<'a> {
         Some(StmtLines { first, last, alone })
     }
 
-    /// `[UNS-1]`, `[UNS-12]` — `step`, at `span`, is outside an `unsafe:` block. In an `unsafe fn`'s
-    /// body a statement's steps are one `E3100`, which says they are the function's own and gives the
-    /// block to write, with what each step's own refusal adds. Elsewhere `refusal` is reported with the
-    /// block to write, and a call says what its callers must make true. Outside a function's body no
-    /// block can be written, and `refusal` is reported as it is.
+    /// `[UNS-1]`, `[UNS-12]` — `step`, at `span`, is outside unsafe code. A statement's steps are one
+    /// `E3100`: the first is reported with its own refusal and the block to write, and each further step
+    /// of that statement amends it to name them together. In a `safe:` block of unsafe code the message
+    /// says so, with both ways out. A call says what its callers must make true. Outside a function's
+    /// body no block can be written, and `refusal` is reported as it is.
     fn refuse_unsafe(&mut self, span: Span, step: UnsafeStep, refusal: Diagnostic) {
         let (Some(line), Some(lines), Some(stmt)) = (self.line_of(span), self.stmt_lines(), self.current_stmt) else {
             self.sink.emit(refusal);
             return;
         };
-        if let Some((name, merged)) = self.unsafe_fn.as_ref().map(|body| (body.name, body.merged.get(&stmt).copied())) {
-            let end = self.sink.mark();
-            // The statement's diagnostic, while it is in the sink (a check rolled back takes it).
-            let kept = merged.filter(|&(at, primary)| {
-                self.sink.diagnostics().get(at).is_some_and(|earlier| earlier.code == Some(codes::E3100) && earlier.primary.span == primary)
-            });
-            let (at, primary) = match kept {
-                Some(kept) => kept,
-                None => {
-                    // A check rolled back may have left steps at this span: this diagnostic starts afresh.
-                    self.unsafe_fn_steps.insert(span, Vec::new());
-                    self.sink.emit(Diagnostic::error(codes::E3100, span, String::new()));
-                    if let Some(body) = &mut self.unsafe_fn {
-                        body.merged.insert(stmt, (end, span));
-                    }
-                    (end, span)
-                }
-            };
+        // The statement's diagnostic, while it is in the sink (a check rolled back takes it).
+        let kept = self.unsafe_merged.get(&stmt).copied().filter(|&(at, primary)| {
+            self.sink.diagnostics().get(at).is_some_and(|earlier| earlier.code == Some(codes::E3100) && earlier.primary.span == primary)
+        });
+        if let Some((at, primary)) = kept {
             let steps = self.unsafe_fn_steps.entry(primary).or_default();
-            if !steps.iter().any(|(already, _)| *already == span) {
-                steps.push((span, step));
+            if steps.iter().any(|(already, _)| *already == span) {
+                return;
             }
-            let message = own_unsafe_steps(name, lines, steps);
+            steps.push((span, step));
+            let message = unsafe_steps(lines, steps, self.in_safe_block);
+            let advice = unsafe_block_to_write(lines, "it is sound");
             self.sink.amend(at, |diagnostic| {
                 diagnostic.message = message;
+                diagnostic.helps.retain(|help| *help != advice);
                 for help in refusal.helps {
                     if !diagnostic.helps.contains(&help) {
                         diagnostic.helps.push(help);
@@ -22939,7 +22947,25 @@ impl<'a> Checker<'a> {
             });
             return;
         }
-        let call = match (&step, self.written_line(span)) {
+        let at = self.sink.mark();
+        self.unsafe_fn_steps.insert(span, vec![(span, step.clone())]);
+        self.unsafe_merged.insert(stmt, (at, span));
+        let written = self.written_line(span);
+        if self.in_safe_block {
+            let what = written.map_or_else(|| "this unsafe step".to_string(), |written| format!("`{written}`"));
+            let mut diagnostic = Diagnostic::error(
+                codes::E3100,
+                span,
+                format!(
+                    "{what} (line {line}) is in a `safe:` block, which is checked as safe code; move it out of the `safe:` block, or {}",
+                    unsafe_block_to_write(lines, "it is sound")
+                ),
+            );
+            diagnostic.notes = refusal.notes;
+            self.sink.emit(diagnostic);
+            return;
+        }
+        let call = match (&step, written) {
             (UnsafeStep::Call { callee, kind }, Some(written)) if *kind != CallKind::Other => {
                 // A call the code does not spell (a `for` loop's `iter`, an operator's method) is named by
                 // its callee.
@@ -24422,7 +24448,7 @@ impl<'a> Checker<'a> {
                 ast::StmtKind::Assign { targets, .. }
                     if !targets.iter().any(Self::rooted_at_self) => {}
                 ast::StmtKind::Decl { .. } | ast::StmtKind::Expr(_) | ast::StmtKind::LocalFn(_) => {}
-                ast::StmtKind::Unsafe(body) => self.validate_class_init_shape(body, span),
+                ast::StmtKind::Unsafe(body) | ast::StmtKind::Safe(body) => self.validate_class_init_shape(body, span),
                 ast::StmtKind::If(if_stmt) => {
                     self.validate_class_init_shape(&if_stmt.then_block, span);
                     match if_stmt.else_block.as_deref() {
@@ -26682,15 +26708,45 @@ impl<'a> Checker<'a> {
             // only permits `[UNS-1]`'s operations, which are refused
             // everywhere else.
             ast::StmtKind::Unsafe(block) => {
-                // `[UNS-3]` — each statement's need of `unsafe` is recorded by `check_stmt`.
-                let statements: Vec<Span> = block.stmts.iter().map(|statement| statement.span).collect();
-                for span in &statements {
-                    self.unsafe_statements.entry(*span).or_insert(false);
+                if self.in_unsafe {
+                    // `[UNS-3]`, `[UNS-12]` — inside unsafe code already, the block adds nothing.
+                    let within = self.unsafe_fn.as_ref().map_or_else(
+                        || "inside another `unsafe:` block".to_string(),
+                        |body| format!("in `{}`, an `unsafe fn`, whose body is unsafe code", body.name),
+                    );
+                    self.sink.emit(
+                        Diagnostic::lint(codes::L3010, stmt.span, format!("this `unsafe:` block is {within}, so it adds nothing"))
+                            .help("remove `unsafe:` and keep its statements [UNS-3], [UNS-12]"),
+                    );
+                } else {
+                    // `[UNS-3]` — each statement's need of `unsafe` is recorded by `check_stmt`.
+                    let statements: Vec<Span> = block.stmts.iter().map(|statement| statement.span).collect();
+                    for span in &statements {
+                        self.unsafe_statements.entry(*span).or_insert(false);
+                    }
+                    self.unsafe_blocks.insert(stmt.span, statements);
                 }
-                self.unsafe_blocks.insert(stmt.span, statements);
                 let was = std::mem::replace(&mut self.in_unsafe, true);
+                let was_safe = std::mem::replace(&mut self.in_safe_block, false);
                 let checked = self.check_block(block);
                 self.in_unsafe = was;
+                self.in_safe_block = was_safe;
+                out.push(Stmt::Block(checked));
+            }
+            // `[UNS-12]` (verdict 118) — `safe:` inside unsafe code: its code is checked as safe code.
+            ast::StmtKind::Safe(block) => {
+                if !self.in_unsafe {
+                    self.sink.emit(
+                        Diagnostic::lint(codes::L3020, stmt.span, "this `safe:` block is not inside unsafe code, so it changes nothing")
+                            .help("remove `safe:` and keep its statements [UNS-12]"),
+                    );
+                }
+                let inside = self.in_unsafe;
+                let was = std::mem::replace(&mut self.in_unsafe, false);
+                let was_safe = std::mem::replace(&mut self.in_safe_block, inside);
+                let checked = self.check_block(block);
+                self.in_unsafe = was;
+                self.in_safe_block = was_safe;
                 out.push(Stmt::Block(checked));
             }
             ast::StmtKind::Defer(block) => {
@@ -36922,7 +36978,11 @@ impl<'a> Checker<'a> {
             // it lowers to a synthesised function and becomes a `[FN-6]`
             // value. A capturing one is a unique anonymous struct implementing
             // `Callable`; it needs an environment and is the next slice.
-            ast::ExprKind::Lambda(lambda) => self.synth_lambda(lambda, expected, span),
+            ast::ExprKind::Lambda(lambda) => {
+                // `[UNS-12]` — a lambda written in unsafe code (one the compiler makes is not written).
+                self.user_lambda_in_unsafe = self.in_unsafe && expr.id != ast::NodeId::DUMMY;
+                self.synth_lambda(lambda, expected, span)
+            }
 
             ast::ExprKind::Lit(lit) => self.synth_literal(lit, span),
 
@@ -40417,9 +40477,10 @@ impl<'a> Checker<'a> {
                 .collect(),
             ret,
             abi: None,
-            // `[GRM-28]`, `[UNS-1]` — an `unsafe` local function: its value is an `unsafe` callable
-            // (`[FN-6]`), each call needs `unsafe`, and its body vouches block by block (`[UNS-12]`).
-            is_unsafe: decl.is_unsafe,
+            // `[GRM-28]`, `[UNS-1]` — an `unsafe` local function, or one written in unsafe code (`[UNS-12]`,
+            // verdict 119): its value is an `unsafe` callable (`[FN-6]`), each call needs `unsafe`, and its
+            // body is unsafe code.
+            is_unsafe: decl.is_unsafe || self.in_unsafe,
             overflow: self.active_overflow,
             fp: self.active_fp,
             borrows: None,
@@ -40427,7 +40488,8 @@ impl<'a> Checker<'a> {
         });
         // A stateless `fn` type: the parameter types and the result, with
         // none of the copy-capture a stored callable value would ask for.
-        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, send: false, params: param_tys, ret });
+        let is_unsafe = decl.is_unsafe || self.in_unsafe;
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe, send: false, params: param_tys, ret });
         let lambda = ast::Lambda {
             is_owned: false,
             params: decl.params.clone(),
@@ -40488,13 +40550,14 @@ impl<'a> Checker<'a> {
             params: named.clone(),
             ret,
             abi: None,
-            is_unsafe: decl.is_unsafe,
+            is_unsafe: decl.is_unsafe || self.in_unsafe,
             overflow: self.active_overflow,
             fp: self.active_fp,
             borrows: None,
             generics: Vec::new(),
         });
-        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe: false, send: false, params: param_tys, ret });
+        let is_unsafe = decl.is_unsafe || self.in_unsafe;
+        let expected = self.types.intern(TyKind::Fn { once: false, abi: None, latebound: false, stateless: true, is_unsafe, send: false, params: param_tys, ret });
         let lambda = ast::Lambda {
             is_owned: false,
             params: decl.params.clone(),
@@ -40590,7 +40653,7 @@ impl<'a> Checker<'a> {
             env_mode,
             generic,
             failed,
-            is_unsafe: decl.is_unsafe,
+            is_unsafe: decl.is_unsafe || self.in_unsafe,
             built: HashSet::new(),
             span,
         });
@@ -40709,9 +40772,10 @@ impl<'a> Checker<'a> {
             item_spans: self.reachable_item_spans(),
         };
         self.local_fn_self.push(LocalFnSelf { name: entry.name, def, depth: self.lambda_depth + 1, env: Some(entry.env_mode), probing: false });
-        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, false);
+        let outer_unsafe = std::mem::replace(&mut self.in_unsafe, entry.is_unsafe);
+        let outer_safe_block = std::mem::replace(&mut self.in_safe_block, false);
         let earlier = self.sink.take();
-        let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, at: entry.span, first: None, merged: HashMap::new() });
+        let own_unsafe = entry.is_unsafe.then(|| UnsafeFnBody { name: entry.name, at: entry.span, first: None });
         let outer_unsafe_fn = std::mem::replace(&mut self.unsafe_fn, own_unsafe);
         let (body, _, locals, _) = self.check_lambda_body(
             &entry.lambda,
@@ -40736,6 +40800,7 @@ impl<'a> Checker<'a> {
             self.sink.emit(diagnostic.note(format!("in `{}` used with {used_with}", entry.name)));
         }
         self.in_unsafe = outer_unsafe;
+        self.in_safe_block = outer_safe_block;
         self.local_fn_self.pop();
         self.type_params = saved_type_params;
         self.push_closure(
@@ -41649,7 +41714,11 @@ impl<'a> Checker<'a> {
     /// which for a capturing one is its environment and not the hint at all.
     fn synth_with_hint(&mut self, expr: &ast::Expr, hint: Ty) -> Expr {
         match &expr.kind {
-            ast::ExprKind::Lambda(lambda) => self.synth_lambda(lambda, Some(hint), expr.span),
+            ast::ExprKind::Lambda(lambda) => {
+                // `[UNS-12]` — a lambda written in unsafe code is an `unsafe fn` value.
+                self.user_lambda_in_unsafe = self.in_unsafe && expr.id != ast::NodeId::DUMMY;
+                self.synth_lambda(lambda, Some(hint), expr.span)
+            }
             _ => self.synth_committed(expr),
         }
     }
@@ -43481,7 +43550,8 @@ impl<'a> Checker<'a> {
     /// `unsafe fn` carries it: without it, `L3015`, which names the first unsafe
     /// step of a body once that is checked (`leave_fn_body`).
     fn check_safety_attribute(&mut self, attrs: &[ast::Attribute], decl: &ast::FnDecl) {
-        let is_unsafe = decl.is_unsafe;
+        // `[UNS-12]` — a function written in unsafe code is an `unsafe fn` (verdict 119).
+        let is_unsafe = decl.is_unsafe || self.in_unsafe;
         // A malformed `@safety` is its own error, not an `L3015` as well.
         let mut written = false;
         for attr in attrs.iter().filter(|attr| attr.path.len() == 1 && attr.path[0].name.is("safety")) {
@@ -43504,8 +43574,9 @@ impl<'a> Checker<'a> {
                     "`@safety` text still reads `TODO`"));
             }
         }
-        // A foreign declaration is no `unsafe fn` written: its `unsafe extern` block vouches for it.
-        if is_unsafe && !written && !decl.is_foreign_decl {
+        // `[UNS-7]` — a C function declared in an `unsafe extern` block carries `@safety` too (verdict
+        // 120); one declared `safe fn` is no `unsafe fn`.
+        if is_unsafe && !written && !decl.is_safe {
             if decl.body.is_some() {
                 self.undocumented_unsafe.insert(decl.name.span);
             } else {
@@ -46267,11 +46338,9 @@ impl<'a> Checker<'a> {
             let refused = self.unsafe_step(span, step,
                 Diagnostic::error(codes::E3100, span, format!("`{}` through a raw pointer needs an `unsafe` block", name.name))
                     .note("`[UNS-1]` lists the operations that do"));
-            // In an `unsafe fn` a refused step is typed on, so that the statement's other steps are named
-            // with it (`p.add(1).read()` reads through `p`); elsewhere its own refusal says enough.
-            if refused && self.unsafe_fn.is_none() {
-                return error;
-            }
+            // A refused step is typed on, so that the statement's other steps are named with it
+            // (`p.add(1).read()` reads through `p`) in its one `E3100` (`[UNS-1]`).
+            let _ = refused;
             let usize_ty = self.common.usize;
             let zero = Expr { ty: usize_ty, kind: ExprKind::Int(0), span };
             return match name.name.as_str() {
@@ -48319,6 +48388,7 @@ impl<'a> Checker<'a> {
             && let Some(value) = self.lambda_values.get(&span)
             && (value.ty == expected || self.types.item_shape(value.ty) == Some(expected))
         {
+            self.user_lambda_in_unsafe = false;
             return value.clone();
         }
         let errors = self.sink.error_count();
@@ -48653,6 +48723,7 @@ impl<'a> Checker<'a> {
     }
 
     fn synth_lambda_fresh(&mut self, lambda: &ast::Lambda, expected: Option<Ty>, span: Span, reserved: Option<DefId>) -> Expr {
+        let made_unsafe = std::mem::take(&mut self.user_lambda_in_unsafe) && reserved.is_none();
         let number = self.closure_tag();
         let skipped_before = self.skipped_instances;
         // ODR-278 — a function item expected (a generic's argument checked again) is its shape.
@@ -48803,6 +48874,7 @@ impl<'a> Checker<'a> {
             let (body, body_ty, locals, _) =
                 self.check_lambda_body(lambda, &params, ret, watch, None);
             let ret = ret.unwrap_or(body_ty);
+            self.closure_made_unsafe = made_unsafe;
             let def = self.push_closure(&params, ret, locals, body, None, span, number, skipped_before, reserved);
             let is_unsafe = self.signatures[def.0 as usize].is_unsafe;
             let ty = self.types.intern(TyKind::Fn {
@@ -49019,6 +49091,7 @@ impl<'a> Checker<'a> {
         } else {
             Mode::Borrow
         };
+        self.closure_made_unsafe = made_unsafe;
         let def = self.push_closure(
             &params,
             ret,
@@ -49540,7 +49613,8 @@ impl<'a> Checker<'a> {
         {
             self.opaque_lambdas.insert(def);
         }
-        let is_unsafe = reserved.is_some_and(|def| self.signatures.get(def.0 as usize).is_some_and(|signature| signature.is_unsafe));
+        let is_unsafe = std::mem::take(&mut self.closure_made_unsafe)
+            || reserved.is_some_and(|def| self.signatures.get(def.0 as usize).is_some_and(|signature| signature.is_unsafe));
         let signature = Signature { decl: span,
             params: signature_params,
             ret,
@@ -56797,18 +56871,22 @@ impl<'a> Checker<'a> {
             }).collect();
             format!("{short}({})", shown.join(", "))
         };
-        let promoted = |c_type: &str, converted: String| Some((
+        // Verdict 123 — what C passes, and the sizes the function may read: never one type guessed.
+        let promoted = |c_type: &str, choice: String| Some((
             true,
-            format!("C passes `{name}` as {c_type} through `...`; if `{short}` reads another type, convert it first: `{}`", call(&converted)),
+            format!("C passes `{name}` as {c_type} through `...`; {choice}"),
             "what passes is decided by C's default argument promotions, and what is read by the C function's `va_arg`".to_string(),
         ));
+        let _ = call;
+        let sizes = |value: &str| format!("write the size `{short}` expects: `{value} as c_int` for 4 bytes, or `{value} as i64` for 8");
         match self.types.kind(ty) {
             TyKind::Int(IntTy::I32 | IntTy::I64 | IntTy::Isize) | TyKind::Uint(UintTy::U32 | UintTy::U64 | UintTy::Usize)
             | TyKind::Float(FloatTy::F64) | TyKind::CLongDouble | TyKind::Ptr { .. } | TyKind::CStr | TyKind::Fn { abi: Some(_), .. } => None,
             // A `bool` is no number to `as`: the help passes the C integer it stands for.
-            TyKind::Bool => promoted("an `int`", format!("(1 if {name} else 0) as c_int")),
-            TyKind::Int(IntTy::I8 | IntTy::I16) | TyKind::Uint(UintTy::U8 | UintTy::U16) => promoted("an `int`", format!("{name} as i64")),
-            TyKind::Float(FloatTy::F32) => promoted("a `double`", format!("{name} as f64")),
+            TyKind::Bool => promoted("a 4-byte `int`", sizes(&format!("(1 if {name} else 0)"))),
+            TyKind::Int(IntTy::I8 | IntTy::I16) | TyKind::Uint(UintTy::U8 | UintTy::U16) => promoted("a 4-byte `int`", sizes(&name)),
+            // C never passes a `float` through `...`: `va_arg` can only read the `double`.
+            TyKind::Float(FloatTy::F32) => promoted("an 8-byte `double`", format!("write `{name} as f64`")),
             // `[FFI-31b]` — no `char` crosses to C; its scalar value does.
             TyKind::Char => Some((
                 false,
@@ -60369,7 +60447,7 @@ fn statement_count(block: &ast::Block) -> usize {
                         ast::MatchArmBody::Expr(_) => 1,
                     })
                     .sum(),
-                ast::StmtKind::With { body, .. } | ast::StmtKind::Defer(body) | ast::StmtKind::Unsafe(body) | ast::StmtKind::Comptime(body) => {
+                ast::StmtKind::With { body, .. } | ast::StmtKind::Defer(body) | ast::StmtKind::Unsafe(body) | ast::StmtKind::Safe(body) | ast::StmtKind::Comptime(body) => {
                     statement_count(body)
                 }
                 _ => 0,
@@ -60480,7 +60558,7 @@ impl ShareWalk<'_> {
                 }
                 self.block(body);
             }
-            ast::StmtKind::Defer(block) | ast::StmtKind::Unsafe(block) | ast::StmtKind::Comptime(block) => self.block(block),
+            ast::StmtKind::Defer(block) | ast::StmtKind::Unsafe(block) | ast::StmtKind::Safe(block) | ast::StmtKind::Comptime(block) => self.block(block),
             ast::StmtKind::LocalFn(function) => {
                 for param in &function.params {
                     if let ast::ParamKind::Named { name, ty } = &param.kind {
@@ -61015,11 +61093,12 @@ fn undocumented_unsafe(name: Symbol, first: Option<&UnsafeStep>) -> String {
     format!("`{name}` is an `unsafe fn`{does}, and nothing says what its callers must make true{that}; say it above the function: `@safety(\"...\")`{with}")
 }
 
-/// `[UNS-12]` — the `E3100` of the statement on `lines` of the `unsafe fn` `name`, whose unsafe steps
-/// there are `steps`: "the reads through `p` on line 4 are this function's own unsafe steps, …". A
+/// `[UNS-1]` — the `E3100` of the statement on `lines`, whose unsafe steps outside unsafe code are
+/// `steps`: "the reads through `p` on line 9 are unsafe steps outside unsafe code, …", or, in a
+/// `safe:` block of unsafe code, "… are in a `safe:` block, which is checked as safe code; …". A
 /// pointer's reads and writes say what its offsets are for, so those are named only when it has
 /// neither.
-fn own_unsafe_steps(name: Symbol, lines: StmtLines, steps: &[(Span, UnsafeStep)]) -> String {
+fn unsafe_steps(lines: StmtLines, steps: &[(Span, UnsafeStep)], in_safe_block: bool) -> String {
     fn plural(count: usize, word: &str) -> String {
         if count == 1 { word.to_string() } else { format!("{word}s") }
     }
@@ -61086,11 +61165,17 @@ fn own_unsafe_steps(name: Symbol, lines: StmtLines, steps: &[(Span, UnsafeStep)]
         [(_, _, noun)] => format!("the {noun} is safe"),
         _ => "each step is safe".to_string(),
     };
-    let (is, own, they) = if count == 1 { ("is", "step", "it is") } else { ("are", "steps", "they are") };
+    let (is, own, they, it) = if count == 1 { ("is", "step", "it is", "it") } else { ("are", "steps", "they are", "them") };
     let place = if lines.first == lines.last { format!("line {}", lines.first) } else { format!("lines {} to {}", lines.first, lines.last) };
+    if in_safe_block {
+        return format!(
+            "{what} on {place} {is} in a `safe:` block, which is checked as safe code; move {it} out of the `safe:` \
+             block, or {}",
+            unsafe_block_to_write(lines, &why)
+        );
+    }
     format!(
-        "`{name}` is an `unsafe fn`, which says its callers must vouch; {what} on {place} {is} this function's own \
-         unsafe {own}, and nothing says why {they} sound; {}",
+        "{what} on {place} {is} unsafe {own} outside unsafe code, and nothing says why {they} sound; {}",
         unsafe_block_to_write(lines, &why)
     )
 }
@@ -62935,6 +63020,7 @@ fn assignments_in_block(block: &ast::Block, loops: &mut Vec<Span>, out: &mut Vec
             ast::StmtKind::With { body, .. }
             | ast::StmtKind::Defer(body)
             | ast::StmtKind::Unsafe(body)
+            | ast::StmtKind::Safe(body)
             | ast::StmtKind::Comptime(body) => assignments_in_block(body, loops, out),
             // A local function's body is a closure's: its assignments are
             // not the enclosing block's.

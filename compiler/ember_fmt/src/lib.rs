@@ -1014,6 +1014,10 @@ impl Printer<'_> {
                 self.line("unsafe:");
                 self.block(block);
             }
+            ast::StmtKind::Safe(block) => {
+                self.line("safe:");
+                self.block(block);
+            }
             // `[GRM-28]` — printed as any function is; the catch-all would
             // flatten its body as it once did `unsafe:`'s.
             ast::StmtKind::LocalFn(decl) => self.function("", decl),

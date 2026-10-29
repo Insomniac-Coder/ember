@@ -10,6 +10,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(effects=[Alloc, Panic])
+    @safety("callers pass what the C function `strdup` requires")
     fn strdup(text: *u8) -> *u8
     safe fn rand() -> i32
     @ffi(effects=[])

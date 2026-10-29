@@ -6,6 +6,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(link_name="two words")  #$ error[E0104]: `two words` is not a symbol a linker takes
+    @safety("callers pass what the C function `magnitude` requires")
     fn magnitude(x: i32) -> i32
 
 fn main():

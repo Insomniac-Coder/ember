@@ -670,6 +670,8 @@ pub enum StmtKind {
     With { items: Vec<WithItem>, body: Block },
     Defer(Block),
     Unsafe(Block),
+    /// `[UNS-12]` — `safe:` inside unsafe code: its code is checked as safe code.
+    Safe(Block),
     Comptime(Block),
     /// `[GRM-28]` — `fn name(…):` inside a block: a local function, which is
     /// a named closure (`[CLO-12]`).

@@ -28,6 +28,7 @@ unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definiti
     safe fn given() -> c_int
     @ffi(param(hook, callback(retained, user_data=data), nullable), destroys(unsubscribe), link_name="subscribe")
     safe fn subscribe(hook: Option[extern "C" fn(*mut void, c_int) -> c_int], data: *mut void) -> c_int
+    @safety("callers pass what the C function `unsubscribe` requires")
     fn unsubscribe(id: c_int)
     @ffi(link_name="fire")
     safe fn fire(value: c_int) -> c_int

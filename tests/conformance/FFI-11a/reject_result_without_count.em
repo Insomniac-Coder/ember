@@ -5,6 +5,7 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(result(borrowed, from(static)))
+    @safety("callers pass what the C function `inspect` requires")
     fn inspect(dataLen: usize) -> *i32
 
 fn main():

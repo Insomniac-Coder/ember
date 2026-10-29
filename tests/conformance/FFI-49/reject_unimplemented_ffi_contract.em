@@ -8,10 +8,13 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(ownership="transfer")    #$ error[E0104]: `ownership` is not a contract word of `@ffi`
+    @safety("callers pass what the C function `acquire` requires")
     fn acquire() -> i32
     @ffi(handle)    #$ error[E5002]: `handle` is a word of a type's contract, not a function's
+    @safety("callers pass what the C function `on_main` requires")
     fn on_main() -> i32
     @ffi(param(p, borrowed, one, forever))    #$ error[E0104]: `forever` is not a contract word of `@ffi`
+    @safety("callers pass what the C function `first` requires")
     fn first(p: *i32) -> i32
 
 fn main():

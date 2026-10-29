@@ -318,7 +318,7 @@ impl Writer<'_> {
                 }
                 self.lift_block(body, enclosing);
             }
-            ast::StmtKind::Defer(block) | ast::StmtKind::Unsafe(block) | ast::StmtKind::Comptime(block) => {
+            ast::StmtKind::Defer(block) | ast::StmtKind::Unsafe(block) | ast::StmtKind::Safe(block) | ast::StmtKind::Comptime(block) => {
                 self.lift_block(block, enclosing);
             }
             ast::StmtKind::LocalFn(decl) => {
@@ -1053,7 +1053,7 @@ impl Rewriter<'_> {
                 self.block(block);
                 self.deferred = outer;
             }
-            ast::StmtKind::Unsafe(block) => self.block(block),
+            ast::StmtKind::Unsafe(block) | ast::StmtKind::Safe(block) => self.block(block),
         }
     }
 

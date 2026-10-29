@@ -338,7 +338,7 @@ codes! {
     E3070 = (Error, 3070, Ownership, "[DRP-1]", "`drop` cannot be called explicitly");
     E3080 = (Error, 3080, Ownership, "[EXC-3]", "overlapping access through the same handle");
     E3090 = (Error, 3090, Ownership, "[ARN-3]", "arena allocation of a type that needs `drop`");
-    E3100 = (Error, 3100, Ownership, "[UNS-1], [UNS-12], [ALC-2], [ARN-8], [FFI-51], [FFI-26], [FFI-54], [FFI-56]", "an unsafe operation outside an `unsafe:` block, an `unsafe fn` body and `into_raw()` included; `Send` declared by hand without `unsafe extend`");
+    E3100 = (Error, 3100, Ownership, "[UNS-1], [UNS-12], [ALC-2], [ARN-8], [FFI-51], [FFI-26], [FFI-54], [FFI-56]", "an unsafe operation outside unsafe code (in a `safe:` block included), `into_raw()` included; `Send` declared by hand without `unsafe extend`");
     // `[UNS-10b]` forbids `UnsafeCell` in `@static_safe` code. The type checker
     // emits this for direct, nested, and body-local uses of the primitive.
     E3105 = (Error, 3105, Ownership, "[UNS-10]", "`UnsafeCell` in `@no_alias_checks` code");
@@ -365,7 +365,7 @@ codes! {
 
     // --- FFI -----------------------------------------------------------------
     E5001 = (Error, 5001, Ffi, "[FFI-5]", "imported type layout does not match");
-    E5010 = (Error, 5010, Ffi, "[FFI-12], [FFI-55]", "overlay does not match the C declaration; an overlay applied to a header other than the one it was written for (its hash differs)");
+    E5010 = (Error, 5010, Ffi, "[FFI-12], [FFI-55]", "overlay does not match the C declaration; a declaration an overlay describes differs from the one `ember.overlays` records, or the package has no record of the overlay");
     E5020 = (Error, 5020, Ffi, "[FFI-15]", "`StrView` is not NUL-terminated");
     E5030 = (Error, 5030, Ffi, "[FFI-17a]", "`std::function` as a parameter");
     E5040 = (Error, 5040, Ffi, "[FFI-21]", "capturing closure passed where a C function pointer is expected");
@@ -462,6 +462,7 @@ codes! {
     E9036 = (Error, 9036, Build, "[HR-29]", "a reloadable package may not link the runtime statically");
     E9037 = (Error, 9037, Build, "[ABI-1]", "reload ABI mismatch on image load");
     E9041 = (Error, 9041, Build, "[TYP-9c]", "the toolchain cannot honour `@fastmath` or `@fp(…)` for a function");
+    E9042 = (Error, 9042, Build, "[BLD-15]", "a link ran past its time limit");
 
     // --- warnings --------------------------------------------------------------
     W0001 = (Warning, 1, Lex, "[LEX-11]", "dangling doc comment");
@@ -495,7 +496,7 @@ codes! {
     L2002 = (Lint, 2002, Types, "[LNT-6]", "large `Copy` value passed by value");
     L3001 = (Lint, 3001, Ownership, "[WK-1]", "potential reference cycle");
     L3002 = (Lint, 3002, Ownership, "[LNT-6]", "a view kept in use longer than necessary");
-    L3010 = (Lint, 3010, Ownership, "[UNS-3]", "`unsafe` block larger than necessary");
+    L3010 = (Lint, 3010, Ownership, "[UNS-3]", "`unsafe` block larger than necessary, or inside unsafe code already");
     L4001 = (Lint, 4001, Effects, "[LNT-6]", "allocation in a hot loop");
     L4002 = (Lint, 4002, Effects, "[LNT-6]", "dynamic dispatch on a final type");
     L4003 = (Lint, 4003, Effects, "[LNT-6]", "large `Array[int]`/`Array[float]` in a hot loop whose values fit 32 bits");
@@ -509,6 +510,7 @@ codes! {
     L3015 = (Lint, 3015, Ownership, "[UNS-7]", "an `unsafe fn` with no `@safety`");
     L3016 = (Lint, 3016, Ownership, "[UNS-7]", "`@safety` text still reads `TODO`");
     L3017 = (Lint, 3017, Ownership, "[WK-4]", "a loop of owners found leaked at exit (made through `unsafe` or foreign code)");
+    L3020 = (Lint, 3020, Ownership, "[UNS-12]", "a `safe:` block outside unsafe code, which changes nothing");
     L3018 = (Lint, 3018, Ownership, "[UNS-9]", "`unsafe` block with no reason category");
 }
 

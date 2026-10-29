@@ -9,10 +9,13 @@
 
 unsafe extern "C":  # SAFETY(ffi): each declaration below matches its C definition
     @ffi(unsafe, link_name="abs")
+    @safety("callers pass what the C function `raw_abs` requires")
     fn raw_abs(x: i32) -> i32
     @ffi(param(p, unsafe))
+    @safety("callers pass what the C function `peek` requires")
     fn peek(p: *i32) -> i32
     @ffi(result(unsafe))
+    @safety("callers pass what the C function `first` requires")
     fn first() -> *i32
     @ffi(unsafe, link_name="labs")    #$ error[E5002]: `unsafe` leaves the call unsafe
     safe fn safe_abs(x: i32) -> i32
