@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# The README's full benchmark run, from Git Bash on the Windows laptop: the Windows set (MSVC,
-# then clang, on the performance cores), then a Linux copy of the compiler in WSL and the gcc
-# set. Every step is on mains power or the run stops. Logs go to build/bench/logs/; the WSL copy
-# and its builds are deleted at the end. Then, if the run is the README's: copy the logs to
-# bench/results/ and run bench/update_readme.py on them (see bench/README.md).
+# The README's full benchmark run, from Git Bash on the Windows laptop: the Windows set (the C
+# backend with MSVC, then with clang, then the LLVM backend, on the performance cores), then a Linux
+# copy of the compiler in WSL and the gcc set. Every step is on mains power or the run stops. Logs go
+# to build/bench/logs/; the WSL copy and its builds are deleted at the end. Then, if the run is the
+# README's: copy the logs to bench/results/ and run bench/update_readme.py on them (see
+# bench/README.md).
 set -u
 cd "$(dirname "$0")/.."
 stamp=$(date +%Y-%m-%d)

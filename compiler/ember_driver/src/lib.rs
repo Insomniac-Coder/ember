@@ -6048,11 +6048,11 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             inspect: [safety_table(&safety_json, &safety_functions, &safety_costs), counts_json(&bodies, &types, &map)],
             simd_report: &simd_report,
             engine,
-            // `[BLD-4]` (ODR-244) — as the C backend's: a `debug` or `development` program a unit
-            // per module; a test instrumented, or a reloadable program, one.
+            // `[BLD-4]` (ODR-244) — as the C backend's: a `debug` program a unit per module; a test
+            // instrumented, or a reloadable program, one.
             units: (options.emit.is_none()
                 && !library
-                && options.profile != Profile::Release
+                && options.profile == Profile::Debug
                 && !(command == "test" && options.ffi_evidence.is_some())
                 && reload_image.is_none())
             .then(|| module_units(&modules, &bodies)),
@@ -6064,13 +6064,14 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         };
         return llvm::build(request, options, &mut sink);
     }
-    // `[BLD-4]` (ODR-244) — a `debug` or `development` program is written one C unit per module, so
-    // a build compiles again only the units whose text changed; a `release` one is one unit, which
-    // the C compiler optimises across (the program ships at its speed). `[FFI-37]` — an
-    // instrumented test is one unit: its call sites are numbered across the whole program.
+    // `[BLD-4]` (ODR-244, the owner) — a `debug` program is written one C unit per module, so a
+    // build compiles again only the units whose text changed; a `development` or `release` one is
+    // one unit, which the C compiler optimises across (`development` is the optimised build a
+    // program is measured with; `release` ships at its speed). `[FFI-37]` — an instrumented test is
+    // one unit: its call sites are numbered across the whole program.
     let instrumented = command == "test" && options.ffi_evidence.is_some();
     let unit_plan: Option<Vec<(String, std::collections::BTreeSet<String>)>> =
-        (options.emit.is_none() && !library && options.profile != Profile::Release && !instrumented)
+        (options.emit.is_none() && !library && options.profile == Profile::Debug && !instrumented)
             .then(|| module_units(&modules, &bodies));
     // ODR-281 — each module's unit is written as soon as it is made (only when it changed, `[BLD-4]`)
     // and not held: the program's C is never in memory at once. A program with nothing to build
@@ -6763,7 +6764,11 @@ fn rewrite_calls_checks_and_loops(
     // `[TYP-8]` — a recursive sum (`fib(n - 1) + fib(n - 2)`) whose values are never negative runs
     // its last call as a loop's turn into a running total, every addition still checked
     // (`ember_analysis::accumulate`).
-    if mir.pass("accumulating recursive sums", types, |bodies, types| ember_analysis::accumulate::accumulate_recursive_sums_all(bodies, types, common, !tuned_for_msvc(options))) > 0 {
+    // Not for gcc, which does better with the written recursion (`a10_recursion`, development:
+    // 3 ms as written, 38 ms and 52 ms as either loop, the C twin 31 ms).
+    if !tuned_for_gcc(options)
+        && mir.pass("accumulating recursive sums", types, |bodies, types| ember_analysis::accumulate::accumulate_recursive_sums_all(bodies, types, common, !tuned_for_msvc(options))) > 0
+    {
         mir.pass("callable region summaries", types, |bodies, types| ember_analysis::install_callable_regions_all(bodies, types));
     }
     // `[RNG-4]` — on the final checks: remove every check the range facts

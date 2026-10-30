@@ -5,13 +5,14 @@
 #$ stdout: 55
 #$ assert-c-count: contains("ember_ck_sub_i64(") == 0
 #$ assert-c-count: contains("ember_ck_sub_u32(") == 0
-#$ assert-c-count: contains("ember_ck_add_i64(") == 2
+#$ assert-c: contains("ember_ck_add_i64(")
 # `[RNG-4]` — past `if n < 2: return`, `n` is at least 2, so `n - 1` and
 # `n - 2` cannot overflow and carry no check; `fib(..) + fib(..)` depends on
-# the results and keeps its check, twice in an optimised build, where `fib`
-# runs as a loop adding into a running total (`ember_analysis::accumulate`):
-# the turn's addition and the return's. In `countdown`, `i < n` makes `n - i`
-# at least 1: no check, where `total + ..` keeps one (`ember_ck_add_u32(`).
+# the results and keeps its check (twice where an optimised build runs `fib`
+# as a loop adding into a running total, `ember_analysis::accumulate`: the
+# turn's addition and the return's; not with gcc). In `countdown`, `i < n`
+# makes `n - i` at least 1: no check, where `total + ..` keeps one
+# (`ember_ck_add_u32(`).
 
 fn fib(n: int) -> int:
     if n < 2:

@@ -1270,7 +1270,7 @@ fn help_lists_every_command_and_flag_of_the_specification() {
     assert!(missing.is_empty(), "`ember --help` omits {missing:?}:\n{shown}");
 }
 
-/// `[BLD-4]` (ODR-244) — a `debug` or `development` program is written one C unit per module
+/// `[BLD-4]` (ODR-244) — a `debug` program is written one C unit per module
 /// (`<stem>.c`, and `<stem>.m.<module>.c` for each module): the text of the unit in `c_dir` that
 /// holds `definition`.
 fn unit_defining(c_dir: &Path, stem: &str, definition: &str) -> String {
@@ -3875,6 +3875,8 @@ fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
 /// ADR-099 — behind the tests of the classes a program knows, an interface
 /// call's table search is the runtime's out-of-line one: the inline search
 /// is a loop, and a loop inside the caller's kept gcc from unrolling it.
+/// `[DSP-3]` — the LLVM backend tries the same classes by their type
+/// information first, each called through its own table.
 #[test]
 fn a_devirtualised_interface_call_searches_out_of_line() {
     let root = workspace_root();
@@ -3885,6 +3887,11 @@ fn a_devirtualised_interface_call_searches_out_of_line() {
     let inline = format!("{}(", ember_branding::runtime("itable_lookup"));
     assert!(c.stdout.contains(&out_of_line), "the fallback is not out of line:\n{}", c.stdout);
     assert!(!c.stdout.contains(&inline), "an inline table search remains:\n{}", c.stdout);
+    let ir = ember(&["build", &source, "--backend", "llvm", "--emit", "llvm-ir", "--profile", "development"], &root);
+    assert_eq!(ir.exit, 0, "IR failed:\n{}", ir.stderr);
+    assert!(ir.stdout.contains("icmp eq ptr") && ir.stdout.contains(&format!("@{}ti_", ember_branding::mangle_prefix())), "no class is tried by its type information:\n{}", ir.stdout);
+    assert!(ir.stdout.contains(&format!("call ptr @{out_of_line}")), "the LLVM backend's fallback is not out of line:\n{}", ir.stdout);
+    assert!(!ir.stdout.contains("call ptr @ember.itable_lookup("), "an inline table search remains in the IR:\n{}", ir.stdout);
 }
 
 /// D-579 — `[LEX-1]`, `[LEX-2]`: a source file that is not UTF-8 is `E0001`, whether it
@@ -7526,27 +7533,30 @@ fn main():
 /// whose values may be negative runs as written: of
 /// `TYP-8/accept_a_recursive_sum_run_as_a_loop_gives_what_it_did_as_written`, which checks that each
 /// gives what it did, `fib`, `total`, `ways` (unsigned) and `traced` are loops and `shifted` is not.
+/// With gcc, which does better with the written recursion, none is a loop.
 #[test]
 fn a_recursive_sum_never_negative_runs_as_a_loop() {
     let root = workspace_root();
     let program = format!("tests/conformance/TYP-8/accept_a_recursive_sum_run_as_a_loop_gives_what_it_did_as_written.{SOURCE_EXT}");
-    let mir = ember(&["build", &program, "--emit", "mir", "--profile", "release"], &root);
-    assert_eq!(mir.exit, 0, "MIR failed:
-{}", mir.stderr);
-    let body = |name: &str| -> String {
-        let header = format!("fn {}:
-", ember_branding::item_symbol(name));
-        let Some(at) = mir.stdout.find(&header) else { return String::new() };
-        mir.stdout[at + header.len()..].split("
-fn ").next().unwrap_or_default().to_string()
+    // The MIR the backend is given, and of it the body of the function `name`.
+    let bodies = |backend: &[&str]| -> Box<dyn Fn(&str) -> String> {
+        let mir = ember(&[&["build", program.as_str(), "--emit", "mir", "--profile", "release"][..], backend].concat(), &root);
+        assert_eq!(mir.exit, 0, "MIR failed ({backend:?}):\n{}", mir.stderr);
+        Box::new(move |name: &str| {
+            let header = format!("fn {}:\n", ember_branding::item_symbol(name));
+            let Some(at) = mir.stdout.find(&header) else { return String::new() };
+            mir.stdout[at + header.len()..].split("\nfn ").next().unwrap_or_default().to_string()
+        })
     };
+    let body = bodies(&["--backend", "llvm"]);
     for name in ["fib", "total", "ways", "traced"] {
-        assert!(body(name).contains("// Temp total"), "`{name}` does not run as a loop:
-{}", body(name));
+        assert!(body(name).contains("// Temp total"), "`{name}` does not run as a loop:\n{}", body(name));
     }
     let shifted = body("shifted");
-    assert!(!shifted.is_empty() && !shifted.contains("// Temp total"), "`shifted`, which returns negative values, runs as a loop:
-{shifted}");
+    assert!(!shifted.is_empty() && !shifted.contains("// Temp total"), "`shifted`, which returns negative values, runs as a loop:\n{shifted}");
+    let with_gcc = bodies(&["--backend", "c", "--cc", "gcc"]);
+    let fib = with_gcc("fib");
+    assert!(!fib.is_empty() && !fib.contains("// Temp total"), "`fib` runs as a loop with gcc:\n{fib}");
 }
 
 /// D-474 — a body instantiated from `std` (a generic function's instance, a

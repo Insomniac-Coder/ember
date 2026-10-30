@@ -2,8 +2,8 @@
 
 usage: python bench/update_readme.py <gcc log> <windows log> [more windows logs]
   A Windows log holds each set with MSVC, then with clang, then with the LLVM backend: a program's
-  first line is MSVC's, its second clang's, its third the LLVM backend's. A later Windows log overrides an earlier one's programs (a disturbed row timed
-  again alone). Writes docs/benchmarks/{as-fast-as-c,close-to-c,slower-than-c}.svg and the
+  first line is MSVC's, its second clang's, its third the LLVM backend's. A later Windows log
+  overrides an earlier one's programs (a disturbed row timed again alone). Writes docs/benchmarks/{as-fast-as-c,close-to-c,slower-than-c}.svg and the
   "More than 10% slower than C" sentence in README.md. A program goes in the table of its slowest
   compiler: under x1.05, x1.05 to x1.10, over x1.10."""
 import html

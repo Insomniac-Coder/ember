@@ -82,7 +82,7 @@ pub struct Options<'a> {
     /// `[FFI-37]` — an instrumented test (`ember test --instrument-ffi`): each call to a foreign
     /// function counted at its site.
     pub instrument_ffi: bool,
-    /// `[BLD-4]` (ODR-244) — a `debug` or `development` program as a unit per module, as the C
+    /// `[BLD-4]` (ODR-244) — a `debug` program as a unit per module, as the C
     /// backend writes it: each unit's name and the bodies it defines (`Output::units`); this module
     /// defines the rest, and the entry.
     pub units: Option<&'a [(String, BTreeSet<String>)]>,

@@ -31,6 +31,10 @@ pub(crate) struct Adapter {
     pub implementations: Vec<Option<(String, ParameterMode)>>,
 }
 
+/// `[DSP-3]` — at most this many classes are tried by their type information before an interface
+/// call searches the tables (the C backend's `MAX_DEVIRTUALISED`).
+const MAX_DEVIRTUALISED: usize = 4;
+
 /// What the whole program's MIR says about dispatch, gathered before any body is written.
 #[derive(Clone, Default)]
 pub(crate) struct Dispatch {
@@ -623,9 +627,41 @@ impl<'a> FnCx<'_, 'a> {
         Ok(())
     }
 
+    /// `[DSP-3]` — the classes of this program that implement `interface` (the only one a call
+    /// names), when there are at most `MAX_DEVIRTUALISED` and each has the slot: each one's type
+    /// information and its table, as the C backend tries them (`interface_implementers`). None in a
+    /// reloadable image, where a reload may add a class.
+    fn interface_implementers(&mut self, identity: &str, slot: usize) -> Result<Vec<(String, String)>> {
+        if self.m.reload.is_some() {
+            return Ok(Vec::new());
+        }
+        let classes: Vec<ClassId> = self.m.ty.table.runtime_classes().map(|(id, _)| id).collect();
+        let mut known = Vec::new();
+        for id in classes {
+            let Some((_, concrete)) = self.m.dispatch.class_itable_entries(self.m, id).into_iter().find(|(name, _)| name == identity) else {
+                continue;
+            };
+            let has_slot = self
+                .m
+                .dispatch
+                .adapters
+                .get(&(identity.to_string(), concrete_name(self.m, concrete)))
+                .is_some_and(|adapter| adapter.implementations.get(slot).is_some_and(Option::is_some));
+            if !has_slot || known.len() == MAX_DEVIRTUALISED {
+                return Ok(Vec::new());
+            }
+            let info = global_name(&crate::glue::type_info(self.m, id));
+            known.push((info, adapter_table(self.m, concrete, identity)?));
+        }
+        Ok(known)
+    }
+
     /// `[TYP-22]`, `[DSP-3]` — a call through an interface's table: a class-interface handle's,
     /// found through its type information (`ember_itable_lookup`, reproduced), or a `dyn`
-    /// carrier's own.
+    /// carrier's own. A class handle's object is first tried against the program's few classes
+    /// that implement the interface (`interface_implementers`), each called through its own
+    /// table, a constant the optimiser reads and inlines through, as the C backend's tests are;
+    /// the search, the runtime's out-of-line one behind them, stays for any other class.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn interface_call(
         &mut self,
@@ -654,9 +690,41 @@ impl<'a> FnCx<'_, 'a> {
                 handle = self.load(Sc::Ptr, &handle, 8);
             }
             let marker = interface_id(self.m, &self::identity(self.m, &[interface]));
-            let lookup = itable_lookup(self.m);
             let info_at = self.gep(&handle, 16);
             let info = self.load(Sc::Ptr, &info_at, 8);
+            let known = if interfaces.len() == 1 { self.interface_implementers(&identity, slot)? } else { Vec::new() };
+            if !known.is_empty() {
+                values.push(Val::Imm(Sc::Ptr, handle));
+                for argument in &args[1..] {
+                    values.push(self.operand(argument)?);
+                }
+                let mut signature = vec![Param::Ptr];
+                signature.extend(params.iter().map(|ty| Param::Ty(*ty)));
+                let dest = dest.as_ref().map(|(ptr, align)| (ptr.as_str(), *align));
+                let offset = slot_offset(self.m, &identity, slot);
+                let done = self.label();
+                for (type_info, table) in known {
+                    let (hit, next) = (self.label(), self.label());
+                    let same = self.value(format!("icmp eq ptr {info}, {type_info}"));
+                    self.emit(format!("br i1 {same}, label %{hit}, label %{next}"));
+                    self.start(&hit);
+                    let entry_at = self.gep(&table, offset);
+                    let entry = self.load(Sc::Ptr, &entry_at, 8);
+                    self.call_c(&entry, Some(ret), &signature, values.clone(), dest);
+                    self.emit(format!("br label %{done}"));
+                    self.start(&next);
+                }
+                let found = self.alloca(8, 8);
+                self.call_rt("itable_lookup_slow", vec![Val::Imm(Sc::Ptr, info), Val::Imm(Sc::Ptr, marker)], Some((&found, 8)));
+                let table = self.load(Sc::Ptr, &found, 8);
+                let entry_at = self.gep(&table, offset);
+                let entry = self.load(Sc::Ptr, &entry_at, 8);
+                self.call_c(&entry, Some(ret), &signature, values, dest);
+                self.emit(format!("br label %{done}"));
+                self.start(&done);
+                return Ok(());
+            }
+            let lookup = itable_lookup(self.m);
             let table = self.value(format!("call ptr {lookup}(ptr {info}, ptr {marker})"));
             (handle, table)
         } else {
