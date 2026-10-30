@@ -1,19 +1,25 @@
 # Ember — handoff
 
-> **2026-10-30, day — the owner is here. START HERE.** The owner's order (asked "at what point do you think we
+> **2026-10-30, evening — the owner is here. START HERE.** The owner's order (asked "at what point do you think we
 > will be able to start with implementing the spec?": "no go in order"):
-> 1. **LLVM the default backend, and the README's benchmarks with an LLVM column** (owner: "yes, could you add it
->    to readme benchmarks too?"). Switched, nine things the C backend's build did were missing from the LLVM
->    backend's; the owner chose to build them first ("a"). All built: `tasks/96/redesign/compiler-0.9.15/decisions.md`
->    "The LLVM backend the default". Full suite green with the default and with `EMBER_BACKEND=c`. Still to do:
->    the Linux run in WSL (scratchpad `llvm_gate.sh`: the GDB printers are new), the commit, the README bench
->    (`bench/run_windows.py`, `CCS=msvc,clang,llvm`, and the WSL gcc run), the push gate's bench for both backends.
-> 2. Push `main` (every unpushed commit) after the full check and the bench; one CI look.
-> 3. A new hardening (Hardened_6) for verdicts 132-135; its intro must stop calling LLVM "planned" (H5 line 154).
-> 4. The compiler and tests for verdicts 132-135, and the effect error's caret.
-> 5. Back to M1 on branch `m1` (below).
-> - The README's phase 5 figure was out of date before today (29%; the evidence gives 26% at `origin/main`
->   already); the next commit's `--write` corrects it, and the pinned spec lines (H4 -> H5).
+> 1. **Done: LLVM the default backend** (`6693188d`; decisions.md "The LLVM backend the default": the nine things
+>    the C backend's build did, built first, the owner's "a"), **and the README's benchmarks with its column**
+>    (`0cabc3af`). The README run found D-932 (a `development` build split per module; ODR-244 splits only
+>    `debug`; fixed, the owner's "go ahead"), the LLVM backend's interface calls without `[DSP-3]`'s class tests,
+>    and the recursive-sum loop slower with gcc (`0b9926f4`). Not yet looked into: `a06_enum_match` with clang
+>    1.00 -> 1.10 and `t5_words` with MSVC 0.87 -> 1.03 since 2026-10-16.
+> 2. **The link hang found (D-933, `87aa1905`):** MSVC's linker livelocks in Intel's TBB allocator during link-time
+>    code generation, 14.44 and 14.51 alike, about once in 10,000 links held to one core; `ember bench` now
+>    builds unpinned. The dumps are in `target/m1/hang-caught` (the owner may report it to Microsoft). Ember's MSVC
+>    search looks only at VS 2022 and 2019 (`ember_build` `find_vcvars`): VS 18 is never found.
+> 3. Push `main` (the full check, both backends, and the bench gate, both backends, are green; the CI spec job's
+>    steps all pass locally: last night's push failed it on the README's stale phase table, fixed in `6693188d`);
+>    one CI look.
+> 4. A new hardening (Hardened_6) for verdicts 132-135; its intro must stop calling LLVM "planned" (H5 line 154).
+> 5. The compiler and tests for verdicts 132-135, and the effect error's caret.
+> 6. Back to M1 on branch `m1` (below).
+> - The laptop went down at 16:30: the night's power watcher, still running, hibernated it when the Wi-Fi changed
+>   name. The watcher runs only unattended now, and never on a network name (memory).
 
 > **2026-10-30, night — AUTONOMOUS (owner asleep).** Owner: "now you work autonomously, keep an eyes on
 > power source and wifi connection if any of those change you wait for 5 minutes and hibernate the laptop and in the
