@@ -242,6 +242,9 @@ impl Toolchain {
                     .filter(|path| path.is_file())
                     .map_or_else(|| name.to_string(), |path| path.display().to_string())
             }
+            // Clang on Windows links with `lld-link` where it is found (link-time optimisation and
+            // `clang_windows_debug_flags` ask for it), else with Microsoft's `link.exe`.
+            Toolchain::Clang(_) if cfg!(windows) => self.lld().map_or_else(|| "link.exe".to_string(), |path| path.display().to_string()),
             Toolchain::Clang(_) | Toolchain::Gcc(_) => {
                 let named = output_started(compiler_command(self).arg("-print-prog-name=ld")).ok()
                     .filter(|output| output.status.success())
@@ -317,7 +320,9 @@ impl Toolchain {
             Some("bundled") => Self::find_bundled().ok_or(BuildError::NoToolchain("bundled")),
             Some("msvc") => Self::find_msvc().ok_or(BuildError::NoToolchain("msvc")),
             Some("clang-cl") => Self::find_clang_cl().ok_or(BuildError::NoToolchain("clang-cl")),
-            Some("clang") => Self::find_on_path("clang")
+            // `[TOOL-2]` — the archive's Clang before one on `PATH` (the LLVM backend's, `[CG-LL-1]`).
+            Some("clang") => Self::bundled_clang()
+                .or_else(|| Self::find_on_path("clang"))
                 .map(Toolchain::Clang)
                 .ok_or(BuildError::NoToolchain("clang")),
             Some("gcc") => Self::find_on_path("gcc")
@@ -348,6 +353,12 @@ impl Toolchain {
             let clang = bin.join("clang");
             clang.is_file().then_some(Toolchain::Clang(clang))
         }
+    }
+
+    /// `[TOOL-2]` — the archive's Clang driver itself, `clang` (beside its `clang-cl` on Windows).
+    fn bundled_clang() -> Option<PathBuf> {
+        let clang = bundled_dir()?.join("llvm").join("bin").join(if cfg!(windows) { "clang.exe" } else { "clang" });
+        clang.is_file().then_some(clang)
     }
 
     /// `[RT-12]` — the toolchain, if it can probe the stack: MSVC and clang-cl probe by default, and so
@@ -1056,6 +1067,8 @@ fn compile_and_link_impl(
             }
             command.args(ir_flags(request.sources));
             command.args(pgo_flags(toolchain));
+            let (debug_compile, debug_link) = clang_windows_debug_flags(toolchain, request.profile);
+            command.args(debug_compile).args(debug_link);
             folder_names(&mut command, request.sources, request.include_dirs);
             let section_flags = executable_section_flags(toolchain, retained_symbols.is_some());
             command.args(section_flags);
@@ -2067,6 +2080,7 @@ pub fn vectorisation_report(
         Toolchain::Clang(_) => {
             command.args(gnu_flags(profile)).args(gcc_flags(toolchain, profile));
             command.args(["-Rpass=loop-vectorize", "-Rpass-missed=loop-vectorize", "-Rpass-analysis=loop-vectorize", "-c"]);
+            command.args(ir_flags(&[source]));
             for dir in include_dirs { command.arg("-I").arg(dir); }
             command.arg(source).arg("-o").arg(&object);
         }
@@ -2169,8 +2183,15 @@ fn folder_names(command: &mut Command, sources: &[PathBuf], include_dirs: &[Path
 }
 
 fn folder_name_flags(sources: &[PathBuf], include_dirs: &[PathBuf]) -> Vec<String> {
+    folder_flags(sources, include_dirs, true)
+}
+
+/// `folder_name_flags`, with the working folder only when `current`: a compile from absolute paths
+/// alone (the runtime's) reads nothing through it, and its object is then the same wherever the
+/// program is built.
+fn folder_flags(sources: &[PathBuf], include_dirs: &[PathBuf], current: bool) -> Vec<String> {
     let mut folders: Vec<(PathBuf, String)> = Vec::new();
-    if let Ok(current) = std::env::current_dir() {
+    if current && let Ok(current) = std::env::current_dir() {
         folders.push((current, ".".to_string()));
     }
     for source in sources {
@@ -2375,6 +2396,21 @@ pub(crate) fn clang_windows_runtime(toolchain: &Toolchain) -> Option<&'static st
     })
 }
 
+/// `[BLD-13]` — Clang's driver on Windows, where a build writes debug information, as clang-cl
+/// does it: the compile's flags, then the link's. No command line or working folder in the
+/// CodeView (`folder_names` names the folders), and the link by LLVM's `lld-link` where it is
+/// found (`Toolchain::linker`), which writes the objects' paths into the program database relative
+/// to a stated folder. Microsoft's linker, Clang's default there, writes them absolute, from its
+/// own working folder, and hashes them into `/Brepro`'s time stamp: the same program built in two
+/// folders would differ.
+pub(crate) fn clang_windows_debug_flags(toolchain: &Toolchain, profile: Profile) -> (&'static [&'static str], &'static [&'static str]) {
+    if !(cfg!(windows) && matches!(toolchain, Toolchain::Clang(_)) && profile != Profile::Release) {
+        return (&[], &[]);
+    }
+    let compile: &'static [&'static str] = &["-gno-codeview-command-line", "-fdebug-compilation-dir=."];
+    if toolchain.lld().is_some() { (compile, &["-fuse-ld=lld", "-Wl,/pdbsourcepath:."]) } else { (compile, &[]) }
+}
+
 /// `[CG-LL-1]` — the LLVM backend's module among a compile's units: Clang compiles it for its own
 /// target (the module names none), and it reads none of the C flags the command shares.
 pub(crate) fn ir_flags<P: AsRef<Path>>(sources: &[P]) -> &'static [&'static str] {
@@ -2563,7 +2599,9 @@ fn runtime_object_impl(
             if inherited_gnu_lto().is_none() {
                 command.args(lto_compile_flags(toolchain, lto, Link::Here));
             }
-            folder_names(&mut command, &[source.to_path_buf()], include_dirs);
+            // `[BLD-13]` — one object wherever the program is built: a program database names it.
+            command.args(clang_windows_debug_flags(toolchain, profile).0);
+            command.args(folder_flags(&[source.to_path_buf()], include_dirs, false));
             for dir in include_dirs {
                 command.arg("-I").arg(dir);
             }

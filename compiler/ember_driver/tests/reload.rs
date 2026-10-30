@@ -22,10 +22,11 @@ struct Run {
     exit: i32,
 }
 
-/// `[CG-LL-1]` — the backend these tests build with: the C backend, or the one `EMBER_BACKEND`
-/// names (`llvm`), as `tasks/impl-0.9.9/annotations.py` takes it.
+/// `[CG-LL-1]` — the backend these tests build with when it is not the C backend: the one
+/// `EMBER_BACKEND` names, else LLVM, the default, as `tasks/impl-0.9.9/annotations.py` takes it.
 fn backend() -> Option<String> {
-    std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty() && backend != "c")
+    let named = std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty());
+    Some(named.unwrap_or_else(|| "llvm".to_string())).filter(|backend| backend != "c")
 }
 
 /// `ember` with `args` in `cwd`; a build or a run with the backend `backend()` names, unless it
@@ -1715,7 +1716,7 @@ fn an_exports_c_abi_is_the_same_under_every_protocol() {
     ] {
         let (package, file) = package("abi-export", manifest, source);
         let out = package.join("target");
-        let built = ember(&["build", "--emit", "c", "--profile", profile, &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
+        let built = ember(&["build", "--backend", "c", "--emit", "c", "--profile", profile, &file.to_string_lossy(), "--out-dir", &out.to_string_lossy()], &root);
         assert_eq!(built.exit, 0, "{profile}, reload {reloadable}:\n{}", built.stderr);
         let c = std::fs::read_to_string(out.join(profile).join("c").join("main.c")).expect("the program's C");
         let declaration = c.lines().find(|line| line.starts_with("int64_t game_frame(") && line.ends_with(");"))

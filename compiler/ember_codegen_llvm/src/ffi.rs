@@ -676,6 +676,9 @@ impl<'a> FnCx<'_, 'a> {
             (abi::classify(self.m.ty.target, result_shape.as_ref(), &shapes), global_name(&counted.foreign_symbol))
         };
         declare_named(self.m, &counted.foreign_symbol, &callee, &sig);
+        if let Some(ffi) = self.m.ffi.as_mut() {
+            ffi.declared.insert(counted.foreign_symbol.clone(), callee.clone());
+        }
         let values: Vec<(Val, u64, u64)> = values.into_iter().zip(&shapes).map(|(value, shape)| (value, shape.size(), shape.align())).collect();
         let (result_size, result_align) = match &result_shape {
             Some(shape) => (shape.size(), shape.align()),
@@ -921,4 +924,42 @@ fn class_method(m: &mut Module<'_>, method: &ember_codegen_c::MethodExport) -> R
             None => cx.call_body(&symbol, arguments, dest),
         }
     })
+}
+
+/// `[FFI-37]` — an instrumented test's foreign functions: each callee symbol's index, each
+/// function's name and the symbol whose address names its library, and the call sites so far, as
+/// the C backend numbers them; the IR's name for a C function a counted wrapper declares.
+pub(crate) struct FfiInstrument {
+    index: std::collections::BTreeMap<String, u32>,
+    pub functions: Vec<(String, String)>,
+    pub sites: Vec<(u32, String)>,
+    pub declared: std::collections::BTreeMap<String, String>,
+}
+
+impl FfiInstrument {
+    pub(crate) fn new(bodies: &[Body]) -> FfiInstrument {
+        let mut index = std::collections::BTreeMap::new();
+        let mut functions = Vec::new();
+        for body in bodies.iter().filter(|body| body.contracts.foreign.is_some()) {
+            let address = match &body.ffi_counted {
+                Some(counted) => counted.foreign_symbol.clone(),
+                None => body.symbol.clone(),
+            };
+            index.insert(body.symbol.clone(), functions.len() as u32);
+            functions.push((body.name.clone(), address));
+        }
+        FfiInstrument { index, functions, sites: Vec::new(), declared: std::collections::BTreeMap::new() }
+    }
+
+    /// Whether a call to `symbol` is counted.
+    pub(crate) fn counts(&self, symbol: &str) -> bool {
+        self.index.contains_key(symbol)
+    }
+
+    /// The next call site, of `symbol` at `place`: its function's number and its own.
+    pub(crate) fn site(&mut self, symbol: &str, place: String) -> Option<(u32, usize)> {
+        let function = *self.index.get(symbol)?;
+        self.sites.push((function, place));
+        Some((function, self.sites.len() - 1))
+    }
 }

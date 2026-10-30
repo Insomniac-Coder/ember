@@ -107,6 +107,8 @@ pub(crate) const MODULE_INIT_ABI_MISMATCH: u32 = 4;
 /// pointers (`alloc`, `free`, `log`, `on_panic`), then its `flags`, padded to 48 bytes.
 pub(crate) mod config {
     pub(crate) const SIZE: u64 = 48;
+    pub(crate) const ALLOC: u64 = 8;
+    pub(crate) const FREE: u64 = 16;
     pub(crate) const ON_PANIC: u64 = 32;
     pub(crate) const FLAGS: u64 = 40;
     /// `EMBER_RT_DEBUG_OBJECTS`

@@ -27,6 +27,53 @@ pub(crate) struct Debug {
     /// Each type's description, and each basic one's by name.
     types: HashMap<Ty, usize>,
     basics: HashMap<String, usize>,
+    /// `[CG-C-9]` — the described types the visualisers show as Ember values (`visualisers.rs`).
+    pub shown: Vec<Shown>,
+}
+
+/// `[CG-C-9]` — a described type the visualisers show as an Ember value, by the name the debug
+/// information gives it (`name`) and its Ember name (`ember`).
+pub(crate) enum Shown {
+    /// A struct, a tuple, or a class's object (`class`: what its handles point at), by its fields.
+    Fields { name: String, ember: String, fields: Vec<String>, tuple: bool, class: bool },
+    /// An enum with payloads: `tag`, and each variant's payload fields under `payload.<variant>`.
+    Enum { name: String, ember: String, variants: Vec<(i128, String, Vec<String>)> },
+}
+
+/// `[CG-LL-3]` — the name the debug information gives a type: its Ember name; in CodeView, the
+/// way C++ writes a template's (`Array<i64>`, a tuple `tuple$<i64,bool>`, a path `geometry::Square`),
+/// the only names Visual Studio's visualisers can match, as Rust's debug information for Windows
+/// writes its own.
+pub(crate) fn debug_name(target: Target, ember: &str) -> String {
+    if target != Target::Win64 {
+        return ember.to_string();
+    }
+    let mut out = String::with_capacity(ember.len());
+    // Each open parenthesis: a tuple's, or a function type's parameters (after its name).
+    let mut tuples = Vec::new();
+    let mut chars = ember.chars().peekable();
+    let mut after_name = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '[' => out.push('<'),
+            ']' => out.push('>'),
+            '(' => {
+                tuples.push(!after_name);
+                out.push_str(if after_name { "(" } else { "tuple$<" });
+            }
+            ')' => out.push(if tuples.pop().unwrap_or(false) { '>' } else { ')' }),
+            ',' => {
+                out.push(',');
+                if chars.peek() == Some(&' ') {
+                    chars.next();
+                }
+            }
+            '.' => out.push_str("::"),
+            _ => out.push(c),
+        }
+        after_name = c.is_alphanumeric() || c == '_';
+    }
+    out
 }
 
 impl Debug {
@@ -39,8 +86,10 @@ impl Debug {
             full,
             types: HashMap::new(),
             basics: HashMap::new(),
+            shown: Vec::new(),
         };
-        let main = map.files().next().map(|file| file.path.display().to_string().replace('\\', "/")).unwrap_or_else(|| module_name.to_string());
+        // `[BLD-13]` — by its path in its package, as every other file is (`file`).
+        let main = map.files().next().map(|file| map.artefact_path(file.id)).unwrap_or_else(|| module_name.to_string());
         let (directory, name) = split(&main);
         let file = debug.node(format!("!DIFile(filename: \"{}\", directory: \"{}\")", escape(name.as_bytes()), escape(directory.as_bytes())));
         let kind = if full { "FullDebug" } else { "LineTablesOnly" };
@@ -120,6 +169,12 @@ impl Debug {
 
     /// A structure named `name` of `size` bytes holding `members` (name, type, offset in bytes).
     fn structure(&mut self, at: usize, name: &str, size: u64, members: &[(String, usize, u64, u64)]) {
+        self.composite(at, "DW_TAG_structure_type", name, size, members);
+    }
+
+    /// A composite type, `tag` (a structure or a union), named `name`, of `size` bytes holding
+    /// `members` (name, type, size and offset in bytes).
+    fn composite(&mut self, at: usize, tag: &str, name: &str, size: u64, members: &[(String, usize, u64, u64)]) {
         let mut elements = Vec::with_capacity(members.len());
         for (member, ty, size, offset) in members {
             elements.push(self.node(format!(
@@ -131,22 +186,25 @@ impl Debug {
         }
         let elements: Vec<String> = elements.iter().map(|element| format!("!{element}")).collect();
         self.nodes[at] = format!(
-            "distinct !DICompositeType(tag: DW_TAG_structure_type, name: \"{}\", size: {}, elements: !{{{}}})",
+            "distinct !DICompositeType(tag: {tag}, name: \"{}\", size: {}, elements: !{{{}}})",
             escape(name.as_bytes()),
             size * 8,
             elements.join(", ")
         );
     }
 
-    /// `[CG-LL-3]` — the description of `ty`, by its Ember name: a number by its width and
-    /// signedness, a reference or pointer as a pointer, a list or view by its words, a struct,
-    /// tuple or class object by its fields, an enum without payloads by its variants.
+    /// `[CG-LL-3]` — the description of `ty`, by its Ember name (`debug_name`): a number by its
+    /// width and signedness, a reference or pointer as a pointer, a list or view by its words, a
+    /// struct, tuple or class object by its fields, an enum without payloads by its variants, one
+    /// with payloads by its `tag` and the union of its variants' payloads, as the C backend lays
+    /// them out, and an `Option` with a niche as its payload (`[TYP-13]`).
     pub(crate) fn describe(&mut self, types: &Types<'_>, ty: Ty) -> usize {
         if let Some(node) = self.types.get(&ty) {
             return *node;
         }
         let table = types.table;
-        let name = table.display(ty).to_string();
+        let ember = table.display(ty).to_string();
+        let name = debug_name(types.target, &ember);
         let (size, _) = types.size_align(ty);
         let bits = size * 8;
         let node = match table.kind(ty).clone() {
@@ -177,7 +235,11 @@ impl Debug {
                     }
                 }
                 let object_size = members.iter().map(|(_, _, size, offset)| offset + size).max().unwrap_or(types.header);
-                self.structure(object, &table.class_def(id).name.to_string(), object_size, &members);
+                let ember = table.class_display_name(id);
+                let name = debug_name(types.target, &ember);
+                self.structure(object, &name, object_size, &members);
+                let fields = members.into_iter().map(|(field, ..)| field).collect();
+                self.shown.push(Shown::Fields { name, ember, fields, tuple: false, class: true });
                 return at;
             }
             TyKind::Enum(id) if table.enum_def(id).is_unit_only() => {
@@ -195,11 +257,51 @@ impl Debug {
                     elements.join(", ")
                 ))
             }
+            TyKind::Enum(id) if let Some(niche) = table.option_niche(id) => {
+                let node = self.describe(types, niche.payload);
+                self.types.insert(ty, node);
+                return node;
+            }
+            TyKind::Enum(id) => {
+                let at = self.node(String::new());
+                self.types.insert(ty, at);
+                let def = table.enum_def(id).clone();
+                let payload_at = table.layout(ty).field_offsets.get(1).copied().unwrap_or(0);
+                let tag = self.describe(types, def.repr);
+                let (tag_size, _) = types.size_align(def.repr);
+                let mut variants = Vec::new();
+                let mut shown = Vec::new();
+                for (variant, offsets) in def.variants.iter().zip(table.variant_field_offsets(id)) {
+                    let mut members = Vec::new();
+                    for (field, offset) in variant.fields.iter().zip(offsets) {
+                        let (field_size, _) = types.size_align(field.ty);
+                        if field_size > 0 {
+                            let described = self.describe(types, field.ty);
+                            members.push((field.name.to_string(), described, field_size, offset - payload_at));
+                        }
+                    }
+                    let variant_size = members.iter().map(|(_, _, size, offset)| offset + size).max().unwrap_or(0);
+                    // Named by its enum too: CodeView finds a structure's layout by its name.
+                    let node = self.node(String::new());
+                    self.structure(node, &debug_name(types.target, &format!("{ember}.{}", variant.name)), variant_size, &members);
+                    shown.push((variant.discriminant, variant.name.to_string(), members.iter().map(|(field, ..)| field.clone()).collect()));
+                    variants.push((variant.name.to_string(), node, variant_size, 0));
+                }
+                let payload_size = variants.iter().map(|(_, _, size, _)| *size).max().unwrap_or(0);
+                let payload = self.node(String::new());
+                self.composite(payload, "DW_TAG_union_type", &debug_name(types.target, &format!("{ember}.payload")), payload_size, &variants);
+                let members = vec![("tag".to_string(), tag, tag_size, 0), ("payload".to_string(), payload, payload_size, payload_at)];
+                self.structure(at, &name, size, &members);
+                self.shown.push(Shown::Enum { name, ember, variants: shown });
+                return at;
+            }
             kind => {
                 let at = self.node(String::new());
                 self.types.insert(ty, at);
                 let word = self.basic("u64", 64, "DW_ATE_unsigned");
                 let byte = self.basic("u8", 8, "DW_ATE_unsigned");
+                let shown_fields = matches!(kind, TyKind::Struct(_) | TyKind::Tuple(_));
+                let tuple = matches!(kind, TyKind::Tuple(_));
                 let members: Vec<(String, usize, u64, u64)> = match kind {
                     TyKind::Struct(id) => {
                         let offsets = table.layout(ty).field_offsets;
@@ -242,6 +344,10 @@ impl Debug {
                     _ => Vec::new(),
                 };
                 self.structure(at, &name, size, &members);
+                if shown_fields {
+                    let fields = members.into_iter().map(|(field, ..)| field).collect();
+                    self.shown.push(Shown::Fields { name, ember, fields, tuple, class: false });
+                }
                 return at;
             }
         };

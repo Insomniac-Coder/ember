@@ -130,7 +130,7 @@ fn ffi_callback_entry(symbol: &str, index: usize) -> String {
     format!("{symbol}_cb{index}")
 }
 
-fn ffi_instrument_source() -> String {
+pub fn ffi_instrument_source() -> String {
     include_str!("ffi_instrument.c")
         .replace("@RT@", RT)
         .replace("@PREFIX@", &ember_branding::SYMBOL_PREFIX.to_uppercase())

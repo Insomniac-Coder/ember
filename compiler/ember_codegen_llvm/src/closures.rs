@@ -12,7 +12,7 @@ use crate::{Module, Result, global_name, unsupported};
 use ember_mir::{AggregateKind, Body, Builtin, CastKind, Const, FuncRef, Operand, ParameterMode, Rvalue, StmtKind, Terminator};
 use ember_types::{FnParam, FnParamMode, Ty, TyKind};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Callables {
     /// Each named function used as a native value, with its function type.
     pub natives: BTreeMap<String, Ty>,

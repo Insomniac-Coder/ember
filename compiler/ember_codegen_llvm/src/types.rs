@@ -68,6 +68,7 @@ pub enum Repr {
 }
 
 /// The type table, as the backend reads it.
+#[derive(Clone)]
 pub struct Types<'a> {
     pub table: &'a TypeTable,
     pub target: Target,

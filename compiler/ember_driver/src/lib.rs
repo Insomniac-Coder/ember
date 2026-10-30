@@ -52,10 +52,11 @@ this compiler does not have yet):
                                                    --explain predicts that reload; --build-id prints
                                                    the hash of the build's inputs; --report=engine
                                                    what the build did to the program (--target is
-                                                   not built yet; --backend llvm builds programs
-                                                   through Clang, the C backend stays the default;
-                                                   with it --pgo-generate instruments a program to
-                                                   record a profile, --pgo-use optimises it with one)
+                                                   not built yet; the LLVM backend, the default,
+                                                   builds programs through Clang, --backend c
+                                                   through a C compiler; with LLVM --pgo-generate
+                                                   instruments a program to record a profile,
+                                                   --pgo-use optimises it with one)
     ember check [file.em] [--syntax-only] [--timings] [-j N]
                                                    type, borrow and effect checks without code generation
     ember test [filter] [--doc] [--no-leak-check] [--instrument-ffi]
@@ -117,8 +118,10 @@ options:
     --emit-optimization-report        list the calls made direct on the whole program's word
     --timings[=json]                  each stage's time, module by module where it runs so
     --syntax-only                     lex and parse only; report E00xx/E01xx
-    --backend c|llvm                  default: c, or the manifest's `[build] backend`; llvm
-                                      writes LLVM IR (`--emit llvm-ir`) that Clang compiles
+    --backend c|llvm                  default: the manifest's `[build] backend`, else
+                                      EMBER_BACKEND, else llvm, which writes LLVM IR
+                                      (`--emit llvm-ir`) that Clang compiles; c writes C
+                                      that a C compiler compiles (--cc)
     --cc msvc|clang|gcc|clang-cl      override C compiler detection
     -j, --jobs <n>                    the threads checking and C compilation use
                                       (default: the physical cores)
@@ -533,7 +536,8 @@ struct Options {
     generics_report: bool,
     /// `[DOC-3]` — `ember doc`: check, then print each view contract.
     doc_report: bool,
-    /// `[CG-LL-1]` — `--backend c|llvm`; the manifest's `[build] backend` when absent.
+    /// `[CG-LL-1]` — `--backend c|llvm`; when absent, the manifest's `[build] backend`, then
+    /// `EMBER_BACKEND`, then LLVM.
     backend: Option<String>,
     /// `[BLD-7]` — `-j N`: the threads the front end's per-body analyses and the C compiles use
     /// (default: the physical cores).
@@ -596,10 +600,9 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 return Err("error[E0900]: `ember --version --matrix` is not implemented yet".to_string());
             }
             // `[TOOL-4]` — the compiler, the language, the backend, and the C compiler and linker
-            // this build resolves (`--cc`'s variable steers it, as for a build), so a bug report
-            // carries its environment.
-            let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
-            let toolchain = Toolchain::detect(requested.as_deref());
+            // a build here resolves, so a bug report carries its environment.
+            let manifest = nearest_manifest_text(Path::new(ember_branding::MANIFEST)).ok().flatten();
+            let (backend, toolchain) = resolved_backend(manifest.as_deref());
             let (compiler, linker) = match &toolchain {
                 Ok(toolchain) => (format!("{} ({})", toolchain.name(), toolchain.compiler_path().display()), toolchain.linker()),
                 Err(error) => (format!("none found: {error}"), "none".to_string()),
@@ -607,12 +610,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             if json {
                 println!("{}", serde_json::json!({
                     "schema": 1, "version": env!("CARGO_PKG_VERSION"), "language": ember_parser::LANGUAGE_VERSION,
-                    "backend": "c", "c_compiler": compiler, "linker": linker, "profile": PROFILE,
+                    "backend": backend, "c_compiler": compiler, "linker": linker, "profile": PROFILE,
                 }));
             } else {
                 println!("ember {}", env!("CARGO_PKG_VERSION"));
                 println!("language: {}", ember_parser::LANGUAGE_VERSION);
-                println!("backend: c");
+                println!("backend: {backend}");
                 println!("C compiler: {compiler}");
                 println!("linker: {linker}");
                 println!("profile: {PROFILE}");
@@ -1724,17 +1727,36 @@ fn cpp_bridge(modules: &[ember_typeck::LoadedModule]) -> String {
     )
 }
 
+/// `[TOOL-4]`, `[TCB-4]`, `[TCB-6]` — the backend a build of the package `manifest` describes uses,
+/// by name, and the compiler it compiles with, resolved as the build resolves them: `[build]
+/// backend`, `EMBER_BACKEND`, else the LLVM backend, which Clang compiles (`[CG-LL-1]`); for the C
+/// backend, `EMBER_CC`, else `[build] c_compiler`.
+fn resolved_backend(manifest: Option<&str>) -> (&'static str, Result<Toolchain, String>) {
+    match llvm::selected(&Options::default(), manifest) {
+        Err(error) => ("c", Err(error)),
+        Ok(true) => ("llvm", llvm::clang(&Options::default())),
+        Ok(false) => {
+            let requested = std::env::var(ember_branding::cc_var())
+                .ok()
+                .filter(|cc| !cc.is_empty())
+                .or_else(|| manifest.and_then(|text| manifest_string(text, "build", "c_compiler")));
+            ("c", Toolchain::detect(requested.as_deref()).map_err(|error| error.to_string()))
+        }
+    }
+}
+
 /// `[TCB-4]` — the trusted base by category, the compiler first, with its version and known defects.
 fn trusted_base_categories(modules: &[ember_typeck::LoadedModule]) -> Vec<(&'static str, String)> {
-    let requested = std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty());
-    let driver = match Toolchain::detect(requested.as_deref()) {
+    let manifest = nearest_manifest_text(Path::new(ember_branding::MANIFEST)).ok().flatten();
+    let (backend, toolchain) = resolved_backend(manifest.as_deref());
+    let driver = match toolchain {
         Ok(toolchain) => format!("{} ({}) and {}", toolchain.name(), toolchain.compiler_path().display(), toolchain.linker()),
         Err(error) => format!("no C compiler found: {error}"),
     };
     let defects = known_defects();
     vec![
         ("compiler", format!(
-            "ember {} (language {}, backend c); known defects: {}",
+            "ember {} (language {}, backend {backend}); known defects: {}",
             env!("CARGO_PKG_VERSION"),
             ember_parser::LANGUAGE_VERSION,
             if defects.is_empty() { "none".to_string() } else { defects.join(", ") },
@@ -2014,6 +2036,76 @@ impl EngineReport {
             .collect();
         section("inlining decisions:".to_string(), &inlining);
         section(format!("classes that could be structs (advisory, never applied; {}):", self.classes.len()), &self.classes);
+    }
+}
+
+/// `[FFI-37]` — what an instrumented test binary counts, with what the program declares of it.
+fn instrumented_run(
+    instrument: Option<&ember_codegen_c::FfiInstrumentOutput>,
+    options: &Options,
+    bodies: &[ember_mir::Body],
+    modules: &[ember_typeck::LoadedModule],
+    input: &Path,
+    exe: &Path,
+    toolchain: &Toolchain,
+) -> Option<foreign::InstrumentedRun> {
+    let (instrument, dir) = instrument.zip(options.ffi_evidence.as_ref())?;
+    let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut run = foreign::InstrumentedRun::new(instrument, bodies, dir.clone(), &package, exe, toolchain.identity());
+    run.imported = modules
+        .iter()
+        .filter_map(|loaded| loaded.foreign.as_ref().map(|foreign| (loaded.module.span.file, foreign.identities.clone())))
+        .collect();
+    Some(run)
+}
+
+/// `[BLD-FFI-1b]` — the C++ projects' runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which
+/// every translation unit of the target is compiled with (`msvc`: cl's and clang-cl's); with GCC or
+/// Clang, libstdc++'s debug mode, which each C++ one is, and `[BLD-FFI-4]` the projects' link-time
+/// optimisation. Projects that disagree (`E9020`), or a runtime that cannot be told (`E9021`), are
+/// the diagnostic.
+fn inherit_cpp_projects(msvc: bool, modules: &[ember_typeck::LoadedModule], target: Option<(&str, &[String])>) -> Result<(), Diagnostic> {
+    let inherited = cimport::inherited_runtime(modules, target)?;
+    if msvc {
+        ember_build::inherit_msvc_runtime(inherited);
+    } else {
+        ember_build::inherit_gnu_runtime(inherited.into_iter().filter(|flag| flag.starts_with("-D_GLIBCXX")).collect());
+        ember_build::inherit_gnu_lto(cimport::inherited_lto(modules));
+    }
+    Ok(())
+}
+
+/// `[DSP-5]`, `[SIMD-2]` — `--emit-optimization-report`, on standard error so it never mixes with
+/// `--emit c` or `--emit llvm-ir`: each virtual call made direct, then each `@simd` loop's verdict.
+fn print_optimization_report(direct_calls: &[String], simd_report: &[String]) {
+    eprintln!("optimization report:");
+    if direct_calls.is_empty() && simd_report.is_empty() {
+        eprintln!("  none");
+    }
+    for line in direct_calls.iter().chain(simd_report) {
+        eprintln!("  {line}");
+    }
+}
+
+/// The host compiler's vectorisation remarks on the program's unit: its C, or the LLVM IR Clang
+/// compiles (`[CG-LL-1]`); why there are none when it cannot say.
+fn vectorisation_remarks(toolchain: &Toolchain, unit: &Path, includes: &[PathBuf], layout: &Layout, profile: Profile) -> Vec<String> {
+    match ember_build::vectorisation_report(toolchain, unit, includes, &layout.obj.join("report"), profile) {
+        Ok(remarks) => remarks,
+        Err(error) => vec![format!("not available: {error}")],
+    }
+}
+
+/// `[SIMD-6]` — after Ember's verdicts, the host compiler's own report on the program's unit,
+/// labelled as its opinion: its absence or a disagreement is never an error.
+fn print_host_vectorisation_report(toolchain: &Toolchain, unit: &Path, includes: &[PathBuf], layout: &Layout, profile: Profile) {
+    eprintln!("host C compiler's vectorisation report ({}; its opinion only, Ember's verdict is above):", toolchain.name());
+    let remarks = vectorisation_remarks(toolchain, unit, includes, layout, profile);
+    if remarks.is_empty() {
+        eprintln!("  none");
+    }
+    for remark in remarks {
+        eprintln!("  {remark}");
     }
 }
 
@@ -4745,10 +4837,11 @@ fn nearest_manifest_text(input: &Path) -> Result<Option<String>, String> {
 }
 
 /// `[DET-7]`, `[BLD-13]` — `--build-id`: the hash of a build's inputs, the same wherever the same
-/// program is built the same way: this compiler (its own bytes), the profile, the target, the C
-/// compiler by its version, the runtime's sources, and every source the build read (the manifest
-/// among them) by its path in its package (`SourceMap::artefact_path`) and its text.
-fn build_id(map: &SourceMap, profile: Profile, toolchain: &Toolchain, runtime: &Path) -> Result<String, String> {
+/// program is built the same way: this compiler (its own bytes), the profile, the target, the
+/// backend (`[CG-LL-1]`), the C compiler by its version, the runtime's sources, and every source the
+/// build read (the manifest among them) by its path in its package (`SourceMap::artefact_path`) and
+/// its text.
+fn build_id(map: &SourceMap, profile: Profile, backend: &str, toolchain: &Toolchain, runtime: &Path) -> Result<String, String> {
     let mut bytes: Vec<u8> = Vec::new();
     let mut part = |data: &[u8]| {
         bytes.extend_from_slice(&(data.len() as u64).to_le_bytes());
@@ -4759,6 +4852,7 @@ fn build_id(map: &SourceMap, profile: Profile, toolchain: &Toolchain, runtime: &
     part(ember_build::content_hash(&compiler).as_bytes());
     part(profile.name().as_bytes());
     part(format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS).as_bytes());
+    part(backend.as_bytes());
     part(toolchain.version().as_bytes());
     let mut runtime_files: Vec<PathBuf> = ["include", "src"].iter()
         .filter_map(|dir| std::fs::read_dir(runtime.join(dir)).ok())
@@ -5923,8 +6017,20 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     if let Some(engine) = engine.as_mut() {
         engine.gather_final(&bodies, &types, &modules, &map);
     }
-    // `[CG-LL-1]` — the LLVM backend, where the command line or the manifest asks for it.
+    // `[CG-LL-1]` — the LLVM backend, unless the command line, the manifest or `EMBER_BACKEND` names
+    // the C backend.
     if llvm::selected(options, manifest.as_deref())? {
+        // Clang's, which compiles the IR.
+        let target = options.cc_flags_target.as_deref().map(|target| (target, target_flags.as_slice()));
+        if let Err(diagnostic) = inherit_cpp_projects(false, &modules, target) {
+            sink.emit(diagnostic);
+            return Ok(finish(&sink, &map, options));
+        }
+        let safety_json = ember_codegen_c::safety_json(&bodies, &map);
+        // `[CLI-10]` — the checks the program keeps and why.
+        if let Some(engine) = engine.as_mut() {
+            engine.gather_checks(&safety_json);
+        }
         let request = llvm::Build {
             mir: verified_mir,
             map: &map,
@@ -5939,7 +6045,17 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
             reload: reload_image.as_ref(),
             additions: reload_additions.as_ref(),
             started,
-            inspect: [safety_table(&ember_codegen_c::safety_json(&bodies, &map), &safety_functions, &safety_costs), counts_json(&bodies, &types, &map)],
+            inspect: [safety_table(&safety_json, &safety_functions, &safety_costs), counts_json(&bodies, &types, &map)],
+            simd_report: &simd_report,
+            engine,
+            // `[BLD-4]` (ODR-244) — as the C backend's: a `debug` or `development` program a unit
+            // per module; a test instrumented, or a reloadable program, one.
+            units: (options.emit.is_none()
+                && !library
+                && options.profile != Profile::Release
+                && !(command == "test" && options.ffi_evidence.is_some())
+                && reload_image.is_none())
+            .then(|| module_units(&modules, &bodies)),
             bodies: &bodies,
             input,
             manifest: manifest.as_deref(),
@@ -5994,16 +6110,8 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         return Err(error);
     }
     mark("C generation", "all modules");
-    // `[DSP-5]` — on standard error, so it never mixes with `--emit c`.
-    // `[SIMD-2]` — then each `@simd` loop's verdict.
     if options.optimization_report {
-        eprintln!("optimization report:");
-        if emitted.optimization_report.is_empty() && simd_report.is_empty() {
-            eprintln!("  none");
-        }
-        for line in emitted.optimization_report.iter().chain(&simd_report) {
-            eprintln!("  {line}");
-        }
+        print_optimization_report(&emitted.optimization_report, &simd_report);
     }
     if header_requested && !(library && options.emit.is_none()) {
         let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
@@ -6161,28 +6269,16 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
         .or_else(|| std::env::var(ember_branding::cc_var()).ok().filter(|cc| !cc.is_empty()))
         .or_else(|| nearest_manifest_text(input).ok().flatten().and_then(|text| manifest_string(&text, "build", "c_compiler")));
     let toolchain = Toolchain::detect(requested.as_deref()).map_err(|e| e.to_string())?;
-    // `[BLD-FFI-1b]` — the C++ projects' runtime switch, `_DEBUG` and `_ITERATOR_DEBUG_LEVEL`, which
-    // every translation unit of the target is compiled with; with GCC or Clang, libstdc++'s debug
-    // mode, which each C++ one is.
-    let inherited = match cimport::inherited_runtime(&modules, options.cc_flags_target.as_deref().map(|target| (target, target_flags.as_slice()))) {
-        Ok(flags) => flags,
-        Err(diagnostic) => {
-            sink.emit(diagnostic);
-            return Ok(finish(&sink, &map, options));
-        }
-    };
-    if matches!(toolchain, Toolchain::Msvc { .. }) {
-        ember_build::inherit_msvc_runtime(inherited);
-    } else {
-        ember_build::inherit_gnu_runtime(inherited.into_iter().filter(|flag| flag.starts_with("-D_GLIBCXX")).collect());
-        // `[BLD-FFI-4]` — and its link-time optimisation.
-        ember_build::inherit_gnu_lto(cimport::inherited_lto(&modules));
+    let target = options.cc_flags_target.as_deref().map(|target| (target, target_flags.as_slice()));
+    if let Err(diagnostic) = inherit_cpp_projects(matches!(toolchain, Toolchain::Msvc { .. }), &modules, target) {
+        sink.emit(diagnostic);
+        return Ok(finish(&sink, &map, options));
     }
     // A static library's objects are linked by its host's build.
     let link = if staticlib { ember_build::Link::Elsewhere } else { ember_build::Link::Here };
     write_build_record(&layout, &module_name, options.profile, &toolchain, link, reload_image.is_some())?;
     if options.build_id {
-        println!("{}", build_id(&map, options.profile, &toolchain, &runtime)?);
+        println!("{}", build_id(&map, options.profile, "c", &toolchain, &runtime)?);
     }
     let runtime_source = runtime.join(format!("src/{}_rt.c", ember_branding::SYMBOL_PREFIX));
     let includes = vec![runtime.join("include")];
@@ -6348,25 +6444,10 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     // `[CLI-10]` — the checks the program keeps and why, and the C compiler's word on its loops.
     if let Some(engine) = engine.as_mut() {
         engine.gather_checks(&emitted.safety_json);
-        engine.loops = match ember_build::vectorisation_report(&toolchain, &c_path, &includes, &layout.obj.join("report"), options.profile) {
-            Ok(remarks) => remarks,
-            Err(error) => vec![format!("not available: {error}")],
-        };
+        engine.loops = vectorisation_remarks(&toolchain, &c_path, &includes, &layout, options.profile);
     }
-    // `[SIMD-6]` — after Ember's verdicts, the host C compiler's own report on
-    // the program's unit, labelled as its opinion: its absence or a
-    // disagreement is never an error.
     if options.optimization_report {
-        eprintln!("host C compiler's vectorisation report ({}; its opinion only, Ember's verdict is above):", toolchain.name());
-        match ember_build::vectorisation_report(&toolchain, &c_path, &includes, &layout.obj.join("report"), options.profile) {
-            Ok(remarks) if remarks.is_empty() => eprintln!("  none"),
-            Ok(remarks) => {
-                for remark in remarks {
-                    eprintln!("  {remark}");
-                }
-            }
-            Err(error) => eprintln!("  not available: {error}"),
-        }
+        print_host_vectorisation_report(&toolchain, &c_path, &includes, &layout, options.profile);
     }
 
     report(&sink, &map, options);
@@ -6375,16 +6456,7 @@ fn compile_once(input: &Path, command: &str, options: &Options, attempts: &mut i
     }
 
     if command == "test" {
-        // `[FFI-37]` — what the instrumented binary counts, with what the program declares of it.
-        let instrumented = emitted.ffi_instrument.as_ref().zip(options.ffi_evidence.as_ref()).map(|(instrument, dir)| {
-            let package = input.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
-            let mut run = foreign::InstrumentedRun::new(instrument, &bodies, dir.clone(), &package, &exe, toolchain.identity());
-            run.imported = modules
-                .iter()
-                .filter_map(|loaded| loaded.foreign.as_ref().map(|foreign| (loaded.module.span.file, foreign.identities.clone())))
-                .collect();
-            run
-        });
+        let instrumented = instrumented_run(emitted.ffi_instrument.as_ref(), options, &bodies, &modules, input, &exe, &toolchain);
         return test_runner::run_tests(&exe, &tests, options, instrumented.as_ref(), &map);
     }
     if command == "run" {

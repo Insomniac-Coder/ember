@@ -20,18 +20,22 @@ jobs:
   # but the conformance suite, three run a third of its cases each
   # (`EMBER_TEST_SHARD`). Every test still runs on every platform. The tests
   # use the `ci` profile: an optimised compiler with the debug checks kept.
+  # `[CG-LL-1]` — the LLVM backend is the default: the C backend's platforms name it
+  # (`EMBER_BACKEND=c`), one per C compiler, and the LLVM backend's run on Linux and Windows.
   build-and-test:
     strategy:
       fail-fast: false
       matrix:
         platform:
-          - { os: ubuntu-latest, cc: clang }
-          - { os: ubuntu-latest, cc: gcc }
-          - { os: windows-latest, cc: msvc }
-          - { os: windows-latest, cc: clang-cl }
+          - { os: ubuntu-latest, cc: clang, backend: c }
+          - { os: ubuntu-latest, cc: gcc, backend: c }
+          - { os: windows-latest, cc: msvc, backend: c }
+          - { os: windows-latest, cc: clang-cl, backend: c }
+          - { os: ubuntu-latest, cc: clang, backend: llvm }
+          - { os: windows-latest, cc: clang, backend: llvm }
         part: [rest, 1/3, 2/3, 3/3]
     runs-on: ${{ matrix.platform.os }}
-    name: ${{ matrix.platform.os }} / ${{ matrix.platform.cc }} / ${{ matrix.part }}
+    name: ${{ matrix.platform.os }} / ${{ matrix.platform.backend }} / ${{ matrix.platform.cc }} / ${{ matrix.part }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -40,9 +44,10 @@ jobs:
       # `[FFI-6]` — `import c` loads libclang at run time. The Windows image has LLVM installed
       # (`C:\Program Files\LLVM\bin\libclang.dll`); the Ubuntu image has no `libclang.so`.
       # `[TST-5]` — and gdb for the scripted debugger session; the Windows image's SDK has cdb.
-      - name: libclang and gdb
+      # `[CG-LL-1]` — and lld, which links the LLVM backend's programs; the Windows image has it.
+      - name: libclang, gdb and lld
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libclang-dev gdb
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev gdb lld
       # `[BLD-4]` (ODR-258) — a program's C is compiled through Ninja, which a source checkout finds
       # on `PATH`.
       - name: Ninja
@@ -60,6 +65,7 @@ jobs:
         run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} tools/run_logged.py test-output.txt cargo test --locked --profile ci ${{ matrix.part == 'rest' && '--workspace -- --skip the_conformance_suite_runs' || '-p ember_driver --test milestones -- --exact the_conformance_suite_runs' }}
         env:
           EMBER_CC: ${{ matrix.platform.cc }}
+          EMBER_BACKEND: ${{ matrix.platform.backend }}
           EMBER_TEST_SHARD: ${{ matrix.part != 'rest' && matrix.part || '' }}
           # `[TST-5]` — a host with no debugger fails unless tests/debugger/waivers.json waives it.
           EMBER_DEBUGGER_REQUIRED: 1
@@ -89,10 +95,11 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { os: ubuntu-latest, cc: gcc }
-          - { os: windows-latest, cc: msvc }
+          - { os: ubuntu-latest, cc: gcc, backend: c }
+          - { os: windows-latest, cc: msvc, backend: c }
+          - { os: windows-latest, cc: clang, backend: llvm }
     runs-on: ${{ matrix.platform.os }}
-    name: performance / ${{ matrix.platform.os }} / ${{ matrix.platform.cc }}
+    name: performance / ${{ matrix.platform.os }} / ${{ matrix.platform.backend }} / ${{ matrix.platform.cc }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -116,6 +123,7 @@ jobs:
         run: ${{ runner.os == 'Windows' && 'target/ci/ember.exe' || 'target/ci/ember' }} bench --compare --report --core 1
         env:
           EMBER_CC: ${{ matrix.platform.cc }}
+          EMBER_BACKEND: ${{ matrix.platform.backend }}
 
   documents:
     runs-on: ubuntu-latest

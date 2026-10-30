@@ -15,6 +15,8 @@ for f in $(git ls-files -co --exclude-standard Cargo.toml Cargo.lock rust-toolch
 done
 cd "$DEST"
 export EMBER_CC=gcc
+# `[CG-LL-1]` — the C backend: the LLVM backend, the default, compiles with Clang.
+export EMBER_BACKEND=c
 cargo test --profile ci --workspace --no-fail-fast > ~/gcc_gate.txt 2>&1
 echo "exit $?" >> ~/gcc_gate.txt
 grep -E "differs|panicked|test result" ~/gcc_gate.txt | head -60

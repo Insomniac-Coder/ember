@@ -265,6 +265,9 @@ fn compile_args(toolchain: &Toolchain, program: &Program<'_>, lto: Lto) -> Vec<O
                 args.push("-Werror".into());
             }
             args.extend(folder_name_flags(program.units, program.include_dirs).into_iter().map(OsString::from));
+            args.extend(crate::clang_windows_debug_flags(toolchain, program.profile).0.iter().map(OsString::from));
+            // `[CG-LL-3]` — the profile-guided optimisation the LLVM backend's build asks for.
+            args.extend(crate::pgo_flags(toolchain).into_iter().map(OsString::from));
             args.extend(executable_section_flags(toolchain, true).iter().map(OsString::from));
             for dir in program.include_dirs {
                 args.push("-I".into());
@@ -376,6 +379,8 @@ fn link_args(toolchain: &Toolchain, program: &Program<'_>, lto: Lto, retained: &
             if toolchain.is_bundled() {
                 args.push("-fuse-ld=lld".into());
             }
+            args.extend(crate::clang_windows_debug_flags(toolchain, program.profile).1.iter().map(OsString::from));
+            args.extend(crate::pgo_flags(toolchain).into_iter().map(OsString::from));
             match inherited_gnu_lto() {
                 Some(inherited) if !inherited.is_empty() => {
                     args.push(inherited.into());

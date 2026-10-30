@@ -16,9 +16,10 @@ fn scratch() -> PathBuf {
     path
 }
 
-/// The backend the harness's `EMBER_BACKEND` names, when it is not the C backend.
+/// The backend the harness's `EMBER_BACKEND` names, else LLVM, the default; none for the C backend.
 fn backend() -> Option<String> {
-    std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty() && backend != "c")
+    let named = std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty());
+    Some(named.unwrap_or_else(|| "llvm".to_string())).filter(|backend| backend != "c")
 }
 
 /// The C toolchain of the hosts a test links: the backend's (Clang's under LLVM).
@@ -101,7 +102,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
     let second_arg = second.to_string_lossy().into_owned();
     let header_only_out = scratch.join("header-only");
     let header_only_arg = header_only_out.to_string_lossy().into_owned();
-    let header_only = Command::new(EMBER).args(["build", package_arg.as_str(), "--emit", "header",
+    let header_only = Command::new(EMBER).args(["build", package_arg.as_str(), "--backend", "c", "--emit", "header",
         "--out-dir", header_only_arg.as_str()]).current_dir(&scratch)
         .env(ember_branding::cc_var(), format!("{}-compiler-that-does-not-exist", ember_branding::CLI_NAME))
         .output().expect("header-only compiler starts");
@@ -119,7 +120,7 @@ fn staticlib_archives_and_headers_link_from_separate_c_and_cpp_hosts() {
     ember_build::compile_object(&toolchain, &header_caller, &[header_only_lib],
         &header_caller_object, Profile::Debug)
         .expect("a C caller compiles against the header-only artifact named like the runtime");
-    let c_only = Command::new(EMBER).args(["build", package_arg.as_str(), "--emit", "c",
+    let c_only = Command::new(EMBER).args(["build", package_arg.as_str(), "--backend", "c", "--emit", "c",
         "--out-dir", header_only_arg.as_str()]).current_dir(&scratch)
         .env(ember_branding::cc_var(), format!("{}-compiler-that-does-not-exist", ember_branding::CLI_NAME))
         .output().expect("C-only compiler starts");
@@ -351,7 +352,7 @@ fn manifest_entry_below_src_resolves_sibling_imports_from_package_root() {
     assert_eq!(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"), "42\n");
 
     let entry_arg = entry.to_string_lossy().into_owned();
-    let explicit = Command::new(EMBER).args(["build", entry_arg.as_str(), "--emit", "c"])
+    let explicit = Command::new(EMBER).args(["build", entry_arg.as_str(), "--backend", "c", "--emit", "c"])
         .current_dir(&package)
         .env(ember_branding::cc_var(), format!("{}-compiler-that-does-not-exist", ember_branding::CLI_NAME))
         .output().expect("explicit entry C-only compiler starts");
@@ -387,7 +388,7 @@ fn a_sync_class_crosses_a_static_librarys_exports() {
     if backend().is_some() {
         let c_out = scratch.join("c-header");
         let c_out_arg = c_out.to_string_lossy().into_owned();
-        let emitted = build(&["build", "--emit", "header", "--out-dir", c_out_arg.as_str()], &package);
+        let emitted = build(&["build", "--backend", "c", "--emit", "header", "--out-dir", c_out_arg.as_str()], &package);
         assert_success(&emitted, "the C backend's header");
         assert_eq!(header, std::fs::read_to_string(c_out.join("debug/lib/worlds.h")).unwrap(), "the library's header is not the C backend's");
     }

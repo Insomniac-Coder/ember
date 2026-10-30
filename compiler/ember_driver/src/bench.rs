@@ -651,19 +651,15 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
     let mut runs = TIMED;
     let mut tier = "all".to_string();
     let mut dir = PathBuf::from("tests/perf");
-    let mut backend = "c".to_string();
+    // `[CG-LL-1]` — as a build's: `--backend`, else `EMBER_BACKEND`, else LLVM.
+    let mut backend = std::env::var(ember_branding::backend_var()).ok().filter(|backend| !backend.is_empty()).unwrap_or_else(|| "llvm".to_string());
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--compare" => compare = true,
             // `[CG-LL-1]` — the Ember programs built by the LLVM backend, their C twins by the Clang
             // that compiles its IR.
-            "--backend" => {
-                backend = rest.next().ok_or("`--backend` needs `c` or `llvm`")?.clone();
-                if !matches!(backend.as_str(), "c" | "llvm") {
-                    return Err(format!("`--backend {backend}`: the backends are `c` and `llvm`"));
-                }
-            }
+            "--backend" => backend = rest.next().ok_or("`--backend` needs `c` or `llvm`")?.clone(),
             "--reload" => reload = true,
             "--runs" => {
                 let value = rest.next().ok_or("`--runs` needs a number of timed runs")?;
@@ -691,6 +687,9 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
             other if other.starts_with('-') => return Err(format!("unknown `ember bench` option `{other}`")),
             other => filter = Some(other.to_string()),
         }
+    }
+    if !matches!(backend.as_str(), "c" | "llvm") {
+        return Err(format!("`{backend}` is not a backend: the backends are `c` and `llvm` [CG-LL-1]"));
     }
     if reload {
         return reload_overhead(&dir, filter.as_deref(), core, runs, &tier, report);

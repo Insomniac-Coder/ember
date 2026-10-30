@@ -1,17 +1,21 @@
-//! `[CG-LL-1]` — `--backend llvm` and `[build] backend = "llvm"`: the program as LLVM IR
-//! (`ember_codegen_llvm`), which Clang compiles and links with the runtime as the C backend's C
-//! is. The C backend stays the default.
+//! `[CG-LL-1]` — the LLVM backend: the program as LLVM IR (`ember_codegen_llvm`), which Clang compiles
+//! and links with the runtime as the C backend's C is. It is the default since it passed the
+//! conformance and the performance suites (2026-10-30); `--backend c` and `[build] backend = "c"`
+//! choose the C backend, which stays supported.
 
 use super::{ExitCode, Layout, Options, Path, PathBuf, Profile, SourceMap, Toolchain, manifest_string};
-use ember_build::LinkRequest;
 
-/// Whether this build uses the LLVM backend: `--backend` first, else the manifest's
-/// `[build] backend`.
+/// Whether this build uses the LLVM backend: `--backend` first, then the manifest's `[build]
+/// backend`, then `EMBER_BACKEND` (`ember_branding::backend_var`); LLVM when none names one.
 pub(crate) fn selected(options: &Options, manifest: Option<&str>) -> Result<bool, String> {
-    let named = options.backend.clone().or_else(|| manifest.and_then(|text| manifest_string(text, "build", "backend")));
+    let named = options
+        .backend
+        .clone()
+        .or_else(|| manifest.and_then(|text| manifest_string(text, "build", "backend")))
+        .or_else(|| std::env::var(ember_branding::backend_var()).ok().filter(|backend| !backend.is_empty()));
     match named.as_deref() {
-        None | Some("c") => Ok(false),
-        Some("llvm") => Ok(true),
+        Some("c") => Ok(false),
+        None | Some("llvm") => Ok(true),
         Some(other) => Err(format!("`[build] backend` is \"c\" or \"llvm\", not `{other}`")),
     }
 }
@@ -40,7 +44,7 @@ fn clang_remedy() -> &'static str {
 }
 
 /// Clang, which compiles the IR and the runtime with it.
-fn clang(options: &Options) -> Result<Toolchain, String> {
+pub(crate) fn clang(options: &Options) -> Result<Toolchain, String> {
     let requested = options
         .cc
         .clone()
@@ -48,11 +52,17 @@ fn clang(options: &Options) -> Result<Toolchain, String> {
     if let Some(other) = requested.as_deref().filter(|cc| *cc != "clang" && *cc != "auto") {
         // The variable is a C backend's choice: only `--cc` is refused outright.
         if options.cc.is_some() {
-            return Err(format!("the LLVM backend's IR is compiled by Clang, not `{other}` (`--cc clang`)"));
+            return Err(format!(
+                "the LLVM backend's IR is compiled by Clang, not `{other}`: build with `--backend c --cc {other}` for the C backend compiled by `{other}`, or `--cc clang`"
+            ));
         }
     }
     Toolchain::detect(Some("clang")).map_err(|_| {
-        format!("error[E9002]: the LLVM backend needs Clang, which was not found\n  = help: {}", clang_remedy())
+        format!(
+            "error[E9002]: the LLVM backend, the default, needs Clang, which was not found\n  = help: {}\n  = help: or build with the C backend, which any C compiler compiles: `--backend c`, or `backend = \"c\"` under `[build]` in `{}`",
+            clang_remedy(),
+            ember_branding::MANIFEST
+        )
     })
 }
 
@@ -77,6 +87,12 @@ pub(crate) struct Build<'a> {
     pub started: std::time::Instant,
     /// `ember inspect`'s tables (`super::write_inspect`), which no backend changes.
     pub inspect: [String; 2],
+    /// `[SIMD-2]` — each `@simd` loop's verdict, for `--emit-optimization-report`.
+    pub simd_report: &'a [String],
+    /// `[CLI-10]` — `--report=engine`'s report, all but Clang's word on the loops, which the build adds.
+    pub engine: Option<super::EngineReport>,
+    /// `[BLD-4]` — the program as a unit per module (`super::module_units`), or as one.
+    pub units: Option<Vec<(String, std::collections::BTreeSet<String>)>>,
     pub bodies: &'a [ember_mir::Body],
     pub input: &'a Path,
     pub manifest: Option<&'a str>,
@@ -159,11 +175,13 @@ fn link_inputs(request: &Build<'_>, toolchain: &Toolchain, layout: &Layout, prof
 
 /// The module emitted, written, compiled and linked; run for `ember run`. A reloadable program's
 /// module is its image, which the shared runtime loads beside the host (Annex B).
-pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag::Sink) -> Result<ExitCode, String> {
+pub(crate) fn build(mut request: Build<'_>, options: &Options, sink: &mut ember_diag::Sink) -> Result<ExitCode, String> {
     let testing = request.command == "test";
     match options.emit.as_deref() {
         None | Some("llvm-ir") => {}
-        Some(other) => return Err(format!("`--emit {other}` is the C backend's; the LLVM backend emits `llvm-ir`")),
+        Some(other) => {
+            return Err(format!("`--emit {other}` is the C backend's (`--backend c --emit {other}`); the LLVM backend emits `llvm-ir`"));
+        }
     }
     // `[FFI-26]`, `[BLD-FFI-5a]` — a library's headers are the C backend's, from the same type plan;
     // this module defines what they declare.
@@ -183,9 +201,14 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         module: request.cdylib,
         package: request.library.then_some(request.package_name),
         classes: interface.as_ref().map_or(&[], |interface| interface.classes.as_slice()),
+        instrument_ffi: testing && options.ffi_evidence.is_some(),
+        units: request.units.as_deref(),
     };
     let output = ember_codegen_llvm::emit(request.mir, request.map, &emit_options).map_err(|error| error.to_string())?;
     super::mark("LLVM IR generation", "all modules");
+    if options.optimization_report {
+        super::print_optimization_report(&output.optimization_report, request.simd_report);
+    }
     if options.emit.as_deref() == Some("llvm-ir") {
         print!("{}", output.ir);
         if let Some(shim) = &output.shim {
@@ -202,14 +225,45 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
     let target_dir = options.out_dir.clone().unwrap_or_else(|| PathBuf::from("target"));
     let layout = Layout::new(&target_dir, options.profile).map_err(|e| e.to_string())?;
     super::write_inspect(&layout, request.module_name, &request.inspect)?;
+    // `[CG-C-9]` — the debugger visualisers beside the program, as the C backend's: a `.natvis`
+    // (which the link also puts in the program database), GDB's auto-loaded `<program>-gdb.py`, and
+    // an LLDB script.
+    let exe_name = if cfg!(windows) { format!("{}.exe", request.module_name) } else { request.module_name.to_string() };
+    std::fs::write(layout.bin.join(format!("{}.natvis", request.module_name)), &output.visualisers.natvis).map_err(|e| e.to_string())?;
+    std::fs::write(layout.bin.join(format!("{exe_name}-gdb.py")), &output.visualisers.gdb).map_err(|e| e.to_string())?;
+    std::fs::write(layout.bin.join(format!("{}.lldb.py", request.module_name)), &output.visualisers.lldb).map_err(|e| e.to_string())?;
+    // `[BLD-4]` — each unit written only when its text changed, so the build compiles again only
+    // those that did; a module's unit from an earlier build that this one has not is removed.
     let ll_path = layout.c.join(format!("{}.ll", request.module_name));
-    std::fs::write(&ll_path, &output.ir).map_err(|e| e.to_string())?;
+    ember_build::ninja::write_if_changed(&ll_path, &output.ir).map_err(|e| e.to_string())?;
     let mut sources = vec![ll_path];
+    let prefix = format!("{}.m.", request.module_name);
+    for (name, ir) in &output.units {
+        let path = layout.c.join(format!("{prefix}{name}.ll"));
+        ember_build::ninja::write_if_changed(&path, ir).map_err(|e| e.to_string())?;
+        sources.push(path);
+    }
+    if let Ok(entries) = std::fs::read_dir(&layout.c) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&prefix) && name.ends_with(".ll") && !sources.contains(&path) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
     // The runtime's inline functions the IR calls, through their one-line C wrappers.
     if let Some(shim) = &output.shim {
         let shim_path = layout.c.join(format!("{}.rt.c", request.module_name));
-        std::fs::write(&shim_path, shim).map_err(|e| e.to_string())?;
+        ember_build::ninja::write_if_changed(&shim_path, shim).map_err(|e| e.to_string())?;
         sources.push(shim_path);
+    }
+    // `[FFI-37]` — an instrumented test's counting, the C backend's unit (it defines the C library's
+    // entry points it intercepts off Windows).
+    if let Some(instrument) = &output.ffi_instrument {
+        let unit = layout.c.join(format!("{}.ffi.c", request.module_name));
+        ember_build::ninja::write_if_changed(&unit, &instrument.source).map_err(|e| e.to_string())?;
+        sources.push(unit);
     }
     let toolchain = clang(options)?;
     ember_build::set_pgo(match &request.pgo {
@@ -228,6 +282,9 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
     // `[BLD-6]` — the build record: the IR goes through the same Clang link, ThinLTO's included (a
     // hot-reload image without it).
     super::write_build_record(&layout, request.module_name, options.profile, &toolchain, ember_build::Link::Here, request.reload.is_some())?;
+    if options.build_id {
+        println!("{}", super::build_id(request.map, options.profile, "llvm", &toolchain, &super::runtime_dir()?)?);
+    }
     // Annex B — the image: the IR and its C, compiled with the reload definitions, as a shared
     // library beside the shared runtime and the host.
     if let Some(image) = request.reload {
@@ -269,7 +326,6 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
     let runtime_input = ember_build::runtime_object_for_executable(&toolchain, &runtime_source, &includes, options.profile, &ember_build::cache_root())
         .map_err(|e| e.to_string())?
         .unwrap_or(runtime_source);
-    let exe_name = if cfg!(windows) { format!("{}.exe", request.module_name) } else { request.module_name.to_string() };
     let exe = layout.bin.join(&exe_name);
     let (libraries, foreign_objects) = link_inputs(&request, &toolchain, &layout, options.profile, false)?;
     // The exports stay though nothing in the program calls them.
@@ -279,18 +335,30 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         .filter(|body| body.abi.is_some() && !body.is_extern_declaration && !body.is_abstract)
         .map(|body| ember_codegen_llvm::function_link_symbol(request.mir.types(), ember_codegen_llvm::Target::host(), body))
         .collect();
+    if output.ffi_instrument.is_some() && !cfg!(windows) {
+        retained.extend(ember_codegen_c::FFI_INTERPOSED.iter().map(|name| name.to_string()));
+    }
     retained.sort();
     retained.dedup();
+    let ll_path = sources[0].clone();
     sources.push(runtime_input);
     sources.extend(foreign_objects);
-    ember_build::compile_and_link_program(
+    // `[BLD-4]` — compiled and linked through Ninja, as the C backend's units are: the IR, its shim
+    // and the runtime where it is not an object yet, each into its own object under `obj`
+    // (`[BLD-13]`: a program database names them), then the objects as they are.
+    let (units, objects): (Vec<PathBuf>, Vec<PathBuf>) =
+        sources.into_iter().partition(|path| path.extension().is_some_and(|extension| extension == "ll" || extension == "c"));
+    ember_build::ninja::build(
         &toolchain,
-        &LinkRequest {
-            sources: &sources,
+        &ember_build::ninja::Program {
+            units: &units,
+            objects: &objects,
             include_dirs: &includes,
             output: exe.clone(),
             profile: options.profile,
-            obj_dir: layout.obj.clone(),
+            dir: layout.obj.clone(),
+            jobs: options.jobs,
+            image: None,
         },
         &retained,
         &libraries,
@@ -308,9 +376,22 @@ pub(crate) fn build(request: Build<'_>, options: &Options, sink: &mut ember_diag
         }
     })?;
     super::mark("LLVM compile and link", "all modules");
+    // `[CLI-10]` — Clang's word on the program's loops; `[SIMD-6]` — after Ember's verdicts, its
+    // report on the IR.
+    let mut engine = request.engine.take();
+    if let Some(engine) = engine.as_mut() {
+        engine.loops = super::vectorisation_remarks(&toolchain, &ll_path, &includes, &layout, options.profile);
+    }
+    if options.optimization_report {
+        super::print_host_vectorisation_report(&toolchain, &ll_path, &includes, &layout, options.profile);
+    }
     super::report(sink, request.map, options);
+    if let Some(engine) = &engine {
+        engine.print(&toolchain);
+    }
     if testing {
-        return super::test_runner::run_tests(&exe, request.tests, options, None, request.map);
+        let instrumented = super::instrumented_run(output.ffi_instrument.as_ref(), options, request.bodies, request.modules, request.input, &exe, &toolchain);
+        return super::test_runner::run_tests(&exe, request.tests, options, instrumented.as_ref(), request.map);
     }
     if request.command == "run" {
         return super::run_program(&exe, options);

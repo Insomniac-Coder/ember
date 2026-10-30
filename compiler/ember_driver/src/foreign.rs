@@ -440,8 +440,8 @@ pub fn load_evidence(input: &std::path::Path) -> Option<Evidence> {
     if binary["path"].as_str().and_then(file_hash).as_deref() != binary["hash"].as_str() {
         stale.push("the test binary".to_string());
     }
-    let requested = std::env::var(ember_branding::cc_var()).ok();
-    let toolchain = ember_build::Toolchain::detect(requested.as_deref()).ok().map(|toolchain| toolchain.identity());
+    // The compiler this package's build would use now (`[CG-LL-1]`: its backend's).
+    let toolchain = crate::resolved_backend(Some(&text)).1.ok().map(|toolchain| toolchain.identity());
     if toolchain.as_deref() != record["identity"]["toolchain"].as_str() {
         stale.push("the C toolchain".to_string());
     }

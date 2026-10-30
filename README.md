@@ -5,10 +5,10 @@
 Ember is an experimental, statically typed, ahead-of-time compiled language for systems and
 application code. It aims for memory safety without a garbage collector, C-like speed, and
 Python-like ergonomics: explicit ownership and borrowing, deterministic destruction, views that
-carry their regions, reference-counted classes, generics with interfaces, and a portable C
-backend. The full language also specifies effects and contracts, compile-time evaluation,
-concurrency, C and C++ interoperability, data-oriented facilities, deterministic execution and hot
-reload.
+carry their regions, reference-counted classes, generics with interfaces, and two backends: LLVM,
+the default, and a portable C backend. The full language also specifies effects and contracts,
+compile-time evaluation, concurrency, C and C++ interoperability, data-oriented facilities,
+deterministic execution and hot reload.
 
 This repository holds the reference compiler (Rust), its C runtime, the standard library (written
 in Ember), the language specification, the conformance suite, the diagnostics and their error
@@ -22,8 +22,8 @@ pages, and the records that keep them consistent.
 
 | | |
 |---|---|
-| Language version being implemented | **0.9.15**, specification `Ember_v0.9.15_Hardened_4` (what changed: its Appendix H, §H.41 to §H.44) |
-| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.15_Hardened_4.md`](docs/spec-source/Ember_v0.9.15_Hardened_4.md) |
+| Language version being implemented | **0.9.15**, specification `Ember_v0.9.15_Hardened_5` (what changed: its Appendix H, §H.41 to §H.44) |
+| Pinned development target | [`docs/spec-source/development-target.json`](docs/spec-source/development-target.json) → [`docs/spec-source/Ember_v0.9.15_Hardened_5.md`](docs/spec-source/Ember_v0.9.15_Hardened_5.md) |
 | Specification sources | [`tasks/spec-0.9.9/parts/`](tasks/spec-0.9.9/parts/), one file per Part; each `Hardened_N` is their concatenation and is never edited afterwards |
 | Last adopted normative specification | [`docs/spec-source/ember-spec.md`](docs/spec-source/ember-spec.md), 0.8.5_Hardened_1 (0.9.10 is adopted when its gates pass and the owner installs it) |
 | Tests | Rust unit and integration suites; Ember run and conformance suites in [`tests/`](tests/) |
@@ -43,12 +43,12 @@ the tool computes. Work planned for after 1.0 has its own row, outside the overa
 | 2 | Ownership, borrowing, regions | 13% |
 | 3 | Classes, reference counting, exclusivity | 2% |
 | 4 | Effects, compile time, reflection, derives | 28% |
-| 5 | C interoperability | 29% |
+| 5 | C interoperability | 26% |
 | 6 | Concurrency and data-oriented design | 19% |
 | 7 | C++ interoperability and the interpreter | 43% |
 | 7a | Iteration, determinism, cost control | 36% |
 | 8 | Hardening and 1.0 | 49% |
-| 9 | The LLVM backend (ODR-223) | 0% |
+| 9 | The LLVM backend (ODR-223) | 40% |
 | | Overall (1.0) | 23% |
 | | After 1.0: the GPU host model (v0.6) | 0% |
 

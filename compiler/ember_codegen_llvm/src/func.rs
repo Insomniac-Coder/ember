@@ -2668,6 +2668,7 @@ impl<'m, 'a> FnCx<'m, 'a> {
             FuncRef::Virtual { owner, slot, receiver, param_modes } => {
                 self.retain_owned_copies(args, |index| param_modes.get(index) == Some(&ember_mir::ParameterMode::Owned))?;
                 let dest = self.dest(dest)?;
+                self.m.note_direct_call(*receiver, *slot, span);
                 return self.virtual_call(*owner, *slot, *receiver, args, dest);
             }
             FuncRef::Interface { interfaces, interface, slot, params, ret, class_handle, param_modes, .. } => {
@@ -2702,7 +2703,10 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     self.call_rt("ffi_check_thread", vec![Val::Imm(Sc::I(32), u32::MAX.to_string()), Val::Imm(Sc::Ptr, what)], None);
                 }
                 if body.variadic {
-                    return self.variadic_call(body, args, dest);
+                    let previous = self.ffi_enter(symbol, span);
+                    self.variadic_call(body, args, dest)?;
+                    self.ffi_leave(previous);
+                    return Ok(());
                 }
                 self.retain_owned_copies(args, |index| body.param_modes.get(index) == Some(&ember_mir::ParameterMode::Owned))?;
                 let mut values = Vec::with_capacity(args.len());
@@ -2710,13 +2714,38 @@ impl<'m, 'a> FnCx<'m, 'a> {
                     values.push(self.operand(argument)?);
                 }
                 let dest = self.dest(dest)?;
-                self.call_body(symbol, values, dest.as_ref().map(|(ptr, align)| (ptr.as_str(), *align)))
+                let previous = self.ffi_enter(symbol, span);
+                self.call_body(symbol, values, dest.as_ref().map(|(ptr, align)| (ptr.as_str(), *align)))?;
+                self.ffi_leave(previous);
+                Ok(())
             }
             FuncRef::Builtin { which, arg_ty } => self.builtin(which, *arg_ty, args, dest, span),
             FuncRef::Virtual { .. } => unsupported("a virtual call ([DSP-2])"),
             FuncRef::Interface { .. } => unsupported("a call through an interface ([TYP-22])"),
             FuncRef::DynBoxNew { .. } => unsupported("a `Box[dyn]` ([TYP-22])"),
             FuncRef::Indirect { .. } => unsupported("a call through a function value ([CLO-3])"),
+        }
+    }
+
+    /// `[FFI-37]`, `[FFI-37b]` — in an instrumented test, a call to a foreign function counted at its
+    /// site, and what it reaches while it runs: the function the instrumentation was in before it.
+    fn ffi_enter(&mut self, symbol: &str, span: ember_span::Span) -> Option<String> {
+        if !self.m.ffi.as_ref().is_some_and(|ffi| ffi.counts(symbol)) {
+            return None;
+        }
+        let place = self.m.map.location(span);
+        let (function, site) = self.m.ffi.as_mut()?.site(symbol, place)?;
+        let enter = ember_branding::runtime("ffi_enter");
+        self.m.declare(&enter, || format!("declare i32 @{enter}(i32, i32)"));
+        Some(self.value(format!("call i32 @{enter}(i32 {function}, i32 {site})")))
+    }
+
+    /// The end of `ffi_enter`'s call: the instrumentation back in the function it was in.
+    fn ffi_leave(&mut self, previous: Option<String>) {
+        if let Some(previous) = previous {
+            let leave = ember_branding::runtime("ffi_leave");
+            self.m.declare(&leave, || format!("declare void @{leave}(i32)"));
+            self.emit(format!("call void @{leave}(i32 {previous})"));
         }
     }
 
@@ -3147,10 +3176,11 @@ pub(crate) fn float_literal(value: f64, sc: Sc) -> String {
 pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<'_>, tests: Option<&[String]>) -> Result<()> {
     let entry_symbol = ember_branding::entry_symbol();
     let main_entry = ember_branding::generated("main_entry");
+    // `[ALC-3]` — the package's global allocator, through the two functions written for it; a test
+    // binary keeps the runtime's, as the C backend's does.
     let (allocate, deallocate) = ember_branding::global_allocator_glue();
-    if bodies.iter().any(|body| [&allocate, &deallocate].contains(&&body.name.rsplit('.').next().unwrap_or_default().to_string())) {
-        return unsupported("a global allocator ([ALC-3])");
-    }
+    let glue = |name: &str| bodies.iter().find(|body| body.name.rsplit('.').next() == Some(name)).map(|body| body.symbol.clone());
+    let global_allocator = glue(&allocate).zip(glue(&deallocate)).filter(|_| tests.is_none());
     let entry = bodies.iter().any(|body| body.symbol == main_entry);
     let called = if entry { main_entry.clone() } else { entry_symbol.clone() };
     let called_body = m.bodies.get(called.as_str()).copied();
@@ -3191,6 +3221,14 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         let flags = cx.gep(&cfg, config::FLAGS);
         cx.emit(format!("store i32 {}, ptr {flags}, align 8", config::DEBUG_OBJECTS));
     }
+    // `[ALC-3]` — every allocation the runtime makes goes through the package's allocator.
+    if let Some((allocate, deallocate)) = &global_allocator {
+        for (symbol, offset) in [(allocate, config::ALLOC), (deallocate, config::FREE)] {
+            cx.declare_body(symbol)?;
+            let field = cx.gep(&cfg, offset);
+            cx.emit(format!("store ptr {}, ptr {field}, align 8", global_name(symbol)));
+        }
+    }
     if which.is_some() {
         // A test's panic is marked for the runner.
         let on_panic = cx.gep(&cfg, config::ON_PANIC);
@@ -3219,6 +3257,15 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
         let done = cx.label();
         let labels: Vec<String> = tests.iter().map(|_| cx.label()).collect();
         let cases: Vec<String> = labels.iter().enumerate().map(|(index, label)| format!("i64 {index}, label %{label}")).collect();
+        // `[FFI-37]` — an instrumented test's counting, around the test.
+        let instrumented = cx.m.ffi.is_some();
+        if instrumented {
+            for entry in ["ffi_instrument_begin", "ffi_instrument_end"] {
+                let symbol = ember_branding::runtime(entry);
+                cx.m.declare(&symbol, || format!("declare void @{symbol}()"));
+            }
+            cx.emit(format!("call void @{}()", ember_branding::runtime("ffi_instrument_begin")));
+        }
         cx.emit(format!("switch i64 {which}, label %{done} [ {} ]", cases.join(" ")));
         for (test, label) in tests.iter().zip(&labels) {
             cx.start(label);
@@ -3226,6 +3273,9 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
             cx.emit(format!("br label %{done}"));
         }
         cx.start(&done);
+        if instrumented {
+            cx.emit(format!("call void @{}()", ember_branding::runtime("ffi_instrument_end")));
+        }
         cx.emit(format!("call void @{}ll_test_end()", ember_branding::RUNTIME_PREFIX));
         cx.call_rt("rt_shutdown", Vec::new(), None);
         cx.emit("ret i32 0");
@@ -3238,16 +3288,18 @@ pub(crate) fn emit_entry(m: &mut Module<'_>, bodies: &[Body], options: &Options<
     cx.declare_body(&called)?;
     let sig = body_signature(cx.m, called_body);
     let ret_ty = called_body.return_ty();
+    // `[RT-4]` — the Ember `main` keeps a frame of its own, where a backtrace ends: never inlined
+    // into this one (in units, the link's optimiser would, and the frame would be C's).
     let status = if entry {
         let Repr::Scalar(Sc::I(bits)) = cx.m.ty.repr(ret_ty) else {
             return unsupported("a `main_entry` whose status is not an integer");
         };
         let slot = cx.alloca(bits as u64 / 8, (bits as u64 / 8).max(1));
-        cx.lowered_call(&global_name(&called), &sig, &[], Some((&slot, (bits as u64 / 8).max(1), bits as u64 / 8)), "");
+        cx.lowered_call(&global_name(&called), &sig, &[], Some((&slot, (bits as u64 / 8).max(1), bits as u64 / 8)), " noinline");
         let value = cx.load(Sc::I(bits), &slot, (bits as u64 / 8).max(1));
         cx.int_convert(&value, bits, 32, true)
     } else {
-        cx.lowered_call(&global_name(&called), &sig, &[], None, "");
+        cx.lowered_call(&global_name(&called), &sig, &[], None, " noinline");
         "0".to_string()
     };
     cx.call_rt("rt_shutdown", Vec::new(), None);

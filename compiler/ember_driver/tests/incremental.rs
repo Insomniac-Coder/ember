@@ -258,6 +258,12 @@ struct Built {
     objects: std::collections::BTreeMap<String, std::time::SystemTime>,
 }
 
+/// `[CG-LL-1]` — the extension of the backend's units: LLVM IR, the default backend's, unless
+/// `EMBER_BACKEND` names the C backend.
+fn unit_extension() -> &'static str {
+    if std::env::var("EMBER_BACKEND").is_ok_and(|backend| backend == "c") { ".c" } else { ".ll" }
+}
+
 fn build(dir: &Path, out: &str, clean: bool) -> Built {
     let mut command = Command::new(EMBER);
     command.args(["build", "--out-dir", out]).current_dir(dir).env(ember_branding::no_compile_cache_var(), "1");
@@ -273,7 +279,7 @@ fn build(dir: &Path, out: &str, clean: bool) -> Built {
             .map(|entries| entries.flatten().map(|entry| (entry.file_name().to_string_lossy().into_owned(), entry.path())).collect())
             .unwrap_or_default()
     };
-    let units = listed("c").into_iter().filter(|(name, _)| name.ends_with(".c")).map(|(name, path)| (name, std::fs::read(path).expect("a unit reads"))).collect();
+    let units = listed("c").into_iter().filter(|(name, _)| name.ends_with(unit_extension())).map(|(name, path)| (name, std::fs::read(path).expect("a unit reads"))).collect();
     let objects = listed("obj")
         .into_iter()
         .filter(|(name, _)| name.ends_with(".obj") || name.ends_with(".o"))
@@ -291,9 +297,10 @@ fn runs(dir: &Path, out: &str) -> String {
 }
 
 /// `[BLD-1]`, `[BLD-4]`, ODR-244, ODR-257 — `ember build` keeps the checked forms as `ember check`
-/// does, writes a `debug` program one C unit per module, and compiles them through Ninja: after each
-/// edit, every C unit is the one a clean build writes, byte for byte, the program prints what the
-/// clean build's prints, and only the units whose text changed are compiled again.
+/// does, writes a `debug` program one unit per module (C, or with the LLVM backend IR), and compiles
+/// them through Ninja: after each edit, every unit is the one a clean build writes, byte for byte,
+/// the program prints what the clean build's prints, and only the units whose text changed are
+/// compiled again.
 #[test]
 fn an_edited_package_builds_as_a_clean_one_does_and_compiles_again_what_the_edit_changed() {
     let dir = scratch();
@@ -305,8 +312,8 @@ fn an_edited_package_builds_as_a_clean_one_does_and_compiles_again_what_the_edit
     let mut before = build(&dir, "target-incremental", false);
     assert!(before.ok, "{}", before.report);
     let units: Vec<&String> = before.units.keys().collect();
-    for module in ["main.m.geom.c", "main.m.shapes.c", "main.m.extra.c"] {
-        assert!(units.iter().any(|unit| *unit == module), "one C unit per module: {units:?}");
+    for module in ["geom", "shapes", "extra"].map(|module| format!("main.m.{module}{}", unit_extension())) {
+        assert!(units.iter().any(|unit| **unit == module), "one unit per module: {units:?}");
     }
     let edits = [
         ("a body", GEOM.replace("acc * 31 + i + 1", "acc * 37 + i + 2"), source("geom"), Some(vec!["main.m.geom"])),
@@ -364,7 +371,7 @@ fn on_threads(dir: &Path, command: &str, jobs: usize, out: &str) -> (bool, Strin
         .map(|entries| {
             entries
                 .flatten()
-                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".c"))
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(unit_extension()))
                 .map(|entry| (entry.file_name().to_string_lossy().into_owned(), std::fs::read(entry.path()).expect("a unit reads")))
                 .collect()
         })

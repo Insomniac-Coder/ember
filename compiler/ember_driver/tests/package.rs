@@ -30,6 +30,11 @@ fn ember(args: &[&str], cwd: &Path) -> Run {
     }
 }
 
+/// `[CG-LL-1]` — the backend these tests build with: `EMBER_BACKEND`'s, else LLVM, the default.
+fn backend() -> String {
+    std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty()).unwrap_or_else(|| "llvm".to_string())
+}
+
 /// `[TOOL-4]` — the first hour: `ember new hello`, `cd hello` and `ember run` print `hello, world`,
 /// three typed commands well inside five minutes. `ember --version` names the compiler, the
 /// language, the backend, and the C compiler and linker it resolved. `ember new` also makes a
@@ -56,7 +61,7 @@ fn the_first_hour_is_new_cd_and_run() {
     let lines: Vec<&str> = version.stdout.lines().collect();
     assert_eq!(lines[0], format!("{} {}", ember_branding::CLI_NAME, env!("CARGO_PKG_VERSION")));
     assert_eq!(lines[1], format!("language: {}", ember_parser::LANGUAGE_VERSION));
-    assert_eq!(lines[2], "backend: c");
+    assert_eq!(lines[2], format!("backend: {}", backend()));
     assert!(lines[3].starts_with("C compiler: ") && !lines[3].contains("none found"), "{}", version.stdout);
     assert!(lines[4].starts_with("linker: ") && lines[4].len() > "linker: ".len(), "{}", version.stdout);
 
@@ -105,8 +110,8 @@ fn dependency_tree(dir: &Path) {
 
 /// `[MOD-1]`, `[VER-5]` — a dependency's modules are its name followed by their path; two majors of
 /// one package coexist in one build, each package seeing the one it depends on, and their symbols
-/// differ in the C. `[MOD-2]`: a dependency's `pub(package)` function is not visible to its
-/// dependant (`E1052`).
+/// differ in the C, and in the LLVM backend's IR. `[MOD-2]`: a dependency's `pub(package)` function
+/// is not visible to its dependant (`E1052`).
 #[test]
 fn two_majors_of_a_dependency_coexist() {
     let dir = scratch();
@@ -115,17 +120,21 @@ fn two_majors_of_a_dependency_coexist() {
     let ran = ember(&["run"], &app);
     assert!(ran.ok, "{}", ran.stderr);
     assert_eq!(ran.stdout, "2\n1\n18\n9\n");
-    let c = std::fs::read_to_string(app.join("target/debug/c/main.c")).unwrap();
-    // (Their small functions are inlined into `main`; the types and the unused functions remain.)
     let symbol = ember_branding::item_symbol;
-    let symbols = [
-        format!("{} ", symbol("geometry.shapes.Square")),
-        format!("{} ", symbol("geometry__1.shapes.Square")),
-        format!("{}(", symbol("geometry.inner")),
-        format!("{}(", symbol("geometry__1.inner")),
-    ];
+    // (Their small functions are inlined into `main`; the types and the unused functions remain.)
+    let (unit, symbols) = if backend() == "llvm" {
+        ("main.ll", vec![format!("@{}(", symbol("geometry.inner")), format!("@{}(", symbol("geometry__1.inner"))])
+    } else {
+        ("main.c", vec![
+            format!("{} ", symbol("geometry.shapes.Square")),
+            format!("{} ", symbol("geometry__1.shapes.Square")),
+            format!("{}(", symbol("geometry.inner")),
+            format!("{}(", symbol("geometry__1.inner")),
+        ])
+    };
+    let written = std::fs::read_to_string(app.join("target/debug/c").join(unit)).unwrap();
     for symbol in symbols {
-        assert!(c.contains(&symbol), "no `{symbol}` in the C");
+        assert!(written.contains(&symbol), "no `{symbol}` in {unit}");
     }
     std::fs::write(app.join("src").join(ember_branding::source_file("main")),
         "import geometry\n\nfn main():\n    println(geometry.inner())\n").unwrap();
@@ -562,7 +571,8 @@ fn the_cpp_corpus_binds_as_recorded() {
 #[test]
 fn link_time_optimisation_is_the_profiles_or_the_manifests_and_recorded() {
     let dir = scratch();
-    let requested = std::env::var(ember_branding::cc_var()).ok();
+    // `[CG-LL-1]` — the backend's compiler: Clang for the LLVM backend.
+    let requested = if backend() == "llvm" { Some("clang".to_string()) } else { std::env::var(ember_branding::cc_var()).ok() };
     let toolchain = ember_build::Toolchain::detect(requested.as_deref()).expect("a C toolchain");
     let cl = matches!(&toolchain, ember_build::Toolchain::Msvc { cl, .. }
         if !cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("clang-cl")));

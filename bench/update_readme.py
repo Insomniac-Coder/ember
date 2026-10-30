@@ -1,8 +1,8 @@
 """The README's benchmark charts and its count of slow programs, from one run's logs.
 
 usage: python bench/update_readme.py <gcc log> <windows log> [more windows logs]
-  A Windows log holds each set with MSVC, then with clang: a program's first line is MSVC's, its
-  second clang's. A later Windows log overrides an earlier one's programs (a disturbed row timed
+  A Windows log holds each set with MSVC, then with clang, then with the LLVM backend: a program's
+  first line is MSVC's, its second clang's, its third the LLVM backend's. A later Windows log overrides an earlier one's programs (a disturbed row timed
   again alone). Writes docs/benchmarks/{as-fast-as-c,close-to-c,slower-than-c}.svg and the
   "More than 10% slower than C" sentence in README.md. A program goes in the table of its slowest
   compiler: under x1.05, x1.05 to x1.10, over x1.10."""
@@ -15,7 +15,9 @@ from descriptions import DESC, MARKS
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ROW = re.compile(r'^(\S+)\s+ember\s+([\d.]+)s \| \w+\s+([\d.]+)s \| ember/ref\s+([\d.]+)x', re.M)
-CCS = ('msvc', 'clang', 'gcc')
+CCS = ('msvc', 'clang', 'llvm', 'gcc')
+# A Windows log's lines for one program, in order.
+WINDOWS = ('msvc', 'clang', 'llvm')
 FILES = {'same': 'as-fast-as-c', 'close': 'close-to-c', 'slow': 'slower-than-c'}
 
 # Colours of GitHub's dark theme.
@@ -33,10 +35,10 @@ def read(gcc_log, windows_logs):
     for name, ember, ref, printed in ROW.findall(pathlib.Path(gcc_log).read_text(encoding='utf-8')):
         results.setdefault(name, {})['gcc'] = (float(ember), float(ref), float(printed))
     for log in windows_logs:
-        seen = set()
+        seen = {}
         for name, ember, ref, printed in ROW.findall(pathlib.Path(log).read_text(encoding='utf-8')):
-            cc = 'clang' if name in seen else 'msvc'
-            seen.add(name)
+            cc = WINDOWS[seen.get(name, 0)]
+            seen[name] = seen.get(name, 0) + 1
             results.setdefault(name, {})[cc] = (float(ember), float(ref), float(printed))
     missing = [n for n in DESC if any(cc not in results.get(n, {}) for cc in CCS)]
     if missing:
@@ -96,8 +98,9 @@ def table(names, results):
     size, line_h, pad = 14, 20, 10
     desc_w, col, x_desc = 400, 74, 16
     x0 = x_desc + desc_w + 18
-    groups = [('MSVC', 'msvc', x0), ('clang', 'clang', x0 + 3 * col + 24), ('gcc (Linux)', 'gcc', x0 + 6 * col + 48)]
-    total_w = groups[2][2] + 3 * col + 16
+    labels = [('MSVC', 'msvc'), ('clang', 'clang'), ('LLVM backend', 'llvm'), ('gcc (Linux)', 'gcc')]
+    groups = [(label, cc, x0 + i * (3 * col + 24)) for i, (label, cc) in enumerate(labels)]
+    total_w = groups[-1][2] + 3 * col + 16
     head_h = 58
     rows, y = [], head_h
     for n in names:
@@ -142,11 +145,11 @@ def table(names, results):
 
 def counts_sentence(results):
     slow = {cc: {n for n in DESC if results[n][cc][2] > 1.10} for cc in CCS}
-    everywhere = slow['msvc'] & slow['clang'] & slow['gcc']
-    all_three = 'none with all three' if not everywhere else f'{len(everywhere)} with all three'
+    everywhere = slow['msvc'] & slow['clang'] & slow['llvm'] & slow['gcc']
+    all_four = 'none with all four' if not everywhere else f'{len(everywhere)} with all four'
     print({cc: sorted(v) for cc, v in slow.items()})
     return (f"More than 10% slower than C: {len(slow['msvc'])} of the {len(DESC)} programs with MSVC, "
-            f"{len(slow['clang'])} with clang, {len(slow['gcc'])} with gcc; {all_three}.")
+            f"{len(slow['clang'])} with clang, {len(slow['llvm'])} with the LLVM backend, {len(slow['gcc'])} with gcc; {all_four}.")
 
 
 def main():
@@ -166,7 +169,7 @@ def main():
     counts = counts_sentence(results)
     readme = ROOT / 'README.md'
     text = readme.read_text(encoding='utf-8')
-    old = re.search(r'More than 10% slower than C: \d+ of the \d+ programs with MSVC, \d+ with clang, \d+ with gcc;[^.]*\.', text)
+    old = re.search(r'More than 10% slower than C: \d+ of the \d+ programs with MSVC, \d+ with clang, (?:\d+ with the LLVM backend, )?\d+ with gcc;[^.]*\.', text)
     if not old:
         sys.exit('README.md: the counts sentence is not there')
     lines, line = [], ''

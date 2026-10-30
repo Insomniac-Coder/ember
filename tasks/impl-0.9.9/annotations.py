@@ -11,9 +11,10 @@ runs on the evaluator too (`ember run --interp`), which must print, exit and pan
 program does (`[IMP-11]`). Files are checked side by side, one per core, and reported in order.
 python tasks/impl-0.9.9/annotations.py tests/conformance/DIA-12 [more directories]
 
-`EMBER_BACKEND=llvm` builds every run test with `--backend llvm` (`[CG-LL-1]`) and checks only
-those: what a program prints, its exit and its panic. The diagnostics and the evaluator do not
-depend on the backend, so the C run covers them. With it, `EMBER_PROFILES=all` runs each test in
+Every run test is built with the default backend, LLVM (`[CG-LL-1]`), and all of it is checked.
+`EMBER_BACKEND=c` builds every run test with the C backend and checks only those: what a program
+prints, its exit and its panic. The diagnostics and the evaluator do not depend on the backend, so
+the default run covers them. With it, `EMBER_PROFILES=all` runs each test in
 every profile it lists, as the cargo harness does, not only the first.
 """
 import glob
@@ -29,7 +30,9 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EMBER = os.environ.get('EMBER') or os.path.join(ROOT, 'target', 'debug', 'ember.exe')
 OUT = None  # Set only while the main run owns its TemporaryDirectory.
-BACKEND = os.environ.get('EMBER_BACKEND') or 'c'
+BACKEND = os.environ.get('EMBER_BACKEND') or 'llvm'
+# The default backend's run checks everything; another's, the runs only.
+FULL = BACKEND == 'llvm'
 ALL_PROFILES = os.environ.get('EMBER_PROFILES') == 'all'
 
 if os.name == 'nt':
@@ -156,9 +159,9 @@ def check(path):
     text = open(path, encoding='utf-8').read()
     kind = (re.search(r'^#\$ test:\s*(\S+)', text, re.M) or [None, ''])[1]
     if kind in ('parse-pass', 'parse-fail'):
-        return [] if BACKEND == 'c' else None
+        return [] if FULL else None
     profile = (re.search(r'^#\$ profiles:\s*([a-z]+)', text, re.M) or [None, 'debug'])[1]
-    if BACKEND != 'c':
+    if not FULL:
         if kind not in ('run-pass', 'run-fail'):
             return None
         listed = re.search(r'^#\$ profiles:\s*(.*)$', text, re.M)
@@ -198,7 +201,7 @@ def run_problems(path, text, profile, kind):
     """The compiled run's problems against the test's `stdout`, `stderr`, `exit` and `panics`,
     and the run's status and output."""
     problems = []
-    backend = ['--backend', BACKEND] if BACKEND != 'c' else []
+    backend = ['--backend', BACKEND]
     code, out, err = run(['run', '--profile', profile, *backend, '--out-dir', out_dir(path)], path,
                          expected_stdin(text), program_args(text))
     exit_line = re.search(r'^#\$ exit:\s*(-?\d+)\s*$', text, re.M)
@@ -251,7 +254,7 @@ def main():
         checked = 0
         for directory, paths in directories:
             # `[TST-4a]` — the harness stops at a conformance directory with no accept case.
-            if BACKEND == 'c' and 'conformance' in os.path.normpath(directory).split(os.sep) \
+            if FULL and 'conformance' in os.path.normpath(directory).split(os.sep) \
                     and not any(os.path.basename(p).startswith('accept_') for p in paths):
                 failures += 1
                 print(os.path.relpath(directory, ROOT))
@@ -266,7 +269,7 @@ def main():
                     print(os.path.relpath(path, ROOT))
                     for problem in problems:
                         print('   ', problem)
-        if BACKEND != 'c':
+        if not FULL:
             print(f'backend {BACKEND}: {checked} run tests, {checked - failures} passing')
         print('failing', failures)
 

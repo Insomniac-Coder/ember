@@ -10,11 +10,13 @@
 #
 # PACKAGE is the package's folder, the one holding its manifest (the current source folder by
 # default); SOURCES are the files whose change builds it again. `ember build` builds it at build
-# time with the C compiler CMake uses (`--cc`); FLAGS_FROM names a C target of the project whose
-# compile flags the build takes (`--cc-flags-from-target`, read from CMake's File API reply in the
-# build folder): the package's C imports are compiled with them, and the C runtime they name is
-# the package's too ([BLD-FFI-1b]). A C++ import takes its project's flags through the File API
-# itself (`[cpp.<project>] cmake = { build_dir, target }`, Annex C).
+# time with the C compiler CMake uses (`--cc`): with Clang, by the backend the package's manifest
+# names, else the LLVM backend, whose IR Clang compiles; with any other compiler (MSVC, clang-cl,
+# GCC), by the C backend, which that compiler compiles ([CG-LL-1]). FLAGS_FROM names a C target of
+# the project whose compile flags the build takes (`--cc-flags-from-target`, read from CMake's File
+# API reply in the build folder): the package's C imports are compiled with them, and the C runtime
+# they name is the package's too ([BLD-FFI-1b]). A C++ import takes its project's flags through the
+# File API itself (`[cpp.<project>] cmake = { build_dir, target }`, Annex C).
 #
 # <name> is then an imported target: a library is linked with target_link_libraries(<app> <name>),
 # which also puts its C header's folder on the include path; an executable is run as $<TARGET_FILE:…>.
@@ -79,6 +81,10 @@ function(_ember_build name package profile flags_from outputs)
     _ember_compiler(compiler)
     set(command "${EMBER_EXECUTABLE}" build "${package}" --profile "${profile}"
         --out-dir "${CMAKE_CURRENT_BINARY_DIR}/ember/${name}" --cc "${compiler}")
+    # [CG-LL-1] — only Clang compiles the LLVM backend's IR.
+    if(NOT compiler STREQUAL "clang")
+        list(APPEND command --backend c)
+    endif()
     if(flags_from)
         list(APPEND command --cc-flags-from-target "${flags_from}")
     endif()

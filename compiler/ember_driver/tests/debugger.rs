@@ -144,29 +144,37 @@ fn between<'a>(output: &'a str, from: &str, to: &str) -> &'a str {
 const NUMBERS_LINE: u32 = 9;
 
 /// `[CG-C-9]` (ODR-178) — with the build's `.natvis`, the debugger shows a collection held directly
-/// in a local as its elements, of their type: the local is its type's own C struct, which the
-/// `.natvis` names. Visual Studio's engine (`cdb`'s `dx`) only: the GDB and LLDB scripts are read
-/// by `build_writes_debugger_visualisers_beside_the_program`.
+/// in a local as its elements, of their type: with the C backend the local is its type's own C
+/// struct, which the `.natvis` names; with the LLVM backend (`[CG-LL-3]`) its type's own debug
+/// type, `Array<i64>`, which the `.natvis` matches as every `Array`. Visual Studio's engine
+/// (`cdb`'s `dx`) only: the GDB and LLDB scripts are read by
+/// `build_writes_debugger_visualisers_beside_the_program` and its LLVM twin.
 #[test]
 fn a_collection_held_in_a_local_shows_its_elements() {
     let Some((Debugger::Cdb, path)) = find_debugger() else {
         eprintln!("the natvis session needs cdb (Windows): {}", install_hint());
         return;
     };
+    for backend in ["c", "llvm"] {
+        collection_shows_its_elements(&path, backend);
+    }
+}
+
+fn collection_shows_its_elements(path: &Path, backend: &str) {
     let dir = temporary_directory("debugger-natvis");
     let source_name = format!("count.{}", ember_branding::SOURCE_EXT);
     std::fs::write(dir.join(&source_name), PROGRAM).expect("the program is written");
     let out = dir.join("out");
     let built = Command::new(EMBER)
-        .args(["build", &source_name, "--profile", "debug", "--out-dir", &out.to_string_lossy()])
+        .args(["build", &source_name, "--backend", backend, "--profile", "debug", "--out-dir", &out.to_string_lossy()])
         .current_dir(&dir)
         .output()
         .expect("ember runs");
-    assert!(built.status.success(), "the build failed:\n{}", String::from_utf8_lossy(&built.stderr));
+    assert!(built.status.success(), "{backend}: the build failed:\n{}", String::from_utf8_lossy(&built.stderr));
     let bin = out.join("debug").join("bin");
     let program = bin.join(format!("count{}", std::env::consts::EXE_SUFFIX));
     let natvis = bin.join("count.natvis");
-    assert!(natvis.is_file(), "no .natvis beside the program in {}", bin.display());
+    assert!(natvis.is_file(), "{backend}: no .natvis beside the program in {}", bin.display());
     let script = format!(
         ".lines -e; .nvload {}; bu `{source_name}:{NUMBERS_LINE}`; g; .printf \"MARK%d\\n\", 1; dx -r1 numbers; .printf \"MARK%d\\n\", 2; q",
         natvis.display()
@@ -182,10 +190,10 @@ fn a_collection_held_in_a_local_shows_its_elements() {
     let shown = between(&output, "MARK1", "MARK2");
     for (index, value) in [(0, 3), (1, 4), (2, 5)] {
         let element = shown.lines().any(|line| line.trim_start().starts_with(&format!("[{index}]")) && line.contains(&format!(": {value}")));
-        assert!(element, "cdb does not show `numbers[{index}]` as {value}:\n{shown}\n(the whole session:\n{output})");
+        assert!(element, "{backend}: cdb does not show `numbers[{index}]` as {value}:\n{shown}\n(the whole session:\n{output})");
     }
     // Its length, which cdb writes in hexadecimal.
-    assert!(shown.contains("numbers") && shown.contains("[0x3]"), "cdb does not show `numbers`'s length:\n{shown}");
+    assert!(shown.contains("numbers") && shown.contains("[0x3]"), "{backend}: cdb does not show `numbers`'s length:\n{shown}");
 }
 
 #[test]

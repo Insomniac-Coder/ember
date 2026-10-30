@@ -32,7 +32,7 @@ pub(crate) struct Adapter {
 }
 
 /// What the whole program's MIR says about dispatch, gathered before any body is written.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Dispatch {
     /// Each class's slots, its bases' first.
     pub virtual_layouts: BTreeMap<ClassId, Vec<Option<VirtualMethod>>>,
@@ -224,6 +224,29 @@ impl Dispatch {
             current = m.ty.table.class_def(class).base;
         }
         entries
+    }
+}
+
+impl Module<'_> {
+    /// `[DSP-5]` — a virtual call on a class that is not final, made directly to the one body it
+    /// can run: `--emit-optimization-report`'s line for it, as the C backend writes it.
+    pub(crate) fn note_direct_call(&mut self, receiver: ClassId, slot: usize, span: ember_span::Span) {
+        let class = self.ty.table.class_def(receiver);
+        if class.openness == ClassOpenness::Final {
+            return;
+        }
+        let Some(method) = self.dispatch.only_implementation(self, receiver, slot).and_then(|symbol| self.bodies.get(symbol.as_str()).copied()) else {
+            return;
+        };
+        let Some(owner) = method.class_owner else { return };
+        let line = format!(
+            "{}: calls `{}.{}` directly, the only implementation for class `{}` ([DSP-5])",
+            self.map.location(span),
+            self.ty.table.class_def(owner).name,
+            method.name,
+            class.name
+        );
+        self.direct_calls.insert((span.file, span.start, line));
     }
 }
 

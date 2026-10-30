@@ -462,6 +462,12 @@ pub fn cc_var() -> String {
     format!("{}_CC", SYMBOL_PREFIX.to_uppercase())
 }
 
+/// `[CG-LL-1]` — the backend a build uses when neither `--backend` nor the manifest's `[build]
+/// backend` names one: `c` or `llvm` (the default).
+pub fn backend_var() -> String {
+    format!("{}_BACKEND", SYMBOL_PREFIX.to_uppercase())
+}
+
 /// D-755 — the code layout `ember bench` builds a program at (`ember_build::LAYOUTS`).
 pub fn bench_layout_var() -> String {
     format!("{}_BENCH_LAYOUT", SYMBOL_PREFIX.to_uppercase())

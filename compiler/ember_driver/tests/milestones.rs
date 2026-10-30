@@ -1015,7 +1015,7 @@ fn the_engine_report_summarises_the_build_and_changes_nothing() {
     }
     assert!(!report.contains("std."), "the report names the standard library's code:\n{report}");
     let c = |report: bool| {
-        let mut args = vec!["build", file.as_str(), "--emit", "c", "--profile", "development", "--out-dir", out.as_str()];
+        let mut args = vec!["build", file.as_str(), "--backend", "c", "--emit", "c", "--profile", "development", "--out-dir", out.as_str()];
         if report {
             args.push("--report=engine");
         }
@@ -1094,7 +1094,7 @@ fn build_writes_debugger_visualisers_beside_the_program() {
     )
     .expect("write the program");
     let out = dir.join("out");
-    let built = ember(&["build", &source.to_string_lossy(), "--profile", "debug", "--out-dir", &out.to_string_lossy()], &root);
+    let built = ember(&["build", &source.to_string_lossy(), "--backend", "c", "--profile", "debug", "--out-dir", &out.to_string_lossy()], &root);
     assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
     let bin = out.join("debug").join("bin");
     let program = if cfg!(windows) { "shapes.exe" } else { "shapes" };
@@ -1131,6 +1131,68 @@ fn build_writes_debugger_visualisers_beside_the_program() {
     let held = format!("\"{}coll_Array_i64\": {{\"kind\": \"collection\", \"name\": \"Array[i64]\", \"shown\": (\"elements\", \"int64_t\")}}", ember_branding::mangle_prefix());
     for (name, script) in [(format!("{program}-gdb.py"), read(&format!("{program}-gdb.py"))), ("shapes.lldb.py".to_string(), read("shapes.lldb.py"))] {
         assert!(script.contains(&described) && script.contains(items) && script.contains(&held), "{name} does not describe the program's types:\n{script}");
+    }
+    assert!(read(&format!("{program}-gdb.py")).contains("pretty_printers"), "the GDB script registers no printer");
+    assert!(read("shapes.lldb.py").contains("def __lldb_init_module(debugger, internal_dict):"), "the LLDB script cannot be imported");
+}
+
+/// `[CG-C-9]`, `[CG-LL-3]` — the LLVM backend's build writes the same three visualisers, for the
+/// names its debug information gives the types: every `Array`, `Span` and `MutSpan` by one entry,
+/// whose buffer is typed with its elements' type (CodeView writes a name as C++ writes a template's,
+/// `Array<i64>`, the only names a `.natvis` matches; DWARF keeps the Ember name), a `str` and a
+/// `String` as text, an enum with payloads as its variant and payload, a struct and a class object
+/// by its Ember name and fields. The GDB and LLDB scripts describe the same types.
+#[test]
+fn the_llvm_backend_writes_debugger_visualisers_beside_the_program() {
+    let root = workspace_root();
+    let dir = temporary_directory("llvm-visualisers");
+    let source = dir.join(format!("shapes.{SOURCE_EXT}"));
+    std::fs::write(
+        &source,
+        "enum Shape:\n    Circle(r: f64)\n    Empty\n\nstruct Bag:\n    items: Array[int]\n    label: String\n    shape: Shape\n\n\
+         class Node:\n    value: int\n\nfn first(b: Bag) -> Option[int]:\n    if b.items.len() > 0:\n        return Some(b.items[0])\n    return None\n\n\
+         fn main():\n    b = Bag([1, 2], \"hi\", Shape.Circle(1.0))\n    n = Node(3)\n    o = first(b)\n    println(o, n.value, b.label)\n",
+    )
+    .expect("write the program");
+    let out = dir.join("out");
+    let built = ember(&["build", &source.to_string_lossy(), "--backend", "llvm", "--profile", "debug", "--out-dir", &out.to_string_lossy()], &root);
+    assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
+    let bin = out.join("debug").join("bin");
+    let program = if cfg!(windows) { "shapes.exe" } else { "shapes" };
+    let read = |name: &str| std::fs::read_to_string(bin.join(name)).unwrap_or_else(|error| panic!("{name} beside the program: {error}"));
+    let natvis = read("shapes.natvis");
+    let option = if cfg!(windows) { "Option<i64>" } else { "Option[i64]" };
+    for wanted in [
+        "<Type Name=\"Array&lt;*&gt;\">".to_string(),
+        "<Type Name=\"MutSpan&lt;*&gt;\">".to_string(),
+        "<ValuePointer>ptr</ValuePointer>".to_string(),
+        "<Type Name=\"String\">".to_string(),
+        "<Type Name=\"str\">".to_string(),
+        "<StringView>(char*)ptr,[len]s8</StringView>".to_string(),
+        "<Type Name=\"Shape\">".to_string(),
+        "<DisplayString Condition=\"tag == 0\">Circle(r: {payload.Circle.r})</DisplayString>".to_string(),
+        "<DisplayString Condition=\"tag == 1\">Empty</DisplayString>".to_string(),
+        "<Item Name=\"r\" Condition=\"tag == 0\">payload.Circle.r</Item>".to_string(),
+        "<Type Name=\"Bag\">".to_string(),
+        "<DisplayString>Bag {{ items: {items}, label: {label}, shape: {shape} }}</DisplayString>".to_string(),
+        "<Type Name=\"Node\">".to_string(),
+        "<DisplayString>Node {{ value: {value} }}</DisplayString>".to_string(),
+        format!("<Type Name=\"{}\">", option.replace('<', "&lt;").replace('>', "&gt;")),
+        "<DisplayString Condition=\"tag == 1\">Some({payload.Some._0})</DisplayString>".to_string(),
+    ] {
+        assert!(natvis.contains(&wanted), "the .natvis lacks {wanted}:\n{natvis}");
+    }
+    let described = [
+        "\"Shape\": {\"kind\": \"enum\", \"name\": \"Shape\", \"variants\": {0: (\"Circle\", [\"r\"]), 1: (\"Empty\", [])}}".to_string(),
+        "\"Bag\": {\"kind\": \"fields\", \"name\": \"Bag\", \"fields\": [\"items\", \"label\", \"shape\"], \"class\": False}".to_string(),
+        "\"Node\": {\"kind\": \"fields\", \"name\": \"Node\", \"fields\": [\"value\"], \"class\": True}".to_string(),
+        format!("\"{option}\": {{\"kind\": \"enum\", \"name\": \"Option[i64]\", \"variants\": {{0: (\"None\", []), 1: (\"Some\", [\"_0\"])}}}}"),
+        "COLLECTIONS = (\"Array[\", \"Span[\", \"MutSpan[\",)".to_string(),
+    ];
+    for (name, script) in [(format!("{program}-gdb.py"), read(&format!("{program}-gdb.py"))), ("shapes.lldb.py".to_string(), read("shapes.lldb.py"))] {
+        for wanted in &described {
+            assert!(script.contains(wanted.as_str()), "{name} lacks {wanted}:\n{script}");
+        }
     }
     assert!(read(&format!("{program}-gdb.py")).contains("pretty_printers"), "the GDB script registers no printer");
     assert!(read("shapes.lldb.py").contains("def __lldb_init_module(debugger, internal_dict):"), "the LLDB script cannot be imported");
@@ -1486,7 +1548,7 @@ fn foreign_scalar_statics_read_the_linkers_storage() {
     let root = workspace_root();
     let source = root.join(format!("tests/conformance/FFI-10/accept_foreign_scalar_statics.{SOURCE_EXT}"));
     let source_arg = source.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "foreign static C emission failed: {}", emitted.stderr);
     assert!(emitted.stdout.contains("extern int32_t raw_counter;"));
     assert!(emitted.stdout.contains("extern int32_t changing_counter;"));
@@ -1530,7 +1592,7 @@ fn foreign_scalar_statics_read_the_linkers_storage() {
     ] {
         std::fs::write(&entry, source).expect("importing module is writable");
         let entry_arg = entry.to_string_lossy().into_owned();
-        let across_modules = ember(&["build", &entry_arg, "--emit", "c"], &root);
+        let across_modules = ember(&["build", &entry_arg, "--backend", "c", "--emit", "c"], &root);
         assert_eq!(across_modules.exit, 0, "{label} foreign static failed: {}", across_modules.stderr);
         assert!(across_modules.stdout.contains("extern const int32_t aliased_count;"));
         assert!(across_modules.stdout.contains("extern int32_t changing_counter;"));
@@ -1557,7 +1619,7 @@ fn foreign_record_statics_exchange_values_with_c() {
     let root = workspace_root();
     let source = root.join(format!("tests/conformance/FFI-10/accept_foreign_record_statics.{SOURCE_EXT}"));
     let source_arg = source.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "foreign record C emission failed: {}", emitted.stderr);
 
     let directory = temporary_directory("foreign-record-static");
@@ -1594,7 +1656,7 @@ fn foreign_record_statics_exchange_values_with_c() {
     ] {
         std::fs::write(&entry, source).expect("foreign record entry is writable");
         let entry_arg = entry.to_string_lossy().into_owned();
-        let across_modules = ember(&["build", &entry_arg, "--emit", "c"], &root);
+        let across_modules = ember(&["build", &entry_arg, "--backend", "c", "--emit", "c"], &root);
         assert_eq!(across_modules.exit, 0, "{label} foreign record failed: {}", across_modules.stderr);
         let imported_c = directory.join(format!("{label}.c"));
         std::fs::write(&imported_c, across_modules.stdout).expect("imported C is writable");
@@ -1642,7 +1704,7 @@ fn foreign_statics_are_places_in_c_storage() {
     let root = workspace_root();
     let source = root.join(format!("tests/conformance/FFI-10/accept_foreign_statics_as_places.{SOURCE_EXT}"));
     let source_arg = source.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "foreign static C emission failed: {}", emitted.stderr);
     assert!(emitted.stdout.contains(" account;"), "the record global is declared: {}", emitted.stdout);
 
@@ -1677,7 +1739,7 @@ fn link_with_fixture(source: &Path, fixture: &str, profile: Profile, directory: 
     let root = workspace_root();
     let source_arg = source.to_string_lossy().into_owned();
     let profile_name = match profile { Profile::Debug => "debug", Profile::Development => "development", Profile::Release => "release" };
-    let emitted = ember(&["build", &source_arg, "--emit", "c", "--profile", profile_name], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c", "--profile", profile_name], &root);
     assert_eq!(emitted.exit, 0, "{label}: C emission failed: {}", emitted.stderr);
     let generated = directory.join(format!("{label}.c"));
     std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
@@ -1777,7 +1839,7 @@ fn vectorcall_declarations_compile_with_the_convention() {
     std::fs::write(&source, "unsafe extern \"vectorcall\":\n    safe fn scale_vector(x: f64, factor: f64) -> f64\n\nfn main():\n    println(scale_vector(2.0, 3.0))\n")
         .expect("program is writable");
     let source_arg = source.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "vectorcall C emission failed: {}", emitted.stderr);
     assert!(emitted.stdout.contains("extern double EMBER_CC_VECTORCALL scale_vector(double"), "{}", emitted.stdout);
     let generated = directory.join("program.c");
@@ -1801,7 +1863,7 @@ fn foreign_record_functions_exchange_values_with_c() {
     let root = workspace_root();
     let source = root.join(format!("tests/conformance/FFI-10/accept_foreign_record_function_values.{SOURCE_EXT}"));
     let source_arg = source.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "foreign record C emission failed: {}", emitted.stderr);
 
     let directory = temporary_directory("foreign-record-function");
@@ -1838,7 +1900,7 @@ fn foreign_record_functions_exchange_values_with_c() {
     ] {
         std::fs::write(&entry, source).expect("foreign record entry is writable");
         let entry_arg = entry.to_string_lossy().into_owned();
-        let emitted = ember(&["build", &entry_arg, "--emit", "c"], &root);
+        let emitted = ember(&["build", &entry_arg, "--backend", "c", "--emit", "c"], &root);
         assert_eq!(emitted.exit, 0, "{label} foreign record call failed: {}", emitted.stderr);
         let generated = directory.join(format!("{label}.c"));
         std::fs::write(&generated, emitted.stdout).expect("imported C is writable");
@@ -1863,7 +1925,7 @@ fn borrowed_record_export_receives_c_value() {
     let root = workspace_root();
     let source = root.join(format!("tests/conformance/FFI-9/accept_borrowed_aggregate_export_by_value.{SOURCE_EXT}"));
     let source_arg = source.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "borrowed record export C emission failed: {}", emitted.stderr);
 
     let directory = temporary_directory("borrowed-record-export");
@@ -1902,7 +1964,7 @@ fn exported_panic_aborts_inside_c_callback() {
     let root = workspace_root();
     let source = root.join(format!("tests/conformance/FFI-25/accept_exported_panic_aborts.{SOURCE_EXT}"));
     let source_arg = source.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "exported panic C emission failed: {}", emitted.stderr);
 
     let directory = temporary_directory("exported-panic-aborts");
@@ -2007,7 +2069,7 @@ fn imported_module_export_keeps_its_c_symbol() {
         "import exported\nunsafe extern \"C\":\n    safe fn call_module_score(value: i32) -> i32\nfn main():\n    println(call_module_score(41))\n")
         .expect("entry is writable");
     let entry_arg = entry.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &entry_arg, "--emit", "c"], &root);
+    let emitted = ember(&["build", &entry_arg, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "module export C emission failed: {}", emitted.stderr);
     let generated = directory.join("program.c");
     std::fs::write(&generated, emitted.stdout).expect("generated C is writable");
@@ -2057,7 +2119,7 @@ fn exported_thread_contracts_hold_in_every_profile() {
     let requested = std::env::var(ember_branding::cc_var()).ok();
     let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
     for profile in [Profile::Debug, Profile::Development, Profile::Release] {
-        let emitted = ember(&["build", &entry_arg, "--emit", "c", "--profile", profile.name()], &root);
+        let emitted = ember(&["build", &entry_arg, "--backend", "c", "--emit", "c", "--profile", profile.name()], &root);
         assert_eq!(emitted.exit, 0, "thread contract C emission failed: {}", emitted.stderr);
         let build = directory.join(profile.name());
         std::fs::create_dir_all(build.join("obj")).expect("object directory is creatable");
@@ -2126,6 +2188,8 @@ fn export_headers_link_from_separate_c_and_cpp_translation_units() {
         &[
             "build",
             &source_arg,
+            "--backend",
+            "c",
             "--emit",
             "header",
             "--out-dir",
@@ -2186,6 +2250,8 @@ fn export_headers_link_from_separate_c_and_cpp_translation_units() {
         &[
             "build",
             &source_arg,
+            "--backend",
+            "c",
             "--emit",
             "c",
             "--emit-header",
@@ -2300,7 +2366,7 @@ fn export_header_rejects_reachable_native_only_types_without_writing_a_header() 
 
     let out_dir = package.join("out");
     let out_arg = out_dir.to_string_lossy().into_owned();
-    let emitted = ember(&["build", &source_arg, "--emit", "header", "--out-dir", &out_arg], &root);
+    let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "header", "--out-dir", &out_arg], &root);
     let diagnostics = format!("{}{}", emitted.stdout, emitted.stderr);
     assert_ne!(emitted.exit, 0, "native function pointers emitted a public header");
     assert!(
@@ -2336,7 +2402,7 @@ fn export_header_guards_distinguish_safe_names_and_unicode_paths() {
         let out = package.join("out");
         let out_arg = out.to_string_lossy().into_owned();
         let emitted = ember_with_env(
-            &["build", &source_arg, "--emit", "header", "--out-dir", &out_arg],
+            &["build", &source_arg, "--backend", "c", "--emit", "header", "--out-dir", &out_arg],
             &root,
             &ember_branding::cc_var(),
             "ember-compiler-that-does-not-exist",
@@ -2366,7 +2432,7 @@ fn native_callback_adapters_preserve_abi_and_attach_host_threads() {
     let requested = std::env::var(ember_branding::cc_var()).ok();
     let toolchain = Toolchain::detect(requested.as_deref()).expect("C compiler is available");
     for profile in [Profile::Debug, Profile::Development, Profile::Release] {
-        let emitted = ember(&["build", &source_arg, "--emit", "c", "--profile", profile.name()], &root);
+        let emitted = ember(&["build", &source_arg, "--backend", "c", "--emit", "c", "--profile", profile.name()], &root);
         assert_eq!(emitted.exit, 0, "callback adapter C emission failed: {}", emitted.stderr);
         let build = directory.join(profile.name());
         std::fs::create_dir_all(build.join("obj")).expect("object directory is creatable");
@@ -2591,7 +2657,7 @@ fn the_debug_profile_rewrites_only_when_the_manifest_turns_them_on() {
         let source = package.join(ember_branding::source_file("main"));
         std::fs::write(package.join(MANIFEST), manifest).expect("manifest is writable");
         std::fs::write(&source, program).expect("source is writable");
-        let emitted = ember(&["build", &source.to_string_lossy(), "--emit", "c", "--profile", profile], &root);
+        let emitted = ember(&["build", &source.to_string_lossy(), "--backend", "c", "--emit", "c", "--profile", profile], &root);
         let _ = std::fs::remove_dir_all(&package);
         emitted
     };
@@ -2757,7 +2823,7 @@ fn emit_obj_writes_objects_without_linking() {
     std::fs::write(&source, "@fastmath\nfn scale(x: f64) -> f64:\n    return x * 2.0\n\nfn main():\n    println(scale(1.5))\n")
         .expect("source is writable");
     let out = package.join("out");
-    let built = ember(&["build", &source.to_string_lossy(), "--emit", "obj", "--out-dir", &out.to_string_lossy()], &root);
+    let built = ember(&["build", &source.to_string_lossy(), "--backend", "c", "--emit", "obj", "--out-dir", &out.to_string_lossy()], &root);
     assert_eq!(built.exit, 0, "[CLI-2] {}", built.stderr);
     let objects: Vec<String> = std::fs::read_dir(out.join("debug").join("obj"))
         .expect("the object directory exists")
@@ -3528,6 +3594,8 @@ fn stable_class_loop_access_is_reported_as_hoisted() {
             &[
                 "build",
                 &source,
+                "--backend",
+                "c",
                 "--profile",
                 profile,
                 "--out-dir",
@@ -3623,7 +3691,7 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results.{SOURCE_EXT}");
     let main_loop = format!("{}_loop0(", ember_branding::entry_symbol());
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
     assert!(msvc.stdout.contains(&format!("EMBER_NOINLINE void {main_loop}")), "no loop function for MSVC:
@@ -3631,7 +3699,7 @@ fn loop_nests_over_separate_lists_get_restrict_functions_for_msvc() {
     assert!(msvc.stdout.contains("* restrict _1_ptr"), "the loop function's lists are not restrict:
 {}", msvc.stdout);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 4, "two nests move (prototype and definition each)");
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:
 {}", clang.stderr);
     assert!(!clang.stdout.contains(&main_loop), "clang keeps the nest in place:
@@ -3647,7 +3715,7 @@ fn a_known_callable_value_is_called_directly() {
     let root = workspace_root();
     let source = format!("bench/programs/a08_closures.{SOURCE_EXT}");
     for cc in ["msvc", "clang", "gcc"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
         let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
         assert!(!main.contains(".native))("), "{cc}: the loop calls through the value:\n{main}");
@@ -3664,7 +3732,7 @@ fn view_parameters_go_as_two_words_on_windows() {
     let root = workspace_root();
     let source = format!("tests/run-pass/views_passed_as_two_words.{SOURCE_EXT}");
     for cc in if cfg!(windows) { &["msvc", "clang"][..] } else { &["clang"][..] } {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc}: C failed:\n{}", c.stderr);
         let count = ember_branding::item_symbol("count_spaces");
         let first = ember_branding::item_symbol("first_len");
@@ -3688,7 +3756,7 @@ fn views_proved_apart_get_restrict_functions_and_nothing_else_does() {
     let root = workspace_root();
     let source = format!("tests/conformance/DSJ-3/accept_views_proved_apart_loop_in_a_restrict_function.{SOURCE_EXT}");
     for cc in ["msvc", "clang", "gcc"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         // A kernel's name as code uses it, followed by its call or parameter list: the backtrace's
         // table of names (`[RT-4]`) writes it as a string too, which is no use.
@@ -3767,7 +3835,7 @@ fn distinct_soa_columns_get_restrict_functions() {
     let root = workspace_root();
     let source = format!("tests/conformance/SIMD-3/accept_distinct_soa_columns_loop_in_a_restrict_function.{SOURCE_EXT}");
     for cc in ["msvc", "clang", "gcc"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:
 {}", c.stderr);
         let kernel = format!("{}_loop", ember_branding::item_symbol("step"));
@@ -3796,10 +3864,10 @@ fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
         let after = after.find("\n}\n").map_or("", |end| &after[end..]);
         before.contains("->items = _") || after.contains("->items = _")
     };
-    let gcc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
+    let gcc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(gcc.exit, 0, "C failed:\n{}", gcc.stderr);
     assert!(written_back(&gcc.stdout), "no list is written back from a local:\n{}", gcc.stdout);
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "C failed:\n{}", msvc.stderr);
     assert!(!written_back(&msvc.stdout), "a list is kept in a local for MSVC:\n{}", msvc.stdout);
 }
@@ -3811,7 +3879,7 @@ fn a_list_a_loop_only_pushes_onto_is_kept_in_a_local() {
 fn a_devirtualised_interface_call_searches_out_of_line() {
     let root = workspace_root();
     let source = format!("tests/run-pass/class_interface_handle.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "development"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development"], &root);
     assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
     let out_of_line = format!("{}(", ember_branding::runtime("itable_lookup_slow"));
     let inline = format!("{}(", ember_branding::runtime("itable_lookup"));
@@ -3881,7 +3949,7 @@ fn input_panics_on_a_line_that_is_not_utf8() {
 fn wrapping_arithmetic_is_unsigned_in_c() {
     let root = workspace_root();
     let source = format!("tests/conformance/TYP-8/accept_wrapping_arithmetic_in_a_loop_is_never_undefined.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(c.exit, 0, "C failed:\n{}", c.stderr);
     for wrapped in [
         "(int64_t)((uint64_t)(i) * (uint64_t)(6364136223846793005LL))",
@@ -3901,7 +3969,7 @@ fn wrapping_arithmetic_is_unsigned_in_c() {
 fn printing_a_class_handle_passes_a_pointer_c_accepts() {
     let root = workspace_root();
     let source = format!("tests/conformance/TYP-36/accept_a_class_handle_prints_its_class_and_address.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--cc", "gcc"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--cc", "gcc"], &root);
     assert_eq!(c.exit, 0, "C failed:
 {}", c.stderr);
     assert!(c.stdout.contains("* const* v)"), "the helper does not take `T const*`:
@@ -3920,7 +3988,7 @@ fn printing_a_class_handle_passes_a_pointer_c_accepts() {
 fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
     let root = workspace_root();
     let separate = format!("tests/conformance/OPT-2/accept_a_loop_nest_over_separate_lists_keeps_its_results.{SOURCE_EXT}");
-    let gcc = ember(&["build", &separate, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
+    let gcc = ember(&["build", &separate, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(gcc.exit, 0, "gcc C failed:
 {}", gcc.stderr);
     assert_eq!(gcc.stdout.matches("EMBER_NOINLINE void").count(), 6, "three loops move (prototype and definition each):
@@ -3928,12 +3996,12 @@ fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
     assert!(gcc.stdout.contains("* restrict _1_ptr"), "the loop function's lists are not restrict:
 {}", gcc.stdout);
     let reading_back = format!("tests/conformance/OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results.{SOURCE_EXT}");
-    let gcc = ember(&["build", &reading_back, "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
+    let gcc = ember(&["build", &reading_back, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "gcc"], &root);
     assert_eq!(gcc.exit, 0, "gcc C failed:
 {}", gcc.stderr);
     assert_eq!(gcc.stdout.matches("EMBER_NOINLINE void").count(), 6, "three nests move for gcc:
 {}", gcc.stdout);
-    let msvc = ember(&["build", &reading_back, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &reading_back, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 2, "one nest moves for MSVC");
 }
 
@@ -3947,7 +4015,7 @@ fn loops_over_separate_lists_get_restrict_functions_for_gcc() {
 fn msvc_writes_small_checked_loops_several_turns_a_pass() {
     let root = workspace_root();
     let source = format!("tests/conformance/CTL-3/accept_a_counted_loop_runs_every_turn_in_any_pass.{SOURCE_EXT}");
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert!(msvc.stdout.contains(" > 7u; ) {"), "no loop runs eight turns to a pass:\n{}", msvc.stdout);
     // `[CG-C-7]` — the object is the local `t`, by its own name.
@@ -3962,7 +4030,7 @@ fn msvc_writes_small_checked_loops_several_turns_a_pass() {
         .expect("total_of is defined");
     let end = start + msvc.stdout[start..].find("\n}\n").expect("total_of ends");
     assert!(!msvc.stdout[start..end].contains("u; ) {"), "the running total's loop was unrolled:\n{}", &msvc.stdout[start..end]);
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
     assert!(!clang.stdout.contains("u; ) {"), "clang's C was unrolled:\n{}", clang.stdout);
 }
@@ -3977,7 +4045,7 @@ fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_nest_adding_the_same_each_round_keeps_its_results.{SOURCE_EXT}");
     let main_loop = format!("{}_loop0(", ember_branding::entry_symbol());
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE void").count(), 2, "one nest moves (prototype and definition):
@@ -3988,7 +4056,7 @@ fn loop_nests_adding_the_same_each_round_get_restrict_functions_for_msvc() {
 ").expect("the loop function ends")];
     assert!(kernel.contains("& 1023LL") && !kernel.contains(" ^ ") && !kernel.contains("& 1000LL"), "the wrong nest moved:
 {kernel}");
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:
 {}", clang.stderr);
     assert!(!clang.stdout.contains(&main_loop), "clang keeps the nest in place:
@@ -4005,12 +4073,12 @@ fn loop_nests_carrying_a_running_value_get_their_own_function_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/OPT-2/accept_a_loop_carrying_a_running_value_keeps_its_results.{SOURCE_EXT}");
     let main_loop = format!("{}_loop", ember_branding::entry_symbol());
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     assert_eq!(msvc.stdout.matches(&format!("EMBER_NOINLINE int64_t {main_loop}")).count(), 4, "two whole-number nests move (prototype and definition each):\n{}", msvc.stdout);
     assert_eq!(msvc.stdout.matches(&format!("EMBER_NOINLINE double {main_loop}")).count(), 2, "the decimal nest moves:\n{}", msvc.stdout);
     assert_eq!(msvc.stdout.matches("EMBER_NOINLINE ").count(), 6, "nothing else moves:\n{}", msvc.stdout);
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
     assert!(!clang.stdout.contains(&main_loop), "clang keeps every loop in place:\n{}", clang.stdout);
 }
@@ -4024,12 +4092,12 @@ fn loop_nests_carrying_a_running_value_get_their_own_function_for_msvc() {
 fn loop_totals_are_block_local_copies_for_msvc() {
     let root = workspace_root();
     let source = format!("tests/conformance/CTL-3b/accept_a_running_total_keeps_its_results.{SOURCE_EXT}");
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:
 {}", msvc.stderr);
     assert_eq!(msvc.stdout.lines().filter(|line| line.ends_with("_in;")).count(), 10, "five totals copied in and back:
 {}", msvc.stdout);
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:
 {}", clang.stderr);
     assert!(!clang.stdout.lines().any(|line| line.ends_with("_in;")), "clang keeps the totals in place:
@@ -4049,7 +4117,7 @@ fn exit_drops_that_only_free_memory_go_in_release() {
     let mut frees = Vec::new();
     for profile in ["debug", "development", "release"] {
         let out_dir = temporary_directory(&format!("exit-drops-{profile}"));
-        let run = ember(&["build", &source, "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
+        let run = ember(&["build", &source, "--backend", "c", "--profile", profile, "--out-dir", &out_dir.to_string_lossy()], &root);
         assert_eq!(run.exit, 0, "{profile} build failed:
 {}", run.stderr);
         let c = unit_defining(&out_dir.join(profile).join("c"), "accept_drops_at_the_end_of_main", &format!("void {main_symbol}(void) {{"));
@@ -4203,7 +4271,7 @@ fn a_check_nothing_held_could_fail_is_removed_and_recorded() {
     let json = std::fs::read_to_string(&side_table)
         .unwrap_or_else(|error| panic!("{}: {error}", side_table.display()));
     assert!(json.contains("\"reason\":\"no_conflicting_hold\""), "missing removed checks: {json}");
-    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
     assert!(!emitted.stdout.contains("field_check_"), "a check nothing could fail survived");
 }
@@ -4214,7 +4282,7 @@ fn a_check_nothing_held_could_fail_is_removed_and_recorded() {
 fn an_access_nothing_can_overlap_is_only_checked() {
     let root = workspace_root();
     let source = format!("tests/conformance/EXC-3/run_fail_a_read_during_a_write_held_elsewhere.{SOURCE_EXT}");
-    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
     assert!(emitted.stdout.contains("field_check_read("), "the read is not a check");
     assert!(!emitted.stdout.contains("field_begin_read("), "the read is still counted");
@@ -4226,7 +4294,7 @@ fn an_access_nothing_can_overlap_is_only_checked() {
 fn a_quiet_mut_self_call_is_only_checked() {
     let root = workspace_root();
     let source = format!("tests/conformance/EXC-19/run_fail_a_quiet_mut_self_call_while_a_field_is_viewed.{SOURCE_EXT}");
-    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
     assert!(emitted.stdout.contains("object_check_failed("), "the call is not a check");
     assert!(!emitted.stdout.contains("object_begin_write("), "the call still marks the object");
@@ -4238,7 +4306,7 @@ fn a_quiet_mut_self_call_is_only_checked() {
 fn access_words_are_packed_before_their_fields() {
     let root = workspace_root();
     let source = format!("tests/conformance/EXC-19/accept_packed_access_words_in_a_base_and_a_derived_class.{SOURCE_EXT}");
-    let emitted = ember(&["build", &source, "--emit", "c"], &root);
+    let emitted = ember(&["build", &source, "--backend", "c", "--emit", "c"], &root);
     assert_eq!(emitted.exit, 0, "C emission failed: {}", emitted.stderr);
     assert!(emitted.stdout.contains("    uint32_t _access_a;
     uint32_t _access_pad0;
@@ -4740,13 +4808,17 @@ fn timings_report_each_stage_and_module() {
         .iter()
         .map(|entry| (entry["stage"].as_str().unwrap().to_string(), entry["module"].as_str().unwrap().to_string()))
         .collect();
+    // `[CG-LL-1]` — the backend's own stages: the LLVM backend's, the default, unless
+    // `EMBER_BACKEND` names the C backend.
+    let backend = if std::env::var("EMBER_BACKEND").is_ok_and(|backend| backend == "c") { "C" } else { "LLVM" };
+    let (generation, link) = if backend == "C" { ("C generation", "C compile and link") } else { ("LLVM IR generation", "LLVM compile and link") };
     for (stage, module) in [
         ("parse", "main"),
         ("read and parse", "std.core"),
         ("check", "all modules"),
         ("lower", "all modules"),
-        ("C generation", "all modules"),
-        ("C compile and link", "all modules"),
+        (generation, "all modules"),
+        (link, "all modules"),
     ] {
         assert!(
             stages.iter().any(|(s, m)| s == stage && m == module),
@@ -4915,7 +4987,7 @@ fn the_compilers_speed_over_bigpkg() {
 fn a_direct_ffi_call_is_the_c_functions_own_call() {
     let root = workspace_root();
     let source = format!("tests/perf/{}", ember_branding::source_file("ffi_direct_call"));
-    let built = ember(&["build", &source, "--emit", "c", "--profile", "release"], &root);
+    let built = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "release"], &root);
     assert_eq!(built.exit, 0, "{}", built.stderr);
     let c = &built.stdout;
     let alias = c
@@ -4941,7 +5013,7 @@ fn a_direct_ffi_call_is_the_c_functions_own_call() {
 fn the_optimization_report_lists_each_direct_call() {
     let root = workspace_root();
     let source = format!("tests/conformance/DSP-5/accept_a_call_with_one_implementation_is_direct.{SOURCE_EXT}");
-    let built = ember(&["build", &source, "--emit", "c", "--emit-optimization-report"], &root);
+    let built = ember(&["build", &source, "--backend", "c", "--emit", "c", "--emit-optimization-report"], &root);
     assert_eq!(built.exit, 0, "build failed:\n{}", built.stderr);
     let listed: Vec<&str> = built.stderr.lines().filter(|line| line.contains("([DSP-5])")).collect();
     assert_eq!(listed.len(), 2, "{}", built.stderr);
@@ -4959,10 +5031,17 @@ fn the_optimization_report_lists_each_direct_call() {
         );
     }
     assert!(!built.stdout.contains("optimization report"), "the report went into the C:\n{}", built.stdout);
+    // `[CG-LL-1]` — the LLVM backend makes the same calls direct and lists them alike.
+    let ir = ember(&["build", &source, "--backend", "llvm", "--emit", "llvm-ir", "--emit-optimization-report"], &root);
+    assert_eq!(ir.exit, 0, "{}", ir.stderr);
+    let from_ir: Vec<&str> = ir.stderr.lines().filter(|line| line.contains("([DSP-5])")).collect();
+    assert_eq!(from_ir, listed, "the LLVM backend's report:\n{}", ir.stderr);
     let final_only = format!("tests/conformance/DSP-1/accept_a_call_on_a_final_class_is_direct.{SOURCE_EXT}");
-    let none = ember(&["build", &final_only, "--emit", "c", "--emit-optimization-report"], &root);
-    assert_eq!(none.exit, 0, "{}", none.stderr);
-    assert!(none.stderr.contains("optimization report:\n  none"), "{}", none.stderr);
+    for backend in [["--backend", "c", "--emit", "c"], ["--backend", "llvm", "--emit", "llvm-ir"]] {
+        let none = ember(&[&["build", final_only.as_str()][..], &backend, &["--emit-optimization-report"]].concat(), &root);
+        assert_eq!(none.exit, 0, "{}", none.stderr);
+        assert!(none.stderr.contains("optimization report:\n  none"), "{backend:?}: {}", none.stderr);
+    }
 }
 
 /// `[SIMD-2]` — `--emit-optimization-report` says of each `@simd` loop
@@ -5001,7 +5080,7 @@ fn the_optimization_report_gives_each_simd_loop_its_verdict_then_the_host_compil
     let host = built.stderr.find("host C compiler's vectorisation report").expect("the host compiler's report follows");
     assert!(verdicts < host, "the host compiler's opinion came first:\n{}", built.stderr);
     assert!(built.stderr[host..].contains("its opinion only"), "{}", built.stderr);
-    let c = ember(&["build", &source, "--emit", "c", "--emit-optimization-report"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--emit-optimization-report"], &root);
     assert_eq!(c.exit, 0, "{}", c.stderr);
     assert!(c.stderr.contains("`@simd` loop") && !c.stderr.contains("host C compiler"), "{}", c.stderr);
     let _ = std::fs::remove_dir_all(&out_dir);
@@ -5590,7 +5669,7 @@ fn check_file(path: &Path, root: &Path) {
     if !expectations.assert_c_order.is_empty() {
         for profile in &c_profiles {
             let emitted = ember(
-                &["build", &relative, "--emit", "c", "--profile", profile],
+                &["build", &relative, "--backend", "c", "--emit", "c", "--profile", profile],
                 root,
             );
             assert_eq!(
@@ -5625,7 +5704,7 @@ fn check_file(path: &Path, root: &Path) {
     if !expectations.assert_c.is_empty() {
         for profile in &c_profiles {
             let emitted = ember(
-                &["build", &relative, "--emit", "c", "--profile", profile],
+                &["build", &relative, "--backend", "c", "--emit", "c", "--profile", profile],
                 root,
             );
             assert_eq!(
@@ -5656,7 +5735,7 @@ fn check_file(path: &Path, root: &Path) {
     if !expectations.assert_c_count.is_empty() {
         for profile in &c_profiles {
             let emitted = ember(
-                &["build", &relative, "--emit", "c", "--profile", profile],
+                &["build", &relative, "--backend", "c", "--emit", "c", "--profile", profile],
                 root,
             );
             assert_eq!(
@@ -6935,6 +7014,8 @@ fn the_emitted_c_compiles_without_warnings() {
         &[
             "build",
             &milestone,
+            "--backend",
+            "c",
             "--emit",
             "c",
         ],
@@ -7024,7 +7105,7 @@ fn the_128_bit_programs_run_with_the_halves() {
         let relative = format!("{relative}.{SOURCE_EXT}");
         let native = ember(&["run", &relative, "--out-dir", &dir.join("native").to_string_lossy()], &root);
         assert_eq!(native.exit, 0, "{relative}: {}", native.stderr);
-        let emitted = ember(&["build", &relative, "--emit", "c"], &root);
+        let emitted = ember(&["build", &relative, "--backend", "c", "--emit", "c"], &root);
         assert_eq!(emitted.exit, 0, "emitting C for {relative} failed:\n{}", emitted.stderr);
         let source = dir.join("program.c");
         std::fs::write(&source, &emitted.stdout).expect("the C is writable");
@@ -7158,7 +7239,7 @@ fn text_iterator_loops_are_counted_loops_without_the_iterator() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
         // ADR-155: MSVC's native step behind the ASCII test takes the lead byte.
@@ -7188,7 +7269,7 @@ fn aggregates_and_views_are_written_field_by_field() {
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
     // clang's C: with MSVC these steps are copied into their loops (ADR-107);
     // the writes by fields are every compiler's.
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let next = c_definition(&c.stdout, &ember_branding::item_symbol("std.string.CharIndices.next"));
     // ADR-135 (G7-2): the item's tuple is a literal written in place, its own
@@ -7204,12 +7285,12 @@ fn aggregates_and_views_are_written_field_by_field() {
     assert!(lines.contains("(_0).ptr = NULL;") && !lines.contains("{ .ptr = NULL"), "`None` of a view is a literal:\n{lines}");
     assert!(lines.contains("(rest).ptr = ((*self).rest).ptr;"), "the rest, written by fields, is copied whole:\n{lines}");
     let counted = format!("tests/conformance/CTL-1/accept_a_view_iterator_loop_is_counted.{SOURCE_EXT}");
-    let c = ember(&["build", &counted, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let c = ember(&["build", &counted, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     assert!(c.stdout.contains(".source;") && !c.stdout.contains(".source).ptr;"), "an iterator's view, written whole, is copied by its fields:\n{}", c.stdout);
     // D-501 — only a source read from memory is copied by its fields: a local
     // whose address is never taken lives in registers and is copied whole.
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let words = c_definition(&c.stdout, &ember_branding::item_symbol("std.string.SplitWhitespace.next"));
     assert!(words.contains("(rest).ptr = ((*self).rest).ptr;"), "the rest, read from memory, is copied whole:\n{words}");
@@ -7251,7 +7332,7 @@ fn split_once_view_fields_stay_field_copies_through_niche_options() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_split_once_view_copy_chains.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
-        let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", cc], &root);
+        let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let first = c_definition(&c.stdout, &ember_branding::item_symbol("first_view"));
         assert!(first.contains(").tag = 0;") && !first.contains("{ .tag = 0 }"), "split None is not tag-only:\n{first}");
@@ -7271,7 +7352,7 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
     let iterators = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
     // clang's C keeps `Chars.next` a function (with MSVC it is copied into
     // its loops, ADR-107); how it is marked is every compiler's.
-    let c = ember(&["build", &iterators, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let c = ember(&["build", &iterators, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let (chars, next) = (ember_branding::item_symbol("std.string.Chars"), ember_branding::item_symbol("std.string.Chars.next"));
     let option_char = ember_branding::instance_symbol("std.core.Option", Some("[char]"));
@@ -7279,7 +7360,7 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
     assert!(c.stdout.contains(&format!("static inline EMBER_MAYBE_UNUSED {chars} {}(", ember_branding::item_symbol("std.core.str.chars"))), "`str.chars` is not static inline:\n{}", c.stdout);
     let attributes = format!("tests/conformance/CG-C-3a/accept_inline_noinline_cold_and_hot.{SOURCE_EXT}");
     for cc in ["msvc", "clang"] {
-        let c = ember(&["build", &attributes, "--emit", "c", "--profile", "development", "--cc", cc], &root);
+        let c = ember(&["build", &attributes, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", cc], &root);
         assert_eq!(c.exit, 0, "{cc} C failed:\n{}", c.stderr);
         let header = |name: &str| {
             let call = format!("{}(", ember_branding::item_symbol(name));
@@ -7300,7 +7381,7 @@ fn inline_header_functions_and_inline_attributes_reach_the_c() {
 fn a_loop_pushing_a_literal_reserves_its_text() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-11/accept_a_string_has_every_str_method.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(c.exit, 0, "clang C failed:\n{}", c.stderr);
     let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
     assert!(main.contains("vec_reserve_hint(") && main.contains(", 2u)"), "no room is reserved for the pushes:\n{main}");
@@ -7312,7 +7393,7 @@ fn a_loop_pushing_a_literal_reserves_its_text() {
 fn an_iterator_loop_without_else_has_no_flag() {
     let root = workspace_root();
     let source = format!("tests/conformance/TYP-17/accept_an_inherent_next_is_the_iterators_for_a_bound_call.{SOURCE_EXT}");
-    let c = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(c.exit, 0, "msvc C failed:\n{}", c.stderr);
     let main = c_definition(&c.stdout, &ember_branding::entry_symbol());
     let next = format!("{}(", ember_branding::item_symbol("Countdown.next"));
@@ -7327,7 +7408,7 @@ fn an_iterator_loop_without_else_has_no_flag() {
 fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
     let root = workspace_root();
     let source = format!("tests/conformance/TXT-10/accept_text_iterators_in_loops_and_through_next.{SOURCE_EXT}");
-    let msvc = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
+    let msvc = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "msvc"], &root);
     assert_eq!(msvc.exit, 0, "msvc C failed:\n{}", msvc.stderr);
     let main = c_definition(&msvc.stdout, &ember_branding::entry_symbol());
     let next = |iterator: &str| format!("{}(", ember_branding::item_symbol(&format!("std.string.{iterator}.next")));
@@ -7340,7 +7421,7 @@ fn msvc_loops_copy_a_standard_step_and_skip_its_answer() {
         pair[0].starts_with("bb") && pair[0].ends_with(": ;") && pair[1].contains(".ptr == NULL && (") && pair[1].contains(".len == SIZE_MAX ? 0 : 1);")
     });
     assert!(!entered_test, "a loop still tests what its step gave back:\n{main}");
-    let clang = ember(&["build", &source, "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
+    let clang = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", "development", "--cc", "clang"], &root);
     assert_eq!(clang.exit, 0, "clang C failed:\n{}", clang.stderr);
     assert!(c_definition(&clang.stdout, &ember_branding::entry_symbol()).contains(&next("Split")), "clang's loop lost its call");
 }
@@ -7536,7 +7617,7 @@ fn memreplace_span_results_refresh_their_index_pointer() {
     let source = format!("tests/conformance/OWN-6/accept_span_replace_result_refreshes_index_pointer.{SOURCE_EXT}");
     for profile in ["debug", "development", "release"] {
         for cc in ["msvc", "clang"] {
-            let c = ember(&["build", &source, "--emit", "c", "--profile", profile, "--cc", cc], &root);
+            let c = ember(&["build", &source, "--backend", "c", "--emit", "c", "--profile", profile, "--cc", cc], &root);
             assert_eq!(c.exit, 0, "{cc}/{profile} C generation failed:\n{}", c.stderr);
             let replaced = c_definition(&c.stdout, &ember_branding::item_symbol("replace_shared_view"));
             assert_memreplace_span_result_pointer_is_refreshed(replaced);
@@ -7562,6 +7643,8 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
             &[
                 "build",
                 &safe,
+                "--backend",
+                "c",
                 "--emit",
                 "c",
                 "--profile",
@@ -7624,6 +7707,8 @@ fn progress_reduction_emits_a_fast_loop_and_preserves_checked_fallback() {
             &[
                 "build",
                 &effectful,
+                "--backend",
+                "c",
                 "--emit",
                 "c",
                 "--profile",
@@ -7716,6 +7801,8 @@ fn string_descriptor_fields_keep_their_source_and_projected_copy_route() {
                 &[
                     "build",
                     &source,
+                    "--backend",
+                    "c",
                     "--emit",
                     "c",
                     "--profile",
@@ -8623,7 +8710,7 @@ pub fn twice(x: i32) -> i32:
     return 2 * x
 ").unwrap();
     let out = dir.join("out");
-    let built = ember(&["build", &source.to_string_lossy(), "--emit", "header", "--cpp", "--out-dir", &out.to_string_lossy()], &root);
+    let built = ember(&["build", &source.to_string_lossy(), "--backend", "c", "--emit", "header", "--cpp", "--out-dir", &out.to_string_lossy()], &root);
     assert_eq!(built.exit, 0, "{}", built.stderr);
     let lib = out.join("debug").join("lib");
     let header = std::fs::read_to_string(lib.join("numbers.hpp")).expect("the C++ header");
@@ -8693,7 +8780,7 @@ pub fn population_of(world: World) -> i32:
     return world.population()
 ").unwrap();
     let out = dir.join("out");
-    let built = ember(&["build", &source.to_string_lossy(), "--emit", "header", "--cpp", "--out-dir", &out.to_string_lossy()], &root);
+    let built = ember(&["build", &source.to_string_lossy(), "--backend", "c", "--emit", "header", "--cpp", "--out-dir", &out.to_string_lossy()], &root);
     assert_eq!(built.exit, 0, "{}", built.stderr);
     let lib = out.join("debug").join("lib");
     let c_header = std::fs::read_to_string(lib.join("worlds.h")).expect("the C header");

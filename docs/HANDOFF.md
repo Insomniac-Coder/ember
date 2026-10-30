@@ -1,6 +1,21 @@
 # Ember — handoff
 
-> **2026-10-30, night — AUTONOMOUS (owner asleep). START HERE.** Owner: "now you work autonomously, keep an eyes on
+> **2026-10-30, day — the owner is here. START HERE.** The owner's order (asked "at what point do you think we
+> will be able to start with implementing the spec?": "no go in order"):
+> 1. **LLVM the default backend, and the README's benchmarks with an LLVM column** (owner: "yes, could you add it
+>    to readme benchmarks too?"). Switched, nine things the C backend's build did were missing from the LLVM
+>    backend's; the owner chose to build them first ("a"). All built: `tasks/96/redesign/compiler-0.9.15/decisions.md`
+>    "The LLVM backend the default". Full suite green with the default and with `EMBER_BACKEND=c`. Still to do:
+>    the Linux run in WSL (scratchpad `llvm_gate.sh`: the GDB printers are new), the commit, the README bench
+>    (`bench/run_windows.py`, `CCS=msvc,clang,llvm`, and the WSL gcc run), the push gate's bench for both backends.
+> 2. Push `main` (every unpushed commit) after the full check and the bench; one CI look.
+> 3. A new hardening (Hardened_6) for verdicts 132-135; its intro must stop calling LLVM "planned" (H5 line 154).
+> 4. The compiler and tests for verdicts 132-135, and the effect error's caret.
+> 5. Back to M1 on branch `m1` (below).
+> - The README's phase 5 figure was out of date before today (29%; the evidence gives 26% at `origin/main`
+>   already); the next commit's `--write` corrects it, and the pinned spec lines (H4 -> H5).
+
+> **2026-10-30, night — AUTONOMOUS (owner asleep).** Owner: "now you work autonomously, keep an eyes on
 > power source and wifi connection if any of those change you wait for 5 minutes and hibernate the laptop and in the
 > morning I want you to report all ODRs to me, you can use one helper agent and make sure you ruling pattern is
 > followed". Watcher: session scratchpad `power_wifi_hibernate.ps1` (log beside it). The night's rulings:

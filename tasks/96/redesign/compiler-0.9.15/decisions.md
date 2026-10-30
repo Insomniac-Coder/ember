@@ -426,6 +426,32 @@ clang 61.70 against 64.71 (0.95x); the LLVM backend 61.97 against 64.55 (0.96x).
 `TYP-8/run_fail_a_recursive_sum_run_as_a_loop_panics_where_it_did` (every profile, both backends, and the
 evaluator agreeing), `milestones.rs` `a_recursive_sum_never_negative_runs_as_a_loop`.
 
+### The LLVM backend the default, 2026-10-30 (owner: "yes, could you add it to readme benchmarks too?", then "a")
+
+`[CG-LL-1]` makes the LLVM backend the default once it passes the conformance and the performance suites;
+both did. Switched, the driver's tests showed nine things the C backend's build did and the LLVM
+backend's did not (the driver returned before them). The owner, asked whether to build them first or
+keep the C backend the default meanwhile: "a" (build them first). None is a language decision.
+
+| Where | Choice | Why |
+|---|---|---|
+| `llvm::selected` | `--backend`, then `[build] backend`, then `EMBER_BACKEND`, then LLVM. The C backend stays one flag away; its errors (`--emit c`, `--cc msvc`, no Clang) say how. | `EMBER_BACKEND` is CI's matrix, as `EMBER_CC` is; four platforms keep the C backend tested with each C compiler. |
+| Tests | A test that reads the C backend's output (`--emit c`, `--emit header`, C units, the C natvis) names `--backend c`; the rest build with the default, or `EMBER_BACKEND`'s. | They test the C backend whatever the default is. |
+| `--build-id`, `--report=engine`, `--emit-optimization-report` | The same functions for both backends (`build_id` hashes the backend too; `print_optimization_report`, `print_host_vectorisation_report`); the LLVM backend records the virtual calls it makes direct as the C backend does. | One answer whichever backend built. |
+| `[BLD-13]` with Clang on Windows | Debug information without the command line or the working folder, linked by `lld-link /pdbsourcepath:.` where LLD is found (`clang_windows_debug_flags`), as clang-cl already was; the runtime object compiled without the working folder. The LLVM program built through Ninja, each unit an object of its own under `obj` (Clang's one-call build named its object after a temporary file). | Microsoft's linker writes absolute paths into the program database and hashes them into the program: one program built in two folders differed. |
+| `[ALC-3]` | The entry stores the two glue functions in the runtime's `alloc` and `free`, as the C entry does. | It was refused. |
+| `[BLD-FFI-1b]`, `[BLD-FFI-4]` | `inherit_cpp_projects`, the C path's, runs for the LLVM backend too (Clang's side). | The LLVM build never inherited the C++ projects' settings. |
+| `[BLD-FFI-2]` | The CMake module passes `--backend c` with any compiler but Clang. | Only Clang compiles the LLVM backend's IR; the module builds with the project's compiler. |
+| `[CG-C-9]`, `[CG-LL-3]` | The LLVM backend's visualisers (`ember_codegen_llvm/src/visualisers.rs`), from the types its debug information describes: a `.natvis` with one entry for every `Array`, `Span` and `MutSpan` and the texts, one per enum, struct and class; GDB and LLDB scripts by the DWARF names. An enum with payloads described as its `tag` and the union of its variants (it was an empty structure). In CodeView a name is written as C++ writes a template's (`Array<i64>`, `tuple$<i64,bool>`, `a::B`), as Rust's debug information for Windows does; DWARF keeps the Ember name. | cdb refuses a `.natvis` naming `Array[int]` ("Failed to register NatVis for type"). Checked with cdb: `numbers` shows its elements, `word` `"local"`, `maybe` `Some(7)`, `b` `Bag { items: [0x2], label: "hi", shape: Circle(r: 1.500000) }`. |
+| `[FFI-37]` | The LLVM backend counts each call to a foreign function at its site (`ffi_enter`/`ffi_leave`), writes the table of foreign functions and links the C backend's instrumentation unit; `ember tcb` and `--version` resolve the backend's compiler as the build does (`resolved_backend`). | Nothing was instrumented, and evidence an LLVM test wrote was "stale" against the C compiler. |
+| `[BLD-4]` (ODR-244) | A `debug` or `development` program a unit per module, as the C backend's, written on the `-j` threads; in units every definition the IR makes `internal` is `weak_odr` in a COMDAT of its name, so each unit makes the glue and tables it needs and the link keeps one, and each unit declares the bodies it names that another defines. | Measured on `bench/bigpkg`, a body edited, debug, medians of five: 6.00 s before (the whole IR compiled again, 3.02 s), 2.99 s after (0.50 s), against the C backend's 3.32 s; a clean build 7.05 s against 8.53 s. `linkonce_odr` may drop a definition only another unit uses. |
+
+| `[RT-4]` | The entry's call of the Ember `main` is `noinline`. | In units, ThinLTO inlined `main` into the C entry, whose frame the backtrace does not name: a `development` panic printed "no backtrace" (`RT-4/run_fail_a_release_panic_names_its_frames`). |
+| `[TOOL-2]` | A build asking for `clang` (the LLVM backend's) takes the archive's Clang before one on `PATH`. | The default backend would otherwise need a Clang the archive already carries. |
+
+Also found: `--version` and `ember tcb` said `backend: c` whatever the backend, and `ember bench` used the
+C backend unless told; each now resolves the backend as a build does.
+
 ### Owner verdicts on §9's rulings, 2026-10-29 (afternoon; asked as ODR 9 onward)
 
 The rulings of §9 and of verdict 125, put to the owner one at a time, numbered on from the morning's

@@ -1,5 +1,6 @@
 """The README's Windows benchmark run: each program in `programs/` built by Ember (release) and its
-hand-written twin in `c/` built by the same C compiler, MSVC and then clang, set by set. Both must
+hand-written twin in `c/` built by the same C compiler, set by set: Ember's C backend with MSVC, then
+with clang, then Ember's LLVM backend, whose IR clang compiles, against the twin clang builds. Both must
 print the same thing; then they run interleaved, and each line gives the median times and the
 peak memory. This process and every process it starts stay on the 8 performance cores (logical
 CPUs 0, 1, 10-13, 22, 23); a run stops at once on battery, where timings are invalid.
@@ -8,7 +9,8 @@ usage: python bench/run_windows.py <log> [runs] [--only <name-part>] [--list]
   runs     how many timed runs of each program (the README uses 11; default 7)
   --only   only the programs whose name contains this (to time a disturbed row again)
   --list   print each program and its twin, build nothing
-  CCS=msvc,clang  which C compilers, in order (the default)
+  CCS=msvc,clang,llvm  which builds, in order (the default): the C backend with each C compiler,
+                       and the LLVM backend (`llvm`), whose twin clang builds
 Builds go to build/bench/<compiler>/ in the repository."""
 import ctypes
 import ctypes.wintypes as wt
@@ -57,7 +59,8 @@ def programs(only=''):
 
 def build_ember(program, cc, out):
     target = out / 'ember' / program.stem
-    result = subprocess.run([str(EMBER), 'build', str(program), '--profile', 'development', '--cc', cc,
+    backend = ['--backend', 'llvm'] if cc == 'llvm' else ['--backend', 'c', '--cc', cc]
+    result = subprocess.run([str(EMBER), 'build', str(program), '--profile', 'development', *backend,
                              '--out-dir', str(target)], capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         sys.exit(f'ember build failed: {program.name}\n{result.stdout}{result.stderr}')
@@ -118,7 +121,7 @@ def main():
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open('w', encoding='utf-8') as out_log:
         for letter in SETS:
-            for cc in os.environ.get('CCS', 'msvc,clang').split(','):
+            for cc in os.environ.get('CCS', 'msvc,clang,llvm').split(','):
                 require_mains(f'set {letter} {cc}')
                 out = ROOT / 'build' / 'bench' / cc
                 for _, program, twin in (c for c in chosen if c[0] == letter):

@@ -24,9 +24,10 @@ fn scratch() -> PathBuf {
     path
 }
 
-/// The backend the harness's `EMBER_BACKEND` names, when it is not the C backend.
+/// The backend the harness's `EMBER_BACKEND` names, else LLVM, the default; none for the C backend.
 fn backend() -> Option<String> {
-    std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty() && backend != "c")
+    let named = std::env::var("EMBER_BACKEND").ok().filter(|backend| !backend.is_empty());
+    Some(named.unwrap_or_else(|| "llvm".to_string())).filter(|backend| backend != "c")
 }
 
 /// The C toolchain of the hosts and archives a test builds: the backend's (Clang's under LLVM, so
@@ -425,7 +426,7 @@ fn a_module_built_for_another_runtime_abi_is_refused_first() {
     if backend().is_some() {
         return a_module_s_ir_built_for_another_runtime_abi_is_refused_first(&dir, &toolchain);
     }
-    let emitted = ember(&["build", "--emit", "c", "--out-dir", "out"], &dir.join("plugin"));
+    let emitted = ember(&["build", "--backend", "c", "--emit", "c", "--out-dir", "out"], &dir.join("plugin"));
     assert_success(&emitted, "the module's C");
     let module_c = dir.join("plugin/out/debug/c/lib.c");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).unwrap();
@@ -851,7 +852,7 @@ fn import_c_shims_reverify_each_layout_with_the_projects_compiler() {
 /// `[IMP-11]`, `[FFI-5a]` — the layout tests compiled with every supported C compiler of this
 /// host (Windows: MSVC and clang-cl, and Clang where it is installed; Linux: GCC and Clang;
 /// macOS: Clang). A header of padded, nested, packed, over-aligned, enum-, pointer- and
-/// bit-field-holding structs is imported, built and run with each compiler: its shim's
+/// bit-field-holding structs is imported, built by the C backend and run with each compiler: its shim's
 /// assertions hold, and Ember's sizes are the ones that compiler's C reports. And the probe of
 /// `import_c_shims_reverify_each_layout_with_the_projects_compiler`, a field only a compiler
 /// other than Clang sees, stops the build at its assertion under each such compiler.
@@ -877,7 +878,7 @@ fn the_layout_assertions_hold_under_every_supported_c_compiler() {
             continue;
         };
         let out = format!("out-{cc}");
-        let built = Command::new(EMBER).args(["build", &ember_branding::source_file("main"), "--out-dir", &out])
+        let built = Command::new(EMBER).args(["build", "--backend", "c", &ember_branding::source_file("main"), "--out-dir", &out])
             .env(ember_branding::cc_var(), cc).current_dir(&dir).output().expect("ember starts");
         assert_success(&built, &format!("the layout program with {cc}"));
         let shim = std::fs::read_to_string(dir.join(&out).join("debug/c/c_h_layouts.shim.c")).expect("the shim is written");
@@ -889,7 +890,7 @@ fn the_layout_assertions_hold_under_every_supported_c_compiler() {
         assert_eq!(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"), "4 2 7 3 4 5 9 1 0 2\ntrue\n",
             "{cc}: Ember's layout is not the C compiler's");
         // The probe: Clang's layout, which the shim asserts, against this compiler's own.
-        let probe = Command::new(EMBER).args(["build", &ember_branding::source_file("probe"), "--out-dir", &out])
+        let probe = Command::new(EMBER).args(["build", "--backend", "c", &ember_branding::source_file("probe"), "--out-dir", &out])
             .env(ember_branding::cc_var(), cc).current_dir(&dir).output().expect("ember starts");
         let clang = match &toolchain {
             Toolchain::Clang(_) => true,
