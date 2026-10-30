@@ -404,6 +404,23 @@ spec's own rules, not rulings; N22's wording was approved.
 - **The open question, answered:** `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` go; a
   hand-written declaration unsafe to call is `@safety` above `unsafe fn` (JOB.md verdict 133).
 
+### Writing 0.9.15_Hardened_6, 2026-10-30 (evening; the owner: "go ahead")
+
+Verdicts 132 to 135 as written in JOB.md, and the LLVM backend the default, which `[CG-LL-1]` already said
+would happen once it passed the conformance and performance suites. The lead's choices in writing them:
+
+| Rule | Choice | Why |
+|---|---|---|
+| FFI-10 (verdict 133) | A plain `fn` in an `unsafe extern` block stays as it was: unsafe to call until its facts are complete and it is `safe fn`, its `E3100` as before. Only the word `unsafe` inside `@ffi(…)` goes, and `unsafe fn` takes its meaning (unsafe on purpose, the `E3100` any `unsafe fn` call gets). | The verdict named `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)`; a plain `fn` is the hand-written twin of a header function with no overlay entry, which also stays unsafe without a word. |
+| CLI-20 (verdicts 130, 133) | `ember fmt --migrate` rewrites both retired spellings: `@ffi(unsafe)` and its per-slot forms, and an overlay entry's `unsafe` contract words, to `unsafe fn`; it writes no `@safety` text. | `[VER-9]`: a hardening that changes the language comes with `--migrate` rewriting every program it can; no placeholder text (§10, `CLI-5`). |
+| E0104 | The retired word is `E0104` in both places, with the `unsafe fn` line to write. | Verdict 130's overlay refusal already is; one code for one mistake. |
+| UNS-7 (verdict 134) | "first call by place": the file built first, then its imports, the earliest line in each; each other call a note `also called at file:line:col`. | The verdict's words; N15's order. |
+
+Not rulings (recorded so the counts are not a surprise): `docs/phase-status.json` takes `UNS-7` off
+`built_for_0915` until verdict 134's notes are built, and puts `CG-LL-1` on it with a test of the default
+(`cg_ll_1_the_llvm_backend_is_the_default`); `appx_h.py` reads a rule past a blank line inside it, which gave
+the older change logs 25 rows they had missed.
+
 ### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")
 
 The LLVM backend lost `a10_recursion` (1.71x C): not the backend's doing. The C backend built by clang

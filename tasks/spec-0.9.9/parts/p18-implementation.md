@@ -315,13 +315,12 @@ points, and with each call standing for what its callee's summary (`[BCK-8]`) sa
 
 Restored from 0.9.8 by ODR-087.
 
-* `[CG-LL-1]` *(new in 0.9.9)* *(changed in 0.9.10)* **Two backends over one intermediate representation.** The reference
+* `[CG-LL-1]` *(new in 0.9.9)* *(changed in 0.9.10)* *(changed in 0.9.15)* **Two backends over one intermediate representation.** The reference
   implementation has two backends over the same MIR: C11 (§XVIII.1), for bootstrap and portability,
   and LLVM, for optimisation control. Both are part of 1.0. The C backend came first; the LLVM
-  backend is built beside it, and becomes the default once it passes the conformance and the
-  performance suites; until it exists, `--backend llvm` and `backend = "llvm"` are refused as not yet
-  implemented. The C backend stays supported afterwards: it is how Ember reaches every platform that
-  has a C compiler.
+  backend, built beside it, passed the conformance and the performance suites and is the default.
+  The C backend stays supported: it is how Ember reaches every platform that has a C compiler, and
+  `--backend c` or `backend = "c"` chooses it.
 * `[CG-LL-2]` *(new in 0.9.9)* The LLVM backend maps MIR to LLVM IR with the C backend's type mapping
   and meets every requirement of this Part that is not about C specifically: no undefined behaviour
   in its output, checked arithmetic through LLVM's overflow intrinsics, and the floating-point rules

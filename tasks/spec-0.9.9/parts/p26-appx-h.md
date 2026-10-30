@@ -175,6 +175,7 @@ Generated: every rule whose text differs between the two hardenings.
 | `[CT-2]` | changed |
 | `[CTL-1]` | changed |
 | `[CTL-3b]` | changed |
+| `[DIA-21]` | changed |
 | `[ECS-3]` | changed |
 | `[ECS-4]` | changed |
 | `[EFF-15]` | changed |
@@ -197,6 +198,7 @@ Generated: every rule whose text differs between the two hardenings.
 | `[FN-8]` | changed |
 | `[FN-10]` | added |
 | `[GRM-2]` | changed |
+| `[GRM-35]` | changed |
 | `[GRM-38]` | added |
 | `[HASH-2]` | changed |
 | `[HASH-3]` | changed |
@@ -211,6 +213,7 @@ Generated: every rule whose text differs between the two hardenings.
 | `[LEX-19]` | changed |
 | `[LNT-6]` | changed |
 | `[MOD-3]` | changed |
+| `[MOD-5]` | changed |
 | `[OBJ-1]` | changed |
 | `[OWN-6]` | changed |
 | `[PAR-3]` | changed |
@@ -233,6 +236,7 @@ Generated: every rule whose text differs between the two hardenings.
 | `[STD-19]` | changed |
 | `[STD-20]` | changed |
 | `[STD-26]` | added |
+| `[THR-1]` | changed |
 | `[THR-6]` | changed |
 | `[THR-8]` | changed |
 | `[THR-9]` | changed |
@@ -570,6 +574,7 @@ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the las
 | `[DET-2]` | changed |
 | `[DET-4]` | changed |
 | `[DRP-6]` | changed |
+| `[DRV-1]` | changed |
 | `[EFF-1]` | changed |
 | `[EFF-7]` | changed |
 | `[EFF-16]` | changed |
@@ -580,6 +585,7 @@ Generated: every rule whose text differs from Hardened_2 in Hardened_52, the las
 | `[EXC-3]` | changed |
 | `[EXC-17]` | changed |
 | `[EXC-19]` | changed |
+| `[FFI-8]` | changed |
 | `[FFI-10]` | changed |
 | `[FFI-11]` | changed |
 | `[FFI-15]` | changed |
@@ -976,8 +982,10 @@ Generated: every rule whose text differs from 0.9.10_Hardened_12.
 
 | Rule | 0.9.10_Hardened_12 → 0.9.10_Hardened_13 |
 |---|---|
+| `[BUD-2]` | changed |
 | `[CG-C-3a]` | changed |
 | `[ERR-6]` | changed |
+| `[FFI-11]` | changed |
 | `[FFI-11b]` | changed |
 | `[FFI-16]` | changed |
 | `[FFI-36a]` | changed |
@@ -991,6 +999,7 @@ Generated: every rule whose text differs from 0.9.10_Hardened_12.
 | `[MAN-7]` | changed |
 | `[PAN-1]` | changed |
 | `[PRF-2]` | changed |
+| `[PRF-3]` | changed |
 | `[RT-4]` | changed |
 
 ## H.19 Changes in 0.9.10_Hardened_14 (from 0.9.10_Hardened_13)
@@ -1149,6 +1158,7 @@ Generated: every rule whose text differs from 0.9.10_Hardened_22.
 | `[FFI-6a]` | changed |
 | `[FFI-6b]` | changed |
 | `[FFI-30c]` | changed |
+| `[GRM-35]` | changed |
 
 ## H.29 Changes in 0.9.10_Hardened_24 (from 0.9.10_Hardened_23)
 
@@ -1223,6 +1233,7 @@ Generated: every rule whose text differs from 0.9.10_Hardened_27.
 | Rule | 0.9.10_Hardened_27 → 0.9.10_Hardened_28 |
 |---|---|
 | `[FFI-39c]` | changed |
+| `[LAY-2]` | changed |
 
 ## H.34 Changes in 0.9.10_Hardened_29 (from 0.9.10_Hardened_28)
 
@@ -1267,9 +1278,11 @@ Generated: every rule whose text differs from 0.9.10_Hardened_30.
 
 | Rule | 0.9.10_Hardened_30 → 0.9.10_Hardened_31 |
 |---|---|
+| `[FFI-8]` | changed |
 | `[FFI-40a]` | changed |
 | `[FFI-41]` | changed |
 | `[FFI-42a]` | changed |
+| `[GRM-35]` | changed |
 | `[STA-1]` | changed |
 | `[TYP-29]` | changed |
 
@@ -1442,6 +1455,7 @@ Generated: every rule whose text differs from 0.9.10_Hardened_34.
 | `[BLD-4]` | changed |
 | `[BLD-10]` | changed |
 | `[BUD-1]` | changed |
+| `[BUD-2]` | changed |
 | `[BUD-3]` | changed |
 | `[BUD-3a]` | changed |
 | `[CG-LL-1]` | changed |
@@ -1449,6 +1463,7 @@ Generated: every rule whose text differs from 0.9.10_Hardened_34.
 | `[ECS-4]` | changed |
 | `[FFI-1]` | changed |
 | `[FFI-8]` | changed |
+| `[FFI-11]` | changed |
 | `[FFI-17a]` | changed |
 | `[FFI-21]` | changed |
 | `[FFI-42]` | changed |
@@ -2049,6 +2064,7 @@ Generated: every rule whose text differs from 0.9.15_Hardened_1.
 | `[CLO-1]` | changed |
 | `[ECS-2]` | changed |
 | `[EFF-2]` | changed |
+| `[FFI-11]` | changed |
 | `[FFI-23]` | changed |
 | `[FFI-28]` | changed |
 | `[FFI-36a]` | changed |
@@ -2121,6 +2137,7 @@ Generated: every rule whose text differs from 0.9.15_Hardened_2.
 | `[CELL-1]` | changed |
 | `[CLI-20]` | changed |
 | `[CLO-14]` | changed |
+| `[DIA-21]` | changed |
 | `[ECS-3]` | changed |
 | `[ECS-4]` | changed |
 | `[ECS-8]` | changed |
@@ -2129,6 +2146,7 @@ Generated: every rule whose text differs from 0.9.15_Hardened_2.
 | `[ERR-4]` | changed |
 | `[ERR-8]` | changed |
 | `[ERR-12]` | changed |
+| `[FFI-8]` | changed |
 | `[FFI-35a]` | changed |
 | `[FN-8]` | changed |
 | `[GRM-31]` | changed |
@@ -2206,7 +2224,9 @@ Generated: every rule whose text differs from 0.9.15_Hardened_3.
 | `[BLD-15]` | added |
 | `[CLI-5]` | changed |
 | `[EFF-2]` | changed |
+| `[FFI-8]` | changed |
 | `[FFI-55]` | changed |
+| `[GRM-35]` | changed |
 | `[LEX-15]` | changed |
 | `[MAN-2]` | changed |
 | `[MAN-8]` | changed |
@@ -2248,7 +2268,44 @@ Generated: every rule whose text differs from 0.9.15_Hardened_4.
 | `[CLI-7]` | changed |
 | `[EFF-2]` | changed |
 | `[FFI-2]` | changed |
+| `[FFI-11]` | changed |
 | `[FFI-12]` | changed |
 | `[FFI-40a]` | changed |
+| `[FFI-55]` | changed |
+| `[GRM-35]` | changed |
 | `[MAN-9]` | added |
+| `[UNS-7]` | changed |
+
+## H.46 Changes in 0.9.15_Hardened_6 (from 0.9.15_Hardened_5)
+
+**0.9.15_Hardened_6** writes in the owner's verdicts 132 to 135 from the review of 2026-10-30, morning
+(`tasks/96/redesign/JOB.md`, and `tasks/96/redesign/compiler-0.9.15/decisions.md`, "Owner verdicts on
+§11's rulings"):
+
+* Verdict 132: an overlay entry for a C++ method without `@ffi(const)` makes the method one that
+  changes its object, whatever the importer reads from the header's body; `@ffi(const)` keeps it one
+  that only reads its object (`[FFI-40a]`, `[GRM-35]`). This reverses Hardened_5's reading.
+* Verdict 133: a hand-written C declaration unsafe to call is written `unsafe fn`, with `@safety` above
+  it, as an overlay entry is; `@ffi(unsafe)`, `param(p, unsafe)` and `result(unsafe)` are `E0104`, whose
+  message gives the line to write, and `ember fmt --migrate` rewrites them, with an overlay entry's
+  `unsafe` contract words (`[FFI-2]`, `[FFI-10]`, `[FFI-11]`, `[CLI-20]`).
+* Verdict 134: `L3015` for an imported function comes once, at its first call by place, with a note
+  naming each other call (`[UNS-7]`).
+* Verdict 135: the default manifest's note reads "created `<path>`: every program needs one, and this
+  folder had none" (`[MAN-9]`).
+* The LLVM backend, which passed the conformance and performance suites, is the default; the C
+  backend is chosen with `--backend c` (`[CG-LL-1]`, §I.1, the manifest example of §XVII).
+
+Generated: every rule whose text differs from 0.9.15_Hardened_5.
+
+| Rule | 0.9.15_Hardened_5 → 0.9.15_Hardened_6 |
+|---|---|
+| `[CG-LL-1]` | changed |
+| `[CLI-20]` | changed |
+| `[FFI-2]` | changed |
+| `[FFI-10]` | changed |
+| `[FFI-11]` | changed |
+| `[FFI-40a]` | changed |
+| `[GRM-35]` | changed |
+| `[MAN-9]` | changed |
 | `[UNS-7]` | changed |

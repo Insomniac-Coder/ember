@@ -18,7 +18,7 @@ reused; retired codes are listed with the reason.
 | `E0101` | unclosed delimiter or literal | `[LEX-6]` |
 | `E0102` | membership test chained (`a in b in c`) | `[GRM-23]` |
 | `E0103` | match arms mix statement and expression form | `[GRM-10]` |
-| `E0104` | attribute or construct not admitted here, among them an attribute that is gone, with the one to write (`@sync`, `@static_safe`, `@no_runtime_checks`, `@fp(contract)`, `@borrows`, `@component`) | `[ATT-1]`, `[PHIL-12]` |
+| `E0104` | attribute or construct not admitted here, among them an attribute that is gone, with the one to write (`@sync`, `@static_safe`, `@no_runtime_checks`, `@fp(contract)`, `@borrows`, `@component`), and `unsafe` written as a contract word, in an overlay entry or in `@ffi(…)`, with the `unsafe fn` line to write | `[ATT-1]`, `[PHIL-12]`, `[FFI-11]` |
 | `E0105` | `;` is not a statement separator | `[GRM-18]` |
 | `E0106` | a multi-statement closure cannot be written inside brackets | `[GRM-17]` |
 | `E0107` | a jump expression may not be an operand | `[GRM-16]` |

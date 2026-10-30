@@ -374,6 +374,27 @@ fn cg_ll_1_an_unknown_backend_is_refused() {
     assert!(said.contains("gcc-jit"), "{said}");
 }
 
+/// `[CG-LL-1]` (0.9.15) — the LLVM backend is the default: with no `--backend`, no `[build] backend`
+/// and no `EMBER_BACKEND`, a build is the LLVM backend's (its IR is what `--emit llvm-ir` prints), and
+/// `backend = "c"` chooses the C backend.
+#[test]
+fn cg_ll_1_the_llvm_backend_is_the_default() {
+    let dir = temporary_directory("llvm");
+    let file = format!("program.{}", ember_branding::SOURCE_EXT);
+    std::fs::write(dir.join(&file), "fn main():\n    println(1)\n").expect("the program is written");
+    let ember = |args: &[&str]| {
+        let output = Command::new(EMBER).args(args).current_dir(&*dir).env_remove("EMBER_BACKEND").output().expect("ember starts");
+        (output.status.success(), format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr)))
+    };
+    let (built, said) = ember(&["build", "--emit", "llvm-ir", &file]);
+    assert!(built && said.contains("define "), "the default build is not the LLVM backend's:\n{said}");
+    let (_, said) = ember(&["--version"]);
+    assert!(said.contains("backend: llvm"), "{said}");
+    std::fs::write(dir.join(ember_branding::MANIFEST), "[package]\nname = \"program\"\nversion = \"0.1.0\"\n\n[build]\nbackend = \"c\"\n").expect("the manifest is written");
+    let (_, said) = ember(&["--version"]);
+    assert!(said.contains("backend: c"), "{said}");
+}
+
 /// ODR-278, `[CLO-1]`, `[STD-19]` — a lambda that captures nothing has a type of its own, which
 /// `map`'s generic argument keeps: the adapter is made for the lambda, holds nothing for it, and
 /// its `next` calls the lambda directly. No callable value is made or called through (in `debug`,

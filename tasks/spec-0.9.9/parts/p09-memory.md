@@ -312,9 +312,11 @@ fn parse(data: Span[u8]) -> Option[u32]:
   `L3015` ("`read_u32_le` is an `unsafe fn` that reads through the raw pointer `p`, and nothing says
   what its callers must make true for that; say it above the function: `@safety("...")`, with what
   `p` must point to"; a declaration with no body is named without a step). For an imported function,
-  `L3015` is given once for each function, at its first call in unsafe code: "`lib_step` is a C
+  `L3015` is given once for each function, at its first call in unsafe code by place: in the file
+  built first, then in its imports, the earliest line in each (verdict 134): "`lib_step` is a C
   function the program calls in unsafe code, and nothing says what its callers must make true; say it
-  in the overlay entry for `lib_step`: `@safety("...")` above `unsafe fn lib_step(…)`". A lambda
+  in the overlay entry for `lib_step`: `@safety("...")` above `unsafe fn lib_step(…)`", with a note
+  for each other call of it, `also called at src/sim.em:14:9`. A lambda
   written inside unsafe code, an `unsafe fn(…)` value, carries `@safety` too, written just before it
   (`set = @safety("`p` points to a writable `int`") fn(v: int) => p.write(v)`, verdict 126), and
   without it is `L3015`; the text stays with the lambda, which `ember tcb` lists, while a value's type

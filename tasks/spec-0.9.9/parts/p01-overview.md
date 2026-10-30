@@ -16,8 +16,8 @@ and lifetimes are inferred and never named. Class objects live in their own bloc
 deterministic destruction; several owners are counted (`shares`), and a link back is a `weakref`. There
 is no null, no exceptions, and no undefined behaviour outside `unsafe`. Performance-critical code uses
 value types, views, structure-of-arrays containers, arenas and enforceable contracts (`@noalloc`,
-`@nosync`). C headers are imported directly. The reference compiler emits C11; LLVM is its planned
-second backend (`[CG-LL-1]`).
+`@nosync`). C headers are imported directly. The reference compiler has two backends: LLVM, the
+default, and C11, which reaches every platform that has a C compiler (`[CG-LL-1]`).
 
 ## I.2 The three tiers
 

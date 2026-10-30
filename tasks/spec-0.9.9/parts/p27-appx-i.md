@@ -178,7 +178,7 @@ Every rule of this document, by family, with the Part that defines it.
 
 | Rule | Part | Begins |
 |---|---|---|
-| `[CG-LL-1]` | XVIII | *(changed in 0.9.10)* Two backends over one intermediate … |
+| `[CG-LL-1]` | XVIII | *(changed in 0.9.10)* *(changed in 0.9.15)* Two backends over one … |
 | `[CG-LL-2]` | XVIII | The LLVM backend maps MIR to LLVM IR with the C backend's type … |
 | `[CG-LL-3]` | XVIII | *(changed in 0.9.15)* It passes the facts the compiler proves to LLVM … |
 

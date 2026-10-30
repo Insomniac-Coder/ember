@@ -36,8 +36,8 @@ fn main():
   (`void free_addr(uintptr_t)`): it is asserted by `safe fn` in an extern block (`[FFI-10]`), or by an
   overlay entry for the function, which asserts that a call within its contract cannot break memory
   safety; such an overlay is an `unsafe overlay` (`[GRM-35]`). An entry written `unsafe fn` asserts
-  nothing of the kind: the function stays unsafe to call, and the entry's `@safety` says what its
-  callers must make true (`[UNS-7]`, verdict 130). A header function with no overlay entry therefore
+  nothing of the kind, nor does a hand declaration written so (verdict 133): the function stays unsafe
+  to call, and its `@safety` says what its callers must make true (`[UNS-7]`, verdict 130). A header function with no overlay entry therefore
   stays unsafe to call. The diagnostic,
   `E5002`, names each missing fact and the overlay line that supplies it (`[DIA-18]`).
 * `[FFI-2a]` *(changed in 0.9.15)* Derived facts need no `unsafe`: `const T*` is a read-only view, `T*`
@@ -59,7 +59,15 @@ fn main():
   declared `safe fn` (a contextual keyword, `[LEX-15]`) and every parameter and result is a scalar, a
   `@layout(c)` value type, or a pointer whose contract is complete (given with `@ffi(…)` on the
   declaration); `safe` on any other function is `E5002`, naming the fact that is missing. Every other
-  call is in `unsafe`. `safe fn` is an asserted fact, listed by `ember tcb` (`[TCB-1]`). Its effects are
+  call is in `unsafe`. A declaration whose calls are to stay unsafe whatever its facts is written
+  `unsafe fn`, with `@safety("…")` above it saying what its callers must make true (`[UNS-7]`), as an
+  overlay entry is (`[GRM-35]`, verdict 133); a call of it outside unsafe code is `E3100`, as any
+  `unsafe fn`'s: "`raw_abs(-3)` (line 11) calls an `unsafe fn`, whose callers must make true what its
+  `@safety` says". `unsafe` is no word of `@ffi(…)`: `@ffi(unsafe)`, `param(p, unsafe)` and
+  `result(unsafe)` are `E0104` ("`unsafe` is no contract word; write the declaration
+  `unsafe fn peek(…)`, with `@safety("…")` above it saying what its callers must make true"), which
+  `ember fmt --migrate` rewrites (`[CLI-20]`); `@ffi(…)` keeps its other words. `safe fn` is an
+  asserted fact, listed by `ember tcb` (`[TCB-1]`). Its effects are
   those its `@ffi(effects=[…])` states plus `FFI`, and every effect when none are stated (`[EFF-3]`);
   which Ember code a call of it may run is `[FFI-52]`'s, and `@ffi(no_callbacks)` says it runs none.
   On a hand declaration, `@ffi(param(name, word, …), result(word, …))` attaches `[FFI-11]`'s
@@ -256,8 +264,9 @@ unsafe overlay c "vulkan/vulkan.h":
   item may begin with `override`, replacing an earlier overlay's entry for that name (`[FFI-30c]`,
   ODR-149). An `overlay_class` section holds the entries of a C++ class's members (verdict 131): its
   methods, which list no receiver, its constructors (`new`) and its static functions, each written as
-  any other entry; `@ffi(const)` above a method's entry asserts that the method only reads its object
-  (`[FFI-40a]`, ODR-160). An entry outside a class section is a function outside any class
+  any other entry; `@ffi(const)` above a method's entry asserts that the method only reads its object,
+  and an entry without it makes the method one that changes its object (`[FFI-40a]`, ODR-160, verdict
+  132). An entry outside a class section is a function outside any class
   (`[FFI-12]`). Ember records the header each overlay was written for in `ember.overlays`,
   never in the overlay (`[FFI-55]`).
 
@@ -288,11 +297,12 @@ unsafe overlay c "vulkan/vulkan.h":
   Other contract words: `out` (an out-parameter, returned instead); `status` (with `@ffi(status=E,
   ok=X, error=N)` on the enum, `[FFI-16]`); `handle`; `callback(borrowed | retained | once, user_data=p)`
   (`[FFI-21]`); `threads(any | main | creator)`; `destroys(f)` (`f`'s parameters may be the registering
-  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); `unsafe` in `@ffi(…)` on a hand
-  declaration (leave the call unsafe); and, on a function, `no_callbacks` (it never calls back into Ember,
+  call's own and its result, `id = listen(…)` then `unlisten(id)`: the token keeps them); and, on a
+  function, `no_callbacks` (it never calls back into Ember,
   `[FFI-52]`), and on a function-pointer typedef, `safe` (`[FFI-56]`).
-  `@ffi(effects=[…])` states effects. An overlay entry leaves its calls unsafe by being written
-  `unsafe fn` (`[GRM-35]`, verdict 130); in an overlay, `unsafe` is no contract word.
+  `@ffi(effects=[…])` states effects. An overlay entry and a hand declaration leave their calls unsafe
+  by being written `unsafe fn` (`[GRM-35]`, `[FFI-10]`, verdicts 130 and 133); `unsafe` is no contract
+  word, in an overlay or in `@ffi(…)` (`E0104`).
 * `[FFI-11a]` A pointer contract with no count word is `E5012`, which lists the five count words and
   names any sibling parameter that looks like a length (an unsigned integer, or a name ending `Count`,
   `Len`, `Size` or `N`).

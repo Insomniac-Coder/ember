@@ -70,8 +70,11 @@ ember --help | --version [--matrix]
   `@fp(allow_fma)`, `assert_disjoint` to `check_disjoint` and `assert_disjoint_or_panic` to
   `assert_disjoint`, a function's type parameters in brackets after its name to a line of their own
   above it (`fn f[T: Add](x: T)` to `[T: needs Add]` above `fn f(x: T)`, `[GRM-40]`), an `x: ref T`
-  parameter to `x: T`, a `T: Sync` bound to `T: needs ThreadShared`, and `for x in xs.iter_mut():` to
-  `for ref mut x in xs:`. It does not rewrite what needs a choice the source does not say: `Shared[T]`
+  parameter to `x: T`, a `T: Sync` bound to `T: needs ThreadShared`, `for x in xs.iter_mut():` to
+  `for ref mut x in xs:`, and a declaration left unsafe to call by the word `unsafe` to `unsafe fn`:
+  an overlay entry's `unsafe` contract words (verdict 130), and `@ffi(unsafe)`, `param(p, unsafe)` and
+  `result(unsafe)` on a hand declaration (verdict 133), the word taken out and an `@ffi(…)` left
+  empty removed. It writes no `@safety` text: `L3015` asks for any that is missing (`[UNS-7]`). It does not rewrite what needs a choice the source does not say: `Shared[T]`
   (`shares T` or `shares mut T`), `RefCell`, `SyncShared` and `@sync` classes (`thread_shared` with
   `guarded by` fields or `Atomic`), `owned fn` (the capture words), and `mem.forget`.
 * `[CLI-21]` *(new in 0.9.9)* `ember run --interp` runs a program on the compile-time evaluator instead
@@ -141,7 +144,7 @@ std = "0.9.15"                    # implicit; may be pinned
 [build]
 entry = "src/main.em"
 target = "native"
-backend = "c"                     # c | llvm (`[CG-LL-1]`)
+backend = "llvm"                  # llvm | c (`[CG-LL-1]`)
 c_compiler = "auto"               # auto | bundled | msvc | clang | gcc
 runtime = "static"                # static | shared (shared is required by hot reload)
 max_instantiations = 200
@@ -179,8 +182,9 @@ large_copy = { level = "warn", threshold = 256 }
 * `[MAN-9]` *(new in 0.9.15)* **Every program is a package** (verdict 127). A command that compiles a
   file (`ember build`, `check`, `run`, `test`, `lint`) with no `ember.toml` in its folder or any folder
   above it first writes a default one in the file's folder, `[package]` with the folder's name as `name`
-  and `version = "0.1.0"`, and says so on standard error; `ember bind` does so in a header's folder no
-  package holds. The program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
+  and `version = "0.1.0"`, and says so on standard error: "note: created `tools/ember.toml`: every
+  program needs one, and this folder had none" (verdict 135); `ember bind` does so in a header's folder
+  no package holds. The program is then that package, and `ember.overlays` sits beside it (`[FFI-55]`).
 * `[MAN-3]` *(changed in 0.9.9)* Every key in `[lints]` names a lint the compiler defines (`E9010`
   otherwise); its value is a level (`allow`, `warn`, `error`) or a table with `level` and the lint's
   parameters.
