@@ -306,6 +306,7 @@ fn reserve_before(body: &mut Body, index: &mut FunctionIndex, shape: &CountedLoo
                 next,
             },
             terminator_span: span,
+            call_span: None,
         });
     }
     // The edges into the loop from outside now reach the first hint; what the index holds

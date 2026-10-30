@@ -1080,7 +1080,7 @@ impl<'a> Builder<'a> {
     }
 
     fn new_block(&mut self, terminator: Terminator, span: Span) -> usize {
-        self.blocks.push(BasicBlock { stmts: Vec::new(), terminator, terminator_span: span });
+        self.blocks.push(BasicBlock { stmts: Vec::new(), terminator, terminator_span: span, call_span: None });
         self.blocks.len() - 1
     }
 
@@ -1329,6 +1329,7 @@ fn result_body(stub: &Body, layout: &Layout, field: usize, span: Span, types: &T
                 otherwise: BasicBlockId(2),
             },
             terminator_span: span,
+            call_span: None,
         },
         BasicBlock {
             stmts: vec![
@@ -1343,6 +1344,7 @@ fn result_body(stub: &Body, layout: &Layout, field: usize, span: Span, types: &T
             ],
             terminator: Terminator::Return,
             terminator_span: span,
+            call_span: None,
         },
         BasicBlock {
             stmts: vec![Stmt::new(
@@ -1351,6 +1353,7 @@ fn result_body(stub: &Body, layout: &Layout, field: usize, span: Span, types: &T
             )],
             terminator: Terminator::Return,
             terminator_span: span,
+            call_span: None,
         },
     ];
     let mut made = stub.clone();

@@ -556,6 +556,7 @@ mod tests {
         BasicBlock {
             stmts: stmts.into_iter().map(|kind| Stmt::new(kind, Span::DUMMY)).collect(),
             terminator, terminator_span: Span::DUMMY,
+            call_span: None,
         }
     }
 

@@ -2545,6 +2545,32 @@ fn unknown_manifest_lint_is_rejected() {
     );
 }
 
+/// `[EFF-2]`, `[EFF-5]` — an effect reached through a lambda a call runs: the error is at the call,
+/// its `^` under the whole call (it was under the call's last argument, the place its lowering set
+/// last), the lambda underlined where it is written, and the chain names it "a lambda" (N6).
+#[test]
+fn an_effect_through_a_lambda_is_reported_at_the_call() {
+    let root = workspace_root();
+    let package = temporary_directory("effect-lambda");
+    let source = package.join(ember_branding::source_file("main"));
+    std::fs::write(package.join(MANIFEST), "[package]\nname = \"lambda\"\nversion = \"0.1.0\"\n").expect("manifest is writable");
+    std::fs::write(
+        &source,
+        "fn apply(f: fn(int) -> int, x: int) -> int:\n    return f(x)\n\n\
+         @noalloc\nfn run(x: int) -> int:\n    return apply(fn(v: int) => [v, v].len(), x)\n\n\
+         fn main():\n    println(run(1))\n",
+    )
+    .expect("source is writable");
+    let checked = ember(&["check", &source.to_string_lossy()], &root);
+    let _ = std::fs::remove_dir_all(&package);
+    assert_ne!(checked.exit, 0, "an allocation under `@noalloc` compiled");
+    let rendered = checked.stderr.replace("\r\n", "\n");
+    assert!(rendered.contains(":6:12\n"), "the error is at the call:\n{rendered}");
+    assert!(rendered.contains("  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ reached from here\n"), "{rendered}");
+    assert!(rendered.contains("  |                  -------------------------- the lambda the call runs\n"), "{rendered}");
+    assert!(rendered.contains("= note: run -> apply -> a lambda -> a new `Array`"), "{rendered}");
+}
+
 /// `[EFF-19]` — `@realtime` stands for the set the package's manifest declares in `[realtime]
 /// contracts`: with `["noalloc"]`, a `@realtime` function may panic but not allocate, and the error
 /// names both `@realtime` and the contract; a name that is no contract is `E9001`.

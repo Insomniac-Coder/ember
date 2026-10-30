@@ -606,6 +606,7 @@ mod tests {
                 stmts,
                 terminator: Terminator::Return,
                 terminator_span,
+                call_span: None,
             }],
             arg_count: 0,
             param_modes: Vec::new(),
@@ -669,6 +670,7 @@ mod tests {
             stmts: Vec::new(),
             terminator: Terminator::Return,
             terminator_span: span,
+            call_span: None,
         });
         body.call_argument_bindings.push(CallArgumentBinding {
             source: LocalId(2), binding: LocalId(3), call_block: BasicBlockId(0),
@@ -908,6 +910,7 @@ mod tests {
                     otherwise: BasicBlockId(2),
                 },
                 terminator_span: span,
+                call_span: None,
             },
             BasicBlock {
                 stmts: vec![Stmt::new(
@@ -919,16 +922,19 @@ mod tests {
                 )],
                 terminator: Terminator::Goto(BasicBlockId(3)),
                 terminator_span: span,
+                call_span: None,
             },
             BasicBlock {
                 stmts: Vec::new(),
                 terminator: Terminator::Goto(BasicBlockId(3)),
                 terminator_span: span,
+                call_span: None,
             },
             BasicBlock {
                 stmts: Vec::new(),
                 terminator: Terminator::Return,
                 terminator_span: span,
+                call_span: None,
             },
         ];
         let violations = verify(&body);
@@ -977,13 +983,15 @@ mod tests {
                         otherwise: BasicBlockId(2),
                     },
                     terminator_span: span,
+                    call_span: None,
                 },
                 BasicBlock {
                     stmts: vec![Stmt::new(StmtKind::BeginAccess { place: access.clone(), mutable: true }, span), flag(true)],
                     terminator: Terminator::Goto(BasicBlockId(3)),
                     terminator_span: span,
+                    call_span: None,
                 },
-                BasicBlock { stmts: Vec::new(), terminator: Terminator::Goto(BasicBlockId(3)), terminator_span: span },
+                BasicBlock { stmts: Vec::new(), terminator: Terminator::Goto(BasicBlockId(3)), terminator_span: span, call_span: None },
                 BasicBlock {
                     stmts: if tested { Vec::new() } else { vec![end.clone()] },
                     terminator: if tested {
@@ -996,9 +1004,10 @@ mod tests {
                         Terminator::Goto(BasicBlockId(5))
                     },
                     terminator_span: span,
+                    call_span: None,
                 },
-                BasicBlock { stmts: vec![end, flag(false)], terminator: Terminator::Goto(BasicBlockId(5)), terminator_span: span },
-                BasicBlock { stmts: Vec::new(), terminator: Terminator::Return, terminator_span: span },
+                BasicBlock { stmts: vec![end, flag(false)], terminator: Terminator::Goto(BasicBlockId(5)), terminator_span: span, call_span: None },
+                BasicBlock { stmts: Vec::new(), terminator: Terminator::Return, terminator_span: span, call_span: None },
             ];
             body
         };
@@ -1058,6 +1067,7 @@ mod tests {
             stmts: Vec::new(),
             terminator: Terminator::Return,
             terminator_span: span,
+            call_span: None,
         });
         let violations = verify(&body);
         assert!(
@@ -1938,6 +1948,7 @@ mod view_invariant_tests {
                 )],
                 terminator: Terminator::Return,
                 terminator_span: span,
+                call_span: None,
             }],
             arg_count: 0,
             param_modes: Vec::new(),
@@ -2155,6 +2166,7 @@ mod interface_upcast_invariant_tests {
                 )],
                 terminator: Terminator::Return,
                 terminator_span: span,
+                call_span: None,
             }],
             arg_count: 0,
             param_modes: Vec::new(),

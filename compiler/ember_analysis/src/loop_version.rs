@@ -1366,6 +1366,7 @@ fn apply(body: &mut Body, types: &TypeTable, plan: Plan) -> usize {
                 otherwise: next,
             },
             terminator_span: span,
+            call_span: None,
         });
     }
 
@@ -2499,7 +2500,7 @@ impl Build {
     }
 
     fn block(&self, body: &mut Body, stmts: Vec<Stmt>, terminator: Terminator) -> BasicBlockId {
-        body.blocks.push(BasicBlock { stmts, terminator, terminator_span: self.span });
+        body.blocks.push(BasicBlock { stmts, terminator, terminator_span: self.span, call_span: None });
         BasicBlockId(body.blocks.len() as u32 - 1)
     }
 
@@ -2700,6 +2701,7 @@ fn group(
                 span: check.span,
             },
             terminator_span: check.span,
+            call_span: None,
         });
         build.block(body, Vec::new(), Terminator::Unreachable);
         report
@@ -2724,6 +2726,7 @@ fn group(
                 ],
                 terminator: Terminator::Assert { cond: copy(set), expected: false, msg: check.msg.clone(), next, span: check.span },
                 terminator_span: check.span,
+                call_span: None,
             });
         }
         build.block(body, vec![build.set(scan, binary(BinOp::Add, copy(scan), word(1)))], Terminator::Goto(scan_head));
@@ -3609,10 +3612,10 @@ fn flush_before(
         let terminator = std::mem::replace(&mut body.blocks[block].terminator, Terminator::Unreachable);
         let span = body.blocks[block].terminator_span;
         // After the check: the remaining statements and the terminator.
-        body.blocks.push(BasicBlock { stmts: tail, terminator, terminator_span: span });
+        body.blocks.push(BasicBlock { stmts: tail, terminator, terminator_span: span, call_span: None });
         let after = BasicBlockId(body.blocks.len() as u32 - 1);
         // The check itself.
-        body.blocks.push(BasicBlock { stmts: rest, terminator: Terminator::Goto(after), terminator_span: span });
+        body.blocks.push(BasicBlock { stmts: rest, terminator: Terminator::Goto(after), terminator_span: span, call_span: None });
         let check = BasicBlockId(body.blocks.len() as u32 - 1);
         let (stmts, pending) = pending_overflow(body, build, common, masks, flag_shift, sizes);
         body.blocks[block].stmts.extend(stmts);
@@ -4421,11 +4424,12 @@ fn apply_hoist(body: &mut Body, shape: &CountedLoop, hoist: ViewHoist) -> usize 
                     stmts: std::mem::take(&mut stmts),
                     terminator: Terminator::Call { func, args, dest, next },
                     terminator_span: body.blocks[block].terminator_span,
+                    call_span: None,
                 });
             }
         }
     }
-    blocks.push(BasicBlock { stmts, terminator: Terminator::Goto(BasicBlockId(shape.header as u32)), terminator_span: span });
+    blocks.push(BasicBlock { stmts, terminator: Terminator::Goto(BasicBlockId(shape.header as u32)), terminator_span: span, call_span: None });
     // Out of the loop, with the storage markers of what moved.
     for item in &items {
         match *item {

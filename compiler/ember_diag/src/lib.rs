@@ -205,6 +205,13 @@ impl Diagnostic {
     }
 }
 
+/// `[UNS-7]` (verdicts 125, 134) — an `L3015` for a C or C++ function is given for each call, and
+/// reported once, at its first call by place, naming the others (`Sink::ordered`): its message,
+/// which names the function, is the key. A lambda's names none: each is its own.
+pub fn once_per_function(diagnostic: &Diagnostic) -> Option<&str> {
+    (diagnostic.code == Some(codes::L3015) && !diagnostic.message.starts_with("this lambda")).then_some(diagnostic.message.as_str())
+}
+
 /// Collects diagnostics for one compiler invocation.
 ///
 /// A stage reports into the sink and keeps going where it can; the driver
@@ -330,17 +337,39 @@ impl Sink {
     /// place; diagnostics at one place in the order they were emitted. `[BLD-1]` — so a build that
     /// checks some modules again and reports the rest's kept diagnostics reports what a clean
     /// build does, in the same order.
-    pub fn ordered(&self) -> Vec<&Diagnostic> {
+    /// Everything collected, in the program's order: by file, in the order the files were read, then
+    /// by place. `[UNS-7]` (verdict 134) — the `L3015`s of one C or C++ function, one for each call,
+    /// are reported as one: at its first call, with a note naming each other call, in that order.
+    pub fn ordered(&self, map: &SourceMap) -> Vec<std::borrow::Cow<'_, Diagnostic>> {
         let mut ordered: Vec<&Diagnostic> = self.diagnostics.iter().collect();
         ordered.sort_by_key(|d| (d.primary.span.file, d.primary.span.start, d.primary.span.end));
-        ordered
+        // Each function's first diagnostic's place in `out`, and the calls it already names.
+        let mut first: std::collections::HashMap<&str, (usize, Vec<Span>)> = std::collections::HashMap::new();
+        let mut out: Vec<std::borrow::Cow<'_, Diagnostic>> = Vec::with_capacity(ordered.len());
+        for d in ordered {
+            let Some(key) = once_per_function(d) else {
+                out.push(std::borrow::Cow::Borrowed(d));
+                continue;
+            };
+            if let Some((at, calls)) = first.get_mut(key) {
+                if !calls.contains(&d.primary.span) {
+                    calls.push(d.primary.span);
+                    // Next to the call it names, before the warning's own notes.
+                    out[*at].to_mut().notes.insert(calls.len() - 2, format!("also called at {}", map.location(d.primary.span)));
+                }
+            } else {
+                first.insert(key, (out.len(), vec![d.primary.span]));
+                out.push(std::borrow::Cow::Borrowed(d));
+            }
+        }
+        out
     }
 
     /// Human rendering of everything collected, in the program's order (`ordered`).
     pub fn render(&self, map: &SourceMap) -> String {
         let mut out = String::new();
-        for d in self.ordered() {
-            out.push_str(&render(d, map));
+        for d in self.ordered(map) {
+            out.push_str(&render(&d, map));
             out.push('\n');
         }
         out
@@ -351,8 +380,8 @@ impl Sink {
     /// stream them while the compiler is still running.
     pub fn render_json(&self, map: &SourceMap) -> String {
         let mut out = String::new();
-        for d in self.ordered() {
-            let _ = writeln!(out, "{}", to_json(d, map));
+        for d in self.ordered(map) {
+            let _ = writeln!(out, "{}", to_json(&d, map));
         }
         out
     }

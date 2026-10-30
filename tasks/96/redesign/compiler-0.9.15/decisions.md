@@ -421,7 +421,7 @@ Not rulings (recorded so the counts are not a surprise): `docs/phase-status.json
 (`cg_ll_1_the_llvm_backend_is_the_default`); `appx_h.py` reads a rule past a blank line inside it, which gave
 the older change logs 25 rows they had missed.
 
-#### Building verdicts 132, 133 and 135 (lead, night of 2026-10-30; none changes what the verdicts say)
+#### Building verdicts 132 to 135 and the effect caret (lead, night of 2026-10-30; none changes what the verdicts say)
 
 | Rule | What was built | Why |
 |---|---|---|
@@ -430,6 +430,8 @@ the older change logs 25 rows they had missed.
 | CLI-5 (132) | `ember bind --init` writes `@ffi(const)` (with a `# derived:` comment) above each method the importer reads as only reading its object. | The starter compiles unchanged and keeps what the import did; without it adopting the starter would make every read-only method changing. |
 | FFI-10 (133) | `safe unsafe fn` is parsed whole and refused, `E5002` ("declared both `safe` and `unsafe`"), as `safe` with `@ffi(unsafe)` was; it was a parse error with no place. | The old refusal carried to the new spelling. |
 | CLI-20 (130, 133) | `ember fmt --migrate` rewrites both: the word out of `@ffi(…)` (an empty one removed) and `unsafe fn`; in an overlay the word out, a slot left bare losing its `:` or `->`, and `unsafe fn`. Neither writes `@safety` text. | `[VER-9]`; §10's no placeholder text. |
+| UNS-7 (134) | The type check gives one `L3015` for each call of a C or C++ function nothing states (each call once, whichever checks see it), and where diagnostics are shown (`Sink::ordered`, text and `--json`) one function's are one: the first by place (the file read first, then the offset), with `also called at <file>:<line>:<col>` for each other, in that order, before the warning's own note. An incremental build keeps each call's warning with its call's part, so a kept part and a part checked again add up to what a clean build reports; D-931's special case in `report_again` goes. | The verdict's words; the kept parts record warnings by the part their place is in, so one merged warning would carry stale calls of parts checked again. |
+| EFF-2 (N6) | An effect's chain is reported at the whole call: MIR keeps a call's own expression (`BasicBlock::call_span`, set for direct, interface and indirect calls) beside its place, which stays its last argument. Moving the place itself was tried and undone: it moved a move's "moved here" from the moved argument to the call, `explain`'s "used at" likewise, and a backtrace frame's column. | The owner's "yes" to N6 named the caret as the flaw to fix, nothing else. |
 | MAN-9 (135) | The note's words as approved; the error beside it reworded the same way ("cannot create `…`: …; every program needs an `ember.toml` in its folder or a folder above"). | Verdict 135's lesson (checklist 18). |
 
 ### `a10_recursion` on the LLVM backend, 2026-10-30 (owner: "yes build it")

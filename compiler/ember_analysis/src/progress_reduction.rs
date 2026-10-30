@@ -1120,6 +1120,7 @@ impl Builder<'_> {
                 otherwise: BasicBlockId(yes as u32),
             },
             terminator_span: self.span,
+            call_span: None,
         });
         b
     }

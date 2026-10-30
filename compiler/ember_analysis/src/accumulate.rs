@@ -258,7 +258,7 @@ fn rewrite(body: &mut Body, shape: Shape, test_at_end: bool) {
         .collect();
     let assign = |place: LocalId, rvalue: Rvalue| Stmt::new(StmtKind::Assign { place: Place::local(place), rvalue }, span);
     let copy = |local: LocalId| Operand::Copy(Place::local(local));
-    let block = |stmts: Vec<Stmt>, terminator: Terminator| BasicBlock { stmts, terminator, terminator_span: span };
+    let block = |stmts: Vec<Stmt>, terminator: Terminator| BasicBlock { stmts, terminator, terminator_span: span, call_span: None };
     let panics = |unreachable: usize| Terminator::Assert {
         cond: Operand::Const(Const::Bool(true)),
         expected: false,

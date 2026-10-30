@@ -343,11 +343,13 @@ fn mixed_ways(body: &mut Body, common: &CommonTypes, site: &Site, t: &Temps, spa
         stmts: vec![assign(prev_end, Rvalue::Use(copy(site.cursor))), assign(run, Rvalue::Use(int(0, common.usize)))],
         terminator: Terminator::Goto(id(copy_of(mixed, site.next))),
         terminator_span: span,
+        call_span: None,
     });
     mixed_blocks.push(BasicBlock {
         stmts: vec![assign(flag, binary(BinOp::Ge, copy(run), int(RUN, common.usize)))],
         terminator: switch(flag, mixed_header, site.header),
         terminator_span: span,
+        call_span: None,
     });
 
     // The short loop: the same, never going back. Its decoder goes on in a copy of the loop's blocks
@@ -384,6 +386,7 @@ fn mixed_ways(body: &mut Body, common: &CommonTypes, site: &Site, t: &Temps, spa
         ],
         terminator: switch(flag, site.next, copy_of(mixed, site.next)),
         terminator_span: span,
+        call_span: None,
     };
     // The loop's entry: a short text runs the short loop.
     let entry_block = BasicBlock {
@@ -395,6 +398,7 @@ fn mixed_ways(body: &mut Body, common: &CommonTypes, site: &Site, t: &Temps, spa
             next: id(entry_test),
         },
         terminator_span: span,
+        call_span: None,
     };
     let entry_test_block = BasicBlock {
         stmts: vec![
@@ -403,6 +407,7 @@ fn mixed_ways(body: &mut Body, common: &CommonTypes, site: &Site, t: &Temps, spa
         ],
         terminator: switch(flag, site.header, copy_of(short, site.header)),
         terminator_span: span,
+        call_span: None,
     };
 
     // The English loop's decoder notes where the character starts and then decides.
@@ -444,6 +449,7 @@ fn stage_blocks(body: &Body, common: &CommonTypes, site: &Site, t: &Temps, span:
             next: id(test),
         },
         terminator_span: span,
+        call_span: None,
     };
     let test_block = BasicBlock {
         stmts: vec![
@@ -466,6 +472,7 @@ fn stage_blocks(body: &Body, common: &CommonTypes, site: &Site, t: &Temps, span:
             otherwise: id(step),
         },
         terminator_span: span,
+        call_span: None,
     };
     let mut step_stmts = body.blocks[site.decode].stmts.clone();
     step_stmts.retain(|s| !matches!(&s.kind, StmtKind::Assign { place, .. } if site.unread_reference.is_some_and(|r| plain(place) == Some(r))));
@@ -481,7 +488,7 @@ fn stage_blocks(body: &Body, common: &CommonTypes, site: &Site, t: &Temps, span:
             rhs: Operand::Const(Const::Int { value: 1, ty: common.usize }),
         },
     ));
-    let step_block = BasicBlock { stmts: step_stmts, terminator: Terminator::Goto(in_copy(id(site.next))), terminator_span: span };
+    let step_block = BasicBlock { stmts: step_stmts, terminator: Terminator::Goto(in_copy(id(site.next))), terminator_span: span, call_span: None };
     let mut blocks = vec![read_block, test_block, step_block];
     for &b in &site.region {
         let mut block = body.blocks[b].clone();

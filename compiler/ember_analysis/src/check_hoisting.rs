@@ -277,6 +277,7 @@ fn apply(body: &mut Body, plan: Plan) {
             otherwise: redirect(*otherwise),
         },
         terminator_span: head.terminator_span,
+        call_span: None,
     };
     let mut check_stmts = Vec::new();
     for &(block, index) in &plan.checks {
@@ -302,6 +303,7 @@ fn apply(body: &mut Body, plan: Plan) {
         stmts: check_stmts,
         terminator: Terminator::Goto(BasicBlockId(plan.header as u32)),
         terminator_span: head.terminator_span,
+        call_span: None,
     };
     let guard_block = body.blocks.len();
     body.blocks.push(guard);

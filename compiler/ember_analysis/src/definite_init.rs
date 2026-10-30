@@ -542,6 +542,7 @@ mod tests {
                         otherwise: BasicBlockId(2),
                     },
                     terminator_span: span,
+                    call_span: None,
                 },
                 BasicBlock {
                     stmts: vec![Stmt::new(
@@ -556,16 +557,19 @@ mod tests {
                     )],
                     terminator: Terminator::Goto(BasicBlockId(3)),
                     terminator_span: span,
+                    call_span: None,
                 },
                 BasicBlock {
                     stmts: Vec::new(),
                     terminator: Terminator::Goto(BasicBlockId(3)),
                     terminator_span: span,
+                    call_span: None,
                 },
                 BasicBlock {
                     stmts: Vec::new(),
                     terminator: Terminator::Return,
                     terminator_span: span,
+                    call_span: None,
                 },
             ],
             arg_count: 1,

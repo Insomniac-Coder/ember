@@ -390,8 +390,14 @@ pub struct BasicBlock {
     pub stmts: Vec<Stmt>,
     pub terminator: Terminator,
     /// Where the terminator came from. A call, a branch condition and a loop
-    /// test are all reads that an analysis has to be able to point at.
+    /// test are all reads that an analysis has to be able to point at. A call's is
+    /// where its lowering ended, its last argument (where a move into it is shown).
     pub terminator_span: Span,
+    /// A call's own expression, `f(a, b)`, where its lowering made it; `None` for any other
+    /// terminator and for a call a pass made. What a call reaches is reported here (`[EFF-2]`,
+    /// the effect analysis's chains), under the whole call.
+    #[serde(default)]
+    pub call_span: Option<Span>,
 }
 
 /// A memory location: a local with a chain of projections.

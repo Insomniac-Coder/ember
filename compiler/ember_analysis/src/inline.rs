@@ -658,7 +658,7 @@ fn known_variant(data: &BasicBlock, x: LocalId) -> Option<usize> {
             _ => {
                 let mut written = Vec::new();
                 crate::loop_version::visit_places(
-                    &BasicBlock { stmts: vec![stmt.clone()], terminator: Terminator::Unreachable, terminator_span: stmt.span },
+                    &BasicBlock { stmts: vec![stmt.clone()], terminator: Terminator::Unreachable, terminator_span: stmt.span, call_span: None },
                     &mut |place: &Place, is_written: bool, _: bool| {
                         if is_written {
                             written.push(place.local);

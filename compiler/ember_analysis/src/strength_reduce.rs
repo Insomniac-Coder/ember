@@ -310,7 +310,7 @@ fn reduce_loop(body: &mut Body, types: &TypeTable, common: &CommonTypes, shape: 
             retarget(&mut body.blocks[block].terminator, |target| if target == header { preheader } else { target });
         }
     }
-    body.blocks.push(BasicBlock { stmts: before, terminator: Terminator::Goto(header), terminator_span: span });
+    body.blocks.push(BasicBlock { stmts: before, terminator: Terminator::Goto(header), terminator_span: span, call_span: None });
     // In the step, after the counter's increment.
     body.blocks[shape.step].stmts.extend(steps);
     // Each value read from its running value.

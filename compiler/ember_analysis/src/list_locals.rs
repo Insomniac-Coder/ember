@@ -235,7 +235,7 @@ fn keep_in_locals(body: &mut Body, types: &TypeTable, header: usize, inside: &Ha
             retarget(&mut body.blocks[block].terminator, |target| if target == header_id { preheader } else { target });
         }
     }
-    body.blocks.push(BasicBlock { stmts: reads, terminator: Terminator::Goto(header_id), terminator_span: span });
+    body.blocks.push(BasicBlock { stmts: reads, terminator: Terminator::Goto(header_id), terminator_span: span, call_span: None });
 
     // Written back on every edge out: one block per place the loop leaves to,
     // numbered in the order they are made.
@@ -252,6 +252,7 @@ fn keep_in_locals(body: &mut Body, types: &TypeTable, header: usize, inside: &Ha
             stmts: writes.clone(),
             terminator: Terminator::Goto(BasicBlockId(target)),
             terminator_span: span,
+            call_span: None,
         });
     }
     kept.len()

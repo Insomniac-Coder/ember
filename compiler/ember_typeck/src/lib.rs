@@ -26,7 +26,7 @@ mod habits;
 pub use comptime::{ComptimeAnswer, ComptimeAnswers, ComptimeRequest};
 pub use derives::component_registry_key;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use ember_ast as ast;
 use ember_hir as hir;
@@ -3736,10 +3736,11 @@ struct Checker<'a> {
     /// (`lib_step`, a member's `Handle.new`); and those whose first call has said so (`L3015`), by that
     /// name, since two imports of one header declare one function (`[FFI-30]`).
     unstated_foreign: HashMap<Span, String>,
-    /// Each such function's first call in unsafe code, by its name: the call, its language, and the
-    /// line to write. Recorded while checking and reported at the end, so a quiet check's rollback
-    /// (`Sink::rollback`) loses none.
-    unstated_calls: HashMap<String, (Span, &'static str, String)>,
+    /// Each such function's calls in unsafe code, by its name: its language, the line to write, and
+    /// the calls. Recorded while checking and reported at the end, so a quiet check's rollback
+    /// (`Sink::rollback`) loses none; one `L3015` each call, which `Sink::ordered` reports as one at
+    /// the first call, naming the others (verdict 134).
+    unstated_calls: HashMap<String, (&'static str, String, BTreeSet<(FileId, u32, u32)>)>,
     /// The type whose members `check_item_attributes_of` is checking, as written.
     members_of: Option<String>,
     /// The files the importer wrote, and those of them `import cpp` wrote.
@@ -23064,17 +23065,19 @@ impl<'a> Checker<'a> {
     /// and at each lambda written in unsafe code without `@safety`; `E0104` for `@safety` on a lambda
     /// written outside it.
     fn report_unstated_safety(&mut self) {
-        let mut calls: Vec<(String, (Span, &'static str, String))> = std::mem::take(&mut self.unstated_calls).into_iter().collect();
-        calls.sort_by_key(|(_, (span, ..))| (span.file, span.start));
-        for (shown, (span, language, line)) in calls {
-            self.sink.emit(
-                Diagnostic::lint(
-                    codes::L3015,
-                    span,
-                    format!("`{shown}` is a {language} function the program calls in unsafe code, and nothing says what its callers must make true; say it in the overlay entry for `{shown}`: {line}"),
-                )
-                .note(format!("{language} code is not trusted as safe: each {language} function a program calls says what its callers must make true [UNS-7]")),
-            );
+        let mut calls: Vec<(String, (&'static str, String, BTreeSet<(FileId, u32, u32)>))> = std::mem::take(&mut self.unstated_calls).into_iter().collect();
+        calls.sort_by_key(|(_, (.., places))| places.first().copied());
+        for (shown, (language, line, places)) in calls {
+            for (file, start, end) in places {
+                self.sink.emit(
+                    Diagnostic::lint(
+                        codes::L3015,
+                        Span::new(file, start, end),
+                        format!("`{shown}` is a {language} function the program calls in unsafe code, and nothing says what its callers must make true; say it in the overlay entry for `{shown}`: {line}"),
+                    )
+                    .note(format!("{language} code is not trusted as safe: each {language} function a program calls says what its callers must make true [UNS-7]")),
+                );
+            }
         }
         let mut lambdas: Vec<(Span, (bool, Option<(String, Span)>))> = std::mem::take(&mut self.lambda_safety).into_iter().collect();
         lambdas.sort_by_key(|(span, _)| (span.file, span.start));
@@ -23268,7 +23271,7 @@ impl<'a> Checker<'a> {
         let refused = self.unsafe_step(span, UnsafeStep::Call { callee: callee.clone(), kind }, refusal);
         // `[UNS-7]` (verdicts 125, 130) — C and C++ code is not trusted as safe: a function the importer
         // wrote whose overlay entry says nothing of it is reported at its first call in unsafe code, where
-        // the program depends on it.
+        // the program depends on it, and at each other call, named under that one (verdict 134).
         if !refused
             && !self.imported_files.contains(&span.file)
             && let Some(shown) = self.unstated_foreign.get(&declared).cloned()
@@ -23279,10 +23282,7 @@ impl<'a> Checker<'a> {
                 Some((owner, _)) => format!("under `class {owner}:`, `@safety(\"...\")` above `unsafe fn {callee}(…)`"),
                 None => format!("`@safety(\"...\")` above `unsafe fn {callee}(…)`"),
             };
-            let first = self.unstated_calls.entry(shown).or_insert((span, language, line.clone()));
-            if (span.file, span.start) < (first.0.file, first.0.start) {
-                *first = (span, language, line);
-            }
+            self.unstated_calls.entry(shown).or_insert_with(|| (language, line, BTreeSet::new())).2.insert((span.file, span.start, span.end));
         }
     }
 

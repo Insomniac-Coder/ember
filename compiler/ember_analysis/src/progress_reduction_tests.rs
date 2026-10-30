@@ -19,6 +19,7 @@ fn block(stmts: Vec<Stmt>, terminator: Terminator) -> BasicBlock {
         stmts,
         terminator,
         terminator_span: span(),
+        call_span: None,
     }
 }
 fn cast(l: u32, to: Ty) -> Rvalue {

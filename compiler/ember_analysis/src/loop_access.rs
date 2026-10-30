@@ -231,6 +231,7 @@ fn lift(body: &mut Body, record: usize, outer: Outer) {
         stmts: vec![end],
         terminator: Terminator::Goto(id(outer.exit)),
         terminator_span: body.blocks[postheader].terminator_span,
+        call_span: None,
     });
     // After its begin, the original goes on in the copy that holds it.
     crate::loop_version::retarget(&mut body.blocks[preheader].terminator, |target| {
@@ -717,6 +718,7 @@ fn apply(body: &mut Body, candidate: Candidate) {
         stmts: prelude.clone(),
         terminator: Terminator::Goto(begin_block),
         terminator_span: original_body.terminator_span,
+        call_span: None,
     };
     // The access ends at the loop's exit now; the copies' releases stay.
     body.blocks[candidate.end].stmts.remove(0);
@@ -732,26 +734,31 @@ fn apply(body: &mut Body, candidate: Candidate) {
         stmts: vec![begin],
         terminator: Terminator::Goto(call_block),
         terminator_span: original_body.terminator_span,
+        call_span: None,
     });
     body.blocks.push(BasicBlock {
         stmts: Vec::new(),
         terminator: original_body.terminator,
         terminator_span: original_body.terminator_span,
+        call_span: None,
     });
     body.blocks.push(BasicBlock {
         stmts: prelude,
         terminator: Terminator::Goto(call_block),
         terminator_span: original_body.terminator_span,
+        call_span: None,
     });
     body.blocks.push(BasicBlock {
         stmts: original_header.stmts,
         terminator: redirect_loop_targets(original_header.terminator, regular_prelude, postheader),
         terminator_span: original_header.terminator_span,
+        call_span: None,
     });
     body.blocks.push(BasicBlock {
         stmts: vec![end],
         terminator: Terminator::Goto(candidate.exit),
         terminator_span: body.blocks[candidate.end].terminator_span,
+        call_span: None,
     });
 
     body.hoisted_accesses.push(HoistedAccess {

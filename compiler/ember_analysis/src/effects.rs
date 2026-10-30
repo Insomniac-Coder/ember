@@ -1341,8 +1341,10 @@ fn rvalue_operands(rvalue: &Rvalue) -> Vec<&Operand> {
     }
 }
 
+/// `[EFF-2]` — where a call is reported: the whole call, where its lowering made one (N6: its last
+/// argument, the terminator's place, was under the `^`).
 fn call_span(block: &ember_mir::BasicBlock) -> Span {
-    block.terminator_span
+    block.call_span.unwrap_or(block.terminator_span)
 }
 
 /// `[EFF-1]`'s table, for each operation the compiler provides. An allocation also carries

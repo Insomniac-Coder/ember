@@ -1286,8 +1286,9 @@ fn insert_shared_accesses(
                     stmts: vec![end.clone().into_stmt(), AccessEvent::Flag { flag: *flag, value: false, span }.into_stmt()],
                     terminator: Terminator::Goto(rest),
                     terminator_span: span,
+                    call_span: None,
                 });
-                appended.push(BasicBlock { stmts: Vec::new(), terminator: Terminator::Unreachable, terminator_span: span });
+                appended.push(BasicBlock { stmts: Vec::new(), terminator: Terminator::Unreachable, terminator_span: span, call_span: None });
                 *current = rest.0 as usize;
             }
             if let Some(events) = events {
@@ -1446,11 +1447,12 @@ fn append_conditional_end(body: &mut Body, flag: LocalId, end: AccessEvent, next
     let span = end.span();
     let test = BasicBlockId(body.blocks.len() as u32);
     let ending = BasicBlockId(test.0 + 1);
-    body.blocks.push(BasicBlock { stmts: Vec::new(), terminator: flag_test(flag, next, ending), terminator_span: span });
+    body.blocks.push(BasicBlock { stmts: Vec::new(), terminator: flag_test(flag, next, ending), terminator_span: span, call_span: None });
     body.blocks.push(BasicBlock {
         stmts: vec![end.into_stmt(), AccessEvent::Flag { flag, value: false, span }.into_stmt()],
         terminator: Terminator::Goto(next),
         terminator_span: span,
+        call_span: None,
     });
     test
 }
@@ -2003,6 +2005,7 @@ fn append_edge_end(
         stmts: vec![event.clone().into_stmt()],
         terminator: Terminator::Goto(target),
         terminator_span: event.span(),
+        call_span: None,
     });
     let terminator = &mut body.blocks[source].terminator;
     match terminator {
@@ -5464,6 +5467,7 @@ mod callable_region_metadata_tests {
                 stmts: Vec::new(),
                 terminator: Terminator::Return,
                 terminator_span: span,
+                call_span: None,
             }],
             arg_count: 0,
             param_modes: Vec::new(),
@@ -5517,6 +5521,7 @@ mod callable_region_metadata_tests {
                 next: BasicBlockId(1),
             },
             terminator_span: span,
+            call_span: None,
         });
         let bodies = vec![caller, leaf];
         let signatures: HashMap<String, Elision> =
@@ -5614,11 +5619,13 @@ mod callable_region_metadata_tests {
                     next: BasicBlockId(1),
                 },
                 terminator_span: span,
+                call_span: None,
             },
             BasicBlock {
                 stmts: Vec::new(),
                 terminator: Terminator::Return,
                 terminator_span: span,
+                call_span: None,
             },
         ];
         let mut bodies = vec![callee, caller];

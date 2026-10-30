@@ -452,6 +452,7 @@ impl<'a> Builder<'a> {
             stmts: Vec::new(),
             terminator: Terminator::Unreachable,
             terminator_span: function.span,
+            call_span: None,
         }];
         Builder {
             function,
@@ -593,6 +594,7 @@ impl<'a> Builder<'a> {
             stmts: Vec::new(),
             terminator: Terminator::Unreachable,
             terminator_span: span,
+            call_span: None,
         });
         id
     }
@@ -2717,6 +2719,8 @@ impl<'a> Builder<'a> {
                     dest: place,
                     next,
                 });
+                // The whole call, where what it reaches is reported (`BasicBlock::call_span`).
+                self.blocks[call_block.0 as usize].call_span = Some(expr.span);
                 self.call_argument_bindings.extend(forwarded_mut_refs.into_iter().map(
                     |(source, binding)| CallArgumentBinding { source, binding, call_block },
                 ));
@@ -2800,6 +2804,7 @@ impl<'a> Builder<'a> {
                     .map(|signature| signature.params.clone())
                     .expect("a checked interface call always targets a dyn-callable slot");
                 let next = self.new_block();
+                let call_block = self.current.0 as usize;
                 self.terminate(Terminator::Call {
                     func: FuncRef::Interface {
                         interfaces: interfaces.clone(),
@@ -2815,6 +2820,7 @@ impl<'a> Builder<'a> {
                     dest: place,
                     next,
                 });
+                self.blocks[call_block].call_span = Some(expr.span);
                 self.current = next;
                 for access in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place: access, mutable: true });
@@ -2906,7 +2912,9 @@ impl<'a> Builder<'a> {
                         sources: self.types.callable_sources(callee.ty),
                     },
                 };
+                let call_block = self.current.0 as usize;
                 self.terminate(Terminator::Call { func, args, dest: place, next });
+                self.blocks[call_block].call_span = Some(expr.span);
                 self.current = next;
                 for place in class_accesses.into_iter().rev() {
                     self.push(StmtKind::EndAccess { place, mutable: true });

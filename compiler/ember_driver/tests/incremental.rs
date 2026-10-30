@@ -492,10 +492,10 @@ fn main():
     println(n, helper.measure(pointer))
 "#;
 
-/// `[UNS-7]` (verdict 125), `[BLD-1]`, D-931 — `L3015` for a C function nothing says the callers of
-/// is reported once in a program, at the first call: with the module of that call kept, it is
-/// reported again, and not reported again beside the one a module checked anew reports at its own
-/// call. Each check reports what a clean one does.
+/// `[UNS-7]` (verdicts 125, 134), `[BLD-1]`, D-931 — `L3015` for a C function nothing says the callers
+/// of is reported once in a program, at its first call by place (the file built first), with a note
+/// naming each other call; whichever modules a check keeps, it reports what a clean one does, and
+/// with the first call taken out the warning is at the other, which no note names any more.
 #[test]
 fn a_c_function_called_with_nothing_stated_is_warned_of_once_whatever_is_kept() {
     let dir = scratch();
@@ -503,13 +503,15 @@ fn a_c_function_called_with_nothing_stated_is_warned_of_once_whatever_is_kept() 
     std::fs::write(dir.join("src").join("unstated.h"), UNSTATED_HEADER).expect("header");
     write(&dir, &source("helper"), UNSTATED_HELPER);
     write(&dir, &source("main"), UNSTATED_MAIN);
+    let helper_call = format!("{}:7:16", source("helper"));
     let steps = [
-        ("the first check", None),
-        ("nothing edited", None),
-        ("the module of the first call", Some((source("main"), UNSTATED_MAIN.replace("println(n, ", "println(n + 0, ")))),
-        ("the other module", Some((source("helper"), UNSTATED_HELPER.replace("as int\n", "as int + 0\n")))),
+        ("the first check", None, true),
+        ("nothing edited", None, true),
+        ("the module of the first call", Some((source("main"), UNSTATED_MAIN.replace("println(n, ", "println(n + 0, "))), true),
+        ("the other module", Some((source("helper"), UNSTATED_HELPER.replace("as int\n", "as int + 0\n"))), true),
+        ("the first call taken out", Some((source("main"), UNSTATED_MAIN.replace("        n = c.strlen(pointer)\n", "        n = 2\n"))), false),
     ];
-    for (step, edit) in steps {
+    for (step, edit, two_calls) in steps {
         if let Some((file, text)) = edit {
             write(&dir, &file, &text);
         }
@@ -518,6 +520,12 @@ fn a_c_function_called_with_nothing_stated_is_warned_of_once_whatever_is_kept() 
         assert!(incremental.ok && clean.ok, "{step}:\n{}\n{}", incremental.report, clean.report);
         assert_eq!(incremental.report, clean.report, "{step}: what the checks report");
         assert_eq!(clean.report.matches("warning[L3015]").count(), 1, "{step}: one `L3015` for `strlen`\n{}", clean.report);
+        let notes: Vec<&str> = clean.report.lines().filter(|line| line.contains("= note: also called at ")).collect();
+        if two_calls {
+            assert!(notes.len() == 1 && notes[0].ends_with(&helper_call), "{step}: the note names the helper's call\n{}", clean.report);
+        } else {
+            assert!(notes.is_empty() && clean.report.contains(&format!("{}:7:16", source("helper"))), "{step}: the warning is at the helper's call\n{}", clean.report);
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

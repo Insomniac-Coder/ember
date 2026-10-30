@@ -393,7 +393,7 @@ fn try_outline(
             Stmt::new(StmtKind::Assign { place: Place::local(map[local]), rvalue: Rvalue::Use(value.clone()) }, span)
         })
         .collect();
-    blocks.push(BasicBlock { stmts: entry_stmts, terminator: Terminator::Goto(remap_block(BasicBlockId(shape.header as u32))), terminator_span: span });
+    blocks.push(BasicBlock { stmts: entry_stmts, terminator: Terminator::Goto(remap_block(BasicBlockId(shape.header as u32))), terminator_span: span, call_span: None });
     for &old in &order {
         let data = &body.blocks[old];
         let stmts: Vec<Stmt> = data
@@ -403,7 +403,7 @@ fn try_outline(
             .collect();
         let mut terminator = rewrite.terminator(&data.terminator)?;
         crate::loop_version::retarget(&mut terminator, remap_block);
-        blocks.push(BasicBlock { stmts, terminator, terminator_span: data.terminator_span });
+        blocks.push(BasicBlock { stmts, terminator, terminator_span: data.terminator_span, call_span: None });
     }
     let give = result
         .map(|result| {
@@ -412,7 +412,7 @@ fn try_outline(
         })
         .into_iter()
         .collect();
-    blocks.push(BasicBlock { stmts: give, terminator: Terminator::Return, terminator_span: span });
+    blocks.push(BasicBlock { stmts: give, terminator: Terminator::Return, terminator_span: span, call_span: None });
 
     let symbol = format!("{}_loop{made}", body.symbol);
     let mut kernel = body.clone();
@@ -478,6 +478,7 @@ fn try_outline(
                 next,
             },
             terminator_span: span,
+            call_span: None,
         });
         args.push(if mutable { Operand::Move(Place::local(view)) } else { Operand::Copy(Place::local(view)) });
     }
@@ -507,6 +508,7 @@ fn try_outline(
             next: BasicBlockId(exit as u32),
         },
         terminator_span: span,
+        call_span: None,
     });
     let header = BasicBlockId(shape.header as u32);
     let preheader = BasicBlockId(first as u32);

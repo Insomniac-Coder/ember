@@ -6,6 +6,9 @@ unsafe overlay cpp "json_api.hpp":  # SAFETY(ffi): each entry matches its declar
     fn parse(text: borrowed count(length), length)
     fn count(document, key: borrowed count(length), length)
     class basic_json:
+        @ffi(const)
         fn is_object()
+        @ffi(const)
         fn size()
+        @ffi(const)
         fn dump(indent, indent_char, ensure_ascii, error_handler)

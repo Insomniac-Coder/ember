@@ -15006,6 +15006,7 @@ mod string_descriptor_view_parts_tests {
                 stmts: Vec::new(),
                 terminator: Terminator::Return,
                 terminator_span: span,
+                call_span: None,
             }],
             arg_count: 1,
             param_modes: vec![ParameterMode::Borrow],

@@ -19,6 +19,12 @@
 #if defined(__linux__) && !defined(_GNU_SOURCE)
 #define _GNU_SOURCE
 #endif
+/* Windows' C runtime marks the standard `getenv`, `fopen`, `strerror` and others deprecated in favour
+ * of its `_s` functions, a warning Clang makes an error under `-Werror`; the runtime uses the standard
+ * ones, as on every other platform. */
+#if defined(_WIN32) && !defined(_CRT_SECURE_NO_WARNINGS)
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 
 #include "ember_rt.h"
 
