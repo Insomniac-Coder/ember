@@ -313,21 +313,58 @@ fn pairs(dir: &Path, filter: Option<&str>) -> Result<Vec<Pair>, String> {
     Ok(found)
 }
 
-/// `[BEN-1]` — this process, and every program it starts, on the one core `core`.
-fn pin_to_core(core: usize) -> Result<(), String> {
+/// The cores a process may run on: Windows' affinity mask, Linux's `cpu_set_t`.
+#[cfg(windows)]
+type Cores = usize;
+#[cfg(target_os = "linux")]
+type Cores = [u64; 16];
+#[cfg(not(any(windows, target_os = "linux")))]
+type Cores = ();
+
+/// The cores this process may run on now: the ones it was given, read before it pins itself, so its
+/// builds go back to them (`set_cores`).
+fn cores() -> Result<Cores, String> {
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn GetProcessAffinityMask(process: *mut std::ffi::c_void, process_mask: *mut usize, system_mask: *mut usize) -> i32;
+        }
+        let (mut process, mut system) = (0usize, 0usize);
+        // SAFETY(ffi): the pseudo-handle of this process and two words for its answer.
+        let read = unsafe { GetProcessAffinityMask(GetCurrentProcess(), &mut process, &mut system) };
+        if read == 0 {
+            return Err(format!("cannot read this process's cores: {}", std::io::Error::last_os_error()));
+        }
+        Ok(process)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn sched_getaffinity(pid: i32, size: usize, mask: *mut u64) -> i32;
+        }
+        let mut mask = [0u64; 16];
+        // SAFETY(ffi): this process (0) and a `cpu_set_t`-sized mask for the answer.
+        if unsafe { sched_getaffinity(0, std::mem::size_of_val(&mask), mask.as_mut_ptr()) } != 0 {
+            return Err(format!("cannot read this process's cores: {}", std::io::Error::last_os_error()));
+        }
+        Ok(mask)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    Err("pinning to one core is not supported on this host".to_string())
+}
+
+/// This process, and every program it starts from now on, on the cores `cores`.
+fn set_cores(cores: &Cores) -> Result<(), String> {
     #[cfg(windows)]
     {
         unsafe extern "system" {
             fn GetCurrentProcess() -> *mut std::ffi::c_void;
             fn SetProcessAffinityMask(process: *mut std::ffi::c_void, mask: usize) -> i32;
         }
-        if core >= usize::BITS as usize {
-            return Err(format!("core {core} is out of range"));
-        }
-        // SAFETY(ffi): the pseudo-handle of this process and a mask of one core.
-        let pinned = unsafe { SetProcessAffinityMask(GetCurrentProcess(), 1usize << core) };
-        if pinned == 0 {
-            return Err(format!("cannot pin to core {core}: {}", std::io::Error::last_os_error()));
+        // SAFETY(ffi): the pseudo-handle of this process and a mask of its cores.
+        if unsafe { SetProcessAffinityMask(GetCurrentProcess(), *cores) } == 0 {
+            return Err(format!("cannot set this process's cores: {}", std::io::Error::last_os_error()));
         }
         Ok(())
     }
@@ -336,23 +373,46 @@ fn pin_to_core(core: usize) -> Result<(), String> {
         unsafe extern "C" {
             fn sched_setaffinity(pid: i32, size: usize, mask: *const u64) -> i32;
         }
-        let mut mask = [0u64; 16];
-        if core >= mask.len() * 64 {
-            return Err(format!("core {core} is out of range"));
-        }
-        mask[core / 64] |= 1u64 << (core % 64);
-        // SAFETY(ffi): this process (0) and a `cpu_set_t`-sized mask of one core.
-        let pinned = unsafe { sched_setaffinity(0, std::mem::size_of_val(&mask), mask.as_ptr()) };
-        if pinned != 0 {
-            return Err(format!("cannot pin to core {core}: {}", std::io::Error::last_os_error()));
+        // SAFETY(ffi): this process (0) and a `cpu_set_t`-sized mask of its cores.
+        if unsafe { sched_setaffinity(0, std::mem::size_of_val(cores), cores.as_ptr()) } != 0 {
+            return Err(format!("cannot set this process's cores: {}", std::io::Error::last_os_error()));
         }
         Ok(())
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     {
-        let _ = core;
+        let _ = cores;
         Err("pinning to one core is not supported on this host".to_string())
     }
+}
+
+/// `[BEN-1]` — this process, and every program it starts from now on, on the one core `core`: the
+/// timed runs. Not the builds (`set_cores` gives them back the process's cores): MSVC's linker
+/// (14.44 and 14.51) livelocks in its allocator, Intel's TBB, about once in 10,000 links held to one
+/// core, and in none of 17,000 that were not.
+fn pin_to_core(core: usize) -> Result<(), String> {
+    #[cfg(windows)]
+    let one: Cores = {
+        if core >= usize::BITS as usize {
+            return Err(format!("core {core} is out of range"));
+        }
+        1usize << core
+    };
+    #[cfg(target_os = "linux")]
+    let one: Cores = {
+        let mut mask = [0u64; 16];
+        if core >= mask.len() * 64 {
+            return Err(format!("core {core} is out of range"));
+        }
+        mask[core / 64] |= 1u64 << (core % 64);
+        mask
+    };
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let one: Cores = {
+        let _ = core;
+        return Err("pinning to one core is not supported on this host".to_string());
+    };
+    set_cores(&one).map_err(|error| format!("cannot pin to core {core}: {error}"))
 }
 
 /// The processor's name, for the gate's report: a benchmark's ratio is a fact about the machine as
@@ -714,7 +774,14 @@ pub fn command(args: &[String]) -> Result<ExitCode, String> {
     let out_dir = std::env::temp_dir().join(format!("ember-bench-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).map_err(|error| error.to_string())?;
     let result = compare_all(&pairs, &baseline, &mut instructions, record, &out_dir, core, report, &backend);
-    let _ = std::fs::remove_dir_all(&out_dir);
+    // A failed build's files stay for whoever looks into it (`[BLD-15]`: a stopped link's command
+    // file and its threads' stacks).
+    match &result {
+        Err(_) => eprintln!("the builds are kept in {}", out_dir.display()),
+        Ok(_) => {
+            let _ = std::fs::remove_dir_all(&out_dir);
+        }
+    }
     if record && result.is_ok() {
         std::fs::write(&instructions_file, render_instructions(&instructions)).map_err(|error| format!("cannot write {}: {error}", instructions_file.display()))?;
         println!("recorded the retired instructions in {} [BEN-4]", instructions_file.display());
@@ -755,7 +822,10 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut
         println!("void: the machine is on battery power, unfit for gating [BEN-3]");
         return Ok(ExitCode::SUCCESS);
     }
+    // The cores the builds run on; each pair's runs are pinned (`pin_to_core`).
+    let own = cores()?;
     pin_to_core(core)?;
+    set_cores(&own)?;
     // D-755 — clang-cl's linker has no layout option: one layout.
     let layouts = if matches!(&toolchain, ember_build::Toolchain::Msvc { cl, .. } if cl.file_stem().is_some_and(|stem| stem.eq_ignore_ascii_case("clang-cl"))) {
         1
@@ -779,8 +849,10 @@ fn compare_all(pairs: &[Pair], baseline: &[(String, String)], instructions: &mut
     let mut summary: Vec<String> = Vec::new();
     for pair in pairs {
         let pair_dir = out_dir.join(&pair.name);
+        set_cores(&own)?;
         let embers = (0..layouts).map(|layout| build_ember(&pair.ember, &pair_dir, layout, backend)).collect::<Result<Vec<_>, _>>()?;
         let twins = (0..layouts).map(|layout| build_twin(&toolchain, &pair.twin, out_dir, &pair.name, layout)).collect::<Result<Vec<_>, _>>()?;
+        pin_to_core(core)?;
         // `[TST-28]` — a checker of identical output.
         let (ember_out, _) = run_once(&embers[0], pair.stdin.as_deref())?;
         let (c_out, _) = run_once(&twins[0], pair.stdin.as_deref())?;
@@ -978,7 +1050,10 @@ fn reload_overhead(dir: &Path, filter: Option<&str>, core: usize, runs: usize, t
         println!("void: the machine is on battery power, unfit for timing [BEN-3]");
         return Ok(ExitCode::SUCCESS);
     }
+    // The cores the builds run on; each program's runs are pinned (`pin_to_core`).
+    let own = cores()?;
     pin_to_core(core)?;
+    set_cores(&own)?;
     let out_dir = std::env::temp_dir().join(format!("ember-bench-reload-{}", std::process::id()));
     println!(
         "[HR-9] reload overhead: {} program(s) of {}, `development` profile, reloadable with `reload = \"{tier}\"`, {} ({}) on core {core} of {}, {WARMUP} untimed and {runs} timed runs of each form, interleaved",
@@ -994,8 +1069,10 @@ fn reload_overhead(dir: &Path, filter: Option<&str>, core: usize, runs: usize, t
             let name = source.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
             let text = std::fs::read_to_string(source).map_err(|error| format!("{}: {error}", source.display()))?;
             let stdin = text.lines().find_map(|line| line.strip_prefix("#$ stdin:").map(|value| value.trim().to_string()));
+            set_cores(&own)?;
             let plain = build_development(source, &out_dir.join(name).join("plain"), None)?;
             let reloadable = build_development(source, &out_dir.join(name).join("reload"), Some(tier))?;
+            pin_to_core(core)?;
             if run_once(&plain, stdin.as_deref())?.0 != run_once(&reloadable, stdin.as_deref())?.0 {
                 return Err(format!("{name}: the reloadable program prints otherwise than the plain one"));
             }

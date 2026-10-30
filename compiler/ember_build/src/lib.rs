@@ -1265,8 +1265,10 @@ pub fn run_limited(command: &mut Command, limit: std::time::Duration, stacks: Op
 
 /// `[BLD-15]` — end the process `id` and every process it started. On Windows, each one's threads'
 /// stacks first, into `stacks`, when the Windows debugger `cdb` is installed: attached without
-/// stopping them (`-pv`), with no symbols to fetch, at most a minute each. They are the evidence of
-/// where a hung linker spins. Then WMI's `Terminate`, which ended the hung `link.exe` that
+/// stopping them (`-pv`), with Microsoft's public symbols (cached under the global cache), each
+/// thread's processor time, and a linker's whole memory beside them (`<stacks>.<process>.dmp`), at
+/// most three minutes each, after a list of every compiler and linker process on the machine. They
+/// are the evidence of where a hung linker spins. Then WMI's `Terminate`, which ended the hung `link.exe` that
 /// `TerminateProcess` (`Stop-Process`, `taskkill /F`) did not, with exit code 1 (its default, 0,
 /// made `cl` and Ninja take the stopped link for a finished one, D-928), then `taskkill` for any
 /// left. Elsewhere, its process group. Every helper runs under a limit of its own.
@@ -1298,11 +1300,28 @@ fn end_process_tree(id: u32, stacks: Option<&Path>) {
     if let Some(stacks) = stacks
         && cdb.is_file()
     {
-        let mut text = String::new();
+        // Microsoft's public symbols name the linker's own functions; fetched once into the cache.
+        let symbols = format!("srv*{}*https://msdl.microsoft.com/download/symbols", cache_root().join("symbols").display());
+        // Every compiler, linker and helper of theirs on the machine, whoever started it: one outside
+        // the tree (a PDB server, a telemetry process) may be what the linker waits on.
+        let mut text = powershell(
+            "Get-CimInstance Win32_Process | Where-Object { $_.Name -match '^(link|lld-link|cl|clang|clang-cl|mspdbsrv|vctip|ninja)(\\.exe)?$' } | \
+             ForEach-Object { $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; \
+             \"$($_.ProcessId) parent $($_.ParentProcessId) started $(if ($p) { $p.StartTime.ToString('HH:mm:ss') }) user $(if ($p) { [int]$p.UserProcessorTime.TotalSeconds })s kernel $(if ($p) { [int]$p.PrivilegedProcessorTime.TotalSeconds })s: $($_.CommandLine)\" }"
+                .to_string(),
+        );
+        text.insert_str(0, "== the machine's compilers and linkers\n");
         for (pid, command) in &tree {
+            // Each thread's processor time first (`!runaway`: the spinning one leads), then the stacks;
+            // a linker's whole memory too (the owner: "save a dump of the spinning link.exe").
+            let mut script = String::from("!runaway 7; ~*kb 60; ");
+            if command.to_ascii_lowercase().contains("link") {
+                script.push_str(&format!(".dump /ma /o \"{}.{pid}.dmp\"; ", stacks.display()));
+            }
+            script.push('q');
             let mut attach = Command::new(cdb);
-            attach.args(["-pv", "-p", &pid.to_string(), "-snul", "-c", "~*kb 40; q"]).env("_NT_SYMBOL_PATH", "").env("_NT_ALT_SYMBOL_PATH", "");
-            let taken = run_bounded(&mut attach, helper_limit).unwrap_or_else(|| "(the debugger gave no stacks within a minute)\n".to_string());
+            attach.args(["-pv", "-p", &pid.to_string(), "-y", &symbols, "-c", &script]).env("_NT_ALT_SYMBOL_PATH", "");
+            let taken = run_bounded(&mut attach, 3 * helper_limit).unwrap_or_else(|| "(the debugger gave no stacks within three minutes)\n".to_string());
             text.push_str(&format!("== process {pid}: {command}\n{taken}\n"));
         }
         let _ = std::fs::write(stacks, text);
